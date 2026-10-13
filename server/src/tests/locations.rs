@@ -1,7 +1,7 @@
 //! Location fixes from the phone (security review H2): only real fixes are stored, and the locate
 //! page never turns a stored value into HTML or script.
 
-use axum::http::{Method, StatusCode};
+use axum::http::{Method, StatusCode, header};
 use serde_json::json;
 
 use super::TestApp;
@@ -270,4 +270,51 @@ async fn a_stored_future_fix_is_pruned() {
     let left = stored(&app, id).await;
     assert_eq!(left.len(), 1, "{left:?}");
     assert_eq!((left[0].1, left[0].2), (59.9, 10.7));
+}
+
+/// Design 33: OSM refuses tiles without a `Referer`, and the admin pages send `Referrer-Policy:
+/// same-origin`. The map's tile layer alone asks for `strict-origin-when-cross-origin` (Leaflet
+/// sets it on each tile's `<img>`), so OSM gets our origin and nothing more; the page's own policy
+/// and the CSP's one image host stay as they are.
+#[tokio::test]
+async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (device, _) = app.create_device("Ella").await;
+    let page = app
+        .get_page(&format!("/devices/locate?device={device}"), &cookie)
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    let layer = html
+        .split("L.tileLayer(")
+        .nth(1)
+        .and_then(|rest| rest.split("}).addTo(map)").next())
+        .expect("the tile layer");
+    assert!(
+        layer.starts_with("'https://tile.openstreetmap.org/{z}/{x}/{y}.png'"),
+        "{layer}"
+    );
+    assert!(
+        layer.contains("referrerPolicy: 'strict-origin-when-cross-origin'"),
+        "{layer}"
+    );
+    assert!(
+        layer.contains("https://www.openstreetmap.org/copyright"),
+        "{layer}"
+    );
+    let header = |name| {
+        page.headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert_eq!(header(header::REFERRER_POLICY), "same-origin");
+    assert!(
+        header(header::CONTENT_SECURITY_POLICY)
+            .contains("img-src 'self' data: https://tile.openstreetmap.org;"),
+        "{}",
+        header(header::CONTENT_SECURITY_POLICY)
+    );
 }

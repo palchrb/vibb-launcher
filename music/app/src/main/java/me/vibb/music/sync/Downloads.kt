@@ -1,6 +1,5 @@
 package me.vibb.music.sync
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -32,11 +31,14 @@ import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.downloadWaiting
+import me.vibb.music.logic.extrasFloor
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.pickVariant
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.storageLimitBytes
 import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Source
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.storytel.Mint
 import me.vibb.music.storytel.StorytelAccount
 import me.vibb.music.storytel.StorytelEndpoints
@@ -45,8 +47,9 @@ import java.util.concurrent.TimeUnit
 /*
  * Downloads (design 21 §4.5, QA #1): WorkManager jobs, never a dataSync foreground service from a
  * nudge or a job. One item at a time with Media3's downloaders into the shared cache; an
- * interrupted item continues with Range requests from what is cached. NOT_METERED unless the
- * parent's mobile-data switch is on, storage not low, never while roaming.
+ * interrupted item continues with Range requests from what is cached - a stream's partial too (design
+ * 30 §1.6: `CacheWriter` fetches only the gaps). NOT_METERED unless the parent's "downloads may use
+ * mobile data" switch is on (design 30 §1.1), storage not low, never while roaming.
  */
 
 /** The default network's capabilities, or null without one. */
@@ -69,11 +72,15 @@ object Downloads {
      * Run the downloads when the network allows, after [delayMs]. A running job gets this one
      * appended (it re-plans until nothing new is wanted, but a sync landing at its very end must not
      * be lost); a waiting one is replaced, so a sync never sits behind a retry delay
-     * (qa-21-step2-code M4). Call off the main thread.
+     * (qa-21-step2-code M4). With [stopRunning] a running job is replaced too: WorkManager stops it and
+     * the new one waits for its constraint (the sync passes `stopRunningDownload`: the downloads switch
+     * went off while the phone is on mobile data, qa-30-s3a-code L1); the partial item resumes with Range
+     * once the network allows. Call off the main thread.
      */
-    fun enqueue(context: Context, mobileData: Boolean, delayMs: Long = 0) {
+    fun enqueue(context: Context, downloadMobileData: Boolean, delayMs: Long = 0, stopRunning: Boolean = false) {
+        // The downloads switch (design 30 §1.1): off Wi-Fi only with it, never while roaming.
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(if (mobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
+            .setRequiredNetworkType(if (downloadMobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
             .setRequiresStorageNotLow(true)
             .build()
         val request = OneTimeWorkRequestBuilder<DownloadWorker>()
@@ -81,18 +88,13 @@ object Downloads {
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .build()
         val wm = WorkManager.getInstance(context)
-        val running = runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList())
+        val running = !stopRunning && runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList())
             .any { it.state == WorkInfo.State.RUNNING }
         wm.enqueueUniqueWork(WORK, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
     }
 
-    /**
-     * The free space where the cache lives (noBackupFilesDir), for Storytel's 1.5 GB floor (design 26b
-     * §3.3): vibb's `_free_bytes` (`disk_usage(...).free`), not what the system could clear for us - the
-     * floor keeps the card from filling, it doesn't make room.
-     */
-    @SuppressLint("UsableSpace")
-    fun freeBytes(context: Context): Long = context.noBackupFilesDir.usableSpace
+    /** The free space where the cache lives, for Storytel's 1.5 GB floor (design 26b §3.3): `MediaCache.freeBytes`. */
+    fun freeBytes(context: Context): Long = MediaCache.freeBytes(context)
 
     /**
      * Fetch one item from [url] into the cache: (bytes cached, the HLS variant fetched). Blocking,
@@ -139,15 +141,18 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         val tried = mutableSetOf<Pair<Long, String>>()
         var nextRetryAt: Long? = null
         while (true) {
-            val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis())
+            // Design 30 §1.6, §1.8: never an item the player holds open; the played extras over the limit
+            // or under the floor go before anything is fetched, so a Storytel book gets its floor.
+            val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
+            CacheThrough.evict(applicationContext, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(applicationContext).state() == "ok"))
             nextRetryAt = plan.nextRetryAt
             val todo = plan.wanted.filter { (it.entry.id to it.item.key) !in tried }
             if (todo.isEmpty()) break
             for (w in todo) {
                 tried += w.entry.id to w.item.key
-                if (downloadWaiting(netCaps(applicationContext), store.mobileData, false) != null) {
+                if (downloadWaiting(netCaps(applicationContext), store.downloadMobileData, false) != null) {
                     // The constraints, not a backoff, wait for the network.
-                    Downloads.enqueue(applicationContext, store.mobileData)
+                    Downloads.enqueue(applicationContext, store.downloadMobileData)
                     NewNotifier.update(applicationContext, store.snapshot())
                     Sync.writeReport(applicationContext)
                     return@withContext Result.success()
@@ -162,7 +167,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         }
         // A refused Storytel login: back when its cooldown is over (one login an hour at most).
         val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()
-        back?.let { Downloads.enqueue(applicationContext, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+        back?.let { Downloads.enqueue(applicationContext, store.downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         // A new book counts in the Nytt notification once its copy is on the phone (design 26b §3.4):
         // after the download, not at the next sync (qa-26b-step3-code M1).
         NewNotifier.update(applicationContext, store.snapshot())
@@ -179,7 +184,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         override suspend fun saveRow(row: DownloadRow) = dao.upsertDownload(row)
 
-        override fun removeCopy(cacheKey: String, hls: Boolean) = MediaCache.remove(context, cacheKey, hls)
+        override suspend fun removeCopy(cacheKey: String, hls: Boolean) = CacheThrough.removeCopy(context, cacheKey, hls)
 
         override suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?> = runInterruptible { Downloads.fetch(context, w, url) }
 

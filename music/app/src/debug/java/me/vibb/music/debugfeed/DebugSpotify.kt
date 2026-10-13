@@ -11,7 +11,7 @@ import java.io.File
 
 /*
  * Debug build only (src/debug; never in a release APK: `checkReleaseHasNoDebugFeed` and
- * SourceScanTest). The fake Spotify for the emulator (design 26c §9.3, docs/testing/emulator.md §6k,
+ * SourceScanTest). The fake Spotify for the emulator (design 26c §9.3, docs/testing/emulator.md §6l,
  * scripts/fake-spotify.py): the one debug switch `SpotifyEndpoints.debugBase` is assigned here and
  * nowhere else, from the debug feed's config.json (`spotify_base`, e.g. "http://10.0.2.2:8731") - by the
  * receiver, and at every process start by [DebugStartup], as DebugStorytel's. Its six readers in

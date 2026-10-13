@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">About This Phone</h1>
+
+    <section id="connection" aria-labelledby="connection-title">
+        <h2 class="group-header" id="connection-title">Connection</h2>
+        <div class="group">
+            {% for row in connection %}
+            {% include "partials/info_row.html" %}
+            {% endfor %}
+        </div>
+        {% if device.enrolled_at.is_some() %}
+        <div class="group-footer">Online means the phone has a live link to this server. Changes reach it within seconds.
+            <details class="info">
+                <summary aria-label="About the connection"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Without the link, changes wait for the phone's own check-in: every 30 minutes, or every 15 while it can't connect. Away means changes may be delayed; Offline, that they wait until it's back.</p>
+                </div>
+            </details>
+        </div>
+        {% endif %}
+    </section>
+
+    {% if !sound.is_empty() %}
+    <section id="sound" aria-labelledby="sound-title">
+        <h2 class="group-header" id="sound-title">Sound</h2>
+        <div class="group">
+            {% for row in sound %}
+            {% include "partials/info_row.html" %}
+            {% endfor %}
+        </div>
+        <p class="group-footer">At the last report.</p>
+    </section>
+    {% endif %}
+
+    {% if !software.is_empty() %}
+    <section id="software" aria-labelledby="software-title">
+        <h2 class="group-header" id="software-title">Software</h2>
+        <div class="group">
+            {% for row in software %}
+            {% include "partials/info_row.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if device.enrolled_at.is_some() %}
+    <section id="diagnostics" aria-labelledby="diagnostics-title">
+        <h2 class="group-header" id="diagnostics-title">Diagnostics</h2>
+        <div class="group">
+            <div class="row" data-row="crashes">
+                <span class="row-label">Crash reports</span>
+                <span class="row-value">{{ crashes_value }}</span>
+            </div>
+            {% for c in crashes %}
+            <details class="info cell" data-crash="{{ c.hash }}">
+                <summary class="row">
+                    <span class="row-label">{{ c.name }}</span>
+                    <span class="row-value" title="{{ c.exact }}">{{ c.count }}&times; · {{ c.when }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel">
+                    <p>Build {{ c.build }} · {{ c.hash }}</p>
+                    <pre>{{ c.trace }}</pre>
+                </div>
+            </details>
+            {% endfor %}
+            {% for row in diagnostics %}
+            {% include "partials/info_row.html" %}
+            {% endfor %}
+        </div>
+        {% if !crashes.is_empty() %}
+        <p class="group-footer">Vibb restarts by itself after a crash. A report holds only where in the code it happened.</p>
+        {% endif %}
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

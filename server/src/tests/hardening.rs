@@ -1,10 +1,13 @@
 //! Hardening (design 04-hardening.md): the per-device restriction switches in the device policy,
-//! the device page's "Phone hardening" form, and the corrupt-allowlist warning (QA step 1 #11).
+//! Advanced › Restrictions (the device page's "Phone hardening" form until design 31 step 3), and
+//! the corrupt-allowlist warning (QA step 1 #11).
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
-use super::{Section, TestApp, autosaves, device_page, form_action_of, input_checked};
+use super::{
+    Section, TestApp, assert_redirect, autosaves, device_page, form_action_of, input_checked,
+};
 
 const SWITCHES: [&str; 10] = [
     "disallow_add_user",
@@ -89,7 +92,8 @@ async fn form_saves_every_switch_and_missing_means_off() {
         &["disallow_safe_boot", "lock_location", "disallow_add_user"],
     )
     .await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to Advanced, no fragment: Restrictions is its first group (design 31 §5.1).
+    assert_redirect(&res, &device_page(id, Section::Advanced), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let value = hardening(&app, &token).await;
     for key in SWITCHES {
@@ -161,26 +165,43 @@ async fn db_error_is_500_and_does_not_nudge() {
 }
 
 #[tokio::test]
-async fn device_page_shows_the_switches() {
+async fn advanced_shows_the_switches_as_one_form() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
     let page = app
-        .get_page(&device_page(id, Section::Summary), &cookie)
+        .get_page(&device_page(id, Section::Advanced), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
     let action = format!("/devices/{id}/hardening");
+    // All ten in one form (H1: a missing box is off), each a switch that saves itself.
     for (name, on) in [
+        ("disallow_factory_reset", true),
+        ("disallow_add_user", true),
+        ("disallow_modify_accounts", true),
+        ("disallow_config_vpn", true),
+        ("disallow_usb_file_transfer", true),
+        ("lock_location", true),
+        ("disallow_airplane_mode", false),
+        ("disallow_config_locale", true),
         ("disallow_debugging_features", true),
         ("disallow_safe_boot", false),
-        ("disallow_airplane_mode", false),
     ] {
         assert_eq!(input_checked(&html, name, "on"), Some(on), "{name}");
         assert!(autosaves(&html, name), "{name}");
         assert_eq!(form_action_of(&html, name), Some(action.as_str()), "{name}");
     }
-    assert!(!html.contains("stored app list for this device can't be read"));
+    assert_eq!(html.matches(&format!("action=\"{action}\"")).count(), 1);
+    assert!(html.contains("Block safe mode") && html.contains("Block USB debugging"));
+    // The device page no longer has the form; its Advanced row leads here.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert_eq!(form_action_of(&summary, "disallow_safe_boot"), None);
+    assert!(summary.contains(&format!("href=\"/devices/{id}/advanced\"")));
+    assert!(!summary.contains("stored app list for this device can't be read"));
 }
 
 #[tokio::test]
@@ -313,71 +334,84 @@ async fn stored_backup(app: &TestApp, id: i64) -> Option<bool> {
     .unwrap()
 }
 
-/// The "Phone hardening" card's part of it: the text between the card's form tag and its end.
-fn hardening_card(html: &str, id: i64) -> &str {
+/// Advanced › Restrictions: the text from its section to the section's end.
+fn restrictions(html: &str) -> &str {
     let start = html
-        .find(&format!("action=\"/devices/{id}/hardening\""))
-        .expect("hardening card");
-    let end = start + html[start..].find("</form>").expect("end of the card");
+        .find("<section id=\"restrictions\"")
+        .expect("Restrictions");
+    let end = start
+        + html[start..]
+            .find("</section>")
+            .expect("end of Restrictions");
     &html[start..end]
 }
 
+/// The "Backup to Google" row's value, if the row is there.
+fn backup_row(html: &str) -> Option<&str> {
+    let row = &html[html.find("data-row=\"google-backup\"")?..];
+    let value = &row[row.find("row-value")?..];
+    let value = &value[value.find('>')? + 1..];
+    Some(&value[..value.find('<')?])
+}
+
 /// Google account on the phone (docs/setup/google-account.md, migrations/0041): the launcher
-/// reports whether Android's backup service is on. Off is one quiet line in the hardening card, on
-/// is a warning, and a report without it (an older launcher, or the phone couldn't read it) shows
-/// nothing.
+/// reports whether Android's backup service is on. Off is a quiet "Off" row in Advanced ›
+/// Restrictions, on is a warning above the group (and an Attention alarm), and a report without
+/// it (an older launcher, or the phone couldn't read it) shows nothing.
 #[tokio::test]
 async fn backup_service_state_is_stored_and_shown() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let quiet = "Backup to Google: off";
+    let advanced = || async {
+        app.get_page(&device_page(id, Section::Advanced), &cookie)
+            .await
+            .text()
+    };
     let warning = "Backup to Google is on";
 
     // No report yet.
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(quiet) && !html.contains(warning));
+    let html = advanced().await;
+    assert_eq!(backup_row(&html), None);
+    assert!(!html.contains(warning));
 
     // An older launcher: the field is missing - stored as NULL, nothing shown.
     report_backup(&app, &token, None).await;
     assert_eq!(stored_backup(&app, id).await, None);
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(quiet) && !html.contains(warning), "{html}");
+    let html = advanced().await;
+    assert!(
+        backup_row(&html).is_none() && !html.contains(warning),
+        "{html}"
+    );
 
     report_backup(&app, &token, Some(json!(false))).await;
     assert_eq!(stored_backup(&app, id).await, Some(false));
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(hardening_card(&html, id).contains(quiet), "{html}");
+    let html = advanced().await;
+    assert_eq!(backup_row(restrictions(&html)), Some("Off"), "{html}");
     assert!(!html.contains(warning));
-    // The page keeps the scroll position after the card's auto-saving switches (no jump to the top).
+    // The page keeps the scroll position after the auto-saving switches (no jump to the top).
     assert!(html.contains("/static/scroll-restore.js"));
 
     report_backup(&app, &token, Some(json!(true))).await;
     assert_eq!(stored_backup(&app, id).await, Some(true));
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+    let html = advanced().await;
+    assert!(restrictions(&html).contains(warning), "{html}");
+    assert_eq!(backup_row(restrictions(&html)), Some("On"));
+    // The Attention row on the device page links to it.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
-    assert!(hardening_card(&html, id).contains(warning), "{html}");
-    assert!(!html.contains(quiet));
+    assert!(summary.contains(&format!("href=\"/devices/{id}/advanced#restrictions\"")));
 
     // Unknown again (an explicit null): only the latest report counts, so nothing is shown.
     report_backup(&app, &token, Some(Value::Null)).await;
     assert_eq!(stored_backup(&app, id).await, None);
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(quiet) && !html.contains(warning), "{html}");
+    let html = advanced().await;
+    assert!(
+        backup_row(&html).is_none() && !html.contains(warning),
+        "{html}"
+    );
 }
 
 #[tokio::test]
@@ -388,12 +422,15 @@ async fn backup_service_state_is_per_device() {
     let (b, _) = app.enrolled_device("b").await;
     report_backup(&app, &token_a, Some(json!(true))).await;
     assert!(
-        app.get_page(&format!("/devices/{a}"), &cookie)
+        app.get_page(&device_page(a, Section::Advanced), &cookie)
             .await
             .text()
             .contains("Backup to Google is on")
     );
-    let html = app.get_page(&format!("/devices/{b}"), &cookie).await.text();
+    let html = app
+        .get_page(&device_page(b, Section::Advanced), &cookie)
+        .await
+        .text();
     assert!(!html.contains("Backup to Google"));
 }
 
@@ -436,18 +473,26 @@ async fn unseen_boots_are_stored_warned_and_logged() {
         .await
         .unwrap()
     };
+    // About This Phone's "Starts without Vibb" row (design 31 step 3), up to the next row.
     let page = || async {
-        app.get_page(&format!("/devices/{id}"), &cookie)
+        let html = app
+            .get_page(&device_page(id, Section::About), &cookie)
             .await
-            .text()
+            .text();
+        let start = html.find("data-row=\"starts\"").expect("the starts row");
+        let end = start
+            + html[start..]
+                .find("data-row=\"time-lock\"")
+                .expect("next row");
+        html[start..end].to_string()
     };
-    let warning = "without the launcher running";
+    let warning = "1 time</span>";
 
     // The first report of the witness's build: 0, nothing shown or logged.
     report(json!({ "count": 0, "last_at_ms": null })).await;
     assert_eq!(stored().await, (Some(0), None));
     assert!(logged().await.is_empty());
-    assert!(!page().await.contains(warning));
+    assert!(page().await.contains(">None</span>"), "{}", page().await);
 
     // A safe-mode boot: count 1, logged once, warned with the switch's advice.
     let at = chrono::Utc::now().timestamp_millis() - 60_000;
@@ -460,14 +505,18 @@ async fn unseen_boots_are_stored_warned_and_logged() {
         )]
     );
     let html = page().await;
+    assert!(html.contains(warning), "{html}");
+    assert!(html.contains("row-value-alarm"), "{html}");
     assert!(
-        html.contains("The phone started 1 time without the launcher running"),
+        html.contains("Turn on Block safe mode in Advanced."),
         "{html}"
     );
-    assert!(
-        html.contains("Turn on &#34;Block safe mode&#34; under Phone hardening."),
-        "{html}"
-    );
+    // An Attention alarm on the device page, linking here.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(summary.contains(&format!("href=\"/devices/{id}/about#diagnostics\"")));
     // The same count again: not logged again.
     report(json!({ "count": 1, "last_at_ms": at })).await;
     assert_eq!(logged().await.len(), 1);

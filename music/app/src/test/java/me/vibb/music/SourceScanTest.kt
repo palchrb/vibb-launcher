@@ -498,4 +498,25 @@ class SourceScanTest {
         assertTrue("the start-up provider is not exported", provider.contains("android:exported=\"false\""))
         assertTrue("created before WorkManager's provider (L2)", provider.contains("android:initOrder=\"1000\""))
     }
+
+    /**
+     * qa-30-s3b-code H2: an app targeting API 28+ refuses every cleartext request without a config of its own -
+     * Sonos SOAP (http://<ip>:1400), http enclosures, `lan` feeds and the emulator's fakes. Cleartext is allowed
+     * for every host (a speaker's LAN address can't be named in advance); the app's own address rules decide
+     * what may be fetched. The system's CAs only, one config for every build type.
+     */
+    @Test
+    fun `cleartext is allowed for Sonos, http enclosures, lan feeds and the fakes - the system CAs only`() {
+        val manifest = moduleFile("src/main/AndroidManifest.xml").readText()
+        assertTrue(manifest.contains("android:networkSecurityConfig=\"@xml/network_security_config\""))
+        assertFalse("one place decides it", manifest.contains("usesCleartextTraffic"))
+        val config = moduleFile("src/main/res/xml/network_security_config.xml").readText()
+            .replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+        assertTrue(config.contains("<base-config cleartextTrafficPermitted=\"true\""))
+        assertEquals("system trust anchors only", listOf("system"), Regex("<certificates src=\"(\\w+)\"").findAll(config).map { it.groupValues[1] }.toList())
+        for (narrower in listOf("domain-config", "debug-overrides", "pin-set")) assertFalse(narrower, config.contains(narrower))
+        val others = moduleFile("src").walk().filter { it.isFile && it.name == "network_security_config.xml" }.map { it.path }.toList()
+        assertEquals(others.toString(), 1, others.size)
+        for (variant in listOf("src/debug/AndroidManifest.xml")) assertFalse(moduleFile(variant).readText().contains("networkSecurityConfig"))
+    }
 }

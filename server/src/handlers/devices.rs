@@ -9,21 +9,46 @@ use crate::AppState;
 use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
+/// One phone on the Devices list (design 31 §3.2): the avatar with the connection dot, the name,
+/// the status line, today's screen time and the Attention count.
 struct DeviceListRow {
     id: i64,
     name: String,
-    status_text: String,
+    /// The avatar's letter and colour class.
+    initial: String,
+    avatar: &'static str,
+    connection: crate::streams::ConnectionState,
+    /// After the state word: "seen 3 min ago", "access removed".
+    detail: Option<String>,
+    /// The exact last contact, for the detail's `title`.
+    detail_title: Option<String>,
+    /// While a rule locks the phone: "Skole until 14:30".
+    lock: Option<String>,
+    screen_time: Option<crate::time_state::ScreenTime>,
+    /// Attention rows on the phone's page (the red badge).
+    attention: usize,
 }
+
+/// The avatars' colours (white text 4.5:1 or more on each); a phone not set up is grey.
+pub(crate) const AVATAR_COLOURS: [&str; 6] = [
+    "avatar-indigo",
+    "avatar-orange",
+    "avatar-teal",
+    "avatar-green",
+    "avatar-pink",
+    "avatar-purple",
+];
 
 #[derive(Template)]
 #[template(path = "devices_list.html")]
 struct DevicesListTemplate {
     title: String,
     devices: Vec<DeviceListRow>,
-    /// Failed 2FA codes before this sign-in (design 22 §3.2.1), until dismissed.
-    login_warning: Option<String>,
+    /// Failed 2FA codes before this sign-in (design 22 §3.2.1), until dismissed; the full text
+    /// is on Account.
+    login_warning: Option<crate::handlers::auth::WarningRow>,
     /// Failed 2FA codes since this sign-in, and the lock (QA 22 Low 9).
-    live_warning: Option<String>,
+    live_warning: Option<crate::handlers::auth::WarningRow>,
     warning_back: &'static str,
 }
 
@@ -36,37 +61,230 @@ pub async fn list_devices(
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
 
-    let rows = devices
-        .into_iter()
-        .map(|d| {
-            let status_text = if d.enrolled_at.is_none() {
-                "Not enrolled yet".to_string()
-            } else {
-                match &d.last_seen_at {
-                    Some(t) => format!("Last seen {t}"),
-                    None => "Enrolled, not seen yet".to_string(),
-                }
-            };
-            DeviceListRow {
-                id: d.id,
-                name: d.name,
-                status_text,
-            }
-        })
-        .collect();
+    let mut rows = Vec::with_capacity(devices.len());
+    for device in devices {
+        rows.push(list_row(&state, device, &zone, now).await);
+    }
 
     Html(
         DevicesListTemplate {
             title: "Devices".to_string(),
             devices: rows,
-            login_warning: crate::handlers::auth::login_warning_of(&session).await,
-            live_warning: crate::handlers::auth::live_warning(&admin),
+            login_warning: crate::handlers::auth::login_warning_row(
+                crate::handlers::auth::login_warning_of(&session)
+                    .await
+                    .as_deref(),
+            ),
+            live_warning: crate::handlers::auth::live_warning_row(&admin, &zone, now),
             warning_back: "/devices",
         }
         .render()
         .unwrap(),
     )
+}
+
+/// A phone's row: one in-memory lookup for the connection, its last report, its rules when one
+/// is locking, and the Attention count (about 10 small reads, §3.8).
+async fn list_row(
+    state: &AppState,
+    device: Device,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> DeviceListRow {
+    use crate::streams::ConnectionState;
+    let connection = connection_of(state, &device, now);
+    let (detail, detail_title) = match connection {
+        ConnectionState::Disconnected => (Some("access removed".to_string()), None),
+        state => match state.last_contact() {
+            Some(at) => (
+                Some(format!("seen {}", zone.relative(at, now))),
+                Some(zone.exact(at)),
+            ),
+            None => (None, None),
+        },
+    };
+    let facts = crate::attention::facts(state, &device, connection).await;
+    let attention = crate::attention::items(device.id, &facts).len();
+    let (lock, screen_time) = if device.enrolled_at.is_some() {
+        time_glance(
+            state,
+            device.id,
+            &connection,
+            facts.calls_enforced,
+            zone,
+            now,
+        )
+        .await
+    } else {
+        (None, None)
+    };
+    let lock = lock.map(|badge| match &detail {
+        Some(seen) => badge.text_beside(seen.trim_start_matches("seen ")),
+        None => badge.text(),
+    });
+    // Online with a lock: the lock says more than "seen just now" (the mockup's "Online · Skole
+    // until 14:30").
+    let (detail, detail_title) = match (&connection, &lock) {
+        (ConnectionState::Online { .. }, Some(_)) => (None, None),
+        _ => (detail, detail_title),
+    };
+    DeviceListRow {
+        initial: initial(&device.name),
+        avatar: avatar_class(&device),
+        id: device.id,
+        name: device.name,
+        connection,
+        detail,
+        detail_title,
+        lock,
+        screen_time,
+        attention,
+    }
+}
+
+/// A phone's avatar colour (also on the Apps tab): grey until it is set up, else by its id.
+pub(crate) fn avatar_class(device: &Device) -> &'static str {
+    if device.enrolled_at.is_none() {
+        "avatar-grey"
+    } else {
+        AVATAR_COLOURS[device.id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
+    }
+}
+
+/// The avatar's letter: the name's first letter or digit, upper-cased when that gives one
+/// letter ("ß" stays "ß"); an emoji or a flag is skipped rather than cut in half; "?" for none.
+pub(crate) fn initial(name: &str) -> String {
+    name.chars()
+        .find(|c| c.is_alphanumeric())
+        .map(|c| {
+            let mut upper = c.to_uppercase();
+            match (upper.next(), upper.next()) {
+                (Some(u), None) => u.to_string(),
+                _ => c.to_string(),
+            }
+        })
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// A phone's connection (design 31 §3.10) from the in-memory stream and last access, and the
+/// database's last report (which survives a restart).
+pub(crate) fn connection_of(
+    state: &AppState,
+    device: &Device,
+    now: chrono::DateTime<chrono::Utc>,
+) -> crate::streams::ConnectionState {
+    crate::streams::connection_state(&connection_inputs(state, device), now)
+}
+
+/// The signals [connection_of] combines (About This Phone also reads the last contact from them).
+pub(crate) fn connection_inputs(
+    state: &AppState,
+    device: &Device,
+) -> crate::streams::ConnectionInputs {
+    crate::streams::ConnectionInputs {
+        enrolled: device.enrolled_at.is_some(),
+        has_token: device.token_hash.is_some(),
+        stream: state.command_streams.state(device.id),
+        last_access: state.limits.last_access(device.id).map(|a| a.at),
+        last_seen: device
+            .last_seen_at
+            .as_deref()
+            .and_then(crate::display_time::parse_db_utc),
+    }
+}
+
+/// The lock badge and today's screen time from the phone's last report (design 31 §3.10, M4).
+pub(crate) async fn time_glance(
+    state: &AppState,
+    device_id: i64,
+    connection: &crate::streams::ConnectionState,
+    calls_enforced: bool,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (
+    Option<crate::time_state::LockBadge>,
+    Option<crate::time_state::ScreenTime>,
+) {
+    use crate::time_state::{BadgeContext, TimeReport, lock_badge, screen_time};
+    let latest: Option<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT reported_at, lock_reason, time_state_json FROM device_status \
+         WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id, %err, "can't read the last report for the time badge");
+        None
+    });
+    let Some((reported_at, lock_reason, time_state_json)) = latest else {
+        return (None, None);
+    };
+    let Some(reported_at) = crate::display_time::parse_db_utc(&reported_at) else {
+        return (None, None);
+    };
+    let report = time_state_json
+        .as_deref()
+        .and_then(TimeReport::parse)
+        .unwrap_or_else(|| TimeReport::from_lock_reason(&lock_reason));
+    // Every effective rule's days (an end is shown only if none locks at it), only while a rule
+    // locks the phone. A rule whose days don't read is kept as "always on" (no end).
+    let mut rules = Vec::new();
+    if report.active_rule_id.is_some() && report.locking() {
+        let custom: bool = sqlx::query_scalar(
+            "SELECT custom_schedule_enabled FROM device_policy WHERE device_id = ?",
+        )
+        .bind(device_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+        rules = crate::time_rules::effective_rule_rows(&state.db, device_id, custom)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|rule| {
+                let days = crate::time_rules::parse_days(&rule.days_json).unwrap_or_default();
+                (rule.id, days)
+            })
+            .collect();
+    }
+    (
+        lock_badge(
+            &report,
+            &BadgeContext {
+                rules: &rules,
+                reported_at,
+                connection,
+                calls_enforced,
+            },
+            zone,
+            now,
+        ),
+        screen_time(&report, zone, now),
+    )
+}
+
+/// A managed phone (an app list or managed calls) without a Parent PIN: its Settings can't be
+/// opened on the phone (the device page's red card, an Attention alarm).
+pub(crate) fn managed_without_pin(policy: &DevicePolicy) -> bool {
+    (policy.allowlist_json.is_some() || policy.calls_managed) && policy.override_pin_hash.is_none()
+}
+
+/// The phone reported, without `time_rules_v1`: it still runs the old schedule.
+pub(crate) fn launcher_without_rules(latest: Option<&DeviceStatus>) -> bool {
+    latest.is_some_and(|s| {
+        !s.capabilities_json
+            .as_deref()
+            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+            .unwrap_or_default()
+            .iter()
+            .any(|c| c == "time_rules_v1")
+    })
 }
 
 #[derive(Template)]
@@ -223,9 +441,10 @@ pub struct RevokeForm {
     confirm: String,
 }
 
-/// "Revoke access" (design 22 §3.1): the phone's token stops working at once and its open
-/// streams end. The phone keeps enforcing what it has and says "access revoked - enroll again";
-/// a new code (above) enrolls it again. Needs the confirm box (else nothing happens).
+/// "Disconnect Phone" on Advanced › Connection ("Revoke access", design 22 §3.1): the phone's
+/// token stops working at once and its open streams end. The phone keeps enforcing what it has and
+/// says "access revoked - enroll again"; a new code (above) connects it again. Needs the confirm
+/// box (else nothing happens). Back to the Connection group, with the flash in it.
 pub async fn revoke_access(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -233,8 +452,10 @@ pub async fn revoke_access(
     Form(form): Form<RevokeForm>,
 ) -> Response {
     if form.confirm != "yes" {
-        return Redirect::to(&format!("/devices/{id}?notice=revoke_unconfirmed#access"))
-            .into_response();
+        return Redirect::to(&format!(
+            "/devices/{id}/advanced?notice=revoke_unconfirmed#connection"
+        ))
+        .into_response();
     }
     let revoked = sqlx::query_scalar::<_, String>(
         "UPDATE devices SET token_hash = NULL WHERE id = ? RETURNING name",
@@ -260,60 +481,76 @@ pub async fn revoke_access(
         Some(&format!("{name} (device {id})")),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}?notice=access_revoked#access")).into_response()
+    Redirect::to(&format!(
+        "/devices/{id}/advanced?notice=access_revoked#connection"
+    ))
+    .into_response()
 }
 
-/// The device page's "Access" card (design 22 §3.1).
+/// A phone's connection to this server, for Advanced › Connection and the not-enrolled card
+/// (design 22 §3.1, design 31 §3.2): times in the Phone Setup zone.
 pub struct AccessCard {
     /// The phone has a working token.
     pub has_token: bool,
-    /// "A typed code is valid until ..." when one is live.
-    pub live_code: Option<String>,
-    /// Typed codes are paused after too many wrong ones this hour.
-    pub typed_paused: Option<String>,
-    pub notice: Option<&'static str>,
+    /// While a code is live: "Setup code" or "Setup QR code", and until when ("14:05").
+    pub live_code: Option<(&'static str, String)>,
+    /// Until when typed codes are paused after too many wrong ones this hour ("14:05").
+    pub typed_paused_until: Option<String>,
+    /// The flash after Disconnect Phone: the text, and whether it is a refusal.
+    pub notice: Option<(&'static str, bool)>,
 }
 
-fn access_card(state: &AppState, device: &Device, notice: Option<&str>) -> AccessCard {
-    let now = chrono::Utc::now();
+impl AccessCard {
+    /// How many wrong typed codes in an hour pause them (for the warning's sentence).
+    pub fn pause_failures(&self) -> u32 {
+        crate::enrollment::TYPED_PAUSE_FAILURES
+    }
+}
+
+pub(crate) fn access_card(
+    state: &AppState,
+    device: &Device,
+    notice: Option<&str>,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> AccessCard {
     let live_code = match (
         &device.enrollment_code_kind,
         &device.enrollment_code_expires_at,
     ) {
-        (Some(kind), Some(expires))
-            if chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S")
-                .is_ok_and(|t| t.and_utc() > now) =>
-        {
-            Some(format!(
-                "A {} is valid until {expires} UTC (once).",
-                if kind == "qr" {
-                    "setup QR code"
-                } else {
-                    "typed code"
-                }
-            ))
+        (Some(kind), Some(expires)) => {
+            chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|t| t.and_utc())
+                .filter(|t| *t > now)
+                .map(|t| {
+                    (
+                        if kind == "qr" {
+                            "Setup QR code"
+                        } else {
+                            "Setup code"
+                        },
+                        zone.until(t, now),
+                    )
+                })
         }
         _ => None,
     };
     AccessCard {
         has_token: device.token_hash.is_some(),
         live_code,
-        typed_paused: state.enrollment.typed_paused_until(now).map(|until| {
-            format!(
-                "Typed codes are paused until {} UTC: {} wrong ones were tried this hour. A setup \
-                 QR code (Provision) still works.",
-                until.format("%H:%M"),
-                crate::enrollment::TYPED_PAUSE_FAILURES
-            )
-        }),
+        typed_paused_until: state
+            .enrollment
+            .typed_paused_until(now)
+            .map(|until| zone.until(until, now)),
         notice: notice.and_then(access_notice),
     }
 }
 
-fn access_notice(code: &str) -> Option<&'static str> {
+fn access_notice(code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
-        "access_revoked" => "Access revoked.",
-        "revoke_unconfirmed" => "Nothing revoked: tick the box first.",
+        "access_revoked" => ("Phone disconnected.", false),
+        "revoke_unconfirmed" => ("Nothing changed: tick the box first.", true),
         _ => return None,
     })
 }
@@ -393,6 +630,9 @@ pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
 struct DeviceDetailTemplate {
     title: String,
     device: Device,
+    /// The Attention rows (design 31 §3.2), the same list the Devices list counts - at the top
+    /// until step 10 builds the summary around them.
+    attention: Vec<crate::attention::AttentionItem>,
     apps: Vec<UnifiedAppRow>,
     /// Precomputed rather than an `{% if %}` expression in the template - Askama's expression
     /// grammar doesn't support closures, so `apps.iter().any(|a| a.is_installing)` can't be
@@ -400,28 +640,25 @@ struct DeviceDetailTemplate {
     any_app_installing: bool,
     pin_configured: bool,
     offline_override_used: bool,
-    /// The last status report's `policy_state` when it isn't "ok" - the phone isn't applying
-    /// the server's current policy (see migrations/0021_device_status_policy_state.sql).
-    policy_problem: Option<String>,
     restrictions_paused: bool,
     vpn_filter_enabled: bool,
     quick_control_wifi: bool,
     quick_control_bluetooth: bool,
     quick_control_brightness: bool,
     quick_control_sound: bool,
-    /// Status card (design 18): the phone's sound and Do Not Disturb at the last sync.
-    sound_lines: Vec<String>,
     latest_status: Option<DeviceStatus>,
+    /// The About This Phone row's value: "Vibb 0.23.6" (design 31 step 3).
+    about_value: Option<String>,
     /// One line for the "Calls & SMS" card, e.g. "Managed - 4 contacts".
     calls_summary: String,
-    /// `calls::call_warnings` - emergency calls, a launcher that can't enforce calls, roles.
+    /// `calls::call_report` - emergency calls, a launcher that can't enforce calls, roles.
     call_warnings: Vec<String>,
-    /// `calls::call_warnings`' hints: good to know, nothing wrong (plain lines).
+    /// `calls::call_report`'s hints: good to know, nothing wrong (plain lines).
     call_hints: Vec<String>,
     /// The stored allowlist isn't valid JSON: the phone gets a 500 for its policy (and keeps its
     /// cached one), and the app checkboxes below show nothing as allowed (QA step 1 #11).
     allowlist_corrupt: bool,
-    /// The "Phone hardening" switches (migrations/0023_hardening.sql).
+    /// The Restrictions switches (migrations/0023_hardening.sql), for the no-PIN warning.
     hardening: Hardening,
     /// Managed (an allowlist, or calls managed) but no override PIN: the launcher's Settings
     /// can't be opened on the phone, there is no offline override, and with USB debugging
@@ -439,13 +676,8 @@ struct DeviceDetailTemplate {
     badges_without_access: bool,
     /// "Time rules" card (handy step 6).
     time: TimeCard,
-    /// "Play and kiosk" card (handy step 7; "Push and Play" until design 19).
-    play: PlayCard,
     /// "Screen lock" card (handy step 10): the kid's PIN, the phone's lock state, warnings.
     lock: crate::kid_lock::LockCard,
-    /// "Launcher updates and notifications" card (handy step 11): the update fence and the
-    /// notification auto-cancel switches, and what the phone reports about them.
-    escapes: crate::kiosk_escapes::EscapesCard,
     /// One-shot message after a kid-PIN save (`?notice=`, `kid_lock::flash_text`), shown in the
     /// "Screen lock" card; `true` = a refusal.
     lock_notice: Option<(&'static str, bool)>,
@@ -453,18 +685,11 @@ struct DeviceDetailTemplate {
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// Status card (design 24b §3): boots the launcher didn't see in the last 30 days.
-    unseen_boots: Option<String>,
     /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
     /// last reported it applied.
     screen_timeout_seconds: i64,
     screen_timeout_options: Vec<(i64, &'static str)>,
     screen_timeout_applied: Option<String>,
-    /// "Phone hardening" card: the latest report's `backup_service_enabled` - `Some(false)` is a
-    /// quiet line, `Some(true)` a warning, `None` (older launcher, unreadable) nothing.
-    backup_service_enabled: Option<bool>,
-    /// "Launcher crashes" card (cleanup 2026-10-06): the newest crash reports.
-    crashes: Vec<crate::crashes::DeviceCrash>,
     /// Apps card (design 13): `device_policy.app_updates_wifi_only`, and the last report's line
     /// about the phone's network.
     app_updates_wifi_only: bool,
@@ -475,13 +700,12 @@ struct DeviceDetailTemplate {
     lock_screen: crate::lock_glance::LockScreenCard,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
-    /// When and how the phone last reached this server (design 22 §3.1, in memory).
-    last_access: String,
-    /// "Access" card (design 22 §3.1): codes, revoke.
+    /// The not-enrolled card's codes (design 22 §3.1); an enrolled phone's are on Advanced.
     access: AccessCard,
 }
 
-/// The kiosk app block switch on the "Play and kiosk" card (handy step 9): with it on, kiosk mode
+/// The kiosk app block switch, "Block other apps' screens" on Advanced › App screens (handy step
+/// 9; the "Play and kiosk" card until design 31 step 3): with it on, kiosk mode
 /// stops every screen of an app that isn't allowed - also ones other apps open (Play, Google
 /// sign-in sheets). The off switch exists for a phone where it breaks something it shouldn't.
 pub async fn update_kiosk_block(
@@ -503,8 +727,9 @@ pub async fn update_kiosk_block(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            // Back to the card (qa-19-code #4), like the escapes card.
-            Redirect::to(&format!("/devices/{id}#play-kiosk")).into_response()
+            // Its own page, no fragment: scroll-restore.js keeps the exact position, so a save
+            // never jumps (design 31 §5.1.4, qa-31-s3-code M3).
+            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
@@ -799,10 +1024,11 @@ pub async fn update_app_updates(
     }
 }
 
-/// The "Launcher updates and notifications" card (handy step 11): the update fence (other Home
-/// apps paused while the launcher installs its own update), the notification auto-cancel rule and
-/// the boot cover (design 16b). One auto-saving form, so a missing checkbox is off; 404 for an
-/// unknown device; nudges; back to the card.
+/// Advanced › Updates & notifications (handy step 11; the "Launcher updates and notifications"
+/// card until design 31 step 3): the update fence (other Home apps paused while the launcher
+/// installs its own update), the notification auto-cancel rule and the boot cover (design 16b).
+/// One auto-saving form, so a missing checkbox is off; 404 for an unknown device; nudges; back to
+/// Advanced without a fragment (a save never jumps).
 pub async fn update_kiosk_escapes(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -824,7 +1050,9 @@ pub async fn update_kiosk_escapes(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}#kiosk-escapes")).into_response()
+            // No fragment: scroll-restore.js keeps the exact position (design 31 §5.1.4,
+            // qa-31-s3-code M3).
+            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");
@@ -834,91 +1062,6 @@ pub async fn update_kiosk_escapes(
             )
                 .into_response()
         }
-    }
-}
-
-/// The device page's "Play and kiosk" card: whether the phone holds the command stream (instant
-/// changes), Play's state and the kiosk app block switch.
-pub(crate) struct PlayCard {
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
-    /// `device_policy.block_activity_start` (handy step 9).
-    pub block_activity_start: bool,
-}
-
-/// Builds [PlayCard] from the in-memory stream count (design 19 Q1) and the phone's latest status
-/// report.
-pub(crate) async fn play_card(
-    state: &AppState,
-    device_id: i64,
-    latest: Option<&DeviceStatus>,
-) -> PlayCard {
-    let mut lines = vec![crate::streams::instant_changes_line(
-        state.command_streams.state(device_id),
-    )];
-    if let Some(line) = battery_line(latest.and_then(|s| s.battery_optimization_exempt)) {
-        lines.push(line.to_string());
-    }
-    let mut warnings = Vec::new();
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    if let Some(until) = latest
-        .and_then(|s| s.install_mode_until_ms)
-        .filter(|until| *until > now_ms)
-    {
-        let until = chrono::DateTime::from_timestamp_millis(until)
-            .map(|t| t.format("%H:%M UTC").to_string())
-            .unwrap_or_default();
-        warnings.push(format!(
-            "Play install mode is on (until {until}): the Play Store can be opened on the phone. Apps installed now stay hidden until you allow them below."
-        ));
-    }
-    if latest.is_some_and(|s| s.play_window_active) {
-        lines.push(
-            "The nightly Play update window is open (screen off): Play is updating apps."
-                .to_string(),
-        );
-    }
-    let block_activity_start: bool =
-        sqlx::query_scalar("SELECT block_activity_start FROM device_policy WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(true);
-    if let Some(notice) = crate::models::admin_policy_notice(
-        latest.and_then(|s| s.admin_policies_pending_json.as_deref()),
-    ) {
-        warnings.push(notice);
-    }
-    if latest.and_then(|s| s.play_store_suspendable) == Some(false) {
-        warnings.push(if block_activity_start {
-            "Play can't be suspended on this phone - Play is blocked only while kiosk is on."
-                .to_string()
-        } else {
-            "Play can't be suspended on this phone, and the kiosk app block below is off: apps \
-             can open the Play Store."
-                .to_string()
-        });
-    }
-    PlayCard {
-        lines,
-        warnings,
-        block_activity_start,
-    }
-}
-
-/// Design 19b: the launcher's battery-optimisation exemption as the phone last reported it - a
-/// plain line for now (19b open question 1); nothing from an older launcher or when unreadable.
-pub(crate) fn battery_line(exempt: Option<bool>) -> Option<&'static str> {
-    match exempt? {
-        true => Some("Battery optimisation: off for the launcher."),
-        false => Some(
-            "Battery optimisation: on - instant changes may lag while the phone sleeps. To fix: on \
-             the phone, launcher Settings -> Pause all restrictions -> Background connection -> \
-             Allow, then end the pause (or, with USB debugging allowed: adb shell dumpsys \
-             deviceidle whitelist +me.vibb.launcher).",
-        ),
     }
 }
 
@@ -1034,14 +1177,7 @@ async fn time_card(
     let ledger_unreadable = reported_state
         .as_ref()
         .is_some_and(|(_, v)| v["ledger_unreadable"].as_bool() == Some(true));
-    let launcher_without_rules = latest.is_some_and(|s| {
-        !s.capabilities_json
-            .as_deref()
-            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-            .unwrap_or_default()
-            .iter()
-            .any(|c| c == "time_rules_v1")
-    });
+    let launcher_without_rules = launcher_without_rules(latest);
     let rules = crate::time_rules::effective_rule_rows(
         &state.db,
         policy.device_id,
@@ -1364,11 +1500,6 @@ async fn render_device(
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);
-    let policy_problem = latest_status
-        .as_ref()
-        .and_then(|s| s.policy_state.clone())
-        .filter(|state| state != "ok")
-        .map(|state| policy_problem_text(&state));
     let restrictions_paused = latest_status
         .as_ref()
         .is_some_and(|s| s.restrictions_paused);
@@ -1399,18 +1530,22 @@ async fn render_device(
         format!("Managed - {contacts}, {calls}, {sms}.")
     };
 
-    let (call_warnings, call_hints) = crate::handlers::calls::call_warnings(&state, &policy)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(device_id = id, %err, "failed to read call warnings");
-            (
-                vec!["Couldn't read this phone's call state - check the server log.".to_string()],
-                Vec::new(),
-            )
-        });
+    let (call_warnings, call_hints, call_problems) =
+        match crate::handlers::calls::call_report(&state, &policy).await {
+            Ok(report) => (report.warnings, report.hints, report.problems),
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "failed to read call warnings");
+                (
+                    vec![
+                        "Couldn't read this phone's call state - check the server log.".to_string(),
+                    ],
+                    Vec::new(),
+                    Vec::new(),
+                )
+            }
+        };
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
-    let play = play_card(&state, id, latest_status.as_ref()).await;
     let lock = {
         let capable = latest_status
             .as_ref()
@@ -1431,64 +1566,6 @@ async fn render_device(
             chrono::Utc::now().timestamp_millis(),
         )
     };
-    let escapes = {
-        let capable = latest_status
-            .as_ref()
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| {
-                caps.contains(&format!(
-                    "\"{}\"",
-                    crate::kiosk_escapes::KIOSK_ESCAPES_CAPABILITY
-                ))
-            });
-        let fence = crate::kiosk_escapes::parse_update_fence(
-            latest_status
-                .as_ref()
-                .and_then(|s| s.update_fence_json.as_deref()),
-        );
-        let cancels = crate::kiosk_escapes::parse_notification_cancels(
-            latest_status
-                .as_ref()
-                .and_then(|s| s.notification_cancels_json.as_deref()),
-        );
-        let mut card = crate::kiosk_escapes::escapes_card(
-            policy.update_fence,
-            policy.notification_auto_cancel,
-            capable,
-            latest_status.is_some(),
-            fence.as_ref(),
-            cancels.as_ref(),
-            latest_status
-                .as_ref()
-                .and_then(|s| s.notification_listener_enabled),
-            chrono::Utc::now().timestamp_millis(),
-        );
-        card.boot_cover = policy.boot_cover;
-        // Design 16b (qa-16b-code #5): what the phone says about the boot cover.
-        let cover_capable = latest_status
-            .as_ref()
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| {
-                caps.contains(&format!(
-                    "\"{}\"",
-                    crate::kiosk_escapes::BOOT_COVER_CAPABILITY
-                ))
-            });
-        let cover_state = crate::kiosk_escapes::parse_boot_cover(
-            latest_status
-                .as_ref()
-                .and_then(|s| s.boot_cover_json.as_deref()),
-        );
-        let (lines, warnings) = crate::kiosk_escapes::boot_cover_notes(
-            policy.boot_cover,
-            cover_capable,
-            latest_status.is_some(),
-            cover_state.as_ref(),
-        );
-        card.lines.extend(lines);
-        card.warnings.extend(warnings);
-        card
-    };
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
     let notice = query.get("notice").map(String::as_str);
     let lock_notice = notice.and_then(crate::kid_lock::flash_text);
@@ -1504,18 +1581,6 @@ async fn render_device(
         (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
     )
     .await;
-    // When "Block safe mode" went on, for the unseen-boots advice (QA 24b Low 12).
-    let safe_boot_blocked_since: Option<i64> = sqlx::query_scalar(
-        "SELECT disallow_safe_boot_set_at_ms FROM device_policy WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(device_id = id, %err, "can't read when safe mode was blocked");
-        None
-    })
-    .flatten();
     let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
         .await
         .unwrap_or_else(|err| {
@@ -1524,7 +1589,6 @@ async fn render_device(
         });
     let lock_same_as_home = !wallpapers.iter().any(|w| w.lock);
 
-    let crashes = crate::crashes::latest(&state.db, id).await;
     let music = crate::handlers::music::device_card(
         &state,
         &policy,
@@ -1536,32 +1600,49 @@ async fn render_device(
     .map_err(|err| tracing::error!(device_id = id, %err, "couldn't load the music card"))
     .ok();
 
+    // The same rows the Devices list counts, from the cards built above (not read twice).
+    let attention = crate::attention::items(
+        id,
+        &crate::attention::facts_of(
+            &crate::attention::Sources {
+                device: &device,
+                policy: &policy,
+                latest: latest_status.as_ref(),
+                relock: &relock,
+                call_problems: &call_problems,
+                incoming_calls_not_blocked: time.incoming_calls_unblocked,
+                connection: connection_of(&state, &device, chrono::Utc::now()),
+            },
+            chrono::Utc::now().timestamp_millis(),
+        ),
+    );
+
+    let zone = crate::display_time::Zone::load(&state.db).await;
     Html(
         DeviceDetailTemplate {
-            last_access: crate::limits::last_access_line(state.limits.last_access(id).as_ref()),
-            access: access_card(&state, &device, query.get("notice").map(String::as_str)),
-            crashes,
+            attention,
+            access: access_card(
+                &state,
+                &device,
+                query.get("notice").map(String::as_str),
+                &zone,
+                chrono::Utc::now(),
+            ),
+            about_value: latest_status
+                .as_ref()
+                .and_then(|s| s.app_version.as_deref())
+                .filter(|v| !v.is_empty())
+                .map(|v| format!("Vibb {}", crate::handlers::device_pages::short_version(v))),
             music,
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
             display_forms,
             lock_screen,
             time,
-            play,
             lock,
-            escapes,
             lock_notice,
             parent_pin,
             relock,
-            unseen_boots: latest_status.as_ref().and_then(|s| {
-                crate::boot_witness::warning(
-                    s.unseen_boots_count,
-                    s.unseen_boots_last_at_ms,
-                    chrono::Utc::now().timestamp_millis(),
-                    policy.hardening.disallow_safe_boot,
-                    safe_boot_blocked_since,
-                )
-            }),
             screen_timeout_seconds: crate::models::screen_timeout_seconds(
                 policy.screen_timeout_seconds,
             ),
@@ -1570,16 +1651,12 @@ async fn render_device(
                 .as_ref()
                 .and_then(|s| s.screen_timeout_seconds)
                 .map(crate::models::screen_timeout_label),
-            backup_service_enabled: latest_status
-                .as_ref()
-                .and_then(|s| s.backup_service_enabled),
             title: device.name.clone(),
             calls_summary,
             call_warnings,
             call_hints,
             allowlist_corrupt,
-            managed_without_pin: (policy.allowlist_json.is_some() || policy.calls_managed)
-                && policy.override_pin_hash.is_none(),
+            managed_without_pin: managed_without_pin(&policy),
             hardening: policy.hardening.clone(),
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
@@ -1591,22 +1668,12 @@ async fn render_device(
             any_app_installing,
             pin_configured: policy.override_pin_hash.is_some(),
             offline_override_used,
-            policy_problem,
             restrictions_paused,
             vpn_filter_enabled: policy.vpn_filter_enabled,
             quick_control_wifi: policy.quick_controls_mask & QUICK_CONTROL_WIFI != 0,
             quick_control_bluetooth: policy.quick_controls_mask & QUICK_CONTROL_BLUETOOTH != 0,
             quick_control_brightness: policy.quick_controls_mask & QUICK_CONTROL_BRIGHTNESS != 0,
             quick_control_sound: policy.quick_controls_mask & QUICK_CONTROL_SOUND != 0,
-            sound_lines: latest_status
-                .as_ref()
-                .map(|s| {
-                    crate::sound_mode::status_lines(
-                        s.ringer_mode.as_deref(),
-                        s.interruption_filter.as_deref(),
-                    )
-                })
-                .unwrap_or_default(),
             device,
             apps,
             latest_status,
@@ -1615,29 +1682,6 @@ async fn render_device(
         .unwrap(),
     )
     .into_response()
-}
-
-/// Parent-facing explanation of a non-"ok" `device_status.policy_state`.
-fn policy_problem_text(state: &str) -> String {
-    match state {
-        "cache_corrupt" => "The phone can't read its saved policy. It enforces the last app list \
-            it had (or nothing but the launcher), and won't pick up changes until it gets a good \
-            policy from this server."
-            .to_string(),
-        "server_error" => "This server answered the phone's policy request with an error, so the \
-            phone keeps its last policy. Check this server's log (\"failed to build device \
-            policy\")."
-            .to_string(),
-        "rejected_suspect" => "The phone ignored the last policy from this server because it \
-            looked like a server falling back to defaults (no app list after it had one). Check \
-            this server's log and version."
-            .to_string(),
-        "fresh_decode_failed" => "The phone couldn't read the last policy from this server - \
-            the launcher and server versions probably don't match. It keeps its current \
-            restrictions."
-            .to_string(),
-        other => format!("The phone reported a policy problem: {other}"),
-    }
 }
 
 /// Flips one row of the unified Apps list for one device - a standalone auto-submitting toggle
@@ -2052,7 +2096,7 @@ pub async fn update_policy(
 /// screen. A PIN must be 4-6 digits, needs an override PIN (the lock's parent code) and must not
 /// be the override PIN (`kid_lock::decide_kid_pin`); a refused save writes nothing and says why.
 /// The first PIN also blocks safe mode (decision after QA review: safe mode skips our lock) -
-/// the parent can switch that off again in "Phone hardening". 404 for an unknown device, 500 on
+/// the parent can switch that off again in Advanced › Restrictions. 404 for an unknown device, 500 on
 /// a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges the phone.
 pub async fn update_kid_lock(
     State(state): State<AppState>,
@@ -2170,9 +2214,10 @@ pub async fn update_kid_lock(
     back(code)
 }
 
-/// The "Phone hardening" card: one auto-submitting form with every switch, so a missing checkbox
-/// really means "off" (same pattern as the calls switches). 404 for an unknown device, 500 (nothing
-/// written) on a DB error; nudges the phone like every other policy change.
+/// Advanced › Restrictions (the "Phone hardening" card until design 31 step 3): one
+/// auto-submitting form with every switch, so a missing checkbox really means "off" (same pattern
+/// as the calls switches). 404 for an unknown device, 500 (nothing written) on a DB error; nudges
+/// the phone like every other policy change.
 pub async fn update_hardening(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2212,7 +2257,9 @@ pub async fn update_hardening(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            // Its own page; no fragment: Restrictions is the first group, and scroll-restore.js
+            // keeps the exact position (design 31 §5.1).
+            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save hardening switches");
@@ -2343,5 +2390,24 @@ pub async fn delete_device(
     .ok();
     crate::photos::prune(&state).await;
 
-    Redirect::to("/")
+    Redirect::to("/devices")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_avatar_letter_is_one_letter() {
+        assert_eq!(initial("anna"), "A");
+        assert_eq!(initial("  émil"), "É");
+        // "ß" upper-cases to two letters: kept as it is.
+        assert_eq!(initial("ßara"), "ß");
+        // An emoji or a flag is skipped, never cut in half.
+        assert_eq!(initial("🇳🇴 Nora"), "N");
+        assert_eq!(initial("👩‍👧 Ella"), "E");
+        assert_eq!(initial("2 phones"), "2");
+        assert_eq!(initial("🦄"), "?");
+        assert_eq!(initial(""), "?");
+    }
 }

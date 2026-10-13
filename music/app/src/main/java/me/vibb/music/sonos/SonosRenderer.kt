@@ -128,7 +128,7 @@ internal class SonosRenderer(
         // and never to a room outside the parent's scope (design 26a §5.5, a belt: the service refuses
         // the switch and leaves a room the scope dropped)
         mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },
-        // the parent's cap in force, read live from the managed config like mobile_data (§5.3)
+        // the parent's cap in force, read live from the managed config like the mobile-data switches (§5.3)
         cap = { Bridge.config(context).volumeCapPct },
         // a start caps every room of the group it plays in (§5.3, qa-26a-corrections M2)
         members = { roomMembers(home.rooms.state.value.rooms, it) },

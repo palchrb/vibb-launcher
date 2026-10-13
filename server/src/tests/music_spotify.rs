@@ -3643,7 +3643,21 @@ mod entries {
             !page.contains("id=\"music-spotify\""),
             "no Spotify control before an app"
         );
-        assert!(page.contains("This includes Spotify, which streams (about 60-150 MB an hour)."));
+        // Design 30: the streaming switch (not the downloads one) is the one Spotify obeys.
+        assert!(page.contains(
+            "This includes Spotify, which streams (about 60-150 MB an hour) and is never saved on the phone."
+        ));
+        let streaming = page
+            .find("Streaming may use mobile data")
+            .expect("the streaming switch");
+        let downloads = page
+            .find("Downloads may use mobile data")
+            .expect("the downloads switch");
+        let spotify = page.find("This includes Spotify").unwrap();
+        assert!(
+            streaming < spotify && spotify < downloads,
+            "Spotify's line is the streaming switch's"
+        );
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
         let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-2").await;

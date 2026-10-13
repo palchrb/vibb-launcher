@@ -1,0 +1,5 @@
+{#- A sub-page warning (design 31 §4.2): a bold title and its one sentence, orange, above the group
+    it belongs to (`device_pages::Note`, as `note`). -#}
+<div class="attention attention-action" data-warning>
+    <span class="attention-text">{{ note.title }}{% if let Some(detail) = note.detail %}<span class="attention-sub">{{ detail }}</span>{% endif %}</span>
+</div>

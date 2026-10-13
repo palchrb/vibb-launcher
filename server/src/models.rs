@@ -98,16 +98,23 @@ pub struct DevicePolicy {
     /// download on an unmetered network only; the launcher's own update after 3 days on any
     /// non-roaming one.
     pub app_updates_wifi_only: bool,
-    /// Vibb music (design 21, migrations/0049): music downloads and streaming may use mobile data
-    /// (default off), the volume cap in percent (`None` = off, the default; see
-    /// `music::VOLUME_CAPS`) and whether this phone gets the family's Storytel login.
-    pub music_mobile_data: bool,
+    /// Vibb music (design 21, migrations/0049): the volume cap in percent (`None` = off, the
+    /// default; see `music::VOLUME_CAPS`) and whether this phone gets the family's Storytel login.
+    /// Mobile data (design 30, migrations/0073, both default off): streaming (an item that isn't
+    /// downloaded plays off Wi-Fi) and downloads (the offline episodes and Storytel books download
+    /// off Wi-Fi); the policy's `mobile_data` is both.
+    pub music_stream_mobile_data: bool,
+    pub music_download_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
-    /// The Spotify account this phone plays as (design 26c §2.5, migrations/0073): `None` = Spotify
+    /// The Spotify account this phone plays as (design 26c §2.5, migrations/0074): `None` = Spotify
     /// is off on this phone (the default). The phone's library, listings and covers hold Spotify
     /// entries only while it is set (`music::spotify_gate`); the FK makes the account exist.
     pub music_spotify_account: Option<i64>,
+    /// The parent's music storage limit in GB (design 30 §1.8, migrations/0073): one of
+    /// `music::STORAGE_LIMITS`, `None` = no limit; default 2. Anything else is sent as 2
+    /// (`music::storage_limit`).
+    pub music_storage_limit_gb: Option<i64>,
     /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
     /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
     pub override_pin_easy: Option<bool>,
@@ -272,7 +279,7 @@ pub struct GlobalSchedule {
     pub daily_budget_json: String,
 }
 
-#[derive(sqlx::FromRow, Clone)]
+#[derive(sqlx::FromRow, Clone, Default)]
 pub struct DeviceStatus {
     pub id: i64,
     pub device_id: i64,
@@ -339,7 +346,7 @@ pub struct DeviceStatus {
     // remote_wipe_ready (migration 0065, QA of the launcher wave Low 4) is read directly by
     // handlers::locate.
     /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
-    /// [admin_policy_notice]; migration 0065). `None` from older launchers.
+    /// [admin_policy_effects]; migration 0065). `None` from older launchers.
     pub admin_policies_pending_json: Option<String>,
     /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
     /// `window_relock::RelockBlock`. `None` from older launchers.
@@ -348,7 +355,7 @@ pub struct DeviceStatus {
     /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
     pub relock_blocks_total: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
-    // handlers::calls::call_warnings.
+    // handlers::calls::call_report.
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -1185,21 +1192,16 @@ pub fn admin_policies_json(pending: Option<&Vec<String>>) -> Option<String> {
     serde_json::to_string(&known).ok()
 }
 
-/// The device page's warning while the launcher's admin lacks policies Android grants at the next
-/// restart (an Android 16 emulator refused the lock-screen camera switch that way).
-pub fn admin_policy_notice(json: Option<&str>) -> Option<String> {
-    let pending: Vec<String> = serde_json::from_str(json?).ok()?;
-    let effects: Vec<&str> = ADMIN_POLICY_EFFECTS
+/// What the launcher can't do yet while its admin lacks policies Android grants at the next
+/// restart (an Android 16 emulator refused the lock-screen camera switch that way): "Restart the
+/// phone once" (an Attention row, and Advanced › App screens with these). Empty: nothing pending.
+pub fn admin_policy_effects(json: Option<&str>) -> Vec<&'static str> {
+    let Some(pending) = json.and_then(|j| serde_json::from_str::<Vec<String>>(j).ok()) else {
+        return Vec::new();
+    };
+    ADMIN_POLICY_EFFECTS
         .iter()
         .filter(|(tag, _)| pending.iter().any(|p| p == tag))
         .map(|(_, effect)| *effect)
-        .collect();
-    if effects.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "Restart the phone once: after a launcher update Android hasn't yet given the launcher what it \
-         needs to {}.",
-        effects.join(", and to ")
-    ))
+        .collect()
 }

@@ -3,7 +3,9 @@ package com.kidslauncher.mdm.lock
 import android.animation.ObjectAnimator
 import android.app.ActivityManager
 import android.app.Dialog
+import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
@@ -14,6 +16,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -129,6 +132,100 @@ class PinLockActivity : AppCompatActivity() {
             openDialogs -= dialog
             renderVoip()
         }
+    }
+
+    // ---- the keyguard cover's dismissal (design 32 step 2, M7; only with the debug switch on) ----------
+
+    /** The first frame since this resume was drawn, and this resume asked once already ([dismissDue]). */
+    private var drawnSinceResume = false
+    private var dismissTried = false
+    private var firstFrameWatch: ViewTreeObserver.OnDrawListener? = null
+
+    /** The state check ([KeyguardCover.check]): [DISMISS_CHECK_MS] after a request, then once a second
+     * while resumed. */
+    private val keyguardCheck = Runnable { checkKeyguard() }
+
+    /** Logged only (M7): the count goes by state; a success lets the waiting screens go at once. */
+    private val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
+        override fun onDismissSucceeded() {
+            KeyguardCover.dismissCallback(this@PinLockActivity, "succeeded")
+            renderVoip()
+        }
+
+        override fun onDismissError() = KeyguardCover.dismissCallback(this@PinLockActivity, "error")
+        override fun onDismissCancelled() = KeyguardCover.dismissCallback(this@PinLockActivity, "cancelled")
+    }
+
+    /** At the resume: watch for the first frame (it is drawn after the display is lit, design 32 §3). */
+    private fun watchFirstFrame() {
+        stopKeyguardWatch()
+        drawnSinceResume = false
+        dismissTried = false
+        if (!KeyguardCover.switchOn) return
+        val decor = window.decorView
+        val watch = object : ViewTreeObserver.OnDrawListener {
+            private var seen = false
+            override fun onDraw() {
+                if (seen) return
+                seen = true
+                // Not from inside onDraw: the frame is out, then the dismissal.
+                decor.post { firstFrame(this) }
+            }
+        }
+        firstFrameWatch = watch
+        decor.viewTreeObserver.addOnDrawListener(watch)
+    }
+
+    private fun firstFrame(watch: ViewTreeObserver.OnDrawListener) {
+        if (firstFrameWatch !== watch) return
+        stopFirstFrameWatch()
+        if (!resumed) return
+        drawnSinceResume = true
+        if (KeyguardCover.dismissDueNow(this, resumed, drawnSinceResume, dismissTried)) {
+            dismissTried = true
+            requestDismiss()
+        } else {
+            handler.removeCallbacks(keyguardCheck)
+            handler.postDelayed(keyguardCheck, DISMISS_CHECK_MS)
+        }
+    }
+
+    /** The only dismissal of the cover's keyguard (besides Home's at boot): after the lock's first frame. */
+    private fun requestDismiss() {
+        if (KeyguardCover.dismissRequested()) {
+            try {
+                getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, dismissCallback)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "requestDismissKeyguard failed", e)
+            }
+        }
+        handler.removeCallbacks(keyguardCheck)
+        handler.postDelayed(keyguardCheck, DISMISS_CHECK_MS)
+    }
+
+    private fun checkKeyguard() {
+        // Only while the cover is in force (qa-32-s2-code nit 3): no polling under the fallback or VoIP.
+        if (!resumed || !KeyguardCover.coverOn) return
+        if (KeyguardCover.check(this, resumed, drawnSinceResume)) {
+            requestDismiss()
+            return
+        }
+        // A keyguard that unlocked lets the ring screen go (it waited, [PinLockRuntime.sendVoipRingScreen]).
+        renderVoip()
+        handler.removeCallbacks(keyguardCheck)
+        handler.postDelayed(keyguardCheck, DISMISS_CHECK_MS)
+    }
+
+    private fun stopFirstFrameWatch() {
+        val watch = firstFrameWatch ?: return
+        firstFrameWatch = null
+        val observer = window.decorView.viewTreeObserver
+        if (observer.isAlive) observer.removeOnDrawListener(watch)
+    }
+
+    private fun stopKeyguardWatch() {
+        stopFirstFrameWatch()
+        handler.removeCallbacks(keyguardCheck)
     }
 
     private val waitTicker: Runnable = object : Runnable {
@@ -324,6 +421,12 @@ class PinLockActivity : AppCompatActivity() {
         applyLockGround()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Design 32: a start onto the resumed lock (the ScreenOn backstop) pauses it only to deliver this.
+        PinLockRuntime.onLockNewIntent()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_ENTERED, entered)
@@ -337,6 +440,8 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
+        // Design 32 step 2: the keyguard cover is dismissed after this resume's first frame.
+        watchFirstFrame()
         glance?.resume()
         ensureLockTask(fallbackDue = false)
         renderVoip()
@@ -349,6 +454,7 @@ class PinLockActivity : AppCompatActivity() {
     override fun onPause() {
         resumed = false
         handler.removeCallbacks(waitTicker)
+        stopKeyguardWatch()
         // 17b: a sent try (or Svar) came up; a pause while one was settling (not our wake
         // activity's) is the app's screen coming up by itself (qa-17b-code #5).
         val sendPending = voipFsiPending

@@ -431,6 +431,7 @@ summary.row:active {
 .group-avatars > .cell ~ .row::before,
 .group-avatars > .cell ~ .cell::before {
     left: 72px;
+    left: var(--avatar-inset, 72px);
 }
 
 @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
@@ -666,6 +667,39 @@ details.info > summary:not(.row) {
     margin: 8px 0 0;
 }
 
+/* The footer's ⓘ follows its text on the same line (a browser that can't make <details> inline
+   puts it on the next line, which works too). */
+.group-footer details.info {
+    display: inline;
+}
+
+/* A value row whose whole row opens its ⓘ (About This Phone): the icon after the value. */
+details.info > summary.row .info-icon {
+    margin-left: 8px;
+}
+
+.row-value-alarm { color: var(--red-text); }
+.row-value-action { color: var(--orange-text); }
+
+/* A crash report's trace, in its ⓘ panel. */
+.info-panel pre {
+    margin: 8px 0 0;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* A sub-page warning (§4.2): an Attention-coloured block that isn't a link. */
+div.attention {
+    cursor: default;
+}
+
+/* The checkbox a confirm needs before its button (Disconnect Phone…). */
+.confirm-body .checkbox-row {
+    margin: 0 0 12px;
+}
+
 /* ---- Badges, dots, counts ---- */
 
 .badge {
@@ -769,6 +803,41 @@ details.info > summary:not(.row) {
 .attention .chev {
     color: currentColor;
     opacity: 0.6;
+}
+
+.attention-icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+}
+
+/* A second line under an Attention row's text: what to do. */
+.attention-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8125rem;
+    font-weight: 400;
+}
+
+/* A row whose text is a link and that has a button too (the sign-in warning's Dismiss). */
+.attention a.attention-text,
+.attention a.attention-text:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+.attention-dismiss {
+    flex: none;
+    min-height: 44px;
+    margin: -11px -8px -11px 0;
+    padding: 0 8px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
 }
 
 .attention-alarm,
@@ -1152,6 +1221,93 @@ th {
     color: var(--label-2);
 }
 
+/* Read by screen readers, not shown. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ---- The Devices list (design 31 §3.2): avatar + dot, name, status line, bar, count ---- */
+
+.device-row {
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.device-row-name {
+    display: block;
+    font-weight: 600;
+}
+
+.device-line {
+    font-size: 0.875rem;
+}
+
+.device-meter {
+    max-width: 210px;
+    margin-top: 7px;
+}
+
+.device-meter + .row-sub {
+    margin-top: 4px;
+}
+
+.row-icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+}
+
+/* The phone's initial; decorative (aria-hidden), the name is beside it. White text is 4.5:1 or
+   more on every colour. */
+.avatar {
+    flex: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #636366;
+    color: #FFFFFF;
+    font-size: 1.1875rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.avatar-indigo { background: #5E5CE6; }
+.avatar-orange { background: #C2410C; }
+.avatar-teal { background: #0E7C91; }
+.avatar-green { background: #2E8540; }
+.avatar-pink { background: #C2306B; }
+.avatar-purple { background: #8944AB; }
+.avatar-grey { background: #636366; }
+
+/* The connection dot on the avatar; the state is also the word in the status line. */
+.avatar-dot {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    box-sizing: content-box;
+    width: 13px;
+    height: 13px;
+    border: 2.5px solid var(--surface);
+    border-radius: 50%;
+    background: var(--dot-grey);
+}
+
+.dot-online { background: var(--dot-green); }
+.dot-away { background: var(--dot-orange); }
+.dot-offline { background: var(--dot-grey); }
+
 /* The Devices and Apps lists: one grouped list of rows. */
 .device-list {
     background: var(--surface);
@@ -1448,5 +1604,199 @@ th {
         transition: none !important;
         animation: none !important;
         scroll-behavior: auto !important;
+    }
+}
+
+/* ---- The Apps tab (design 31 step 11): phone and catalog rows, the app page, Add App ---- */
+
+/* Rows that start with a 36px avatar or app tile: the hairline starts at the label. */
+.group-small {
+    --avatar-inset: 64px;
+}
+
+.avatar-small {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+}
+
+/* A catalog app's tile: its catalog icon on its colour, else its first letter (decorative). */
+.app-row-tile {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: #636366;
+    color: #FFFFFF;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.app-row-tile img {
+    width: 22px;
+    height: 22px;
+}
+
+.row > .badge {
+    flex: none;
+}
+
+.text-alarm {
+    color: var(--red-text);
+    font-weight: 600;
+}
+
+.row-label-quiet {
+    color: var(--label-2);
+    font-size: 0.9375rem;
+}
+
+/* A row of plain text (an empty state, a one-line explanation). */
+.row-note {
+    color: var(--label-2);
+    font-size: 0.9375rem;
+}
+
+details.info > summary.row .info-icon {
+    margin-left: 12px;
+}
+
+/* "Source & Signing", "More Options": a disclosure row on its own, its groups below it. */
+details.section > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+details.section > summary::-webkit-details-marker {
+    display: none;
+}
+
+.section-toggle {
+    background: var(--surface);
+    border-radius: 12px;
+    margin: 0 0 20px;
+}
+
+.section-chev {
+    transition: transform 0.2s;
+}
+
+details.section[open] > summary .section-chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+
+/* A form in a group: stacked fields (label, input, the error under it), then its button. */
+.form-group {
+    padding: 16px;
+}
+
+.field {
+    position: relative;
+}
+
+.field-info > summary:not(.row) {
+    position: absolute;
+    top: -11px;
+    right: -10px;
+}
+
+.field .info-panel {
+    margin: 0 0 10px;
+}
+
+.form-group input[type="file"] {
+    display: block;
+    max-width: 100%;
+    margin-bottom: 16px;
+    font: inherit;
+    font-size: 0.9375rem;
+}
+
+.form-flash {
+    margin: 0 -16px 16px;
+}
+
+.button-wide {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border-radius: 12px;
+    font-size: 1.0625rem;
+}
+
+.container > form > .button-wide {
+    margin-bottom: 20px;
+}
+
+code.key {
+    word-break: break-all;
+    font-size: 0.8125rem;
+}
+
+/* "Show on phones as": the shared app_display_form partial as one row of a group. */
+.group-display > details.app-display {
+    border-top: 0;
+    padding: 0;
+}
+
+.group-display > details.app-display > summary {
+    padding: 11px 16px;
+    min-height: 44px;
+}
+
+.group-display > details.app-display > form {
+    padding: 0 16px 16px;
+}
+
+/* Add App's source: two real radios before the rows, so CSS marks the chosen row and hides the
+   GitHub fields for uploads (no script, no :has()). */
+.choice-radio {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.choice-row {
+    cursor: pointer;
+}
+
+.choice-check {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--tint);
+    visibility: hidden;
+}
+
+#source-github:checked ~ .group .check-github,
+#source-manual:checked ~ .group .check-manual {
+    visibility: visible;
+}
+
+#source-manual:checked ~ .github-only {
+    display: none;
+}
+
+#source-github:focus ~ .group label[for="source-github"],
+#source-manual:focus ~ .group label[for="source-manual"] {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
+}
+
+#source-github:focus:not(:focus-visible) ~ .group label[for="source-github"],
+#source-manual:focus:not(:focus-visible) ~ .group label[for="source-manual"] {
+    outline: none;
+}
+
+@media (forced-colors: active) {
+    .choice-check {
+        color: CanvasText;
     }
 }

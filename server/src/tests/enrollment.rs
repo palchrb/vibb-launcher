@@ -302,10 +302,16 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
     };
     let first_code = code_of(&first.text());
     assert_eq!(first_code.len(), 9, "ABCD-EFGH");
-    // The device page says a code is live, but never shows it.
+    // The device page says a code is live (in local time, never UTC), but never shows it.
     let page = app.get_page(&location, &cookie).await.text();
-    assert!(page.contains("A typed code is valid until"), "{page}");
+    assert!(page.contains("Setup code works until"), "{page}");
     assert!(!page.contains(&first_code));
+    // "Back" from the code page returns to the not-enrolled card.
+    assert!(
+        first
+            .text()
+            .contains(&format!("href=\"/devices/{id}#access\""))
+    );
 
     let second = app
         .request_form(
@@ -350,10 +356,11 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
             &[],
         )
         .await;
+    // Back to Advanced › Connection, the flash in its group (design 31 step 3).
     assert_redirect(
         &res,
-        &format!("/devices/{id}?notice=revoke_unconfirmed"),
-        Some("access"),
+        &format!("/devices/{id}/advanced?notice=revoke_unconfirmed"),
+        Some("connection"),
     );
     let res = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
@@ -370,8 +377,8 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
         .await;
     assert_redirect(
         &res,
-        &format!("/devices/{id}?notice=access_revoked"),
-        Some("access"),
+        &format!("/devices/{id}/advanced?notice=access_revoked"),
+        Some("connection"),
     );
     assert!(
         tokio::time::timeout(Duration::from_secs(5), stream.into_body().collect())
@@ -384,11 +391,28 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
         .await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED);
     let page = app
-        .get_page(&format!("/devices/{id}?notice=access_revoked"), &cookie)
+        .get_page(
+            &format!("/devices/{id}/advanced?notice=access_revoked"),
+            &cookie,
+        )
         .await
         .text();
-    assert!(page.contains("Access revoked."), "{page}");
-    assert!(page.contains("access is revoked: it can"));
+    let connection = &page[page.find("<section id=\"connection\"").unwrap()..];
+    let connection = &connection[..connection.find("</section>").unwrap()];
+    assert!(
+        connection.contains("<p class=\"flash\" role=\"status\">Phone disconnected.</p>"),
+        "{page}"
+    );
+    assert!(connection.contains("Access removed"), "{page}");
+    // Nothing to disconnect any more; a new code is still offered.
+    assert!(!connection.contains("/revoke"), "{page}");
+    assert!(connection.contains("/regenerate-code"), "{page}");
+    // Its Attention row links there.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains(&format!("href=\"/devices/{id}/advanced#connection\"")));
     let events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'access_revoked'",
     )

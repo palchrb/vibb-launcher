@@ -27,7 +27,7 @@ use crate::models::{DevicePolicy, DeviceStatus, InstalledApp};
 use crate::music::{
     self, CACHE_CHOICES, MAX_CATEGORY_NAME_CHARS, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES_PER_ENTRY,
     MAX_LIBRARY_BYTES, MAX_NAME_CHARS, MIN_FREE_BYTES, MusicCategory, MusicEntry, MusicFile,
-    ORDERS, VOLUME_CAPS,
+    ORDERS, STORAGE_LIMITS, VOLUME_CAPS,
 };
 use crate::photos::{self, MUSIC_COVERS, Shape};
 use crate::security::{self, CurrentAdmin};
@@ -3634,10 +3634,18 @@ pub struct SpotifyBindingCard {
 pub struct MusicCard {
     pub app: Option<MusicAppSwitch>,
     pub ticks: Vec<MusicTick>,
-    pub mobile_data: bool,
+    /// Streaming and downloads on mobile data (design 30 §1.1).
+    pub stream_mobile_data: bool,
+    pub download_mobile_data: bool,
+    /// When the switches differ and the phone still runs on the old one (design 30 §1.3).
+    pub data_note: Option<&'static str>,
     pub volume_cap: Option<i64>,
     /// Every choice and whether it is the current one.
     pub volume_caps: Vec<(i64, bool)>,
+    /// The music storage limit in GB as sent (design 30 §1.8), `None` = no limit.
+    pub storage_limit: Option<i64>,
+    /// Every choice and whether it is the current one ("No limit" is `storage_limit.is_none()`).
+    pub storage_limits: Vec<(i64, bool)>,
     pub storytel: bool,
     pub storytel_stored: bool,
     /// Why this phone's ticked Storytel entries aren't sent (design 26b §2.3, §2.7), by the switch.
@@ -3776,6 +3784,7 @@ pub(crate) async fn device_card(
 
     let mut lines = Vec::new();
     let mut warnings = Vec::new();
+    let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
     let capable = latest_status
         .and_then(|s| s.capabilities_json.as_deref())
         .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
@@ -3827,7 +3836,15 @@ pub(crate) async fn device_card(
                 lines.push(format!("Downloads waiting: {waiting}"));
             }
             if let Some(bytes) = report.cache_bytes {
-                lines.push(format!("Stored on the phone: {}", music::megabytes(bytes)));
+                // An app from before design 30 step 3a sends no `audio_bytes`: today's line (§1.10).
+                let (line, warning) = music::storage_line(
+                    bytes,
+                    report.audio_bytes,
+                    report.extra_bytes,
+                    storage_limit,
+                );
+                lines.push(line);
+                warnings.extend(warning);
             }
             // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused`.
             match report.storytel.as_deref() {
@@ -3885,7 +3902,15 @@ pub(crate) async fn device_card(
     Ok(MusicCard {
         app,
         ticks,
-        mobile_data: policy.music_mobile_data,
+        stream_mobile_data: policy.music_stream_mobile_data,
+        download_mobile_data: policy.music_download_mobile_data,
+        // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
+        data_note: music::older_phone_note(
+            policy.music_stream_mobile_data,
+            policy.music_download_mobile_data,
+            state_report.as_ref().and_then(|report| report.cache_bytes),
+            state_report.as_ref().and_then(|report| report.extra_bytes),
+        ),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
             .iter()
@@ -3895,6 +3920,11 @@ pub(crate) async fn device_card(
                     music::volume_cap(policy.music_volume_cap_pct) == Some(*cap),
                 )
             })
+            .collect(),
+        storage_limit,
+        storage_limits: STORAGE_LIMITS
+            .iter()
+            .map(|gb| (*gb, storage_limit == Some(*gb)))
             .collect(),
         storytel: policy.music_storytel,
         storytel_stored,
@@ -4055,7 +4085,7 @@ async fn spotify_binding_card(
 /// an account's id; design 26c §2.5): which Spotify account the phone plays as. One auto-saving
 /// select; an account that isn't logged in here is refused back at `#music-spotify` with nothing
 /// changed (checked in the `UPDATE` itself, so a Remove can't slip in between). The binding moves
-/// the library revision (0073's trigger): the phone's Spotify entries come or go with it.
+/// the library revision (0074's trigger): the phone's Spotify entries come or go with it.
 pub async fn save_device_spotify(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4220,16 +4250,32 @@ pub async fn set_device_entry(
     Redirect::to(&format!("/devices/{id}#music-entry-{entry_id}")).into_response()
 }
 
-/// `POST /devices/{id}/music`: mobile data (`mobile_data`), the volume cap (`volume_cap`: "off" or
-/// one of [VOLUME_CAPS]) and Storytel on this phone (`storytel`). One auto-saving form: a missing
-/// checkbox is off.
+/// The two mobile-data switches of a `POST /devices/{id}/music` (design 30 §3, QA L6): today's
+/// page sends the hidden `v=2` and a checkbox per switch (missing = off); a page opened before the
+/// update sends only `mobile_data`, which meant both, so it sets both.
+pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
+    if form.get("v").is_some_and(|v| v == "2") {
+        (
+            form.contains_key("stream_mobile_data"),
+            form.contains_key("download_mobile_data"),
+        )
+    } else {
+        let both = form.contains_key("mobile_data");
+        (both, both)
+    }
+}
+
+/// `POST /devices/{id}/music`: the mobile-data switches ([mobile_switches]), the volume cap
+/// (`volume_cap`: "off" or one of [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none"
+/// or one of [STORAGE_LIMITS]; missing - a page from before design 30 - keeps the stored one) and
+/// Storytel on this phone (`storytel`). One auto-saving form: a missing checkbox is off.
 pub async fn save_device_settings(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
-    let mobile_data = form.contains_key("mobile_data");
+    let (stream, download) = mobile_switches(&form);
     let storytel = form.contains_key("storytel");
     let cap = match field(&form, "volume_cap").trim() {
         "" | "off" => None,
@@ -4238,30 +4284,44 @@ pub async fn save_device_settings(
             _ => return (StatusCode::BAD_REQUEST, "Unknown volume cap").into_response(),
         },
     };
-    let updated = sqlx::query(
-        "UPDATE device_policy SET music_mobile_data = ?, music_volume_cap_pct = ?, \
-         music_storytel = ?, updated_at = datetime('now') WHERE device_id = ?",
+    // `Some(new)` = save it (`new` = None is no limit), `None` = keep the stored one.
+    let limit: Option<Option<i64>> = match form.get("storage_limit").map(|v| v.trim()) {
+        None => None,
+        Some("none") => Some(None),
+        Some(value) => match value.parse::<i64>() {
+            Ok(gb) if STORAGE_LIMITS.contains(&gb) => Some(Some(gb)),
+            _ => return (StatusCode::BAD_REQUEST, "Unknown storage limit").into_response(),
+        },
+    };
+    let updated: Result<Option<Option<i64>>, sqlx::Error> = sqlx::query_scalar(
+        "UPDATE device_policy SET music_stream_mobile_data = ?, music_download_mobile_data = ?, \
+         music_volume_cap_pct = ?, music_storytel = ?, \
+         music_storage_limit_gb = CASE WHEN ? THEN ? ELSE music_storage_limit_gb END, \
+         updated_at = datetime('now') WHERE device_id = ? RETURNING music_storage_limit_gb",
     )
-    .bind(mobile_data)
+    .bind(stream)
+    .bind(download)
     .bind(cap)
     .bind(storytel)
+    .bind(limit.is_some())
+    .bind(limit.flatten())
     .bind(id)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await;
-    match updated {
-        Ok(result) if result.rows_affected() == 0 => {
-            return (StatusCode::NOT_FOUND, "Device not found").into_response();
-        }
-        Ok(_) => {}
+    let stored_limit = match updated {
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(Some(stored)) => stored,
         Err(err) => return server_error(err, "couldn't save a phone's music settings"),
-    }
+    };
     nudge(&state, &[id]);
     log_event(
         &state,
         &admin,
         "music_phone_settings",
         &format!(
-            "device {id}: mobile data {mobile_data}, volume cap {}, Storytel {storytel}",
+            "device {id}: streaming on mobile data {stream}, downloads on mobile data {download}, \
+             storage limit {}, volume cap {}, Storytel {storytel}",
+            music::storage_limit_label(music::storage_limit(stored_limit)),
             cap.map_or("off".to_string(), |c| format!("{c} %"))
         ),
     )

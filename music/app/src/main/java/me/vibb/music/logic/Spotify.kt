@@ -36,20 +36,22 @@ fun isSpotify(entry: Entry): Boolean = entry.source == Source.SPOTIFY
 
 /**
  * How a Spotify item plays right now: [Playability.STREAM] through the network gate (the parent's
- * mobile-data switch, never roaming - every stream's rule, [streamAllowed]), else
- * [Playability.NEEDS_NETWORK]; never [Playability.GONE] (a Spotify item has no copy and no url by
- * design) and never [Playability.LOCAL].
+ * **streaming** switch, design 30's `stream_mobile_data`, never roaming - every stream's rule,
+ * [streamAllowed]), else [Playability.NEEDS_NETWORK]; never [Playability.GONE] (a Spotify item has no
+ * copy and no url by design) and never [Playability.LOCAL]. The downloads switch and the storage limit
+ * never apply: Spotify has no downloads and nothing of it is ever cached.
  */
-fun spotifyPlayability(caps: NetCaps?, mobileData: Boolean): Playability =
-    if (streamAllowed(caps, mobileData)) Playability.STREAM else Playability.NEEDS_NETWORK
+fun spotifyPlayability(caps: NetCaps?, streamMobileData: Boolean): Playability =
+    if (streamAllowed(caps, streamMobileData)) Playability.STREAM else Playability.NEEDS_NETWORK
 
 /**
  * The line a start that the gate refuses shows (§5.8): [SpotifyLine.NEEDS_WIFI] when there is a
- * network with internet that the gate refuses (mobile data not allowed, or roaming), else
- * [SpotifyLine.NEEDS_INTERNET] (offline); null when the gate lets it stream.
+ * network with internet that the gate refuses (streaming on mobile data not allowed, or roaming), else
+ * [SpotifyLine.NEEDS_INTERNET] (offline); null when the gate lets it stream. [streamMobileData]: the
+ * streaming switch (design 30), as [spotifyPlayability].
  */
-fun spotifyNetworkLine(caps: NetCaps?, mobileData: Boolean): SpotifyLine? = when {
-    streamAllowed(caps, mobileData) -> null
+fun spotifyNetworkLine(caps: NetCaps?, streamMobileData: Boolean): SpotifyLine? = when {
+    streamAllowed(caps, streamMobileData) -> null
     caps != null && caps.internet && caps.physical -> SpotifyLine.NEEDS_WIFI
     else -> SpotifyLine.NEEDS_INTERNET
 }

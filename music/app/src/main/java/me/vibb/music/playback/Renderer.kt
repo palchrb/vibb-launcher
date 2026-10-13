@@ -135,8 +135,11 @@ sealed interface RendererEvent {
     data object InterruptionEnded : RendererEvent
     data class IsPlaying(val playing: Boolean) : RendererEvent
 
-    /** The current item failed, with the `item_errors` code (`MediaCache.errorCode`). */
-    data class Error(val code: String) : RendererEvent
+    /**
+     * The current item failed, with the `item_errors` code (`MediaCache.errorCode`); [gated]: the phone's
+     * streaming gate refused it (design 30 §1.6, `MediaCache.StreamGate`) - not the item's fault.
+     */
+    data class Error(val code: String, val gated: Boolean = false) : RendererEvent
 
     /** The renderer can't play at all (a Sonos room's failed start, design 26a §4.2): back to the phone, paused. */
     data object Lost : RendererEvent

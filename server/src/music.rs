@@ -93,6 +93,97 @@ pub fn volume_cap(stored: Option<i64>) -> Option<i64> {
     stored.filter(|pct| VOLUME_CAPS.contains(pct))
 }
 
+/// The music storage limit's choices in GB (decimal, design 30 §1.8); `None` = no limit.
+pub const STORAGE_LIMITS: [i64; 4] = [1, 2, 5, 10];
+/// The limit of every phone, new or existing (migration 0073), and of a stored value that isn't a
+/// choice.
+pub const DEFAULT_STORAGE_LIMIT_GB: i64 = 2;
+
+/// The limit as sent (`storage_limit_gb`): a choice is itself, NULL is no limit (`None`), any
+/// other stored value is the default.
+pub fn storage_limit(stored: Option<i64>) -> Option<i64> {
+    match stored {
+        None => None,
+        Some(gb) if STORAGE_LIMITS.contains(&gb) => Some(gb),
+        Some(_) => Some(DEFAULT_STORAGE_LIMIT_GB),
+    }
+}
+
+/// "2 GB" or "no limit".
+pub fn storage_limit_label(limit_gb: Option<i64>) -> String {
+    limit_gb.map_or("no limit".to_string(), |gb| format!("{gb} GB"))
+}
+
+/// The two switches on the wire (design 30 §1.3): `(mobile_data, stream_mobile_data,
+/// download_mobile_data)`. `mobile_data` is what an older launcher and music app read, one switch
+/// for both, so it is on only when both are: it never spends data the parent turned off.
+pub fn mobile_data_wire(stream: bool, download: bool) -> (bool, bool, bool) {
+    (stream && download, stream, download)
+}
+
+/// The device card's note when the switches differ but the phone still runs on the one old switch
+/// (design 30 §1.3): an app report (`cache_bytes`, always sent since design 21) without
+/// `extra_bytes` (sent from the music app's step 3a on, passed on by a launcher of the same
+/// step). No app report (a fresh phone, or the launcher's own fields only): no note.
+pub fn older_phone_note(
+    stream: bool,
+    download: bool,
+    cache_bytes: Option<i64>,
+    extra_bytes: Option<i64>,
+) -> Option<&'static str> {
+    (stream != download && cache_bytes.is_some() && extra_bytes.is_none()).then_some(
+        "This phone's launcher or music app is older: it uses mobile data for music only when \
+         both switches are on. Update both.",
+    )
+}
+
+/// The device card's storage line and its warning (design 30 §1.10). Without `audio_bytes` (a
+/// music app from before design 30) the line is today's. With it, the music downloads against the
+/// parent's limit (the server's current one) and the played extras; the warning when the kept
+/// items alone (`audio_bytes - extra_bytes`) pass the limit.
+pub fn storage_line(
+    cache_bytes: i64,
+    audio_bytes: Option<i64>,
+    extra_bytes: Option<i64>,
+    limit_gb: Option<i64>,
+) -> (String, Option<String>) {
+    let stored = format!("Stored on the phone: {}", megabytes(cache_bytes));
+    let Some(audio) = audio_bytes else {
+        return (stored, None);
+    };
+    let extra = extra_bytes.unwrap_or(0).max(0);
+    let mut line = format!("{stored}. Music downloads: {}", megabytes(audio));
+    match limit_gb {
+        Some(gb) => line.push_str(&format!(" of the {gb} GB limit")),
+        None => line.push_str(" (no limit)"),
+    }
+    if extra > 0 {
+        line.push_str(&format!(
+            ", {} of it played beyond the offline depth (kept while there is room)",
+            megabytes(extra)
+        ));
+    }
+    line.push('.');
+    let kept = audio.saturating_sub(extra);
+    let warning = limit_gb
+        .filter(|gb| kept > gb.saturating_mul(1_000_000_000))
+        .map(|gb| {
+            format!(
+                "Kept episodes and books alone use {} of the {gb} GB limit - lower an entry's \
+                 offline depth or raise the limit.",
+                gigabytes_up(kept)
+            )
+        });
+    (line, warning)
+}
+
+/// Bytes as "2.1 GB", rounded **up** to the tenth (qa-30-s1-code L1): a figure over the limit never
+/// reads as the limit itself ("2.0 GB of the 2 GB limit"). Negative bytes read as 0.
+pub fn gigabytes_up(bytes: i64) -> String {
+    let tenths = bytes.max(0).saturating_add(99_999_999) / 100_000_000;
+    format!("{}.{} GB", tenths / 10, tenths % 10)
+}
+
 pub fn icon_known(key: &str) -> bool {
     crate::music_icons::ICONS.iter().any(|(k, _)| *k == key)
 }
@@ -885,7 +976,7 @@ macro_rules! storytel_gate {
 /// at its `?`: a Spotify entry only while the phone plays as an account (`music_spotify_account`
 /// set; the FK makes the account exist). The library, the listing route, the cover route and the
 /// art route all use it, so unbinding a phone (or removing its account) drops the entries from it;
-/// migration 0073's trigger rebuilds the cached libraries. A login that needs renewing doesn't
+/// migration 0074's trigger rebuilds the cached libraries. A login that needs renewing doesn't
 /// close it: the tiles stay and say so on the phone.
 #[macro_export]
 macro_rules! spotify_gate {
@@ -1198,10 +1289,17 @@ pub async fn tick_fits(
 pub struct MusicPolicy {
     /// The version of `GET /api/devices/music/library` for this phone; `null` = nothing ticked.
     pub library_version: Option<String>,
-    /// Downloads and streaming may use mobile data (default off).
+    /// Both switches on (design 30 §1.3): an older launcher's and music app's one switch for
+    /// downloads and streaming. Stays: an older launcher refuses a music object without it.
     pub mobile_data: bool,
+    /// Streaming may use mobile data (design 30, default off).
+    pub stream_mobile_data: bool,
+    /// Downloads, Storytel books included, may use mobile data (design 30, default off).
+    pub download_mobile_data: bool,
     /// `STREAM_MUSIC` cap in percent, `null` = off (the default).
     pub volume_cap_pct: Option<i64>,
+    /// The music storage limit in GB (design 30 §1.8), `null` = no limit; default 2.
+    pub storage_limit_gb: Option<i64>,
     /// Changes with every save and clear of the family's Storytel login; 0 unless this phone's
     /// Storytel switch is on and a login is stored. The phone compares with `!=` (QA #7).
     pub storytel_generation: i64,
@@ -1229,10 +1327,17 @@ pub async fn policy_music(
     } else {
         0
     };
+    let (mobile_data, stream_mobile_data, download_mobile_data) = mobile_data_wire(
+        policy.music_stream_mobile_data,
+        policy.music_download_mobile_data,
+    );
     Ok(MusicPolicy {
         library_version,
-        mobile_data: policy.music_mobile_data,
+        mobile_data,
+        stream_mobile_data,
+        download_mobile_data,
         volume_cap_pct: volume_cap(policy.music_volume_cap_pct),
+        storage_limit_gb: storage_limit(policy.music_storage_limit_gb),
         storytel_generation,
         spotify: policy.music_spotify_account.is_some(),
     })
@@ -1599,6 +1704,12 @@ pub struct MusicState {
     /// The library version the music app has applied.
     pub library_version: Option<String>,
     pub cache_bytes: Option<i64>,
+    /// The music app's audio cache (downloads, played extras and partials, Storytel books
+    /// included): what the parent's storage limit counts (design 30 §1.10). Sent from step 3a on.
+    pub audio_bytes: Option<i64>,
+    /// The played extras' bytes in [Self::audio_bytes] (design 30 §1.8). Sent from the app's step
+    /// 3a on, 0 when none: its presence marks a phone that reads both mobile-data switches (§1.3).
+    pub extra_bytes: Option<i64>,
     pub downloads_waiting: Option<i64>,
     pub entry_errors: Vec<EntryError>,
     /// The Storytel login on the phone ("ok", "none", "login_failed", ...).
@@ -1687,6 +1798,8 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
         bridge: word(state.bridge),
         library_version: state.library_version.filter(|v| is_version(v)),
         cache_bytes: state.cache_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
+        audio_bytes: state.audio_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
+        extra_bytes: state.extra_bytes.map(|b| b.clamp(0, 10_000_000_000_000)),
         downloads_waiting: state.downloads_waiting.map(|n| n.clamp(0, 1_000_000)),
         entry_errors: state
             .entry_errors
@@ -1846,6 +1959,42 @@ pub fn megabytes(bytes: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_limit_reads_choices_null_and_junk() {
+        for gb in STORAGE_LIMITS {
+            assert_eq!(storage_limit(Some(gb)), Some(gb));
+        }
+        assert_eq!(storage_limit(None), None, "NULL is no limit");
+        for junk in [0, -1, 3, 20, 1000, i64::MIN, i64::MAX] {
+            assert_eq!(
+                storage_limit(Some(junk)),
+                Some(DEFAULT_STORAGE_LIMIT_GB),
+                "{junk}"
+            );
+        }
+        assert_eq!(DEFAULT_STORAGE_LIMIT_GB, 2);
+        assert_eq!(storage_limit_label(Some(2)), "2 GB");
+        assert_eq!(storage_limit_label(None), "no limit");
+        assert_eq!(gigabytes_up(3_200_000_000), "3.2 GB");
+        assert_eq!(gigabytes_up(3_200_000_001), "3.3 GB");
+        assert_eq!(gigabytes_up(-5), "0.0 GB");
+    }
+
+    #[test]
+    fn older_phone_note_needs_an_app_report_without_extra_bytes() {
+        let app_report = Some(1_000_000);
+        // The switches differ, an app report without `extra_bytes`: the note.
+        assert!(older_phone_note(true, false, app_report, None).is_some());
+        assert!(older_phone_note(false, true, app_report, None).is_some());
+        // Equal switches: the old switch is the same thing.
+        assert!(older_phone_note(true, true, app_report, None).is_none());
+        assert!(older_phone_note(false, false, app_report, None).is_none());
+        // A phone that sends `extra_bytes` reads both switches (0 counts: always sent).
+        assert!(older_phone_note(true, false, app_report, Some(0)).is_none());
+        // No app report (none yet, or the launcher's fields only): nothing to say.
+        assert!(older_phone_note(true, false, None, None).is_none());
+    }
 
     #[test]
     fn nrk_links_are_normalised() {
@@ -2242,6 +2391,32 @@ mod tests {
         let stored = sanitize_music_state(&fixture).unwrap();
         let kept: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(kept, fixture);
+    }
+
+    /// Design 30 §1.10: `audio_bytes` and `extra_bytes` are clamped like `cache_bytes`; an app
+    /// from before step 3a sends neither, and they stay absent.
+    #[test]
+    fn music_state_clamps_audio_and_extra_bytes() {
+        let state = |raw: serde_json::Value| {
+            parse_music_state(sanitize_music_state(&raw).as_deref()).unwrap()
+        };
+        let clamped = state(serde_json::json!({
+            "cache_bytes": 5, "audio_bytes": -1, "extra_bytes": i64::MAX
+        }));
+        assert_eq!(clamped.audio_bytes, Some(0));
+        assert_eq!(clamped.extra_bytes, Some(10_000_000_000_000));
+        let kept = state(serde_json::json!({"audio_bytes": 980_000_000, "extra_bytes": 0}));
+        assert_eq!(
+            (kept.audio_bytes, kept.extra_bytes),
+            (Some(980_000_000), Some(0))
+        );
+        let older = state(serde_json::json!({"cache_bytes": 1_000_000}));
+        assert_eq!((older.audio_bytes, older.extra_bytes), (None, None));
+        // Not a number: the report is refused like any malformed field (as `cache_bytes`).
+        assert_eq!(
+            sanitize_music_state(&serde_json::json!({"extra_bytes": "many"})),
+            None
+        );
     }
 
     #[test]

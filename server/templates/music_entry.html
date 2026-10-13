@@ -101,7 +101,7 @@ input, select { max-width: 100%; }
             <option value="{{ value }}"{% if form.cache == *value %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
         </select>
-        <p class="hint" style="margin-top:4px;">Downloads wait for Wi-Fi unless the phone may use mobile data (its Music card).</p>
+        <p class="hint" style="margin-top:4px;">Downloads wait for Wi-Fi unless the phone's 'Downloads may use mobile data' is on (its Music card).</p>
         {% else %}
         <p class="hint">Own files play in track order (or by file name when a file has no track number) and are always all on the phone.</p>
         {% endif %}

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import me.vibb.music.logic.ItemRef
 import me.vibb.music.sonos.RoomsView
 
 /** The app's own session commands (only our own controller may send them). */
@@ -151,4 +152,39 @@ object PlayerHub {
     @Volatile internal var capChanged: (() -> Unit)? = null
 
     fun positionMs(): Long? = position?.invoke()
+
+    /**
+     * The held set (design 30 §1.6): every item the phone's ExoPlayer may have a period open for - the
+     * current item and the next in its timeline (it opens the next one in the current one's last ~50 s,
+     * and a progressive period keeps the cache's hole lock while its source is open, paused included) -
+     * plus what a queue being built has [claim]ed. Empty on a Sonos room or with nothing loaded. Never
+     * pruned, evicted, swept or settled; its progressive items that aren't done are never fetched.
+     * Immutable, written on the main thread, read anywhere - every removal reads it again right before
+     * it removes.
+     */
+    @Volatile var heldLocal: Set<ItemRef> = emptySet()
+        private set
+
+    /** The player's timeline part of [heldLocal], and the claims of a queue not loaded yet (main thread). */
+    private var timeline: Set<ItemRef> = emptySet()
+    private var claims: Set<ItemRef> = emptySet()
+
+    /** A new queue's start item and its next, held before the service reads rows for it (L4; main thread). */
+    fun claim(refs: Set<ItemRef>) {
+        claims = claims + refs
+        heldLocal = timeline + claims
+    }
+
+    /**
+     * The player's timeline holds [refs] now (main thread); the claims end once the queue they were made
+     * for is loaded or dropped ([loaded]). Returns the items that left the held set: they may be settled
+     * now (§1.5).
+     */
+    fun hold(refs: Set<ItemRef>, loaded: Boolean = false): Set<ItemRef> {
+        val before = heldLocal
+        timeline = refs
+        if (loaded) claims = emptySet()
+        heldLocal = timeline + claims
+        return before - heldLocal
+    }
 }

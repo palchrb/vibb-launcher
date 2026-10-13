@@ -1,0 +1,17 @@
+{#- A typed state's words (`device_pages::Note`, as `note`) as a row in a group: title · value, the
+    sentence behind the row's ⓘ. Warnings use partials/note_warning.html instead. -#}
+{% if let Some(detail) = note.detail %}
+<details class="info cell">
+    <summary class="row">
+        <span class="row-label">{{ note.title }}</span>
+        {% if let Some(value) = note.value %}<span class="row-value">{{ value }}</span>{% endif %}
+        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+    </summary>
+    <div class="info-panel"><p>{{ detail }}</p></div>
+</details>
+{% else %}
+<div class="row">
+    <span class="row-label">{{ note.title }}</span>
+    {% if let Some(value) = note.value %}<span class="row-value">{{ value }}</span>{% endif %}
+</div>
+{% endif %}

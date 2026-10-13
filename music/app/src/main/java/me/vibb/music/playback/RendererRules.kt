@@ -30,12 +30,13 @@ fun phoneRendererFor(entry: Entry): RendererKind = if (isSpotify(entry)) Rendere
  * Whether an item of [entry] can play now (§5.10 `playable`, QA H1): on a room ([kind] not `onPhone`)
  * always (the speaker fetches by itself and its queue holds only what it can play); a Spotify item by the
  * network gate alone (`spotifyPlayability`: never `GONE`, it has no copy and no url by design); every other
- * item from its copy, else streamed through the gate.
+ * item from its copy, else streamed through the gate. [streamMobileData] is design 30's streaming switch -
+ * a stream's, Spotify's included; the downloads switch never decides whether something plays.
  */
-fun itemPlayable(kind: RendererKind, entry: Entry, hasCopy: Boolean, hasUrl: Boolean, caps: NetCaps?, mobileData: Boolean): Boolean = when {
+fun itemPlayable(kind: RendererKind, entry: Entry, hasCopy: Boolean, hasUrl: Boolean, caps: NetCaps?, streamMobileData: Boolean): Boolean = when {
     !kind.onPhone -> true
-    isSpotify(entry) -> spotifyPlayability(caps, mobileData) == Playability.STREAM
-    else -> playability(hasCopy, hasUrl, caps, mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
+    isSpotify(entry) -> spotifyPlayability(caps, streamMobileData) == Playability.STREAM
+    else -> playability(hasCopy, hasUrl, caps, streamMobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
 }
 
 /**

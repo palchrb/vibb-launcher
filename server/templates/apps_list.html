@@ -7,29 +7,53 @@
 {% let tab = "apps" %}
 {% include "partials/app_header.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Apps</h1>
-        <a href="/apps/tracked/new" class="button-small">Add an app</a>
-    </div>
+    <h1 class="page-title">Apps</h1>
 
-    {% if tracked.is_empty() %}
-    <p class="empty-state">No apps yet. Add one to get started.</p>
-    {% else %}
-    <div class="device-list">
-        {% for app in tracked %}
-        <a class="device-card" href="/apps/tracked/{{ app.id }}">
-            <span class="device-name">{{ app.name }}{% if app.is_launcher %} &middot; Launcher{% endif %}</span>
-            <span class="device-status">
-                {% if let Some(tag) = app.latest_release_tag %}
-                {{ tag }}{% if !app.enabled %} &middot; disabled{% endif %}
-                {% else %}
-                Not synced yet
-                {% endif %}
-            </span>
+    {% if !phones.is_empty() %}
+    <h2 class="group-header">On phones</h2>
+    <div class="group group-avatars group-small" data-group="phones">
+        {% for p in phones %}
+        <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
+            <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
+            <span class="row-label">{{ p.name }}</span>
+            <span class="row-value">{{ p.value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}
     </div>
     {% endif %}
+
+    <h2 class="group-header">Catalog</h2>
+    {% if apps.is_empty() %}
+    <p class="empty-state">No apps yet.</p>
+    {% else %}
+    <div class="group group-avatars group-small" data-group="catalog">
+        {% for a in apps %}
+        <a class="row app-row" href="/apps/tracked/{{ a.id }}" data-app="{{ a.id }}">
+            {% if let Some((icon, colour)) = a.tile.icon %}
+            <span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>
+            {% else %}
+            <span class="app-row-tile {{ a.tile.colour }}" aria-hidden="true">{{ a.tile.letter }}</span>
+            {% endif %}
+            <span class="row-label">{{ a.label }}<span class="row-sub">{{ a.sub }}</span></span>
+            {% if let Some((text, class)) = a.badge %}
+            <span class="{{ class }}" data-badge>{{ text }}</span>
+            {% else if let Some(version) = a.version %}
+            <span class="row-value" data-version>{{ version }}</span>
+            {% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endfor %}
+    </div>
+    <p class="group-footer">Apps here are kept up to date on every phone that has them.</p>
+    {% endif %}
+
+    <div class="group">
+        <a class="row row-button" href="/apps/tracked/new" data-row="add-app">
+            <svg class="row-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="row-label">Add App</span>
+        </a>
+    </div>
 </main>
 </body>
 </html>

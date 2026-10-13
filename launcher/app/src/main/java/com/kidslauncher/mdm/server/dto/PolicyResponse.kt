@@ -101,10 +101,11 @@ data class PolicyResponse(
      * server) = **off**, as before; nullable so nothing the server sends here can fail the policy.
      * The offline override and the pause don't lift it - it guards data, not the kid. */
     val appUpdatesWifiOnly: Boolean? = null,
-    /** Vibb music (design 21): the server's `{library_version, mobile_data, volume_cap_pct,
-     * storytel_generation, spotify}`; `null` from an older server, or when the server couldn't read
-     * the library (then the music app keeps what it has - never an empty library). Carried as raw
-     * JSON so nothing in it can fail the policy, and read field by field:
+    /** Vibb music (design 21): the server's `{library_version, mobile_data, stream_mobile_data,
+     * download_mobile_data, volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (design 30
+     * adds the switches and the limit; `mobile_data` = both); `null` from an older server, or when the
+     * server couldn't read the library (then the music app keeps what it has - never an empty library).
+     * Carried as raw JSON so nothing in it can fail the policy, and read field by field:
      * [com.kidslauncher.mdm.music.musicPolicy] for the music sync, and
      * [com.kidslauncher.mdm.music.musicSpotify] for `spotify` (design 26c §6.2: this phone plays
      * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false).

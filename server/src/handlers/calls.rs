@@ -191,6 +191,9 @@ async fn load_page(
 /// What the calls page and the device page show about a phone's calls.
 pub(crate) struct CallReport {
     pub warnings: Vec<String>,
+    /// What each warning is about, typed (design 31 M5: the Attention rows' titles), in the same
+    /// order; `Waiting` is the one that isn't a problem.
+    pub problems: Vec<CallProblem>,
     /// Good to know, nothing wrong (shown as a plain line, not an error).
     pub hints: Vec<String>,
     /// Waiting for the phone to confirm a role change (reload the page).
@@ -232,15 +235,6 @@ fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
 }
 
-/// `call_report`'s warnings and hints (the device page).
-pub(crate) async fn call_warnings(
-    state: &AppState,
-    policy: &DevicePolicy,
-) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
-    let report = call_report(state, policy).await?;
-    Ok((report.warnings, report.hints))
-}
-
 /// What the parent should know about this phone's calls, from its latest status report: the
 /// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer,
 /// call-redirection or call-screening role isn't ours (security review L7: without the dialer and
@@ -257,6 +251,7 @@ pub(crate) async fn call_report(
 ) -> Result<CallReport, sqlx::Error> {
     let mut report = CallReport {
         warnings: Vec::new(),
+        problems: Vec::new(),
         hints: Vec::new(),
         auto_refresh: false,
     };
@@ -287,6 +282,7 @@ pub(crate) async fn call_report(
             .map(str::to_string)
     };
     let warnings = &mut report.warnings;
+    let problems = &mut report.problems;
     let now = chrono::Utc::now();
     if let Some(at) = text("last_emergency_call_at").and_then(|t| parse_time(&t))
         && now - at < chrono::Duration::days(7)
@@ -295,6 +291,7 @@ pub(crate) async fn call_report(
             "An emergency call was made from this phone at {} (UTC).",
             at.format("%Y-%m-%d %H:%M")
         ));
+        problems.push(CallProblem::EmergencyCall);
     }
     if let Some(until) = text("callback_window_until").and_then(|t| parse_time(&t))
         && until > now
@@ -304,6 +301,7 @@ pub(crate) async fn call_report(
              emergency services can call back.",
             until.format("%H:%M")
         ));
+        problems.push(CallProblem::CallbackWindow);
     }
     // Handy's lock (step 10, QA 10 #8): the in-call screen didn't come up over the lock for a
     // ringing call - the kid may not have been able to answer.
@@ -316,6 +314,7 @@ pub(crate) async fn call_report(
              version.",
             at.format("%Y-%m-%d %H:%M")
         ));
+        problems.push(CallProblem::CallScreenFailed);
     }
 
     let reported = parse_sqlite_time(&reported_at);
@@ -334,16 +333,21 @@ pub(crate) async fn call_report(
             warnings.push(format!(
                 "Waiting for the phone to confirm the change (last report {last_report} UTC)."
             ));
+            problems.push(CallProblem::Waiting);
             report.auto_refresh =
                 changed.is_some_and(|c| (now.naive_utc() - c).num_seconds() < ROLES_REFRESH_SECS);
         }
-        RoleReport::Unconfirmed => warnings.push(format!(
-            "The phone hasn't confirmed the change made at {} UTC yet (last report {last_report} \
-             UTC) - it may be off or offline. The warnings below are from that last report.",
-            changed
-                .map(|c| c.format("%H:%M").to_string())
-                .unwrap_or_default()
-        )),
+        RoleReport::Unconfirmed => {
+            warnings.push(format!(
+                "The phone hasn't confirmed the change made at {} UTC yet (last report \
+                 {last_report} UTC) - it may be off or offline. The warnings below are from that \
+                 last report.",
+                changed
+                    .map(|c| c.format("%H:%M").to_string())
+                    .unwrap_or_default()
+            ));
+            problems.push(CallProblem::Unconfirmed);
+        }
         RoleReport::Current => {}
     }
 
@@ -365,6 +369,7 @@ pub(crate) async fn call_report(
                  in Apps, and calls aren't managed by the launcher (Calls & SMS). Allow the phone \
                  app, or turn call management on."
             ));
+            problems.push(CallProblem::DialerNotAllowed);
         }
         if (!policy.calls_managed || policy.sms_enabled)
             && let Some(sms_app) = text("default_sms_package")
@@ -374,6 +379,7 @@ pub(crate) async fn call_report(
                 "The phone hides its Messages app ({sms_app}) because it isn't allowed in Apps, so \
                  texts can't be read or sent. Allow it there."
             ));
+            problems.push(CallProblem::MessagesHidden);
         }
     }
     if !policy.calls_managed {
@@ -395,6 +401,7 @@ pub(crate) async fn call_report(
         } else {
             "This phone's launcher does not enforce calls yet. Update the launcher.".to_string()
         });
+        problems.push(CallProblem::NotEnforced);
         return Ok(report);
     }
     if roles == RoleReport::Pending {
@@ -407,6 +414,7 @@ pub(crate) async fn call_report(
              good policy from this server."
                 .to_string(),
         );
+        problems.push(CallProblem::FailClosed);
     }
     // Security review L7: Telecom binds one screening service besides the carrier's - the
     // call-screening role's holder, else the default phone app's (CallsManager
@@ -415,6 +423,11 @@ pub(crate) async fn call_report(
     // before the wave doesn't report the screening role (`None`).
     let screening = flag("screening_role_held");
     if flag("dialer_role_held") == Some(false) {
+        problems.push(if screening == Some(true) {
+            CallProblem::NotPhoneApp
+        } else {
+            CallProblem::AnyoneCanCall
+        });
         warnings.push(if screening == Some(true) {
             "Phone app role not active: the launcher isn't the phone's default phone app, so the \
              phone can only call emergency numbers. Incoming calls are still filtered (it holds \
@@ -447,6 +460,7 @@ pub(crate) async fn call_report(
              add-role-holder android.app.role.CALL_REDIRECTION <launcher package>`."
                 .to_string(),
         );
+        problems.push(CallProblem::NoRedirection);
     }
     if flag("call_log_readable") == Some(false) {
         warnings.push(
@@ -455,23 +469,31 @@ pub(crate) async fn call_report(
              Check that the launcher is the default phone app."
                 .to_string(),
         );
+        problems.push(CallProblem::CallLogUnreadable);
     }
     match text("boot_policy").as_deref() {
-        Some("write_failed") => warnings.push(
+        Some("write_failed") => {
+            problems.push(CallProblem::RulesAfterRestart);
+            warnings.push(
             "The phone couldn't save its call rules for use right after a restart, so until it's \
              unlocked once after a reboot it rejects every call except emergency calls. It retries \
              on every sync."
-                .to_string(),
-        ),
-        Some("unreadable") => warnings.push(
+                    .to_string(),
+            )
+        }
+        Some("unreadable") => {
+            problems.push(CallProblem::RulesAfterRestart);
+            warnings.push(
             "The phone's copy of its call rules for use right after a restart can't be read, so \
              until it's unlocked once after a reboot it rejects every call except emergency calls."
-                .to_string(),
-        ),
+                    .to_string(),
+            )
+        }
         _ => {}
     }
     if let Some(error) = text("last_error") {
         warnings.push(format!("The phone reported a calls problem: {error}"));
+        problems.push(CallProblem::Reported);
     }
     if !policy.sms_enabled
         && let Some(sms_app) = text("default_sms_package")
@@ -486,9 +508,98 @@ pub(crate) async fn call_report(
                 "SMS is off, but the Messages app ({sms_app}) is allowed. The phone keeps it \
                  suspended anyway (RCS chat would bypass the SMS block); uncheck it in Apps."
             ));
+            problems.push(CallProblem::SmsAppAllowed);
         }
     }
     Ok(report)
+}
+
+/// What a [CallReport] warning is about (design 31 M5): the Attention row's short title comes from
+/// this, never from the warning's first sentence (package names, 40 words).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallProblem {
+    /// An emergency call in the last 7 days.
+    EmergencyCall,
+    /// The emergency services' callback window is open.
+    CallbackWindow,
+    /// The in-call screen couldn't come up over the lock.
+    CallScreenFailed,
+    /// Waiting for the phone to confirm a change (not a problem).
+    Waiting,
+    /// The phone hasn't confirmed a change made 5+ minutes ago.
+    Unconfirmed,
+    /// Calls unmanaged and the phone app isn't allowed: emergency calls only.
+    DialerNotAllowed,
+    /// The SMS app isn't allowed, so the phone hides it.
+    MessagesHidden,
+    /// The launcher doesn't (or no longer does) enforce calls.
+    NotEnforced,
+    /// The phone can't read its call rules: emergency calls only.
+    FailClosed,
+    /// Not the phone app, but incoming calls are still screened.
+    NotPhoneApp,
+    /// Not the phone app and nothing screens incoming calls.
+    AnyoneCanCall,
+    /// The call-redirection role is missing.
+    NoRedirection,
+    /// The call log can't be read (no emergency callback).
+    CallLogUnreadable,
+    /// The call rules for right after a restart couldn't be saved or read.
+    RulesAfterRestart,
+    /// The phone reported an error.
+    Reported,
+    /// SMS is off but the Messages app is allowed.
+    SmsAppAllowed,
+}
+
+impl CallProblem {
+    /// The Attention row's title: at most 8 words, no package names.
+    pub fn title(self) -> &'static str {
+        match self {
+            CallProblem::EmergencyCall => "Emergency call made from this phone",
+            CallProblem::CallbackWindow => "Emergency services can call back now",
+            CallProblem::CallScreenFailed => "A call may have rung unanswered",
+            CallProblem::Waiting => "Waiting for the phone to confirm",
+            CallProblem::Unconfirmed => "Calls change not confirmed yet",
+            CallProblem::DialerNotAllowed => "Only emergency calls work",
+            CallProblem::MessagesHidden => "Messages app is hidden",
+            CallProblem::NotEnforced => "Calls aren't screened",
+            CallProblem::FailClosed => "Phone can't read its call rules",
+            CallProblem::NotPhoneApp => "Vibb isn't the phone app",
+            CallProblem::AnyoneCanCall => "Anyone can call this phone",
+            CallProblem::NoRedirection => "Blocked numbers may ring briefly",
+            CallProblem::CallLogUnreadable => "Emergency callback may not work",
+            CallProblem::RulesAfterRestart => "Calls blocked after a restart",
+            CallProblem::Reported => "Phone reported a calls problem",
+            CallProblem::SmsAppAllowed => "Messages app allowed with SMS off",
+        }
+    }
+
+    /// Something to look at (everything but `Waiting`).
+    pub fn needs_attention(self) -> bool {
+        self != CallProblem::Waiting
+    }
+
+    /// Every kind, for the tests.
+    #[cfg(test)]
+    pub(crate) const ALL: [CallProblem; 16] = [
+        CallProblem::EmergencyCall,
+        CallProblem::CallbackWindow,
+        CallProblem::CallScreenFailed,
+        CallProblem::Waiting,
+        CallProblem::Unconfirmed,
+        CallProblem::DialerNotAllowed,
+        CallProblem::MessagesHidden,
+        CallProblem::NotEnforced,
+        CallProblem::FailClosed,
+        CallProblem::NotPhoneApp,
+        CallProblem::AnyoneCanCall,
+        CallProblem::NoRedirection,
+        CallProblem::CallLogUnreadable,
+        CallProblem::RulesAfterRestart,
+        CallProblem::Reported,
+        CallProblem::SmsAppAllowed,
+    ];
 }
 
 /// Capability the launcher reports when it enforces `call_policy`.

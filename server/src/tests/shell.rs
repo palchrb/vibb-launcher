@@ -20,6 +20,8 @@ async fn every_page_marks_its_own_tab() {
         ("/devices".to_string(), "devices"),
         (device_page(id, Section::Summary), "devices"),
         (device_page(id, Section::Calls), "devices"),
+        (device_page(id, Section::About), "devices"),
+        (device_page(id, Section::Advanced), "devices"),
         ("/devices/new".to_string(), "devices"),
         (format!("/devices/{id}/provision"), "devices"),
         ("/apps".to_string(), "apps"),
@@ -67,15 +69,32 @@ async fn every_page_marks_its_own_tab() {
 }
 
 /// Every template with the tab bar sets its tab right before including it, to one of the five
-/// (the template decides, not the path - §3.1).
+/// (the template decides, not the path - §3.1). A rebuilt sub-page includes the bar alone, without
+/// the brand bar (§3.0: its back link and large title replace it).
 #[test]
 fn every_template_with_the_bar_sets_its_tab() {
     let mut with_bar = 0;
+    let mut bar_alone = 0;
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
-        let Some(at) = text.find("{% include \"partials/app_header.html\" %}") else {
+        let header = text.find("{% include \"partials/app_header.html\" %}");
+        let alone = text.find("{% include \"partials/tab_bar.html\" %}");
+        assert!(
+            header.is_none() || alone.is_none(),
+            "{}: the bar twice",
+            path.display()
+        );
+        let Some(at) = header.or(alone) else {
             continue;
         };
+        if alone.is_some() {
+            bar_alone += 1;
+            assert!(
+                text.contains("class=\"nav-back\""),
+                "{}: a sub-page without its back link",
+                path.display()
+            );
+        }
         with_bar += 1;
         let before = text[..at].trim_end();
         let line = before.lines().last().unwrap_or("").trim();
@@ -89,7 +108,11 @@ fn every_template_with_the_bar_sets_its_tab() {
             path.display()
         );
     }
-    assert!(with_bar >= 23, "{with_bar} templates with the bar");
+    assert!(with_bar >= 25, "{with_bar} templates with the bar");
+    assert!(
+        bar_alone >= 4,
+        "About This Phone, Advanced, the app page and Add App"
+    );
     let updates = std::fs::read_to_string("templates/updates.html").unwrap();
     assert!(updates.contains("{% let tab = \"settings\" %}"));
 }
@@ -164,15 +187,19 @@ async fn auto_saving_controls_use_the_static_script() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
+    let advanced = app
+        .get_page(&device_page(id, Section::Advanced), &cookie)
+        .await
+        .text();
+    assert!(autosaves(&advanced, "disallow_factory_reset"));
+    assert_eq!(
+        form_action_of(&advanced, "disallow_factory_reset"),
+        Some(format!("/devices/{id}/hardening").as_str())
+    );
     let html = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
-    assert!(autosaves(&html, "disallow_factory_reset"));
-    assert_eq!(
-        form_action_of(&html, "disallow_factory_reset"),
-        Some(format!("/devices/{id}/hardening").as_str())
-    );
     assert!(autosaves(&html, "screen_timeout_seconds"));
     // A Save button form doesn't save itself.
     assert!(!autosaves(&html, "new_pin"));
@@ -319,9 +346,11 @@ async fn hub_values_say_none_when_there_is_nothing() {
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let now = chrono::Local::now();
+    let now = chrono::Utc::now();
+    let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
     let values =
-        crate::handlers::settings_hub::hub_values(&app.db, &dir.path().join("none"), now).await;
+        crate::handlers::settings_hub::hub_values(&app.db, &dir.path().join("none"), &zone, now)
+            .await;
     assert_eq!(values.time_rules.as_deref(), Some("No rules"));
     assert_eq!(values.web_filter.as_deref(), Some("No lists"));
     assert_eq!(values.blocked_today.as_deref(), Some("None today"));
@@ -346,10 +375,11 @@ async fn hub_values_say_none_when_there_is_nothing() {
     let newest = put("backup-20261010-030000.zip", day * 3);
     put("notes.txt", std::time::Duration::ZERO);
     put("backup-20261013-030000.zip.part", std::time::Duration::ZERO);
-    let values = crate::handlers::settings_hub::hub_values(&app.db, dir.path(), now).await;
-    let expected = crate::handlers::settings_hub::day_time_label(
-        chrono::DateTime::<chrono::Local>::from(newest).naive_local(),
-        now.naive_local(),
+    let values = crate::handlers::settings_hub::hub_values(&app.db, dir.path(), &zone, now).await;
+    let expected = crate::handlers::settings_hub::backup_label(
+        &zone,
+        chrono::DateTime::<chrono::Utc>::from(newest),
+        now,
     );
     assert!(!expected.starts_with("Today"), "{expected}");
     assert_eq!(values.backups.as_deref(), Some(expected.as_str()));

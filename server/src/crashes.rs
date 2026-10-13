@@ -1,6 +1,6 @@
-//! Launcher crash reports (cleanup 2026-10-06): `POST /api/devices/crashes` stores them, the
-//! device page shows them. The launcher sends only a stack-trace hash and a short trace of class
-//! names and frames - never an exception message - and this module re-checks that shape before
+//! Launcher crash reports (cleanup 2026-10-06): `POST /api/devices/crashes` stores them, About
+//! This Phone › Diagnostics shows them. The launcher sends only a stack-trace hash and a short
+//! trace of class names and frames - never an exception message - and this module re-checks that shape before
 //! anything is stored, so a phone can't push free text into the database.
 
 use serde::Deserialize;
@@ -9,7 +9,7 @@ use serde::Deserialize;
 pub const MAX_PER_BATCH: usize = 10;
 /// The trace is cut here.
 pub const MAX_TRACE_CHARS: usize = 4000;
-/// The device page shows this many, newest first.
+/// About This Phone shows this many, newest first.
 pub const SHOWN: i64 = 5;
 
 #[derive(Deserialize)]
@@ -38,7 +38,7 @@ pub struct CleanCrash {
     pub app_version_code: i64,
 }
 
-/// One crash on the device page.
+/// One crash on About This Phone › Diagnostics.
 #[derive(sqlx::FromRow)]
 pub struct DeviceCrash {
     pub hash: String,
@@ -49,13 +49,6 @@ pub struct DeviceCrash {
 }
 
 impl DeviceCrash {
-    /// The phone's clock when it last crashed this way, as UTC.
-    pub fn last_at(&self) -> String {
-        chrono::DateTime::from_timestamp_millis(self.last_at_ms)
-            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    }
-
     /// The first line: the exception class.
     pub fn exception(&self) -> &str {
         self.trace.lines().next().unwrap_or("")

@@ -29,6 +29,9 @@ import me.vibb.music.logic.Listed
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.addItemError
 import me.vibb.music.logic.downloadWaiting
+import me.vibb.music.logic.extrasFloor
+import me.vibb.music.logic.stopRunningDownload
+import me.vibb.music.logic.storageLimitBytes
 import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
 import me.vibb.music.logic.repickWanted
@@ -43,6 +46,7 @@ import me.vibb.music.model.Library
 import me.vibb.music.model.Listing
 import me.vibb.music.model.ListingParser
 import me.vibb.music.model.Source
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sonos.SonosFiles
 import me.vibb.music.sonos.SpeakerCache
 import me.vibb.music.storytel.StorytelAccount
@@ -51,7 +55,8 @@ import java.util.concurrent.TimeUnit
 
 /*
  * The sync (design 21 §4.5 as changed by 21b §6): bridge (step 3; step 2's debug feed has already
- * written the library and listings) -> listings into Room, NY -> prune -> downloads -> the Nytt
+ * written the library and listings) -> listings into Room, NY -> prune, the played extras' eviction and
+ * the orphan sweep (design 30 §1.8; streams settled before it all, `CacheThrough.catchUp`) -> downloads -> the Nytt
  * notification -> the report. Unique WorkManager work: on the nudge (15 s settle, as vibb's
  * `SYNC_SETTLE_S`), at start, and a 6 h backstop. It never fetches a listing from a source.
  * Design 29: the known keys before the listings, the news after them, and one run at a time.
@@ -104,7 +109,14 @@ object Sync {
      */
     private val runLock = Mutex()
 
-    suspend fun run(context: Context) = withContext(Dispatchers.IO) { runLock.withLock { runLocked(context) } }
+    /**
+     * The streams played since the last sync are settled first, outside [runLock] (design 30 §1.5, H1:
+     * a settle never waits, but nothing that could keeps the next sync behind it).
+     */
+    suspend fun run(context: Context) = withContext(Dispatchers.IO) {
+        CacheThrough.catchUp(context)
+        runLock.withLock { runLocked(context) }
+    }
 
     private suspend fun runLocked(context: Context) {
         // The bridge first (21 §4.5 as 21b §6 has it): what the launcher holds lands in the inbox.
@@ -176,16 +188,20 @@ object Sync {
         val want = ArtWants.compute(context)
         if (lib != null) store.pruneCovers(lib.covers, want.keep)
 
-        // Keep/prune (only on parsed listings), then the downloads.
-        val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis())
-        for (row in plan.prune) {
-            MediaCache.remove(context, row.cacheKey, row.hls)
-            dao.deleteDownload(row.entryId, row.itemKey)
-        }
+        // Keep/prune (only on parsed listings), never what the player holds (design 30 §1.6); the bytes no row
+        // owns; then the played extras over the parent's limit or under the free floor (§1.8) - after the sweep,
+        // so orphans about to go never cost an extra (qa-30-s3b-code L2); then the downloads.
+        val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
+        CacheThrough.remove(context, plan.prune)
+        CacheThrough.sweepOrphans(context)
+        CacheThrough.evict(context, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(context).state() == "ok"))
+        // A running job may not go on where the downloads switch now forbids it (qa-30-s3a-code L1).
+        val downloadMobileData = store.downloadMobileData
+        val stop = stopRunningDownload(netCaps(context), downloadMobileData)
         if (plan.wanted.isNotEmpty()) {
-            Downloads.enqueue(context, store.mobileData)
+            Downloads.enqueue(context, downloadMobileData, stopRunning = stop)
         } else {
-            plan.nextRetryAt?.let { Downloads.enqueue(context, store.mobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+            plan.nextRetryAt?.let { Downloads.enqueue(context, downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0), stopRunning = stop) }
         }
         NewNotifier.update(context, store.snapshot())
         writeReport(context)
@@ -240,9 +256,9 @@ object Sync {
     suspend fun writeReport(context: Context) = withContext(Dispatchers.IO) {
         val store = Store.get(context)
         val snap = store.snapshot()
-        val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis())
+        val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
         val storageLow = store.ownDir.parentFile!!.usableSpace < LOW_STORAGE_BYTES
-        val waiting = downloadWaiting(netCaps(context), store.mobileData, storageLow)
+        val waiting = downloadWaiting(netCaps(context), store.downloadMobileData, storageLow)
         // The phone's Storytel login: none, refused (the cooldown runs) or ok (design 26b §4.5).
         val storytel = StorytelAccount.get(context).state()
         val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()
@@ -250,10 +266,16 @@ object Sync {
         val errors = store.db.itemErrors().map { ItemError(it.entryId, it.version, it.itemKey, it.error) }
         // Own files and the cover files (episode pictures included, design 27 §2.3).
         val ownBytes = store.ownDir.listFiles().orEmpty().sumOf { it.length() } + store.coversDir.listFiles().orEmpty().sumOf { it.length() }
+        // The audio cache: what the parent's storage limit counts, and the played extras in it now - from
+        // this plan, so the sync and the download job both send the true value (design 30 §1.10, L1).
+        val audioBytes = MediaCache.totalBytes(context)
+        val extraBytes = CacheThrough.extraBytes(context, plan)
         val report = stateReport(
             BuildConfig.VERSION_CODE.toLong(),
             snap.library?.version,
-            MediaCache.totalBytes(context) + ownBytes,
+            audioBytes + ownBytes,
+            audioBytes,
+            extraBytes,
             readEntryErrors(store),
             errors,
             states,

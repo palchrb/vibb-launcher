@@ -419,16 +419,16 @@ An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and
 
 ### The launcher's own self-update
 
-The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add**:
+The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add App**:
 
-- source: GitHub, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes the
-  newest `launcher-v*` release that carries the APK)
-- asset filename filter: `kids-launcher-mdm.apk`
-- "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
+- source: GitHub releases, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes
+  the newest `launcher-v*` release that carries the APK)
+- under More Options, "File name contains": `kids-launcher-mdm.apk`, and "Tag starts with": `launcher-v`
+- "Include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
   - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
     turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
-- package name: `me.vibb.launcher` (a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration
-  0037)
+- the package needs nothing typed: the first release's APK pins `me.vibb.launcher` (the add form's package field isn't
+  saved; a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration 0037)
 
 #### Rollout of the package rename (`com.kidslauncher.mdm` -> `me.vibb.launcher`, 2026-10-06)
 
@@ -444,7 +444,7 @@ the old launcher as a second app. And once this server is updated, the provision
    `releases/latest/download/kids-launcher-mdm.apk` is the renamed build.
 3. **Only then update this server.** Until step 2 is done, the provisioning QR doesn't work (it names the new package
    while "latest" still serves the old one) - provision with adb meanwhile.
-- then, on the app's page, turn on "This is the launcher app"
+- then, on the app's page, turn on "This is the launcher app" (Source & Signing)
 
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
 broken, fix it forward by releasing the old (or fixed) code under a higher `launcher-v*` tag.
@@ -454,8 +454,8 @@ broken, fix it forward by releasing the old (or fixed) code under a higher `laun
 FCM is gone: the phones' own connection to this server (the SSE stream) is the only way changes reach them at once, and
 every phone also checks in by itself every 30 minutes (15 while its connection is down). One launcher APK now works the
 same with anyone's server, and no nudge goes through Google. Other apps' notifications (Element X) still use Google's
-push service: Play services stays installed and is never restricted. The device page's "Play and kiosk" card says
-whether the phone is connected right now.
+push service: Play services stays installed and is never restricted. The Devices list and the phone's About This Phone
+say whether it is connected right now (Online / Away / Offline).
 
 Order, if this server ever had FCM configured:
 
@@ -485,7 +485,7 @@ The Music tab holds the library for the Vibb music app; each phone's page has a 
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
   `vibb-music.apk` as the launcher update. Migration 0049 sets the launcher row to `launcher-v*` releases and
   `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
-  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Release tag prefix".
+  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Tag starts with" (Source & Signing).
 - **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
   or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
   0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
@@ -559,8 +559,8 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
   stored now; typed codes last 15 minutes, setup-QR codes 30). The provisioning page makes its QR code with a button
   now, and the Tailscale key is no longer shown on Settings > Phone Setup.
 - Limits on the phones' API: a phone's own token is never slowed by other clients; an address that keeps sending bad
-  tokens or wrong typed codes gets 429 for 10 minutes. The device page's Access card shows when and how each phone last
-  reached the server, and can revoke its access.
+  tokens or wrong typed codes gets 429 for 10 minutes. About This Phone shows when and how each phone last
+  reached the server; Advanced › Connection can disconnect it (revoke its access).
 - Rolling back to 0.22 means restoring the `update.sh` backup: 0.22 refuses a database with migration 0052 (and 0053).
 
 ## Server 0.24.0 (security review, server part)
@@ -576,7 +576,7 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
-  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget the package and key" on
+  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget Package and Key…" (Source & Signing) on
   the app's page lets the next release set them again.
 - **A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed** (never
   Settings, a browser or a file manager): it can call and text, but every other app stays hidden until you allow it
@@ -599,6 +599,12 @@ Release note for the parent app's rename and new tab bar:
   DNS/Filters) and Blocked Activity are rows at the top of Settings; Provisioning is Settings › Phone Setup.
 - The manifest keeps its URL and gets `"id": "/"` (the id it already had implicitly), so an installed app is not
   reinstalled. The two-factor issuer in authenticator apps stays "Kids Device MDM" (it only labels new entries).
+
+## The Locate map (design 33)
+
+The parent's browser loads the map's tiles directly from OpenStreetMap with an origin-only `Referer` (OSM sees
+the PWA's address, e.g. its tailnet host name, never a path), so the parent's browser needs to reach
+`tile.openstreetmap.org`; the server itself never contacts OSM.
 
 ## Useful commands on the Pi
 

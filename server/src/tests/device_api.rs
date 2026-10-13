@@ -422,14 +422,19 @@ async fn policy_json_keys_snapshot() {
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
-    // defaults; only `library_version` and `volume_cap_pct` may be null. `null` as a whole only when
-    // it can't be read (tests/music.rs).
+    // defaults; only `library_version`, `volume_cap_pct` and `storage_limit_gb` may be null. `null`
+    // as a whole only when it can't be read (tests/music.rs). Design 30: `mobile_data` stays (both
+    // switches on), the two switches and the storage limit (a fresh phone's 2 GB) are added. Design
+    // 26c: `spotify` (bound to an account; the launcher's DNS exemption).
     assert_eq!(
         object["music"],
         serde_json::json!({
             "library_version": null,
             "mobile_data": false,
+            "stream_mobile_data": false,
+            "download_mobile_data": false,
             "volume_cap_pct": null,
+            "storage_limit_gb": 2,
             "storytel_generation": 0,
             "spotify": false
         })
@@ -605,9 +610,26 @@ async fn status_report_stores_policy_state_and_pause() {
     assert_eq!(state.as_deref(), Some("cache_corrupt"));
     assert!(paused);
 
+    // The device page: an Attention row; About This Phone: the problem and what it means (design
+    // 31 step 3).
     let page = device_page(&app, id).await;
-    assert!(page.contains("read its saved policy"), "{page}");
+    assert!(
+        page.contains("Phone can&#39;t apply its settings"),
+        "{page}"
+    );
     assert!(page.contains("All restrictions are paused"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains("Saved settings unreadable"), "{about}");
+    assert!(about.contains("read its saved settings"), "{about}");
+}
+
+async fn about_page(app: &TestApp, id: i64) -> String {
+    let response = crate::handlers::device_pages::view_about(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+    )
+    .await;
+    super::read_response(response).await.text()
 }
 
 #[tokio::test]
@@ -628,8 +650,10 @@ async fn status_report_from_older_launcher_has_no_warnings() {
 
     post_status(&app, &token, json!({ "policy_state": "ok" })).await;
     let page = device_page(&app, id).await;
-    assert!(!page.contains("saved policy"));
+    assert!(!page.contains("apply its settings"));
     assert!(!page.contains("All restrictions are paused"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains(">Applied</span>"), "{about}");
 }
 
 async fn toggle(app: &TestApp, id: i64, package: &str, selected: bool) -> axum::http::StatusCode {
@@ -715,7 +739,13 @@ async fn server_error_policy_state_is_shown() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
-    assert!(device_page(&app, id).await.contains("answered the phone"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains(">Server error</span>"), "{about}");
+    assert!(
+        about.contains("This server answered with an error"),
+        "{about}"
+    );
+    assert!(about.contains("failed to build device policy"), "{about}");
 }
 
 async fn timeout(app: &TestApp, token: String) -> serde_json::Value {

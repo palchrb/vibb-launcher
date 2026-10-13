@@ -35,7 +35,7 @@ changes and starts the kiosk).
 +me.vibb.launcher` ("Added: ..."), so the launcher's connection to the server isn't held back
 while the phone sleeps. Without adb (QR provisioning, or later): launcher Settings -> "Pause all
 restrictions" -> "Background connection" ("Bakgrunnstilkobling") -> Allow, then end the pause. The
-device page's "Play and kiosk" card says which it is. Android's own battery page shows the launcher
+phone's About This Phone page ("Battery optimisation") says which it is. Android's own battery page shows the launcher
 as "Unrestricted" whatever the real state - trust the device page.
 
 **Power-button gestures (bug 25b), in the same adb session:** `adb shell settings put secure
@@ -51,7 +51,7 @@ accounts" on the device row before scanning, then follow the enrolled-phone step
 
 **On an enrolled phone:**
 
-1. PWA, device page, "Phone hardening": untick **"Block adding or removing accounts"** (it saves
+1. PWA, the phone's Advanced › Restrictions: untick **"Block account changes"** (it saves
    itself and nudges the phone; launcher Settings -> "Sync now" if in doubt).
 2. Phone: launcher Settings (unlock code) -> **"Pause all restrictions"** ("Sett alle
    begrensninger på pause") -> unlock code. Kiosk, time rules and app restrictions are off for up to
@@ -103,8 +103,8 @@ instead of add).
 AOSP switches Android's backup service off when a device owner is set, and only the device owner
 can switch it on - handy never does. On every policy apply while the phone is managed, the
 launcher checks it and switches it off if anything turned it on; the override PIN and the pause
-don't change that, and there is no switch for it in the PWA. The device page shows it in the
-"Phone hardening" card: "Backup to Google: off", or a warning if the phone reports it on (nothing
+don't change that, and there is no switch for it in the PWA. The phone's Advanced › Restrictions
+shows it: "Backup to Google · Off", or a warning (and an Attention row) if the phone reports it on (nothing
 from a launcher that doesn't report it yet). By hand, with adb allowed:
 `adb shell bmgr activated` -> "Backup Manager currently deactivated" (`bmgr enabled` answers
 "Error: Backup Manager is not activated for user 0").
@@ -122,8 +122,8 @@ from a launcher that doesn't report it yet). By hand, with adb allowed:
 ## 9. Open device check: Play-services screens in install mode
 
 Play may hand over to Play services (`com.google.android.gms`) during an install: Play Protect
-prompts, terms of service, the purchase/authentication sheet, an account check. With the **"Kiosk
-app block"** on ("Play and kiosk" card), those screens may be stopped and end on Android's
+prompts, terms of service, the purchase/authentication sheet, an account check. With **"Block
+other apps' screens"** on (the kiosk app block, Advanced › App screens), those screens may be stopped and end on Android's
 `BlockedAppActivity`, because install mode pins only the Play Store (`com.android.vending`).
 
 How to see it (adb needs "Block USB debugging" off, or use the emulator, §6b):

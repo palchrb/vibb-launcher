@@ -3,8 +3,10 @@
 -- parent logged in (each refresh token sealed with the music key, AAD spotify-v1:<fp>:<user>), the
 -- account a phone plays as (NULL = Spotify off), and a listing's Spotify state. music_entries.source
 -- already allows 'spotify' (0049); a Spotify item is state 'ok' with url NULL like a Storytel book (0072).
--- 0073 is the next number on main at 437eb84 (2026-10-13); renumber at the final rebase if main took it
--- (`startup::pre_migration_backup` compares MAX(version) only: never deploy it out of order).
+-- Written as 0073 on the branch `music-3-spotify` (main at 0072); renumbered 0074 at the merge of main
+-- (571f86f) on 2026-10-13: main's 0073 is design 30's music_data_and_storage. If 0073 reaches a server
+-- after this one ran, sqlx applies it out of order and `startup::pre_migration_backup` (MAX(version)
+-- only) takes no backup first: design 30's server ships before or together with this one.
 CREATE TABLE music_spotify_app (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     client_id TEXT NOT NULL,

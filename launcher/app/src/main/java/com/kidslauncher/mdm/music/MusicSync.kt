@@ -143,11 +143,11 @@ object MusicSync {
     private fun sameBundle(a: Bundle, b: Bundle): Boolean =
         a.keySet() == b.keySet() && a.keySet().all { a.get(it) == b.get(it) }
 
-    /** The parent's mobile-data switch for music, as the cached policy says. */
-    fun mobileData(): Boolean = try {
-        musicPolicy(currentPolicyDecision().policy?.music)?.mobileData == true
+    /** The cached policy's music object, read (null = none, refused or unreadable): what [ownFileGate] gets. */
+    fun cachedMusicPolicy(): MusicPolicy? = try {
+        musicPolicy(currentPolicyDecision().policy?.music)
     } catch (e: Exception) {
-        false
+        null
     }
 
     /**
@@ -309,20 +309,9 @@ object MusicCourier {
         return changed
     }
 
-    /** The pictures fetchable now (design 27 §2.2, QA M6): what [artToFetch] allows on this network. */
-    fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> {
-        val caps = AppDownloads.currentCaps(app)
-        return artToFetch(
-            want,
-            has = MusicStore.coversDir(app).list().orEmpty().toSet(),
-            failures = MusicStore.artFailures(app),
-            online = caps != null && caps.internet && caps.physical,
-            unmetered = caps?.notMetered == true,
-            mobileData = music.mobileData && caps?.notRoaming == true,
-            max = ART_PER_RUN,
-            nowMs = System.currentTimeMillis(),
-        )
-    }
+    /** The pictures fetchable now (design 27 §2.2, QA M6): what [artToFetchOn] allows on this network. */
+    fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> =
+        artToFetchOn(want, MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, ART_PER_RUN, System.currentTimeMillis())
 
     /**
      * Episode pictures (design 27 §2.2), after the covers: the music app's want set, through the

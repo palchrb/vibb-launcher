@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # fake-spotify.py - a fake Spotify for the server and the music app on the emulator (design 26c §9;
-# docs/testing/emulator.md §6k, written in step 5b).
+# docs/testing/emulator.md §6l, written in step 5b).
 #
 # Part of handy (palchrb/vibb-launcher), licensed under the GNU General Public License v3.0 or later
 # (LICENSE). Modelled on palchrb/vibb's test fakes and its rule that both fakes answer from ONE source
@@ -635,7 +635,7 @@ def handler_for(sp):
                 start = int(r.group(1))
                 end = min(int(r.group(2)), size - 1) if r.group(2) else size - 1
                 status = 206
-            # the tone's fetches through the phone's debug proxy (§6k: a seek is a 206 from its byte, the proxy's Range)
+            # the tone's fetches through the phone's debug proxy (§6l: a seek is a 206 from its byte, the proxy's Range)
             log(f"audio {track_id}: {status}" + (f" Range {rng.strip()}" if rng else ""))
             self.send_response(status)
             self.send_header("Content-Type", "audio/wav")

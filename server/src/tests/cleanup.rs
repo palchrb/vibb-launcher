@@ -546,12 +546,12 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
+    // About This Phone › Diagnostics (design 31 step 3; the device page's card until then).
     let cookie = app.admin_cookie().await;
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(page.contains("Launcher crashes"));
+    let about = format!("/devices/{id}/about");
+    let page = app.get_page(&about, &cookie).await.text();
+    assert!(page.contains("Crash reports"));
+    assert!(page.contains("1 kind"));
     assert!(page.contains("java.lang.IllegalStateException"));
     assert!(page.contains("3&times;") || page.contains("3×"));
     assert!(!page.contains("4791234567"));
@@ -562,11 +562,50 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .await
         .unwrap();
     assert_eq!(crate::retention::prune(&app.db).await.unwrap().crashes, 1);
+    let page = app.get_page(&about, &cookie).await.text();
+    assert!(page.contains("None in 30 days"));
+    assert!(!page.contains("java.lang.IllegalStateException"));
+}
+
+/// A crash trace is phone-supplied text, and `crashes::sanitize` lets `<` and `>` through in
+/// identifiers (real traces have `<init>` and `<clinit>` frames): About This Phone must escape it,
+/// the trace in its `<pre>` and the row's label alike (qa-31-s3-code L3).
+#[tokio::test]
+async fn crash_traces_are_escaped_on_about() {
+    use axum::http::{Method, StatusCode};
+    let app = super::TestApp::new().await;
+    let (id, token) = app.enrolled_device("kid").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/crashes",
+            Some(&token),
+            Some(serde_json::json!({ "crashes": [{
+                "hash": "fedcba9876543210",
+                "trace": "<b>Boom\n    at com.x.Foo.<init>(Foo.kt:3)\n",
+                "count": 1, "first_at_ms": 1_790_000_000_000_i64,
+                "last_at_ms": 1_790_000_000_000_i64, "app_version_code": 23_007_000
+            }]})),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let stored: String = sqlx::query_scalar("SELECT trace FROM device_crashes")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(stored.contains("<init>"), "the frame is kept: {stored}");
+    let cookie = app.admin_cookie().await;
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&format!("/devices/{id}/about"), &cookie)
         .await
         .text();
-    assert!(page.contains("No crashes reported in the last 30 days."));
+    assert!(
+        page.contains("com.x.Foo.&#60;init&#62;(Foo.kt:3)"),
+        "{page}"
+    );
+    assert!(page.contains("&#60;b&#62;Boom"), "{page}");
+    assert!(!page.contains("<b>"), "{page}");
+    assert!(!page.contains("<init>"), "{page}");
 }
 
 #[tokio::test]

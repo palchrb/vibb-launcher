@@ -1,11 +1,12 @@
 //! Which phones hold the SSE command stream open right now (design 19, open question 1): an
-//! in-memory count per device and when it last changed, for the device page's "Instant changes"
-//! line. Nothing is stored and nothing reaches the device API - a server restart starts empty.
+//! in-memory count per device and when it last changed, for the PWA's Online / Away / Offline
+//! ([connection_state], design 31 §3.10; About This Phone shows "Online since 08:12"). Nothing is
+//! stored and nothing reaches the device API - a server restart starts empty.
 //!
 //! The count goes up when `handlers::device_api::commands_stream` answers and down when its
 //! response stream is dropped ([StreamGuard]). A phone that vanishes without closing its
 //! connection (no FIN: lost network, a phone switched off) still counts until this server's TCP
-//! gives up on the peer - so the page says "as far as this server can tell".
+//! gives up on the peer - so Online also needs a recent contact.
 //!
 //! Every open stream also has a close signal (design 22 §2): [CommandStreams::close_all] ends
 //! them at shutdown, so a graceful stop doesn't wait for phones that never hang up.
@@ -154,25 +155,308 @@ impl Drop for StreamGuard {
     }
 }
 
-/// The device page's line about the stream (design 19 QA #11).
-pub fn instant_changes_line(state: Option<StreamState>) -> String {
-    let at = |t: DateTime<Utc>| t.format("%Y-%m-%d %H:%M:%S").to_string();
-    match state {
-        Some(s) if s.open > 0 => format!(
-            "Instant changes: connected since {} UTC, as far as this server can tell. The phone also checks in by itself every 30 minutes.",
-            at(s.since)
-        ),
-        Some(s) => format!(
-            "Instant changes: not connected since {} UTC - changes reach the phone when it reconnects or at its next check-in (every 30 minutes, 15 while it can't connect).",
-            at(s.since)
-        ),
-        None => "Instant changes: not connected since this server started - changes reach the phone when it connects or at its next check-in (every 30 minutes).".to_string(),
+/// Online: a stream is open and the last contact is at most this old (design 31 §3.10, H2).
+///
+/// With the stream up, nothing else reaches the server on a quiet night (the keepalive goes from
+/// the server to the phone). The launcher's backstop sync then runs every 30 min
+/// (`push/SyncSchedule.kt`, `BACKSTOP_INTERVAL_MS`), armed as an inexact alarm
+/// (`push/BackstopAlarm.kt`, `setAndAllowWhileIdle`) that Android may deliver up to 0.75 × its
+/// delay late: 30 × 1.75 = 52.5 min, plus margin. A healthy idle phone stays Online all night.
+/// Nothing links the two files at compile time: a launcher change to the backstop must revisit
+/// this.
+pub const ONLINE_WINDOW_MINUTES: i64 = 60;
+
+/// Away: no stream, and the last contact is at most this old (design 31 §3.10, H2).
+///
+/// With the stream down the backstop runs every 15 min (`BACKSTOP_SSE_DOWN_INTERVAL_MS`), up to
+/// 0.75 × late: 15 × 1.75 = 26.25 min, plus up to 9 min of Doze's while-idle quota
+/// (`MIN_BACKSTOP_MS`) and margin. Older is Offline. Revisit with any launcher backstop change.
+pub const AWAY_WINDOW_MINUTES: i64 = 45;
+
+/// What the parent sees about a phone's link to this server (design 31 §3.10): the header's dot
+/// and word, the Devices list's status line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// Not enrolled.
+    NotSetUp,
+    /// Enrolled, but its access was revoked (no token): it can't come back by itself.
+    Disconnected,
+    /// Enrolled, no contact ever.
+    NotSeenYet,
+    /// A stream is open (since `since`) and the last contact is at most an hour old.
+    Online {
+        since: DateTime<Utc>,
+        last_contact: DateTime<Utc>,
+    },
+    /// No stream, last contact at most 45 min ago: changes may be delayed.
+    Away { last_contact: DateTime<Utc> },
+    /// Anything older, or a stream "open" with no contact for over an hour (a phone that
+    /// vanished without closing it).
+    Offline { last_contact: DateTime<Utc> },
+}
+
+/// The signals [connection_state] combines (§1.2b). `last_access` is any authenticated request
+/// since this server started (`limits::last_access`), `last_seen` the last status report
+/// (`devices.last_seen_at`, kept across a restart).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ConnectionInputs {
+    pub enrolled: bool,
+    pub has_token: bool,
+    pub stream: Option<StreamState>,
+    pub last_access: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
+}
+
+/// The state (§3.10's table). Last contact is the newest of the last access, the last report and
+/// an open stream's `since`. Right after a server restart only the last report is known, so a
+/// phone shows Away - or Offline if that report is over 45 min old, as an idle phone's often is -
+/// until its stream reconnects: seconds after a clean stop (the streams are closed, the phones
+/// reconnect at once), up to 5 min after a crash or a power cut (no FIN reaches the phones; they
+/// reconnect after 300 s of silence). Honest, so no special case.
+/// The newest of the last access, the last report and an open stream's `since`, whatever the
+/// state - also for a Disconnected phone, whose last contact About This Phone still shows
+/// (qa-31-s3-code M1: "cut off a minute ago" vs "gone for weeks").
+pub fn last_contact(inputs: &ConnectionInputs) -> Option<DateTime<Utc>> {
+    let open = inputs.stream.filter(|s| s.open > 0);
+    [inputs.last_access, inputs.last_seen, open.map(|s| s.since)]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
+pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> ConnectionState {
+    if !inputs.enrolled {
+        return ConnectionState::NotSetUp;
+    }
+    if !inputs.has_token {
+        return ConnectionState::Disconnected;
+    }
+    let open = inputs.stream.filter(|s| s.open > 0);
+    let Some(last_contact) = last_contact(inputs) else {
+        return ConnectionState::NotSeenYet;
+    };
+    let age = now - last_contact;
+    match open {
+        Some(stream) if age <= chrono::Duration::minutes(ONLINE_WINDOW_MINUTES) => {
+            ConnectionState::Online {
+                since: stream.since,
+                last_contact,
+            }
+        }
+        None if age <= chrono::Duration::minutes(AWAY_WINDOW_MINUTES) => {
+            ConnectionState::Away { last_contact }
+        }
+        _ => ConnectionState::Offline { last_contact },
+    }
+}
+
+impl ConnectionState {
+    /// The word next to the dot.
+    pub fn word(&self) -> &'static str {
+        match self {
+            ConnectionState::NotSetUp => "Not set up",
+            ConnectionState::Disconnected => "Disconnected",
+            ConnectionState::NotSeenYet => "Not seen yet",
+            ConnectionState::Online { .. } => "Online",
+            ConnectionState::Away { .. } => "Away",
+            ConnectionState::Offline { .. } => "Offline",
+        }
+    }
+
+    /// The colour: `online` (green), `away` (orange), else `offline` (grey).
+    pub fn css(&self) -> &'static str {
+        match self {
+            ConnectionState::Online { .. } => "online",
+            ConnectionState::Away { .. } => "away",
+            _ => "offline",
+        }
+    }
+
+    /// While Online: since when its stream is open.
+    pub fn online_since(&self) -> Option<DateTime<Utc>> {
+        match *self {
+            ConnectionState::Online { since, .. } => Some(since),
+            _ => None,
+        }
+    }
+
+    pub fn last_contact(&self) -> Option<DateTime<Utc>> {
+        match *self {
+            ConnectionState::Online { last_contact, .. }
+            | ConnectionState::Away { last_contact }
+            | ConnectionState::Offline { last_contact } => Some(last_contact),
+            _ => None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn minutes_ago(now: DateTime<Utc>, m: i64) -> DateTime<Utc> {
+        now - chrono::Duration::minutes(m)
+    }
+
+    /// An enrolled phone with a token, its stream (`open`, since `stream_min` ago) and its last
+    /// access and report.
+    fn phone(
+        now: DateTime<Utc>,
+        stream: Option<(u32, i64)>,
+        access_min: Option<i64>,
+        seen_min: Option<i64>,
+    ) -> ConnectionInputs {
+        ConnectionInputs {
+            enrolled: true,
+            has_token: true,
+            stream: stream.map(|(open, m)| StreamState {
+                open,
+                since: minutes_ago(now, m),
+            }),
+            last_access: access_min.map(|m| minutes_ago(now, m)),
+            last_seen: seen_min.map(|m| minutes_ago(now, m)),
+        }
+    }
+
+    #[test]
+    fn the_state_follows_the_windows() {
+        let now = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
+        let state = |inputs: ConnectionInputs| connection_state(&inputs, now);
+        // §3.10's table, row by row.
+        assert_eq!(
+            state(phone(now, Some((1, 3)), Some(3), Some(3))),
+            ConnectionState::Online {
+                since: minutes_ago(now, 3),
+                last_contact: minutes_ago(now, 3)
+            }
+        );
+        assert_eq!(
+            state(phone(now, Some((1, 30)), Some(3), None)).online_since(),
+            Some(minutes_ago(now, 30)),
+            "About's \"Online since\""
+        );
+        assert_eq!(
+            state(phone(now, None, Some(12), Some(20))),
+            ConnectionState::Away {
+                last_contact: minutes_ago(now, 12)
+            }
+        );
+        assert_eq!(state(phone(now, None, Some(12), None)).online_since(), None);
+        // A revoked phone is Disconnected, but its last contact is still known (qa-31-s3-code M1).
+        let revoked = ConnectionInputs {
+            has_token: false,
+            ..phone(now, Some((0, 1)), Some(2), Some(5))
+        };
+        assert_eq!(state(revoked), ConnectionState::Disconnected);
+        assert_eq!(last_contact(&revoked), Some(minutes_ago(now, 2)));
+        // A closed stream's `since` is no contact.
+        assert_eq!(last_contact(&phone(now, Some((0, 1)), None, None)), None);
+        assert_eq!(
+            state(phone(now, None, None, Some(120))),
+            ConnectionState::Offline {
+                last_contact: minutes_ago(now, 120)
+            }
+        );
+        assert_eq!(
+            state(ConnectionInputs {
+                has_token: false,
+                ..phone(now, None, Some(1), Some(1))
+            }),
+            ConnectionState::Disconnected
+        );
+        assert_eq!(
+            state(phone(now, None, None, None)),
+            ConnectionState::NotSeenYet
+        );
+        assert_eq!(
+            state(ConnectionInputs {
+                enrolled: false,
+                has_token: false,
+                ..Default::default()
+            }),
+            ConnectionState::NotSetUp
+        );
+
+        // A healthy idle phone: the stream up, the last backstop sync 50 min ago.
+        assert_eq!(
+            state(phone(now, Some((1, 300)), Some(50), Some(50))).word(),
+            "Online"
+        );
+        assert_eq!(
+            state(phone(now, Some((1, 300)), Some(60), Some(60))).word(),
+            "Online"
+        );
+        // A stream "open" with no contact for 61 min: the phone vanished without closing it.
+        assert_eq!(
+            state(phone(now, Some((1, 300)), Some(61), Some(61))).word(),
+            "Offline"
+        );
+        // No stream: Away up to 45 min, then Offline.
+        assert_eq!(state(phone(now, None, Some(30), Some(30))).word(), "Away");
+        assert_eq!(state(phone(now, None, Some(45), Some(45))).word(), "Away");
+        assert_eq!(
+            state(phone(now, None, Some(46), Some(46))).word(),
+            "Offline"
+        );
+        // A stream that closed counts for nothing (open 0), its `since` is not a contact.
+        assert_eq!(
+            state(phone(now, Some((0, 1)), None, Some(50))).word(),
+            "Offline"
+        );
+        // A stream that just opened is a contact by itself.
+        assert_eq!(
+            state(phone(now, Some((1, 0)), None, Some(300))).word(),
+            "Online"
+        );
+        // The newest signal wins: a fresh request beats an old report.
+        assert_eq!(
+            state(phone(now, None, Some(2), Some(200))).last_contact(),
+            Some(minutes_ago(now, 2))
+        );
+    }
+
+    #[test]
+    fn right_after_a_restart_a_fresh_report_is_away_until_the_stream_is_back() {
+        let now = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
+        // Memory empty: no stream, no last access - only the database's last report.
+        let restarted = phone(now, None, None, Some(5));
+        assert_eq!(connection_state(&restarted, now).word(), "Away");
+        let reconnected = ConnectionInputs {
+            stream: Some(StreamState {
+                open: 1,
+                since: now,
+            }),
+            last_access: Some(now),
+            ..restarted
+        };
+        assert_eq!(connection_state(&reconnected, now).word(), "Online");
+        // Older than the Away window: Offline until it reconnects.
+        assert_eq!(
+            connection_state(&phone(now, None, None, Some(50)), now).word(),
+            "Offline"
+        );
+    }
+
+    #[test]
+    fn words_and_colours() {
+        let t = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
+        let online = ConnectionState::Online {
+            since: t,
+            last_contact: t,
+        };
+        assert_eq!((online.word(), online.css()), ("Online", "online"));
+        let away = ConnectionState::Away { last_contact: t };
+        assert_eq!((away.word(), away.css()), ("Away", "away"));
+        for (state, word) in [
+            (ConnectionState::Offline { last_contact: t }, "Offline"),
+            (ConnectionState::Disconnected, "Disconnected"),
+            (ConnectionState::NotSeenYet, "Not seen yet"),
+            (ConnectionState::NotSetUp, "Not set up"),
+        ] {
+            assert_eq!((state.word(), state.css()), (word, "offline"));
+        }
+        assert_eq!(ConnectionState::NotSeenYet.last_contact(), None);
+    }
 
     #[test]
     fn guards_count_streams_per_device() {
@@ -232,23 +516,5 @@ mod tests {
         assert!(*late.closed().borrow(), "opened during shutdown");
         drop(first);
         assert_eq!(streams.state(1).unwrap().open, 0);
-    }
-
-    #[test]
-    fn the_line_says_what_the_server_can_tell() {
-        let since = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
-        let connected = instant_changes_line(Some(StreamState { open: 1, since }));
-        assert!(
-            connected.starts_with("Instant changes: connected since 2026-"),
-            "{connected}"
-        );
-        assert!(connected.contains("as far as this server can tell"));
-        assert!(connected.contains("every 30 minutes"));
-        let down = instant_changes_line(Some(StreamState { open: 0, since }));
-        assert!(
-            down.starts_with("Instant changes: not connected since 2026-"),
-            "{down}"
-        );
-        assert!(instant_changes_line(None).contains("since this server started"));
     }
 }

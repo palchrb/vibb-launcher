@@ -812,7 +812,7 @@ pub struct Listing {
     pub art_same_run: i64,
     pub art_backlog_at: Option<String>,
     pub art_refresh: bool,
-    /// Spotify (design 26c §3.3-§3.4, migration 0073): `list` or `context`.
+    /// Spotify (design 26c §3.3-§3.4, migration 0074): `list` or `context`.
     pub spotify_mode: Option<String>,
     /// A playlist's `snapshot_id` at the last item read.
     pub spotify_snapshot: Option<String>,
@@ -1354,7 +1354,7 @@ struct Plan {
     spotify: SpotifyPlan,
 }
 
-/// A check's Spotify state (design 26c §3.3-§3.4, migration 0073's columns), from and to
+/// A check's Spotify state (design 26c §3.3-§3.4, migration 0074's columns), from and to
 /// `music_listings`; kept as it was by a failed check.
 #[derive(Clone, Default)]
 struct SpotifyPlan {

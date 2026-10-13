@@ -19,6 +19,9 @@ base64 = "0.22"
 # quick-xml's own "encoding" feature (MIT/Apache-2.0).
 encoding_rs = "0.8"
 chrono = { version = "0.4.45", features = ["serde"] }
+# The parent PWA's local times (design 31 §3.10, src/display_time.rs): the Phone Setup time zone.
+# The IANA data is compiled in, so the distroless image needs no zoneinfo (MIT/Apache-2.0).
+chrono-tz = { version = "0.10.4", default-features = false, features = ["std"] }
 dotenvy = "0.15.7"
 # The music library endpoint (design 21) answers gzip; already in the tree through zip.
 flate2 = "1"

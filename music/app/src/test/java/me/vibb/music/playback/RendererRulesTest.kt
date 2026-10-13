@@ -37,11 +37,11 @@ class RendererRulesTest {
     fun `a Spotify item plays by the network gate alone - no copy, no url, never GONE (QA H1)`() {
         val s = spotify()
         for (kind in listOf(RendererKind.LOCAL, RendererKind.SPOTIFY)) {
-            assertTrue(itemPlayable(kind, s, hasCopy = false, hasUrl = false, wifi, mobileData = false))
-            assertFalse("mobile data not allowed", itemPlayable(kind, s, false, false, mobile, mobileData = false))
-            assertTrue("the parent's switch", itemPlayable(kind, s, false, false, mobile, mobileData = true))
-            assertFalse("never roaming", itemPlayable(kind, s, false, false, roaming, mobileData = true))
-            assertFalse("offline", itemPlayable(kind, s, false, false, null, mobileData = true))
+            assertTrue(itemPlayable(kind, s, hasCopy = false, hasUrl = false, wifi, streamMobileData = false))
+            assertFalse("streaming on mobile data not allowed", itemPlayable(kind, s, false, false, mobile, streamMobileData = false))
+            assertTrue("the parent's streaming switch", itemPlayable(kind, s, false, false, mobile, streamMobileData = true))
+            assertFalse("never roaming", itemPlayable(kind, s, false, false, roaming, streamMobileData = true))
+            assertFalse("offline", itemPlayable(kind, s, false, false, null, streamMobileData = true))
         }
         // the phone's other items: unchanged
         assertFalse("a url-less feed item without a copy is gone", itemPlayable(RendererKind.LOCAL, entry(2), false, false, wifi, false))

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.media.MediaCache
+import me.vibb.music.Fixtures.moduleFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -75,7 +76,7 @@ class ReportTest {
     @Test
     fun `the report has music_state's fields and never positions`() {
         val report = stateReport(
-            versionCode = 7, libraryVersion = "aa485b7dd0d2a390", cacheBytes = 1234,
+            versionCode = 7, libraryVersion = "aa485b7dd0d2a390", cacheBytes = 1234, audioBytes = 1000, extraBytes = 0,
             entryErrors = listOf(EntryError(3, "bad_listing")),
             itemErrors = listOf(ItemError(2, "0123456789abcdef", "k1", "http_404")),
             downloads = listOf(DownloadState(2, "0123456789abcdef", 1, 3, Waiting.WIFI), DownloadState(1, "v", 2, 2, null)),
@@ -83,15 +84,18 @@ class ReportTest {
             sonosRooms = listOf(ReportedRoom("RINCON_000E58A0B1C201400", "Stua")),
         )
         assertEquals(
-            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel", "spotify", "sonos_rooms"),
+            setOf(
+                "version_code", "library_version", "cache_bytes", "audio_bytes", "extra_bytes", "downloads_waiting", "entry_errors", "item_errors",
+                "downloads", "storytel", "spotify", "sonos_rooms",
+            ),
             report.keys,
         )
         assertEquals("design 26c §4.4: none until the player plays Spotify", "none", report["spotify"]!!.jsonPrimitive.content)
-        assertEquals("ok", stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = "ok")["spotify"]!!.jsonPrimitive.content)
+        assertEquals("ok", stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = "ok")["spotify"]!!.jsonPrimitive.content)
         val room = (report["sonos_rooms"] as JsonArray).single().jsonObject
         assertEquals("uid and name only - never an ip", setOf("uid", "name"), room.keys)
         assertEquals("Stua", room["name"]!!.jsonPrimitive.content)
-        assertEquals(JsonArray(emptyList()), stateReport(1, null, 0, emptyList(), emptyList(), emptyList())["sonos_rooms"])
+        assertEquals(JsonArray(emptyList()), stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList())["sonos_rooms"])
         assertEquals("ok", report["storytel"]!!.jsonPrimitive.content)
         assertEquals(2, report["downloads_waiting"]!!.jsonPrimitive.int)
         val error = (report["item_errors"] as JsonArray).single().jsonObject
@@ -108,7 +112,7 @@ class ReportTest {
     fun `the report's spotify is the stored outcome's word, and an unplayable track is an item error`() {
         val file = SpotifyOutcome("not_premium", 1_760_000_000_000).encode()
         val report = stateReport(
-            1, "v", 0, emptyList(),
+            1, "v", 0, 0, 0, emptyList(),
             listOf(ItemError(6, "11ee11ee11ee11ee", "1FakeTrackA00000000001", "unplayable")),
             emptyList(),
             spotify = SpotifyOutcome.reported(file),
@@ -118,15 +122,34 @@ class ReportTest {
         assertEquals("unplayable", error["error"]!!.jsonPrimitive.content)
         assertEquals("the track's id, never a uri or a token", "1FakeTrackA00000000001", error["item"]!!.jsonPrimitive.content)
         for (word in SpotifyWords.ALL) {
-            assertEquals(word, stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(SpotifyOutcome(word, 1).encode()))["spotify"]!!.jsonPrimitive.content)
+            assertEquals(word, stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(SpotifyOutcome(word, 1).encode()))["spotify"]!!.jsonPrimitive.content)
         }
-        assertEquals("no file: none", "none", stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(null))["spotify"]!!.jsonPrimitive.content)
+        assertEquals("no file: none", "none", stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(null))["spotify"]!!.jsonPrimitive.content)
         // the stored file holds the word and its time, nothing else
         assertEquals(setOf("outcome", "at"), kotlinx.serialization.json.Json.parseToJsonElement(file).jsonObject.keys)
         // one row per track, the latest (a track unplayable twice is one row)
         var log = addItemError(emptyList(), ItemError(6, "v", "t1", "unplayable"))
         log = addItemError(log, ItemError(6, "v", "t1", "unplayable"))
         assertEquals(1, log.size)
+    }
+
+    /** Design 30 §1.10 (M4): both always sent, 0 included - their presence tells the PWA this app reads both switches. */
+    @Test
+    fun `audio_bytes and extra_bytes are always in the report`() {
+        val none = stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList())
+        assertEquals(0L, none["audio_bytes"]!!.jsonPrimitive.long)
+        assertEquals(0L, none["extra_bytes"]!!.jsonPrimitive.long)
+        val some = stateReport(1, null, 3_500_000_000, 3_400_000_000, 200_000_000, emptyList(), emptyList(), emptyList())
+        assertEquals(3_500_000_000L, some["cache_bytes"]!!.jsonPrimitive.long)
+        assertEquals(3_400_000_000L, some["audio_bytes"]!!.jsonPrimitive.long)
+        assertEquals(200_000_000L, some["extra_bytes"]!!.jsonPrimitive.long)
+        // The music app sends them from the report the sync and the download job both write (writeReport).
+        val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
+        val write = sync.substringAfter("suspend fun writeReport(context: Context)").substringBefore("val text = report.toString()")
+        assertTrue(write.contains("val audioBytes = MediaCache.totalBytes(context)"))
+        // design 30 step 3b: the played extras' bytes now, from the report's own plan (L1)
+        assertTrue(write.contains("val extraBytes = CacheThrough.extraBytes(context, plan)"))
+        assertTrue(write.contains("audioBytes + ownBytes,\n            audioBytes,\n            extraBytes,"))
     }
 
     /** Design 26b §4.5 (QA M4): a Storytel entry's waiting, and the account's word. */
@@ -143,7 +166,7 @@ class ReportTest {
         assertEquals("else the shared rule", listOf(Waiting.ROAMING, Waiting.ROAMING, null), waits(Waiting.ROAMING, "ok", 10 * gb))
         assertEquals(listOf(null, null, null), waits(null, "ok", 10 * gb))
         for (word in listOf("none", "ok", "refused")) {
-            val report = stateReport(1, null, 0, emptyList(), emptyList(), reportWaiting(states, storytel, null, word, 10 * gb), word)
+            val report = stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), reportWaiting(states, storytel, null, word, 10 * gb), word)
             assertEquals(word, report["storytel"]!!.jsonPrimitive.content)
             if (word != "ok") assertEquals("login", (report["downloads"] as JsonArray)[0].jsonObject["waiting"]!!.jsonPrimitive.content)
         }

@@ -171,6 +171,29 @@ class SpotifyRulesTest {
         assertEquals(listOf(6L), plan.prune.map { it.entryId })
     }
 
+    /**
+     * Design 30 at the merge of main (571f86f): its played extras, the storage limit and the downloads switch never
+     * apply to Spotify - nothing of it is fetched, cached or kept. A Spotify row (which can't exist: nothing ever
+     * writes one) that says "played" is still pruned, never an extra, at any depth, held or not; the plan wants no
+     * Storytel floor for it; the free-floor eviction has nothing of it to pick.
+     */
+    @Test
+    fun `design 30 - a Spotify item is never a played extra, never downloaded, never under the storage limit`() {
+        val feed = entry(2)
+        for (playlist in listOf(spotify(6, "playlist"), spotify(6, "playlist").copy(cache = 5), spotify(6, "playlist").copy(cache = -1))) {
+            val snap = snapshot(library(listOf(playlist, feed)), items = rows(6, listOf("t1", "t2")) + Fixtures.items(2, listOf("e1")))
+            val played = done(6, "t2").copy(playedAt = 1_760_000_000_000)
+            val held = setOf(me.vibb.music.logic.ItemRef(6, "t2"))
+            for (plan in listOf(downloadPlan(snap, listOf(played), 0), downloadPlan(snap, listOf(played), 0, held))) {
+                assertTrue("depth ${playlist.cache}: never an extra", plan.extras.none { it.entryId == 6L })
+                assertEquals("depth ${playlist.cache}: pruned", listOf(played), plan.prune.filter { it.entryId == 6L })
+                assertTrue(plan.wanted.none { it.entry.id == 6L })
+                assertFalse(plan.wantsStorytel)
+                assertTrue("no downloads state, so no waiting", plan.states.none { it.entry == 6L })
+            }
+        }
+    }
+
     @Test
     fun `NY - a listed Spotify item is news once Spotify plays, only acknowledged before (26c §4_3)`() {
         val playlist = spotify(6, "playlist")
@@ -205,10 +228,10 @@ class SpotifyRulesTest {
 
     @Test
     fun `spotifyPlayability is the stream gate - never GONE, never LOCAL (H1)`() {
-        assertEquals(Playability.STREAM, spotifyPlayability(wifi, mobileData = false))
-        assertEquals(Playability.STREAM, spotifyPlayability(mobile, mobileData = true))
-        for ((caps, mobileData) in listOf(mobile to false, roaming to true, noInternet to true, null to true)) {
-            assertEquals("$caps $mobileData", Playability.NEEDS_NETWORK, spotifyPlayability(caps, mobileData))
+        assertEquals(Playability.STREAM, spotifyPlayability(wifi, streamMobileData = false))
+        assertEquals(Playability.STREAM, spotifyPlayability(mobile, streamMobileData = true))
+        for ((caps, streamMobileData) in listOf(mobile to false, roaming to true, noInternet to true, null to true)) {
+            assertEquals("$caps $streamMobileData", Playability.NEEDS_NETWORK, spotifyPlayability(caps, streamMobileData))
         }
         assertNull(spotifyNetworkLine(wifi, false))
         assertEquals("mobile data not allowed", SpotifyLine.NEEDS_WIFI, spotifyNetworkLine(mobile, false))

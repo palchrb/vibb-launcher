@@ -1640,7 +1640,7 @@ internal class SpotifyRenderer(
             val fakeTokens = SpotifyEndpoints.debugTokens()
             val fakeApi = SpotifyApi(http, base, SystemClock::elapsedRealtime)
             // the fake's token route only for a run without a launcher (§9.3): a managed phone - the debug launcher
-            // with the server on the fake's accounts base, §6k part A - takes its token through the bridge
+            // with the server on the fake's accounts base, §6l part A - takes its token through the bridge
             val ask: suspend () -> TokenResult = suspend {
                 if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {
                     runInterruptible(Dispatchers.IO) { fakeApi.debugToken(fakeTokens) }
@@ -1740,7 +1740,7 @@ private class AndroidSpotifyPorts(
         },
     )
 
-    override fun networkLine(): SpotifyLine? = spotifyNetworkLine(netCaps(app), store.mobileData)
+    override fun networkLine(): SpotifyLine? = spotifyNetworkLine(netCaps(app), store.streamMobileData)
 
     override fun save(a: Active, index: Int, posMs: Long, durationMs: Long?, force: Boolean) =
         persistPlace(app, store, scope, writer, a, index, posMs, durationMs, durationMs, force)

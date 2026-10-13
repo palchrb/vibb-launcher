@@ -25,7 +25,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Storytel - the login, the asset call's 302, a CDN of silent books - answering from the music app's Storytel test
   fixtures; §6i), `fake-spotify.py` (a fake Spotify - the accounts service with PKCE, the Web API the server and the
   phone use, a stub Web Playback SDK playing a tone - answering from `server/testdata/spotify/` and the music app's
-  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6k).
+  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-audio.py` (a fake podcast host of
+  silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -78,8 +79,8 @@ one commit.
   shared snapshots, the three `spotify_hosts.json`, `music/gradle/` and `music.yml`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
-  `scripts/fake-storytel.py` and `scripts/fake-spotify.py`, whose `--selftest`s it runs after the build;
-  `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` copies;
+  `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
+  after the build; `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` copies;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

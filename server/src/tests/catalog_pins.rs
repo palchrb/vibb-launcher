@@ -112,13 +112,18 @@ async fn the_first_release_pins_the_app_and_a_different_one_is_refused() {
         .await
         .unwrap();
 
-    // Not an APK at all: refused, nothing cached.
+    // Not an APK at all: refused, nothing cached. The Upload group says so in a short title, the
+    // raw error behind its ⓘ (design 31 §4.4), with Source & Signing open.
     let junk = upload(&app, &cookie, id, "0.9", b"PK\x03\x04not a zip").await;
+    let page = junk.text().replace("&#39;", "'");
+    assert!(page.contains("a zip: invalid Zip archive"), "{page}");
+    let flash = &page[page
+        .find(r#"data-flash="upload""#)
+        .expect("the upload's flash")..];
     assert!(
-        junk.text().contains("a zip: invalid Zip archive"),
-        "{}",
-        junk.text()
+        flash.starts_with(r#"data-flash="upload">"#) && flash.contains("Couldn't read the APK")
     );
+    assert!(page.contains(r#"id="source" open"#), "{page}");
     assert_eq!(pins(&app, id).await, (String::new(), None, None));
 
     let mut nudges = app.state.command_notify.subscribe();
@@ -162,15 +167,21 @@ async fn the_first_release_pins_the_app_and_a_different_one_is_refused() {
     assert_eq!(entry["signer_sha256"], KEY1);
 
     // Another key, another package: refused, the cached release kept.
-    for (bad, why) in [
-        ("fixture-key2.apk", "signed with a different key"),
+    for (bad, why, title) in [
+        (
+            "fixture-key2.apk",
+            "signed with a different key",
+            "Signed with a different key",
+        ),
         (
             "other-package-key1.apk",
             "the Android package me.vibb.otherfixture",
+            "Release is a different app",
         ),
     ] {
         let refused = upload(&app, &cookie, id, "2.0", &fixture(bad)).await;
         assert!(refused.text().contains(why), "{bad}: {}", refused.text());
+        assert!(refused.text().contains(title), "{bad}: {}", refused.text());
         assert_eq!(pins(&app, id).await.2.as_deref(), Some("1.0"), "{bad}");
     }
     // The same key again is a normal update.
@@ -338,6 +349,7 @@ async fn a_release_naming_an_app_from_elsewhere_or_the_system_is_refused() {
         "{}",
         refused.text()
     );
+    assert!(refused.text().contains("Package belongs to another app"));
     assert_eq!(pins(&app, id).await, (String::new(), None, None));
     assert!(!allowed(&app, &token, "org.mozilla.firefox").await);
 
@@ -376,6 +388,12 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
         "{}",
         v1_only.text()
     );
+    assert!(
+        v1_only
+            .text()
+            .replace("&#39;", "'")
+            .contains("Release can't be checked")
+    );
     assert_eq!(pins(&app, id).await.2.as_deref(), Some("1.0"));
 
     let pinned =
@@ -389,7 +407,11 @@ async fn a_pinned_app_refuses_what_it_cant_check() {
         signer_sha256: Some(KEY1.to_string()),
     };
     let refused = crate::handlers::tracked_apps::check_pins(&pinned, &unreadable).unwrap_err();
-    assert!(refused.contains("can't be read"), "{refused}");
+    assert_eq!(
+        refused.problem,
+        crate::handlers::tracked_apps::SyncProblem::CantCheck
+    );
+    assert!(refused.detail.contains("can't be read"), "{refused}");
 }
 
 /// QA of the security wave, Medium 3: a new phone keeps calls and texts - its phone and SMS apps,

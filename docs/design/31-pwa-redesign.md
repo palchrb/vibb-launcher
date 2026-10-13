@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, see "Step 1 implementation status" at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -705,6 +705,10 @@ Below the rows:
      optimisation. A battery percentage needs a launcher and API change, which is out of scope here.
 2. **Attention.** Only the rows that apply, from `attention::collect`. Each row has a short title of at most 8
    words, built from a typed value (M5), and links to the page that fixes it.
+   - **Which rows count** (the user's decision, qa-31-s2-code L5): a phone not set up has none (its "Not set up" is
+     enough). An Offline or Disconnected phone keeps the rows read from its last report, marked "At last report";
+     the server's own facts (no or easy Parent PIN, access removed, incoming calls not blocked) stay unmarked. The
+     list's count and the summary count the same rows.
    - **Alarms (red):**
      - restrictions paused;
      - possible PIN leak (foreign app);
@@ -720,6 +724,13 @@ Below the rows:
    - **Needs action (orange):**
      - blocked apps waiting;
      - restart once;
+     - Play install mode on, "Play Store open (install mode)" → Advanced › App screens;
+     - Play can't be paused while "Block other apps' screens" is off, "Play Store can be opened" → App screens;
+     - "Vibb isn't the Home app" (the update fence is partial) → Advanced › Updates & notifications;
+     - "Boot cover wasn't shown" (another home screen came up at boot) → Updates & notifications.
+
+       These four were added in step 3's fix round (qa-31-s3-code M4, L4). The coordinator decided yes on the user's
+       behalf, since each lets other screens reach the child; **the user can overrule** it, and the rows go.
      - no notification access;
      - calls problems from `call_report`;
      - the screen-time record unreadable (`ledger_unreadable`, L2);
@@ -995,7 +1006,8 @@ look:
      - **New setup code** is a POST to `/devices/{id}/regenerate-code`, which shows the code page.
 - Missing server setup (no checksum, no server URL) shows as one red row, "Server setup needed", with the env var
   detail behind ⓘ.
-- `enroll_code.html`'s "Back to …" goes to `/devices/{id}` (enrolled) or the "Connect this phone" group, not
+- `enroll_code.html`'s "Back to …" goes to Advanced › Connection (`/devices/{id}/advanced#connection`, where New
+  Setup Code is for an enrolled phone; step 3, qa-31-s3-code #12) or the "Connect this phone" group, not
   `#access` (L5).
 
 ### 3.8 Shared builders: card builders, `attention::collect`, typed states
@@ -1005,8 +1017,11 @@ look:
   `music::device_card`. Each sub-page handler calls only its own builders (M1).
 - **`attention::collect(state, device) -> Vec<AttentionItem>`.**
   - Each item has a kind, a level (alarm / action), a short title and a target URL.
-  - It reads about 10 sources per phone: relock, parent PIN, play, escapes, `call_report`, music, sound, boots,
-    policy problem, notification access, Google backup, kid lock, time state.
+  - It reads about 10 sources per phone: relock, parent PIN, play, `call_report`, sound, boots, policy problem,
+    notification access, Google backup, kid lock, time state, and since step 3's fix round the Play notes and the
+    escapes notes (Advanced's own builders, so the row and the page agree). Music has no row in §3.2's list.
+  - As built (step 2): `attention::facts` gathers them into typed `Facts`, `attention::items` makes the rows; the
+    device page passes the cards it has already built to `facts_of`.
   - The summary renders it. The Devices list shows its length as the badge.
   - A test checks that the list's count equals the summary's rows.
   - On the list this is about 10 small reads per phone. That is fine at 1-5 phones. Do not attempt a single query.
@@ -1117,19 +1132,31 @@ Notes for the build:
   - Each has its derivation in a comment that names `BACKSTOP_INTERVAL_MS`, `BACKSTOP_SSE_DOWN_INTERVAL_MS` and the
     0.75 inexact window. Nothing links the two files at compile time.
   - A launcher change to the backstop must revisit them.
-- **Right after a server restart**, the memory is empty. A phone with a fresh `last_seen_at` shows **Away** for the
-  5-15 s until its stream reconnects. That is honest and harmless, so there is no special case.
-- **The lock badge's end time and "stale" wording** (M4):
-  - The report has the rule's name and the phone's local `day`, not the window's end. The end comes from the rule's
-    days on the server.
-  - The end shows only when the phone's `day` and the day before give the same end for that rule. Otherwise the
-    badge shows the rule name alone.
+- **Right after a server restart**, the memory is empty. A phone shows **Away**, or **Offline** if its last report
+  is over 45 min old (as an idle phone's often is), until its stream reconnects: seconds after a clean stop, up to
+  5 min after a crash or a power cut (no FIN reaches the phones; they reconnect after 300 s of silence). That is
+  honest and harmless, so there is no special case (qa-31-s2-code L4).
+- **The lock badge's end time and "stale" wording** (M4; the step 2 fix round, qa-31-s2-code M1-M3):
+  - **The end shows only when it is provably right** (the parent's rule). The report has the rule's name and the
+    phone's local `day`, not the window's end, so the end comes from the rules' days on the server, and only when
+    all of these hold:
+    - the phone reports its own time zone (`time_state.zone`) and it is the Phone Setup zone, since the windows are
+      the phone's wall clock. **No launcher sends a zone yet, so no end shows today**; a launcher `zone` (or better,
+      `active_until`) field is an API change in both directories, left out of design 31;
+    - the report is fresh, from the server's local today, and its local time lies inside one window of the active
+      rule (a report a few seconds after the end is outside it);
+    - at that window's end no effective rule has a window running or starting (the same rule's next day, an all-day
+      rule, a legacy morning/evening pair, an adjacent or overlapping rule), and the screen time isn't used up: the
+      end is a real unlock.
   - An end on the next local day says so: "Leggetid until 07:00 tomorrow". On the same day it is "Skole until 14:30".
   - When the report's `day` isn't the server's local today, neither the badge's end nor the screen-time bar shows.
-    The badge then says "Leggetid · at last report (yesterday 21:40)".
-  - Offline always adds "at last report". Away adds it once the report is older than 15 min (L2).
-  - A launcher `active_until` field would remove the guess. That is an API change in both directories, left out of
-    design 31.
+    The badge then says "Leggetid · at last report (yesterday 21:40)". An end already passed does the same.
+  - Offline always adds "at last report". Away adds it once the report is older than 15 min (L2). A stale badge
+    never has an end.
+  - **The fallback zone** (Phone Setup's zone empty or unknown): no end; the report's `day` counts as current within
+    a day of the UTC date, and the bar names the phone's day ("42 of 90 min on 13 Oct") instead of "today" (M2).
+  - **"· calls off"** only while calls are managed and the launcher screens them (no "Calls aren't screened" or
+    "Anyone can call this phone" in the call report), as the device page says (M3).
 - **Local and relative time** come from `display_time` (M4):
   - It uses `chrono-tz` (MIT/Apache-2.0; the IANA data is compiled in, so the distroless image needs no
     `zoneinfo`), with the zone from Phone Setup (`provisioning_settings.time_zone`).
@@ -1944,3 +1971,265 @@ Choices made while building:
 5. `/updates` isn't fetched by the tab test (it asks GitHub when it renders); its tab is checked in the template.
 6. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox) - owed on a phone or
    desktop browser before merging.
+
+## Step 2 implementation status (2026-10-13)
+
+Built on branch `design-31-s2` (from `60872f24`); server only, no migration. New crate: `chrono-tz` 0.10.4
+(MIT/Apache-2.0, `std` only; adds `phf`, `phf_shared`, `siphasher` to `Cargo.lock`).
+- **`display_time`** (`src/display_time.rs`): `Zone::load` reads the Phone Setup zone; empty or unknown (case-sensitive
+  IANA ids, so "Europe/Olso" and "europe/oslo") is UTC and every clock time says "UTC". `parse_db_utc`
+  (`datetime('now')` text with or without a fraction, and RFC 3339), `local`, `clock` ("14:30"), `exact` for `title=`
+  ("2026-10-13 10:59:13 CEST"), `relative` (§3.10's steps; "12 Oct 2025" in another year; up to 5 min ahead is "just
+  now", further ahead its date). Unit tests: Oslo DST both ways, an empty and an unknown zone, yesterday, a time
+  2 min ahead, the steps. The Settings hub's "today" and backup time now use the Phone Setup zone (step 1 choice 3).
+- **`connection_state`** (`streams.rs`, pure, `ONLINE_WINDOW_MINUTES` 60 / `AWAY_WINDOW_MINUTES` 45 with their
+  derivation): Online, Away, Offline, Disconnected, Not seen yet, Not set up; last contact is the newest of last
+  access, `last_seen_at` and an open stream's `since`. `devices::connection_of` feeds it. Table tests for every row,
+  50 min / 61 min with a stream, 30 / 45 / 46 min without, revoked, the restart case.
+- **Lock badge and screen time** (`src/time_state.rs`): the typed `time_state` (`TimeReport`), `LockBadge` and
+  `ScreenTime` with §3.10's rules (M4; the end time as tightened by the fix round below); another day's report shows
+  no end and no bar and says "at last report (yesterday 21:40)"; Offline always and Away after 15 min add "at last
+  report"; an end already passed drops the end and says "at last report".
+- **`attention::facts` + `items`** (`src/attention.rs`; `collect` in the spec): §3.2's 11 alarms and 6 needs-action kinds from typed sources -
+  `kid_lock::lock_off` (new: a Child PIN set but the lock off on the phone), `calls::CallProblem` (new: the call
+  report's warnings typed, one per warning, each with a title of at most 8 words), the relock card's foreign access
+  and blocks, `admin_policy_notice`, the sound filter, the backup flag, the policy state, the boots, the rules.
+  `devices::managed_without_pin` and `launcher_without_rules` are shared with the device page.
+- **Devices list** (`devices_list.html`, `devices::list_row`): large title, the sign-in warnings as orange rows
+  (live: a link to Account; after sign-in: with Dismiss), "Phones" group (avatar with initial and connection dot,
+  name, "Online · seen 3 min ago" with the exact time in `title`, the lock part, the bar and "42 of 90 min today",
+  the red count), "No phones yet.", the Add Phone row. The intro paragraph moved to `device_add.html`.
+  `style.css?v=10` (avatar, dot, row, `.visually-hidden`, the warning rows' sub-line and Dismiss).
+- **Stub summary** (until step 10): the device page shows the Attention rows in an "Attention" group under its
+  title, linking to the cards (`#status`, `#time`, `#launcher`, `#hardening` are new ids; `#parent-pin`, `#access`,
+  `#screen-lock`, `#play-kiosk`; calls rows to `/devices/{id}/calls`). Each later step repoints its targets
+  (`attention::target`).
+- **Tests**: unit tests in `display_time`, `streams`, `time_state`, `attention`, `kid_lock`, `settings_hub`;
+  `tests/devices_list.rs` (every connection state on the list, the lock part and bar, yesterday's report, the badge
+  equal to the device page's rows, the UTC fallback, the empty list). `cargo test`: 703 passed; `node --test
+  jstest/*.test.js`: 16 passed; fmt clean; clippy: the same 13 warnings as before, none in the step's files.
+
+Choices made while building:
+1. **The list's status line**: Online with a lock shows the lock instead of "seen ..." (the Main mockup's "Online ·
+   Skole until 14:30"); Away and Offline keep "seen ..." and add the lock. When "at last report" would repeat the
+   seen time, the list leaves the time out ("Skole · at last report").
+2. **The bar**: shown with a limit; without a limit "42 min today" without a bar, and nothing at 0 min.
+3. **Calls rows** are orange (§3.2 lists "calls problems" under needs action), one per warning but not "waiting for
+   the phone"; "Anyone can call this phone" is the §4.5 #17 title.
+4. **`parent_pin::when_text`** is not folded in yet: its callers (Status notices, PIN events, relock and boot notes)
+   switch to `display_time` in the steps that rebuild their cards (3, 4, 10), and it goes with the last.
+5. **Attention's music and escapes sources**: §3.8 names them, but §3.2's list has no row for them; nothing added.
+6. **The avatars** use darker shades of the mockup's hues (white text 4.5:1 or more; decorative, `aria-hidden`); a
+   phone not set up is grey. The mockup's "+" in the top bar is left out: the brand bar is still there (step 15),
+   and the Add Phone row does the same.
+7. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox).
+
+**Fix round after the code QA** (`qa-31-s2-code.md`: 3 Medium, 5 Low, nits; all fixed, with `main` merged first -
+designs 30, 32 step 1 and 33):
+
+| # | Fix |
+|---|---|
+| M1 | `time_state::provable_end`: an end only when the phone reports its zone (`time_state.zone`) and it is Phone Setup's, the report is fresh and today's and lies inside one window of the active rule, and at that end no effective rule locks (same rule's next day, all-day, legacy pair, adjacent or overlapping rules) and the screen time isn't used up. A stale badge never has an end. No launcher sends a zone yet, so **no end time shows today**; a launcher `zone`/`active_until` field is an API change left out of design 31. Tests: the three QA probes (a report at 14:30:05, a London phone, windows that meet), all-day every day, a one-day 24 h window, the day before's 24 h window, overlap, adjacency, used-up screen time; the devices-list test now expects "Skole" with no end for an every-day all-day rule. |
+| M2 | The fallback zone shows no end (its `name()` is none); the report's `day` counts as current within a day of the UTC date, and the bar says "42 of 90 min on 13 Oct" instead of "today". Test: a New York phone at 20:30 local. |
+| M3 | "· calls off" only with `Facts::calls_enforced` (calls managed, no `NotEnforced`/`AnyoneCanCall` in the call report); a list test with calls unmanaged. |
+| L1 | `tests/attention.rs`: one test per fact (each report field or setting raises exactly its row on an otherwise clean phone, and nothing on the clean one), and every call warning has its typed problem (a report that sets every flag). |
+| L2 | Away's stale boundary tested at 15 and 16 min; the report's date check and the day before's 24 h window each have a case. |
+| L3 | The sign-in warnings on Devices are short rows (`auth::live_warning_row`: "5 wrong two-factor codes since sign-in", "Someone knows your password - change it · sign-ins locked until 14:05" in the Phone Setup zone; `login_warning_row`); the full sentences stay on Account. Kept orange, as §3.2 says. |
+| L4 | §3.10, `server/CLAUDE.md` and the `connection_state` doc: Away, or Offline past 45 min, until the stream is back - seconds after a clean stop, up to 5 min after a crash. |
+| L5 | The user's decision (§3.2 item 2): no rows for a phone not set up; an Offline or Disconnected phone's report-based rows say "At last report" and still count; list and summary count the same `items`. |
+| Checks | `cargo test` 725 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+| Nits | A time more than 5 min ahead reads "today 16:00" on the same day; the key test uses a set and documents that calls rows share "calls"; the device page passes its built cards to `attention::facts_of` (`call_warnings` is gone, the page uses `call_report`); the avatar letter is the first letter or digit, one character ("ß" kept, emoji and flags skipped); the Backups page labels its times "server time" (it matches the file names; the hub uses the Phone Setup zone); the `title=` on the list's "seen" stays (the header's ⓘ is step 10's). §3.8 no longer names music and escapes as sources. |
+
+## Step 3 implementation status (2026-10-13)
+
+Built on branch `design-31-s3` (from `main` at `4d225da4`, step 2 merged); server only, no migration, no new crate.
+- **Routes:** `GET /devices/{id}/about` and `GET /devices/{id}/advanced` (`handlers::device_pages`). Unknown phone: 404.
+  Every POST route is unchanged; only where the forms return moved.
+- **About This Phone** (`device_about.html`, read-only, the About mockup plus Time lock): Connection (Status "Online
+  since 08:12" / Away / Offline / Disconnected "access removed" / Not seen yet / Not set up; Last contact "10:59 · 3
+  min ago"; Last full report; Network from `LastAccess`, the outside addresses behind ⓘ; the mockup's footer, the
+  check-in cadence behind its ⓘ), Sound (Ringer, Do Not Disturb red while on), Software (Vibb "0.23.6", full version
+  behind ⓘ; Music app; Settings from server "Applied" or a `PolicyProblem` title, the old sentence behind ⓘ; Battery
+  optimisation, the fix behind ⓘ), Diagnostics (Crash reports "None in 30 days" / "N kinds" with one row per crash,
+  the trace behind its ⓘ; Starts without Vibb; Time lock). Local times, the exact one in `title`.
+- **Advanced** (`device_advanced.html`): Restrictions (all 10 switches as **one** `hardening` form, H1, in three
+  groups so each has its footer and ⓘ, then the Backup to Google row, with the alarm above the group while it is on);
+  App screens (`kiosk-block` "Block other apps' screens" + the Play state); Updates & notifications (`kiosk-escapes`,
+  one form: Update fence, Notification filter, Boot cover, each with a one-line subtitle, the details behind the
+  footer's ⓘ; the phone's state as rows, warnings above; "Removed since last report"); Connection (live code row,
+  New Setup Code, Set Up with QR Code ›, **Disconnect Phone…** as a `<details>` confirm keeping the required box, the
+  flash in the group); **Remove Phone…** as a `<details>` confirm. Sub-page header (back link + large title), the
+  tab bar alone (`partials/tab_bar.html`, split out of `app_header.html`).
+- **Redirects** (§5.1): `hardening`, `kiosk-block` and `kiosk-escapes` → `/devices/{id}/advanced` with no fragment
+  (since the fix round, M3); `revoke` → `/advanced?notice=…#connection`; `delete` → `/devices`.
+  `enroll_code.html`'s Back: `/advanced#connection` (enrolled), `#access` (the not-enrolled card).
+- **The device page:** the Access, Play and kiosk, Launcher updates and notifications, Launcher crashes and Phone
+  hardening cards and Remove are gone; the Status card lost the time lock line, app version, sound lines, "Last
+  reported", the policy problem and the unseen-boots text. Two rows at the bottom: **About This Phone · Vibb 0.23.6 ›**
+  and **Advanced ›** (the DeviceSummary mockup's icon tiles). Attention targets moved (Do Not Disturb `/about#sound`,
+  policy problem `/about#software`, unseen restarts `/about#diagnostics`, Backup to Google `/advanced#restrictions`,
+  access removed `/advanced#connection`, restart once `/advanced#app-screens`).
+- **Rust texts (M5):** typed siblings, and the sentence builders deleted with their unit tests: `ConnectionState`
+  (+ `online_since`) for `instant_changes_line`; `Via::label` / `LastAccess::detail` for `last_access_line`;
+  `sound_mode::state` (`Ringer`, `Dnd`) for `status_lines`; `boot_witness::unseen` (`UnseenBoots`, `BootAdvice`) for
+  `warning`; `device_pages::PolicyProblem` for `policy_problem_text`; `PlayNote` for the play lines and
+  `battery_line`; `models::admin_policy_effects` for `admin_policy_notice`; `kiosk_escapes::EscapeNote` (`Release`,
+  `Handover`) for the escapes card's lines, warnings, `release_text` and the boot-cover notes. `Zone::when` ("10:59",
+  "yesterday 21:40", "12 Oct") is new in `display_time`. CSS `?v=11` (the footer ⓘ inline, alarm/action values, the
+  trace in a panel).
+- **Tests:** `tests/device_pages.rs` (About's rows and their values for a full report and a healthy one, a phone not
+  set up, 404s, the **redirect table** built from the rendered forms on Advanced, the `<details>` confirms and the
+  unconfirmed revoke, a live code shown without the code); repointed through `device_page(id, Section::About |
+  Advanced)`: `hardening.rs`, `step11.rs`, `step9.rs`, `play.rs`, `sound_mode.rs`, `cleanup.rs` (the crash pin keeps
+  its no-free-text assertions), `enrollment.rs` (the `#access` redirects → `#connection`), `edge.rs`, `device_api.rs`,
+  `command_receipts.rs`, `window_relock.rs`, `devices_list.rs`, `shell.rs` (the sub-pages' tab, a sub-page includes the
+  bar alone and has a back link); unit tests in `sound_mode`, `boot_witness`, `kiosk_escapes`, `limits`, `streams`,
+  `display_time`, `attention`, `device_pages`. `cargo test`: 735 passed; `node --test jstest/*.test.js`: 16 passed;
+  fmt clean; clippy: the same 13 warnings, none in the step's files.
+- **Browser pass** (headless Chromium, 390 px, light and dark, JS on and off, every `<details>` opened): no
+  horizontal scroll on About, Advanced, the device page, or a phone not set up. Still owed on a real phone (iOS Safari
+  14's inline `<details>` in a footer).
+
+Choices made while building:
+1. **A phone not set up:** its "Not enrolled yet" card (New code, QR, notices, `typed_paused`) stays on the device page
+   until step 10 makes it "Connect this phone"; Advanced shows Restrictions (they can be set before setup, as the
+   launcher docs advise for USB debugging) and Remove Phone only, not App screens, Updates or Connection; About shows
+   "Not set up". The About and Advanced rows are live, not greyed "After setup" (§3.2): Restrictions and Remove must
+   stay reachable.
+2. **Where the two rows sit:** at the bottom of the device page, where the DeviceSummary mockup has them, though other
+   cards still follow the Status card until step 10.
+3. **Restrictions in three groups of one form:** a switch row can't hold an ⓘ (§4.4: a control never sits in a
+   summary), so the explanations are footers with ⓘ: the plain switches; Block USB debugging; Block safe mode. Labels:
+   Block factory reset, Block new users and guests, Block account changes, Block VPN settings, Block USB file transfer,
+   Keep location on, Block airplane mode, Lock the phone's language, Block USB debugging, Block safe mode. The old
+   per-switch notes moved into the footers' ⓘ.
+4. **Dropped as redundant:** the escapes card's "Update fence off: …" line (the switch says it) and the Status card's
+   "Whether a time rule was locking" footer. The "Update waiting" value is the version without `launcher-v` (the tag in
+   the ⓘ).
+5. **"Starts without Vibb"** shows "2 times", not §3.2's "2 in 30 days": the phone's count is all-time; the row shows
+   while the last one is under 30 days old, its time behind ⓘ.
+6. **Music app version** comes from its versionCode (the phone reports no version name) by the repo's scheme; a
+   release candidate reads one patch below (2999 → "0.2.999"); the package and code are behind ⓘ.
+7. **Battery optimisation** "Off" means the launcher is exempt (good), "On" (orange) that it may lag, as the old line
+   said.
+8. **Time lock** shows the reported rule's name ("Skole") when the phone sends one, else the kind (Bedtime, School,
+   Screen time used up, A time rule, or "Locked" for an unknown code - no raw code).
+9. **Play install mode** is an orange warning ("Play Store open until 14:30"), as it was red before; the update window
+   is a row. **Restart the phone once** shows on App screens with its reasons, and stays an Attention row.
+10. **New Setup Code** stays one tap: making a code changes nothing, using it does (§5.6 doesn't list it).
+11. **Remove Phone** now redirects to `/devices` (was `/`, which redirects there).
+12. **The enroll code page's Back** goes to Advanced › Connection for an enrolled phone (where New Setup Code is),
+    not to `/devices/{id}` as §3.7 says.
+13. **Crash rows** are labelled with the exception's class name ("IllegalStateException"); the full trace, build and
+    hash are in the row's ⓘ.
+14. References to the moved cards were renamed where they name a place: the kid-lock warning and the Screen lock
+    card ("Advanced › Restrictions"), Phone Setup's language hint, `server/CLAUDE.md`, `DEPLOY.md`,
+    `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md`.
+15. `play_card` moved from `devices.rs` to `device_pages.rs` (with the pure `play_notes`); `DeviceStatus` derives
+    `Default` for the pure note tests.
+
+**Fix round after the code QA** (`qa-31-s3-code.md`: 4 Medium, 6 Low, nits; all fixed, with `main` merged first -
+step 11 at `293ecb82`):
+
+| # | Fix |
+|---|---|
+| L6 (merge) | Step 3's header split kept: the app page and Add App include `partials/tab_bar.html` alone, step 11's `subpage` flag is gone; `style.css?v=12`; both status sections and both `server/CLAUDE.md` sections kept. `shell` counts 4 sub-pages with the bar alone, each with a back link. |
+| M1 | About's Last contact comes from the signals (`streams::last_contact` over `devices::connection_inputs`), not the state, so a Disconnected phone keeps its time. Tests: `streams` (a revoked phone's contact; a closed stream is none), `device_pages::about_keeps_a_disconnected_phones_last_contact`. |
+| M2 | `Zone::until`: "14:05" today, "00:05 tomorrow", "Mon 14:30" within the week, "20 Oct 14:30" beyond; a past time reads as `when`. Used for the live code, the typed-code pause and Play install mode. Unit test at 23:50 Oslo. |
+| M3 | `kiosk-block` and `kiosk-escapes` redirect to `/devices/{id}/advanced` with no fragment, as `hardening` does, so `scroll-restore.js` keeps the position. Pinned in the redirect table, `step9` and `step11`. |
+| M4, L4 | Four orange Attention rows (§3.2), decided yes on the user's behalf by the coordinator (the user can overrule): "Play Store open (install mode)" and "Play Store can be opened" (not pausable, "Block other apps' screens" off) → `/advanced#app-screens`; "Vibb isn't the Home app" and "Boot cover wasn't shown" → `/advanced#updates`. Facts from Advanced's own `play_notes` / `escapes_card`. Tests: `tests/attention.rs` (each raises exactly its row; the switch alone, or Play blocked, raises none), the unit tests' order, titles and targets. "Filter has no notification access" and "Some home screens weren't paused" stay on Advanced only. |
+| L1 | The Play warning names the switch: "Play is blocked only while Block other apps' screens is on." / "Block other apps' screens is off, so apps can open the Play Store." |
+| L2 | Block safe mode's ⓘ ends "Turn it on once this version of Vibb has been tested on the phone." |
+| L3 | `cleanup::crash_traces_are_escaped_on_about`: a `<b>Boom` exception and a `<init>` frame are stored, and About shows them escaped, never as tags. |
+| L5 | Tests: the typed-codes-paused warning on Connection (`state.enrollment`), a disconnected phone's last contact, the live code's end has a clock time, `about#software` among the Attention anchors. |
+| N1 | "Disconnected · access removed". |
+| N2 | A versionCode ending in 999 reads as its release, "0.3.0 (pre-release)". |
+| N3 | `device_pages::crash_label`: the class name, or the whole first line when it is a frame or a cause. |
+| N4 | `load_device`: 404 for an unknown phone, 500 (logged) on a DB error. |
+| N5 | The Backup-on warning has "(Vibb's Settings › Sync now)" and "report it" again. |
+| N6 | No change: the `launcher/CLAUDE.md` edit only starts the launcher's CI job. |
+| §3.7 | Now says the code page's Back goes to Advanced › Connection (choice 12). |
+| Checks | `cargo test` 750 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. Headless 390 px, light/dark, JS on/off: About, Add App and the Apps tab after the merge, no horizontal scroll, sub-pages without the brand bar. |
+
+## Step 11 implementation status (2026-10-13)
+
+Built on branch `design-31-s11` (from `4d225da4`, with steps 1 and 2 in), in parallel with step 3; server only, no
+migration, no new crate, `style.css?v=11`.
+- **Apps tab** (`apps_list.html`, `tracked_apps::list_apps`): the large title; **On phones**, one row per phone
+  (36px avatar from step 2's `devices::avatar_class`/`initial`, the name, "14 allowed" or "Not set up" or "List
+  unreadable", a chevron); **Catalog**, one row per app: a 36px tile (the catalog icon on its colour, else the first
+  letter), the name phones show ("Chat"), a sub-line ("Launcher · all phones", "Element X · 1 phone", "No phones"),
+  the version from the tag (`version_of`: "launcher-v0.32.0" -> "0.32.0", "v26.10.1" -> "26.10.1") or a badge
+  instead: **Off** (grey, disabled), **Update failed** (red, the last sync failed), **No release yet** (grey); the
+  launcher first, then by name; the footer and **Add App**.
+- **The app page** (`tracked_app_detail.html`): the sub-page header ("‹ Apps", the large title, no brand bar); the top
+  group (Version, "Last checked 2 h ago" with the exact time in `title`, the running state "Checking now…" or the
+  failure's short title with the raw error and its exact time behind ⓘ, **Check Now**); **Show on phones as** (the
+  `app_display_form` partial unchanged, as one row of a group, with a one-line footer); **On phones** (new: the phones
+  with it ticked - every set-up phone for the launcher - each linking to its row on the phone's page); **Source &
+  Signing**, a `<details>` (closed; open when a refused save or upload is in it) holding Release (GitHub link or
+  "Uploaded by you", the full tag, the file, the package with the confirm-a-candidate forms, the signing key short
+  with the whole key behind ⓘ, **Forget Package and Key…** as a `<details>` confirm - M6), Details (the one form:
+  name, repo, "File name contains", "Tag starts with", their hints behind ⓘ, the error under the field with
+  `aria-invalid`/`aria-describedby`), Updates (Include pre-releases, Enabled, This is the launcher app: switches,
+  one form each as before, now with a `<noscript>` Save) and, for an uploaded app, Upload a new version; **Remove
+  App…** in red behind its confirm.
+- **Add App** (`tracked_app_add.html`): name, the source as two rows (GitHub releases / Upload APKs yourself), the
+  repo; "File name contains", "Tag starts with", the package and Include pre-releases under **More Options**, open
+  when one holds something or was refused. The source's inline `onchange` script is gone (§5.2): the two radios sit
+  before the rows, so CSS marks the chosen row and hides the GitHub fields for an upload.
+- **Rust texts**: a sync failure is typed (`tracked_apps::SyncProblem`, 13 kinds, each with a title of at most 6
+  words; `Failure { problem, detail }`), set where each error happens - GitHub unreachable / 404 / other answers, no
+  matching release, download, unreadable APK, another app, another key, can't check, a package taken, server, removed.
+  `check_pins` and `check_new_package` return it; a refused release keeps its kind ("not downloaded again" keeps
+  the title). Upload and package refusals show the same way in their group (a red title, the reason behind ⓘ).
+  The field errors say "The file name filter is ..." and "The tag prefix may only hold ...".
+- **Every form keeps its POST target and behaviour**; each redirects to the app's page as before (Display to
+  `#display`, Remove to `/apps`, Add to the new app). `tests/tracked_apps.rs`
+  `every_form_on_the_app_pages_returns_to_its_page` is this step's part of §5.1's redirect table: it posts every form
+  the GitHub and the uploaded app's pages render and fails on a form it has no row for.
+- **Tests**: `tests/tracked_apps.rs` (the tab: rows, count equal to the phone page's ticks, order, badges, icon, footer;
+  the app page: no brand, its phones and their links, the switches' forms, the two confirms, the launcher's and an
+  uploaded app's page; Add App's More Options and radios; the redirect table; the existing tests through the step 1
+  helpers, the failure as title + ⓘ and the catalog's "Update failed"), `tests/catalog_pins.rs` (each refused upload's
+  title, the raw reason kept, Source & Signing open), unit tests `a_release_tag_reads_as_a_version`,
+  `sync_problems_have_short_titles` and the typed failures in the sync tests. Checked in headless Chromium at 390 px,
+  light and dark, with and without JS: no horizontal scroll, the source rows switch the GitHub fields with CSS alone.
+
+Choices made while building:
+1. **"On phones" links** (the tab and the app page) go to the phone's page - at the app's own row
+   (`#app-<package>`) from an app page - until step 6 builds `/devices/{id}/apps`; one function,
+   `tracked_apps::phone_apps_href`, to repoint then. `device_detail.html` is untouched (step 3 works on it).
+2. **"N allowed"** counts what the phone's Apps card ticks (`tracked_apps::allowed_count`): reported apps on its
+   allowlist (not Play's core) plus catalog apps chosen for it and not reported installed; the launcher isn't
+   counted. A test checks the two agree.
+3. **The brand bar** leaves the two rebuilt inner pages (§3.0): they set `{% let subpage = true %}` before the tab, and
+   `partials/app_header.html` skips the bar when it is defined (`is defined`, Askama 0.16). Step 3's sub-pages can use
+   the same flag; if it chose another one, the merge picks one. **The merge picked step 3's** (qa-31-s3-code L6): the
+   two pages include `partials/tab_bar.html` alone, the flag is gone, and `style.css` is at `?v=12`.
+4. **The catalog row's name** is the name phones show (the mockup's "Chat") with the admin name in the sub-line;
+   the app page keeps the admin name as its title.
+5. **"Update failed"** reads the in-memory sync status, so it clears on a restart until the next hourly check, like
+   the app page's failure line.
+6. **The shared `app_display_form` partial** is not reworded: the device page uses it too, and step 6 restyles it
+   there. Its summary keeps the native disclosure marker.
+7. **The add form's package field** is kept under More Options as §3.3 says, though the server never stored it; its
+   ⓘ now says so.
+8. **Button and row case**: action rows and confirms in Title Case as the mockups draw them ("Check Now", "Add App",
+   "Remove App…", "Forget Package and Key…").
+9. Not checked here: a real phone (iOS Safari 14, Chrome 80) - owed before merging, as for steps 1 and 2.
+
+**Fix round after the code QA** (`qa-31-s11-code.md`: 1 Medium, 7 Low, nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | The review's option (b), which fits §5.1 item 4 (an anchor where the result is): the Upload form posts to `.../upload#upload` and each package confirm to `.../confirm-package#release`, so a refusal rendered in the POST's answer lands on its group - Source & Signing open, the red title and its reason behind ⓘ in view, where the parent was. A success redirects to `?notice=uploaded#upload` / `?notice=package_confirmed#release`, which opens Source & Signing and shows a green line in that group ("New version uploaded", "Package confirmed"; `tracked_apps::note_of`, any other `notice` ignored). One partial for both groups' results, `partials/flash_note.html`. Tests: `a_form_result_shows_in_its_group_where_the_parent_was`, and the redirect table now asserts each action's fragment and both success redirects. |
+| L1 | `stream_to_file` and `download_asset` return a typed `Failure`: temp-file, write, flush and rename errors are `Server`, an asset over 1 GB is the new `TooBig` ("Release file is over 1 GB"), the rest `Download`. Tests: `a_failed_download_leaves_no_file` checks `Download` for each case, `a_disk_error_is_the_servers_not_the_downloads`, and the over-the-limit test checks `TooBig`. |
+| L2 | `github_problem(StatusCode)` (404 `RepoNotFound`, anything else `GithubError`) and `release_from` (an invalid stored filter `Filter`, no match `NoRelease`), unit-tested in `github_answers_are_classified`. |
+| L3 | The redirect table seeds a candidate (a phone with the uploaded app ticked reports the fixture's package installed by Vibb), so `/confirm-package` is rendered and posted; it also checks that Upload, Confirm, Forget and Check were all seen. The confirm test asserts the redirect. |
+| L4 | Forget and Remove: each form must lie inside its confirm, after `</summary>` and before that `</details>`. |
+| L5 | `outside_text_is_escaped_on_the_apps_pages`: `<b>` in an app name, a display label, a phone name, a sync failure's detail and a refused confirm's package, escaped on `/apps` and the app page. |
+| L6 | The tab test allows and reports `com.google.android.gms`: the phone's page still ticks 3 and the row still says "3 allowed". |
+| L7 | Add App's wrapper has no `role="radiogroup"`/`aria-labelledby` any more: the two radios with one name are the group. |
+| Nits | (1) the header partial says only definition counts ("set it to anything"); (2) `style.css?v=11` kept, `v=12` if step 3's CSS lands first; (3) `DEPLOY.md`'s launcher setup says Add App, "File name contains", "Tag starts with" and that the package is pinned from the APK; (4) "Check Now" in the refused-release detail; (5) `version_of` strips a leading "v" first, then takes the first "-v" before a digit (`v2.1.0-v8a` -> "2.1.0-v8a"); (6) phones sort by name the same way on the tab and the app page (the Devices list's binary order); (7) the launcher's row says "no phones" until one is set up (`the_launcher_is_on_all_phones_only_once_there_are_some`); (8) the two result ⓘ are labelled "More about the refused upload/package"; (9) `.group-tiles` is gone: step 2's `.group-avatars` hairline reads `--avatar-inset` (72px), `.group-small` sets 64px; the unstyled `.flash-line`, `.flash-info` and `.catalog-empty` hooks are gone; (10) the tab's phone rows still open the device page at its top until step 6 (choice 1); `device_detail.html` is step 3's. |
+| Mutations | Each surviving mutation the review lists now fails a test: confirm redirecting to `/apps` (the redirect table, the confirm test), 404 as `GithubError` (`github_answers_are_classified`), download errors re-kinded (`a_failed_download_leaves_no_file`), Forget's form outside its confirm (the app page test), `\|safe` on the failure detail, the catalog label or the shared result partial (the escaping test), Play's core counted (the tab test); and dropping the `#upload` fragment fails three tests. |

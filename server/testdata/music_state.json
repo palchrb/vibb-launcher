@@ -4,6 +4,8 @@
   "bridge": "bound",
   "library_version": "0123456789abcdef",
   "cache_bytes": 123456789,
+  "audio_bytes": 100000000,
+  "extra_bytes": 23456789,
   "downloads_waiting": 2,
   "entry_errors": [
     {
