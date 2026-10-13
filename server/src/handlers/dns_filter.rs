@@ -68,8 +68,12 @@ struct DnsFilterTemplate {
     selected: Option<Device>,
     selected_id: i64,
     device_blocklist_rows: Vec<BlocklistRow>,
-    device_blocked_domains: Vec<DnsCustomDomain>,
+    /// This device's blocks, each with whether Spotify's binding overrides it on this phone (design
+    /// 26c §6.2, qa-26c-step3-code L5: the phone plays Spotify and the domain is one of its hosts).
+    device_blocked_domains: Vec<(DnsCustomDomain, bool)>,
     device_allowed_domains: Vec<DnsCustomDomain>,
+    /// The site-wide custom blocks this phone's Spotify binding overrides (empty unless bound).
+    device_spotify_global: Vec<String>,
 }
 
 pub async fn show_dns_filter(
@@ -107,46 +111,74 @@ pub async fn show_dns_filter(
     let selected_id = params.get("device").and_then(|s| s.parse::<i64>().ok());
     let selected = selected_id.and_then(|id| devices.iter().find(|d| d.id == id).cloned());
 
-    let (device_blocklist_rows, device_blocked_domains, device_allowed_domains) =
-        if let Some(ref dev) = selected {
-            let overrides: HashMap<i64, bool> = sqlx::query_as::<_, (i64, bool)>(
-                "SELECT blocklist_id, enabled FROM device_blocklist_overrides WHERE device_id = ?",
-            )
-            .bind(dev.id)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default()
-            .into_iter()
+    let (
+        device_blocklist_rows,
+        device_blocked_domains,
+        device_allowed_domains,
+        device_spotify_global,
+    ) = if let Some(ref dev) = selected {
+        let overrides: HashMap<i64, bool> = sqlx::query_as::<_, (i64, bool)>(
+            "SELECT blocklist_id, enabled FROM device_blocklist_overrides WHERE device_id = ?",
+        )
+        .bind(dev.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+        let rows = blocklists
+            .iter()
+            .map(|b| {
+                let is_override = overrides.contains_key(&b.id);
+                let effective_enabled = overrides.get(&b.id).copied().unwrap_or(b.enabled);
+                BlocklistRow {
+                    blocklist: b.clone(),
+                    effective_enabled,
+                    is_override,
+                }
+            })
             .collect();
 
-            let rows = blocklists
-                .iter()
-                .map(|b| {
-                    let is_override = overrides.contains_key(&b.id);
-                    let effective_enabled = overrides.get(&b.id).copied().unwrap_or(b.enabled);
-                    BlocklistRow {
-                        blocklist: b.clone(),
-                        effective_enabled,
-                        is_override,
-                    }
-                })
-                .collect();
+        let device_custom = sqlx::query_as::<_, DnsCustomDomain>(
+            "SELECT * FROM dns_custom_domains WHERE device_id = ? ORDER BY domain",
+        )
+        .bind(dev.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+        let (dev_blocked, dev_allowed): (Vec<_>, Vec<_>) = device_custom
+            .into_iter()
+            .partition(|d| d.list_type == "block");
+        // A phone that plays Spotify never gets Spotify's hosts as blocked (the delivered list
+        // and the launcher's filter): say so where the parent types the block.
+        let spotify = sqlx::query_scalar::<_, bool>(
+            "SELECT music_spotify_account IS NOT NULL FROM device_policy WHERE device_id = ?",
+        )
+        .bind(dev.id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+        let overridden = |d: &str| spotify && crate::spotify::is_spotify_host(d);
+        let dev_blocked = dev_blocked
+            .into_iter()
+            .map(|d| {
+                let over = overridden(&d.domain);
+                (d, over)
+            })
+            .collect();
+        let global = blocked_domains
+            .iter()
+            .filter(|d| overridden(&d.domain))
+            .map(|d| d.domain.clone())
+            .collect();
 
-            let device_custom = sqlx::query_as::<_, DnsCustomDomain>(
-                "SELECT * FROM dns_custom_domains WHERE device_id = ? ORDER BY domain",
-            )
-            .bind(dev.id)
-            .fetch_all(&state.db)
-            .await
-            .unwrap_or_default();
-            let (dev_blocked, dev_allowed): (Vec<_>, Vec<_>) = device_custom
-                .into_iter()
-                .partition(|d| d.list_type == "block");
-
-            (rows, dev_blocked, dev_allowed)
-        } else {
-            (Vec::new(), Vec::new(), Vec::new())
-        };
+        (rows, dev_blocked, dev_allowed, global)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    };
 
     let selected_id = selected.as_ref().map(|d| d.id).unwrap_or(0);
     let blocklists = {
@@ -177,6 +209,7 @@ pub async fn show_dns_filter(
             device_blocklist_rows,
             device_blocked_domains,
             device_allowed_domains,
+            device_spotify_global,
         }
         .render()
         .unwrap(),

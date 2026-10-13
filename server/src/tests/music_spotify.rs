@@ -4149,7 +4149,7 @@ mod phones {
         app.fetch.release();
         app.state
             .spotify
-            .set_phone_token_budget(Duration::from_secs(10));
+            .set_phone_token_budget(crate::spotify::PHONE_TOKEN_BUDGET);
         let (status, body) = answer(&app, &token).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["access_token"], json!("FAKE-ACCESS-2"));
@@ -4250,5 +4250,64 @@ mod phones {
             "unbinding moves it back"
         );
         assert_eq!(blocked(token).await, everything);
+    }
+
+    /// qa-26c-step3-code L5: where the parent types a block (`/dns?device=`), a block of one of
+    /// Spotify's hosts says it isn't applied while the phone plays Spotify - its own and a site-wide
+    /// one - and nothing else is marked; an unbound phone's page marks nothing.
+    #[tokio::test]
+    async fn the_web_filter_page_says_what_spotify_overrides() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (ella, _) = app.enrolled_device("Ella").await;
+        for (domain, device) in [
+            ("spotify.com", Some(ella)),
+            ("ads.example", Some(ella)),
+            ("i.scdn.co", None),
+            ("tracker.example", None),
+        ] {
+            sqlx::query(
+                "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES (?, 'block', ?)",
+            )
+            .bind(domain)
+            .bind(device)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        }
+        let page = || {
+            let app = &app;
+            let cookie = cookie.clone();
+            async move {
+                let res = app.get_page(&format!("/dns?device={ella}"), &cookie).await;
+                assert_eq!(res.status, StatusCode::OK);
+                res.text()
+            }
+        };
+        let unbound = page().await;
+        assert!(unbound.contains("spotify.com"));
+        assert!(
+            !unbound.contains("not applied while Spotify is on"),
+            "{unbound}"
+        );
+        assert!(!unbound.contains("while Spotify is on for this phone"));
+
+        let account = ready(&app).await;
+        bind(&app, ella, account).await;
+        let bound = page().await;
+        assert!(
+            bound.contains(
+                "spotify.com <span class=\"hint\">- not applied while Spotify is on for this phone</span>"
+            ),
+            "{bound}"
+        );
+        assert!(bound.contains("<span>ads.example</span>"), "{bound}");
+        assert_eq!(
+            bound.matches("- not applied while Spotify is on").count(),
+            1
+        );
+        assert!(bound.contains(
+            "Not applied on Ella while Spotify is on for this phone (its Music card): i.scdn.co."
+        ));
     }
 }

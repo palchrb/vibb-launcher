@@ -31,10 +31,17 @@ class BridgeTest {
             val theirs = repo("launcher/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from launcher/'s copy", theirs.readText(), ours.readText())
         }
-        // Appended, never reordered: getSpotifyToken after wantArt, last (design 26c §8 item 2).
+        // Appended, never reordered (the transaction codes an installed launcher or app uses follow the
+        // order; qa-26c-step3-code L2): the whole sequence, a new method added at the end.
         val aidl = moduleFile("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()
-        assertTrue(aidl.indexOf("void wantArt(") in 0 until aidl.indexOf("void getSpotifyToken("))
-        assertTrue(aidl.substringAfter("void getSpotifyToken(").substringAfter(";").trim() == "}")
+        val methods = Regex("^\\s+(?:oneway )?[\\w\\[\\]]+ (\\w+)\\(", RegexOption.MULTILINE).findAll(aidl).map { it.groupValues[1] }.toList()
+        assertEquals(
+            listOf(
+                "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
+                "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
+            ),
+            methods,
+        )
     }
 
     @Test

@@ -34,11 +34,17 @@ class MusicPlanTest {
             val theirs = repo("music/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from music/'s copy", theirs.readText(), ours.readText())
         }
-        // Appended, never reordered (the transaction codes follow the order): getSpotifyToken last.
+        // Appended, never reordered (the transaction codes an installed music app or launcher uses follow the
+        // order; qa-26c-step3-code L2): the whole sequence, a new method added at the end.
         val methods = Regex("^\\s+(?:oneway )?\\S+ (\\w+)\\(", RegexOption.MULTILINE)
             .findAll(module("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()).map { it.groupValues[1] }.toList()
-        assertEquals("getSpotifyToken", methods.last())
-        assertEquals("wantArt", methods[methods.size - 2])
+        assertEquals(
+            listOf(
+                "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
+                "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
+            ),
+            methods,
+        )
     }
 
     @Test

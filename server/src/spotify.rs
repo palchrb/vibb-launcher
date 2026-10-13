@@ -124,11 +124,13 @@ pub const PHONE_TOKEN_MIN_LEFT: Duration = Duration::from_secs(600);
 pub const PHONE_TOKENS_PER_WINDOW: usize = 20;
 /// The phone token limit's rolling window.
 pub const PHONE_TOKEN_WINDOW: Duration = Duration::from_secs(3600);
-/// The token route's own budget (qa-26c-step1-code's note): a refresh can wait for the gate behind
-/// a feed fetch, and the phone's bridge gives up after 10 s anyway. A refresh still running when
-/// it ends finishes on its own ([Accounts::access_token] runs it as a task) and is kept for the
-/// next ask.
-pub const PHONE_TOKEN_BUDGET: Duration = Duration::from_secs(10);
+/// The token route's own budget (qa-26c-step1-code's note): a refresh can wait in the server-wide
+/// request gate behind a sweep (a feed fetch holds it up to 120 s). A refresh still running when it
+/// ends finishes on its own ([Accounts::access_token] runs it as a task) and is kept for the next
+/// ask - the music app's `TokenCache` asks once more about 5 s after an `unreachable` at a play start
+/// (§5.5, step 4). 8 s, under the launcher's and the music app's 10 s each (qa-26c-step3-code L3), so
+/// the server's honest 502 `unreachable` reaches the phone before their own timeouts fire.
+pub const PHONE_TOKEN_BUDGET: Duration = Duration::from_secs(8);
 
 // --- the phone's hosts (§6.2) --------------------------------------------------------------------
 

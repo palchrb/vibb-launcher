@@ -205,7 +205,10 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 ### 2.1 Bring your own developer app (`music_spotify_app`, `SPOTIFY_CLIENT_ID`)
 - **Nothing ships.** The server has no client ID of its own. Until the parent sets one, Spotify is "not configured":
   `/music/spotify` explains how to register an app (below), the add form and every Spotify control are absent, the
-  library has no Spotify entries (none can exist), the policy's `music.spotify` is false, and nothing else changes.
+  library has no Spotify entries (none can exist), the policy's `music.spotify` is false (no phone can be bound: Clear
+  and a new client ID unbind every phone), and nothing else changes. `music.spotify` follows the binding alone (§2.5):
+  in 2b L1's one case - an environment client ID gone between restarts with bindings left - the phone keeps the DNS
+  exemption and its entries, and the token route answers `off` (step 3, qa-26c-step3-code L6).
 - **The setting**: one row `music_spotify_app (client_id, redirect_uri, saved_at)` written from the PWA, or the
   environment's `SPOTIFY_CLIENT_ID` (and optionally `SPOTIFY_REDIRECT_URI`), which then wins and shows as "set by the
   server's configuration" with the field read-only. A client ID is 32 characters `[0-9A-Za-z]` (else a 400 by the
@@ -391,6 +394,15 @@ retry or two). Answers (always JSON, never a token outside `ok`):
 `expires_in_s` is what is left of the token. The token is never written to the database, a log or `music_state`. A
 phone whose account changes gets the new account's token on its next ask; `account` tells it to drop the WebView's
 storage (§5.2).
+
+**The route's budget** (step 3, qa-26c-step3-code L3): a refresh goes through `AppState.music_fetch`, the server-wide
+gate (one request in flight, FIFO), so during a sweep it can wait behind a feed fetch (up to 120 s), listings and art.
+The route waits at most `PHONE_TOKEN_BUDGET` = **8 s** for it, then answers 502 `unreachable`; the refresh is not
+cancelled (2b's spawned `MintJob`) - it finishes and is kept, so the next ask gets it at once. 8 s is under the
+launcher's 10 s and the music app's 10 s, which start earlier, so the server's honest answer arrives before either
+gives up. The phone's side of this case is §5.5's one prompt retry. (A second gate lane for the accounts service would
+change §0.3's "one gate"; not needed with the retry.) Order of the checks: binding and app first (`off`, not counted),
+then the limit, then the mint; a database error is 500 `unreachable`; Spotify's 429 without a number waits 30 s.
 
 ## 3. Server: links, entries, listings, the PWA
 
@@ -876,7 +888,11 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   reach the server) and a timeout (also an older launcher without the method: its oneway call is dropped) ->
   `Unreachable`.
 - **Cooldowns**: after `Reauthorize` no bridge call for 10 minutes (and the line says so); after `Unreachable` the next
-  play asks again; `Busy` waits its `retry_after`.
+  play asks again; `Busy` waits its `retry_after` (the callback's `expiresInMs`, §8 item 2).
+- **One prompt retry at a start** (qa-26c-step3-code L3, built in step 4's `TokenCache`): an `Unreachable` during a
+  play start is asked once more about 5 s later, inside the start budget, before the line shows - the server's refresh
+  may only have waited behind a sweep past its 8 s budget (§2.6) and is then kept, so the second ask finds it. One
+  retry only; a second `Unreachable` is the line.
 - **Ahead of expiry while playing** (QA M2): the SDK asks for a token when the old one expired (§1.1) - typically with
   the screen off, and the bridge -> launcher -> tsnet -> server path is untested in Doze. So while the renderer's
   `playWhenReady` is true, `TokenCache` refreshes when 10 minutes are left (under the renderer's wake lock, §5.7), and a
@@ -1067,14 +1083,22 @@ maps unknowns to `Unreachable`).
     blocked parent like `akamaized.net` never blocks the listed exact host under it);
   - **the version moves with the binding** (QA M7): the launcher refetches the delivered list only when
     `dns_filter_version` changes, and `compute_dns_filter_version` (`handlers/device_api.rs:591-624`) hashes the global
-    list, the overrides and the custom domains - not the binding. It gains `spotify:<bool>` in its hash, so binding
-    *and* unbinding a phone refetch its list (else an unbound phone kept a list without the Spotify domains until some
-    other change). A test: bind and unbind each change the version.
+    list, the overrides and the custom domains - not the binding. It gains `\nspotify:true` in its hash **while the
+    phone is bound** (built so in step 3: an unbound phone keeps the version it had, so the upgrade makes no phone
+    refetch its list), so binding *and* unbinding a phone refetch its list (else an unbound phone kept a list without
+    the Spotify domains until some other change). A test: bind and unbind each change the version.
   - **What it overrides**, said on the device card's DNS section while bound: "Spotify's hosts are allowed on this phone
     while Spotify is on" - a parent's deliberate block of `spotify.com` or `scdn.co` (a streaming category) is
-    overridden on that phone for every app, not only the music app.
+    overridden on that phone for every app, not only the music app. And where the parent types a block
+    (`/dns?device=<id>`, qa-26c-step3-code L5): each of the phone's custom blocks the rule names reads "not applied while
+    Spotify is on for this phone", and the site-wide ones it names are listed under them.
+  - **The rule**, the same on both sides (`spotify::is_spotify_host`, `isSpotifyHost`): a domain equal to or under a
+    suffix - Spotify's own parents included, so the delivered list drops `spotify.com` itself - or exactly an exact host
+    (a third-party parent like `akamaized.net` stays delivered; the launcher exempts the exact hosts before its walk).
 - **The list** (`spotify_hosts.json`, byte-identical in `server/testdata/`, `launcher/app/src/test/resources/` and
-  `music/app/src/test/resources/`; each side's constant checked against it by a test):
+  `music/app/src/test/resources/`; each side's constant checked against it by a test - the server's `HOST_SUFFIXES`/
+  `EXACT_HOSTS` and the launcher's `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS` from step 3, the music app's with
+  `M/spotify/SpotifyHosts.kt` in step 4):
   ```json
   {
     "comment": "Spotify's hosts for the Web Playback SDK (design 26c §6.2): the DNS filter never blocks them on a phone with Spotify on, and the music app's WebView loads nothing else. PROVISIONAL (unverified) until the spike's item 10 step 7 capture replaces it (step 6 at the latest).",
@@ -1187,12 +1211,14 @@ family's matter, outside the code.
 
      interface ISpotifyTokenCallback {
          /** [status]: one of bridge_contract.json's spotify_token.statuses; [accessToken] only with "ok", else null;
-          *  [expiresInMs] its life from now (0 unless "ok"); [account] "<id>:<generation>" with "ok", else null. */
+          *  [expiresInMs] its life from now with "ok", the wait before asking again with "busy" (the server's
+          *  retry_after_s), else 0; [account] "<id>:<generation>" with "ok", else null. */
          oneway void onToken(String status, String accessToken, long expiresInMs, String account);
      }
      ```
    - `bridge_contract.json` gains `"spotify_token": {"statuses": ["ok", "off", "reauthorize", "busy", "unreachable",
-     "key", "launcher"], "timeout_ms": 10000}`; `MusicPlanTest` and `BridgeTest` check their constants against it.
+     "key", "launcher"], "timeout_ms": 10000}`; `MusicPlanTest` and `BridgeTest` check their constants against it, and
+     each pins `IMusicBridge`'s whole method sequence (a new method is appended to the list; qa-26c-step3-code L2).
 3. **The library**: `server/testdata/music_library.json` regenerated (`MUSIC_LIBRARY_SNAPSHOT_WRITE=1`) with two Spotify
    entries - `"source": "spotify"`, `"target": "spotify:playlist:FAKEplaylist0000000001"`, `"cache": 0`, `"resume":
    true`, `"order": "auto"`, `"items": "<a version>"`, **`"spotify": "list"`**; and `"target":
@@ -1205,9 +1231,11 @@ family's matter, outside the code.
    sanitizer test gains `unplayable` and the six `spotify` words; anything else is dropped).
 5. **`spotify_hosts.json`** (§6.2), three copies, provisional. Equality is pinned as for the other shared files (QA
    L10): music's `ContractFilesTest` compares its copy with `server/testdata/spotify_hosts.json` byte for byte, the
-   launcher's `MusicPlanTest` compares its copy with the music app's (as it does for the AIDL); each side's constant is
-   checked against its copy (`SpotifyHostsTest` in music and launcher, `spotify::tests::hosts_match_the_contract` on the
-   server).
+   launcher's `MusicPlanTest` compares its copy with the music app's and the server's (as it does for the AIDL), and
+   `spotify::tests::hosts_match_the_contract` reads both app copies too (as `phone::tests` does), which is what
+   `server-ci.yml` watching them needs; each side's constant is checked against its copy (`SpotifyHostsTest` in the
+   launcher and `hosts_match_the_contract` on the server in step 3; the music app's `SpotifyHostsTest` with its
+   constant in step 4).
 6. **CI paths** (root `CLAUDE.md`'s list and the workflows): `launcher.yml` and `music.yml` watch
    `server/testdata/spotify_hosts.json` and both app copies; `server-ci.yml` watches the app copies; `music.yml` also
    watches `server/testdata/spotify/` and `scripts/fake-spotify.py` (step 4).
@@ -1330,6 +1358,15 @@ phone running a debug build must never send a token elsewhere). Spotify does the
 | Music, service | `GuardsTest` (a Spotify item never reaches `LocalRenderer.load`/`ItemMediaSourceFactory`, nor the session through `onPlaybackResumption`; every `RendererKind` read through §5.10's rule; `saveNow` writes only measured positions), `SourceScanTest` (§7.1, §7.2: the one WebView, its settings, `addJavascriptInterface` only there, no `addView` of it, `Authorization` only in the two API files, no `Log.` with a token, the debug switch's writer and readers, the nb strings), the renderer's behaviour through a fake host (`SpotifyRendererTest` with a scripted page: start, pause, steps coalesced, the window's end, `Ended`, focus loss and transient loss, noisy, the fade, a suspension destroying the host, `showsPlaying` per §5.4's table - held through a 30 s gap, false after it) |
 | The fake | `python3 -I scripts/fake-spotify.py --selftest` (CI, `music.yml`) |
 
+As built in step 3 (and its fix round): the server's token rows are `tests::music_spotify::phones` (the six answers, the
+limit, a refresh slower than the budget kept, the policy and the blocklist following the binding, `/dns?device=`'s
+marks); `spotify::tests` adds `hosts_match_the_contract` (both app copies too) and the limit. The launcher's
+`DnsFilterEngineTest` also pins where the flag is set (the sync, before the refetch; the VPN's load from the cached
+policy), and `MusicPlanTest`/`BridgeTest` the whole AIDL sequence. The music app's `SpotifyHostsTest` and `WebPolicyTest`
+come with step 4's constant; step 3's music rows are `SpotifyRulesTest`'s library part (the grammar, `uriOf`, hidden
+until step 5b, both views and the room's drop once playable, the order, never fetchable or kept - `downloadPlan` skips
+Spotify, so `downloads` never lists one -, NY gated, the words), `ContractFilesTest`, `BridgeTest` and `ReportTest`.
+
 Added by the design QA fix round (each in its step's tests):
 - **Server**: `interval(link, ..)` per kind; `restamp_versions` restamps a Spotify listing; `SweepView::gated`/`phone_count`
   for an unbound phone and for no app; `DevicePolicy.music_spotify_account` read by `policy_music`;
@@ -1402,22 +1439,27 @@ Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed b
    suites). Files: server `S/handlers/music_api.rs` (`POST /api/devices/music/spotify/token`, its limit),
    `S/device_routes.rs`, `S/handlers/device_api.rs` (`music.spotify` in the policy through `policy_music`; the delivered
    blocklist's drop; **`compute_dns_filter_version` hashing the binding**), `S/spotify.rs` (`hosts` + its test),
-   `server/testdata/{music_library,music_state,spotify_hosts}.json`; launcher `aidl/me/vibb/bridge/{IMusicBridge,
+   `S/handlers/dns_filter.rs` + `templates/dns_filter.html` (the marks, fix round L5), `templates/device_detail.html`
+   (the DNS note owed by 2b), `server/testdata/{music_library,music_state,spotify_hosts}.json`; launcher `aidl/me/vibb/bridge/{IMusicBridge,
    ISpotifyTokenCallback}.aidl` (the import), `L/music/MusicServer.kt` (the token route), `L/music/MusicBridgeService.kt`
    (`getSpotifyToken`) + `L/music/SpotifyTokenCourier.kt` (new, pure), `L/music/SpotifyHosts.kt` (new),
    `L/server/DnsFilterEngine.kt` (`classify`'s gated exemption), `L/server/dto/PolicyResponse.kt` (`music.spotify`),
    `L/server/EnforcementPlan.kt` + `AppEnforcer.kt` (the WebView provider in `neverRestrict`), the test resources
    (`bridge_contract.json`, `spotify_hosts.json`) and tests; music `aidl/...` (the same two files), `M/model/Library.kt`
    (`Source.SPOTIFY`, `spotifyMode`, cache 0), `M/spotify/SpotifyRef.kt` (new), `M/logic/{PlayOrder,LibraryView,
-   Offline,NewItems}.kt` (§4.2-§4.3: visible in both views, not fetchable), `M/bridge/SpotifyBridgeToken.kt` (new;
+   Offline,NewItems}.kt` (§4.2-§4.3: visible in both views, not fetchable), `M/logic/Spotify.kt` (new:
+   `SPOTIFY_PLAYABLE`, which step 5b flips there), `M/sonos/PlayBody.kt` (`speakerDropReason` = `spotify`),
+   `M/sync/DownloadPlan.kt` (Spotify skipped), the UI's `Kind` branches, `M/bridge/SpotifyBridgeToken.kt` (new;
    unused by playback yet), `M/logic/Report.kt` (`spotify` = `none`), strings, the test resources
    (`music_library.json`, `bridge_contract.json`, `spotify_hosts.json`); CI paths (§8 item 6). Until step 5b
    `Snapshot.visible` keeps Spotify items hidden behind one constant (`SPOTIFY_PLAYABLE = false`, flipped in step 5b),
    so a library with Spotify entries parses and shows nothing (26b step 1's way). Tests: §10's contract rows on every
    side. Acceptance: the three suites green; the shared files byte-identical. **Not**: the renderer, the WebView.
 4. **Music: the Android-free core and the fake.** Files: `M/spotify/{SpotifyApi,SpotifyHttp,SdkState,SpotifyTracker,
-   SpotifyHosts,WebPolicy,SpotifyEndpoints,TokenCache}.kt`, `M/logic/Spotify.kt` (`spotifyPlayability`, `contextItem`,
-   `SpotifyOutcome`, the window, the words), `assets/spotify/{player.html,player.js}`, `src/test/resources/spotify/`
+   SpotifyHosts,WebPolicy,SpotifyEndpoints,TokenCache}.kt` (`SpotifyHosts.kt`: the constant checked against the music
+   copy of `spotify_hosts.json` by `SpotifyHostsTest`, §8 item 5; `TokenCache`: §5.5's one prompt retry), `M/logic/Spotify.kt`
+   (step 3 made it with `SPOTIFY_PLAYABLE`; step 4 adds `spotifyPlayability`, `contextItem`, `SpotifyOutcome`, the
+   window, the words), `assets/spotify/{player.html,player.js}`, `src/test/resources/spotify/`
    (the play request and answers, `sdk_states/` incl. autoplay, transfer-in and relink sequences),
    `scripts/fake-spotify.py`, `.github/workflows/music.yml` (the selftest and the watched paths), root `CLAUDE.md`'s
    paths line. Tests: §10's music-pure rows (the tracker's ownership rule, 3 unplayable in a row, the token prefetch),
@@ -2383,3 +2425,28 @@ provisional** (its comment says so; unverified as a whole): the spike's DNS capt
 server's and launcher's constants) in one commit, at the latest in step 6, before any stable tag. [device check]: the
 WebView provider read on the Jelly Star (`getCurrentWebViewPackage`), and the exemption with the family's categories on
 (QA checklist item 15).
+
+### Fix round after QA's code review (qa-26c-step3-code, 2026-10-13)
+
+All six findings fixed; none disputed. The shared files are unchanged (still byte-identical).
+- **L1** (the launcher's flag unpinned): `DnsFilterEngineTest`'s source scan pins `MdmSyncWorker`'s
+  `DnsFilterEngine.setSpotify(com.kidslauncher.mdm.music.musicSpotify(freshPolicy.music))` before `refreshIfNeeded`,
+  `loadFromDisk`'s `spotifyOn` from `cachedPolicy()`, `setSpotify`'s assignment and `classify` passing the flag.
+- **L2** (only the AIDL's tail pinned): `MusicPlanTest` and `BridgeTest` each pin `IMusicBridge`'s whole ordered
+  sequence of 13 methods (`version` ... `wantArt`, `getSpotifyToken`); an append adds one name at the end.
+- **L3** (a refresh behind a sweep answers `unreachable`): taken with the optional part - `PHONE_TOKEN_BUDGET` is **8 s**
+  (under the launcher's and the music app's 10 s, so the server's 502 reaches the phone first); §2.6 says the refresh can
+  outlast the budget behind the gate and is kept, §5.5 gives step 4's `TokenCache` one retry about 5 s after an
+  `Unreachable` at a play start; §11 step 4 names it. The second gate lane stays out (§0.3's one gate).
+- **L4** (a 0/0 `downloads` row per Spotify entry): `downloadPlan` skips Spotify entries (a copy that somehow exists is
+  pruned); `SpotifyRulesTest`'s never-fetchable test pins no state row, nothing wanted and that prune.
+- **L5** (the override unsaid where the block is typed): `/dns?device=<id>` marks each of the bound phone's custom blocks
+  `is_spotify_host` names "- not applied while Spotify is on for this phone" and lists the site-wide ones it overrides
+  ("Not applied on Ella while Spotify is on for this phone (its Music card): ..."); nothing marked unbound.
+  `tests::music_spotify::phones::the_web_filter_page_says_what_spotify_overrides`.
+- **L6** (spec body vs the build): §2.1 (`music.spotify` follows the binding, 2b L1's case), §2.6 (the budget, the gate,
+  the check order), §5.5 (`busy`'s wait, the retry), §6.2 (`\nspotify:true` while bound, the rule, the constants per
+  side, the `/dns` marks), §8 items 2 (the callback's doc as built, the full-sequence pin) and 5 (who compares what; the
+  music `SpotifyHostsTest` in step 4), §10 (step 3's rows as built), §11 steps 3 and 4 (`logic/Spotify.kt`,
+  `sonos/PlayBody.kt`, `sync/DownloadPlan.kt`, the `/dns` page; step 4's `SpotifyHosts.kt` + `SpotifyHostsTest` and
+  the retry). §4.4 stands as written after L4.

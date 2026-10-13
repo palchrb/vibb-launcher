@@ -23,6 +23,7 @@ import me.vibb.music.model.ListingItem
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.sonos.PlayBodies
+import me.vibb.music.sync.downloadPlan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -109,6 +110,14 @@ class SpotifyRulesTest {
         assertEquals(emptyList<String>(), wantedDownloads(setOf("t1"), listOf(KeepItem("t1", false, fetchable(playlist, item))), emptySet(), "t1"))
         val snap = snapshot(library(listOf(playlist)), items = rows(6, listOf("t1")), downloads = listOf(done(6, "t1")))
         assertTrue("its items have no copy to count", snap.listed[6]!!.all { it.url == null })
+        // qa-26c-step3-code L4: the plan skips it - no state row for the report's `downloads` (§4.4), nothing
+        // wanted, and a copy that somehow exists goes.
+        val feed = entry(2)
+        val both = snapshot(library(listOf(playlist, feed)), items = rows(6, listOf("t1", "t2")) + Fixtures.items(2, listOf("e1")))
+        val plan = downloadPlan(both, listOf(done(6, "t1")), 0)
+        assertEquals("only the feed reports", listOf(2L), plan.states.map { it.entry })
+        assertTrue(plan.wanted.none { it.entry.id == 6L })
+        assertEquals(listOf(6L), plan.prune.map { it.entryId })
     }
 
     @Test

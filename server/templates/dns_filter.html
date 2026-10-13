@@ -129,14 +129,17 @@
             {% if device_blocked_domains.is_empty() %}
             <p class="subtitle">None yet.</p>
             {% else %}
-            {% for d in device_blocked_domains %}
+            {% for (d, spotify) in device_blocked_domains %}
             <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
-                <span>{{ d.domain }}</span>
+                <span>{{ d.domain }}{% if spotify %} <span class="hint">- not applied while Spotify is on for this phone</span>{% endif %}</span>
                 <form method="post" action="/dns/domains/{{ d.id }}/delete">
                     <button type="submit" class="button-small button-danger">Remove</button>
                 </form>
             </div>
             {% endfor %}
+            {% endif %}
+            {% if !device_spotify_global.is_empty() %}
+            <p class="hint">Not applied on {{ device.name }} while Spotify is on for this phone (its Music card): {{ device_spotify_global.join(", ") }}.</p>
             {% endif %}
             <form method="post" action="/dns/domains/new" style="margin-top:12px;">
                 <input type="hidden" name="list_type" value="block">
