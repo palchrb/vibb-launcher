@@ -65,8 +65,8 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
             ],
         )
         .await;
-    // Back to its group on Advanced, never the top of the page.
-    assert_redirect(&res, &device_page(id, Section::Advanced), Some("updates"));
+    // Back to Advanced with no fragment: scroll-restore.js keeps the position, never a jump.
+    assert_redirect(&res, &device_page(id, Section::Advanced), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let p = policy(&app, &token).await;
     assert_eq!(p["update_fence"], json!(true));

@@ -108,7 +108,10 @@ fn every_template_with_the_bar_sets_its_tab() {
         );
     }
     assert!(with_bar >= 25, "{with_bar} templates with the bar");
-    assert!(bar_alone >= 4, "About This Phone, Advanced, the app page and Add App");
+    assert!(
+        bar_alone >= 4,
+        "About This Phone, Advanced, the app page and Add App"
+    );
     let updates = std::fs::read_to_string("templates/updates.html").unwrap();
     assert!(updates.contains("{% let tab = \"settings\" %}"));
 }

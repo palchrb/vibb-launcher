@@ -17,7 +17,7 @@
         {% match backup_service_enabled %}
         {% when Some(true) %}
         <div class="attention attention-alarm" data-warning="google-backup">
-            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync. If it stays on, something on the phone keeps turning it on.</span></span>
+            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync (Vibb's Settings › Sync now). If it stays on, something on the phone keeps turning it on: report it.</span></span>
         </div>
         {% when _ %}
         {% endmatch %}
@@ -92,7 +92,7 @@
                     <summary aria-label="About safe mode"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
                         <p>Safe mode starts the phone without Vibb, so your child can use it unfiltered; the restrictions above still apply there. It repairs nothing.</p>
-                        <p>If an update breaks Vibb, the ways back are: this server sending a fixed version (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu.</p>
+                        <p>If an update breaks Vibb, the ways back are: this server sending a fixed version (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Turn it on once this version of Vibb has been tested on the phone.</p>
                     </div>
                 </details>
             </div>

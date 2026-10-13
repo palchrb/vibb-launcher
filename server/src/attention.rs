@@ -18,7 +18,9 @@
 
 use crate::AppState;
 use crate::handlers::calls::CallProblem;
+use crate::handlers::device_pages::PlayNote;
 use crate::handlers::window_relock::RelockCard;
+use crate::kiosk_escapes::EscapeNote;
 use crate::models::{Device, DevicePolicy, DeviceStatus};
 use crate::streams::ConnectionState;
 
@@ -49,6 +51,14 @@ pub enum Kind {
     /// How many apps the phone keeps hidden.
     BlockedApps(usize),
     RestartOnce,
+    /// Play install mode is on: the Play Store opens on the phone.
+    PlayInstallMode,
+    /// Android won't pause Play and "Block other apps' screens" is off: apps can open it.
+    PlayStoreOpenable,
+    /// The launcher isn't Android's Home app: the update fence is partial.
+    NotHomeApp,
+    /// The boot cover was armed but not shown: another home screen came up at boot.
+    BootCoverNotShown,
     NoNotificationAccess,
     Calls(CallProblem),
     LedgerUnreadable,
@@ -107,6 +117,10 @@ impl AttentionItem {
             Kind::ChildLockOff => "child-lock-off",
             Kind::BlockedApps(_) => "blocked-apps",
             Kind::RestartOnce => "restart-once",
+            Kind::PlayInstallMode => "play-install-mode",
+            Kind::PlayStoreOpenable => "play-store-openable",
+            Kind::NotHomeApp => "not-home-app",
+            Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
@@ -135,6 +149,12 @@ pub struct Facts {
     pub child_lock_off: bool,
     pub blocked_apps: usize,
     pub restart_once: bool,
+    /// Advanced's Play and update-fence warnings that let other screens reach the child (design 31
+    /// step 3 fix round, qa-31-s3-code M4/L4; the user can overrule).
+    pub play_install_mode: bool,
+    pub play_store_openable: bool,
+    pub not_home_app: bool,
+    pub boot_cover_not_shown: bool,
     pub no_notification_access: bool,
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
@@ -175,6 +195,10 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         Kind::BlockedApps(facts.blocked_apps),
     );
     add(facts.restart_once, Kind::RestartOnce);
+    add(facts.play_install_mode, Kind::PlayInstallMode);
+    add(facts.play_store_openable, Kind::PlayStoreOpenable);
+    add(facts.not_home_app, Kind::NotHomeApp);
+    add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
     for problem in &facts.calls {
         add(problem.needs_attention(), Kind::Calls(*problem));
@@ -208,6 +232,10 @@ fn level(kind: Kind) -> Level {
         | Kind::ChildLockOff => Level::Alarm,
         Kind::BlockedApps(_)
         | Kind::RestartOnce
+        | Kind::PlayInstallMode
+        | Kind::PlayStoreOpenable
+        | Kind::NotHomeApp
+        | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
@@ -231,6 +259,10 @@ fn title(kind: Kind) -> String {
         Kind::BlockedApps(1) => "1 blocked app waits",
         Kind::BlockedApps(n) => return format!("{n} blocked apps wait"),
         Kind::RestartOnce => "Restart the phone once",
+        Kind::PlayInstallMode => "Play Store open (install mode)",
+        Kind::PlayStoreOpenable => "Play Store can be opened",
+        Kind::NotHomeApp => "Vibb isn't the Home app",
+        Kind::BootCoverNotShown => "Boot cover wasn't shown",
         Kind::NoNotificationAccess => "Notification access off",
         Kind::Calls(problem) => problem.title(),
         Kind::LedgerUnreadable => "Screen-time record unreadable",
@@ -251,7 +283,10 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::UnseenRestarts => ("/about", "diagnostics"),
         Kind::GoogleBackup => ("/advanced", "restrictions"),
         Kind::AccessRevoked => ("/advanced", "connection"),
-        Kind::RestartOnce => ("/advanced", "app-screens"),
+        Kind::RestartOnce | Kind::PlayInstallMode | Kind::PlayStoreOpenable => {
+            ("/advanced", "app-screens")
+        }
+        Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("", "parent-pin"),
         Kind::ChildLockOff => ("", "screen-lock"),
         Kind::NoNotificationAccess => ("", "launcher"),
@@ -370,6 +405,9 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
+    let play =
+        crate::handlers::device_pages::play_notes(latest, policy.block_activity_start, now_ms);
+    let escapes = crate::handlers::device_pages::escapes_card(policy, latest, now_ms).notes;
     Facts {
         not_set_up: false,
         report_stale: matches!(
@@ -414,6 +452,15 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             latest.and_then(|st| st.admin_policies_pending_json.as_deref()),
         )
         .is_empty(),
+        // The same notes Advanced shows, so the row and the page agree.
+        play_install_mode: play
+            .iter()
+            .any(|n| matches!(n, PlayNote::InstallMode { .. })),
+        play_store_openable: play.contains(&PlayNote::NotSuspendable { block_on: false }),
+        not_home_app: escapes.contains(&EscapeNote::PartialFence),
+        boot_cover_not_shown: escapes
+            .iter()
+            .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
         no_notification_access: latest.and_then(|st| st.notification_listener_enabled)
             == Some(false),
         calls: s.call_problems.to_vec(),
@@ -448,6 +495,10 @@ mod tests {
             child_lock_off: true,
             blocked_apps: 2,
             restart_once: true,
+            play_install_mode: true,
+            play_store_openable: true,
+            not_home_app: true,
+            boot_cover_not_shown: true,
             no_notification_access: true,
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
@@ -526,6 +577,10 @@ mod tests {
                 "Lock is off on the phone",
                 "2 blocked apps wait",
                 "Restart the phone once",
+                "Play Store open (install mode)",
+                "Play Store can be opened",
+                "Vibb isn't the Home app",
+                "Boot cover wasn't shown",
                 "Notification access off",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
@@ -591,6 +646,19 @@ mod tests {
         assert_eq!(target("google-backup"), "/devices/7/advanced#restrictions");
         assert_eq!(target("access-revoked"), "/devices/7/advanced#connection");
         assert_eq!(target("restart-once"), "/devices/7/advanced#app-screens");
+        assert_eq!(
+            target("play-install-mode"),
+            "/devices/7/advanced#app-screens"
+        );
+        assert_eq!(
+            target("play-store-openable"),
+            "/devices/7/advanced#app-screens"
+        );
+        assert_eq!(target("not-home-app"), "/devices/7/advanced#updates");
+        assert_eq!(
+            target("boot-cover-not-shown"),
+            "/devices/7/advanced#updates"
+        );
         assert_eq!(target("child-lock-off"), "/devices/7#screen-lock");
         assert_eq!(target("notification-access"), "/devices/7#launcher");
         assert_eq!(target("screen-time-record"), "/devices/7#time");

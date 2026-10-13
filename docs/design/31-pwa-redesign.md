@@ -724,6 +724,13 @@ Below the rows:
    - **Needs action (orange):**
      - blocked apps waiting;
      - restart once;
+     - Play install mode on, "Play Store open (install mode)" → Advanced › App screens;
+     - Play can't be paused while "Block other apps' screens" is off, "Play Store can be opened" → App screens;
+     - "Vibb isn't the Home app" (the update fence is partial) → Advanced › Updates & notifications;
+     - "Boot cover wasn't shown" (another home screen came up at boot) → Updates & notifications.
+
+       These four were added in step 3's fix round (qa-31-s3-code M4, L4). The coordinator decided yes on the user's
+       behalf, since each lets other screens reach the child; **the user can overrule** it, and the rows go.
      - no notification access;
      - calls problems from `call_report`;
      - the screen-time record unreadable (`ledger_unreadable`, L2);
@@ -999,7 +1006,8 @@ look:
      - **New setup code** is a POST to `/devices/{id}/regenerate-code`, which shows the code page.
 - Missing server setup (no checksum, no server URL) shows as one red row, "Server setup needed", with the env var
   detail behind ⓘ.
-- `enroll_code.html`'s "Back to …" goes to `/devices/{id}` (enrolled) or the "Connect this phone" group, not
+- `enroll_code.html`'s "Back to …" goes to Advanced › Connection (`/devices/{id}/advanced#connection`, where New
+  Setup Code is for an enrolled phone; step 3, qa-31-s3-code #12) or the "Connect this phone" group, not
   `#access` (L5).
 
 ### 3.8 Shared builders: card builders, `attention::collect`, typed states
@@ -1010,7 +1018,8 @@ look:
 - **`attention::collect(state, device) -> Vec<AttentionItem>`.**
   - Each item has a kind, a level (alarm / action), a short title and a target URL.
   - It reads about 10 sources per phone: relock, parent PIN, play, `call_report`, sound, boots, policy problem,
-    notification access, Google backup, kid lock, time state. (Music and escapes have no row in §3.2's list.)
+    notification access, Google backup, kid lock, time state, and since step 3's fix round the Play notes and the
+    escapes notes (Advanced's own builders, so the row and the page agree). Music has no row in §3.2's list.
   - As built (step 2): `attention::facts` gathers them into typed `Facts`, `attention::items` makes the rows; the
     device page passes the cards it has already built to `facts_of`.
   - The summary renders it. The Devices list shows its length as the badge.
@@ -2051,8 +2060,8 @@ Built on branch `design-31-s3` (from `main` at `4d225da4`, step 2 merged); serve
   New Setup Code, Set Up with QR Code ›, **Disconnect Phone…** as a `<details>` confirm keeping the required box, the
   flash in the group); **Remove Phone…** as a `<details>` confirm. Sub-page header (back link + large title), the
   tab bar alone (`partials/tab_bar.html`, split out of `app_header.html`).
-- **Redirects** (§5.1): `hardening` → `/devices/{id}/advanced` (first group, no fragment); `kiosk-block` →
-  `#app-screens`; `kiosk-escapes` → `#updates`; `revoke` → `/advanced?notice=…#connection`; `delete` → `/devices`.
+- **Redirects** (§5.1): `hardening`, `kiosk-block` and `kiosk-escapes` → `/devices/{id}/advanced` with no fragment
+  (since the fix round, M3); `revoke` → `/advanced?notice=…#connection`; `delete` → `/devices`.
   `enroll_code.html`'s Back: `/advanced#connection` (enrolled), `#access` (the not-enrolled card).
 - **The device page:** the Access, Play and kiosk, Launcher updates and notifications, Launcher crashes and Phone
   hardening cards and Remove are gone; the Status card lost the time lock line, app version, sound lines, "Last
@@ -2118,6 +2127,29 @@ Choices made while building:
     `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md`.
 15. `play_card` moved from `devices.rs` to `device_pages.rs` (with the pure `play_notes`); `DeviceStatus` derives
     `Default` for the pure note tests.
+
+**Fix round after the code QA** (`qa-31-s3-code.md`: 4 Medium, 6 Low, nits; all fixed, with `main` merged first -
+step 11 at `293ecb82`):
+
+| # | Fix |
+|---|---|
+| L6 (merge) | Step 3's header split kept: the app page and Add App include `partials/tab_bar.html` alone, step 11's `subpage` flag is gone; `style.css?v=12`; both status sections and both `server/CLAUDE.md` sections kept. `shell` counts 4 sub-pages with the bar alone, each with a back link. |
+| M1 | About's Last contact comes from the signals (`streams::last_contact` over `devices::connection_inputs`), not the state, so a Disconnected phone keeps its time. Tests: `streams` (a revoked phone's contact; a closed stream is none), `device_pages::about_keeps_a_disconnected_phones_last_contact`. |
+| M2 | `Zone::until`: "14:05" today, "00:05 tomorrow", "Mon 14:30" within the week, "20 Oct 14:30" beyond; a past time reads as `when`. Used for the live code, the typed-code pause and Play install mode. Unit test at 23:50 Oslo. |
+| M3 | `kiosk-block` and `kiosk-escapes` redirect to `/devices/{id}/advanced` with no fragment, as `hardening` does, so `scroll-restore.js` keeps the position. Pinned in the redirect table, `step9` and `step11`. |
+| M4, L4 | Four orange Attention rows (§3.2), decided yes on the user's behalf by the coordinator (the user can overrule): "Play Store open (install mode)" and "Play Store can be opened" (not pausable, "Block other apps' screens" off) → `/advanced#app-screens`; "Vibb isn't the Home app" and "Boot cover wasn't shown" → `/advanced#updates`. Facts from Advanced's own `play_notes` / `escapes_card`. Tests: `tests/attention.rs` (each raises exactly its row; the switch alone, or Play blocked, raises none), the unit tests' order, titles and targets. "Filter has no notification access" and "Some home screens weren't paused" stay on Advanced only. |
+| L1 | The Play warning names the switch: "Play is blocked only while Block other apps' screens is on." / "Block other apps' screens is off, so apps can open the Play Store." |
+| L2 | Block safe mode's ⓘ ends "Turn it on once this version of Vibb has been tested on the phone." |
+| L3 | `cleanup::crash_traces_are_escaped_on_about`: a `<b>Boom` exception and a `<init>` frame are stored, and About shows them escaped, never as tags. |
+| L5 | Tests: the typed-codes-paused warning on Connection (`state.enrollment`), a disconnected phone's last contact, the live code's end has a clock time, `about#software` among the Attention anchors. |
+| N1 | "Disconnected · access removed". |
+| N2 | A versionCode ending in 999 reads as its release, "0.3.0 (pre-release)". |
+| N3 | `device_pages::crash_label`: the class name, or the whole first line when it is a frame or a cause. |
+| N4 | `load_device`: 404 for an unknown phone, 500 (logged) on a DB error. |
+| N5 | The Backup-on warning has "(Vibb's Settings › Sync now)" and "report it" again. |
+| N6 | No change: the `launcher/CLAUDE.md` edit only starts the launcher's CI job. |
+| §3.7 | Now says the code page's Back goes to Advanced › Connection (choice 12). |
+| Checks | `cargo test` 750 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. Headless 390 px, light/dark, JS on/off: About, Add App and the Apps tab after the merge, no horizontal scroll, sub-pages without the brand bar. |
 
 ## Step 11 implementation status (2026-10-13)
 

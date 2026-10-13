@@ -213,6 +213,17 @@ pub struct ConnectionInputs {
 /// until its stream reconnects: seconds after a clean stop (the streams are closed, the phones
 /// reconnect at once), up to 5 min after a crash or a power cut (no FIN reaches the phones; they
 /// reconnect after 300 s of silence). Honest, so no special case.
+/// The newest of the last access, the last report and an open stream's `since`, whatever the
+/// state - also for a Disconnected phone, whose last contact About This Phone still shows
+/// (qa-31-s3-code M1: "cut off a minute ago" vs "gone for weeks").
+pub fn last_contact(inputs: &ConnectionInputs) -> Option<DateTime<Utc>> {
+    let open = inputs.stream.filter(|s| s.open > 0);
+    [inputs.last_access, inputs.last_seen, open.map(|s| s.since)]
+        .into_iter()
+        .flatten()
+        .max()
+}
+
 pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> ConnectionState {
     if !inputs.enrolled {
         return ConnectionState::NotSetUp;
@@ -221,11 +232,7 @@ pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> Connec
         return ConnectionState::Disconnected;
     }
     let open = inputs.stream.filter(|s| s.open > 0);
-    let Some(last_contact) = [inputs.last_access, inputs.last_seen, open.map(|s| s.since)]
-        .into_iter()
-        .flatten()
-        .max()
-    else {
+    let Some(last_contact) = last_contact(inputs) else {
         return ConnectionState::NotSeenYet;
     };
     let age = now - last_contact;
@@ -335,6 +342,15 @@ mod tests {
             }
         );
         assert_eq!(state(phone(now, None, Some(12), None)).online_since(), None);
+        // A revoked phone is Disconnected, but its last contact is still known (qa-31-s3-code M1).
+        let revoked = ConnectionInputs {
+            has_token: false,
+            ..phone(now, Some((0, 1)), Some(2), Some(5))
+        };
+        assert_eq!(state(revoked), ConnectionState::Disconnected);
+        assert_eq!(last_contact(&revoked), Some(minutes_ago(now, 2)));
+        // A closed stream's `since` is no contact.
+        assert_eq!(last_contact(&phone(now, Some((0, 1)), None, None)), None);
         assert_eq!(
             state(phone(now, None, None, Some(120))),
             ConnectionState::Offline {

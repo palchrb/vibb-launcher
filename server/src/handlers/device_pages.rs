@@ -162,7 +162,7 @@ impl PlayNote {
                 title: format!(
                     "Play Store open until {}",
                     DateTime::from_timestamp_millis(*until_ms)
-                        .map(|t| zone.when(t, now))
+                        .map(|t| zone.until(t, now))
                         .unwrap_or_default()
                 ),
                 value: None,
@@ -193,9 +193,9 @@ impl PlayNote {
                 title: "Play can't be paused on this phone".to_string(),
                 value: None,
                 detail: Some(if *block_on {
-                    "Play is blocked only while the switch above is on.".to_string()
+                    "Play is blocked only while Block other apps' screens is on.".to_string()
                 } else {
-                    "And the switch above is off: apps can open the Play Store.".to_string()
+                    "Block other apps' screens is off, so apps can open the Play Store.".to_string()
                 }),
             },
         }
@@ -265,17 +265,38 @@ pub(crate) fn short_version(full: &str) -> &str {
 }
 
 /// "1.2.3" from a versionCode `X*1_000_000 + Y*1_000 + Z` (the repo's release scheme, root
-/// CLAUDE.md). A release candidate's code is one lower, so it reads one patch below (2999 →
-/// "0.2.999"); the ⓘ has the code itself.
+/// CLAUDE.md). A release candidate's code is one lower than its release's, so a code ending in
+/// 999 reads as the next release, "0.3.0 (pre-release)" for 2999 (qa-31-s3-code N2; a real
+/// x.y.999 would be mislabelled, which the scheme makes unlikely). The ⓘ has the code itself.
 pub(crate) fn version_of_code(code: i64) -> Option<String> {
+    let parts = |c: i64| format!("{}.{}.{}", c / 1_000_000, (c / 1_000) % 1_000, c % 1_000);
     (code > 0).then(|| {
-        format!(
-            "{}.{}.{}",
-            code / 1_000_000,
-            (code / 1_000) % 1_000,
-            code % 1_000
-        )
+        if code % 1_000 == 999 {
+            format!("{} (pre-release)", parts(code + 1))
+        } else {
+            parts(code)
+        }
     })
+}
+
+/// A crash row's label from the trace's first stored line: the exception's class without its
+/// package ("IllegalStateException"). When `crashes::sanitize` dropped the exception line (a
+/// message with spaces), the trace starts with a frame or a cause: then the whole line, trimmed
+/// (qa-31-s3-code N3), never "kt" or "Caused by".
+pub(crate) fn crash_label(first_line: &str) -> String {
+    let line = first_line.trim();
+    if first_line.starts_with("    at ")
+        || line.starts_with("Caused by:")
+        || line.starts_with("...")
+    {
+        return line.to_string();
+    }
+    line.split(':')
+        .next()
+        .and_then(|class| class.trim().rsplit('.').next())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(line)
+        .to_string()
 }
 
 /// One crash report on About › Diagnostics.
@@ -305,15 +326,24 @@ struct AboutTemplate {
     diagnostics: Vec<Row>,
 }
 
-async fn load_device(state: &AppState, id: i64) -> Option<Device> {
-    sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+/// The phone, or the page's answer: 404 for an unknown one, 500 when the database fails
+/// (qa-31-s3-code N4: not "Device not found" for a DB error).
+async fn load_device(state: &AppState, id: i64) -> Result<Device, (StatusCode, &'static str)> {
+    match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .unwrap_or_else(|err| {
+    {
+        Ok(Some(device)) => Ok(device),
+        Ok(None) => Err((StatusCode::NOT_FOUND, "Device not found")),
+        Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the device");
-            None
-        })
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            ))
+        }
+    }
 }
 
 async fn load_policy(state: &AppState, id: i64) -> DevicePolicy {
@@ -345,6 +375,8 @@ async fn load_latest(state: &AppState, id: i64) -> Option<DeviceStatus> {
 /// network of the last request.
 fn connection_rows(
     connection: &ConnectionState,
+    // From the signals, not the state: a Disconnected phone has one too (qa-31-s3-code M1).
+    last_contact: Option<DateTime<Utc>>,
     reported_at: Option<DateTime<Utc>>,
     last_access: Option<&crate::limits::LastAccess>,
     zone: &Zone,
@@ -356,7 +388,7 @@ fn connection_rows(
         "Status",
         match connection {
             ConnectionState::Online { since, .. } => format!("since {}", zone.when(*since, now)),
-            ConnectionState::Disconnected => "access removed".to_string(),
+            ConnectionState::Disconnected => "· access removed".to_string(),
             _ => String::new(),
         },
     )
@@ -366,7 +398,7 @@ fn connection_rows(
     if matches!(connection, ConnectionState::NotSetUp) {
         return rows;
     }
-    rows.push(match connection.last_contact() {
+    rows.push(match last_contact {
         Some(t) => {
             let relative = zone.relative(t, now);
             let value = if zone.local(t).date_naive() == zone.today(now) && t <= now {
@@ -400,8 +432,9 @@ fn connection_rows(
 
 /// GET `/devices/{id}/about`: About This Phone.
 pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    let Some(device) = load_device(&state, id).await else {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
     };
     let policy = load_policy(&state, id).await;
     let latest = load_latest(&state, id).await;
@@ -414,6 +447,9 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
     let connection_rows = connection_rows(
         &connection,
+        crate::streams::last_contact(&crate::handlers::devices::connection_inputs(
+            &state, &device,
+        )),
         reported_at,
         state.limits.last_access(id).as_ref(),
         &zone,
@@ -550,13 +586,7 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
             .map(|c| {
                 let at = DateTime::from_timestamp_millis(c.last_at_ms);
                 CrashView {
-                    name: c
-                        .exception()
-                        .split(':')
-                        .next()
-                        .and_then(|class| class.trim().rsplit('.').next())
-                        .unwrap_or("")
-                        .to_string(),
+                    name: crash_label(c.exception()),
                     count: c.count,
                     when: at.map(|t| zone.when(t, now)).unwrap_or_default(),
                     exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
@@ -617,8 +647,9 @@ pub async fn view_advanced(
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let Some(device) = load_device(&state, id).await else {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
     };
     let policy = load_policy(&state, id).await;
     let latest = load_latest(&state, id).await;
@@ -667,7 +698,7 @@ pub async fn view_advanced(
 
 /// The escapes card from the policy and the last report (capabilities, the fence, the filter,
 /// the listener, the boot cover).
-fn escapes_card(
+pub(crate) fn escapes_card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     now_ms: i64,
@@ -712,8 +743,35 @@ mod tests {
         assert_eq!(version_of_code(3_000), Some("0.3.0".to_string()));
         assert_eq!(version_of_code(1_002_003), Some("1.2.3".to_string()));
         assert_eq!(version_of_code(23_006_000), Some("23.6.0".to_string()));
+        // A release candidate: one below its release.
+        assert_eq!(
+            version_of_code(2_999),
+            Some("0.3.0 (pre-release)".to_string())
+        );
+        assert_eq!(
+            version_of_code(999_999),
+            Some("1.0.0 (pre-release)".to_string())
+        );
         assert_eq!(version_of_code(0), None);
         assert_eq!(version_of_code(-5), None);
+    }
+
+    #[test]
+    fn crash_labels_are_the_class_name_or_the_whole_line() {
+        assert_eq!(
+            crash_label("java.lang.IllegalStateException"),
+            "IllegalStateException"
+        );
+        assert_eq!(crash_label("a.b.Boom: something"), "Boom");
+        // The exception line was dropped: the first frame or cause, whole.
+        assert_eq!(
+            crash_label("    at com.x.Foo.bar(Foo.kt:3)"),
+            "at com.x.Foo.bar(Foo.kt:3)"
+        );
+        assert_eq!(
+            crash_label("Caused by: java.io.IOException"),
+            "Caused by: java.io.IOException"
+        );
     }
 
     #[test]
@@ -782,7 +840,7 @@ mod tests {
                 .detail
                 .as_deref()
                 .unwrap()
-                .contains("switch above is off")
+                .contains("screens is off, so apps can open")
         );
     }
 }

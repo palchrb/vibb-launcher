@@ -176,19 +176,24 @@ pub(crate) fn connection_of(
     device: &Device,
     now: chrono::DateTime<chrono::Utc>,
 ) -> crate::streams::ConnectionState {
-    crate::streams::connection_state(
-        &crate::streams::ConnectionInputs {
-            enrolled: device.enrolled_at.is_some(),
-            has_token: device.token_hash.is_some(),
-            stream: state.command_streams.state(device.id),
-            last_access: state.limits.last_access(device.id).map(|a| a.at),
-            last_seen: device
-                .last_seen_at
-                .as_deref()
-                .and_then(crate::display_time::parse_db_utc),
-        },
-        now,
-    )
+    crate::streams::connection_state(&connection_inputs(state, device), now)
+}
+
+/// The signals [connection_of] combines (About This Phone also reads the last contact from them).
+pub(crate) fn connection_inputs(
+    state: &AppState,
+    device: &Device,
+) -> crate::streams::ConnectionInputs {
+    crate::streams::ConnectionInputs {
+        enrolled: device.enrolled_at.is_some(),
+        has_token: device.token_hash.is_some(),
+        stream: state.command_streams.state(device.id),
+        last_access: state.limits.last_access(device.id).map(|a| a.at),
+        last_seen: device
+            .last_seen_at
+            .as_deref()
+            .and_then(crate::display_time::parse_db_utc),
+    }
 }
 
 /// The lock badge and today's screen time from the phone's last report (design 31 §3.10, M4).
@@ -525,7 +530,7 @@ pub(crate) fn access_card(
                         } else {
                             "Setup code"
                         },
-                        zone.when(t, now),
+                        zone.until(t, now),
                     )
                 })
         }
@@ -537,7 +542,7 @@ pub(crate) fn access_card(
         typed_paused_until: state
             .enrollment
             .typed_paused_until(now)
-            .map(|until| zone.when(until, now)),
+            .map(|until| zone.until(until, now)),
         notice: notice.and_then(access_notice),
     }
 }
@@ -722,9 +727,9 @@ pub async fn update_kiosk_block(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            // Back to its group on Advanced (qa-19-code #4; design 31 §5.1: the no-JS save
-            // lands there too).
-            Redirect::to(&format!("/devices/{id}/advanced#app-screens")).into_response()
+            // Its own page, no fragment: scroll-restore.js keeps the exact position, so a save
+            // never jumps (design 31 §5.1.4, qa-31-s3-code M3).
+            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
@@ -1023,7 +1028,7 @@ pub async fn update_app_updates(
 /// card until design 31 step 3): the update fence (other Home apps paused while the launcher
 /// installs its own update), the notification auto-cancel rule and the boot cover (design 16b).
 /// One auto-saving form, so a missing checkbox is off; 404 for an unknown device; nudges; back to
-/// its group.
+/// Advanced without a fragment (a save never jumps).
 pub async fn update_kiosk_escapes(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1045,7 +1050,9 @@ pub async fn update_kiosk_escapes(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}/advanced#updates")).into_response()
+            // No fragment: scroll-restore.js keeps the exact position (design 31 §5.1.4,
+            // qa-31-s3-code M3).
+            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");

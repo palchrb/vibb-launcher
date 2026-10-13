@@ -176,12 +176,8 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             &[],
         )
         .await;
-    // Back to its group on Advanced, not the top of the page (qa-19-code #4, design 31 step 3).
-    super::assert_redirect(
-        &res,
-        &format!("/devices/{id}/advanced"),
-        Some("app-screens"),
-    );
+    // Back to Advanced with no fragment: scroll-restore.js keeps the position (qa-31-s3-code M3).
+    super::assert_redirect(&res, &format!("/devices/{id}/advanced"), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, &token).await["block_activity_start"],
@@ -224,7 +220,10 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
         html.contains("Play can&#39;t be paused on this phone"),
         "{html}"
     );
-    assert!(html.contains("the switch above is off"), "{html}");
+    assert!(
+        html.contains("Block other apps&#39; screens is off, so apps can open the Play Store"),
+        "{html}"
+    );
     assert_eq!(
         super::input_checked(&html, "block_activity_start", "on"),
         Some(false)

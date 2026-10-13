@@ -236,9 +236,10 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 /// §5.1's redirect table for Advanced: every form on the page, posted with valid values, returns
-/// to its own group (an auto-save on the first group: no fragment, the script keeps the position),
-/// "New Setup Code" shows the code page, Remove Phone goes to the list. Built from the rendered
-/// forms, so a form that moves can't keep a stale target.
+/// to Advanced. The three auto-saves have **no fragment**, so `scroll-restore.js` keeps the exact
+/// position and a save never jumps (§5.1.4, qa-31-s3-code M3); Disconnect Phone lands on its
+/// group, where its flash is; "New Setup Code" shows the code page, Remove Phone goes to the list.
+/// Built from the rendered forms, so a form that moves can't keep a stale target.
 #[tokio::test]
 async fn advanced_forms_return_to_their_groups() {
     let app = TestApp::new().await;
@@ -265,12 +266,12 @@ async fn advanced_forms_return_to_their_groups() {
         (
             "kiosk-block",
             &[("block_activity_start", "on")],
-            Some((advanced.clone(), Some("app-screens"))),
+            Some((advanced.clone(), None)),
         ),
         (
             "kiosk-escapes",
             &[("update_fence", "on")],
-            Some((advanced.clone(), Some("updates"))),
+            Some((advanced.clone(), None)),
         ),
         ("regenerate-code", &[], None),
         (
@@ -421,6 +422,63 @@ async fn a_live_code_shows_on_connection_without_the_code() {
     let row = &row[..row.find("</div>").unwrap()];
     assert!(row.contains("Setup code"), "{row}");
     assert!(row.contains("Works until "), "{row}");
+    // Always a clock time, also past midnight ("00:05 tomorrow", `Zone::until`, M2).
+    let until = &row[row.find("Works until ").unwrap() + 12..];
+    assert!(until.contains(':'), "{row}");
     assert!(!row.contains("UTC"), "{row}");
     assert!(!html.contains(code));
+
+    // Typed codes paused (too many wrong ones this hour): a warning on Connection, with the end.
+    let now = chrono::Utc::now();
+    for _ in 0..crate::enrollment::TYPED_PAUSE_FAILURES {
+        app.state.enrollment.typed_failed(now);
+    }
+    assert!(app.state.enrollment.typed_paused_until(now).is_some());
+    let html = app
+        .get_page(&device_page(id, Section::Advanced), &cookie)
+        .await
+        .text();
+    let warning = &html[html
+        .find("data-warning=\"typed-paused\"")
+        .expect("the warning")..];
+    let warning = &warning[..warning.find("</div>").unwrap()];
+    assert!(warning.contains("Typed codes paused until "), "{warning}");
+    assert!(
+        warning.contains("A setup QR code still works."),
+        "{warning}"
+    );
+}
+
+/// A disconnected phone still shows when it was last in contact (qa-31-s3-code M1): "cut off a
+/// minute ago" and "gone for weeks" read differently.
+#[tokio::test]
+async fn about_keeps_a_disconnected_phones_last_contact() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    report(&app, &token, json!({})).await;
+    let before = app
+        .get_page(&device_page(id, Section::About), &cookie)
+        .await
+        .text();
+    let contact = value(&before, "last-contact").unwrap();
+    assert!(contact.contains(" · just now"), "{contact}");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/revoke"),
+            Some(&cookie),
+            &[("confirm", "yes")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let after = app
+        .get_page(&device_page(id, Section::About), &cookie)
+        .await
+        .text();
+    assert_eq!(
+        value(&after, "status").as_deref(),
+        Some("Disconnected · access removed")
+    );
+    assert_eq!(value(&after, "last-contact"), Some(contact), "{after}");
 }

@@ -281,6 +281,8 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         json!({
             "interruption_filter": "priority",
             "backup_service_enabled": true,
+            // Software has a row (the policy-problem target, qa-31-s3-code L5); "ok" adds none.
+            "policy_state": "ok",
             "installed_apps": [{"package_name": "com.android.deskclock", "label": "Clock"}]
         }),
     )
@@ -334,6 +336,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     }
     for (page, anchor) in [
         ("about", "sound"),
+        ("about", "software"),
         ("about", "diagnostics"),
         ("advanced", "restrictions"),
         ("advanced", "app-screens"),

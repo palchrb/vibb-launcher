@@ -156,6 +156,23 @@ impl Zone {
         }
     }
 
+    /// When something ends, for "until …": "14:05" today, "00:05 tomorrow" (the lock badge's
+    /// wording, §3.10), "Mon 14:30" within the week, else "20 Oct 14:30" - always with its clock
+    /// time, the one thing an end is for (qa-31-s3-code M2). A time already past reads as [when].
+    pub fn until(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        if t <= now {
+            return self.when(t, now);
+        }
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        let days = (day - today).num_days();
+        match days {
+            0 => self.clock(t),
+            1 => format!("{} tomorrow", self.clock(t)),
+            2..=6 => format!("{} {}", self.local(t).format("%a"), self.clock(t)),
+            _ => format!("{} {}", self.date(t, now), self.clock(t)),
+        }
+    }
+
     /// "12 Oct", or "12 Oct 2025" in another year than `now`'s.
     fn date(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
         let local = self.local(t);
@@ -282,6 +299,26 @@ mod tests {
         assert_eq!(
             Zone::utc_fallback().when(utc("2026-10-13 06:12:00"), now),
             "06:12 UTC"
+        );
+    }
+
+    #[test]
+    fn until_keeps_the_clock_time_past_midnight() {
+        let zone = oslo();
+        let now = utc("2026-10-13 21:50:00"); // 23:50 in Oslo, a Tuesday
+        let until = |s: &str| zone.until(utc(s), now);
+        assert_eq!(until("2026-10-13 21:55:00"), "23:55");
+        // A code made at 23:50 (15 min), install mode, a typed-code pause.
+        assert_eq!(until("2026-10-13 22:05:00"), "00:05 tomorrow");
+        assert_eq!(until("2026-10-14 21:59:00"), "23:59 tomorrow");
+        assert_eq!(until("2026-10-15 12:30:00"), "Thu 14:30");
+        assert_eq!(until("2026-10-19 12:30:00"), "Mon 14:30");
+        assert_eq!(until("2026-10-20 12:30:00"), "20 Oct 14:30");
+        // Already past: as `when`.
+        assert_eq!(until("2026-10-13 21:00:00"), "23:00");
+        assert_eq!(
+            Zone::utc_fallback().until(utc("2026-10-13 22:05:00"), now),
+            "22:05 UTC"
         );
     }
 
