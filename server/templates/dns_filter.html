@@ -4,10 +4,11 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
-        <h1>DNS/Filters</h1>
+        <h1>Web Filter</h1>
     </div>
     <p class="subtitle">Blocking now happens on-device (each kid's launcher runs its own local filter) - this page manages the shared blocklists/custom domains it uses. Turn filtering on/off for a specific kid from their device page. <a href="/dns/log">See what's been blocked &rarr;</a></p>
 
@@ -15,7 +16,7 @@
         <h2>Upstream resolver</h2>
         <p class="subtitle">Where non-blocked queries get forwarded, encrypted (DNS-over-TLS).</p>
         <form method="post" action="/dns/upstream">
-            <select name="upstream" onchange="this.form.submit()" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
+            <select name="upstream" data-autosave style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
                 <option value="cloudflare" {% if settings.upstream == "cloudflare" %}selected{% endif %}>Cloudflare (1.1.1.1)</option>
                 <option value="quad9" {% if settings.upstream == "quad9" %}selected{% endif %}>Quad9 (9.9.9.9)</option>
             </select>
@@ -27,7 +28,7 @@
         {% for row in blocklists %}
         <form method="post" action="/dns/blocklists/{{ row.list.id }}/toggle" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
             <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="enabled" value="on" {% if row.list.enabled %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="enabled" value="on" {% if row.list.enabled %}checked{% endif %} data-autosave>
                 {{ row.list.name }}
             </label>
         </form>
@@ -110,7 +111,7 @@
             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
                 <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ row.blocklist.id }}/override" style="flex:1;">
                     <label class="checkbox-row">
-                        <input type="checkbox" name="enabled" value="on" {% if row.effective_enabled %}checked{% endif %} onchange="this.form.submit()">
+                        <input type="checkbox" name="enabled" value="on" {% if row.effective_enabled %}checked{% endif %} data-autosave>
                         {{ row.blocklist.name }}
                         {% if row.is_override %}<span class="subtitle">(overridden)</span>{% endif %}
                     </label>

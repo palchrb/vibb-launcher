@@ -1,7 +1,5 @@
-//! The Settings tab - a static card list linking out to the existing
-//! Backups/Software updates/Security log/Account pages, mirroring the
-//! admin-console pattern from the user's Board Game Tracker app. No DB
-//! queries of its own, just navigation.
+//! Settings › Phone Setup (`/settings/provisioning`): the values every phone's setup QR code carries.
+//! The Settings tab itself (`/settings`) is `handlers::settings_hub`.
 
 use askama::Template;
 use axum::Form;
@@ -11,22 +9,6 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::models::ProvisioningSettings;
-
-#[derive(Template)]
-#[template(path = "settings_hub.html")]
-struct SettingsHubTemplate {
-    title: String,
-}
-
-pub async fn settings_hub() -> impl IntoResponse {
-    Html(
-        SettingsHubTemplate {
-            title: "Settings".to_string(),
-        }
-        .render()
-        .unwrap(),
-    )
-}
 
 #[derive(Template)]
 #[template(path = "provisioning_settings.html")]
@@ -79,7 +61,7 @@ pub async fn provisioning_settings_form(State(state): State<AppState>) -> impl I
 
     Html(
         ProvisioningSettingsTemplate {
-            title: "Provisioning".to_string(),
+            title: "Phone Setup".to_string(),
             tailscale_key_hint: key_hint(&settings.tailscale_auth_key),
             settings,
         }

@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "devices" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -175,7 +176,7 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/kiosk-block">
             <label class="checkbox-row">
-                <input type="checkbox" name="block_activity_start" value="on" {% if play.block_activity_start %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="block_activity_start" value="on" {% if play.block_activity_start %}checked{% endif %} data-autosave>
                 Kiosk app block: in kiosk mode, screens of apps that aren't allowed never open - also when an allowed app opens them (Play Store, Google sign-in and payment sheets). Emergency calls, permission questions, the share sheet and photo/file pickers keep working. Install and sign in during install mode instead. Turn it off only if it breaks something on this phone.
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -193,15 +194,15 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/kiosk-escapes">
             <label class="checkbox-row">
-                <input type="checkbox" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave>
                 Update fence: while the launcher installs its own update (at night, screen off, no call - about a minute), Android's own home screens and the notification shade are paused, so the phone never shows them. Leave it off until it is checked on this phone model.
             </label>
             <label class="checkbox-row">
-                <input type="checkbox" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} data-autosave>
                 Notification filter: remove other apps' notifications (setup reminders, "set a screen lock", tips) whose tap would open a screen outside the allowed apps. Allowed apps, calls, alarms and public-safety alerts (cell broadcast, earthquake) always stay.
             </label>
             <label class="checkbox-row">
-                <input type="checkbox" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} data-autosave>
                 Boot cover: while the phone starts, show the Vibb logo instead of the phone's own home screen until the launcher is ready (a few seconds after switching on). Takes effect from the next shutdown or restart. Test it on this phone first: restart it twice and check that the launcher comes up both times.
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -312,7 +313,7 @@
         <p class="subtitle">Only a checked app's keyboard and accessibility service can be turned on in the phone's Settings - an accessibility service not even during a pause, since it could read the parent PIN. Check the app first.</p>
         <form method="post" action="/devices/{{ device.id }}/app-updates">
             <label class="checkbox-row">
-                <input type="checkbox" name="app_updates_wifi_only" value="on" {% if app_updates_wifi_only %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="app_updates_wifi_only" value="on" {% if app_updates_wifi_only %}checked{% endif %} data-autosave>
                 App updates only on Wi-Fi: apps from the catalog download only on Wi-Fi (a network that isn't metered) and wait otherwise - turn it off when an app is needed now. The launcher's own update waits for Wi-Fi up to 3 days, then takes any network. Nothing downloads while the phone is roaming, switch on or off. Unlocking or pausing on the phone doesn't change this.
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -338,7 +339,7 @@
                 <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">
                 {% endif %}
                 <label class="checkbox-row">
-                    <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
+                    <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} data-autosave>
                     {{ app.label }}
                     <span class="app-status" data-installing="{{ app.is_installing }}" data-failed="{{ app.install_failed }}">{{ app.status_label }}</span>
                     {% if app.show_no_release_hint %} <span class="subtitle">(no release yet - won't install until one's added)</span>{% endif %}
@@ -356,7 +357,7 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/lock-screen" id="lock-screen-text">
             <label class="checkbox-row">
-                <input type="checkbox" name="show_text" value="on" {% if lock_screen.show_text %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="show_text" value="on" {% if lock_screen.show_text %}checked{% endif %} data-autosave>
                 <span>Show the message text too, not just who it's from - anyone holding the locked phone can read it.</span>
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -371,7 +372,7 @@
             <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" id="lock-screen-app-{{ app.package_name }}">
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 <label class="checkbox-row">
-                    <input type="checkbox" name="on" value="on" {% if app.on %}checked{% endif %} onchange="this.form.submit()">
+                    <input type="checkbox" name="on" value="on" {% if app.on %}checked{% endif %} data-autosave>
                     <span>{{ app.label }}{% if let Some(note) = app.note %} <span class="app-status" style="white-space:normal;">{{ note }}</span>{% endif %}</span>
                 </label>
                 <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -416,7 +417,7 @@
             <input type="hidden" name="package_name" value="{{ app.package_name }}">
             <input type="hidden" name="anchor" value="music">
             <label class="checkbox-row">
-                <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} data-autosave>
                 <span>The music app on this phone (installed and allowed like any app from the catalog; unticking uninstalls it) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
             </label>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -436,7 +437,7 @@
                 <div class="error">{{ notice }}</div>
                 {% endif %}
                 <label class="checkbox-row">
-                    <input type="checkbox" name="selected" {% if tick.checked %}checked{% endif %} onchange="this.form.submit()">
+                    <input type="checkbox" name="selected" {% if tick.checked %}checked{% endif %} data-autosave>
                     <span>{{ tick.name }} <span class="subtitle">- {{ tick.detail }}</span></span>
                 </label>
                 <noscript><button type="submit" class="button-small">Save</button></noscript>
@@ -450,18 +451,18 @@
 
         <form method="post" action="/devices/{{ device.id }}/music" id="music-settings">
             <label class="checkbox-row">
-                <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} data-autosave>
                 Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere. This includes Storytel books, often several hundred MB each.
             </label>
             <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
-            <select id="music_volume_cap" name="volume_cap" onchange="this.form.submit()">
+            <select id="music_volume_cap" name="volume_cap" data-autosave>
                 <option value="off" {% if music.volume_cap.is_none() %}selected{% endif %}>Off</option>
                 {% for (cap, selected) in music.volume_caps %}
                 <option value="{{ cap }}" {% if selected %}selected{% endif %}>{{ cap }} %</option>
                 {% endfor %}
             </select>
             <label class="checkbox-row" style="margin-top:12px;">
-                <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} data-autosave>
                 <span>Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it on the <a href="/music#storytel">Music</a> page){% endif %}. Off removes it from the phone.</span>
             </label>
             {% if let Some(note) = music.storytel_note %}
@@ -479,7 +480,7 @@
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms">
             <label class="checkbox-row">
-                <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} data-autosave>
                 <span>All rooms: the music app may play on every Sonos speaker it finds, on any Wi-Fi - at a friend's house on theirs too. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
             </label>
             {% if music.sonos.all %}
@@ -490,7 +491,7 @@
             <div class="app-checkbox-list">
                 {% for room in music.sonos.rows %}
                 <label class="checkbox-row">
-                    <input type="checkbox" name="room" value="{{ room.uid }}" {% if room.allowed %}checked{% endif %} onchange="this.form.submit()">
+                    <input type="checkbox" name="room" value="{{ room.uid }}" {% if room.allowed %}checked{% endif %} data-autosave>
                     <span>{% if room.reported %}{{ room.label }}{% else %}A speaker the phone no longer knows <span class="subtitle" style="font-size:12px;">{{ room.uid }}</span>{% endif %}</span>
                 </label>
                 {% endfor %}
@@ -518,13 +519,13 @@
         <div class="error">The launcher can't read notifications, so apps on the home screen show no unread counts, the notification filter is off, the notifications on the lock screen are missed calls only, and Vibb music has no "Spilles nå" card on the home screen and no player on the lock screen. Android has no way for the launcher to turn this on by itself: with USB debugging allowed, run <code>adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService</code> (add <code>.debug</code> to the first package name for a debug build; a phone still on a launcher from before 2026-10-06 has <code>com.kidslauncher.mdm</code> there).</div>
         {% endif %}
         <label for="launcher_language">Language</label>
-        <select id="launcher_language" name="language" onchange="this.form.submit()">
+        <select id="launcher_language" name="language" data-autosave>
             <option value="system" {% if launcher_language == "system" %}selected{% endif %}>Same as the phone</option>
             <option value="nb" {% if launcher_language == "nb" %}selected{% endif %}>Norsk bokmål</option>
             <option value="en" {% if launcher_language == "en" %}selected{% endif %}>English</option>
         </select>
         <label for="home_columns">Apps per row on the home screen</label>
-        <select id="home_columns" name="home_columns" onchange="this.form.submit()">
+        <select id="home_columns" name="home_columns" data-autosave>
             <option value="3" {% if home_columns == 3 %}selected{% endif %}>3 (bigger)</option>
             <option value="4" {% if home_columns == 4 %}selected{% endif %}>4</option>
         </select>
@@ -543,7 +544,7 @@
                 {% else %}
                 <span style="display:block;width:45px;height:80px;border-radius:8px;background: {{ w.background }}"></span>
                 {% endif %}
-                <span><input type="checkbox" name="wallpaper" value="{{ w.id }}" {% if w.checked %}checked{% endif %} onchange="this.form.submit()"> {{ w.label }}</span>
+                <span><input type="checkbox" name="wallpaper" value="{{ w.id }}" {% if w.checked %}checked{% endif %} data-autosave> {{ w.label }}</span>
             </label>
             {% endfor %}
         </div>
@@ -553,7 +554,7 @@
         <h3>Lock screen background</h3>
         <p class="subtitle">By default the lock shows the same wallpaper as the home screen - a photo included, so anyone holding the locked phone sees it. Choose another one of the ticked wallpapers to give the lock its own.</p>
         <label for="lock-wallpaper-select">Lock screen</label>
-        <select id="lock-wallpaper-select" name="wallpaper" onchange="this.form.submit()">
+        <select id="lock-wallpaper-select" name="wallpaper" data-autosave>
             <option value="" {% if lock_same_as_home %}selected{% endif %}>Same as Home</option>
             {% for w in wallpapers %}{% if w.checked %}
             <option value="{{ w.id }}" {% if w.lock %}selected{% endif %}>{{ w.label }}</option>
@@ -639,7 +640,7 @@
         <h2>Screen timeout</h2>
         <p class="subtitle">How long the screen stays on without being touched. When it turns off, the phone locks (with a kid PIN set). The phone keeps this setting: changes made on the phone are put back. Saves itself immediately.</p>
         <label for="screen_timeout_seconds">Turn the screen off after</label>
-        <select id="screen_timeout_seconds" name="screen_timeout_seconds" onchange="this.form.submit()">
+        <select id="screen_timeout_seconds" name="screen_timeout_seconds" data-autosave>
             {% for (seconds, label) in screen_timeout_options %}
             <option value="{{ seconds }}" {% if *seconds == screen_timeout_seconds %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -654,44 +655,44 @@
         <h2>Phone hardening</h2>
         <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The parent PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} data-autosave>
             Block factory reset from Settings (a reset from the phone's recovery menu can't be blocked; the phone then stops reporting)
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} data-autosave>
             Block adding users and guests
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} data-autosave>
             Block adding or removing accounts
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} data-autosave>
             Block VPN settings
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} data-autosave>
             Block copying files over USB
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} data-autosave>
             Keep location on and block location settings (Find my device needs it)
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} data-autosave>
             Block airplane mode (off by default, so it can be used when travelling)
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} data-autosave>
             Lock the phone's language (the launcher's own language is set on this page, under Launcher)
         </label>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} data-autosave>
             Block USB debugging (adb) and developer options
         </label>
         <p class="subtitle">With USB debugging blocked, a computer can't repair the phone: if the launcher ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again. Turn it off here before you work on the phone with adb.</p>
         <label class="checkbox-row">
-            <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} data-autosave>
             Block safe mode
         </label>
         <p class="subtitle">Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
@@ -726,7 +727,7 @@
         </label>
 
         <h2>Ad/content filtering (VPN)</h2>
-        <p class="subtitle">The launcher runs its own on-device VPN to filter ads/content locally (see the <a href="/dns">DNS/Filters</a> tab for blocklists and what's been blocked). Turning this off disables that filtering on this device entirely - the device still syncs normally, it just stops blocking anything. There's no on-device way for a kid to turn this off themselves. The log of blocked domains is off unless you <a href="/dns/log?device={{ device.id }}">switch it on for this phone</a> (kept 7 days).</p>
+        <p class="subtitle">The launcher runs its own on-device VPN to filter ads/content locally (see <a href="/dns">Settings › Web Filter</a> for blocklists and what's been blocked). Turning this off disables that filtering on this device entirely - the device still syncs normally, it just stops blocking anything. There's no on-device way for a kid to turn this off themselves. The log of blocked domains is off unless you <a href="/dns/log?device={{ device.id }}">switch it on for this phone</a> (kept 7 days).</p>
         <label class="checkbox-row">
             <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
             Enable ad/content filtering on this device

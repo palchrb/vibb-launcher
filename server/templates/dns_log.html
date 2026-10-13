@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -28,7 +29,7 @@
     <form method="post" action="/dns/log/{{ device.id }}" class="card" id="dns-log-switch">
         <h2>Blocked-domain log for {{ device.name }}</h2>
         <label class="checkbox-row">
-            <input type="checkbox" name="dns_log_enabled" value="on" {% if log_enabled %}checked{% endif %} onchange="this.form.submit()">
+            <input type="checkbox" name="dns_log_enabled" value="on" {% if log_enabled %}checked{% endif %} data-autosave>
             Keep a log of blocked domains for this phone
         </label>
         <p class="subtitle">Off by default. When on, the phone reports each blocked domain (at most once per 10 minutes per domain) and the server keeps it for {{ retention_days }} days. Switching it off deletes this phone's log right away. Filtering works the same either way.</p>

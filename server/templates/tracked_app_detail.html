@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "apps" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -116,7 +117,7 @@
     <div class="card">
         <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases">
             <label class="checkbox-row">
-                <input type="checkbox" name="include_prereleases" value="on" {% if app.include_prereleases %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="include_prereleases" value="on" {% if app.include_prereleases %}checked{% endif %} data-autosave>
                 Include pre-releases
             </label>
             <p class="hint">Needed for a repo that only ever publishes to a rolling/pre-release tag - otherwise a repo with no full releases will never be found.</p>
@@ -140,7 +141,7 @@
     <div class="card">
         <form method="post" action="/apps/tracked/{{ app.id }}/enabled">
             <label class="checkbox-row">
-                <input type="checkbox" name="enabled" value="on" {% if app.enabled %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="enabled" value="on" {% if app.enabled %}checked{% endif %} data-autosave>
                 Enabled - {% if app.source_type == "github" %}checked automatically every hour{% else %}pushed to devices when synced{% endif %}
             </label>
         </form>
@@ -149,7 +150,7 @@
     <div class="card">
         <form method="post" action="/apps/tracked/{{ app.id }}/is-launcher">
             <label class="checkbox-row">
-                <input type="checkbox" name="is_launcher" value="on" {% if app.is_launcher %}checked{% endif %} onchange="this.form.submit()">
+                <input type="checkbox" name="is_launcher" value="on" {% if app.is_launcher %}checked{% endif %} data-autosave>
                 This is the launcher app
             </label>
             <p class="hint">Marks this row as the launcher/MDM agent itself - it becomes permanently installed on every device (can't be unchecked on a device's own page) and can't be removed from this list. There should be exactly one app marked this way.</p>

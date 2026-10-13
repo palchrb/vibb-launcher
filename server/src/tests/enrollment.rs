@@ -8,7 +8,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::json;
 
-use super::{LOOPBACK_PEER, TestApp};
+use super::{LOOPBACK_PEER, TestApp, assert_redirect};
 use crate::enrollment::{self, Kind, TYPED_PAUSE_FAILURES};
 
 fn peer(text: &str) -> SocketAddr {
@@ -350,9 +350,10 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
             &[],
         )
         .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}?notice=revoke_unconfirmed#access").as_str())
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}?notice=revoke_unconfirmed"),
+        Some("access"),
     );
     let res = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
@@ -367,9 +368,10 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
             &[("confirm", "yes")],
         )
         .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}?notice=access_revoked#access").as_str())
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}?notice=access_revoked"),
+        Some("access"),
     );
     assert!(
         tokio::time::timeout(Duration::from_secs(5), stream.into_body().collect())

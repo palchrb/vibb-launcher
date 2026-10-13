@@ -4,7 +4,7 @@
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
-use super::TestApp;
+use super::{Section, TestApp, autosaves, device_page, form_action_of, input_checked};
 
 const SWITCHES: [&str; 10] = [
     "disallow_add_user",
@@ -165,21 +165,21 @@ async fn device_page_shows_the_switches() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    let page = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await;
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
-    assert!(html.contains(&format!("action=\"/devices/{id}/hardening\"")));
-    assert!(html.contains(
-        "name=\"disallow_debugging_features\" value=\"on\" checked onchange=\"this.form.submit()\""
-    ));
-    assert!(
-        html.contains("name=\"disallow_safe_boot\" value=\"on\"  onchange=\"this.form.submit()\"")
-    );
-    assert!(
-        html.contains(
-            "name=\"disallow_airplane_mode\" value=\"on\"  onchange=\"this.form.submit()\""
-        )
-    );
+    let action = format!("/devices/{id}/hardening");
+    for (name, on) in [
+        ("disallow_debugging_features", true),
+        ("disallow_safe_boot", false),
+        ("disallow_airplane_mode", false),
+    ] {
+        assert_eq!(input_checked(&html, name, "on"), Some(on), "{name}");
+        assert!(autosaves(&html, name), "{name}");
+        assert_eq!(form_action_of(&html, name), Some(action.as_str()), "{name}");
+    }
     assert!(!html.contains("stored app list for this device can't be read"));
 }
 

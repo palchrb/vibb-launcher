@@ -795,6 +795,32 @@ async fn screen_timeout_policy_form_and_report() {
     );
 }
 
+/// Every page template under `templates/`, subfolders included; `partials/` holds pieces of
+/// pages, not pages.
+pub(super) fn template_files() -> Vec<std::path::PathBuf> {
+    template_files_in(std::path::Path::new("templates"))
+}
+
+/// The page templates under `root` (see `template_files`).
+pub(super) fn template_files_in(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n != "partials") {
+                    walk(&path, found);
+                }
+            } else if path.extension().is_some_and(|e| e == "html") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    walk(root, &mut found);
+    found.sort();
+    found
+}
+
 /// No POST may make the page jump to the top (server/CLAUDE.md): every page template includes the
 /// head partial with the scroll-restore script, and the rendered pages carry it.
 #[tokio::test]
@@ -826,16 +852,17 @@ async fn pages_restore_scroll_after_auto_save() {
         ),
         Err(_) => eprintln!("node not installed - jstest/ skipped here (CI runs it)"),
     }
-    for entry in std::fs::read_dir("templates").unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "html") {
-            let text = std::fs::read_to_string(&path).unwrap();
-            assert!(
-                text.contains("{% include \"partials/head.html\" %}"),
-                "{} lacks the head partial",
-                path.display()
-            );
-        }
+    // Every page template, in subfolders too (design 31 M8: a `templates/device/` page can't skip
+    // the head partial and its scroll restore).
+    let pages = template_files();
+    assert!(pages.len() >= 27, "{} page templates", pages.len());
+    for path in pages {
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("{% include \"partials/head.html\" %}"),
+            "{} lacks the head partial",
+            path.display()
+        );
     }
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;

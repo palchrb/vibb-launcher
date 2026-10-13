@@ -4,59 +4,78 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "settings" %}
 {% include "partials/app_header.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Settings</h1>
-    </div>
+    <h1 class="page-title">Settings</h1>
 
-    <div class="icon-list">
-        <a href="/backups" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#16a34a;">&#128190;</span>
-            <span class="icon-list-text">
-                <strong>Backups</strong>
-                <span>Create, schedule, upload, and restore backups</span>
-            </span>
+    <div class="group group-icons">
+        <a class="row" href="/schedules" data-row="time-rules">
+            <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5v3.7l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Time Rules</span>
+            {% if let Some(value) = values.time_rules %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
-        <a href="/updates" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#7c3aed;">&#128260;</span>
-            <span class="icon-list-text">
-                <strong>Software updates</strong>
-                <span>App version, Raspberry Pi OS, and Tailscale</span>
-            </span>
+        <a class="row" href="/dns" data-row="web-filter">
+            <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 1.8l5.5 2v4.3c0 3.5-2.4 6-5.5 7.1C5.4 14.1 3 11.6 3 8.1V3.8z" fill="currentColor"/></svg></span>
+            <span class="row-label">Web Filter</span>
+            {% if let Some(value) = values.web_filter %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
-        <a href="/security" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#dc2626;">&#128274;</span>
-            <span class="icon-list-text">
-                <strong>Security</strong>
-                <span>Login activity, lockouts, and banned IPs</span>
-            </span>
+        <a class="row" href="/dns/log" data-row="blocked-activity">
+            <span class="tile tile-red"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4 13L13 4" stroke="currentColor" stroke-width="1.7"/></svg></span>
+            <span class="row-label">Blocked Activity</span>
+            {% if let Some(value) = values.blocked_today %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
-        <a href="/account" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#2563eb;">&#128100;</span>
-            <span class="icon-list-text">
-                <strong>Account</strong>
-                <span>Change password, two-factor login</span>
-            </span>
-        </a>
-        <a href="/wallpapers" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#14213d;">&#128444;</span>
-            <span class="icon-list-text">
-                <strong>Wallpapers</strong>
-                <span>Backgrounds the children can choose from, and your own photos</span>
-            </span>
-        </a>
-        <a href="/settings/provisioning" class="icon-list-item">
-            <span class="icon-list-icon" style="background:#0891b2;">&#128241;</span>
-            <span class="icon-list-text">
-                <strong>Provisioning</strong>
-                <span>Server URL and Tailscale key used in every device's setup QR code</span>
-            </span>
+        <a class="row" href="/wallpapers" data-row="wallpapers">
+            <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2" y="3" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 12l3.5-4 3 3 2-2 2.5 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
+            <span class="row-label">Wallpapers</span>
+            {% if let Some(value) = values.wallpapers %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
     </div>
 
-    <form method="post" action="/logout" style="margin-top:24px;">
-        <button type="submit" class="button-secondary">Sign out</button>
+    <div class="group group-icons">
+        <a class="row" href="/settings/provisioning" data-row="phone-setup">
+            <span class="tile tile-green"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="5" y="1.8" width="7" height="13.4" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7.5 12.7h2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Phone Setup</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/backups" data-row="backups">
+            <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2" y="3" width="13" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 7v6.5h11V7M7 10h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Backups</span>
+            {% if let Some(value) = values.backups %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/updates" data-row="software-updates">
+            <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M8.5 2.5v8M5 7.5l3.5 3.5L12 7.5M3 14h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="row-label">Software Updates</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+    </div>
+
+    <div class="group group-icons">
+        <a class="row" href="/account" data-row="account">
+            <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="6" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 15c.6-3 2.8-4.5 5.5-4.5S13.4 12 14 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Account &amp; Password</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/security" data-row="security-log">
+            <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M4 2.5h7l2 2v10H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M6.5 7.5h4M6.5 10.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Security Log</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/updates" data-row="about">
+            <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.6v4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.5" cy="5.2" r="1" fill="currentColor"/></svg></span>
+            <span class="row-label">About</span>
+            <span class="row-value">{{ values.about }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+    </div>
+
+    <form method="post" action="/logout" class="group">
+        <button type="submit" class="row row-button row-danger">Sign Out</button>
     </form>
 </main>
 </body>
