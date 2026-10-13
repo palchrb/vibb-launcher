@@ -1,12 +1,20 @@
 package me.vibb.music.media
 
+import androidx.media3.common.C
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.Cache
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.io.IOException
 import java.lang.reflect.Proxy
 
 /**
@@ -28,6 +36,11 @@ class ThroughSinkTest {
         set("length", length)
         set("flags", flags)
         return s
+    }
+
+    private inline fun <reified T> allocate(): T {
+        val unsafe = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe").apply { isAccessible = true }.get(null)
+        return unsafe.javaClass.getMethod("allocateInstance", Class::class.java).invoke(unsafe, T::class.java) as T
     }
 
     /** No cache call is expected: an unknown-length spec makes Media3's sink a no-op. */
@@ -91,6 +104,7 @@ class ThroughSinkTest {
         } catch (e: HttpDataSource.InvalidResponseCodeException) {
             assertEquals(416, e.responseCode)
             assertEquals("http_416", MediaCache.errorCode(e))
+            assertTrue("its cause names it (qa-30-s3b-code L1)", MediaCache.sourceChanged(e))
             assertTrue("the response is closed", "close" in calls)
         }
         val (same, _) = http(206, mapOf("Content-Range" to listOf("bytes 500-999/1000")))
@@ -101,5 +115,28 @@ class ThroughSinkTest {
         assertEquals("no stored length: no verdict", 500L, LengthGuard(unknown) { null }.open(spec("e1:k1", position = 500)))
         val (noKey, _) = http(206, mapOf("Content-Range" to listOf("bytes 500-1199/1200")))
         assertEquals("not through the cache (an uncached item)", 500L, LengthGuard(noKey) { stored[it] }.open(spec(null, position = 500)))
+    }
+
+    /** qa-30-s3b-code L1: a changed source fails at once; anything else is retried as Media3 does. */
+    @Test
+    fun `the player doesn't retry a changed source, and retries everything else as Media3 does`() {
+        val (changed, _) = http(206, mapOf("Content-Range" to listOf("bytes 500-1199/1200")))
+        val e = try {
+            LengthGuard(changed) { 1000L }.open(spec("e1:k1", position = 500))
+            null
+        } catch (e: HttpDataSource.InvalidResponseCodeException) {
+            e
+        }!!
+        fun info(error: IOException, count: Int = 1) = LoadErrorHandlingPolicy.LoadErrorInfo(allocate<LoadEventInfo>(), allocate<MediaLoadData>(), error, count)
+        val policy = SourceChangedPolicy()
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(info(e)))
+        assertEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(info(IOException(e))))
+        val other = IOException("a dropped connection")
+        assertNotEquals(C.TIME_UNSET, policy.getRetryDelayMsFor(info(other, 2)))
+        assertEquals(DefaultLoadErrorHandlingPolicy().getRetryDelayMsFor(info(other, 2)), policy.getRetryDelayMsFor(info(other, 2)))
+        assertFalse(MediaCache.sourceChanged(other))
+        // The player's media sources take it.
+        val local = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText()
+        assertTrue(local.contains(".setMediaSourceFactory(ItemMediaSourceFactory(context).setLoadErrorHandlingPolicy(SourceChangedPolicy()))"))
     }
 }

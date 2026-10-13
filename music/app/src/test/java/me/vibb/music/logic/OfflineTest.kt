@@ -367,12 +367,17 @@ class OfflineTest {
     @Test
     fun `the keep set and the held items are never evicted, even over the limit`() {
         val e = entry(1, cache = 2)
-        val rows = listOf(done(1, "k20"), done(1, "k19"), played(1, "k10", at = 5), played(1, "k9", at = 1, finished = false))
-        val p = plan(snapshot(library(listOf(e)), items(1, keys), downloads = rows), rows)
+        // The keep set: the newest two (k20, k19), the bookmark (k5) and its next (k4, newest first) - all played,
+        // and played longest ago, so they would be the first to go if they were extras (qa-30-s3b-code M1).
+        val kept = listOf(played(1, "k20", at = 1), played(1, "k19", at = 2), played(1, "k5", at = 3), played(1, "k4", at = 4, finished = false))
+        val rows = kept + listOf(played(1, "k10", at = 50), played(1, "k9", at = 60, finished = false))
+        val snap = snapshot(library(listOf(e)), items(1, keys), downloads = rows, bookmarks = mapOf("e1" to ("k5" to 60_000L)))
+        val p = plan(snap, rows)
         assertEquals(listOf("k10", "k9"), p.extras.map { it.itemKey })
+        assertTrue("the keep set is never pruned either", p.prune.isEmpty())
         val extras = p.extras.map { Extra(it.entryId, it.itemKey, it.cacheKey, gb, it.playedAt!!) }
-        // The kept items alone are 3 GB of a 1 GB limit: every extra that isn't held goes, nothing else.
-        val gone = extrasToEvict(extras, setOf(ItemRef(1, "k9")), totalBytes = 5 * gb, limitBytes = gb, freeBytes = 10 * gib, floorBytes = EXTRAS_FREE_FLOOR)
+        // The kept items alone are 4 GB of a 1 GB limit: every extra that isn't held goes, nothing else.
+        val gone = extrasToEvict(extras, setOf(ItemRef(1, "k9")), totalBytes = 6 * gb, limitBytes = gb, freeBytes = 10 * gib, floorBytes = EXTRAS_FREE_FLOOR)
         assertEquals(listOf("k10"), gone.map { it.itemKey })
     }
 
@@ -403,7 +408,7 @@ class OfflineTest {
     fun `a played item outside the keep set is an extra, an unplayed one is pruned`() {
         val e = entry(1, cache = 2)
         val rows = listOf(
-            done(1, "k20"), done(1, "k19"),
+            played(1, "k20", at = 1), played(1, "k19", at = 2), // the keep set, played: never an extra (M1)
             played(1, "k10", at = now), done(1, "k9"),
             played(1, "k8", at = now, finished = false), done(1, "k7", finished = false),
         )
@@ -442,6 +447,24 @@ class OfflineTest {
         // HLS isn't held back: a segment's lock lasts one segment load.
         val hls = snapshot(library(listOf(e)), items(1, keys, hls = true), bookmarks = bookmarks)
         assertEquals(listOf("k3", "k20", "k19", "k2"), plan(hls, rows, held = held).wanted.map { it.item.key })
+    }
+
+    /** qa-30-s3b-code L5: ExoPlayer loads up to 50 s ahead, so with short items more than the next is open. */
+    @Test
+    fun `short items - the held set reaches every item that starts within the window ahead`() {
+        val long = { _: Int -> 30 * 60_000L }
+        assertEquals("long items: the current and the next", listOf(3, 4), heldAhead(3, 4, 10, remainingMs = 20 * 60_000L, durationMs = long))
+        assertEquals("the current item's end is near: still the next only", listOf(3, 4), heldAhead(3, 4, 10, 10_000L, long))
+        // 20 s clips, 10 s left of the current: the next starts in 10 s, then 30, 50, 70; 90 s is past the window.
+        val clip = { _: Int -> 20_000L }
+        assertEquals(listOf(3, 4, 5, 6, 7), heldAhead(3, 4, 10, 10_000L, clip))
+        assertEquals("the queue's end", listOf(8, 9), heldAhead(8, 9, 10, 10_000L, clip))
+        assertEquals("the last item", listOf(9), heldAhead(9, -1, 10, 10_000L, clip))
+        assertEquals("an unknown length ends the window", listOf(3, 4, 5), heldAhead(3, 4, 10, 10_000L) { if (it == 5) null else 20_000L })
+        assertEquals("an unknown position: the current and the next", listOf(3, 4), heldAhead(3, 4, 10, null, clip))
+        assertTrue("nothing loaded", heldAhead(-1, -1, 0, null, clip).isEmpty())
+        assertEquals(setOf(ItemRef(1, "a"), ItemRef(1, "c")), heldItems(1, listOf("a", "b", "c"), listOf(0, 2, 7)))
+        assertEquals(75_000L, HELD_AHEAD_MS)
     }
 
     @Test

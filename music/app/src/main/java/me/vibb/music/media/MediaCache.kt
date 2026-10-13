@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.ParserException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -20,6 +21,8 @@ import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import me.vibb.music.BuildConfig
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.Store
@@ -206,6 +209,9 @@ object MediaCache {
     /** Did the playback fail at the [StreamGate] (the streaming switch, design 30 §1.6)? */
     fun gated(error: Throwable): Boolean = generateSequence(error) { it.cause }.any { it is StreamGateException }
 
+    /** Did a load fail at the [LengthGuard] (a changed source, design 30 §1.6)? */
+    fun sourceChanged(error: Throwable): Boolean = generateSequence(error) { it.cause }.any { it is SourceChangedException }
+
     /** Delete an item's audio. */
     fun remove(context: Context, cacheKey: String, hls: Boolean) {
         val c = get(context)
@@ -300,6 +306,23 @@ class ThroughSink(cache: Cache, private val decide: () -> Boolean, private val f
     }
 }
 
+/**
+ * The [LengthGuard]'s reason, the cause of its synthetic 416 (`errorCode` still reads `http_416`): another
+ * request would only trip the guard again, so the player's [SourceChangedPolicy] doesn't retry it.
+ */
+class SourceChangedException : IOException("the source changed under a partial copy")
+
+/**
+ * The player's load policy (qa-30-s3b-code L1): Media3's default, except that a changed source fails at once
+ * - the default retries anything that isn't a parse error or the like after 0, 1 and 2 s, three more
+ * requests the guard would close, before the player hears of it.
+ */
+@OptIn(UnstableApi::class)
+class SourceChangedPolicy : DefaultLoadErrorHandlingPolicy() {
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+        if (MediaCache.sourceChanged(loadErrorInfo.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
+}
+
 /** The streaming switch refused a request (design 30 §1.6): "Ikke lastet ned - trenger Wi-Fi", never an item error. */
 class StreamGateException : IOException("streaming is not allowed on this network now")
 
@@ -349,7 +372,8 @@ class LengthGuard(private val upstream: HttpDataSource, private val storedLength
             )
             if (changed) {
                 upstream.close()
-                throw HttpDataSource.InvalidResponseCodeException(416, "the source changed under a partial copy", null, headers, dataSpec, ByteArray(0))
+                // The cause names it, so the player's load policy doesn't retry it (SourceChangedPolicy).
+                throw HttpDataSource.InvalidResponseCodeException(416, "the source changed under a partial copy", SourceChangedException(), headers, dataSpec, ByteArray(0))
             }
         }
         return length

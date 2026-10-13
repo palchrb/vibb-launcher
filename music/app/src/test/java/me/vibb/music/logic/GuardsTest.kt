@@ -179,10 +179,11 @@ class GuardsTest {
         assertFalse(service.contains("exo."))
         assertFalse(service.contains("ExoPlayer"))
         assertFalse(service.contains("savePosition"))
-        // The display position is never stored (qa-26a-step2-code M2): its five readers are PlayerHub.position,
-        // previous's 3 s rule, the resume overlap, the launcher's setNowPlaying and the seek back to where a
-        // changed source failed (design 30 §1.6, playOnUncached) - no other.
-        assertEquals(5, Regex("""positionMs\(\)""").findAll(service).count())
+        // The display position is never stored (qa-26a-step2-code M2): its six readers are PlayerHub.position,
+        // previous's 3 s rule, the resume overlap, the launcher's setNowPlaying, the seek back to where a
+        // changed source failed (design 30 §1.6, playOnUncached) and the held window (qa-30-s3b-code L5) - no other.
+        assertEquals(6, Regex("""positionMs\(\)""").findAll(service).count())
+        assertTrue(service.contains("val remaining = length(current)?.let { (it - renderer.positionMs()).coerceAtLeast(0) }"))
         assertTrue(service.contains("val pos = renderer.positionMs()\n        val entryId = a.entry.id\n        a.uncached += item.key"))
         assertTrue(service.contains("PlayerHub.position = { renderer.positionMs() }"))
         assertTrue(service.contains("previousAction(renderer.currentIndex(), renderer.itemCount(), renderer.positionMs(), duration)"))
@@ -259,6 +260,8 @@ class GuardsTest {
         val tick = service.substringAfter("private val saveTick").substringBefore("private fun onRendererEvent")
         assertTrue(tick.contains("renderer.saveNow()"))
         assertTrue(tick.contains("reportNowPlaying(refresh = true)"))
+        // and the held window moves with the position (design 30 §1.6, qa-30-s3b-code L5)
+        assertTrue(tick.contains("updateHeld()"))
     }
 
     private val sonos by lazy { code("src/main/java/me/vibb/music/sonos/SonosController.kt") }
@@ -733,7 +736,11 @@ class GuardsTest {
         assertTrue(factory.contains("val through = tag.ref?.takeIf { tag.through && !tag.copyOnly }?.let { MediaCache.throughSink(app, it, tag.through, tag.cacheKey, url, tag.hls) }"))
         val item = service.substringAfter("private fun mediaItem(a: Active, item: PlayItem): MediaItem {").substringBefore("val meta =")
         assertTrue(item.contains("val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS"))
-        assertTrue(item.contains("b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = item.key in a.uncached, ref = ItemRef(a.entry.id, item.key)))"))
+        assertTrue(item.contains("b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = uncached, ref = ItemRef(a.entry.id, item.key)))"))
+        assertTrue(item.contains("val uncached = item.key in a.uncached"))
+        // An uncached item carries no cache key: no request names the stale copy's key (the guard would trip again).
+        assertTrue(item.contains("b.setUri(url)\n"))
+        assertTrue(item.contains("if (!uncached) b.setCustomCacheKey(cacheKey)"))
         assertEquals("only the NRK/RSS branch sets through", 1, Regex("through = through").findAll(item).count())
         // The gate on every player upstream (not the job's), the length guard on both factories' http.
         assertTrue(media.contains("DataSource.Factory { StreamGate(upstream.createDataSource()) { streamAllowed(netCaps(app), store.streamMobileData) } }"))
@@ -759,7 +766,12 @@ class GuardsTest {
         val uncached = body(service, "private fun playOnUncached(")
         assertTrue(uncached.contains("a.uncached += item.key"))
         assertTrue(uncached.contains("store.db.deleteDownload(entryId, item.key)"))
-        assertTrue(uncached.contains("renderer.replaceItem(index, mediaItem(a, item))\n        renderer.seekTo(index, pos)\n        renderer.prepare()"))
+        // qa-30-s3b-code H1: a new source, never replaceItem - Media3's replaceMediaItem keeps the source when
+        // canUpdateMediaItem says yes (the uri, the cache key or stream keys; never the tag), so the item would
+        // stay on the cache-backed source and trip the guard again.
+        assertTrue(uncached.contains("renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)"))
+        assertFalse(uncached.contains("replaceItem"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/LocalRenderer.kt").contains("exo.setMediaItems(items, startIndex, startMs)"))
         assertFalse("never starts playback by itself", uncached.contains("play()"))
     }
 
@@ -778,6 +790,14 @@ class GuardsTest {
         // Every item and timeline change goes through publish, which sets the held set; a load ends the claims.
         assertTrue(body(service, "private fun publish() {").trimStart().startsWith("updateHeld()"))
         assertTrue(service.contains("renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)\n        updateHeld(loaded = true)"))
+        // Every other end of a queue's claims (qa-30-s3b-code L6): start() giving up, playback resumption once the
+        // session has its items, and an exception between the claim and the queue.
+        val start = body(service, "private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        assertTrue(start.substringAfter("if (first == null) {").substringBefore("return").contains("updateHeld(loaded = true)"))
+        assertTrue(Regex("future\\.set\\(MediaSession\\.MediaItemsWithStartPosition\\(a\\.items\\.map \\{ mediaItem\\(a, it\\) \\}, index, pos\\)\\)\\s*handler\\.post \\{ updateHeld\\(loaded = true\\) \\}").containsMatchIn(service))
+        val active = body(service, "private suspend fun activeFor(")
+        assertTrue(active.indexOf("PlayerHub.claim(") in 0 until active.indexOf("claimed = true"))
+        assertTrue(Regex("""\} catch \(e: Throwable\) \{\s*if \(claimed\) updateHeld\(loaded = true\)\s*throw e""").containsMatchIn(active))
         // The release never settles (its scope ends): the next sync's catch-up does.
         val destroy = body(service, "override fun onDestroy() {")
         assertTrue(destroy.contains("PlayerHub.hold(emptySet(), loaded = true)\n        scope.cancel()"))
@@ -792,7 +812,12 @@ class GuardsTest {
         assertTrue(media.substringAfter("fun copyOnlyFactory(").substringBefore("\n\n").contains(".setUpstreamDataSourceFactory(null)"))
         // Never for a held item; catch-up enqueues the job once.
         assertTrue(body(through, "private suspend fun settleLocked(").contains("if (ItemRef(row.entryId, row.itemKey) in PlayerHub.heldLocal) return null"))
-        assertTrue(body(through, "suspend fun catchUp(").contains("if (incomplete > 0) Downloads.enqueue(context, store.downloadMobileData)"))
+        // qa-30-s3b-code L3: catch-up starts no job (the sync's plan does, for what is wanted); L4: an item let go
+        // half played asks for one.
+        assertFalse(body(through, "suspend fun catchUp(").contains("Downloads.enqueue"))
+        val settle = body(through, "suspend fun settle(")
+        assertTrue(settle.contains("incomplete = it == null && row.playedAt != null && ref !in PlayerHub.heldLocal"))
+        assertTrue(settle.contains("if (incomplete) Downloads.enqueue(context, store.downloadMobileData)"))
     }
 
     /** §1.6 (L7): the pure plan takes the held set; the worker and the sync must pass the player's. */
@@ -813,18 +838,21 @@ class GuardsTest {
             ),
         )
         assertTrue(work.indexOf("CacheThrough.evict(") < work.indexOf("run.fetchOne(w)"))
-        // The sync: prune, evict, sweep - in that order, inside runLock, before the downloads.
+        // The sync: prune, sweep, evict - in that order (qa-30-s3b-code L2: orphans never cost an extra), inside
+        // runLock, before the downloads.
         val order = listOf(
             "val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)",
             "CacheThrough.remove(context, plan.prune)",
-            "CacheThrough.evict(context, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(context).state() == \"ok\"))",
             "CacheThrough.sweepOrphans(context)",
+            "CacheThrough.evict(context, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(context).state() == \"ok\"))",
             "val downloadMobileData = store.downloadMobileData",
         ).map { body(sync, "private suspend fun runLocked(").indexOf(it) }
         assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
         // The report's extra_bytes from its own plan, so the job's report isn't 0 (L1).
         assertTrue(sync.contains("val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)"))
         assertTrue(sync.contains("val extraBytes = CacheThrough.extraBytes(context, plan)"))
+        // Eviction counts the held extras as staying (qa-30-s3b-code N1): freed bytes are only the unheld ones'.
+        assertTrue(body(through, "suspend fun evict(").contains("extrasToEvict(extras, PlayerHub.heldLocal, MediaCache.totalBytes(context), limitBytes, MediaCache.freeBytes(context), floorBytes)"))
         // The sweep reads the cache's keys before the rows (§1.8).
         val sweep = body(through, "suspend fun sweepOrphans(")
         assertTrue(sweep.indexOf("val keys = MediaCache.resourceKeys(context)") < sweep.indexOf("val rows = store.db.downloads()"))

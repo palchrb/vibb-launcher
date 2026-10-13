@@ -29,6 +29,7 @@ import me.vibb.music.logic.showsPlaying
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.MediaCache
+import me.vibb.music.media.SourceChangedPolicy
 
 /** Speech (podcasts, stories: a notification pauses rather than ducks) or music. */
 internal fun audioAttributes(speech: Boolean): AudioAttributes = AudioAttributes.Builder()
@@ -50,7 +51,7 @@ internal class LocalRenderer(
     private val queue: () -> Active?,
 ) : Renderer {
     private val exo: ExoPlayer = ExoPlayer.Builder(context)
-        .setMediaSourceFactory(ItemMediaSourceFactory(context))
+        .setMediaSourceFactory(ItemMediaSourceFactory(context).setLoadErrorHandlingPolicy(SourceChangedPolicy()))
         .setAudioAttributes(audioAttributes(speech = true), true)
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)

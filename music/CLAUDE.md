@@ -92,13 +92,17 @@ changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testin
   nothing - and 1 GiB free), makes the item's not-done row before its first byte (`insertThrough`), and a cache
   error never fails playback (`FLAG_IGNORE_CACHE_ON_ERROR`). "On the phone" is still a done row: a stream played to
   its end is settled into one by a non-blocking span check (`CacheThrough.settle` when it leaves the held set, on
-  IO, never the service's `writer`; `catchUp` at every sync, before `runLock`); the job completes a partial with
-  Range. The player's **held set** (`PlayerHub.heldLocal`: the current item and the next, plus a new queue's
-  claims) is never pruned, evicted, swept or settled - every removal reads it again right before it removes - and
+  IO, never the service's `writer` - a played one left incomplete asks for the job; `catchUp` at every sync, before
+  `runLock`, enqueues nothing); the job completes a partial with Range. The player's **held set**
+  (`PlayerHub.heldLocal`: the current item, the next, and every item starting within `HELD_AHEAD_MS` of the position
+  - with short items ExoPlayer opens more than the next - plus a new queue's claims, which end at its load, its
+  give-up or an exception) is never pruned, evicted, swept or settled - every removal reads it again right before it removes - and
   its progressive items that aren't done are never fetched (the downloader would wait on the player's lock).
   `sameSource` ignores an http url's query; another source's partial, or bytes with no row, play uncached
-  (`staleThrough`); a resume against another total length is the `LengthGuard`'s synthetic `http_416` (the job
-  refetches from 0, the player drops the row and plays on uncached). The HLS rendition is pinned to the download's
+  (`staleThrough`); a resume against another total length is the `LengthGuard`'s synthetic `http_416` (its cause
+  `SourceChangedException`, never retried by the player's `SourceChangedPolicy`; the job refetches from 0, the player
+  drops the row and loads the queue again with the item uncached and without a cache key - never `replaceItem`,
+  which Media3 turns into an in-place update of the same cache-backed source). The HLS rendition is pinned to the download's
   (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos and Storytel never write through.
 - Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
   hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
@@ -110,6 +114,10 @@ changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testin
   floor (`extrasFloor`: 1 GiB, 1.5 GB while a Storytel book is wanted and the login is ok) - by the sync and by the
   job before each round. The keep set and the held set are never evicted. Cache bytes no row owns are swept at
   every sync (`orphanResources`, keys read before rows).
+- **Cleartext http is allowed** (`res/xml/network_security_config.xml`, qa-30-s3b-code H2; `SourceScanTest`): Sonos
+  SOAP to a speaker's LAN address, http enclosures, `lan` feeds and the emulator's fakes all need it, and a config
+  can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
+  Sonos URLs from IP literals); trust is the system's CAs only.
 - Positions are keyed by (entry key, item key), never by URL.
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).

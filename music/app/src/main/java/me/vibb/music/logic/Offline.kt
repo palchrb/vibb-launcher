@@ -170,8 +170,38 @@ fun sourceChanged(storedLength: Long?, status: Int, contentRange: String?, conte
 fun keepPlayedAt(stored: Long?, incoming: Long?): Long? = listOfNotNull(stored, incoming).maxOrNull()
 
 /** The items the phone's player may have a period open for (design 30 §1.6): [current] and [next] of [keys]. */
-fun heldItems(entryId: Long, keys: List<String>, current: Int, next: Int): Set<ItemRef> =
-    listOf(current, next).mapNotNull { keys.getOrNull(it) }.mapTo(linkedSetOf()) { ItemRef(entryId, it) }
+fun heldItems(entryId: Long, keys: List<String>, current: Int, next: Int): Set<ItemRef> = heldItems(entryId, keys, listOf(current, next))
+
+/** The items at [indices] of [keys] (-1 or out of range: none). */
+fun heldItems(entryId: Long, keys: List<String>, indices: List<Int>): Set<ItemRef> =
+    indices.mapNotNull { keys.getOrNull(it) }.mapTo(linkedSetOf()) { ItemRef(entryId, it) }
+
+/**
+ * How far ahead of the playing position the held set reaches (qa-30-s3b-code L5): ExoPlayer loads up to 50 s
+ * ahead (`DefaultLoadControl`), and the set is computed again at least every 15 s while playing (the save
+ * tick), so 75 s covers every period it can have opened since.
+ */
+const val HELD_AHEAD_MS = 75_000L
+
+/**
+ * The queue indices the phone's player may have a period open for: [current], [next], and every item after
+ * [next] that starts within [HELD_AHEAD_MS] of the position - with short items (news clips, trailers)
+ * ExoPlayer opens more than the next. [remainingMs]: what is left of the current item; [durationMs] of an
+ * index. An unknown length ends the window there (the current item and the next stay held regardless).
+ */
+fun heldAhead(current: Int, next: Int, count: Int, remainingMs: Long?, durationMs: (Int) -> Long?): List<Int> {
+    if (current < 0) return emptyList()
+    if (next !in 0 until count) return listOf(current)
+    val held = mutableListOf(current, next)
+    var startsIn = (remainingMs ?: return held) + (durationMs(next) ?: return held)
+    var i = next + 1
+    while (i < count && i != current && startsIn < HELD_AHEAD_MS) {
+        held += i
+        startsIn += durationMs(i) ?: break
+        i++
+    }
+    return held
+}
 
 /** A played extra as eviction sees it: its cache key, its bytes now and when the phone last started it. */
 data class Extra(val entryId: Long, val itemKey: String, val cacheKey: String, val bytes: Long, val playedAt: Long)

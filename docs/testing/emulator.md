@@ -530,14 +530,18 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   `extra_bytes`: `run-as ... cat files/music/report.json`;
 - a fake podcast host: `python3 -I scripts/fake-audio.py [--vary]` (port 8731, episodes `ep1..ep3` of 20 MB) and its
   listing `python3 -I scripts/fake-audio.py --print-listing 6 > debug-feed/items/6.json`, for a `lan` RSS entry 6 in
-  `debug-feed/library.json` (a public entry may not reach 10.0.2.2, 21b §2.7).
+  `debug-feed/library.json` (a public entry may not reach 10.0.2.2, 21b §2.7). Plain http works since the app's
+  network security config allows cleartext (qa-30-s3b-code H2); before it, every http fake failed with
+  `CLEARTEXT communication ... not permitted`. For the extras, give the fake more episodes than the depth:
+  `--episodes ep1,ep2,ep3,ep4,ep5,ep6,ep7` at depth 5, or depth 1.
 
 Checks (S = streaming switch, D = downloads switch; depth 5, limit 2 GB unless noted):
 - **S on, D off, Wi-Fi off:** a not-downloaded episode plays and `du` grows while it plays; the report's
   `downloads[].waiting` is `wifi` and no download runs (`adb logcat -s WM-WorkerWrapper`).
 - **S off, D on, Wi-Fi off:** the episode says "Ikke lastet ned - trenger Wi-Fi" and the queue moves on; downloads
   (and §6i's fake Storytel books) run. **Roaming, both on:** nothing streams or downloads; copies play.
-- **Offline at once:** play episode 6 (not downloaded) to its end on Wi-Fi, then the next item: in airplane mode it
+- **Offline at once:** play an episode outside the keep set (with the fake above: `ep1` at depth 5, the oldest of
+  seven; on a real feed episode 6), not downloaded, to its end on Wi-Fi, then the next item: in airplane mode it
   plays, its list shows it on the phone, and after the next sync `extra_bytes` > 0.
 - **Not twice:** S on, D off, on LTE: stream half of a not-downloaded keep-set episode, then play another entry.
   Wi-Fi on: the job fetches only the second half (`adb shell dumpsys netstats detail`, the app's uid), then

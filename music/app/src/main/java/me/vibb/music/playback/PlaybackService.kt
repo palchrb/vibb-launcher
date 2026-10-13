@@ -84,6 +84,7 @@ import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playability
 import me.vibb.music.logic.previousAction
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.heldAhead
 import me.vibb.music.logic.heldItems
 import me.vibb.music.logic.homePlan
 import me.vibb.music.logic.resumeFrom
@@ -547,32 +548,41 @@ class PlaybackService : MediaSessionService() {
         var entryRows = rows.filter { it.entryId == entry.id }
         var copies = snap.onPhone[entry.id].orEmpty().toMutableSet()
         var stale = emptySet<String>()
-        if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {
-            val before = PlayerHub.heldLocal
-            PlayerHub.claim(heldItems(entry.id, keys, start, start + 1))
-            val through = entry.source == Source.NRK || entry.source == Source.RSS
-            val fresh = CacheThrough.queueRows(this, entry, if (through) items else emptyList(), before)
-            entryRows = fresh.rows
-            stale = fresh.stale
-            copies = entryRows.filter { it.done }.map { it.itemKey }.toMutableSet()
+        var claimed = false
+        try {
+            if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {
+                val before = PlayerHub.heldLocal
+                PlayerHub.claim(heldItems(entry.id, keys, start, start + 1))
+                claimed = true
+                val through = entry.source == Source.NRK || entry.source == Source.RSS
+                val fresh = CacheThrough.queueRows(this, entry, if (through) items else emptyList(), before)
+                entryRows = fresh.rows
+                stale = fresh.stale
+                copies = entryRows.filter { it.done }.map { it.itemKey }.toMutableSet()
+            }
+            // The entry's cover is made now; an item's own picture only where its small copy exists - the
+            // rest when it becomes current (refreshArt), never a decode per queue item up front (QA H2).
+            val art = withContext(writer) {
+                val map = HashMap<String, Uri>()
+                entry.cover?.let { c -> artwork(c)?.let { map[c] = it } }
+                for (hash in order.mapNotNull { it.artHash }.toSet()) smallArt(hash).takeIf { it.isFile }?.let { map[hash] = Uri.fromFile(it) }
+                map
+            }
+            return Active(
+                entry, order, items,
+                snap.positions[entry.key].orEmpty().toMutableMap(),
+                copies,
+                entryRows.filter { it.done }.associateBy { it.itemKey }.toMutableMap(),
+                shuffled,
+                art,
+                uncached = stale.toMutableSet(),
+            )
+        } catch (e: Throwable) {
+            // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
+            // otherwise stay busy - never fetched - until the next queue loads.
+            if (claimed) updateHeld(loaded = true)
+            throw e
         }
-        // The entry's cover is made now; an item's own picture only where its small copy exists - the
-        // rest when it becomes current (refreshArt), never a decode per queue item up front (QA H2).
-        val art = withContext(writer) {
-            val map = HashMap<String, Uri>()
-            entry.cover?.let { c -> artwork(c)?.let { map[c] = it } }
-            for (hash in order.mapNotNull { it.artHash }.toSet()) smallArt(hash).takeIf { it.isFile }?.let { map[hash] = Uri.fromFile(it) }
-            map
-        }
-        return Active(
-            entry, order, items,
-            snap.positions[entry.key].orEmpty().toMutableMap(),
-            copies,
-            entryRows.filter { it.done }.associateBy { it.itemKey }.toMutableMap(),
-            shuffled,
-            art,
-            uncached = stale.toMutableSet(),
-        )
     }
 
     /**
@@ -766,11 +776,15 @@ class PlaybackService : MediaSessionService() {
             val url = download?.url ?: item.url.orEmpty()
             val hls = download?.hls ?: item.hls
             val cacheKey = itemCacheKey(a.entry.key, item.key)
-            b.setUri(url).setCustomCacheKey(cacheKey)
+            val uncached = item.key in a.uncached
+            b.setUri(url)
+            // An uncached item (design 30 §1.6) has no cache key: no request of it names the stale copy's key,
+            // so the length guard has no stored length to trip on again.
+            if (!uncached) b.setCustomCacheKey(cacheKey)
             // A public entry's audio never comes from a private address (21b §2.7). What streams is written
             // as it plays (design 30 §1.4: the sink decides at each open), unless its cached bytes are stale (§1.6).
             val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS
-            b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = item.key in a.uncached, ref = ItemRef(a.entry.id, item.key)))
+            b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = uncached, ref = ItemRef(a.entry.id, item.key)))
             if (hls) {
                 b.setMimeType(MimeTypes.APPLICATION_M3U8)
                 download?.variant?.let { b.setStreamKeys(listOf(StreamKey(HlsMultivariantPlaylist.GROUP_INDEX_VARIANT, it))) }
@@ -1032,6 +1046,8 @@ class PlaybackService : MediaSessionService() {
             // The launcher's snapshot keeps the place too, so Home is right after a crash or a
             // dead battery (qa-21-step4-code L4).
             reportNowPlaying(refresh = true)
+            // The held window moves with the position (design 30 §1.6, qa-30-s3b-code L5: HELD_AHEAD_MS).
+            updateHeld()
             handler.postDelayed(this, 15_000)
         }
     }
@@ -1231,9 +1247,11 @@ class PlaybackService : MediaSessionService() {
         val entryId = a.entry.id
         a.uncached += item.key
         scope.launch(writer) { store.db.deleteDownload(entryId, item.key) }
-        renderer.replaceItem(index, mediaItem(a, item))
-        renderer.seekTo(index, pos)
-        renderer.prepare()
+        // The queue loaded again, never `replaceItem` (qa-30-s3b-code H1): Media3's replaceMediaItem keeps the
+        // media source whenever `canUpdateMediaItem` says yes - it compares the uri (and for progressive the
+        // cache key, for HLS the stream keys), never the tag - so the item would stay on the cache-backed source
+        // and trip the guard again. A load builds every source anew; the play state stays as it was.
+        renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)
     }
 
     /** An item started: it leaves Nytt (21 §4.5), and on the phone it is played (design 30 §1.5). */
@@ -1404,7 +1422,11 @@ class PlaybackService : MediaSessionService() {
         val held = if (a == null || renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0) {
             emptySet()
         } else {
-            heldItems(a.entry.id, a.items.map { it.key }, renderer.currentIndex(), renderer.player.nextMediaItemIndex)
+            // The current item, the next, and with short items what ExoPlayer may have opened after it (L5).
+            val current = renderer.currentIndex()
+            val length = { i: Int -> a.items.getOrNull(i)?.let { a.durations[it.key] ?: it.durationMs } }
+            val remaining = length(current)?.let { (it - renderer.positionMs()).coerceAtLeast(0) }
+            heldItems(a.entry.id, a.items.map { it.key }, heldAhead(current, renderer.player.nextMediaItemIndex, a.items.size, remaining, length))
         }
         for (ref in PlayerHub.hold(held, loaded)) {
             scope.launch(Dispatchers.IO) {

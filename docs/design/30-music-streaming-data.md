@@ -223,10 +223,12 @@ cache lock (H1):
 
 Settle runs:
 - when an item **leaves the held set** (§1.6), launched on `Dispatchers.IO` in the service's scope. Never on the
-  service's `writer`, where positions and bookmarks are written;
+  service's `writer`, where positions and bookmarks are written. A played row that stays incomplete enqueues the
+  download job, whose plan decides whether it is wanted (qa-30-s3b-code L4);
 - at every sync, **before** `Sync.runLock` is taken (design 29's mutex; `CacheThrough` has its own small mutex), as
-  `catchUp`: every row that is not done, has `playedAt`, and is not held. It enqueues the download job **once** if any
-  row is still incomplete. A partial extra is re-checked at every sync, which is cheap as a span check;
+  `catchUp`: every row that is not done, has `playedAt`, and is not held. It enqueues no job (qa-30-s3b-code L3): the
+  sync's own plan, built right after, enqueues one for the keep-set items still wanted. A partial extra is
+  re-checked at every sync, which is cheap as a span check;
 - never for a held item. The service's release can't settle (its scope is cancelled), so the next sync's `catchUp`
   covers it.
 
@@ -237,7 +239,10 @@ visible, and the download plan doesn't want it.
 
 **The held set** (`PlayerHub.heldLocal: Set<ItemRef>`, immutable and `@Volatile`, written on main) is every item the
 phone's ExoPlayer may have a period open for:
-- the current item and the next one in its timeline (shuffle included);
+- the current item and the next one in its timeline (shuffle included), and every item after it that starts within
+  `HELD_AHEAD_MS` (75 s) of the position: with items shorter than the load control's 50 s ExoPlayer opens more than
+  the next (qa-30-s3b-code L5; recomputed at every publish and every 15 s save tick). An item without a known
+  duration ends the window after the next item: the one case it can miss;
 - empty on a Sonos room or with nothing loaded.
 
 ExoPlayer opens the next item's period in the current item's last ~50 s, and with a sink a progressive period keeps
@@ -291,8 +296,11 @@ per request breaks that. The guard catches it by length, the cheap signal.
   gives `http_416` with no new mapping:
   - **the job:** `DownloadRun`'s existing `http_416` path drops the partial and fetches once from 0;
   - **the player** (`onError`, an item without a done copy, code `http_416`): its row is deleted (its bytes become
-    orphans, swept when not held). The item is replaced in place (`renderer.replaceItem`, a new source with
-    `ItemTag.uncached`) and sought to the saved position. It plays on, and no item error is recorded.
+    orphans, swept when not held). The queue is loaded again at that item and position with it `ItemTag.uncached` and
+    without a cache key (qa-30-s3b-code H1: `renderer.replaceItem` would be Media3's in-place update - its
+    `canUpdateMediaItem` never compares the tag - and keep the cache-backed source). It plays on, and no item error is
+    recorded. The guard's 416 carries a `SourceChangedException` cause, which the player's load policy never retries
+    (L1).
 
   Same-length re-stitching isn't caught. The copy then plays with a jump, and a parse failure still drops it
   (`bad_media`).
@@ -367,7 +375,8 @@ So extras go when space is needed (the floor) **or** when the cache is over the 
 the limit and the floor bound the extras, and an age limit would delete what the kid replays while there is room.
 
 Where eviction runs:
-- the sync: inside `runLock`, after the listings, with the prune. It never waits on a lock: held items are skipped, and
+- the sync: inside `runLock`, after the listings, the prune and the orphan sweep (the sweep first, so orphans about to
+  go never cost an extra, qa-30-s3b-code L2). It never waits on a lock: held items are skipped, and
   removing an unheld resource takes `SimpleCache`'s monitor only briefly;
 - the download job: each planning round, before fetching, so a Storytel book gets its floor;
 - both re-check the held set before each removal.
@@ -379,8 +388,9 @@ Bytes per item come from one pass over the cache's keys (`MediaCache.bytesByItem
 heldCacheKeys)`.
 - A resource key is an orphan when it is no row's `cacheKey` and doesn't start with any row's `hlsKeyPrefix`, and isn't
   held.
-- The cache's keys are read **before** the rows. The sink inserts its row before it writes, so a key seen first has
-  its row by the time the rows are read.
+- The cache's keys are read **before** the rows. The sink inserts its row before it writes, so a key with committed
+  bytes seen first has its row by the time the rows are read. (`SimpleCache` adds a key at the hole lock, before
+  the sink's row; such a key belongs to an item the player holds and has no committed span - qa-30-s3b-code N4.)
 - It removes what a still-open `CacheDataSource` committed after a prune, and a stale partial left by §1.6.
 
 ### 1.9 Removals
@@ -580,12 +590,12 @@ Step 3b (cache-through, extras, the limit):
   - every item and timeline change sets `heldLocal`. An item leaving it is settled on IO (§1.5);
   - `startedPlaying` (local renderer): `markPlayed` beside design 29's `deleteNews`;
   - `onError`: the length guard's `http_416` path and the gate's exception (§1.6).
-- `sync/CacheThrough.kt` (new): `settle(context, ref)`, `catchUp(context)` (one enqueue per sync),
+- `sync/CacheThrough.kt` (new): `settle(context, ref)`, `catchUp(context)` (no enqueue since qa-30-s3b-code L3),
   `evict(context, plan)` (re-checks `heldLocal` before each remove) and `sweepOrphans(context)`.
 - `sync/Downloads.kt`: the worker plans with `PlayerHub.heldLocal` and evicts each round before fetching, with
   `extrasFloor(plan.wantsStorytel, StorytelAccount.state() == "ok")` and the limit.
 - `sync/Sync.kt`: `catchUp` before `runLock`. Inside it, after the listings: the plan with `held`, the prune
-  (re-checking held), `evict`, `sweepOrphans`. `writeReport` computes `extra_bytes` from the plan (L1).
+  (re-checking held), `sweepOrphans`, `evict` (qa-30-s3b-code L2: the sweep first). `writeReport` computes `extra_bytes` from the plan (L1).
 - `sync/ArtPlan.kt`: extras' art in `keep` (§1.11).
 
 **Design 29 coordination:** step 3b builds on design 29 merged into main: Room 3 -> 4, design 29's `Sync.kt` (its two
@@ -1038,3 +1048,43 @@ Branch `design-30-s3b` from step 3a with its fix round (`70a7e801`), step 1's fi
   listing", the bridge's report fields, `fake-audio.py`), design 21 §4.5 (a pointer here), `docs/testing/emulator.md`
   §6f (§8's checks, the fake host), root `CLAUDE.md` (scripts, `music.yml`), `PLAN.md`.
 - Not device-tested: §8 checks 2 (the `du`), 5-10.
+
+**Code QA fix round** (`qa-30-s3b-code.md`: 2 High (H2 pre-existing), 1 Medium, 6 Low, 4 Nits; all addressed):
+- **H1:** `playOnUncached` loads the queue again (`renderer.load(..., index, pos, playNow = false)`: every source built
+  anew, the play state kept) instead of `replaceItem`, which Media3 turns into an in-place update of the same
+  cache-backed source (`canUpdateMediaItem` compares the uri and the cache key or stream keys, never the tag). The
+  uncached item carries no `customCacheKey`, so no request names the stale copy's key and the guard can't trip on
+  its old stored length. `GuardsTest` pins both (the load, no `replaceItem`, the missing key); the pins fail on
+  `d3c8b648`.
+- **H2:** `res/xml/network_security_config.xml`: `base-config cleartextTrafficPermitted="true"`, system trust anchors
+  only, referenced from the manifest (no `usesCleartextTraffic`), lint's `InsecureBaseConfiguration` ignored on that
+  element with a comment. Nothing narrower: Sonos speakers sit on whatever LAN address the home's router gives them,
+  and a network security config can only name hosts (`domain-config`), not ranges; http enclosures and `lan` feeds are
+  arbitrary hosts too. The app's own address rules still decide what may be fetched. `SourceScanTest` `cleartext is
+  allowed for Sonos, http enclosures, lan feeds and the fakes - the system CAs only` pins the file, the reference, no
+  other config, no domain or debug overrides. `music/CLAUDE.md` has the rule.
+- **M1:** `the keep set and the held items are never evicted, even over the limit` now plays the whole keep set (the
+  newest two, the bookmark and its next, all played before the extras) and asserts none of it is an extra or pruned;
+  `a played item outside the keep set ...` plays its keep set too. QA's mutation M1 goes red.
+- **L1:** the guard's 416 has a `SourceChangedException` cause (`errorCode` still `http_416`); `SourceChangedPolicy`
+  (Media3's default, except `C.TIME_UNSET` for it) is the player's load policy (`LocalRenderer`). `ThroughSinkTest`
+  `the player doesn't retry a changed source, and retries everything else as Media3 does`.
+- **L2:** the sync sweeps before it evicts (§1.8, §5.2 amended); `GuardsTest` pins the order.
+- **L3:** `catchUp` enqueues nothing (§1.5 amended): the sync's own plan enqueues for wanted keep-set items.
+- **L4:** `settle` (the service's, when an item leaves the held set) enqueues the job when a played row stays
+  incomplete; the job's plan decides whether it is wanted. Only a played row: a preloaded next item the kid never
+  started doesn't start a job.
+- **L5:** the held set reaches every item that starts within `HELD_AHEAD_MS` (75 s: the load control's 50 s plus the
+  15 s save tick, which now recomputes it) of the position (`heldAhead`, pure; `OfflineTest` `short items - ...`). An
+  unknown length ends the window after the next item - the limit left, documented in §1.6 (an item with no
+  listed or known duration is rare: the server lists durations). A sixth `positionMs()` reader (the window), in the
+  allowlist.
+- **L6:** `GuardsTest` pins the other ends of a claim (`start()`'s give-up, resumption's post) and `activeFor` ends its
+  claims when anything throws between the claim and the queue (`catch (e: Throwable)`, rethrown).
+- **N1:** `evict`'s `extrasToEvict(extras, PlayerHub.heldLocal, ...)` pinned. **N2:** emulator.md §6f: the fake needs
+  more episodes than the depth (`--episodes ep1,...,ep7` or depth 1), and cleartext now works. **N3:** no change - the
+  spec's choice (the sink's 1 GiB floor vs the job's 1.5 GB while a Storytel book is wanted); the churn is bounded by
+  what the kid plays. **N4:** the sweep's KDoc and §1.8 say a key can appear at the hole lock before its row, and why
+  that is harmless.
+- Music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 657 tests (654 before), 0
+  failures; `fake-audio.py --selftest` OK.

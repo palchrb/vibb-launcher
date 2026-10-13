@@ -46,26 +46,35 @@ object CacheThrough {
 
     /**
      * [ref] left the player's held set (the service, on IO - never its writer): its row becomes a done
-     * copy when every byte is cached. The done row, else null (incomplete, held, or no row).
+     * copy when every byte is cached. The done row, else null (incomplete, held, or no row). A played row
+     * that stays incomplete asks for the download job (qa-30-s3b-code L4): while it was held the plan left it out
+     * (busy), so a keep-set item let go half streamed is completed now, not at the next sync; the job's own
+     * plan decides whether it is wanted at all.
      */
     suspend fun settle(context: Context, ref: ItemRef): DownloadRow? = withContext(Dispatchers.IO) {
         val store = Store.get(context)
-        lock.withLock { store.db.download(ref.entryId, ref.itemKey)?.let { settleLocked(context, store, it) } }
+        var incomplete = false
+        val done = lock.withLock {
+            val row = store.db.download(ref.entryId, ref.itemKey) ?: return@withLock null
+            settleLocked(context, store, row).also { incomplete = it == null && row.playedAt != null && ref !in PlayerHub.heldLocal }
+        }
+        if (incomplete) Downloads.enqueue(context, store.downloadMobileData)
+        done
     }
 
     /**
      * At every sync, before `Sync.runLock` (§1.5): every played row that isn't done or held is settled
-     * when complete; the download job is enqueued once if any is still incomplete. A partial extra is
-     * checked again at every sync - a span check, cheap.
+     * when complete. A partial extra is checked again at every sync - a span check, cheap. No download job
+     * from here (qa-30-s3b-code L3): the sync's own plan, built right after, enqueues one when a keep-set
+     * item is still wanted; a partial extra is never fetched, so a job for it would find nothing to do.
      */
     suspend fun catchUp(context: Context) = withContext(Dispatchers.IO) {
         val store = Store.get(context)
         val rows = store.db.downloads().filter { !it.done && it.playedAt != null && ItemRef(it.entryId, it.itemKey) !in PlayerHub.heldLocal }
         // One row at a time under the mutex: a new queue's rows (queueRows) never wait for the whole pass.
-        val incomplete = rows.count { row ->
-            lock.withLock { store.db.download(row.entryId, row.itemKey)?.let { settleLocked(context, store, it) } } == null
+        for (row in rows) {
+            lock.withLock { store.db.download(row.entryId, row.itemKey)?.let { settleLocked(context, store, it) } }
         }
-        if (incomplete > 0) Downloads.enqueue(context, store.downloadMobileData)
     }
 
     private suspend fun settleLocked(context: Context, store: Store, row: DownloadRow): DownloadRow? {
@@ -162,8 +171,11 @@ object CacheThrough {
     /**
      * The orphan sweep (§1.8, M1's backstop), at every sync: cache resources no row owns and the player
      * doesn't hold ([orphanResources]). The cache's keys are read before the rows: the sink makes its
-     * row before it writes, so a key seen first has its row by the time the rows are read. No row means
-     * nothing to settle, and only a held item gets a new one: no mutex, the held set read before each removal.
+     * row before it writes a byte, so a key with committed bytes seen first has its row by the time the rows
+     * are read. A key can appear earlier - `SimpleCache` adds it at the hole lock, before the upstream open and
+     * the sink's row (qa-30-s3b-code N4) - but such a key is an item the player holds, and has no committed
+     * span: `removeResource` of a locked, empty content removes nothing. No row means nothing to settle, and
+     * only a held item gets a new one: no mutex, the held set read before each removal.
      */
     suspend fun sweepOrphans(context: Context) = withContext(Dispatchers.IO) {
         val store = Store.get(context)

@@ -187,12 +187,13 @@ object Sync {
         val want = ArtWants.compute(context)
         if (lib != null) store.pruneCovers(lib.covers, want.keep)
 
-        // Keep/prune (only on parsed listings), never what the player holds (design 30 §1.6); the played
-        // extras over the parent's limit or under the free floor (§1.8); the bytes no row owns; then the downloads.
+        // Keep/prune (only on parsed listings), never what the player holds (design 30 §1.6); the bytes no row
+        // owns; then the played extras over the parent's limit or under the free floor (§1.8) - after the sweep,
+        // so orphans about to go never cost an extra (qa-30-s3b-code L2); then the downloads.
         val plan = downloadPlan(store.snapshot(), dao.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
         CacheThrough.remove(context, plan.prune)
-        CacheThrough.evict(context, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(context).state() == "ok"))
         CacheThrough.sweepOrphans(context)
+        CacheThrough.evict(context, plan, storageLimitBytes(store.storageLimitGb), extrasFloor(plan.wantsStorytel, StorytelAccount.get(context).state() == "ok"))
         // A running job may not go on where the downloads switch now forbids it (qa-30-s3a-code L1).
         val downloadMobileData = store.downloadMobileData
         val stop = stopRunningDownload(netCaps(context), downloadMobileData)
