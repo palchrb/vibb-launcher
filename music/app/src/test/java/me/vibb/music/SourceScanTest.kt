@@ -76,11 +76,12 @@ class SourceScanTest {
         val files = sources("src/main/java") + sources("src/main/AndroidManifest.xml")
         assertTrue(files.size > 30)
         for (f in files) {
-            // design 26c §7.2: the one web view is Spotify's headless player (the next test), and the manifest
-            // names the WebView only in its two meta-data (Safe Browsing and metrics off)
-            if (f.name == "SpotifyWebHost.kt") continue
+            // design 26c §7.2: the one web view is Spotify's headless player (the next test) - its file is scanned
+            // for everything but the word WebView (qa-26c-step5a-code L7) - and the manifest names the WebView
+            // only in its two meta-data (Safe Browsing and metrics off)
+            val tokens = if (f.name == "SpotifyWebHost.kt") banned - "WebView" else banned
             val text = code(f).replace(WEBVIEW_META_SAFE_BROWSING, "").replace(WEBVIEW_META_METRICS, "")
-            for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
+            for (token in tokens) if (text.contains(token)) fail("${f.name} references $token")
         }
     }
 
@@ -104,14 +105,19 @@ class SourceScanTest {
             assertFalse("${f.name}: the web player is never on screen", text.contains("addView"))
         }
         val host = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyWebHost.kt"))
-        assertEquals("one WebView", 1, Regex("""\bWebView\(""").findAll(host).count())
+        // the page's, and a throwaway one only to clear the HTTP cache with no page alive (qa-26c-step5a-code L6)
+        assertEquals("the page's WebView and the clear's", 2, Regex("""\bWebView\(""").findAll(host).count())
+        val clear = host.substringAfter("override fun clearStorage(done: () -> Unit) {").substringBefore("\n    }\n")
+        assertTrue(clear.contains("val tmp = WebView(app)\n            tmp.clearCache(true)\n            tmp.destroy()"))
+        assertTrue("the next page waits for the cookies' clear", clear.contains("cookies.removeAllCookies {") && clear.contains("main.post(done)"))
         for (setting in listOf(
             "s.setAllowFileAccess(false)", "s.setAllowContentAccess(false)", "s.setGeolocationEnabled(false)",
             "s.setSupportMultipleWindows(false)", "s.safeBrowsingEnabled = false", "s.mediaPlaybackRequiresUserGesture = false",
             "v.addJavascriptInterface(PageBridge(gen), SpotifyPage.BRIDGE)",
             "override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true",
-            "WebPolicy.current().decide(url)", "ServiceWorkerController.getInstance().setServiceWorkerClient(",
+            "WebPolicy.current().decide(url)", "val controller = ServiceWorkerController.getInstance()", "controller.setServiceWorkerClient(",
             "PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID", "request.deny()",
+            "sw.setAllowFileAccess(false)", "sw.setAllowContentAccess(false)",
             "v.loadDataWithBaseURL(SpotifyPage.BASE_URL, page, \"text/html\", \"utf-8\", null)",
         )) {
             assertTrue("SpotifyWebHost.kt: $setting", host.contains(setting))
@@ -125,6 +131,11 @@ class SourceScanTest {
         assertTrue(manifest.contains("$WEBVIEW_META_METRICS\"\n            android:value=\"true\""))
         // the page bridge's methods are the page's (PlayerJsTest holds player.js to the same names)
         val bridge = host.substringAfter("private inner class PageBridge(").substringBefore("\n    }\n")
+        // the SDK's own error text reaches the log only in a debug build (§7.1, qa-26c-step5a-code L8)
+        val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))
+        val messageLines = renderer.lines().filter { it.contains("\$message") }
+        assertEquals(1, messageLines.size)
+        assertTrue(messageLines.single(), messageLines.single().contains("if (BuildConfig.DEBUG) \": \$message\" else \"\""))
         val methods = Regex("""@JavascriptInterface\s+fun ([a-zA-Z]+)\(""").findAll(bridge).map { it.groupValues[1] }.toList()
         assertEquals(me.vibb.music.spotify.SpotifyPage.FROM_PAGE, methods)
         assertEquals("only the bridge is exposed", methods.size, Regex("@JavascriptInterface").findAll(host).count())
@@ -343,8 +354,16 @@ class SourceScanTest {
                 if (code(f).contains("StorytelEndpoints.$reader(")) assertTrue("${f.name} reads $reader", f.name in allowed)
             }
         }
-        val assigning = sources("src/debug").filter { Regex("StorytelEndpoints\\.debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
-        assertEquals("only the debug feed assigns it", listOf("DebugStorytel.kt"), assigning)
+        // every assignment of a debug base in src/debug, qualified or not (qa-26c-step5a-code L7): Storytel's in
+        // DebugStorytel.kt, Spotify's in DebugSpotify.kt, nothing else
+        val assignments = sources("src/debug").flatMap { f ->
+            Regex("""([A-Za-z_.]*)\bdebugBase\s*=[^=]""").findAll(code(f)).map { f.name to it.groupValues[1] }.toList()
+        }.sortedBy { it.first }
+        assertEquals(
+            "only the debug feed assigns them",
+            listOf("DebugSpotify.kt" to "SpotifyEndpoints.", "DebugStorytel.kt" to "StorytelEndpoints."),
+            assignments,
+        )
     }
 
     /**

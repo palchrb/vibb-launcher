@@ -69,6 +69,7 @@ import me.vibb.music.spotify.SpotifyTracker.Event
 import me.vibb.music.spotify.SpotifyTracker.Mode
 import me.vibb.music.sync.netCaps
 import okhttp3.HttpUrl
+import java.io.File
 import kotlin.coroutines.resume
 
 /*
@@ -143,6 +144,15 @@ internal interface SpotifyPorts {
     /** The phone's last Spotify outcome (§4.4: `spotify_state.json`, written only when the word changes). */
     fun outcome(word: String)
 
+    /**
+     * The account the web player's cookies and storage on disk belong to (the token's `"<id>:<generation>"`,
+     * not a secret; qa-26c-step5a-code M1), or null when none is known; [storePageAccount] writes it (null
+     * deletes it).
+     */
+    fun pageAccount(): String?
+
+    fun storePageAccount(account: String?)
+
     /** The debug log: fixed words, never a token, a uri list, a state or the SDK's message in a release. */
     fun log(message: String)
 }
@@ -186,7 +196,18 @@ internal class SpotifyRenderer(
     private val looper: Looper?,
 ) : Renderer {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-    private val api = SpotifyApi(http, apiBase, ports::now)
+
+    /** When the last play call of a start went out (an IO thread writes it): what the page posted before it is the old play's. */
+    @Volatile
+    private var playSentAt = Long.MAX_VALUE
+    private val api = SpotifyApi(
+        { request ->
+            if (request.url.encodedPath == PLAY_PATH) playSentAt = ports.now()
+            http.send(request)
+        },
+        apiBase,
+        ports::now,
+    )
 
     /** The access token (§5.5), in memory only. */
     val tokens = TokenCache(scope, askToken, ports::now, sleep = { sleep(it) }, log = ports::log)
@@ -268,8 +289,18 @@ internal class SpotifyRenderer(
     /** A play asked for while a start's calls ran: it goes when they end. */
     private var queued: Request? = null
 
-    /** States posted while a start's Web API calls run: read after the call (the tracker needs `played()` first). */
-    private val held = ArrayDeque<SdkSnapshot>()
+    /**
+     * States posted while a start's Web API calls run, with their arrival: read after the call - those before
+     * the play call went out as the old play's (they only tell the tracker what played before), the rest
+     * after `played()` (our new play's first state can beat the 204).
+     */
+    private val held = ArrayDeque<Pair<SdkSnapshot, Long>>()
+
+    /** A clear of the web player's cookies and storage in progress: the next page waits for it (qa-26c-step5a-code L6). */
+    private var clearing: CompletableDeferred<Unit>? = null
+
+    /** The last token answer that wasn't a token (the SDK's `authentication_error` is read through it; L3). */
+    private var tokenFailure: TokenResult? = null
     private var readyWait: CompletableDeferred<String?>? = null
     private var deviceWait: CompletableDeferred<Boolean>? = null
 
@@ -512,7 +543,7 @@ internal class SpotifyRenderer(
         lookTimer = null
         fadeTimer = null
         if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) host.call("pause")
-        destroyHost(clear = false)
+        destroyHost()
         pwr = false
         released = true
         if (focusHeld) ports.abandonFocus()
@@ -535,17 +566,38 @@ internal class SpotifyRenderer(
     fun suspended() {
         saveNow(force = true)
         pause(PauseCause.OTHER)
-        destroyHost(clear = false)
+        destroyHost()
         changed()
     }
 
     /** Spotify off on this phone, or no Spotify entry left (§5.2's clearing): the page and its storage go, and the token. */
     fun forget() {
         pause(PauseCause.OTHER)
-        destroyHost(clear = true)
+        forgetAccount()
         tokens.clear()
-        hostAccount = null
         changed()
+    }
+
+    /** The page, its cookies, storage and cache, and the account marker (M1) go. */
+    private fun forgetAccount() {
+        destroyHost()
+        startClear()
+        hostAccount = null
+        ports.storePageAccount(null)
+    }
+
+    /** Clear the web player's cookies, storage and cache; the next page waits for it (L6). */
+    private fun startClear() {
+        val done = CompletableDeferred<Unit>()
+        clearing = done
+        val timeout = ports.after(CLEAR_WAIT_MS) {
+            ports.log("spotify: the web player's clear took too long")
+            done.complete(Unit)
+        }
+        host.clearStorage {
+            timeout()
+            done.complete(Unit)
+        }
     }
 
     /** What the session's player shows (§5.4's table); SpotifyRendererTest reads it row by row. */
@@ -562,8 +614,12 @@ internal class SpotifyRenderer(
 
     // --- starts ---
 
+    /**
+     * Our paused track plays again through the SDK - unless shuffle or repeat must go off first (a state said
+     * either is on while paused: the tracker reads nothing until the next play call, H1).
+     */
     private fun resumable(): Boolean =
-        host.alive && deviceId != null && tracker.mode == Mode.OURS && tracker.index == index && !ended && !stopped
+        host.alive && deviceId != null && tracker.mode == Mode.OURS && tracker.index == index && !ended && !stopped && !needSettings
 
     /** Where a fresh start of the current item begins: its last measurement, seek or load position. */
     private fun startPosition(): Long = place.takeIf { it.index == index }?.posMs ?: 0
@@ -659,26 +715,38 @@ internal class SpotifyRenderer(
     private suspend fun prepareAndCall(s: Start): StartEnd = coroutineScope {
         val r = s.request
         val readyBy = minOf(s.deadline, ports.now() + SPOTIFY_READY_MS)
-        var ready: Deferred<String?> = async { awaitReady(readyBy) }
+        // a live page of a known account gets ready beside the token; a new page waits for it, so that it is
+        // never made on another account's storage (M1)
+        var ready: Deferred<String?>? = if (hostAccount != null && host.alive) async { awaitReady(readyBy) } else null
         // the token's deadline leaves the play call its room (qa-26c-step4-code's note)
         val token = tokens.get(s.deadline - SPOTIFY_CALL_MS, atStart = true)
         if (token !is TokenResult.Ok) {
-            ready.cancel()
+            ready?.cancel()
+            noteTokenFailure(token)
             return@coroutineScope StartEnd.Failed(token.problem() ?: SpotifyProblem.UNREACHABLE)
         }
-        if (hostAccount != null && hostAccount != token.account) {
-            // another account or a new login: the old account's cookies and storage must not linger (§5.2)
-            ready.cancel()
-            ports.log("spotify: another account - the web player is cleared")
-            destroyHost(clear = true)
-            ready = async { awaitReady(readyBy) }
+        tokenFailure = null
+        if (hostAccount != token.account) {
+            // §5.2 (qa-26c-step5a-code M1): the cookies and storage on disk must be this account's - after another
+            // account or a new login in this process, and at a process's first page against the marker on disk
+            // (a differing or missing marker clears: an upgrade, a crash before the write, a rebind while the app
+            // was down)
+            ready?.cancel()
+            ready = null
+            val owner = hostAccount ?: ports.pageAccount()
+            if (owner != token.account) {
+                ports.log("spotify: the web player's storage isn't this account's - cleared")
+                destroyHost()
+                startClear()
+            }
+            hostAccount = token.account
+            ports.storePageAccount(token.account)
         }
-        hostAccount = token.account
-        val device = ready.await()
+        val device = (ready ?: async { awaitReady(readyBy) }).await()
         sdkProblem?.let { return@coroutineScope StartEnd.Failed(it) }
         if (device == null) {
             ports.log("spotify: the web player wasn't ready in time")
-            destroyHost(clear = false) // the next play loads the page again
+            destroyHost() // the next play loads the page again
             return@coroutineScope StartEnd.Failed(SpotifyProblem.UNREACHABLE)
         }
         if (s.cancelled || s.superseded || start !== s) return@coroutineScope StartEnd.Dropped
@@ -711,14 +779,30 @@ internal class SpotifyRenderer(
         sdkProblem = null
         val replay = held.toList()
         held.clear()
+        val sentAt = playSentAt
+        playSentAt = Long.MAX_VALUE
+        val sent = end is StartEnd.Called && end.result == StartResult.Sent
+        if (sent && !s.superseded) {
+            // what the page posted before the play call went out is the old play's: it only tells the
+            // tracker what played before, read for nothing (qa-26c-step5a-code M3)
+            for ((snap, at) in replay) if (at < sentAt) tracker.onState(snap, at)
+        }
         when {
+            s.superseded && sent && queued == null -> {
+                // its successor was dropped (a pause, a new queue): the play that went out is stopped,
+                // never left sounding or read against the old play (qa-26c-step5a-code H1)
+                ports.log("spotify: a replaced play went out - paused")
+                if (host.alive) host.call("pause")
+                tracker.lost()
+            }
             s.superseded -> ports.log("spotify: a start replaced by a newer play")
             end is StartEnd.Called && end.result == StartResult.Sent -> {
                 if (s.settings) needSettings = false
                 apply(tracker.played(r.index, r.index + end.window - 1, s.posMs, r.fresh))
                 when {
                     problem != null -> fail(problem)
-                    s.cancelled -> {
+                    s.cancelled || suppressed -> {
+                        // the kid paused, or a transient focus loss holds it (M2): it never sounds over that
                         host.call("pause")
                         tracker.pauseSent()
                     }
@@ -726,6 +810,8 @@ internal class SpotifyRenderer(
                 }
             }
             s.cancelled -> ports.log("spotify: a paused start ended")
+            // the SDK's own word (the page gone, no Widevine, no Premium) wins over the call's (L4)
+            problem != null -> fail(problem)
             end is StartEnd.Called -> fail(end.result.problem() ?: SpotifyProblem.UNREACHABLE)
             end is StartEnd.Failed -> fail(end.problem)
             else -> if (pwr && queued == null) {
@@ -734,7 +820,7 @@ internal class SpotifyRenderer(
                 pauseCause = PauseCause.OTHER
             }
         }
-        if (!s.superseded) for (snap in replay) feed(snap)
+        if (!s.superseded) for ((snap, at) in replay) if (!sent || at >= sentAt) feed(snap)
         val next = queued
         queued = null
         if (next != null) begin(next) else changed()
@@ -743,12 +829,14 @@ internal class SpotifyRenderer(
     private fun replayHeld() {
         val replay = held.toList()
         held.clear()
-        for (snap in replay) feed(snap)
+        for ((snap, _) in replay) feed(snap)
     }
 
     /** The page and its `ready` device id within [by] (the elapsed clock); null when it didn't come or the SDK refused. */
     private suspend fun awaitReady(by: Long): String? {
         if (!host.alive) {
+            // a clear in progress first: the new page must not read what it is removing (L6)
+            clearing?.await()
             deviceId = null
             host.open()
         }
@@ -801,12 +889,9 @@ internal class SpotifyRenderer(
         when (p) {
             SpotifyProblem.NO_WIDEVINE, SpotifyProblem.STOPPED -> {
                 stopped = true
-                destroyHost(clear = false)
+                destroyHost()
             }
-            SpotifyProblem.OFF -> {
-                destroyHost(clear = true)
-                hostAccount = null
-            }
+            SpotifyProblem.OFF -> forgetAccount()
             else -> Unit
         }
         if (pwr) {
@@ -859,7 +944,7 @@ internal class SpotifyRenderer(
             is HostEvent.State -> {
                 deviceWait?.complete(true)
                 if (start?.calling == true) {
-                    held.addLast(e.snapshot)
+                    held.addLast(e.snapshot to ports.now())
                     while (held.size > HELD_MAX) held.removeFirst()
                 } else {
                     feed(e.snapshot)
@@ -882,13 +967,20 @@ internal class SpotifyRenderer(
     }
 
     private fun onSdkError(kind: String, message: String) {
-        ports.log("spotify: the web player said $kind: $message")
+        // the SDK's own text only in a debug build (§7.1; qa-26c-step5a-code L8): it is foreign text
+        ports.log("spotify: the web player said $kind" + if (BuildConfig.DEBUG) ": $message" else "")
         if (kind == "playback") {
             apply(tracker.onPlaybackError())
             changed()
             return
         }
-        val p = sdkErrorProblem(kind) ?: return // authentication: the token result says it; autoplay, csp: the log only
+        if (kind == "authentication") {
+            // read through the token answer the renderer already has (§5.5; L3): during a start its own
+            // token decides; else the last failed answer says why, and a failure without one is the network
+            if (start == null) fail(tokenFailure?.problem() ?: SpotifyProblem.UNREACHABLE)
+            return
+        }
+        val p = sdkErrorProblem(kind) ?: return // autoplay, csp: the log only
         if (start != null) {
             sdkProblem = p
             readyWait?.complete(null)
@@ -901,10 +993,27 @@ internal class SpotifyRenderer(
     private fun answerToken(requestId: Int) {
         scope.launch {
             val t = tokens.get(ports.now() + SPOTIFY_CALL_MS)
-            if (t is TokenResult.Ok && accountChanged(t)) return@launch
+            if (t is TokenResult.Ok && t.account != hostAccount) {
+                // never another account's token to this page (M1): a start's own check clears it; else now
+                if (start == null) accountChanged(t) else host.call("token", requestId, null)
+                return@launch
+            }
             host.call("token", requestId, (t as? TokenResult.Ok)?.token)
-            if (t == TokenResult.Off) fail(SpotifyProblem.OFF)
+            if (t is TokenResult.Ok) {
+                tokenFailure = null
+                return@launch
+            }
+            noteTokenFailure(t)
+            // the SDK asks when its token expired, so without one it stops: say why (§5.8; L3) - an adult's
+            // matter for `reauthorize`, the entries' end for `off`; the rest is read at its authentication error
+            if (start == null && (t == TokenResult.Off || t == TokenResult.Reauthorize)) {
+                fail(t.problem() ?: SpotifyProblem.UNREACHABLE)
+            }
         }
+    }
+
+    private fun noteTokenFailure(t: TokenResult) {
+        if (t !is TokenResult.Ok) tokenFailure = t
     }
 
     /**
@@ -912,12 +1021,10 @@ internal class SpotifyRenderer(
      * the page and its storage go before the token reaches it (§5.2) - the next play makes a new one.
      */
     private fun accountChanged(t: TokenResult.Ok): Boolean {
-        val old = hostAccount ?: return false
-        if (old == t.account || start != null) return false
+        if (hostAccount == t.account || start != null) return false
         ports.log("spotify: another account - the web player is cleared")
         pause(PauseCause.OTHER)
-        destroyHost(clear = true)
-        hostAccount = null
+        forgetAccount()
         changed()
         return true
     }
@@ -946,6 +1053,9 @@ internal class SpotifyRenderer(
 
     /** What the tracker's events do (step 4's mapping; §5.4). */
     private fun apply(events: List<Event>) {
+        // a play the renderer starts by itself only goes on with a play the kid wants now: never while paused,
+        // never under a transient focus loss (qa-26c-step5a-code H1, M2) - "nothing starts by itself"
+        val wanted = pwr && !suppressed
         for (e in events) {
             // while a start or a step replaces the old play, only a foreign track still needs its pause
             if ((start != null || stepTimer != null) && e !is Event.NotOurs) continue
@@ -984,13 +1094,16 @@ internal class SpotifyRenderer(
                     if (e.index != index) moveIndex(e.index, auto = !e.resume && e.index == index + 1)
                     val pos = if (e.resume) measuredAt(e.index) else 0
                     place = Place(e.index, pos, ports.now(), moving = false)
-                    if (ports.mayPlay()) request(Request(e.index, pos, fresh = false, settings = needSettings))
+                    if (wanted && ports.mayPlay()) request(Request(e.index, pos, fresh = false, settings = needSettings))
                 }
                 is Event.QueueAdd -> queueAdd(e.index)
                 is Event.ShuffleOrRepeat -> {
-                    ports.log("spotify: shuffle or repeat is on - turned off, played again")
+                    // paused, the next play of the kid's turns them off (`needSettings`)
+                    ports.log("spotify: shuffle or repeat is on - turned off at the next play")
                     needSettings = true
-                    if (ports.mayPlay()) request(Request(e.index, measuredAt(e.index), fresh = false, settings = true))
+                    val pos = measuredAt(e.index)
+                    place = Place(e.index, pos, ports.now(), moving = false)
+                    if (wanted && ports.mayPlay()) request(Request(e.index, pos, fresh = false, settings = true))
                 }
                 Event.Look -> {
                     lookTimer?.invoke()
@@ -1118,11 +1231,17 @@ internal class SpotifyRenderer(
                 }
                 if (suppressed) {
                     suppressed = false
-                    if (pwr && host.alive && tracker.mode == Mode.OURS) {
-                        host.call("resume")
-                        tracker.resumeSent()
-                        lastOursAt = ports.now()
-                        armGap()
+                    val live = host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)
+                    when {
+                        !pwr || start != null -> Unit // a start still on its way goes on as it is
+                        live -> {
+                            // our track, or the play sent under the loss and paused (M2): it plays again
+                            host.call("resume")
+                            tracker.resumeSent()
+                            lastOursAt = ports.now()
+                            if (tracker.mode == Mode.STARTING) armFirstState(ports.now() + SPOTIFY_FIRST_STATE_MS) else armGap()
+                        }
+                        ports.mayPlay() -> request(Request(index, startPosition(), fresh = false, settings = needSettings))
                     }
                     explicit += Pending(RendererEvent.InterruptionEnded, null)
                     changed()
@@ -1158,7 +1277,7 @@ internal class SpotifyRenderer(
         val wait = minOf(SPOTIFY_FIRST_STATE_MS, deadline - ports.now()).coerceAtLeast(0)
         firstStateTimer = ports.after(wait) {
             firstStateTimer = null
-            if (pwr && tracker.mode == Mode.STARTING && start == null) {
+            if (pwr && !suppressed && tracker.mode == Mode.STARTING && start == null) {
                 ports.log("spotify: no state of ours after the play call")
                 fail(SpotifyProblem.UNREACHABLE)
             }
@@ -1200,7 +1319,7 @@ internal class SpotifyRenderer(
             idleTimer = null
             if (!pwr && start == null) {
                 ports.log("spotify: idle for ${SPOTIFY_HOST_IDLE_MS / 60_000} min - the web player goes")
-                destroyHost(clear = false)
+                destroyHost()
                 changed()
             }
         }
@@ -1224,6 +1343,7 @@ internal class SpotifyRenderer(
                 scope.launch {
                     val t = tokens.prefetch(ports.now() + SPOTIFY_CALL_MS)
                     if (t is TokenResult.Ok && accountChanged(t)) return@launch
+                    noteTokenFailure(t)
                     armPrefetch()
                 }
             } else {
@@ -1232,12 +1352,12 @@ internal class SpotifyRenderer(
         }
     }
 
-    private fun destroyHost(clear: Boolean) {
+    private fun destroyHost() {
         cancelIdle()
         lookTimer?.invoke()
         lookTimer = null
         if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) tracker.lost()
-        if (host.alive || clear) host.destroy(clear)
+        if (host.alive) host.destroy()
         deviceId = null
         readyWait?.complete(null)
     }
@@ -1417,6 +1537,12 @@ internal class SpotifyRenderer(
         /** The prefetch timer never spins faster than this (an ask in flight isn't "due"). */
         const val PREFETCH_MIN_WAIT_MS = 1_000L
 
+        /** The play call's path (its send time splits the states held through a start's calls). */
+        const val PLAY_PATH = "/v1/me/player/play"
+
+        /** A clear of the web player's stores is awaited at most this long before the next page. */
+        const val CLEAR_WAIT_MS = 3_000L
+
         /** At most this many states held through a start's calls (the page posts every 5 s and on every change). */
         const val HELD_MAX = 32
 
@@ -1559,5 +1685,27 @@ private class AndroidSpotifyPorts(
 
     override fun outcome(word: String) = outcomeSink(word)
 
+    private val accountFile = File(app.noBackupFilesDir, "spotify_page_account")
+
+    override fun pageAccount(): String? = runCatching { accountFile.readText().trim() }.getOrNull()?.takeIf { ACCOUNT.matches(it) }
+
+    override fun storePageAccount(account: String?) {
+        try {
+            if (account == null) {
+                accountFile.delete()
+                return
+            }
+            val tmp = File(accountFile.path + ".tmp")
+            tmp.writeText(account)
+            if (!tmp.renameTo(accountFile)) logSink("spotify: the page's account marker not written")
+        } catch (e: Exception) {
+            logSink("spotify: the page's account marker not written (${e.javaClass.simpleName})")
+        }
+    }
+
     override fun log(message: String) = logSink(message)
+
+    private companion object {
+        val ACCOUNT = Regex("[0-9]{1,18}:[0-9]{1,18}")
+    }
 }

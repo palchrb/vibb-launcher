@@ -13,10 +13,12 @@ import android.os.PowerManager
  * auto-lock must still end a player left on, SourceScanTest) and a Wi-Fi lock are held, each for at most
  * [TIMEOUT_MS] and renewed by the service's 15 s save tick ([renew], through the renderer's saveNow); a
  * missed release can't keep the phone awake longer than that. Released on every pause, end, error,
- * "elsewhere", detach and destroy. The Wi-Fi lock is WIFI_MODE_FULL_LOW_LATENCY as SonosLocks' (HIGH_PERF,
- * which §5.7 names after Media3's WifiLockManager, is deprecated and a no-op since API 34 - the app's
- * minSdk). The spike's no-lock pass was the emulator; the Jelly Star's run decides whether the wake lock
- * stays (§14 item 6). Main thread.
+ * "elsewhere", detach and destroy. The Wi-Fi lock is WIFI_MODE_FULL_LOW_LATENCY as SonosLocks' (HIGH_PERF
+ * is deprecated since API 34 - the app's minSdk - and taken as LOW_LATENCY), and on API 34+ every Wi-Fi lock
+ * is LOW_LATENCY, which is active only with the screen on and the app in the foreground
+ * (qa-26c-step5a-code L1): with the screen off it keeps nothing out of power save. It is kept, harmless;
+ * only the Jelly Star's screen-off run shows whether Wi-Fi power save stalls the stream, and whether the
+ * wake lock stays (§14 item 6). Main thread.
  */
 class SpotifyLocks(context: Context, private val log: (String) -> Unit) {
     private val app = context.applicationContext

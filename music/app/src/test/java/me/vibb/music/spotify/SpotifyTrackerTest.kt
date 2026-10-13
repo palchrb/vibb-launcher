@@ -106,6 +106,7 @@ class SpotifyTrackerTest {
             "start", "advance", "end_of_window", "end_of_window_gap", "end_of_queue", "pause", "elsewhere", "elsewhere_not_ready",
             "relinked", "relinked_not_by_name", "relinked_other_artist", "unplayable", "unplayable_reset", "autoplay",
             "autoplay_window", "transfer_in", "queue_leftover", "step_back_stale", "restart_stale", "trackless", "shuffled",
+            "start_old_advance",
         )
         assertTrue("the sequences §9.2 and the QA fix round name: ${wanted - sequences.toSet()}", sequences.containsAll(wanted))
         for (name in sequences) replay(name)

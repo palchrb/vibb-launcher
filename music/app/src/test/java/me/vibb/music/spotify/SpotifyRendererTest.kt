@@ -95,6 +95,9 @@ class SpotifyRendererTest {
         val saves = mutableListOf<Triple<Int, Long, Boolean>>()
         val outcomes = mutableListOf<String>()
 
+        /** The page's account marker on disk (M1); the default account's, as after an earlier run. */
+        var marker: String? = "2:1"
+
         override fun now(): Long = this@SpotifyRendererTest.now
         override fun after(delayMs: Long, block: () -> Unit): () -> Unit = this@SpotifyRendererTest.after(delayMs, block)
         override fun requestFocus(speech: Boolean, onChange: (FocusChange) -> Unit): Boolean {
@@ -129,33 +132,62 @@ class SpotifyRendererTest {
             outcomes += word
         }
 
+        override fun pageAccount(): String? = marker
+
+        override fun storePageAccount(account: String?) {
+            marker = account
+        }
+
         override fun log(message: String) {
             log += message
         }
     }
 
-    /** The scripted page: records its calls; `ready` comes at once unless [autoReady] is null. */
+    /**
+     * The scripted page, as `player.js` and the fake's stub behave (qa-26c-step5a-code L9): a new page's SDK asks
+     * for a token at `connect()` (`needToken`), and `ready` follows a non-null `vibb.token` - unless [autoReady]
+     * is null (the test drives both). Records its calls and its lifecycle ([log]: open, destroy, clear).
+     */
     private inner class Page : SpotifyHost {
         override var events: ((HostEvent) -> Unit)? = null
         override var alive = false
         var opens = 0
-        val destroys = mutableListOf<Boolean>()
+        val log = mutableListOf<String>()
         val calls = mutableListOf<String>()
         var autoReady: String? = DEVICE
+        private var request = 0
+        private var asking = -1
+
+        val destroys get() = log.count { it == "destroy" }
+        val clears get() = log.count { it == "clear" }
 
         override fun open() {
             alive = true
             opens++
-            autoReady?.let { id -> after(0) { emit(HostEvent.Ready(id)) } }
+            log += "open"
+            if (autoReady != null) {
+                val id = ++request
+                asking = id
+                after(0) { emit(HostEvent.NeedToken(id)) }
+            }
         }
 
         override fun call(name: String, vararg args: Any?) {
             calls += SpotifyPage.call(name, *args)
+            if (name == "token" && args[0] == asking && args[1] != null) {
+                asking = -1
+                autoReady?.let { id -> after(0) { emit(HostEvent.Ready(id)) } }
+            }
         }
 
-        override fun destroy(clear: Boolean) {
+        override fun destroy() {
             alive = false
-            destroys += clear
+            log += "destroy"
+        }
+
+        override fun clearStorage(done: () -> Unit) {
+            log += "clear"
+            after(0, done)
         }
 
         fun emit(e: HostEvent) = events?.invoke(e)
@@ -186,6 +218,7 @@ class SpotifyRendererTest {
     private var tokenLife = 60 * 60_000L
     private var account = "2:1"
     private var sameToken = false
+    private var refused: TokenResult? = null
     private var active: Active? = null
 
     /** Play the service's part on an unplayable track (`PlaybackService.onError`: record, then on to the next). */
@@ -218,7 +251,7 @@ class SpotifyRendererTest {
         val dispatcher = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher
         val ask: suspend () -> TokenResult = {
             asks++
-            TokenResult.Ok(if (sameToken) "FAKE-ACCESS-1" else "FAKE-ACCESS-$asks", now + tokenLife, account)
+            refused ?: TokenResult.Ok(if (sameToken) "FAKE-ACCESS-1" else "FAKE-ACCESS-$asks", now + tokenLife, account)
         }
         val r = SpotifyRenderer(page, api, "https://api.spotify.com".toHttpUrl(), ask, ports, dispatcher, { active }, null)
         r.onEvent = { e ->
@@ -275,6 +308,10 @@ class SpotifyRendererTest {
         assertEquals("no call before the page is ready", 0, api.all().size)
         assertTrue(r.showsPlaying)
         assertEquals(Player.STATE_BUFFERING, r.spec().playbackState)
+        page.emit(HostEvent.NeedToken(1)) // the SDK's getOAuthToken at connect(): the start's token, from memory
+        settle()
+        assertEquals("vibb.token(1,\"FAKE-ACCESS-1\")", page.calls.last())
+        assertEquals("one token ask for both", 1, asks)
         page.emit(HostEvent.Ready(DEVICE))
         settle()
         assertEquals(
@@ -610,7 +647,7 @@ class SpotifyRendererTest {
         r.suspended()
         assertEquals("vibb.pause()", page.calls.last())
         assertFalse(page.alive)
-        assertEquals(listOf(false), page.destroys)
+        assertEquals(listOf("open", "destroy"), page.log)
         assertEquals("the bookmark, written before it returns", Triple(0, 8_000L, true), ports.saves.last())
         assertFalse(r.showsPlaying)
         ports.mayPlay = false
@@ -821,11 +858,12 @@ class SpotifyRendererTest {
         val r = playing()
         r.pause()
         advance(5 * 60_000L)
-        assertEquals("idle: the page went", listOf(false), page.destroys)
+        assertEquals("idle: the page went", listOf("open", "destroy"), page.log)
         account = "3:1"
         r.play()
         advance(0)
-        assertEquals("the old account's cookies and storage cleared before the new page plays", listOf(false, true), page.destroys)
+        assertEquals("the old account's cookies and storage cleared before the new page", listOf("open", "destroy", "clear", "open"), page.log)
+        assertEquals("3:1", ports.marker)
         assertTrue(page.alive)
         assertEquals(2, api.plays().size)
         // and the SDK's own ask that brings another account clears the live page at once
@@ -834,8 +872,9 @@ class SpotifyRendererTest {
         r.tokens.invalidate()
         page.emit(HostEvent.NeedToken(3))
         settle()
-        assertEquals(listOf(false, true, true), page.destroys)
+        assertEquals(listOf("open", "destroy", "clear", "open", "destroy", "clear"), page.log)
         assertFalse("no token of another account reaches the old page", page.calls.any { it.startsWith("vibb.token(3,") })
+        assertNull("the marker goes with the page", ports.marker)
         assertFalse(r.showsPlaying)
         r.release()
     }
@@ -866,6 +905,231 @@ class SpotifyRendererTest {
         assertFalse(ports.locks)
         assertFalse(ports.focusHeld)
         assertNull(ports.noisy)
+    }
+
+    // --- the code QA's fix round (qa-26c-step5a-code) ---
+
+    @Test
+    fun `H1 - shuffle switched on elsewhere while paused starts nothing, and the next play turns it off`() = runBlocking {
+        val r = playing()
+        post(state(0, 20_000))
+        r.pause()
+        post(state(0, 21_000, paused = true))
+        advance(60_000)
+        post(state(0, 21_000, paused = true, shuffle = true))
+        advance(2_000)
+        assertFalse("nothing starts by itself", r.showsPlaying)
+        assertEquals("no call", 1, api.plays().size)
+        assertFalse(ports.locks || ports.focusHeld)
+        r.play()
+        advance(0)
+        assertEquals("the kid's play turns them off first", 2, api.paths().count { it.contains("/shuffle") })
+        assertEquals(21_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `H1 - a pause behind a replaced step stays a pause - the play that went out is stopped`() = runBlocking {
+        val r = playing()
+        api.gate = CountDownLatch(1)
+        r.seekTo(3, 0)
+        advance(300) // the step's call is on its way
+        r.seekTo(1, 0)
+        advance(300) // a pick: queued behind it
+        r.pause()
+        val pauses = page.calls.count { it == "vibb.pause()" }
+        events.clear()
+        api.gate!!.countDown()
+        settle()
+        assertEquals("the replaced call's play is paused when its 204 comes", pauses + 1, page.calls.count { it == "vibb.pause()" })
+        assertEquals("vibb.pause()", page.calls.last())
+        post(state(3, 0, prev = listOf(0))) // Spotify plays what the replaced call sent
+        advance(1_000)
+        assertEquals(2, api.plays().size)
+        assertFalse(r.showsPlaying)
+        assertFalse("the kid's pause is never undone", events.any { it == RendererEvent.Resumed || it == RendererEvent.IsPlaying(true) })
+        assertEquals("vibb.pause()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `H1 - every play the renderer starts from a tracker event needs the kid's intent`() {
+        val text = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").readText()
+        val apply = text.substringAfter("private fun apply(events: List<Event>) {").substringBefore("\n    }\n")
+        assertTrue(apply.contains("val wanted = pwr && !suppressed"))
+        val requests = apply.lines().filter { it.contains("request(") }
+        assertEquals(2, requests.size)
+        assertTrue(requests.joinToString("\n"), requests.all { it.contains("if (wanted && ports.mayPlay()) request(") })
+    }
+
+    @Test
+    fun `M1 - a process's first page clears another account's storage before it opens`() = runBlocking {
+        ports.marker = "2:1"
+        account = "3:1"
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        assertEquals("cleared before the first page", listOf("clear", "open"), page.log)
+        assertEquals("3:1", ports.marker)
+        assertEquals("vibb.token(1,\"FAKE-ACCESS-1\")", page.calls.first { it.startsWith("vibb.token(") })
+        assertEquals(1, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `M1 - the same account's page keeps its storage, and no marker clears once`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(listOf("open"), page.log)
+        r.release()
+        ports.marker = null
+        page.log.clear()
+        val again = renderer()
+        again.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        assertEquals("an upgrade or a crash before the write: cleared", listOf("clear", "open"), page.log)
+        assertEquals("2:1", ports.marker)
+        again.release()
+    }
+
+    @Test
+    fun `M2 - a transient focus loss while the play call is on its way - the sent play is paused, played again at the gain`() = runBlocking {
+        api.gate = CountDownLatch(1)
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        ports.focus!!(FocusChange.LOSS_TRANSIENT)
+        api.gate!!.countDown()
+        settle()
+        assertEquals(1, api.plays().size)
+        assertEquals("never over the call", "vibb.pause()", page.calls.last())
+        assertTrue(r.spec().playWhenReady && r.spec().suppressed)
+        advance(11_000)
+        assertNull("no first-state failure while suppressed", r.rendererState)
+        ports.focus!!(FocusChange.GAIN)
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        post(state(0, 0))
+        assertEquals(Player.STATE_READY, r.spec().playbackState)
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `M2 - a transient focus loss while the page loads - nothing sounds when the play goes out`() = runBlocking {
+        page.autoReady = null
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        settle()
+        ports.focus!!(FocusChange.LOSS_TRANSIENT)
+        page.emit(HostEvent.Ready(DEVICE))
+        advance(0)
+        assertEquals(1, api.plays().size)
+        assertEquals("vibb.pause()", page.calls.last())
+        assertTrue(r.spec().suppressed)
+        r.release()
+    }
+
+    @Test
+    fun `M3 - Spotify's own advance landing in a start is no skip - held through the call or not`() = runBlocking {
+        for (held in listOf(true, false)) {
+            events.clear()
+            val r = playing(count = 6, duration = 20_000)
+            for (n in 1..3) {
+                advance(5_000)
+                post(state(n, 0, prev = (0 until n).toList().takeLast(3), duration = 20_000))
+            }
+            post(state(3, 19_000, prev = listOf(0, 1, 2), duration = 20_000))
+            val before = api.plays().size
+            if (held) api.gate = CountDownLatch(1)
+            r.seekTo(1, 0) // the kid picks track 1 in the last second of track 3
+            advance(300)
+            post(state(4, 0, prev = listOf(1, 2, 3), duration = 20_000)) // the old play's own advance
+            api.gate?.countDown()
+            api.gate = null
+            settle()
+            assertEquals("held=$held: no item error", 0, events.count { it is RendererEvent.Error })
+            assertEquals("held=$held: one play for the pick", before + 1, api.plays().size)
+            post(state(1, 0, prev = listOf(0), duration = 20_000))
+            assertEquals(1, r.currentIndex())
+            assertEquals(Player.STATE_READY, r.spec().playbackState)
+            assertTrue(r.showsPlaying)
+            r.release()
+        }
+    }
+
+    @Test
+    fun `L3 - reauthorize at the SDK's own token ask - ask a grown-up, and the word reauthorize`() = runBlocking {
+        val r = playing()
+        refused = TokenResult.Reauthorize
+        r.tokens.invalidate()
+        page.emit(HostEvent.NeedToken(9))
+        settle()
+        assertEquals("vibb.token(9,null)", page.calls.last { it.startsWith("vibb.token(") })
+        assertEquals(RendererState.SPOTIFY_ASK_ADULT, r.rendererState)
+        assertEquals("reauthorize", ports.outcomes.last())
+        assertFalse(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `L3 - the SDK's authentication error is read through the last token answer`() = runBlocking {
+        val r = playing()
+        refused = TokenResult.Unreachable
+        r.tokens.invalidate()
+        page.emit(HostEvent.NeedToken(9))
+        settle()
+        assertTrue("an unreachable answer alone isn't the line yet", r.showsPlaying)
+        page.emit(HostEvent.Error("authentication", "expired"))
+        settle()
+        assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        assertEquals("unreachable", ports.outcomes.last())
+        r.release()
+    }
+
+    @Test
+    fun `L4 - the page gone while the play call runs - stopped, not the call's trenger internett`() = runBlocking {
+        api.gate = CountDownLatch(1)
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        api.answer = { SpotifyResponse(502, null, ByteArray(0)) }
+        page.alive = false
+        page.emit(HostEvent.Gone)
+        api.gate!!.countDown()
+        settle()
+        assertEquals(RendererState.SPOTIFY_STOPPED, r.rendererState)
+        assertEquals(Player.STATE_IDLE, r.spec().playbackState)
+        r.release()
+    }
+
+    @Test
+    fun `deviation 7 - our first state before the 204 is held and read after played - ours, not paused`() = runBlocking {
+        api.gate = CountDownLatch(1)
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        post(state(0, 0)) // our new play's first state beats the call's answer
+        api.gate!!.countDown()
+        settle()
+        assertFalse("never paused as foreign", page.calls.contains("vibb.pause()"))
+        assertEquals(Player.STATE_READY, r.spec().playbackState)
+        assertTrue(events.contains(RendererEvent.Ready))
+        r.release()
+    }
+
+    @Test
+    fun `deviation 7 - the old play's news during a step is ignored`() = runBlocking {
+        val r = playing()
+        r.seekTo(3, 0)
+        post(state(1, 0, prev = listOf(0))) // the old play moves on (and would read as a skip of 0)
+        assertEquals(3, r.currentIndex())
+        assertEquals(0, events.count { it is RendererEvent.Error })
+        assertFalse(events.contains(RendererEvent.ItemChanged(1, auto = true)))
+        advance(300)
+        assertEquals(uri(3), windowOf(api.plays().last()).first())
+        r.release()
     }
 
     private companion object {

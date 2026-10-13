@@ -25,9 +25,11 @@ import kotlin.math.abs
  *   transferring playback to "Vibb", a leftover session): [Event.NotOurs] - paused at once, never
  *   measured, never mapped to an index - and from then on every playing state is paused until our next
  *   play. After [Event.Ended], three unplayable in a row, or a confirmed `null`, the same.
- * - **A start passes over what played before it** (H1, L1): the track of the last state seen before the
- *   play call is stale in a start, unless it is the sent track near the sent position (a restart of the
- *   same track from 0 isn't its old tick).
+ * - **A start passes over what played before it** (H1, L1; qa-26c-step5a-code M3): the track of the last
+ *   state seen before the play call, the old play's expected next track (Spotify's own advance can only
+ *   go there while the call is on its way) and our adds still in Spotify's queue are stale in a start,
+ *   unless it is the sent track near the sent position (a restart of the same track from 0 isn't its old
+ *   tick).
  * - **Shuffle or repeat on** (M1): a state that says so is read for nothing - no start, skip, end or
  *   foreign track; one [Event.ShuffleOrRepeat] asks the renderer to turn both off and play again.
  * - **A state naming no track** (no uri, no name; L2) is evidence of nothing: passed over.
@@ -138,9 +140,12 @@ class SpotifyTracker {
     /** The uris we asked Spotify to queue, not yet seen playing: Spotify's queue survives a new play (H1). */
     private val adds = LinkedHashSet<String>()
 
-    /** The track of the last state seen, and of the last one before the current play call (H1, L1). */
+    /** The track of the last state seen; what a start passes over (H1, L1, qa-26c-step5a-code M3). */
     private var lastSeenUri: String? = null
-    private var prePlayUri: String? = null
+    private var prePlayUris: Set<String> = emptySet()
+
+    /** The old play's expected next track, kept across a [load] (a new queue's first play). */
+    private var oldNextUri: String? = null
     private var sentPositionMs = 0L
 
     /** A [Event.ShuffleOrRepeat] was asked for: nothing is read until the next play (M1). */
@@ -158,6 +163,7 @@ class SpotifyTracker {
 
     /** The queue ([load]: the service's items in play order, never filtered) and where it stands; nothing is sent. */
     fun load(queue: List<SpotifyTrack>, index: Int) {
+        oldNextUri = expectedNext()
         this.queue = queue
         this.index = index.coerceIn(0, (queue.size - 1).coerceAtLeast(0))
         mode = Mode.IDLE
@@ -174,6 +180,7 @@ class SpotifyTracker {
     fun newDevice() {
         adds.clear()
         lastSeenUri = null
+        oldNextUri = null
     }
 
     /**
@@ -184,13 +191,15 @@ class SpotifyTracker {
      */
     fun played(index: Int, known: Int, positionMs: Long = 0, fresh: Boolean = true): List<Event> {
         if (index !in queue.indices) return emptyList()
+        val oldNext = expectedNext() ?: oldNextUri
+        oldNextUri = null
+        prePlayUris = setOfNotNull(lastSeenUri, oldNext) + adds
         this.index = index
         this.known = known.coerceIn(index, queue.size - 1)
         mode = Mode.STARTING
         addAsked = -1
         pausePending = false
         correcting = false
-        prePlayUri = lastSeenUri
         sentPositionMs = positionMs.coerceAtLeast(0)
         reported.clear()
         if (fresh) unplayableRun = 0
@@ -303,12 +312,20 @@ class SpotifyTracker {
         return events
     }
 
-    /** A state of the track that played before the play call (H1, L1), unless it is the sent track near the sent position. */
+    /**
+     * A state of what the old play was or would be playing (H1, L1, qa-26c-step5a-code M3): its last
+     * track, its expected next (Spotify's own advance while the call was on its way), an add of ours -
+     * unless it is the sent track near the sent position.
+     */
     private fun stale(s: SdkState): Boolean {
-        val before = prePlayUri ?: return false
-        if (s.uri != before) return false
-        return !(before == queue[index].uri && abs(s.positionMs - sentPositionMs) <= START_NEAR_MS)
+        val uri = s.uri ?: return false
+        if (uri !in prePlayUris) return false
+        return !(uri == queue[index].uri && abs(s.positionMs - sentPositionMs) <= START_NEAR_MS)
     }
+
+    /** The next item of a play of ours that is on the player, or null. */
+    private fun expectedNext(): String? =
+        if (mode == Mode.OURS || mode == Mode.STARTING) queue.getOrNull(index + 1)?.uri else null
 
     private fun onOurs(s: SdkState, nowMs: Long): List<Event> {
         if (matches(s, index)) return ourState(s, nowMs)

@@ -36,8 +36,9 @@ import java.util.concurrent.TimeUnit
  *   the interceptor - the platform WebView only, no `androidx.webkit` (§11: no new dependency).
  * - Every request passes [WebPolicy.decide]: our two assets, https to Spotify's hosts, the fake's https
  *   name through the debug proxy (the debug switch only, §9.3), anything else an empty 403 (the host
- *   counted for the debug log, never the URL). A WebSocket isn't seen here: the DNS filter and the CSP
- *   bound it (§5.2). No navigation, no new windows, no file or content access, no geolocation; the
+ *   counted for the debug log, never the URL). A WebSocket and a redirect's target aren't seen here
+ *   (`shouldInterceptRequest` sees only a redirect's first URL): the DNS filter and the CSP bound them (§5.2,
+ *   qa-26c-step5a-code L2). No navigation, no new windows, no file or content access, no geolocation; the
  *   protected-media permission only, for Spotify's SDK origin or ours.
  * - The bridge object's methods run on a WebView thread: each validates and caps its input and posts
  *   to the main thread; a destroyed page's late calls are dropped (its generation).
@@ -80,11 +81,14 @@ interface SpotifyHost {
     /** One host -> page call ([SpotifyPage.call]: `vibb.<name>(<quoted args>)`); nothing without a page. */
     fun call(name: String, vararg args: Any?)
 
+    /** Disconnect and destroy the page: the Connect device leaves the account's list (its `disconnect()` gets its moment). */
+    fun destroy()
+
     /**
-     * Disconnect and destroy the page (the Connect device leaves the account's list). With [clear] also
-     * the web player's cookies, storage and cache - the old account's state must not linger (§5.2).
+     * Clear the web player's cookies, storage and HTTP cache - the old account's state must not linger
+     * (§5.2) - and call [done] on the main thread once the cookies are gone (the next page waits for it).
      */
-    fun destroy(clear: Boolean)
+    fun clearStorage(done: () -> Unit)
 }
 
 /**
@@ -140,24 +144,50 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         v.evaluateJavascript(SpotifyPage.call(name, *args), null)
     }
 
-    override fun destroy(clear: Boolean) {
-        val v = view
+    override fun destroy() {
+        val v = view ?: return
+        // out at once: the page's late bridge calls and loads carry the old generation and are dropped
         view = null
         generation++
         connected = -1
-        if (v != null) runCatching { v.evaluateJavascript(SpotifyPage.call("disconnect"), null) }
-        if (clear) {
-            // the music app has no other web view: the process-wide stores are only Spotify's (also with no
-            // page alive: an earlier page's account left them on disk)
-            CookieManager.getInstance().removeAllCookies(null)
-            WebStorage.getInstance().deleteAllData()
-            v?.clearCache(true)
+        // the SDK's disconnect() tells Spotify the device leaves; the view goes when it has run, or after
+        // DISCONNECT_WAIT_MS (qa-26c-step5a-code L5)
+        var gone = false
+        val kill = Runnable {
+            if (gone) return@Runnable
+            gone = true
+            v.removeJavascriptInterface(SpotifyPage.BRIDGE)
+            v.stopLoading()
+            v.destroy()
         }
-        if (v == null) return
-        v.removeJavascriptInterface(SpotifyPage.BRIDGE)
-        v.stopLoading()
-        v.destroy()
-        log("spotify: web player destroyed${if (clear) " and cleared" else ""}")
+        try {
+            v.evaluateJavascript(SpotifyPage.call("disconnect")) { main.postDelayed(kill, DISCONNECT_SETTLE_MS) }
+        } catch (e: RuntimeException) {
+            main.post(kill)
+        }
+        main.postDelayed(kill, DISCONNECT_WAIT_MS)
+        log("spotify: web player destroyed")
+    }
+
+    override fun clearStorage(done: () -> Unit) {
+        // the music app has no other web view: the process-wide stores are only Spotify's (also with no page
+        // alive - an earlier page's account left them on disk); the HTTP cache is per app, cleared through a
+        // throwaway view when no page is alive (qa-26c-step5a-code L6)
+        WebStorage.getInstance().deleteAllData()
+        val v = view
+        if (v != null) {
+            v.clearCache(true)
+        } else {
+            val tmp = WebView(app)
+            tmp.clearCache(true)
+            tmp.destroy()
+        }
+        val cookies = CookieManager.getInstance()
+        cookies.removeAllCookies {
+            cookies.flush()
+            main.post(done)
+        }
+        log("spotify: web player's cookies, storage and cache cleared")
     }
 
     private fun template(): String = app.assets.open(TEMPLATE).bufferedReader().use { it.readText() }
@@ -255,6 +285,10 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         /** The answers the proxy passes back (qa-26c-step4-code: the tone's seek and the stub's fetches need them). */
         private val PROXY_HEADERS = listOf("Content-Range", "Accept-Ranges", "Access-Control-Allow-Origin")
 
+        /** The SDK's `disconnect()` has this long after it ran, and the view at most [DISCONNECT_WAIT_MS], before it goes. */
+        private const val DISCONNECT_SETTLE_MS = 300L
+        private const val DISCONNECT_WAIT_MS = 1_000L
+
         @Volatile
         private var swInstalled = false
 
@@ -271,7 +305,12 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         private fun installServiceWorkerClient(log: (String) -> Unit) {
             if (swInstalled) return
             swInstalled = true
-            ServiceWorkerController.getInstance().setServiceWorkerClient(object : ServiceWorkerClient() {
+            val controller = ServiceWorkerController.getInstance()
+            // their own settings: no file or content access either (L6; WebPolicy refuses those schemes anyway)
+            val sw = controller.serviceWorkerWebSettings
+            sw.setAllowFileAccess(false)
+            sw.setAllowContentAccess(false)
+            controller.setServiceWorkerClient(object : ServiceWorkerClient() {
                 override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = intercept(request, log)
             })
         }
