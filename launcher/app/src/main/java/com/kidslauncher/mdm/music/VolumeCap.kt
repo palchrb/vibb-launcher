@@ -32,6 +32,10 @@ private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_
 /** A new output settles its own volume a moment after it appears (BT absolute volume): looked at again then. */
 private const val ROUTE_SETTLE_MS = 1_500L
 
+/** CE prefs with the last policy cap read (`-1` = none), kept while the policy's music object can't be read. */
+private const val CAP_PREFS = "volume_cap"
+private const val CAP_KEY = "policy_cap_pct"
+
 /**
  * The parent's volume cap (design 21 §3, user decision: off by default, Off/90/80/70/60 % per
  * phone, every app and every output): while managed and without the offline override or the
@@ -97,13 +101,23 @@ object VolumeCap {
      */
     fun refresh(context: Context, policy: PolicyResponse?, managed: Boolean, overrideActive: Boolean) {
         val before = pct
-        pct = capPctInForce(musicPolicy(policy?.music)?.volumeCapPct, managed, overrideActive)
         val app = context.applicationContext
+        pct = capPctInForce(policyCap(app, policy), managed, overrideActive)
         main.post { clamp(app) }
         if (!pushed || before != pct) {
             pushed = true
             MusicSync.capChanged(app, policy)
         }
+    }
+
+    /** The last policy cap read (CE prefs `volume_cap`): what a refused music object keeps (qa-30-s2-code L1). */
+    @Synchronized
+    private fun policyCap(app: Context, policy: PolicyResponse?): Int? {
+        val prefs = app.getSharedPreferences(CAP_PREFS, Context.MODE_PRIVATE)
+        val remembered = prefs.getInt(CAP_KEY, -1).takeIf { it >= 0 }
+        val cap = policyCapPct(policy?.music, remembered)
+        if (cap != remembered) prefs.edit().putInt(CAP_KEY, cap ?: -1).commit()
+        return cap
     }
 
     private var settle: Runnable? = null

@@ -450,10 +450,27 @@
         {% endif %}
 
         <form method="post" action="/devices/{{ device.id }}/music" id="music-settings">
+            <input type="hidden" name="v" value="2">
             <label class="checkbox-row">
-                <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} data-autosave>
-                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere. This includes Storytel books, often several hundred MB each.
+                <input type="checkbox" name="stream_mobile_data" value="on" {% if music.stream_mobile_data %}checked{% endif %} data-autosave>
+                <span><strong>Streaming may use mobile data</strong>: something that isn't downloaded can play off Wi-Fi too. What plays is saved on the phone as it plays, so it isn't fetched twice (not for an entry that keeps nothing).</span>
             </label>
+            <label class="checkbox-row">
+                <input type="checkbox" name="download_mobile_data" value="on" {% if music.download_mobile_data %}checked{% endif %} data-autosave>
+                <span><strong>Downloads may use mobile data</strong>: the offline episodes and Storytel books also download off Wi-Fi - a Storytel book is often several hundred MB.</span>
+            </label>
+            <p class="subtitle">Never while roaming. On Wi-Fi both always work, and what's downloaded plays anywhere.</p>
+            {% if let Some(note) = music.data_note %}
+            <div class="error">{{ note }}</div>
+            {% endif %}
+            <label for="music_storage_limit">Music storage limit</label>
+            <select id="music_storage_limit" name="storage_limit" data-autosave>
+                {% for (gb, selected) in music.storage_limits %}
+                <option value="{{ gb }}" {% if selected %}selected{% endif %}>{{ gb }} GB</option>
+                {% endfor %}
+                <option value="none" {% if music.storage_limit.is_none() %}selected{% endif %}>No limit</option>
+            </select>
+            <p class="subtitle">Downloads, Storytel books and what was played. Over the limit, episodes played beyond the offline depth are removed first; the offline episodes always stay.</p>
             <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
             <select id="music_volume_cap" name="volume_cap" data-autosave>
                 <option value="off" {% if music.volume_cap.is_none() %}selected{% endif %}>Off</option>

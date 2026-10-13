@@ -156,4 +156,43 @@ class MusicFileDownloadsTest {
         val server = FakeServer({ throw IOException("reset") })
         assertEquals(FetchResult.FAILED, fetch(server, State()).run(file))
     }
+
+    @Test
+    fun `own files follow the downloads switch`() {
+        // Design 30 §1.1: the gate's "Wi-Fi only" is the policy's downloads switch off, never the streaming one.
+        fun music(stream: Boolean?, download: Boolean?, mobile: Boolean = false) = musicPolicy(
+            kotlinx.serialization.json.buildJsonObject {
+                put("library_version", kotlinx.serialization.json.JsonNull)
+                put("mobile_data", kotlinx.serialization.json.JsonPrimitive(mobile))
+                stream?.let { put("stream_mobile_data", kotlinx.serialization.json.JsonPrimitive(it)) }
+                download?.let { put("download_mobile_data", kotlinx.serialization.json.JsonPrimitive(it)) }
+                put("storytel_generation", kotlinx.serialization.json.JsonPrimitive(0))
+            },
+        )!!
+        val metered = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = false, notRoaming = true, physical = true)
+        val roaming = metered.copy(notRoaming = false)
+        val wifi = metered.copy(notMetered = true)
+        fun gate(m: MusicPolicy?, caps: com.kidslauncher.mdm.server.NetCaps) = ownFileGate(caps, m, 0L, 0L, file.size, null)
+        assertEquals("streaming alone waits for Wi-Fi", com.kidslauncher.mdm.server.DownloadGate.WAIT_WIFI, gate(music(true, false), metered))
+        assertEquals("downloads alone go", com.kidslauncher.mdm.server.DownloadGate.GO, gate(music(false, true), metered))
+        assertEquals("an older server's mobile_data", com.kidslauncher.mdm.server.DownloadGate.GO, gate(music(null, null, mobile = true), metered))
+        assertEquals("never roaming", com.kidslauncher.mdm.server.DownloadGate.WAIT_ROAMING, gate(music(false, true), roaming))
+        assertEquals("Wi-Fi always", com.kidslauncher.mdm.server.DownloadGate.GO, gate(music(false, false), wifi))
+        assertEquals("no readable music object: Wi-Fi only", com.kidslauncher.mdm.server.DownloadGate.WAIT_WIFI, gate(null, metered))
+        assertEquals("no readable music object on Wi-Fi", com.kidslauncher.mdm.server.DownloadGate.GO, gate(null, wifi))
+        assertEquals(
+            "room is still checked",
+            com.kidslauncher.mdm.server.DownloadGate.WAIT_SPACE,
+            ownFileGate(wifi, music(false, true), 0L, 0L, file.size, 1L),
+        )
+        // The glue is one call each, pinned whole (qa-30-s2-code L2): nothing between the cached policy and ownFileGate.
+        fun source(path: String) = listOf(java.io.File(path), java.io.File("app/$path")).first { it.exists() }.readText()
+        val gateSource = source("src/main/java/com/kidslauncher/mdm/music/MusicFileDownloads.kt").substringAfter("private fun gate(").substringBefore("\n    }\n")
+        assertEquals(
+            "return ownFileGate(AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app))",
+            gateSource.lines().last().trim(),
+        )
+        val sync = source("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").substringAfter("fun cachedMusicPolicy(): MusicPolicy? = try {").substringBefore("\n    }\n")
+        assertEquals("musicPolicy(currentPolicyDecision().policy?.music)\n    } catch (e: Exception) {\n        null", sync.trim())
+    }
 }

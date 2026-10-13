@@ -65,8 +65,8 @@ class MusicPlanTest {
 
     @Test
     fun `the policy's music object - null means nothing ticked, anything malformed keeps what is there (M4)`() {
-        assertEquals(MusicPolicy("0123456789abcdef", true, 70, 3), musicPolicy(policyJson()))
-        assertEquals("JSON null: nothing ticked", MusicPolicy(null, true, 70, 3), musicPolicy(policyJson(version = JsonNull)))
+        assertEquals(MusicPolicy("0123456789abcdef", true, true, 70, DEFAULT_STORAGE_LIMIT_GB, 3), musicPolicy(policyJson()))
+        assertEquals("JSON null: nothing ticked", MusicPolicy(null, true, true, 70, DEFAULT_STORAGE_LIMIT_GB, 3), musicPolicy(policyJson(version = JsonNull)))
         assertNull("a longer version", musicPolicy(policyJson(version = JsonPrimitive("0123456789abcdef0123"))))
         assertNull("a number", musicPolicy(policyJson(version = JsonPrimitive(5))))
         assertNull("a generation that isn't a number", musicPolicy(policyJson(generation = JsonPrimitive("x"))))
@@ -74,6 +74,67 @@ class MusicPlanTest {
         assertNull("library_version missing", musicPolicy(buildJsonObject { put("mobile_data", true); put("storytel_generation", 0) }))
         assertNull("an older server", musicPolicy(null))
         assertNull(musicPolicy(JsonPrimitive(5)))
+    }
+
+    /** Design 30's music object as the server sends it from step 1 on (`policy_json_keys_snapshot`). */
+    private fun policy30(
+        mobile: Boolean = false,
+        stream: kotlinx.serialization.json.JsonElement? = JsonPrimitive(false),
+        download: kotlinx.serialization.json.JsonElement? = JsonPrimitive(false),
+        limit: kotlinx.serialization.json.JsonElement? = JsonPrimitive(2),
+    ) = buildJsonObject {
+        put("library_version", JsonNull); put("mobile_data", mobile)
+        stream?.let { put("stream_mobile_data", it) }
+        download?.let { put("download_mobile_data", it) }
+        put("volume_cap_pct", JsonNull)
+        limit?.let { put("storage_limit_gb", it) }
+        put("storytel_generation", 0)
+    }
+
+    @Test
+    fun `the policy's music object - two switches, an older server's mobile_data for both, a malformed switch keeps what is there`() {
+        assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30()))
+        val streamOnly = musicPolicy(policy30(stream = JsonPrimitive(true)))!!
+        assertTrue(streamOnly.streamMobileData)
+        assertFalse(streamOnly.downloadMobileData)
+        assertFalse("the old key is both", streamOnly.mobileData)
+        val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
+        assertFalse(downloadOnly.streamMobileData)
+        assertTrue(downloadOnly.downloadMobileData)
+        val both = musicPolicy(policy30(mobile = true, stream = JsonPrimitive(true), download = JsonPrimitive(true)))!!
+        assertTrue(both.streamMobileData && both.downloadMobileData && both.mobileData)
+        // The new keys win over mobile_data; mobile_data is only the fallback.
+        assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30(mobile = true)))
+        // An older server: no new keys - both switches are its one switch, the limit 2 GB.
+        assertEquals(MusicPolicy(null, true, true, null, 2, 0), musicPolicy(policy30(mobile = true, stream = null, download = null, limit = null)))
+        assertEquals(MusicPolicy(null, false, false, null, 2, 0), musicPolicy(policy30(stream = null, download = null, limit = null)))
+        assertEquals("one key missing falls back alone", MusicPolicy(null, true, false, null, 2, 0), musicPolicy(policy30(mobile = true, stream = null)))
+        for (bad in listOf(JsonPrimitive("true"), JsonPrimitive(1), JsonNull, buildJsonObject { }, buildJsonArray { })) {
+            assertNull("stream_mobile_data = $bad", musicPolicy(policy30(stream = bad)))
+            assertNull("download_mobile_data = $bad", musicPolicy(policy30(download = bad)))
+        }
+        assertNull("mobile_data is still required", musicPolicy(kotlinx.serialization.json.JsonObject(policy30() - "mobile_data")))
+    }
+
+    @Test
+    fun `the storage limit - absent is 2 GB, null is none, a stray value is 2 GB`() {
+        assertEquals("an older server", DEFAULT_STORAGE_LIMIT_GB, musicPolicy(policy30(limit = null))!!.storageLimitGb)
+        assertEquals(2, DEFAULT_STORAGE_LIMIT_GB)
+        assertNull("no limit", musicPolicy(policy30(limit = JsonNull))!!.storageLimitGb)
+        for (gb in listOf(1, 2, 5, 10, MAX_STORAGE_LIMIT_GB)) assertEquals(gb, musicPolicy(policy30(limit = JsonPrimitive(gb)))!!.storageLimitGb)
+        assertEquals(1000, MAX_STORAGE_LIMIT_GB)
+        // qa-30-s2-code L1: lenient like the server's storage_limit and the music app - a stray value
+        // reads as the default and never refuses the object (the cap, the courier and Storytel ride on it).
+        for (stray in listOf(
+            JsonPrimitive(0), JsonPrimitive(-2), JsonPrimitive(1001), JsonPrimitive(2.5), JsonPrimitive(0.5), JsonPrimitive("2"), JsonPrimitive(true),
+            JsonPrimitive(10_000_000_000L), buildJsonObject { }, buildJsonArray { },
+        )) {
+            val read = musicPolicy(policy30(limit = stray, stream = JsonPrimitive(true)))
+            assertEquals("storage_limit_gb = $stray", MusicPolicy(null, true, false, null, DEFAULT_STORAGE_LIMIT_GB, 0), read)
+            assertEquals(DEFAULT_STORAGE_LIMIT_GB, storageLimitGb(stray))
+        }
+        assertEquals(DEFAULT_STORAGE_LIMIT_GB, storageLimitGb(null))
+        assertNull(storageLimitGb(JsonNull))
     }
 
     @Test
@@ -174,6 +235,32 @@ class MusicPlanTest {
     }
 
     @Test
+    fun `later pictures follow the downloads switch`() {
+        val want = WantArt(listOf(pic(1)), listOf(pic(2)))
+        val now = 1_800_000_000_000L
+        // artToFetchOn: the phone's network and the policy, as artFetchable passes them (qa-30-s2-code L2).
+        val metered = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = false, notRoaming = true, physical = true)
+        fun fetch(music: MusicPolicy, caps: com.kidslauncher.mdm.server.NetCaps? = metered) = artToFetchOn(want, emptySet(), emptyMap(), caps, music, 50, now)
+        val streamOnly = musicPolicy(policy30(stream = JsonPrimitive(true)))!!
+        val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
+        val neither = musicPolicy(policy30())!!
+        assertEquals("streaming alone: now only", listOf(pic(1)), fetch(streamOnly))
+        assertEquals("downloads: later too", listOf(pic(1), pic(2)), fetch(downloadOnly))
+        assertEquals("roaming: now only", listOf(pic(1)), fetch(downloadOnly, metered.copy(notRoaming = false)))
+        assertEquals("Wi-Fi: later without either switch", listOf(pic(1), pic(2)), fetch(neither, metered.copy(notMetered = true)))
+        assertEquals("no network: nothing", emptyList<String>(), fetch(downloadOnly, null))
+        assertEquals("no physical transport: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(physical = false, notMetered = true)))
+        assertEquals("no internet: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(internet = false)))
+        // The glue is one call, pinned whole: nothing between the policy and artToFetchOn.
+        val courier = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        val fetchable = courier.substringAfter("fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> =").substringBefore("\n\n").trim()
+        assertEquals(
+            "artToFetchOn(want, MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, ART_PER_RUN, System.currentTimeMillis())",
+            fetchable,
+        )
+    }
+
+    @Test
     fun `art to delete - keeps library covers and the want set`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         assertEquals(sortedSetOf(pic(4), "junk"), artToDelete(setOf(pic(1), pic(2), pic(3), pic(4), "junk"), setOf(pic(3)), want))
@@ -232,19 +319,43 @@ class MusicPlanTest {
 
     @Test
     fun `the managed config carries the keys the music app reads`() {
-        val r = restrictionsFor(MusicPolicy(null, true, 60, 4), "me.vibb.launcher", "nb", 60)
+        val r = restrictionsFor(MusicPolicy(null, true, true, 60, 5, 4), "me.vibb.launcher", "nb", 60)
         assertEquals(
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb", "mobile_data" to true, "library_version" to "",
-                "storytel_generation" to 4, "volume_cap_pct" to 60,
+                "storytel_generation" to 4, "volume_cap_pct" to 60, "stream_mobile_data" to true, "download_mobile_data" to true, "storage_limit_gb" to 5,
             ),
             r,
         )
     }
 
     @Test
+    fun `the managed config carries both switches, the limit and mobile_data as both`() {
+        fun written(stream: Boolean, download: Boolean, limit: Int?) =
+            restrictionsFor(MusicPolicy(null, stream, download, null, limit, 0), "p", "", null)
+        for ((stream, download) in listOf(true to false, false to true, true to true, false to false)) {
+            val r = written(stream, download, 2)
+            assertEquals("$stream/$download", stream, r[MusicRestrictions.STREAM_MOBILE_DATA])
+            assertEquals("$stream/$download", download, r[MusicRestrictions.DOWNLOAD_MOBILE_DATA])
+            assertEquals("an older music app reads both: $stream/$download", stream && download, r[MusicRestrictions.MOBILE_DATA])
+        }
+        assertEquals(2, written(true, true, 2)[MusicRestrictions.STORAGE_LIMIT_GB])
+        assertEquals(10, written(true, true, 10)[MusicRestrictions.STORAGE_LIMIT_GB])
+        assertEquals("no limit is 0", 0, written(true, true, null)[MusicRestrictions.STORAGE_LIMIT_GB])
+        assertEquals(0, storageLimitRestriction(null))
+        assertEquals(1000, storageLimitRestriction(1000))
+        assertEquals(
+            listOf("stream_mobile_data", "download_mobile_data", "storage_limit_gb"),
+            listOf(MusicRestrictions.STREAM_MOBILE_DATA, MusicRestrictions.DOWNLOAD_MOBILE_DATA, MusicRestrictions.STORAGE_LIMIT_GB),
+        )
+        // End to end from the policy: an older server's mobile_data reaches the new keys as both, the limit 2 GB.
+        val old = restrictionsFor(musicPolicy(policy30(mobile = true, stream = null, download = null, limit = null))!!, "p", "", null)
+        assertEquals(listOf(true, true, true, 2), listOf("mobile_data", "stream_mobile_data", "download_mobile_data", "storage_limit_gb").map { old[it] })
+    }
+
+    @Test
     fun `the managed config carries the volume cap in force - 0 when none, lifted with the override (design 26a §5_3)`() {
-        val policy = MusicPolicy(null, true, 70, 4)
+        val policy = MusicPolicy(null, true, true, 70, 2, 4)
         assertEquals(70, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = true, overrideActive = false))["volume_cap_pct"])
         assertEquals("the override or the pause lifts it", 0, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = true, overrideActive = true))["volume_cap_pct"])
         assertEquals("unmanaged", 0, restrictionsFor(policy, "p", "", capPctInForce(policy.volumeCapPct, managed = false, overrideActive = false))["volume_cap_pct"])
@@ -265,12 +376,12 @@ class MusicPlanTest {
 
     @Test
     fun `the managed config holds only types the platform stores - Boolean, Int, String (H1)`() {
-        for (policy in listOf(MusicPolicy("0123456789abcdef", false, null, 0), MusicPolicy(null, true, 60, Long.MAX_VALUE))) {
+        for (policy in listOf(MusicPolicy("0123456789abcdef", false, false, null, null, 0), MusicPolicy(null, true, true, 60, 1000, Long.MAX_VALUE))) {
             for ((key, value) in restrictionsFor(policy, "me.vibb.launcher", "", policy.volumeCapPct)) {
                 assertTrue("$key is a ${value.javaClass.simpleName}", restrictionValueStorable(value))
             }
         }
-        assertEquals("a huge generation is clamped", Int.MAX_VALUE, restrictionsFor(MusicPolicy(null, true, 60, Long.MAX_VALUE), "p", "", 60)["storytel_generation"])
+        assertEquals("a huge generation is clamped", Int.MAX_VALUE, restrictionsFor(MusicPolicy(null, true, true, 60, 2, Long.MAX_VALUE), "p", "", 60)["storytel_generation"])
         assertFalse(restrictionValueStorable(4L))
         assertFalse(restrictionValueStorable(1.5))
     }
@@ -351,7 +462,7 @@ class MusicPlanTest {
         assertEquals(strings("music_packages"), MUSIC_PACKAGES)
         assertTrue(module("src/main/AndroidManifest.xml").readText().contains("\${applicationId}" + (contract["permission_suffix"] as JsonPrimitive).content))
         val types = (contract["restrictions"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }
-        val written = restrictionsFor(MusicPolicy(null, true, null, 1), "me.vibb.launcher", "nb", null)
+        val written = restrictionsFor(MusicPolicy(null, true, false, null, 2, 1), "me.vibb.launcher", "nb", null)
         assertEquals(types.keys, written.keys)
         for ((key, value) in written) {
             val type = when (value) {

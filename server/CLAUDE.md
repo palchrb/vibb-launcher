@@ -533,7 +533,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (nrk/rss/own, storytel since design 26b; `target` unique, NULL for own; `key` = vibb's `state_key`, `own-<id>`;
   `cache` -1/0/1-100, own = -1; <= 200), `music_files` (own uploads, <= 300 per entry, `missing`),
   `device_music_entries` (ticks),
-  `device_policy.music_mobile_data/music_volume_cap_pct/music_storytel`, `music_storytel` singleton,
+  `device_policy.music_volume_cap_pct/music_storytel` (and since design 30, migration `0073`,
+  `music_stream_mobile_data`/`music_download_mobile_data`, which replaced `music_mobile_data` and both took its value,
+  and `music_storage_limit_gb` - 1/2/5/10, NULL = no limit, default 2 for every phone), `music_storytel` singleton,
   `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
   (migration `0071`, design 26a §5.5: NULL = every Sonos room, else a JSON array of speaker uids; its trigger moves
   `music_library_revision`; read fail-closed by `music::sonos_rooms_allowed` - a value that isn't a list of strings is
@@ -543,14 +545,26 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **PWA** (`handlers::music`, `templates/music*.html`): `/music` (add by link - one GET, `AppState.music_fetch`,
   canned in tests; own-files entries; categories; Storytel; the music app's catalog row), `/music/entries/{id}`
   (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
-  ticks, mobile data, volume cap Off/90/80/70/60 - NULL = off, Storytel switch, the Sonos rooms at `#music-sonos`
+  ticks, the `#music-settings` form - since design 30 two switches "Streaming may use mobile data" / "Downloads may use
+  mobile data" (a hidden `v=2` marks today's page; a post without it is a page from before the update, and its one
+  `mobile_data` checkbox sets both - `handlers::music::mobile_switches`), the "Music storage limit" select (1/2/5/10
+  GB/No limit, `storage_limit` = a choice or `none`, else 400; missing = the stored one kept), the note "This phone's
+  launcher or music app is older ..." while the switches differ and the phone's app report (`cache_bytes`) has no
+  `extra_bytes` (`music::older_phone_note`), the storage line and its over-the-limit warning (`music::storage_line`;
+  `audio_bytes`/`extra_bytes` reach `MusicState` in design 30 step 3a, until then today's "Stored on the phone"),
+  event `music_phone_settings` naming both switches and the limit -, volume cap Off/90/80/70/60 - NULL = off,
+  Storytel switch, the Sonos rooms at `#music-sonos`
   - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event
   `music_sonos_rooms_changed` (detail clipped to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "The
   phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
   redirects to its anchor; a 400 re-renders with the values and the error by the autofocused field. Changes nudge the
   phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
-- **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, volume_cap_pct, storytel_generation}` (always the
-  key; `null` when the library query fails, QA #3; `policy_json_keys_snapshot`). The library (`music::library_for`):
+- **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
+  volume_cap_pct, storage_limit_gb, storytel_generation}` (always the key; `null` when the library query fails, QA #3;
+  `policy_json_keys_snapshot`). Design 30: `mobile_data` stays for an older launcher (it refuses a music object
+  without it) and is `stream && download` (`music::mobile_data_wire`: AND never spends data the parent turned off);
+  `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
+  (`music::storage_limit`). The library (`music::library_for`):
   16 hex of SHA-256 over the JSON **without** its `version` (QA #4; `sonos_rooms` - null or the allowed uids, after
   `covers`, ignored by an older music app, which then allows every room - is hashed like every other field), pinned
   by `music_library_snapshot` in `testdata/music_library.json` (the music app keeps a copy). Ticks and uploads that
@@ -706,7 +720,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
   (`no_audio` "Storytel gave no audio for this book"). The device card: the phone's `music_state.storytel`
   (`none`/`ok`/`refused`, refused as a warning), "Storytel is off on this phone: its N Storytel entries aren't sent",
-  and the mobile-data help text's "This includes Storytel books, often several hundred MB each."
+  and the downloads switch's text "... a Storytel book is often several hundred MB" (design 30).
 - **The import** (`music_import.rs`, §2.6): a `storytel:` target `parse_target` accepts imports as a Storytel entry
   (name, order, resume; cache 0 -> -1); one it refuses is `Skip::BadLink`. Nothing is fetched: the sweep lists it
   (`not_on_shelf` if the family's shelf lacks it, `storytel_off` without a login).
