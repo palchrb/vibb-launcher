@@ -1,0 +1,28 @@
+# Vibb Phone server in Docker (server >= 0.23.0) - server/DEPLOY.md, "Docker".
+#
+# Copy this file and env.example (as .env) to a folder on the host, fill in .env, then:
+#   docker compose up -d
+#   docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm initial-admin-password
+# Sign in as admin and change the password.
+#
+# The host's network: the host's Tailscale and Caddy (Caddyfile.example) put HTTPS in front, and the server sees the
+# real client address, which its admin gate needs. It listens on 127.0.0.1 only (BIND_ADDR, DEVICE_BIND_ADDR).
+# Updating: set HANDY_VERSION in .env, then `docker compose pull && docker compose up -d`.
+services:
+  handy:
+    image: ghcr.io/palchrb/handy-server:${HANDY_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - handy-data:/app/data
+      # The Storytel key: its own volume, so copies of the data volume don't carry it.
+      - handy-keys:/app/data/keys
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  handy-data: {}
+  handy-keys: {}

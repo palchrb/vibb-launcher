@@ -1,0 +1,82 @@
+// Auto-saving controls (design 31 §5.2, L7). A control marked `data-autosave` saves its form when it
+// changes, through form.submit() - which static/scroll-restore.js (loaded un-deferred before this)
+// hooks, so the page that comes back keeps its position (a save never jumps to the top).
+//
+// A <select> changed from the keyboard (arrow keys, type-ahead on a closed select) does not save on
+// every key: it saves on Enter or when it loses focus. A choice confirmed with Enter in an open
+// dropdown (Enter's keydown comes before its change) saves at once. Changed with a pointer (or a
+// phone's own picker), it saves at once. Without JS every such control has a <noscript> Save
+// button. Loaded un-deferred from the head partial (it only listens on the document), so a control
+// changed while the page is still loading saves too. ES5. Tested with node (jstest/autosave.test.js).
+(function (root) {
+    "use strict";
+
+    function isAutosave(el) {
+        return !!(el && el.form && el.hasAttribute && el.hasAttribute("data-autosave"));
+    }
+
+    function isSelect(el) {
+        return String(el.tagName).toUpperCase() === "SELECT";
+    }
+
+    function install(doc) {
+        // The select a key went to since the last pointer press on it, the one whose change waits
+        // for Enter or blur, and the one where Enter came before its change (an open dropdown).
+        var keyed = null;
+        var pending = null;
+        var entered = null;
+
+        function save(el) {
+            if (pending === el) pending = null;
+            el.form.submit();
+        }
+
+        doc.addEventListener("keydown", function (e) {
+            var el = e.target;
+            if (!isAutosave(el) || !isSelect(el)) return;
+            if (e.key === "Enter") {
+                if (pending === el) {
+                    if (e.preventDefault) e.preventDefault();
+                    save(el);
+                } else if (keyed === el) {
+                    entered = el;
+                }
+                return;
+            }
+            if (e.key === "Tab") return;
+            keyed = el;
+            entered = null;
+        }, true);
+
+        function pointer(e) {
+            if (keyed === e.target) keyed = null;
+        }
+        doc.addEventListener("mousedown", pointer, true);
+        doc.addEventListener("touchstart", pointer, true);
+
+        doc.addEventListener("change", function (e) {
+            var el = e.target;
+            if (!isAutosave(el)) return;
+            if (isSelect(el) && keyed === el && entered !== el) {
+                pending = el;
+                return;
+            }
+            if (entered === el) entered = null;
+            save(el);
+        }, true);
+
+        doc.addEventListener("focusout", function (e) {
+            var el = e.target;
+            if (keyed === el) keyed = null;
+            if (entered === el) entered = null;
+            if (pending === el) save(el);
+        }, true);
+    }
+
+    var api = { install: install };
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = api;
+    } else if (root.document) {
+        install(root.document);
+    }
+})(this);

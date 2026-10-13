@@ -43,7 +43,7 @@
         {% endif %}
         <form method="post" action="/music/entries/{{ entry.id }}/offline" class="music-offline">
             <label for="offline-{{ entry.id }}">Offline</label>
-            <select id="offline-{{ entry.id }}" name="cache" onchange="this.form.submit()">
+            <select id="offline-{{ entry.id }}" name="cache" data-autosave>
                 {% for (value, label) in sweep.caches %}
                 <option value="{{ value }}"{% if sweep.cache == *value %} selected{% endif %}>{{ label }}</option>
                 {% endfor %}

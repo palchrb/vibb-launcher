@@ -16,6 +16,7 @@ pub mod parent_pin;
 pub mod provisioning;
 pub mod schedules;
 pub mod settings;
+pub mod settings_hub;
 pub mod sw;
 pub mod system_maintenance;
 pub mod system_update;

@@ -13,7 +13,7 @@ use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{TestApp, TestResponse};
+use super::{TestApp, TestResponse, autosaves, input_checked, nav_current};
 
 // ------------------------------------------------------------------------------------------------
 // Helpers
@@ -329,7 +329,7 @@ async fn entry_id_by_key(app: &TestApp, key: &str) -> i64 {
         .unwrap()
 }
 
-async fn add_own(app: &TestApp, cookie: &str, name: &str) -> i64 {
+pub(super) async fn add_own(app: &TestApp, cookie: &str, name: &str) -> i64 {
     let res = app
         .request_form(Method::POST, "/music/own", Some(cookie), &[("name", name)])
         .await;
@@ -2422,17 +2422,24 @@ async fn the_device_card_ticks_entries_and_switches_the_app() {
     assert!(card.contains(&format!(
         "action=\"/devices/{device}/music/entries/{entry}\""
     )));
-    assert!(card.contains("checked onchange"), "ticked and auto-saving");
+    let tick_form = |card: &str| -> String {
+        let action = format!("action=\"/devices/{device}/music/entries/{entry}\"");
+        let at = card.find(&action).expect("the entry's tick");
+        let rest = &card[at..];
+        rest[..rest.find("</form>").unwrap()].to_string()
+    };
+    let ticked = tick_form(card);
+    assert_eq!(input_checked(&ticked, "selected", ""), Some(true), "ticked");
+    assert!(autosaves(&ticked, "selected"), "auto-saving");
     assert!(card.contains("1 entry"));
     let other_page = app
         .get_page(&format!("/devices/{other}"), &cookie)
         .await
         .text();
     let other_card = other_page.split("id=\"music\"").nth(1).unwrap();
-    assert!(
-        !other_card
-            .contains("checked onchange=\"this.form.submit()\">\n                    <span>Abels")
-    );
+    let other_action = format!("action=\"/devices/{other}/music/entries/{entry}\"");
+    let other_tick = &other_card[other_card.find(&other_action).expect("listed, unticked")..];
+    assert_eq!(input_checked(other_tick, "selected", ""), Some(false));
 
     // Unticking.
     tick(&app, &cookie, device, entry, false).await;
@@ -2543,7 +2550,8 @@ async fn the_device_card_scopes_sonos_rooms() {
     );
     assert!(!page.contains("hasn't seen any speakers"));
     assert!(page.contains(&format!("action=\"/devices/{device}/music/sonos-rooms\"")));
-    assert!(page.contains("name=\"all\" value=\"on\" checked onchange"));
+    assert_eq!(input_checked(&page, "all", "on"), Some(true));
+    assert!(autosaves(&page, "all"));
     assert!(page.contains(&format!(
         "<input type=\"hidden\" name=\"room\" value=\"{STUA}\">"
     )));
@@ -2582,9 +2590,10 @@ async fn the_device_card_scopes_sonos_rooms() {
             .await
             .text(),
     );
-    assert!(page.contains("name=\"all\" value=\"on\"  onchange"));
-    assert!(page.contains(&format!("name=\"room\" value=\"{STUA}\" checked onchange")));
-    assert!(page.contains(&format!("name=\"room\" value=\"{KJOKKEN}\"  onchange")));
+    assert_eq!(input_checked(&page, "all", "on"), Some(false));
+    assert_eq!(input_checked(&page, "room", STUA), Some(true));
+    assert_eq!(input_checked(&page, "room", KJOKKEN), Some(false));
+    assert!(autosaves(&page, "room"));
     assert!(page.contains("Kjøkken &#60;b&#62;") || page.contains("Kjøkken &lt;b&gt;"));
     assert!(!page.contains("Kjøkken <b>"));
     assert!(!page.contains("No room ticked"));
@@ -3044,6 +3053,7 @@ async fn the_music_pages_render_and_link_both_ways() {
     let page = app.get_page("/music", &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
     let text = page.text();
+    assert_eq!(nav_current(&text), "music");
     for needle in [
         "/static/scroll-restore.js",
         "href=\"/apps\"",
@@ -3054,12 +3064,9 @@ async fn the_music_pages_render_and_link_both_ways() {
     ] {
         assert!(text.contains(needle), "{needle}");
     }
-    assert!(
-        app.get_page("/apps", &cookie)
-            .await
-            .text()
-            .contains("href=\"/music\"")
-    );
+    let apps = app.get_page("/apps", &cookie).await.text();
+    assert_eq!(nav_current(&apps), "apps");
+    assert!(apps.contains("href=\"/music\""), "the Music tab");
     let entry_page = app
         .get_page(&format!("/music/entries/{entry}"), &cookie)
         .await;

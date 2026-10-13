@@ -94,6 +94,11 @@ data class Library(
      * room, the default. A group is allowed by its coordinator.
      */
     val sonosRooms: List<String>? = null,
+    /**
+     * Every entry's key by id, usable or not (design 29 §1.3): the news rules know a key an older app
+     * can't read too, so the update that makes it readable can't flood.
+     */
+    val keyById: Map<Long, String> = entries.associate { it.id to it.key },
 ) {
     fun entry(id: Long): Entry? = entries.firstOrNull { it.id == id }
     fun filesOf(entryId: Long): List<OwnFile> = files.filter { it.entry == entryId }.sortedWith(compareBy({ it.sort }, { it.id }))
@@ -157,7 +162,7 @@ object LibraryParser {
             .distinctBy { it.id }
         val covers = elements(root["covers"]).mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
             .filter { HASH.matches(it) }.toSet()
-        return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles), sonosRooms(root["sonos_rooms"]))
+        return Library(version, categories, entries, files, covers, rawIds(rawEntries), rawIds(rawFiles), sonosRooms(root["sonos_rooms"]), rawKeys(rawEntries))
     }
 
     /** `sonos_rooms`: absent or null = every room (an older server), a list = those uids, anything else none. */
@@ -170,6 +175,17 @@ object LibraryParser {
     /** The numeric `id` of every object in [array], whatever else it holds. */
     private fun rawIds(array: JsonArray): Set<Long> =
         array.mapNotNull { ((it as? JsonObject)?.get("id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() }.toSet()
+
+    /** The numeric `id` and string `key` of every object in [array] that has both, whatever else it holds (the first per id). */
+    private fun rawKeys(array: JsonArray): Map<Long, String> {
+        val keys = mutableMapOf<Long, String>()
+        for (o in array.filterIsInstance<JsonObject>()) {
+            val id = (o["id"] as? JsonPrimitive)?.content?.toLongOrNull() ?: continue
+            val key = (o["key"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: continue
+            keys.putIfAbsent(id, key)
+        }
+        return keys
+    }
 
     private fun elements(e: JsonElement?): List<JsonElement> = (e as? JsonArray).orEmpty()
 

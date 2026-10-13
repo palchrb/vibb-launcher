@@ -35,7 +35,7 @@ SERVICE_USER="kidphone"
 # minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
 # keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
 # the tag, so a signed file can't be passed off under another name or as another release.
-SERVER_SIGNING_PUBKEY="not-set"
+SERVER_SIGNING_PUBKEY="RWQp6olF7G4WFeRgDWSWwq2/qOkClyqqXEzDBrPPf2EUrdZlAUQATU5g"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run this as root (e.g. 'sudo bash update.sh')." >&2
@@ -243,7 +243,7 @@ resolve_server_tag() {
 # minisign key, pinned here (the same line in install.sh, update.sh and actions.sh - a server test
 # keeps them equal; server/DEPLOY.md, "Release signing"). The trusted comment names the file and
 # the tag, so a signed file can't be passed off under another name or as another release.
-SERVER_SIGNING_PUBKEY="not-set"
+SERVER_SIGNING_PUBKEY="RWQp6olF7G4WFeRgDWSWwq2/qOkClyqqXEzDBrPPf2EUrdZlAUQATU5g"
 
 # verify_signed FILE NAME TAG: FILE.minisig must be a good signature of FILE by the pinned key,
 # with the trusted comment "NAME TAG". Anything else - no key pinned, no minisign, no or a bad

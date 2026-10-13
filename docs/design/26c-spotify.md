@@ -2011,3 +2011,16 @@ All six findings fixed; none disputed (one premise corrected, L3). `cargo fmt --
   `FetchError::code` maps `Refused` to `network` - so that row is for a future code; `database` was real.
 - **L4** (`spotify_gate!()` on one line): written with `\` continuations, one clause per line, as `storytel_gate!()`
   (a `\`-newline in the generator script had joined the lines).
+
+## Merge of main (a5d30b9, 2026-10-13)
+
+`origin/main` (designs 29, 31 step 1 - the PWA shell - and 32 step 1) merged into `music-3-spotify` after step 2a's fix
+round, before step 2b. One textual conflict: `PLAN.md`'s music paragraph - both sides kept (this branch's "Phase 3,
+Spotify" text, then main's design 29 sentence); main's one-line "Phase 3 (Spotify) follows design 26; its first step,
+the engine spike, ..." was dropped as superseded by the 26c text. `templates/music.html` merged by itself: main's shell
+(no Apps|Music switch, `{% let tab = "music" %}`) with step 1's Spotify card. What the merge broke, fixed in the merge
+commit: `templates/music_spotify.html` (step 1's page) set no `tab`, which `tests::shell::every_template_with_the_bar_sets_its_tab`
+requires - it now sets `{% let tab = "music" %}` before the header include (it had no inline `onchange`). Nothing
+in `server/src/music*.rs`, `handlers/music.rs`, migrations or testdata changed on main. On the merge: `cargo fmt
+--check` clean, `cargo clippy --all-targets` the 12 known warnings, `cargo test` 733 passed, 0 failed -
+`tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` passes now (main changed `tests/parent_pin.rs`).

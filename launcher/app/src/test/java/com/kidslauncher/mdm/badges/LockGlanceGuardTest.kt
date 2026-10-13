@@ -311,7 +311,7 @@ class LockGlanceGuardTest {
         val activity = code("PinLockActivity.kt")
         // Opened in go(), after Home, before the finish, only when UNLOCKED.
         val go = body(activity, "go")
-        val open = go.indexOf("pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it) }")
+        val open = go.indexOf("pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }")
         assertTrue(go, open >= 0)
         assertTrue(go.indexOf("HomeFront.bring(") in 0 until open)
         assertTrue(open < go.indexOf("finishAndRemoveTask()"))

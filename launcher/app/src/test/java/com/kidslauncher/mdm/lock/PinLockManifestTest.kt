@@ -34,6 +34,17 @@ class PinLockManifestTest {
             handled.containsAll(setOf("mcc", "mnc", "locale", "fontScale", "density", "layoutDirection", "orientation", "screenSize", "uiMode")),
         )
         assertEquals("\${applicationId}.pinlock", lock.getAttributeNS(ns, "taskAffinity"))
+        // Design 32 (§7.1, design 17 qa-16-17-code #2): showWhenLocked, never turn-screen-on - that
+        // would keep it visible while dark only by waking the phone at every lock-up.
+        assertEquals("true", lock.getAttributeNS(ns, "showWhenLocked"))
+        assertEquals("", lock.getAttributeNS(ns, "turnScreenOn"))
+        val code = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+            .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("//[^\\n]*"), "")
+        assertTrue(!code.contains("setTurnScreenOn") && !code.contains("turnScreenOn"))
+        val onCreate = code.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
+        val secure = onCreate.indexOf("window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)")
+        assertTrue(secure in 0 until onCreate.indexOf("setContentView("))
         assertTrue("com.kidslauncher.mdm.lock.PinLockActivity" !in com.kidslauncher.mdm.calls.DirectBootComponents.CLASS_NAMES)
         assertTrue(com.kidslauncher.mdm.calls.DirectBootComponents.needsUnlockedSetup("com.kidslauncher.mdm.lock.PinLockActivity"))
     }

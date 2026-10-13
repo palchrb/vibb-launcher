@@ -9,8 +9,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.CallLog
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
 import android.view.Gravity
 import android.view.GestureDetector
@@ -30,6 +32,7 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
+import com.kidslauncher.mdm.lock.homeDarkResume
 import com.kidslauncher.mdm.lock.homeShowsContent
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
@@ -106,6 +109,11 @@ private const val MAX_OVERLAYS = 8
  * ([NightGround]), with nothing to touch, and its resume roots lock task and shows the lock. The
  * content is inflated and bound only on the UNLOCKED edge ([showContent]) and taken off the window
  * again on the LOCKED one ([showNight]).
+ *
+ * Design 32: at a lock-up while dark Home is brought under the lock, so what WM shows before the
+ * lock's first frame at the next screen-on is Home's snapshot - plain black (no recents screenshot,
+ * a black task description), never the app the kid was in. That resume only shows the night ground
+ * ([homeDarkResume]); the rest waits for an interactive start or resume.
  */
 class HomeActivity : UIObjectActivity() {
 
@@ -206,6 +214,17 @@ class HomeActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Design 32 (QA M3): Home lies under the PIN lock after a lock-up while dark - its snapshot,
+        // which WM may show before the lock's first frame, is a plain black ground, never a
+        // screenshot. The live bars and the launch splash (16e) stay as they are.
+        setRecentsScreenshotEnabled(false)
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setBackgroundColor(Color.BLACK)
+                .setStatusBarColor(Color.BLACK)
+                .setNavigationBarColor(Color.BLACK)
+                .build(),
+        )
 
         // Back does nothing on the home screen, same as stock Android launchers.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -373,9 +392,24 @@ class HomeActivity : UIObjectActivity() {
         return true
     }
 
+    /** Design 32: Home brought under the lock at a lock-up, the screen still off ([homeDarkResume]). */
+    private fun darkUnderLock(): Boolean =
+        homeDarkResume(PinLockRuntime.darkLockUp, interactive(), PinLockRuntime.mode == LockMode.LOCKED)
+
+    /** The screen is on (unknown counts as on: the usual path). */
+    private fun interactive(): Boolean = getSystemService(PowerManager::class.java)?.isInteractive != false
+
     override fun onStart() {
         super.onStart()
+        // Design 32 (QA M1): under the lock while dark, nothing - the card renders and listeners come
+        // at the next interactive start or resume ([startWork]).
+        if (darkUnderLock()) return
+        startWork()
+    }
 
+    /** onStart's work - once per start, also when a dark start skipped it ([onResume]). */
+    private fun startWork() {
+        if (started) return
         // First launch: mark it done and try to set the default home screen
         if (!LauncherPreferences.internal().started()) {
             LauncherPreferences.internal().started(true)
@@ -404,7 +438,18 @@ class HomeActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         resumedNow = true
-        PinLockRuntime.onHomeResumed()
+        // Design 32 (QA M1): brought under the lock while dark - the night ground only. No update
+        // fence, no time-rule screen over the lock, no lock start, no boot mark: the lock's own start
+        // came right after Home's in the same pass, and nothing slow may come before its creation.
+        // No lock task either (qa-32-s1-code L1): the lock's task is the focused one by now, so
+        // `startLockTask` here could only throw; with the kiosk on and no lock task running, the
+        // lock's own resume asks Home to root it (START_HOME), as before design 32.
+        if (darkUnderLock()) {
+            showNight()
+            return
+        }
+        startWork()
+        PinLockRuntime.onHomeResumed(interactive())
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
         // doc comment on the GrapheneOS hardened_malloc / native-crash risk this sidesteps by
         // waiting until the launcher has actually rendered instead of racing the very first UI

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Debug build only: the design 16d lock-task override hook (docs/testing/emulator.md §6e), the
-     design 24b vault-key hook and the design 28 fake headset. Merged
+     design 24b vault-key hook, the design 28 fake headset and design 32's lock-up toggle. Merged
      into the debug manifest; the release build never sees this file (checkReleaseHasNoDebugHook,
      DebugHookAbsentTest). Exported for `adb shell am broadcast -n`, guarded by DUMP (shell holds it,
      apps don't). -->
@@ -18,6 +18,11 @@
         <!-- Design 28 §4: a fake Bluetooth headset connects (the listening window's device checks). -->
         <receiver
             android:name="com.kidslauncher.mdm.music.HeadsetDebugReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP" />
+        <!-- Design 32 §5 H2: the lock-up re-starts a lock that is on top, or skips it (the default). -->
+        <receiver
+            android:name="com.kidslauncher.mdm.lock.LockUpDebugReceiver"
             android:exported="true"
             android:permission="android.permission.DUMP" />
     </application>

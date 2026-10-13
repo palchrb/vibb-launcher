@@ -30,6 +30,7 @@ mod music_sweep;
 mod parent_pin;
 mod play;
 mod provisioning;
+mod shell;
 mod sound_mode;
 mod step10;
 mod step11;
@@ -418,4 +419,193 @@ fn session_cookie(response: &TestResponse) -> Option<String> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(';').next())
         .map(str::to_string)
+}
+
+// ------------------------------------------------------------------------------------------------
+// Page markup helpers (design 31 §5.5, M8). Tests assert on what a control *is* - checked, saving
+// itself, posting where - never on attribute order or whitespace, so a restyled switch
+// (`class="sw" role="switch"`) or a moved handler (`data-autosave`) changes no test.
+// ------------------------------------------------------------------------------------------------
+
+/// One start tag: where it starts in the page and its attributes in order (a bare attribute has
+/// no value). Values are the raw text between the quotes, still HTML-escaped.
+pub struct Tag<'a> {
+    pub start: usize,
+    pub attrs: Vec<(&'a str, Option<&'a str>)>,
+}
+
+impl<'a> Tag<'a> {
+    pub fn attr(&self, name: &str) -> Option<&'a str> {
+        self.attrs
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.unwrap_or(""))
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.attrs
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case(name))
+    }
+}
+
+/// Every `<name ...>` start tag in `html`, in page order.
+pub fn tags<'a>(html: &'a str, name: &str) -> Vec<Tag<'a>> {
+    let open = format!("<{name}");
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = html[from..].find(&open).map(|i| from + i) {
+        from = at + open.len();
+        let rest = &html[from..];
+        // `<input` must not match `<inputs`: the name ends at whitespace, `/` or `>`.
+        if !rest.starts_with(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/') {
+            continue;
+        }
+        let (attrs, len) = parse_attrs(rest);
+        found.push(Tag { start: at, attrs });
+        from += len;
+    }
+    found
+}
+
+/// The attributes up to the tag's `>` (quotes respected) and how many bytes that took.
+type Attrs<'a> = Vec<(&'a str, Option<&'a str>)>;
+
+fn parse_attrs(text: &str) -> (Attrs<'_>, usize) {
+    let bytes = text.as_bytes();
+    let mut attrs = Vec::new();
+    let mut i = 0;
+    loop {
+        while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] == b'>' {
+            return (attrs, (i + 1).min(bytes.len()));
+        }
+        let key_start = i;
+        while i < bytes.len()
+            && !matches!(bytes[i], b'=' | b'>' | b'/')
+            && !bytes[i].is_ascii_whitespace()
+        {
+            i += 1;
+        }
+        let key = &text[key_start..i];
+        if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            match bytes.get(i).copied() {
+                Some(quote @ (b'"' | b'\'')) => {
+                    let value_start = i + 1;
+                    let end = text[value_start..]
+                        .find(quote as char)
+                        .map_or(text.len(), |e| value_start + e);
+                    attrs.push((key, Some(&text[value_start..end])));
+                    i = (end + 1).min(bytes.len());
+                }
+                _ => {
+                    let value_start = i;
+                    while i < bytes.len() && bytes[i] != b'>' && !bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    attrs.push((key, Some(&text[value_start..i])));
+                }
+            }
+        } else {
+            attrs.push((key, None));
+        }
+    }
+}
+
+/// The form controls (`input`, `select`, `textarea`) named `name`, in page order.
+fn controls<'a>(html: &'a str, name: &str) -> Vec<Tag<'a>> {
+    let mut found: Vec<Tag<'a>> = ["input", "select", "textarea"]
+        .iter()
+        .flat_map(|kind| tags(html, kind))
+        .filter(|tag| tag.attr("name") == Some(name))
+        .collect();
+    found.sort_by_key(|tag| tag.start);
+    found
+}
+
+/// Whether the first `<input>` named `name` - with `value`, unless `value` is empty - is
+/// checked; `None` when there is no such input. Slice `html` to one form or card first when the
+/// name repeats.
+pub fn input_checked(html: &str, name: &str, value: &str) -> Option<bool> {
+    tags(html, "input")
+        .into_iter()
+        .find(|tag| {
+            tag.attr("name") == Some(name) && (value.is_empty() || tag.attr("value") == Some(value))
+        })
+        .map(|tag| tag.has("checked"))
+}
+
+/// Whether a control named `name` saves its form when it changes: `data-autosave` (handled by
+/// `static/autosave.js`), or an inline `onchange` that submits.
+pub fn autosaves(html: &str, name: &str) -> bool {
+    controls(html, name).iter().any(|tag| {
+        tag.has("data-autosave") || tag.attr("onchange").is_some_and(|js| js.contains("submit"))
+    })
+}
+
+/// The `action` of the form that holds the first control named `input_name`.
+pub fn form_action_of<'a>(html: &'a str, input_name: &str) -> Option<&'a str> {
+    let control = controls(html, input_name).into_iter().next()?;
+    let form = tags(&html[..control.start], "form").into_iter().last()?;
+    // The form must still be open at the control.
+    if html[form.start..control.start].contains("</form>") {
+        return None;
+    }
+    form.attr("action")
+}
+
+/// The tab the tab bar marks `aria-current="page"` (`devices`, `apps`, `locate`, `music`,
+/// `settings`), or "" when none is (design 31 §3.1).
+pub fn nav_current(html: &str) -> &str {
+    let Some(start) = html.find("<nav class=\"tab-bar\"") else {
+        return "";
+    };
+    let nav = &html[start..];
+    let nav = &nav[..nav.find("</nav>").unwrap_or(nav.len())];
+    tags(nav, "a")
+        .into_iter()
+        .find(|tag| tag.attr("aria-current") == Some("page"))
+        .map_or("", |tag| tag.attr("data-tab").unwrap_or(""))
+}
+
+/// A phone's page in the PWA. Design 31 moves the device page's cards to sub-pages one step at a
+/// time (§8); a test names the section, so a move changes this table, not the test.
+#[derive(Clone, Copy, Debug)]
+pub enum Section {
+    /// `/devices/{id}`: the device page (the summary from design 31 step 10).
+    Summary,
+    /// `/devices/{id}/calls`: Calls & Contacts.
+    Calls,
+}
+
+pub fn device_page(id: i64, section: Section) -> String {
+    match section {
+        Section::Summary => format!("/devices/{id}"),
+        Section::Calls => format!("/devices/{id}/calls"),
+    }
+}
+
+/// A redirect (3xx) to `path` (with its query) and `fragment` (`None`: no `#` at all) - the
+/// redirect table's check (design 31 §5.1).
+#[track_caller]
+pub fn assert_redirect(response: &TestResponse, path: &str, fragment: Option<&str>) {
+    assert!(
+        response.status.is_redirection(),
+        "expected a redirect to {path}, got {}: {}",
+        response.status,
+        response.text()
+    );
+    let location = response.location().expect("a redirect without Location");
+    let (got_path, got_fragment) = match location.split_once('#') {
+        Some((p, f)) => (p, Some(f)),
+        None => (location, None),
+    };
+    assert_eq!(got_path, path, "redirect path (Location: {location})");
+    assert_eq!(
+        got_fragment, fragment,
+        "redirect fragment (Location: {location})"
+    );
 }

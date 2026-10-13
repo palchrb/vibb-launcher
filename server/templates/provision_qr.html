@@ -4,22 +4,23 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "devices" %}
 {% include "partials/app_header.html" %}
 <main class="container container-narrow">
     <div class="page-header">
         <h1>Provision {{ device.name }}</h1>
     </div>
-    <p class="subtitle">The QR code carries a fresh enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Provisioning settings</a> - scanning it does setup and enrollment in one step. The code is valid for 30 minutes and works once; making a new QR code (or a typed code on the device page) replaces it.</p>
+    <p class="subtitle">The QR code carries a fresh enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a> - scanning it does setup and enrollment in one step. The code is valid for 30 minutes and works once; making a new QR code (or a typed code on the device page) replaces it.</p>
 
     {% if missing_checksum %}
-    <div class="card" style="border-color:#dc2626;">
+    <div class="card card-alarm">
         <p><strong>Launcher signing checksum not configured (see DEPLOY.md).</strong> Without it, Android can't check that the launcher it downloads is your own build, so no QR code is shown. Set <code>LAUNCHER_SIGNATURE_CHECKSUM</code> in <code>/opt/kid-phone-server/.env</code> and restart the server.</p>
     </div>
     {% endif %}
 
     {% if missing_server_url %}
-    <div class="card" style="border-color:#dc2626;">
-        <p><strong>No server URL configured yet.</strong> Set one on the <a href="/settings/provisioning">Provisioning settings</a> page first, or this QR code won't be able to auto-enroll the device - you'd still need to type it in by hand afterward.</p>
+    <div class="card card-alarm">
+        <p><strong>No server URL configured yet.</strong> Set one on the <a href="/settings/provisioning">Phone Setup</a> page (under Settings) first, or this QR code won't be able to auto-enroll the device - you'd still need to type it in by hand afterward.</p>
     </div>
     {% endif %}
 

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Time Rules</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;align-items:center;height:44px;padding:0 16px}
+.back{display:flex;align-items:center;gap:4px;font-size:17px;color:#0B66D6}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.grp.ic .row+.row:before{left:57px}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;text-align:right;font-size:16px}
+.s2{display:block;font-size:13px;color:#6B6B70;margin-top:2px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.chev{flex:none;color:#C4C4C7}
+.tile{flex:none;width:29px;height:29px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff}
+.av{flex:none;width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:600}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 900px">
+  <div class="top">
+    <a class="back" href="Settings.dc.html">
+      <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Settings
+    </a>
+  </div>
+  <h1 class="lt">Time Rules</h1>
+
+  <div class="sh">Everyone · rules</div>
+  <div class="grp ic">
+    <a class="row" href="RuleEditor.dc.html">
+      <span class="tile" style="background: #FF9F0A"><svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true"><path d="M2 7l6.5-4 6.5 4M4 7v7h9V7M7 14v-4h3v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
+      <span class="lbl">Skole<span class="s2">Mon–Fri 08:15–14:30 · calls off</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="RuleEditor.dc.html">
+      <span class="tile" style="background: #5E5CE6"><svg width="17" height="17" viewBox="0 0 17 17" aria-hidden="true"><path d="M12.5 10.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6 7.5z" fill="currentColor"/></svg></span>
+      <span class="lbl">Leggetid<span class="s2">Every day 20:30–07:00 · calls on</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="RuleEditor.dc.html" style="color: #0B66D6">
+      <svg width="29" height="22" viewBox="0 0 29 22" aria-hidden="true"><circle cx="14.5" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14.5 7v8M10.5 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="lbl">Add Rule</span>
+    </a>
+  </div>
+
+  <div class="sh">Everyone · screen time</div>
+  <div class="grp">
+    <a class="row" href="#budget">
+      <span class="lbl">Daily limit<span class="s2">Mon–Fri 90 min · Sat–Sun 2 h</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="sh">Phones</div>
+  <div class="grp ic">
+    <a class="row" href="DeviceSummary.dc.html">
+      <span class="av" style="background: #5E5CE6">A</span>
+      <span class="lbl">Anna</span><span class="val">Everyone's rules</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="DeviceSummary.dc.html">
+      <span class="av" style="background: #FF7A45">E</span>
+      <span class="lbl">Emil</span><span class="val">Own rules</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+  <div class="ft">Emergency calls always work.</div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="settings" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

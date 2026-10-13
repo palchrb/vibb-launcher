@@ -188,8 +188,9 @@ android {
 
 /**
  * The debug hooks live in src/debug only: design 16d's lock-task override (docs/testing/emulator.md
- * §6e), design 24b's vault-key receiver and design 28's fake headset. This scans a variant's merged
- * manifest and its APKs' dex for the hooks' names: a release build fails if any is there
+ * §6e), design 24b's vault-key receiver, design 28's fake headset and design 32's lock-up toggle. This
+ * scans a variant's merged manifest and its APKs' dex for the hooks' names: a release build fails if
+ * any is there
  * ([expectPresent] false, a dependency of assembleRelease), and the debug build checks they are all
  * there (a positive control: the scan really finds them).
  */
@@ -308,7 +309,7 @@ androidComponents {
         val check = tasks.register<CheckDebugHook>(if (release) "check${cap}HasNoDebugHook" else "check${cap}HasDebugHook") {
             manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
             apkDir.set(variant.artifacts.get(SingleArtifact.APK))
-            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver"))
+            names.set(listOf("LockTaskOverride", "lock_task_debug_override", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver"))
             expectPresent.set(!release)
         }
         tasks.matching { it.name == "assemble$cap" }.configureEach { dependsOn(check) }

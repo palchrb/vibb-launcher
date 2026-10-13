@@ -181,7 +181,7 @@ async fn main() {
         std::process::exit(run_command(command, &args[1..]).await);
     }
 
-    tracing::info!("Kids Device MDM {APP_VERSION} starting");
+    tracing::info!("Vibb Phone server {APP_VERSION} starting");
 
     // Rustls 0.23+ requires an explicit process-wide default crypto provider
     // before any TLS connection works - without this, the DNS filter's
@@ -1105,7 +1105,7 @@ pub fn build_admin_router(
             "/dns/log/{device_id}",
             post(handlers::dns_filter::set_dns_log),
         )
-        .route("/settings", get(handlers::settings::settings_hub))
+        .route("/settings", get(handlers::settings_hub::settings_hub))
         .route(
             "/settings/provisioning",
             get(handlers::settings::provisioning_settings_form)

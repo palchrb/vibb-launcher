@@ -11,7 +11,9 @@ import java.io.File
  * src/main or src/release names it, the main manifest doesn't declare its receiver, and the
  * release `LockTaskDebug` passes the computed setting through. The built release APK is checked
  * too (`checkReleaseHasNoDebugHook`, a dependency of assembleRelease). The same for design 24b's
- * vault-key receiver and design 28's fake headset.
+ * vault-key receiver, design 28's fake headset and design 32's lock-up toggle (its release
+ * `LockUpDebug` passes the plan through; only the receiver's name is banned - the release class
+ * carries the object's name).
  */
 class DebugHookAbsentTest {
     private fun dir(path: String) = listOf("src/$path", "app/src/$path").map(::File).first { it.exists() }
@@ -29,7 +31,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -39,7 +41,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver")) {
+        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver")) {
             assertFalse(name, main.contains(name))
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
             assertTrue(name, receiver.contains("android:exported=\"true\""))
@@ -65,5 +67,21 @@ class DebugHookAbsentTest {
         val callers = sources("main").filter { code(it).contains("LockTaskDebug") }.map { it.name }
         assertEquals(listOf("LockTaskChrome.kt"), callers)
         assertEquals(1, Regex("LockTaskDebug\\.adjust\\(context, computed\\)").findAll(code(dir("main/java/com/kidslauncher/mdm/lock/LockTaskChrome.kt"))).count())
+    }
+
+    @Test
+    fun `release LockUpDebug passes the lock-up plan through, and the screen-off's lock-up is its only caller`() {
+        // Design 32 step 1 item 4: the H2 experiment's toggle exists only in the debug build.
+        val release = code(dir("release/java/com/kidslauncher/mdm/lock/LockUpDebug.kt"))
+        assertEquals(1, Regex("\\bfun ").findAll(release).count())
+        assertTrue(release, release.contains("fun adjust(start: LockUpStart, showLock: Boolean): LockUpStart = start\n"))
+        assertFalse(release.contains("var "))
+        val callers = sources("main").filter { code(it).contains("LockUpDebug") }.map { it.name }
+        assertEquals(listOf("PinLockRuntime.kt"), callers)
+        val runtime = code(dir("main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))
+        assertEquals(1, Regex("LockUpDebug\\.adjust\\(lockUpStarts\\(").findAll(runtime).count())
+        // The debug version only turns a skipped lock on top back into the lock's start.
+        val debug = code(dir("debug/java/com/kidslauncher/mdm/lock/LockUpDebug.kt"))
+        assertTrue(debug.contains("if (!skipRestart && showLock && start == LockUpStart.NONE) LockUpStart.LOCK else start"))
     }
 }

@@ -494,7 +494,7 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
         "{element}"
     );
     assert!(element.contains(&format!(r#"action="/devices/{id}/lock-screen/apps""#)));
-    assert!(element.contains(r#"onchange="this.form.submit()""#));
+    assert!(super::autosaves(&element, "on"));
     let signal = form_of(section, "org.thoughtcrime.securesms").expect("Signal listed");
     assert!(
         !signal.contains("checked") && signal.contains("Signal"),

@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let tab = "devices" %}
 {% include "partials/app_header.html" %}
 <main class="container">
     <div class="page-header">
@@ -11,7 +12,7 @@
         <a href="/devices/new" class="button">Add a device</a>
     </div>
     {% include "partials/login_warning.html" %}
-    <p class="subtitle">Add a device below, then use its own page to provision it by QR code or adb - each device's QR carries its own enrollment code plus the server URL/Tailscale key from <a href="/settings/provisioning">Provisioning settings</a>.</p>
+    <p class="subtitle">Add a device below, then use its own page to provision it by QR code or adb - each device's QR carries its own enrollment code plus the server URL/Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a>.</p>
 
     {% if devices.is_empty() %}
     <p class="empty-state">No devices yet. Add one to get started.</p>

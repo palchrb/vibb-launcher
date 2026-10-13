@@ -38,7 +38,11 @@ pause does **not** switch it off (it is the kid's own lock). Unmanaged → `setK
 Pure `lock/PinLockState.kt` (DISABLED / LOCKED / UNLOCKED; events below), glue in `lock/PinLockRuntime.kt`:
 - **Screen off** (receiver moves from `CommandListenerService.kt:97-103,260-276` into the runtime; same registration):
   → LOCKED and start `PinLockActivity` at once, so it is drawn before the next screen-on (no content flash
-  [needs device test]). Not while a call is active (`OngoingCalls.calls` or `TelecomManager.isInCall`): the proximity
+  [needs device test]). **Wrong since Android 10/14** (design 32, `32-lock-flash.md`): the broadcast comes after
+  the display is off, and an activity without turn-screen-on can't draw while dark, so the lock is drawn only
+  after the screen-on and what lies under it flashes first. Design 32 step 1 puts Home (a black snapshot)
+  under the lock at a dark lock-up and makes the lock's stand-in black; step 2 tries the system keyguard as a
+  bridge across the sleep. Not while a call is active (`OngoingCalls.calls` or `TelecomManager.isInCall`): the proximity
   sensor turns the screen off mid-call; then LOCKED is applied when the last call ends with the screen off.
 - **Screen on / `USER_PRESENT`**: start the lock if LOCKED and not resumed (backstop). **Process start / boot**: LOCKED
   (no "unlocked" is persisted; a killed process fails closed); Home's `onResume` checks it before `redirectToLockScreenIfLocked`

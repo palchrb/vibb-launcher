@@ -333,13 +333,15 @@ enum class GlanceSendCheck {
      * opened - the row is marked opened. */
     OPENED,
 
-    /** Something else is in front, but with the kiosk off that may be the app the kid had open before
-     * the lock: nothing is concluded (the app clears its notification when the room opens). */
+    /** Something else is in front, but the lock didn't leave through Home (kiosk off with a call live,
+     * design 32): that may be what the kid had open before the lock - nothing is concluded (the app
+     * clears its notification when the room opens). */
     UNKNOWN,
 }
 
 /** [ourWindowInFront]: an activity of ours other than the lock is resumed now; [confirmable]: the
- * kiosk is on (the lock left through Home) or the send came from the time-rule screen. */
+ * lock left through Home (kiosk on, or design 32 with no call live) or the send came from the
+ * time-rule screen. */
 fun glanceSendCheck(ourWindowInFront: Boolean, confirmable: Boolean): GlanceSendCheck = when {
     ourWindowInFront -> GlanceSendCheck.REFUSED
     confirmable -> GlanceSendCheck.OPENED
