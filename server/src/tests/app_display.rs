@@ -111,7 +111,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
     .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{a}#app-{ELEMENT}").as_str())
+        Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
     );
     assert_eq!(
         app_display(&app, &token_a).await,
@@ -200,12 +200,21 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
     report_installed(&app, &token, &["com.spotify.music", "org.example.clock"]).await;
 
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    // Both allowed: both get a form.
-    assert!(page.contains(r#"id="app-com.spotify.music""#), "{page}");
-    assert!(page.contains(r#"id="app-org.example.clock""#));
+    // Both allowed: both get a form, under their row, posting to the row.
+    for package in ["com.spotify.music", "org.example.clock"] {
+        let row = &page[page.find(&format!(r#"id="app-{package}""#)).expect(package)..];
+        let row = &row[..row.find("</details>").unwrap()];
+        assert!(row.contains(&format!(r#"id="display-{package}""#)), "{row}");
+        assert!(
+            row.contains(&format!(
+                r#"action="/devices/{id}/apps/display#app-{package}""#
+            )),
+            "{row}"
+        );
+    }
     assert!(page.contains("/static/app-display.js"));
 
     save(
@@ -227,12 +236,17 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
         ])
     );
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
     assert!(
         page.contains("Musikk, with the music note icon on sky"),
         "{page}"
+    );
+    // The row's tile shows the icon the phone shows.
+    let row = &page[page.find(r#"id="app-com.spotify.music""#).unwrap()..];
+    assert!(
+        row[..row.find("</label>").unwrap()].contains(r#"src="/static/app-icons/music_note.svg""#)
     );
 
     for bad in ["com.android.vending", "chat", "a..b", ""] {
@@ -249,7 +263,7 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
-/// Refused input: 400, nothing written, the device page with that app's form open, the entered
+/// Refused input: 400, nothing written, Device › Apps with that app's form open, the entered
 /// values kept and the field with the problem focused (no jump to the top).
 #[tokio::test]
 async fn refused_input_keeps_the_values_by_the_field() {
@@ -279,8 +293,13 @@ async fn refused_input_keeps_the_values_by_the_field() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{message}");
         let html = res.text();
         assert!(html.contains(message), "{message}: {html}");
+        // Device › Apps, the app's form open under its row.
         assert!(
-            html.contains(&format!(r#"id="app-{ELEMENT}" open"#)),
+            html.contains(r#"<h1 class="page-title">Apps</h1>"#),
+            "{message}"
+        );
+        assert!(
+            html.contains(&format!(r#"id="display-{ELEMENT}" open"#)),
             "{message}"
         );
         assert!(html.contains("autofocus"), "{message}");
@@ -301,9 +320,9 @@ async fn refused_input_keeps_the_values_by_the_field() {
     assert!(html.contains(r#"value="Chat""#), "the entered name is kept");
     // The browser doesn't cut the name (it would count UTF-16 units; we count characters, and a
     // refused save keeps the value - qa-14-code #4).
-    assert!(html.contains(&format!(r#"id="app-{ELEMENT}-label" name="label""#)));
+    assert!(html.contains(&format!(r#"id="display-{ELEMENT}-label" name="label""#)));
     assert!(!html.contains(&format!(
-        r#"id="app-{ELEMENT}-label" name="label" value="Chat" maxlength"#
+        r#"id="display-{ELEMENT}-label" name="label" value="Chat" maxlength"#
     )));
     let partial = std::fs::read_to_string("templates/partials/app_display_form.html").unwrap();
     assert!(!partial.contains("maxlength"));

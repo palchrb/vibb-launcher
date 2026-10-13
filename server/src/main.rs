@@ -744,6 +744,8 @@ pub fn build_admin_router(
         )
         // Step 4: Lock Screen & PINs.
         .route("/devices/{id}/lock", get(handlers::device_pages::view_lock))
+        // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`).
+        .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
         .route(

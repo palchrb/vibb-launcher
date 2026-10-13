@@ -2032,3 +2032,27 @@ input.row-input {
     height: 22px;
     margin: 0 0 4px;
 }
+
+/* ---- Device › Apps (design 31 step 6) ---- */
+
+/* An allowed app's Name and icon: a line under its row, indented to the name (the row's 16px, the
+   36px tile and 12px); open, its form under it at the group's width. */
+.group-apps > .cell > details.app-display {
+    border-top: 0;
+    padding: 0 16px;
+}
+
+.group-apps > .cell > details.app-display > summary {
+    min-height: 44px;
+    padding: 2px 0 12px 48px;
+    font-size: 0.8125rem;
+    color: var(--tint);
+}
+
+.group-apps > .cell > details.app-display > form {
+    padding: 0 0 16px;
+}
+
+.group-apps > .cell > .flash {
+    padding-left: 64px;
+}

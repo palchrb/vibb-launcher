@@ -219,14 +219,25 @@ async fn corrupt_allowlist_is_a_warning_on_the_device_page() {
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
-    // ... and the parent sees why.
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    // ... and the parent sees why: on Device › Apps (the cause behind its ⓘ), and as the Apps
+    // row's value on the device page.
+    let page = app.get_page(&device_page(id, Section::Apps), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    let warning = &html[html.find("data-warning").expect("the warning")..];
+    assert!(warning.contains("App list unreadable"), "{warning}");
     assert!(
-        page.text()
-            .contains("stored app list for this device can't be read"),
-        "{}",
-        page.text()
+        warning.contains("failed to build device policy"),
+        "{warning}"
+    );
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"apps\"").unwrap()..];
+    assert!(
+        row[..row.find("</a>").unwrap()].contains("List unreadable"),
+        "{row}"
     );
 }
 

@@ -565,29 +565,29 @@ fn access_notice(code: &str) -> Option<(&'static str, bool)> {
 /// `package_name` can be empty only for a manual-upload catalog app nobody's typed a package name
 /// for yet - it can never be matched against a real installed app by name, so it always shows as
 /// `NotInstalled` until an admin adds one (see `tracked_apps.rs`).
-struct UnifiedAppRow {
-    package_name: String,
-    label: String,
-    tracked_app_id: Option<i64>,
-    is_launcher: bool,
-    checked: bool,
+pub(crate) struct UnifiedAppRow {
+    pub(crate) package_name: String,
+    pub(crate) label: String,
+    pub(crate) tracked_app_id: Option<i64>,
+    pub(crate) is_launcher: bool,
+    pub(crate) checked: bool,
     /// Precomputed display text rather than a template-side call to `status.label()` - lets a
     /// `NotInstalled` row show live download progress ("Installing 42%") instead of the plain
-    /// static label when a fresh `device_install_progress` row exists for it - see `view_device`.
-    status_label: String,
-    /// True exactly when `status_label` carries a live percentage - drives device_detail.html's
+    /// static label when a fresh `device_install_progress` row exists for it - see `app_rows`.
+    pub(crate) status_label: String,
+    /// True exactly when `status_label` carries a live percentage - drives Device › Apps'
     /// self-polling reload (there's no push mechanism to this page, so it has to ask again) rather
     /// than the template trying to parse `status_label`'s text back apart.
-    is_installing: bool,
+    pub(crate) is_installing: bool,
     /// True when the device reported a failed install attempt for this app that hasn't cleared yet
     /// (see `device_install_progress.failed`) - a separate flag from `is_installing` so
-    /// device_detail.html can style it distinctly rather than parsing `status_label`'s text.
-    install_failed: bool,
+    /// Device › Apps can style it distinctly rather than parsing `status_label`'s text.
+    pub(crate) install_failed: bool,
     /// Precomputed rather than compared in the template (`status == AppRowStatus::NotInstalled`) -
     /// flags a catalog app that's checked but has nothing to actually push yet (no GitHub release
     /// synced, or a manual-upload app nobody's uploaded a build to yet). Selecting it used to
     /// silently do nothing until a release showed up, with no indication why.
-    show_no_release_hint: bool,
+    pub(crate) show_no_release_hint: bool,
 }
 
 /// The six parent-facing LockTask features, decoded from/encoded into the
@@ -633,11 +633,6 @@ struct DeviceDetailTemplate {
     /// The Attention rows (design 31 §3.2), the same list the Devices list counts - at the top
     /// until step 10 builds the summary around them.
     attention: Vec<crate::attention::AttentionItem>,
-    apps: Vec<UnifiedAppRow>,
-    /// Precomputed rather than an `{% if %}` expression in the template - Askama's expression
-    /// grammar doesn't support closures, so `apps.iter().any(|a| a.is_installing)` can't be
-    /// written directly there.
-    any_app_installing: bool,
     restrictions_paused: bool,
     latest_status: Option<DeviceStatus>,
     /// The About This Phone row's value: "Vibb 0.23.6" (design 31 step 3).
@@ -648,9 +643,8 @@ struct DeviceDetailTemplate {
     call_warnings: Vec<String>,
     /// `calls::call_report`'s hints: good to know, nothing wrong (plain lines).
     call_hints: Vec<String>,
-    /// The stored allowlist isn't valid JSON: the phone gets a 500 for its policy (and keeps its
-    /// cached one), and the app checkboxes below show nothing as allowed (QA step 1 #11).
-    allowlist_corrupt: bool,
+    /// The Apps row's value (design 31 step 6): "14 allowed", or "List unreadable".
+    apps_value: String,
     /// The Restrictions switches (migrations/0023_hardening.sql), for the no-PIN warning.
     hardening: Hardening,
     /// Managed (an allowlist, or calls managed) but no override PIN: the launcher's Settings
@@ -670,12 +664,6 @@ struct DeviceDetailTemplate {
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// Apps card (design 13): `device_policy.app_updates_wifi_only`, and the last report's line
-    /// about the phone's network.
-    app_updates_wifi_only: bool,
-    app_downloads_line: Option<String>,
-    /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
-    display_forms: Vec<crate::app_display::AppDisplayForm>,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
     /// The not-enrolled card's codes (design 22 §3.1); an enrolled phone's are on Advanced.
@@ -718,57 +706,6 @@ pub async fn update_kiosk_block(
                 .into_response()
         }
     }
-}
-
-/// The "Name and icon" forms of the device page (design 14): every allowed (checked) app with a
-/// valid package name but the launcher - installed apps, Play apps and catalog apps not installed
-/// yet. Each shows this phone's own choice, else the catalog default; a refused save shows what
-/// was entered.
-async fn app_display_forms(
-    state: &AppState,
-    device_id: i64,
-    apps: &[UnifiedAppRow],
-    entered: Option<&(String, crate::app_display::Entered)>,
-) -> Vec<crate::app_display::AppDisplayForm> {
-    use crate::app_display::{AppDisplayForm, DisplayValues};
-    let defaults = crate::app_display::catalog_defaults(&state.db)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(%err, "couldn't read the catalog's app names");
-            Default::default()
-        });
-    let own = crate::app_display::device_rows(&state.db, device_id)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(device_id, %err, "couldn't read the phone's app names");
-            Default::default()
-        });
-    apps.iter()
-        .filter(|a| {
-            a.checked && !a.is_launcher && crate::app_display::valid_package_name(&a.package_name)
-        })
-        .map(|a| {
-            let default = defaults.get(&a.package_name);
-            let row = own.get(&a.package_name);
-            let current = row.or(default).cloned().unwrap_or_else(DisplayValues::own);
-            let mut form = AppDisplayForm::new(
-                format!("/devices/{device_id}/apps/display"),
-                format!("app-{}", a.package_name),
-                a.package_name.clone(),
-                a.label.clone(),
-                &current,
-                entered
-                    .filter(|(package, _)| *package == a.package_name)
-                    .map(|(_, e)| e),
-            );
-            form.catalog_default = default.map(DisplayValues::describe);
-            form.own_row = row.is_some();
-            if row.is_none() && default.is_some() {
-                form.summary = format!("{} (from the catalog)", form.summary);
-            }
-            form
-        })
-        .collect()
 }
 
 /// Lock Screen & PINs' Notifications group (design 25 §3.3; the Apps card's "On the lock screen"
@@ -842,9 +779,10 @@ pub(crate) async fn lock_screen_card(
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
 /// `action` "own" = the app's own (on this phone, even with a catalog default), "catalog" =
 /// follow the catalog default (the phone's row goes), else save the fields. A choice equal to the
-/// catalog default, or "the app's own" without a default, keeps no row. Refused input: 400, the
-/// device page with that app's form open, the entered values and the error by the field, the field
-/// focused (so the page doesn't jump to the top). Saved: back to the app (`#app-<package>`); nudges.
+/// catalog default, or "the app's own" without a default, keeps no row. Refused input: 400,
+/// Device › Apps with that app's form open, the entered values and the error by the field, the
+/// field focused (the form posts to `…#app-<package>`, so the answer lands on the app's row, not
+/// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`); nudges.
 pub async fn save_app_display(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -884,9 +822,17 @@ pub async fn save_app_display(
         let state = state.clone();
         let package = package.clone();
         async move {
-            let mut response =
-                render_device(&state, id, &Default::default(), Some((package, entered))).await;
-            *response.status_mut() = StatusCode::BAD_REQUEST;
+            let mut response = crate::handlers::device_pages::render_apps(
+                &state,
+                id,
+                None,
+                Some((package, entered)),
+            )
+            .await;
+            // The page, as a refusal; a page that failed to render keeps its own status.
+            if response.status() == StatusCode::OK {
+                *response.status_mut() = StatusCode::BAD_REQUEST;
+            }
             response
         }
     };
@@ -915,14 +861,24 @@ pub async fn save_app_display(
             None => !values.is_own(),
         };
     let result = if keep_row {
-        let rows: i64 = sqlx::query_scalar(
+        let rows: i64 = match sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_app_display WHERE device_id = ? AND package_name != ?",
         )
         .bind(id)
         .bind(&package)
         .fetch_one(&state.db)
         .await
-        .unwrap_or(0);
+        {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "couldn't count the phone's app names");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn't save - nothing was changed.",
+                )
+                    .into_response();
+            }
+        };
         if rows >= crate::app_display::MAX_ROWS_PER_DEVICE {
             return refuse(FieldError {
                 field: "label",
@@ -953,7 +909,7 @@ pub async fn save_app_display(
     match result {
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}#app-{package}")).into_response()
+            Redirect::to(&format!("/devices/{id}/apps#app-{package}")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app's name and icon");
@@ -966,10 +922,11 @@ pub async fn save_app_display(
     }
 }
 
-/// "App updates only on Wi-Fi" on the Apps card (design 13): catalog apps download on an
-/// unmetered network only, the launcher's own update after 3 days on any non-roaming one. An
-/// auto-saving form, so a missing checkbox is off; back to the page (scroll-restore keeps the
-/// place); 404 for an unknown device; nudges the phone.
+/// "Download on Wi-Fi only" on Device › Apps (design 13; design 31 step 6): catalog apps download
+/// on an unmetered network only, the launcher's own update after 3 days on any non-roaming one. An
+/// auto-saving form, so a missing checkbox is off; back to its group at the bottom of the page
+/// (`#downloads`: without JS a redirect without one would land at the top of a long list); 404 for
+/// an unknown device; nudges the phone.
 pub async fn update_app_updates(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -989,7 +946,7 @@ pub async fn update_app_updates(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}/apps#downloads")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app update switch");
@@ -1245,19 +1202,21 @@ pub async fn view_device(
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_device(&state, id, &query, None).await
+    render_device(&state, id, &query).await
 }
 
 /// The Apps list a phone's pages build on: one row per app the phone reports and per catalog app
 /// it doesn't have, the launcher first; the parsed allowlist (a corrupt one reads as empty and is
-/// flagged), what the phone reports installed, and its downloads. Lock Screen & PINs lists its
-/// Notifications from the same rows (design 31 step 4).
+/// flagged), what the phone reports installed, and its downloads. Device › Apps shows them (design
+/// 31 step 6), Lock Screen & PINs lists its Notifications from them (step 4) and the device page
+/// counts them. A DB error is the caller's to report, never fewer rows: a catalog app that didn't
+/// load would read as gone, a selection that didn't load as "not allowed".
 pub(crate) struct AppRows {
-    apps: Vec<UnifiedAppRow>,
-    installed: Vec<InstalledApp>,
-    allowed: std::collections::HashSet<String>,
-    allowlist_corrupt: bool,
-    downloads: Option<crate::app_downloads::AppDownloads>,
+    pub(crate) apps: Vec<UnifiedAppRow>,
+    pub(crate) installed: Vec<InstalledApp>,
+    pub(crate) allowed: std::collections::HashSet<String>,
+    pub(crate) allowlist_corrupt: bool,
+    pub(crate) downloads: Option<crate::app_downloads::AppDownloads>,
 }
 
 pub(crate) async fn app_rows(
@@ -1265,7 +1224,7 @@ pub(crate) async fn app_rows(
     id: i64,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
-) -> AppRows {
+) -> Result<AppRows, sqlx::Error> {
     // A corrupt stored allowlist is shown as a warning, not silently as "nothing allowed" -
     // `build_policy` answers the phone with a 500 for it.
     let parsed_allowlist = policy
@@ -1288,14 +1247,12 @@ pub(crate) async fn app_rows(
 
     let all_tracked = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps ORDER BY name")
         .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+        .await?;
     let selected_app_ids: std::collections::HashSet<i64> =
         sqlx::query_scalar("SELECT tracked_app_id FROM device_tracked_apps WHERE device_id = ?")
             .bind(id)
             .fetch_all(&state.db)
-            .await
-            .unwrap_or_default()
+            .await?
             .into_iter()
             .collect();
 
@@ -1311,8 +1268,7 @@ pub(crate) async fn app_rows(
         )
         .bind(id)
         .fetch_all(&state.db)
-        .await
-        .unwrap_or_default()
+        .await?
         .into_iter()
         .map(|(tracked_app_id, percent, failed)| (tracked_app_id, (percent, failed)))
         .collect();
@@ -1320,6 +1276,8 @@ pub(crate) async fn app_rows(
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
     // A fresh progress row above still wins for the live percentage - but not over a release the
     // phone refused (security review M10): its reason beats "Install failed".
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
     let downloads =
         crate::app_downloads::parse(latest.and_then(|s| s.app_downloads_json.as_deref()));
     let download_of = |tracked_app_id: i64| {
@@ -1351,7 +1309,7 @@ pub(crate) async fn app_rows(
             } else if app.installer.as_deref() == Some(crate::play::PLAY_STORE) {
                 "Installed from Play".to_string()
             } else if let Some(update) = update {
-                crate::app_downloads::update_label(update)
+                crate::app_downloads::update_label(update, &zone, now)
             } else {
                 "Installed".to_string()
             },
@@ -1381,12 +1339,18 @@ pub(crate) async fn app_rows(
         let has_release = t.latest_release_tag.is_some();
         let progress = install_progress.get(&t.id).copied();
         let (status_label, is_installing, install_failed) = match (progress, download_of(t.id)) {
-            (_, Some(download)) if crate::app_downloads::refused(download) => {
-                (crate::app_downloads::new_app_label(download), false, true)
-            }
+            (_, Some(download)) if crate::app_downloads::refused(download) => (
+                crate::app_downloads::new_app_label(download, &zone, now),
+                false,
+                true,
+            ),
             (Some((_, true)), _) => ("Install failed".to_string(), false, true),
             (Some((percent, false)), _) => (format!("Installing {percent}%"), true, false),
-            (None, Some(download)) => (crate::app_downloads::new_app_label(download), false, false),
+            (None, Some(download)) => (
+                crate::app_downloads::new_app_label(download, &zone, now),
+                false,
+                false,
+            ),
             (None, None) => ("Not installed".to_string(), false, false),
         };
         apps.push(UnifiedAppRow {
@@ -1416,7 +1380,7 @@ pub(crate) async fn app_rows(
                 status_label: downloads
                     .as_ref()
                     .and_then(|d| d.entry(launcher.id))
-                    .map(crate::app_downloads::launcher_label)
+                    .map(|e| crate::app_downloads::launcher_label(e, &zone, now))
                     .unwrap_or_else(|| "Installed".to_string()),
                 is_installing: false,
                 install_failed: false,
@@ -1430,22 +1394,20 @@ pub(crate) async fn app_rows(
         );
     }
 
-    AppRows {
+    Ok(AppRows {
         apps,
         installed,
         allowed,
         allowlist_corrupt,
         downloads,
-    }
+    })
 }
 
-/// The device page; `entered` = a refused "Name and icon" save (that app's form opens with the
-/// entered values and the error, design 14).
+/// The device page.
 async fn render_device(
     state: &AppState,
     id: i64,
     query: &std::collections::HashMap<String, String>,
-    entered: Option<(String, crate::app_display::Entered)>,
 ) -> Response {
     let state = state.clone();
     let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
@@ -1483,19 +1445,22 @@ async fn render_device(
     .ok()
     .flatten();
 
-    let AppRows {
-        apps,
-        allowed,
-        allowlist_corrupt,
-        downloads,
-        ..
-    } = app_rows(&state, id, &policy, latest_status.as_ref()).await;
-
-    let any_app_installing = apps.iter().any(|a| a.is_installing);
-    let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
-    let app_downloads_line = downloads
-        .as_ref()
-        .and_then(crate::app_downloads::network_line);
+    // The Apps row's value (design 31 step 6): the switches on under Device › Apps, the launcher
+    // not counted - the number the Apps tab shows.
+    let rows = app_rows(&state, id, &policy, latest_status.as_ref())
+        .await
+        .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's apps"))
+        .ok();
+    let apps_value = match &rows {
+        Some(rows) if !rows.allowlist_corrupt => format!(
+            "{} allowed",
+            rows.apps
+                .iter()
+                .filter(|a| a.checked && !a.is_launcher)
+                .count()
+        ),
+        _ => "List unreadable".to_string(),
+    };
     let restrictions_paused = latest_status
         .as_ref()
         .is_some_and(|s| s.restrictions_paused);
@@ -1562,7 +1527,9 @@ async fn render_device(
         notice,
         chrono::Utc::now().timestamp_millis(),
         // Whether each blocked app is ticked under Apps (QA of cmd-expiry, Low 3).
-        (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
+        rows.as_ref()
+            .filter(|rows| policy.allowlist_json.is_some() && !rows.allowlist_corrupt)
+            .map(|rows| &rows.allowed),
     )
     .await;
     let music = crate::handlers::music::device_card(
@@ -1609,9 +1576,7 @@ async fn render_device(
                 .filter(|v| !v.is_empty())
                 .map(|v| format!("Vibb {}", crate::handlers::device_pages::short_version(v))),
             music,
-            app_updates_wifi_only: policy.app_updates_wifi_only,
-            app_downloads_line,
-            display_forms,
+            apps_value,
             time,
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_some() {
                 "PIN on"
@@ -1624,7 +1589,6 @@ async fn render_device(
             calls_summary,
             call_warnings,
             call_hints,
-            allowlist_corrupt,
             managed_without_pin: managed_without_pin(&policy),
             hardening: policy.hardening.clone(),
             home_value: format!("{} per row", policy.home_columns),
@@ -1633,10 +1597,8 @@ async fn render_device(
             } else {
                 "Off"
             },
-            any_app_installing,
             restrictions_paused,
             device,
-            apps,
             latest_status,
         }
         .render()
@@ -1645,40 +1607,49 @@ async fn render_device(
     .into_response()
 }
 
-/// Flips one row of the unified Apps list for one device - a standalone auto-submitting toggle
-/// (see device_detail.html), not folded into the big `update_policy` form like the rest of a
-/// device's settings. Deliberately different from that form's "edit several things, then click
-/// Save" pattern - live testing (back when this was two separate lists) showed an admin checking
-/// a box and *not* separately scrolling down to hit an unrelated form's Save button, since every
-/// other on/off switch in this app already auto-saves on change. The launcher's own row never
-/// reaches this handler - its checkbox in the template is `disabled`, and a disabled control can't
-/// be interacted with to submit a request in the first place.
+/// Where an app's row is on Device › Apps (design 31 step 6): `app-<package>` - the anchor the
+/// blocked apps, the Apps tab and the saves link to -, or `catalog-<id>` for a catalog app that
+/// has no package yet. The page's ids and [toggle_app]'s redirect both come from here.
+pub(crate) fn app_anchor(package: &str, tracked_app_id: Option<i64>) -> String {
+    match tracked_app_id {
+        _ if crate::handlers::device_api::is_package_name(package) => format!("app-{package}"),
+        Some(id) => format!("catalog-{id}"),
+        None => "allowed".to_string(),
+    }
+}
+
+/// One app's switch on Device › Apps (and the music app's on the Music card): its own
+/// auto-saving form, so a parent never has to find a Save button.
 ///
-/// Takes both `package_name` and `tracked_app_id` as (independently optional) form fields rather
-/// than a single path-scoped id, since a row here might be catalog-only (no package name on file
-/// yet), install-only (a preinstalled or otherwise-installed app never added to the catalog), or
-/// both - see `UnifiedAppRow`'s own doc comment. At least one is expected to be present; a toggle
-/// with neither is a no-op.
+/// Takes `package_name` and `tracked_app_id` (each optional): a row may be a catalog app with no
+/// package yet, an app the phone reports that the catalog doesn't have, or both
+/// (`UnifiedAppRow`).
 ///
-/// Checking: adds the `device_tracked_apps` row if there's a catalog entry to track (so a
-/// not-yet-installed app actually gets pushed, and an already-installed one starts picking up
-/// future updates), allows the package if there's one on file - both no-ops if already in
-/// that state - and cancels an uninstall an earlier uncheck queued.
+/// On: adds the `device_tracked_apps` row for a catalog app (so it is pushed and kept up to
+/// date), allows the package, and cancels an uninstall an earlier "off" queued (the catalog app's
+/// own package too). Off: removes both and queues a silent uninstall
+/// (`device_pending_uninstalls`) when the phone's last report has the package installed and not
+/// preinstalled (a preinstalled app can only be hidden).
 ///
-/// Unchecking: removes the `device_tracked_apps` row and disallows the package the same way.
-/// Whether it *also* queues a silent uninstall depends on current on-device status - a preinstalled
-/// app can never actually be uninstalled (only suspended/hidden), so that step is skipped entirely
-/// for one; any other currently-installed package gets queued via `device_pending_uninstalls`,
-/// same as before this was generalized from tracked-apps-only.
+/// Where it returns (§5.1): `back=music` (or `anchor=music`, a page from before design 31 step 6)
+/// to the Music card (`/devices/{id}#music`, until step 7 builds Device › Music), anything else to
+/// the app's row on Device › Apps (`#app-<package>`): the row moves between Allowed and Not
+/// allowed, and the fragment finds it again, with or without JS.
+///
+/// Refused, nothing written: a package that isn't a package name (it would go into the allowlist)
+/// or nothing at all, Play's core and Vibb itself (400), an unknown phone (404), turning on a
+/// catalog app whose package the phone has from the Play Store (one source per package: back to
+/// its row with `?notice=from_play&app=<row>`, the reason under it). A catalog app deleted since
+/// the page loaded changes nothing and returns to the page. A DB error is a 500.
 pub async fn toggle_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
-) -> axum::response::Response {
+) -> Response {
     let checked = form.contains_key("selected");
     let package_name = form
         .get("package_name")
-        .map(String::as_str)
+        .map(|p| p.trim())
         .unwrap_or("")
         .to_string();
     let tracked_app_id: Option<i64> = form.get("tracked_app_id").and_then(|s| s.parse().ok());
@@ -1687,65 +1658,89 @@ pub async fn toggle_app(
     // launcher keeps them installed, unhidden and out of the kiosk whatever the allowlist says.
     if crate::play::is_play_core(&package_name) {
         return (
-            axum::http::StatusCode::BAD_REQUEST,
-            "The Play Store, Play services and Google Services Framework are managed by the \
-             launcher itself and can't be allowed or removed here.",
+            StatusCode::BAD_REQUEST,
+            "The Play Store, Play services and Google Services Framework are managed by Vibb \
+             itself and can't be allowed or removed here.",
         )
             .into_response();
     }
-    // One source per package: the launcher can't update a Play-installed copy from the catalog
-    // (different signature, Android 14 update ownership).
-    if checked && let Some(tid) = tracked_app_id {
-        match catalog_conflicts_with_play(&state, id, tid).await {
-            Ok(Some(name)) => {
-                return (
-                    axum::http::StatusCode::CONFLICT,
-                    format!(
-                        "{name} is installed on this phone from the Play Store, so it can't also \
-                         be installed from the Apps catalog. Uninstall the Play copy first (uncheck \
-                         it, wait for the phone to report it gone), then select it here."
-                    ),
-                )
-                    .into_response();
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::error!(device_id = id, %err, "catalog source check failed");
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't check where this app is installed from - nothing was changed.",
-                )
-                    .into_response();
+    if (!package_name.is_empty() && !crate::handlers::device_api::is_package_name(&package_name))
+        || (package_name.is_empty() && tracked_app_id.is_none())
+    {
+        return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+    }
+    let failed = |err: sqlx::Error| {
+        tracing::error!(device_id = id, package_name, %err, "couldn't change an app");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't change this app - check the server log.",
+        )
+            .into_response()
+    };
+    match sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return failed(err),
+    }
+    let page = format!("/devices/{id}/apps");
+    // The catalog app: its own package (an uninstall queued for it is cancelled too) and whether
+    // it is Vibb, which is on every phone and never toggled.
+    let catalog_package = match tracked_app_id {
+        Some(tid) => {
+            match sqlx::query_as::<_, (String, bool)>(
+                "SELECT package_name, is_launcher FROM tracked_apps WHERE id = ?",
+            )
+            .bind(tid)
+            .fetch_optional(&state.db)
+            .await
+            {
+                Ok(Some((_, true))) => {
+                    return (StatusCode::BAD_REQUEST, "Vibb is always on.").into_response();
+                }
+                Ok(Some((package, false))) => Some(package).filter(|p| !p.is_empty()),
+                // Removed from the catalog since the page loaded (a second tab, a double tap).
+                Ok(None) => return Redirect::to(&page).into_response(),
+                Err(err) => return failed(err),
             }
         }
-    }
+        None => None,
+    };
+    let installed = match latest_installed(&state, id).await {
+        Ok(installed) => installed,
+        Err(err) => return failed(err),
+    };
+    let anchor = app_anchor(&package_name, tracked_app_id);
 
     if checked {
-        if let Some(tid) = tracked_app_id {
-            sqlx::query(
+        // One source per package: Vibb can't update a Play-installed copy from the catalog
+        // (another signature, Android 14's update ownership).
+        if let Some(catalog) = &catalog_package
+            && installed.iter().any(|a| {
+                a.package_name == *catalog
+                    && a.installer.as_deref() == Some(crate::play::PLAY_STORE)
+            })
+        {
+            return Redirect::to(&format!("{page}?notice=from_play&app={anchor}#{anchor}"))
+                .into_response();
+        }
+        if let Some(tid) = tracked_app_id
+            && let Err(err) = sqlx::query(
                 "INSERT OR IGNORE INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)",
             )
             .bind(id)
             .bind(tid)
             .execute(&state.db)
             .await
-            .ok();
+        {
+            return failed(err);
         }
-        // Checked again before the phone synced: the uninstall the uncheck queued is off (the
-        // catalog app's own package too, when the row had none) - else the next sync would still
-        // remove the app ("deleted by your administrator").
-        let catalog_package: Option<String> = match tracked_app_id {
-            Some(tid) => sqlx::query_scalar(
-                "SELECT package_name FROM tracked_apps WHERE id = ? AND package_name != ''",
-            )
-            .bind(tid)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten(),
-            None => None,
-        };
-        for package in [Some(package_name.as_str()), catalog_package.as_deref()]
+        // On again before the phone synced: the uninstall the "off" queued is off too - else the
+        // next sync would still remove the app ("deleted by your administrator").
+        for package in [Some(&package_name), catalog_package.as_ref()]
             .into_iter()
             .flatten()
             .filter(|p| !p.is_empty())
@@ -1758,7 +1753,7 @@ pub async fn toggle_app(
             .execute(&state.db)
             .await
             {
-                tracing::error!(device_id = id, package, %err, "can't cancel a queued uninstall");
+                return failed(err);
             }
         }
         if !package_name.is_empty()
@@ -1767,23 +1762,26 @@ pub async fn toggle_app(
             return allowlist_error_response(id, &package_name, err);
         }
     } else {
-        if let Some(tid) = tracked_app_id {
-            sqlx::query(
+        if let Some(tid) = tracked_app_id
+            && let Err(err) = sqlx::query(
                 "DELETE FROM device_tracked_apps WHERE device_id = ? AND tracked_app_id = ?",
             )
             .bind(id)
             .bind(tid)
             .execute(&state.db)
             .await
-            .ok();
+        {
+            return failed(err);
         }
         if !package_name.is_empty() {
             if let Err(err) = remove_from_allowlist(&state, id, &package_name).await {
                 return allowlist_error_response(id, &package_name, err);
             }
-            let (installed, preinstalled) = installed_app_status(&state, id, &package_name).await;
-            if installed && !preinstalled {
-                sqlx::query(
+            let removable = installed
+                .iter()
+                .any(|a| a.package_name == package_name && !a.preinstalled);
+            if removable
+                && let Err(err) = sqlx::query(
                     "INSERT OR IGNORE INTO device_pending_uninstalls (device_id, package_name) \
                      VALUES (?, ?)",
                 )
@@ -1791,18 +1789,18 @@ pub async fn toggle_app(
                 .bind(&package_name)
                 .execute(&state.db)
                 .await
-                .ok();
+            {
+                return failed(err);
             }
         }
     }
 
     let _ = state.command_notify.send(id);
-    // The Music card's app switch (design 21) comes back to its card; the Apps card's to the
-    // page (scroll-restore keeps the place).
-    if form.get("anchor").map(String::as_str) == Some("music") {
+    let back = form.get("back").or_else(|| form.get("anchor"));
+    if back.map(String::as_str) == Some("music") {
         return Redirect::to(&format!("/devices/{id}#music")).into_response();
     }
-    Redirect::to(&format!("/devices/{id}")).into_response()
+    Redirect::to(&format!("{page}#{anchor}")).into_response()
 }
 
 fn allowlist_error_response(
@@ -1821,21 +1819,13 @@ fn allowlist_error_response(
         .into_response()
 }
 
-/// The catalog app's name when the device's latest status report shows its package installed from
-/// the Play Store; `None` when there's no conflict (no package name, not installed, other source).
-async fn catalog_conflicts_with_play(
+/// The apps the phone's last report lists installed (none before its first report): where each
+/// came from (a Play copy can't also come from the catalog) and whether it is preinstalled (it can
+/// only be hidden, never uninstalled).
+async fn latest_installed(
     state: &AppState,
     device_id: i64,
-    tracked_app_id: i64,
-) -> Result<Option<String>, sqlx::Error> {
-    let app: Option<(String, String)> =
-        sqlx::query_as("SELECT name, package_name FROM tracked_apps WHERE id = ?")
-            .bind(tracked_app_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let Some((name, package)) = app.filter(|(_, package)| !package.is_empty()) else {
-        return Ok(None);
-    };
+) -> Result<Vec<InstalledApp>, sqlx::Error> {
     let json: Option<Option<String>> = sqlx::query_scalar(
         "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -1843,43 +1833,11 @@ async fn catalog_conflicts_with_play(
     .bind(device_id)
     .fetch_optional(&state.db)
     .await?;
-    let installed: Vec<InstalledApp> = json
+    Ok(json
         .flatten()
         .as_deref()
         .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-    let from_play = installed.iter().any(|a| {
-        a.package_name == package && a.installer.as_deref() == Some(crate::play::PLAY_STORE)
-    });
-    Ok(from_play.then_some(name))
-}
-
-/// Whether the device's most recent status report lists this package as installed, and if so,
-/// whether it was reported as a preinstalled (`ApplicationInfo.FLAG_SYSTEM`) app - gates both
-/// whether [toggle_app] has anything to uninstall at all, and whether it should even try (a
-/// preinstalled app can only ever be suspended/hidden, never actually removed).
-async fn installed_app_status(
-    state: &AppState,
-    device_id: i64,
-    package_name: &str,
-) -> (bool, bool) {
-    let json: Option<String> = sqlx::query_scalar(
-        "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    let installed: Vec<InstalledApp> = json
-        .as_deref()
-        .and_then(|j| serde_json::from_str(j).ok())
-        .unwrap_or_default();
-    match installed.iter().find(|a| a.package_name == package_name) {
-        Some(a) => (true, a.preinstalled),
-        None => (false, false),
-    }
+        .unwrap_or_default())
 }
 
 /// Why [add_to_allowlist]/[remove_from_allowlist] couldn't change the allowlist. Neither ever

@@ -70,7 +70,7 @@
             <p style="margin:0 0 8px;">{{ text }}</p>
             <ul style="margin:0; padding-left:20px;">
                 {% for item in relock.blocks.items %}
-                <li>{{ item.text }}{% if let Some(ticked) = item.ticked %}{% if ticked %} Ticked under Apps: it shows again after "Allow these apps".{% else %} Not ticked under Apps: after "Allow these apps" it stays hidden until you <a href="#app-{{ item.package_name }}">tick it</a> too.{% endif %}{% endif %}</li>
+                <li>{{ item.text }}{% if let Some(ticked) = item.ticked %}{% if ticked %} Ticked under Apps: it shows again after "Allow these apps".{% else %} Not ticked under Apps: after "Allow these apps" it stays hidden until you <a href="/devices/{{ device.id }}/apps#app-{{ item.package_name }}">tick it</a> too.{% endif %}{% endif %}</li>
                 {% endfor %}
             </ul>
             {% if let Some(more) = relock.blocks.more %}
@@ -201,72 +201,6 @@
         <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
     </div>
 
-    <div class="card">
-        <h2>Apps</h2>
-        {% if allowlist_corrupt %}
-        <div class="error">The stored app list for this device can't be read, so the phone gets an error instead of its policy and keeps enforcing the last one it had. The checkboxes below don't show what the phone allows, and changing them fails. Check this server's log ("failed to build device policy"), or restore a backup.</div>
-        {% endif %}
-        <p class="subtitle">Every app currently on this device, plus anything from the <a href="/apps">Apps</a> catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; checking one that isn't installed installs and allows it. Unchecking disallows it - and uninstalls it too, unless it's preinstalled and can't be removed; checking it again before the phone syncs cancels the uninstall. Each checkbox saves itself immediately - no separate Save button. A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed - never Settings, a browser or a file manager.</p>
-        <p class="subtitle">Only a checked app's keyboard and accessibility service can be turned on in the phone's Settings - an accessibility service not even during a pause, since it could read the parent PIN. Check the app first.</p>
-        <form method="post" action="/devices/{{ device.id }}/app-updates">
-            <label class="checkbox-row">
-                <input type="checkbox" name="app_updates_wifi_only" value="on" {% if app_updates_wifi_only %}checked{% endif %} data-autosave>
-                App updates only on Wi-Fi: apps from the catalog download only on Wi-Fi (a network that isn't metered) and wait otherwise - turn it off when an app is needed now. The launcher's own update waits for Wi-Fi up to 3 days, then takes any network. Nothing downloads while the phone is roaming, switch on or off. Unlocking or pausing on the phone doesn't change this.
-            </label>
-            <noscript><button type="submit" class="button-small">Save</button></noscript>
-        </form>
-        {% if let Some(line) = app_downloads_line %}
-        <p class="subtitle">{{ line }}</p>
-        {% endif %}
-        {% if apps.is_empty() %}
-        <p class="subtitle">Nothing to show yet - the phone hasn't reported its installed apps, and nothing's been added to the <a href="/apps">Apps</a> catalog either.</p>
-        {% else %}
-        <div class="app-checkbox-list">
-            {% for app in apps %}
-            {% if app.is_launcher %}
-            <label class="checkbox-row">
-                <input type="checkbox" checked disabled>
-                {{ app.label }} (launcher - always installed)
-                <span class="app-status">{{ app.status_label }}</span>
-            </label>
-            {% else %}
-            <form method="post" action="/devices/{{ device.id }}/apps/toggle" id="app-{{ app.package_name }}">
-                <input type="hidden" name="package_name" value="{{ app.package_name }}">
-                {% if let Some(tracked_app_id) = app.tracked_app_id %}
-                <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">
-                {% endif %}
-                <label class="checkbox-row">
-                    <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} data-autosave>
-                    {{ app.label }}
-                    <span class="app-status" data-installing="{{ app.is_installing }}" data-failed="{{ app.install_failed }}">{{ app.status_label }}</span>
-                    {% if app.show_no_release_hint %} <span class="subtitle">(no release yet - won't install until one's added)</span>{% endif %}
-                </label>
-            </form>
-            {% endif %}
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% if !display_forms.is_empty() %}
-        <h3>Names and icons on the phone</h3>
-        <p class="subtitle">Give an allowed app another name and one of the icons on this phone - "Chat" for Element X, for instance. An app's default from the <a href="/apps">Apps</a> catalog applies unless you choose here. The kid can rename only the apps you haven't named.</p>
-        {% for form in display_forms %}
-        {% include "partials/app_display_form.html" %}
-        {% endfor %}
-        <script src="/static/app-display.js?v=2" defer></script>
-        {% endif %}
-    </div>
-
-    {% if any_app_installing %}
-    <script>
-        // Live progress has no push mechanism to this page - the server only ever gets a fresh
-        // percentage when the device reports one (see /api/devices/apps/progress), so this page
-        // has to poll for it. Only reloads while something here is actually installing - once
-        // nothing is, this block isn't rendered at all on the next load, so the polling stops
-        // itself rather than running forever on an otherwise-idle device page.
-        setTimeout(() => location.reload(), 3000);
-    </script>
-    {% endif %}
-
     <div class="card" id="music">
         <h2>Music</h2>
         <p class="subtitle">The Vibb music app and what's in it on this phone. The library itself - podcasts, NRK, own files, categories - is on the <a href="/music">Music</a> page. Each choice here saves itself immediately.</p>
@@ -281,7 +215,7 @@
         <form method="post" action="/devices/{{ device.id }}/apps/toggle">
             <input type="hidden" name="tracked_app_id" value="{{ app.tracked_app_id }}">
             <input type="hidden" name="package_name" value="{{ app.package_name }}">
-            <input type="hidden" name="anchor" value="music">
+            <input type="hidden" name="back" value="music">
             <label class="checkbox-row">
                 <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} data-autosave>
                 <span>The music app on this phone (installed and allowed like any app from the catalog; unticking uninstalls it) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
@@ -395,10 +329,16 @@
         <a href="/music" class="button-small" style="margin-top:12px;">Music library</a>
     </div>
 
-    {#- Design 31 steps 3-5: the Status/Access/Play/crash facts, the set-once controls, the lock
-        and PINs, the home screen and the web filter moved to their sub-pages; the rows stay where
-        the summary (step 10) has them, at the bottom. -#}
+    {#- Design 31 steps 3-6: the Status/Access/Play/crash facts, the set-once controls, the lock
+        and PINs, the home screen, the web filter and the apps moved to their sub-pages; the rows
+        stay where the summary (step 10) has them, at the bottom. -#}
     <div class="group group-icons" id="more">
+        <a class="row" href="/devices/{{ device.id }}/apps" data-row="apps">
+            <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="2.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/></svg></span>
+            <span class="row-label">Apps</span>
+            <span class="row-value">{{ apps_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">
             <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
             <span class="row-label">Lock Screen &amp; PINs</span>
@@ -406,7 +346,7 @@
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         <a class="row" href="/devices/{{ device.id }}/home" data-row="home">
-            <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="2.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/></svg></span>
+            <span class="tile tile-orange"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M2.5 8l6-5.3 6 5.3v6.5h-4v-4h-4v4h-4z" fill="currentColor"/></svg></span>
             <span class="row-label">Home Screen</span>
             <span class="row-value">{{ home_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

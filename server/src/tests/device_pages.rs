@@ -3,8 +3,9 @@
 //! time lock - local times, the exact one in `title`); Advanced holds the forms the device page's
 //! Hardening, Play and kiosk, Launcher updates and Access cards had, and Remove Phone; Lock Screen
 //! & PINs the Screen lock, Parent PIN and Screen timeout cards, the lock background and the Apps
-//! card's "On the lock screen". Their POST routes are unchanged; this checks where each returns to
-//! (the redirect table, §5.1) and the confirms.
+//! card's "On the lock screen"; steps 5 and 6 Home Screen, Web Filter and Apps (the Apps card).
+//! Their POST routes are unchanged; this checks where each returns to (the redirect table, §5.1)
+//! and the confirms.
 
 use axum::http::{Method, StatusCode};
 use serde_json::json;
@@ -1639,4 +1640,461 @@ async fn a_phone_not_set_up_has_home_and_filter() {
         let res = app.get_page(&device_page(999, section), &cookie).await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{section:?}");
     }
+}
+
+// ---- Step 6: Device › Apps ----------------------------------------------------------------------
+
+/// Anna's apps: the phone reports its clock (preinstalled; allowed by the first report's
+/// defaults) and a game (not allowed, a name with markup); the catalog has Vibb, Element X (chosen
+/// for her, not installed yet) and Notes (no package, no release). Returns (Anna, Vibb, Element X,
+/// Notes).
+async fn apps_phone(app: &TestApp) -> (i64, i64, i64, i64) {
+    let (id, token) = app.enrolled_device("Anna").await;
+    let catalog = |name: &'static str,
+                   package: &'static str,
+                   tag: Option<&'static str>,
+                   launcher| async move {
+        sqlx::query_scalar::<_, i64>(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag, \
+             is_launcher) VALUES (?, ?, 'owner/repo', ?, ?) RETURNING id",
+        )
+        .bind(name)
+        .bind(package)
+        .bind(tag)
+        .bind(launcher)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let vibb = catalog("Vibb", "me.vibb.launcher", Some("launcher-v1.0.0"), true).await;
+    let element = catalog("Element X", "io.element.android.x", Some("v26.10.1"), false).await;
+    let notes = catalog("Notes", "", None, false).await;
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(id)
+        .bind(element)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    report(
+        app,
+        &token,
+        json!({ "installed_apps": [
+            { "package_name": "com.android.deskclock", "label": "Clock", "preinstalled": true },
+            { "package_name": "org.example.game", "label": "<b>Game</b>", "preinstalled": false },
+        ] }),
+    )
+    .await;
+    (id, vibb, element, notes)
+}
+
+/// The text of the `<section id="{id}"` up to its end.
+fn section<'a>(html: &'a str, id: &str) -> &'a str {
+    let at = html
+        .find(&format!("<section id=\"{id}\""))
+        .unwrap_or_else(|| panic!("no section {id}"));
+    &html[at..at + html[at..].find("</section>").unwrap()]
+}
+
+/// Every auto-saving form on the page has a `<noscript>` Save (§5.2).
+#[track_caller]
+fn every_auto_save_has_a_save_without_js(html: &str) {
+    let mut seen = 0;
+    for form in tags(html, "form") {
+        let body = &html[form.start..form.start + html[form.start..].find("</form>").unwrap()];
+        if body.contains("data-autosave") {
+            seen += 1;
+            assert!(body.contains("<noscript>"), "{body}");
+        }
+    }
+    assert!(seen > 0);
+}
+
+#[tokio::test]
+async fn apps_holds_the_moved_forms() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, _, notes) = apps_phone(&app).await;
+
+    // The device page: a row with the count, none of the card's forms or its reload.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"apps\"").expect("the Apps row")..];
+    let row = &row[..row.find("</a>").unwrap()];
+    assert!(
+        row.contains("<span class=\"row-value\">2 allowed</span>"),
+        "{row}"
+    );
+    assert!(summary.contains(&format!("href=\"/devices/{id}/apps\"")));
+    for gone in [
+        "/apps/toggle",
+        "/app-updates",
+        "/apps/display",
+        "location.reload",
+    ] {
+        assert!(!summary.contains(gone), "{gone}");
+    }
+
+    let html = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert_subpage(&html, id, "Apps", &["allowed", "not-allowed", "downloads"]);
+    // Allowed: Vibb first and always on (no switch), the clock, Element X waiting to install.
+    let allowed = section(&html, "allowed");
+    let at = |part: &str, anchor: &str| {
+        part.find(&format!("id=\"{anchor}\""))
+            .unwrap_or_else(|| panic!("{anchor}: {part}"))
+    };
+    let launcher = &allowed[at(allowed, "app-me.vibb.launcher")..];
+    let launcher = &launcher[..launcher.find("</div>\n").unwrap()];
+    assert!(
+        launcher.contains("Always on") && !launcher.contains("<form"),
+        "{launcher}"
+    );
+    assert!(at(allowed, "app-me.vibb.launcher") < at(allowed, "app-com.android.deskclock"));
+    assert!(allowed.contains("id=\"app-io.element.android.x\""));
+    let element = &allowed[at(allowed, "app-io.element.android.x")..];
+    assert!(element.contains("Not installed"), "{element}");
+    // Not allowed: the game (its name escaped) and Notes, which has no release yet.
+    let not_allowed = section(&html, "not-allowed");
+    assert!(not_allowed.contains("id=\"app-org.example.game\""));
+    assert!(not_allowed.contains("&#60;b&#62;Game"), "{not_allowed}");
+    assert!(!html.contains("<b>Game"));
+    let notes_row = &not_allowed[at(not_allowed, &format!("catalog-{notes}"))..];
+    assert!(
+        notes_row.contains("Not installed · No release yet"),
+        "{notes_row}"
+    );
+    let switches: Vec<bool> = tags(&html, "input")
+        .into_iter()
+        .filter(|t| t.attr("name") == Some("selected"))
+        .map(|t| t.has("checked"))
+        .collect();
+    assert_eq!(
+        switches,
+        [true, true, false, false],
+        "on in Allowed, off below"
+    );
+    // Name and icon under each allowed app with a package, never for Vibb or one not allowed.
+    for package in ["com.android.deskclock", "io.element.android.x"] {
+        assert!(
+            allowed.contains(&format!("id=\"display-{package}\"")),
+            "{package}"
+        );
+    }
+    assert!(!html.contains("id=\"display-org.example.game\""));
+    assert!(!html.contains("id=\"display-me.vibb.launcher\""));
+    // Every row's id once; no search field (§6.0); the keyboard note behind the ⓘ.
+    let mut ids: Vec<&str> = tags(&html, "div")
+        .into_iter()
+        .filter_map(|t| t.attr("data-app"))
+        .collect();
+    let all = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), all);
+    assert_eq!(all, 5);
+    assert!(!html.contains("type=\"search\""));
+    let footer = &not_allowed[not_allowed.find("<details class=\"info\">").unwrap()..];
+    assert!(
+        footer.contains("keyboard or accessibility service"),
+        "{footer}"
+    );
+    // The Wi-Fi switch, on for a new phone; nothing installs, so no reload.
+    assert_eq!(
+        form_action_of(&html, "app_updates_wifi_only"),
+        Some(format!("/devices/{id}/app-updates").as_str())
+    );
+    assert_eq!(
+        input_checked(&html, "app_updates_wifi_only", "on"),
+        Some(true)
+    );
+    assert!(!html.contains("location.reload"));
+    every_auto_save_has_a_save_without_js(&html);
+    for name in ["selected", "app_updates_wifi_only"] {
+        assert!(autosaves(&html, name), "{name}");
+    }
+}
+
+/// §5.1's redirect table for Device › Apps, built from the rendered forms: a switch returns to its
+/// app's row (`#app-<package>`, `#catalog-<id>` without a package) - the row changes group, and
+/// the fragment finds it again with or without JS -, a Name and icon save to the same row (its
+/// action has the fragment too, for a refusal rendered in the answer), the Wi-Fi switch to its
+/// group at the bottom. Every fragment names an element of the page; then each did what it says,
+/// on Anna only (the phone from the path).
+#[tokio::test]
+async fn apps_forms_return_to_their_rows() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, element, notes) = apps_phone(&app).await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let page = device_page(id, Section::Apps);
+    let html = app.get_page(&page, &cookie).await.text();
+    let (mut toggles, mut names, mut updates) = (0, 0, 0);
+    for (action, hidden) in forms(&html) {
+        let field = |name: &str| {
+            hidden
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        let (target, action_fragment) = match action.split_once('#') {
+            Some((target, fragment)) => (target.to_string(), Some(fragment.to_string())),
+            None => (action.clone(), None),
+        };
+        let mut sent: Vec<(&str, &str)> = hidden
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let expected = if target == format!("/devices/{id}/apps/toggle") {
+            toggles += 1;
+            assert_eq!(field("back"), Some("apps"));
+            assert_eq!(action_fragment, None);
+            // Flip it: on what was off.
+            let package = field("package_name").unwrap();
+            let row = match package {
+                "" => format!("catalog-{}", field("tracked_app_id").unwrap()),
+                package => format!("app-{package}"),
+            };
+            let was_on = html[html.find(&format!("id=\"{row}\"")).unwrap()..]
+                .split("</label>")
+                .next()
+                .unwrap()
+                .contains(" checked");
+            if !was_on {
+                sent.push(("selected", "on"));
+            }
+            row
+        } else if target == format!("/devices/{id}/apps/display") {
+            names += 1;
+            sent.extend([("label", "Mine"), ("icon", "chat"), ("color", "auto")]);
+            let row = format!("app-{}", field("package_name").unwrap());
+            assert_eq!(action_fragment.as_deref(), Some(row.as_str()));
+            row
+        } else if target == format!("/devices/{id}/app-updates") {
+            updates += 1;
+            "downloads".to_string()
+        } else {
+            panic!("a form the table doesn't know: {action}");
+        };
+        assert!(
+            html.contains(&format!("id=\"{expected}\"")),
+            "{expected} names nothing on the page"
+        );
+        let res = app
+            .request_form(Method::POST, &target, Some(&cookie), &sent)
+            .await;
+        assert_redirect(&res, &page, Some(&expected));
+    }
+    assert_eq!((toggles, names, updates), (4, 2, 1));
+
+    // Each did what it says: the clock and Element X off, the game and Notes on; two names; the
+    // Wi-Fi switch off. All on Anna.
+    let allowlist: String =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let allowlist: Vec<String> = serde_json::from_str(&allowlist).unwrap();
+    assert!(
+        allowlist.contains(&"org.example.game".to_string()),
+        "{allowlist:?}"
+    );
+    assert!(
+        !allowlist.contains(&"com.android.deskclock".to_string()),
+        "{allowlist:?}"
+    );
+    assert!(
+        !allowlist.contains(&"io.element.android.x".to_string()),
+        "{allowlist:?}"
+    );
+    let chosen: Vec<i64> =
+        sqlx::query_scalar("SELECT tracked_app_id FROM device_tracked_apps WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(chosen, [notes]);
+    assert_ne!(chosen, [element]);
+    let named: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT device_id, package_name FROM device_app_display ORDER BY package_name",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        named,
+        [
+            (id, "com.android.deskclock".to_string()),
+            (id, "io.element.android.x".to_string())
+        ]
+    );
+    let (wifi_only, emil_wifi_only): (bool, bool) = sqlx::query_as(
+        "SELECT (SELECT app_updates_wifi_only FROM device_policy WHERE device_id = ?), \
+                (SELECT app_updates_wifi_only FROM device_policy WHERE device_id = ?)",
+    )
+    .bind(id)
+    .bind(emil)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!((wifi_only, emil_wifi_only), (false, true));
+    // The preinstalled clock is only hidden, never queued for uninstall.
+    let uninstalls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_pending_uninstalls")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(uninstalls, 0);
+    // The rows moved group; the fragments still find them.
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(section(&html, "allowed").contains("id=\"app-org.example.game\""));
+    assert!(section(&html, "not-allowed").contains("id=\"app-com.android.deskclock\""));
+}
+
+/// A switch that can't be what it says changes nothing: not a package name, nothing at all, Play's
+/// core, Vibb itself (400), an unknown phone (404); a catalog app deleted since the page loaded
+/// returns to the page (a second tap lands where the first did). A failed read is a 500, never a
+/// shorter list.
+#[tokio::test]
+async fn the_apps_switch_refuses_bad_input_and_the_page_fails_loudly() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, vibb, element, _) = apps_phone(&app).await;
+    let toggle = |path_id: i64, fields: Vec<(&'static str, String)>| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            let fields: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{path_id}/apps/toggle"),
+                Some(cookie),
+                &fields,
+            )
+            .await
+        }
+    };
+    let before = || async {
+        sqlx::query_as::<_, (Option<String>, i64)>(
+            "SELECT allowlist_json, (SELECT COUNT(*) FROM device_tracked_apps) \
+             FROM device_policy WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let start = before().await;
+    for (fields, status) in [
+        (
+            vec![("package_name", "not a package".to_string())],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            vec![("package_name", "<b>x</b>.y".to_string())],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            vec![("package_name", String::new())],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            vec![("package_name", "com.android.vending".to_string())],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            vec![
+                ("package_name", "me.vibb.launcher".to_string()),
+                ("tracked_app_id", vibb.to_string()),
+            ],
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let mut fields = fields;
+        fields.push(("selected", "on".to_string()));
+        let res = toggle(id, fields.clone()).await;
+        assert_eq!(res.status, status, "{fields:?}");
+    }
+    let res = toggle(9999, vec![("package_name", "org.example.game".to_string())]).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    // A catalog app that is gone: back to the page, nothing written.
+    let res = toggle(
+        id,
+        vec![
+            ("package_name", "org.example.gone".to_string()),
+            ("tracked_app_id", "9999".to_string()),
+            ("selected", "on".to_string()),
+        ],
+    )
+    .await;
+    assert_redirect(&res, &device_page(id, Section::Apps), None);
+    assert_eq!(before().await, start);
+
+    // A failed write is a 500, and nothing else is written.
+    sqlx::query("ALTER TABLE device_tracked_apps RENAME TO device_tracked_apps_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = toggle(
+        id,
+        vec![
+            ("package_name", "io.element.android.x".to_string()),
+            ("tracked_app_id", element.to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    let allowlist: String =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(Some(allowlist), start.0);
+    // ... and every read the page needs fails as a 500.
+    let res = app.get_page(&device_page(id, Section::Apps), &cookie).await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(res.text().contains("Couldn't read this phone"));
+    sqlx::query("ALTER TABLE device_tracked_apps_gone RENAME TO device_tracked_apps")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for table in ["device_app_display", "device_status", "tracked_apps"] {
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let res = app.get_page(&device_page(id, Section::Apps), &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{table}");
+        assert!(res.text().contains("Couldn't read this phone"), "{table}");
+        sqlx::query(&format!("ALTER TABLE {table}_gone RENAME TO {table}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        app.get_page(&device_page(9999, Section::Apps), &cookie)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// A phone not set up has the page: a catalog app turned on installs with its first settings, and
+/// the page says the phone hasn't reported its own apps.
+#[tokio::test]
+async fn a_phone_not_set_up_has_its_apps_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Mia").await;
+    let html = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(html.contains("data-row=\"not-reported\""));
+    assert!(!html.contains("Nothing else on this phone."));
+    assert!(html.contains(&format!("action=\"/devices/{id}/app-updates\"")));
 }

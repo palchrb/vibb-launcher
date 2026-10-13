@@ -681,15 +681,26 @@ async fn allowlist_json(app: &TestApp, id: i64) -> Option<String> {
 async fn toggle_app_adds_and_removes() {
     let app = TestApp::new().await;
     let (id, _) = app.enrolled_device("phone").await;
-    set_allowlist_json(&app, id, Some(r#"["a"]"#)).await;
+    set_allowlist_json(&app, id, Some(r#"["org.example.a"]"#)).await;
 
-    assert!(toggle(&app, id, "b", true).await.is_redirection());
+    assert!(
+        toggle(&app, id, "org.example.b", true)
+            .await
+            .is_redirection()
+    );
     assert_eq!(
         allowlist_json(&app, id).await.as_deref(),
-        Some(r#"["a","b"]"#)
+        Some(r#"["org.example.a","org.example.b"]"#)
     );
-    assert!(toggle(&app, id, "a", false).await.is_redirection());
-    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some(r#"["b"]"#));
+    assert!(
+        toggle(&app, id, "org.example.a", false)
+            .await
+            .is_redirection()
+    );
+    assert_eq!(
+        allowlist_json(&app, id).await.as_deref(),
+        Some(r#"["org.example.b"]"#)
+    );
 }
 
 /// A corrupt stored allowlist used to be read as `[]`: unchecking then silently did nothing (the
@@ -701,11 +712,11 @@ async fn toggle_app_with_corrupt_allowlist_fails_without_writing() {
     set_allowlist_json(&app, id, Some("not json")).await;
 
     assert_eq!(
-        toggle(&app, id, "a", false).await,
+        toggle(&app, id, "org.example.a", false).await,
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        toggle(&app, id, "a", true).await,
+        toggle(&app, id, "org.example.a", true).await,
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("not json"));
