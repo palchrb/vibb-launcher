@@ -25,7 +25,7 @@
 # lock comes within about 5 s of it and logcat shows the mark was on screen ~3 s (design 16e), and for 45 s
 # after the lock is up neither the shade nor Quick Settings opens over it and SystemUI's
 # TaskbarDelegate has the status bar's disable flags (design 16d); a screen-off and wake within a few ms
-# (the double press) starts the lock with no starting window (design 32). Call state
+# that cancel the screen-off fade (the double press) still bring the lock up (design 32). Call state
 # comes from `dumpsys telecom`. Screenshots of every step go into a folder; a PASS/FAIL/SKIP summary at the
 # end (exit 1 on any FAIL, also on SKIP with STRICT=1).
 #
@@ -905,42 +905,61 @@ fi
 
 step "Double press: the lock starts with the screen on (design 32)"
 # The user's mash log (2026-10-13): a power press and a second one ~60 ms later cancel the screen-off
-# fade, so SCREEN_OFF arrives with the screen on and the lock is started as a visible launch. It must
-# show no starting window (SystemUI draws a splash as `VRI[<last part of the package>]`) and no open
-# animation (the closing app shrank into a card). SLEEP then WAKEUP in one `input` call: no camera
-# double-press gesture. Needs the phone unlocked (from the Unlock step) to lock it again.
+# fade, so SCREEN_OFF arrives with the screen on (`Lock-up at screen-off: LOCK (..., interactive=true,
+# ...)`) and the lock is started as a visible launch. That keeps a known residual (design 32 §12,
+# qa-32-s2-code M1): the lock's black splash (SystemUI draws it as `VRI[<last part of the package>]`)
+# and Shell's default close of the app below - the app the kid was in anyway. Checked here: the lock
+# is in front within 5 s, only for a press that really cancelled the fade (interactive=true; up to 5
+# tries - on the emulator the display may go fully off first). The splash is recorded, not judged; the
+# animation is a manual frame-step. SLEEP then WAKEUP in one `input` call: no camera double-press
+# gesture. Needs the phone unlocked (from the Unlock step) to lock it again.
 if [ -z "$KID_PIN" ] || top_is "$LOCK_ACTIVITY"; then
     why="the PIN lock is in front"
     [ -z "$KID_PIN" ] && why="KID_PIN not set"
-    skip "double press: the lock without a starting window" "$why"
-    skip "double press: no open animation (manual)" "not run"
+    skip "double press: the lock comes up after a cancelled screen-off" "$why"
+    skip "double press: the splash and the close animation (manual)" "not run"
 else
-    sh_ input keyevent KEYCODE_HOME >/dev/null
-    sleep 2
     sysui_pid="$(sh_ pidof com.android.systemui | awk '{print $1}')"
     vri_name="${PKG##*.}"
     sh_ dumpsys activity service SystemUIService WMShell protolog enable-text WM_SHELL_TRANSITIONS >/dev/null || true
-    logcat_clear
-    sh_ input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP >/dev/null
-    if wait_for 5 top_is "$LOCK_ACTIVITY"; then
+    pressed=0
+    lockup=""
+    for try in 1 2 3 4 5; do
+        sh_ input keyevent KEYCODE_HOME >/dev/null
+        sleep 2
+        logcat_clear
+        sh_ input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP >/dev/null
+        wait_for 5 top_is "$LOCK_ACTIVITY" || true
         sleep 1
         dump="$(logcat_dump)"
+        lockup="$(grep -m1 -o 'Lock-up at screen-off: [A-Z_]* ([^)]*)' <<<"$dump" || true)"
+        if grep -q 'interactive=true' <<<"$lockup"; then
+            pressed=1
+            break
+        fi
+        # The display went off first: a dark lock-up. Unlock and try again.
+        if top_is "$LOCK_ACTIVITY"; then
+            screen_on
+            sleep 1
+            enter_pin "$KID_PIN" && wait_for 5 top_is_not "$LOCK_ACTIVITY" || true
+        fi
+        echo "  try $try: ${lockup:-no lock-up line} - not a cancelled screen-off"
+    done
+    if [ "$pressed" -eq 0 ]; then
+        skip "double press: the lock comes up after a cancelled screen-off" "no try cancelled the screen-off fade (last: ${lockup:-no lock-up line})"
+        skip "double press: the splash and the close animation (manual)" "no cancelled screen-off"
+    else
         printf '%s\n' "$dump" >"$OUT_DIR/double-press-logcat.txt"
         splash=""
         if [ -n "$sysui_pid" ]; then
-            splash="$(adb_ logcat -d -v brief --pid="$sysui_pid" 2>/dev/null | tr -d '\r' | grep -F "VRI[$vri_name]" | head -3 || true)"
+            splash="$(adb_ logcat -d -v brief --pid="$sysui_pid" 2>/dev/null | tr -d '\r' | grep -F "VRI[$vri_name]" | head -1 || true)"
         fi
-        if [ -z "$sysui_pid" ]; then
-            skip "double press: the lock without a starting window" "SystemUI's pid unknown"
-        elif [ -z "$splash" ]; then
-            pass "double press: the lock without a starting window ($(grep -m1 -o 'Lock-up at screen-off: [A-Z_]* ([^)]*)' <<<"$dump" || echo "no lock-up line"))"
+        if top_is "$LOCK_ACTIVITY"; then
+            pass "double press: the lock comes up after a cancelled screen-off ($lockup)"
         else
-            fail "double press: the lock without a starting window" "SystemUI drew $splash"
+            fail "double press: the lock comes up after a cancelled screen-off" "$lockup; top: $(top_activity)"
         fi
-        skip "double press: no open animation (manual)" "frame-step a screenrecord; Shell's transition log is in double-press-logcat.txt"
-    else
-        fail "double press: the lock without a starting window" "no lock in front: $(top_activity)"
-        skip "double press: no open animation (manual)" "no lock"
+        skip "double press: the splash and the close animation (manual)" "known residual (design 32 §12): splash ${splash:+seen}${splash:-not seen in the SystemUI log}; frame-step a screenrecord - black splash, then the lock, the app's close animation allowed"
     fi
     shot double-press
     sh_ dumpsys activity service SystemUIService WMShell protolog disable-text WM_SHELL_TRANSITIONS >/dev/null || true

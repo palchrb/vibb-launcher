@@ -129,8 +129,20 @@ class KeyguardCoverPlanTest {
         }
     }
 
-    private fun write(dpm: FakeDpm, mode: KeyguardMode = KeyguardMode.COVER, timeout: Long? = 30_000L, added: Int = 0, stored: MutableList<Int> = mutableListOf(), storeOk: Boolean = true) =
-        writeKeyguard(dpm, mode, managed = true, coverAdded = added, timeoutMs = { timeout }) { stored += it; storeOk }
+    private fun write(
+        dpm: FakeDpm,
+        mode: KeyguardMode = KeyguardMode.COVER,
+        timeout: Long? = 30_000L,
+        added: Int = 0,
+        stored: MutableList<Int> = mutableListOf(),
+        storeOk: Boolean = true,
+        written: MutableList<Boolean> = mutableListOf(),
+        writtenOk: Boolean = true,
+    ) = writeKeyguard(
+        dpm, mode, managed = true, coverAdded = added, timeoutMs = { timeout },
+        storeCoverAdded = { stored += it; storeOk },
+        storeWritten = { dpm.calls += "written=$it"; written += it; writtenOk },
+    )
 
     @Test
     fun `COVER - features, read back, T, read back, then false`() {
@@ -140,7 +152,8 @@ class KeyguardCoverPlanTest {
         assertEquals(KeyguardMode.COVER, w.mode)
         assertTrue(w.lockMayRun)
         assertNull(w.coverFailed)
-        assertEquals(listOf("features?", "features=$KEYGUARD_FEATURES_ALL", "features?", "t?", "t=30000", "t?", "disabled=false"), dpm.calls)
+        // M2: cover_written is committed before setKeyguardDisabled(false).
+        assertEquals(listOf("features?", "features=$KEYGUARD_FEATURES_ALL", "features?", "t?", "t=30000", "t?", "written=true", "disabled=false"), dpm.calls)
         assertEquals("coverAdded stored before the write", listOf(KEYGUARD_FEATURES_ALL and 2.inv()), stored)
         assertEquals(30_000L, dpm.t)
         assertFalse(dpm.disabled)
@@ -177,6 +190,15 @@ class KeyguardCoverPlanTest {
             assertTrue(it.disabled)
             assertEquals(2, it.features)
         }
+        // cover_written can't be kept: never false, the fallback (which clears it again).
+        FakeDpm().let {
+            val written = mutableListOf<Boolean>()
+            val w = write(it, writtenOk = false, written = written)
+            assertEquals("cover_written", w.coverFailed)
+            assertFalse(it.calls.contains("disabled=false"))
+            assertTrue(it.disabled)
+            assertEquals(listOf(true, false), written)
+        }
         // coverAdded can't be kept: nothing written at all but the fallback.
         FakeDpm().let {
             val w = write(it, storeOk = false)
@@ -192,6 +214,7 @@ class KeyguardCoverPlanTest {
         val stored = mutableListOf<Int>()
         val w = write(dpm, mode = KeyguardMode.DISABLED, added = KEYGUARD_FEATURES_ALL and (2 or 16).inv(), stored = stored)
         assertEquals("disabled=true", dpm.calls.first())
+        assertEquals("M2: the flag cleared after the true worked", "written=false", dpm.calls.last())
         assertEquals(2 or 16, dpm.features)
         assertEquals(0L, dpm.t)
         assertEquals(listOf(0), stored)
@@ -199,7 +222,19 @@ class KeyguardCoverPlanTest {
         // Release after step 1: features already right, no T - only the true call writes.
         val plain = FakeDpm(features = 2, t = 0L)
         write(plain, mode = KeyguardMode.DISABLED)
-        assertEquals(listOf("disabled=true", "features?", "t?"), plain.calls)
+        assertEquals(listOf("disabled=true", "features?", "t?", "written=false"), plain.calls)
+        // A true that throws keeps the flag (a new process tries again) and is reported (nit 2).
+        val throwing = object : KeyguardPolicy by FakeDpm() {
+            override fun readFeatures(): Int = KEYGUARD_FEATURES_ALL
+            override fun writeDisabled(disabled: Boolean): Boolean = throw SecurityException("no admin")
+            override fun writeFeatures(value: Int) = throw SecurityException("no disable-keyguard-features")
+        }
+        val flags = mutableListOf<Boolean>()
+        val w2 = writeKeyguard(throwing, KeyguardMode.DISABLED, true, KEYGUARD_FEATURES_ALL and 2.inv(), { null }, { true }, { flags += it; true })
+        assertFalse(w2.lockMayRun)
+        assertNull(w2.disabled)
+        assertEquals(emptyList<Boolean>(), flags)
+        assertEquals(listOf("setKeyguardDisabled(true) failed", "Failed to set the keyguard camera feature"), w2.errors.map { it.first })
     }
 
     @Test
@@ -209,7 +244,7 @@ class KeyguardCoverPlanTest {
         assertEquals(KeyguardMode.UNTOUCHED, w.mode)
         assertFalse(w.lockMayRun)
         assertFalse(dpm.disabled)
-        assertEquals(listOf("disabled=false", "features?", "t?"), dpm.calls)
+        assertEquals(listOf("disabled=false", "features?", "t?", "written=false"), dpm.calls)
     }
 
     // ---- the dismissal (M7) ----------------------------------------------------------------------------
@@ -251,23 +286,44 @@ class KeyguardCoverPlanTest {
         assertFalse("no cover: as today", sendAfterUnlock(coverOn = false, keyguardLocked = true))
     }
 
+    // ---- a new process (qa-32-s2-code M2) -------------------------------------------------------------
+
     @Test
-    fun `Home's boot dismissal - only the switch, before the arm, no credential, while locked`() {
-        assertTrue(homeBootDismissDue(switchOn = true, armed = false, deviceSecure = false, keyguardLocked = true))
-        assertFalse(homeBootDismissDue(false, false, false, true))
-        assertFalse(homeBootDismissDue(true, true, false, true))
-        assertFalse("never the bouncer", homeBootDismissDue(true, false, true, true))
-        assertFalse("SystemUI hasn't shown it yet", homeBootDismissDue(true, false, false, false))
+    fun `a new process writes DISABLED when the cover may be in the device policy, before any apply`() {
+        assertTrue("an update, a crash, a reboot without ACTION_SHUTDOWN", processStartWrite(coverWritten = true, configured = false))
+        assertFalse("an apply wrote already", processStartWrite(coverWritten = true, configured = true))
+        assertFalse("no cover: nothing (release)", processStartWrite(coverWritten = false, configured = false))
+        // The write itself: true, the cover's bits and T out, the flag cleared.
+        val dpm = FakeDpm(features = KEYGUARD_FEATURES_ALL, t = 30_000L, disabled = false)
+        write(dpm, mode = KeyguardMode.DISABLED, added = KEYGUARD_FEATURES_ALL and 2.inv())
+        assertTrue(dpm.disabled)
+        assertEquals(2, dpm.features)
+        assertEquals(0L, dpm.t)
+        assertTrue(dpm.calls.contains("written=false"))
+    }
+
+    @Test
+    fun `before the first apply a rewrite writes nothing, and disableNow acts on the stored flag`() {
+        assertFalse("the re-arm or a VoIP edge before the first apply", rewriteDue(configured = false))
+        assertTrue(rewriteDue(configured = true))
+        assertTrue("the crash guard in a new process", disableNowDue(coverOn = false, coverWritten = true))
+        assertTrue(disableNowDue(coverOn = true, coverWritten = false))
+        assertFalse("no cover: nothing (release)", disableNowDue(coverOn = false, coverWritten = false))
     }
 
     // ---- the lock-up under the cover, the dark lock-up (M5) ----------------------------------------------
 
     @Test
     fun `under the cover the lock-up starts the lock alone`() {
-        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverOn = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = true, lockOnTop = true, callLive = false, interactive = false, coverOn = true))
-        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = false, lockOnTop = false, callLive = false, interactive = false, coverOn = true))
-        assertEquals(LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverOn = false))
+        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = true))
+        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = true, lockOnTop = true, callLive = false, interactive = false, coverLocked = true))
+        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = false, lockOnTop = false, callLive = false, interactive = false, coverLocked = true))
+        assertEquals("the keyguard not locked: step 1's Home (L4)", LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = false))
+        // L2: the input is the cover and its keyguard locked at this screen-off - never a constant.
+        val atScreenOff = body(code("$lock/PinLockRuntime.kt"), "lockUpAtScreenOff")
+        assertTrue(atScreenOff.contains("val cover = KeyguardCover.coverOn\n"))
+        assertTrue(atScreenOff.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)\n"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg)"))
     }
 
     private val dark = RefrontInputs(locked = true, lockResumed = false, interactive = false, ourCall = false, telecomInCall = false, emergencyFlow = false, alarmRinging = false)
@@ -296,9 +352,25 @@ class KeyguardCoverPlanTest {
         val cover = code("$lock/KeyguardCover.kt")
         // The shutdown (M4) and the crash guard (L8) route through disableNow.
         assertEquals(1, Regex("""\.setKeyguardDisabled\(admin, true\)""").findAll(cover).count())
-        assertTrue(body(cover, "disableNow").contains("dpm.setKeyguardDisabled(admin, true)"))
-        assertTrue(body(cover, "disableNow").contains("if (!coverOn) return"))
-        assertTrue(body(cover, "onShutdown").contains("disableNow(context, \"shutdown\", synchronous = true)"))
+        val disable = body(cover, "disableNow")
+        assertTrue(disable.contains("dpm.setKeyguardDisabled(admin, true)"))
+        // M2: decided under the monitor, on the stored flag too; the shutdown blocks later covers.
+        assertTrue(disable.indexOf("synchronized(this) {") in 0 until disable.indexOf("if (!disableNowDue(coverOn, coverWritten(app))) return@synchronized"))
+        assertTrue(disable.contains("if (shutdown) shuttingDown = true"))
+        assertTrue(disable.contains("if (ok) storeWritten(app, false)"))
+        // L2: the cover off is also not armed (no re-arm from this state without a lock resume).
+        assertTrue(disable.contains("armed = false"))
+        assertTrue(body(cover, "onShutdown").contains("disableNow(context, \"shutdown\", synchronous = true, shutdown = true)"))
+        assertTrue(body(cover, "wantedNow").contains("val off = forceOff || shuttingDown"))
+        assertTrue(body(cover, "onLockResumed").contains("if (!shuttingDown && coverRearmDue("))
+        // M2: the process start's write and rewrite's guard.
+        val start = body(cover, "atProcessStart")
+        assertTrue(start.contains("if (!processStartWrite(coverWritten(app), configured = inputs != null)) return"))
+        assertTrue(start.contains("write(app, dpm, admin, \"a cover left by an earlier process\", KeyguardMode.DISABLED, managed = true)"))
+        assertTrue(body(cover, "rewrite").contains("if (!rewriteDue(configured = inputs != null)) return@synchronized"))
+        assertTrue(body(code("$lock/PinLockRuntime.kt"), "init").contains("KeyguardCover.atProcessStart(app)"))
+        // nit 2: what threw is logged whatever the switch says.
+        assertTrue(body(cover, "write").contains("for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)"))
         assertTrue(body(cover, "guardTripped").contains("disableNow(context, \"crash guard\", synchronous = false)"))
         assertTrue(body(code("$lock/BootCover.kt"), "onReceive").contains("KeyguardCover.onShutdown(app)"))
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "guardTripped").contains("KeyguardCover.guardTripped(app)"))
@@ -324,11 +396,11 @@ class KeyguardCoverPlanTest {
     }
 
     @Test
-    fun `requestDismissKeyguard only in the lock and Home's boot path`() {
+    fun `requestDismissKeyguard only in the lock`() {
+        // qa-32-s2-code L1: Home's boot dismissal is gone - Home sleeps behind an un-occluded keyguard;
+        // the process start's DISABLED write dismisses it instead (M2).
         val callers = mainSources.filter { code(it).contains("requestDismissKeyguard(") }.map { it.name }.sorted()
-        assertEquals(listOf("HomeActivity.kt", "PinLockActivity.kt"), callers)
-        val home = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt")
-        assertTrue(body(home, "dismissBootKeyguard").contains("homeBootDismissDue(KeyguardCover.switchOn, KeyguardCover.armed, keyguard.isDeviceSecure, keyguard.isKeyguardLocked)"))
+        assertEquals(listOf("PinLockActivity.kt"), callers)
         val lockActivity = code("$lock/PinLockActivity.kt")
         assertEquals(1, Regex("requestDismissKeyguard\\(").findAll(lockActivity).count())
         assertTrue(body(lockActivity, "requestDismiss").contains("if (KeyguardCover.dismissRequested())"))
@@ -337,22 +409,35 @@ class KeyguardCoverPlanTest {
         assertTrue(body(lockActivity, "onPause").contains("stopKeyguardWatch()"))
         assertTrue(body(lockActivity, "watchFirstFrame").contains("if (!KeyguardCover.switchOn) return"))
         assertTrue(body(lockActivity, "firstFrame").contains("KeyguardCover.dismissDueNow(this, resumed, drawnSinceResume, dismissTried)"))
+        // nit 3: the state check polls only while the cover is in force.
+        assertTrue(body(lockActivity, "checkKeyguard").contains("if (!resumed || !KeyguardCover.coverOn) return"))
+        // L2: the check's fallback, and the waiting screens when the cover goes off.
+        val cover = code("$lock/KeyguardCover.kt")
+        assertTrue(body(cover, "check").contains("if (dismissFallback(failures)) {\n                fallback(context)"))
+        assertTrue(body(cover, "write").contains("if (wasOn && !coverOn) handler.post { runWaiting(app, \"the cover is off\") }"))
     }
 
     @Test
-    fun `the call screens, the ring screen and the time-rule start wait for the unlock`() {
+    fun `the VoIP call screen, the ring screen and the time-rule start wait for the unlock - our call screen doesn't`() {
         val runtime = code("$lock/PinLockRuntime.kt")
         val dispatch = body(runtime, "dispatch")
-        assertTrue(dispatch.contains("if (result.showCall) KeyguardCover.whenUnlocked(context, \"the call screen\") { showCall(it) }"))
-        assertTrue(dispatch.contains("KeyguardCover.whenUnlocked(context, \"the VoIP call screen\") {"))
+        // L5: InCallActivity is showWhenLocked - at once, never held during a live call.
+        assertTrue(dispatch.contains("if (result.showCall) showCall(context)\n"))
+        val voip = dispatch.substringAfter("KeyguardCover.whenUnlocked(context, \"the VoIP call screen\") {").substringBefore("\n        }\n")
+        // L5: checked again when it runs later.
+        assertTrue(voip, voip.contains("if (mode == LockMode.LOCKED && !ourCall() && VoipCalls.phase == VoipPhase.IN_CALL) {"))
         assertEquals(1, Regex("VoipCalls\\.reopenCall\\(").findAll(runtime).count())
         assertEquals(1, Regex("showCall\\(").findAll(dispatch).count())
         val fsi = body(runtime, "sendVoipRingScreen")
         assertTrue(fsi.indexOf("if (KeyguardCover.mustWait(context)) return VOIP_FSI_SETTLE_MS") in 0 until fsi.indexOf("VoipCalls.showRingScreen(context)"))
         val recheck = body(code("java/com/kidslauncher/mdm/timerules/TimeRulesRuntime.kt"), "recheck")
-        assertTrue(recheck.contains("KeyguardCover.whenUnlocked(context, \"the time-rule screen\") { LockActivity.start(it) }"))
+        assertTrue(recheck.contains("KeyguardCover.whenUnlocked(context, \"the time-rule screen\") {"))
+        assertTrue(recheck.contains("if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) LockActivity.start(it)"))
         val cover = code("$lock/KeyguardCover.kt")
-        assertTrue(body(cover, "mustWait").contains("sendAfterUnlock(coverOn, keyguardLocked(context))"))
+        // L2: release relies on these - without the cover every send goes at once.
+        assertTrue(body(cover, "mustWait").contains("Boolean = coverOn && sendAfterUnlock(coverOn, keyguardLocked(context))"))
+        val unlocked = body(cover, "whenUnlocked")
+        assertTrue(unlocked, unlocked.contains("{\n        if (!mustWait(context)) {\n            send(context)\n            return\n        }"))
     }
 
     @Test
@@ -369,8 +454,12 @@ class KeyguardCoverPlanTest {
         assertTrue(body(cover, "onVoipPhase").contains("if (!interactive || after == voipSeen) return"))
         assertTrue(body(cover, "onLockResumed").contains("coverRearmDue(heldOff = !armed, interactive = interactive, lockResumed = true, wakePending = wakePending)"))
         assertFalse(runtime.substringAfter("private val screenOffWork = Runnable {").substringBefore("\n    }\n").contains("KeyguardCover"))
+        // L2: a dark screen-off ends the fallback's wake - after the ScreenOff dispatch (the lock-up first).
+        val off = runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("} else {")
+        val dispatchAt = off.indexOf("dispatch(app, LockEvent.ScreenOff(")
+        assertTrue(off, dispatchAt >= 0 && off.indexOf("if (KeyguardCover.switchOn) KeyguardCover.onScreenOff(interactive(app))") > dispatchAt)
         // The cover is written only while armed, and its fallback holds it off until the next re-arm.
-        assertTrue(body(cover, "write").contains("coverWanted = switchOn && armed"))
+        assertTrue(body(cover, "wantedNow").contains("coverWanted = !off && switchOn && armed"))
         val fallback = body(cover, "fallback")
         assertTrue(fallback.contains("armed = false") && fallback.contains("wakePending = true"))
     }

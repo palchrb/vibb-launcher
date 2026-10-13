@@ -163,9 +163,9 @@ class LockUpPlanTest {
         assertTrue(dispatch.contains("show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)"))
         val atScreenOff = body(code, "lockUpAtScreenOff")
         assertTrue(atScreenOff.contains("val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover)"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg)"))
         assertTrue(atScreenOff.indexOf("lockUp(context, start, lockAsk(event))") in 0 until atScreenOff.indexOf("Log.i("))
-        assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive, cover=\$cover)\""))
+        assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive, cover=\$cover, kg=\$kg)\""))
         val lockUp = body(code, "lockUp")
         val home = lockUp.indexOf("HomeFront.bring(context, \"under the lock (a lock-up while dark)\", animate = false)")
         val show = lockUp.indexOf("show(context, ask = ask, fromLockUp = true)")
@@ -363,14 +363,21 @@ class LockUpPlanTest {
         assertTrue(body(activity, "onNewIntent").contains("PinLockRuntime.onLockNewIntent()"))
     }
 
+    /**
+     * qa-32-s2-code M1: an awake lock start (the double press) keeps its black splash and Shell's default
+     * close of the app the kid was in (§12) - handy is the home process, so `windowDisablePreview` is
+     * skipped, and no public option overrides a task change. So: the preview on (step 1's black splash
+     * covers the old frame at once), no inert options.
+     */
     @Test
-    fun `every lock start has no starting window and no animation for any change`() {
+    fun `the lock start keeps its black splash and passes no options`() {
         val show = body(runtime, "show")
-        assertTrue(show.contains("Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),\n                lockStartOptions(context),"))
+        assertTrue(show.contains("Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),\n            )"))
         assertEquals(1, Regex("Intent\\(context, PinLockActivity::class.java\\)").findAll(runtime).count())
-        assertTrue(runtime.contains("android.app.ActivityOptions.makeCustomAnimation(context, 0, 0).toBundle()"))
+        assertFalse(runtime.contains("makeCustomAnimation"))
+        assertFalse(runtime.contains("lockStartOptions"))
         val theme = file("res/values/styles.xml").readText().substringAfter("<style name=\"PinLockTheme\"").substringBefore("</style>")
-        assertTrue(theme.contains("<item name=\"android:windowDisablePreview\">true</item>"))
+        assertTrue(theme.contains("<item name=\"android:windowDisablePreview\">false</item>"))
         // The one place in the app that starts the lock.
         val starts = file("java").walk().filter { it.isFile && it.extension == "kt" }
             .filter { it.readText().contains("Intent(context, PinLockActivity::class.java)") }.map { it.name }.toList()

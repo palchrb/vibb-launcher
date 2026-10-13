@@ -98,7 +98,7 @@ class DebugHookAbsentTest {
         assertEquals(listOf("KeyguardCover.kt"), callers)
         val cover = code(dir("main/java/com/kidslauncher/mdm/lock/KeyguardCover.kt"))
         assertEquals(2, Regex("KeyguardCoverDebug\\.enabled\\(").findAll(cover).count())
-        for (fn in listOf("fun loadSwitch(", "fun configure(")) {
+        for (fn in listOf("fun atProcessStart(", "fun configure(")) {
             val body = cover.substringAfter(fn).substringBefore("\n    }\n")
             assertTrue(fn, body.contains("KeyguardCoverDebug.enabled("))
         }

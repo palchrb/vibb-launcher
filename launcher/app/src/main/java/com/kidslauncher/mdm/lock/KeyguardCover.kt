@@ -23,15 +23,16 @@ private const val LOG_TAG = "KeyguardCover"
  *
  * **The one keyguard writer** (H2, M6): `setKeyguardDisabled`, `setKeyguardDisabledFeatures` and
  * `setMaximumTimeToLock` are called only here - from [configure] (every apply), [rewrite] (the VoIP
- * edge, the re-arm, the fallback), [followTimeout] (the screen timeout, H1) and [disableNow] (the
- * shutdown, M4, and the crash guard, L8).
+ * edge, the re-arm, the fallback), [followTimeout] (the screen timeout, H1), [disableNow] (the
+ * shutdown, M4, and the crash guard, L8) and [atProcessStart] (a cover an earlier process left in the
+ * device policy, qa-32-s2-code M2 - prefs `keyguard_cover` `cover_written` says whether it may be there).
  *
  * The lock's dismissal (M7) lives in `PinLockActivity`; its state - the failures, the request - here,
  * on the main thread. So do the screens of other apps that wait for the unlock ([whenUnlocked], M5).
  */
 object KeyguardCover {
 
-    /** The debug switch, cached by [configure] and [loadSwitch] - never read from prefs on the main thread (L5). */
+    /** The debug switch, cached by [configure] and [atProcessStart] - never read from prefs on the main thread (L5). */
     @Volatile
     var switchOn = false
         private set
@@ -71,18 +72,42 @@ object KeyguardCover {
     @Volatile
     private var last: KeyguardWritten? = null
 
+    /** `ACTION_SHUTDOWN` came: every later write is the cover off, and nothing re-arms (M2.4). Monitor. */
+    @Volatile
+    private var shuttingDown = false
+
+    /** The stored `cover_written` (M2), cached once read or written; `null` = not read yet. */
+    @Volatile
+    private var written: Boolean? = null
+
     private val handler = Handler(Looper.getMainLooper())
     private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "keyguard-cover").apply { isDaemon = true } }
 
     // ---- the writer ----------------------------------------------------------------------------
 
-    /** The debug switch, off the main thread at the process start ([PinLockRuntime.init]) - Home's boot
-     * dismissal may need it before the first apply. */
-    fun loadSwitch(context: Context) {
+    /**
+     * Off the main thread at the process start ([PinLockRuntime.init]): the debug switch, and (M2) a cover
+     * an earlier process or boot left in the device policy goes off at once - [processStartWrite]:
+     * DISABLED (`setKeyguardDisabled(true)` dismisses a Swipe screen a reboot without `ACTION_SHUTDOWN`
+     * left up), the cover's bits and T out, unless an apply already wrote in this process. The cover
+     * comes back at the first lock resume with the screen on after the first apply (M4).
+     */
+    fun atProcessStart(context: Context) {
+        val app = context.applicationContext
         switchOn = try {
-            KeyguardCoverDebug.enabled(context.applicationContext)
+            KeyguardCoverDebug.enabled(app)
         } catch (e: Exception) {
             false
+        }
+        try {
+            synchronized(this) {
+                if (!processStartWrite(coverWritten(app), configured = inputs != null)) return
+                val (dpm, admin) = owner(app) ?: return
+                // Only a managed phone ever had the cover: B2's camera bit stays.
+                write(app, dpm, admin, "a cover left by an earlier process", KeyguardMode.DISABLED, managed = true)
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The process start's keyguard write failed", e)
         }
     }
 
@@ -108,37 +133,54 @@ object KeyguardCover {
             false
         }
         inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped)
-        return write(app, dpm, admin, "apply").lockMayRun
+        val (wanted, forManaged) = wantedNow()
+        return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
     }
 
-    /** [configure]'s inputs again, on the writer thread: the VoIP edge, the re-arm, the fallback. */
+    /** [configure]'s inputs again, on the writer thread: the VoIP edge, the re-arm, the fallback - never
+     * before the first apply in this process ([rewriteDue], M2: it would write UNTOUCHED from no inputs). */
     private fun rewrite(context: Context, why: String) {
         val app = context.applicationContext
         writer.execute {
             try {
                 val (dpm, admin) = owner(app) ?: return@execute
-                synchronized(this) { write(app, dpm, admin, why) }
+                synchronized(this) {
+                    if (!rewriteDue(configured = inputs != null)) return@synchronized
+                    val (wanted, forManaged) = wantedNow()
+                    write(app, dpm, admin, why, wanted, forManaged)
+                }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Keyguard write ($why) failed", e)
             }
         }
     }
 
-    /** Caller holds the monitor. */
-    private fun write(app: Context, dpm: DevicePolicyManager, admin: ComponentName, why: String, forceOff: Boolean = false): KeyguardWritten {
+    /** The mode for [configure]'s inputs now, and their `managed`; [forceOff] (or a shutdown, M2.4): the
+     * cover never. Monitor held, inputs set. */
+    private fun wantedNow(forceOff: Boolean = false): Pair<KeyguardMode, Boolean> {
         val i = inputs ?: Inputs(managed = false, hasKidPin = false, deviceSecure = false, guardTripped = false)
+        val off = forceOff || shuttingDown
+        val wanted = keyguardMode(
+            i.managed, i.hasKidPin, i.deviceSecure,
+            coverWanted = !off && switchOn && armed,
+            voip = if (off) VoipPhase.NONE else voipSeen,
+            guardTripped = i.guardTripped,
+        )
+        return wanted to i.managed
+    }
+
+    /** Caller holds the monitor. */
+    private fun write(app: Context, dpm: DevicePolicyManager, admin: ComponentName, why: String, wanted: KeyguardMode, managed: Boolean): KeyguardWritten {
         val wasOn = coverOn
-        val wanted = if (forceOff) {
-            keyguardMode(i.managed, i.hasKidPin, i.deviceSecure, coverWanted = false, VoipPhase.NONE, i.guardTripped)
-        } else {
-            keyguardMode(i.managed, i.hasKidPin, i.deviceSecure, coverWanted = switchOn && armed, voipSeen, i.guardTripped)
-        }
-        val written = writeKeyguard(DpmKeyguard(dpm, admin), wanted, i.managed, coverAdded(app), { ScreenTimeout.effectiveMs(app) }) {
-            storeCoverAdded(app, it)
-        }
+        val written = writeKeyguard(
+            DpmKeyguard(dpm, admin), wanted, managed, coverAdded(app), { ScreenTimeout.effectiveMs(app) },
+            storeCoverAdded = { storeCoverAdded(app, it) },
+            storeWritten = { storeWritten(app, it) },
+        )
         coverOn = written.mode == KeyguardMode.COVER
         last = written
-        // Release (the switch never on) logs nothing new.
+        // Release (the switch never on) logs nothing new - except what threw (qa-32-s2-code nit 2).
+        for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)
         if (switchOn || wasOn || coverOn) {
             Log.i(LOG_TAG, "mode=${written.mode} features=${written.features?.let { "0x" + Integer.toHexString(it) }} " +
                 "maxTimeToLock=${written.maxTimeToLockMs} disabled=${written.disabled} ($why${if (switchOn && !armed) ", held off until a lock resume with the screen on" else ""})")
@@ -151,20 +193,27 @@ object KeyguardCover {
     }
 
     /**
-     * M4 / L8: `setKeyguardDisabled(true)` at once while the cover is on - [synchronous] at
-     * `ACTION_SHUTDOWN` (a clean reboot has no keyguard), on the writer thread for the crash guard.
-     * Nothing while the cover is off (release: as before).
+     * M4 / L8: `setKeyguardDisabled(true)` at once while the cover may be in the device policy - in
+     * memory or by the stored flag ([disableNowDue], M2: the crash guard trips in a new process) -
+     * [synchronous] at `ACTION_SHUTDOWN` (a clean reboot has no keyguard; every later write is the cover
+     * off), on the writer thread for the crash guard. Decided under the monitor, so a `configure`
+     * writing the cover finishes first (M2.4). Nothing without a cover (release: as before).
      */
-    fun disableNow(context: Context, why: String, synchronous: Boolean) {
-        if (!coverOn) return
+    fun disableNow(context: Context, why: String, synchronous: Boolean, shutdown: Boolean = false) {
         val app = context.applicationContext
         val run = Runnable {
             try {
-                val (dpm, admin) = owner(app) ?: return@Runnable
                 synchronized(this) {
+                    if (shutdown) shuttingDown = true
+                    if (!disableNowDue(coverOn, coverWritten(app))) return@synchronized
+                    val (dpm, admin) = owner(app) ?: return@synchronized
                     val ok = dpm.setKeyguardDisabled(admin, true)
+                    if (ok) storeWritten(app, false)
                     coverOn = false
                     armed = false
+                    last = (last ?: KeyguardWritten(KeyguardMode.DISABLED, ok)).copy(
+                        mode = KeyguardMode.DISABLED, lockMayRun = ok, coverFailed = null, disabled = true, errors = emptyList(),
+                    )
                     Log.i(LOG_TAG, "disabled now ($why): setKeyguardDisabled(true)=$ok")
                 }
             } catch (e: Exception) {
@@ -181,7 +230,7 @@ object KeyguardCover {
     }
 
     /** M4: `ACTION_SHUTDOWN` ([BootCover]'s receiver, synchronous). */
-    fun onShutdown(context: Context) = disableNow(context, "shutdown", synchronous = true)
+    fun onShutdown(context: Context) = disableNow(context, "shutdown", synchronous = true, shutdown = true)
 
     /**
      * H1: [ScreenTimeout]'s write of `SCREEN_OFF_TIMEOUT` (it stays the only writer of the setting),
@@ -218,7 +267,8 @@ object KeyguardCover {
             Log.i(LOG_TAG, "maxTimeToLock=$t ($why)")
         } else {
             Log.w(LOG_TAG, "maxTimeToLock=$t couldn't be set ($why) - the cover falls back")
-            write(app, dpm, admin, "max time to lock failed", forceOff = true)
+            val (wanted, forManaged) = wantedNow(forceOff = true)
+            write(app, dpm, admin, "max time to lock failed", wanted, forManaged)
         }
     }
 
@@ -241,7 +291,7 @@ object KeyguardCover {
      */
     fun onLockResumed(context: Context, interactive: Boolean) {
         var why: String? = null
-        if (coverRearmDue(heldOff = !armed, interactive = interactive, lockResumed = true, wakePending = wakePending)) {
+        if (!shuttingDown && coverRearmDue(heldOff = !armed, interactive = interactive, lockResumed = true, wakePending = wakePending)) {
             armed = true
             why = "re-armed"
         }
@@ -374,6 +424,9 @@ object KeyguardCover {
 
     // ---- helpers -------------------------------------------------------------------------------------------
 
+    /** The keyguard is locked now (the lock-up's `kg`, qa-32-s2-code L4). */
+    fun keyguardLockedNow(context: Context): Boolean = keyguardLocked(context)
+
     private fun keyguardLocked(context: Context): Boolean = try {
         context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
     } catch (e: Exception) {
@@ -404,6 +457,28 @@ object KeyguardCover {
         prefs(app).edit().putInt(KEY_COVER_ADDED, value).commit()
     } catch (e: Exception) {
         false
+    }
+
+    /** M2: the device policy may hold the cover. Read once, then cached; unreadable = maybe while the
+     * switch is on (release: never a cover, so no). */
+    private const val KEY_COVER_WRITTEN = "cover_written"
+
+    private fun coverWritten(app: Context): Boolean = written ?: try {
+        prefs(app).getBoolean(KEY_COVER_WRITTEN, false)
+    } catch (e: Exception) {
+        switchOn
+    }.also { written = it }
+
+    /** Committed only when it changes - release (never a cover) never writes it. */
+    private fun storeWritten(app: Context, value: Boolean): Boolean {
+        if (coverWritten(app) == value) return true
+        val ok = try {
+            prefs(app).edit().putBoolean(KEY_COVER_WRITTEN, value).commit()
+        } catch (e: Exception) {
+            false
+        }
+        if (ok) written = value
+        return ok
     }
 
     /** The DPM calls - here and nowhere else. */

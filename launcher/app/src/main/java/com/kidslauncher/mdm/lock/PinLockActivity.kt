@@ -204,7 +204,8 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     private fun checkKeyguard() {
-        if (!resumed || !KeyguardCover.switchOn) return
+        // Only while the cover is in force (qa-32-s2-code nit 3): no polling under the fallback or VoIP.
+        if (!resumed || !KeyguardCover.coverOn) return
         if (KeyguardCover.check(this, resumed, drawnSinceResume)) {
             requestDismiss()
             return

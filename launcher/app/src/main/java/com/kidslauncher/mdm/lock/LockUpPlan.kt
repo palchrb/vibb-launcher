@@ -30,17 +30,19 @@ enum class LockUpStart {
  * the top task since the last lock-up (best effort, [lockOnTopAfter]); [callLive]: our call,
  * Telecom's or a VoIP phase other than NONE; [interactive]: the screen is on - a `SCREEN_OFF` that
  * waited in the broadcast queue past the next wake (QA L1) starts no visible Home.
- * [coverOn]: design 32 step 2's keyguard cover is in force (debug switch) - the lock alone, no Home
- * under it: while the cover's keyguard is locked nothing that isn't showWhenLocked can be on screen,
- * so Home's stand-in adds nothing, and its start (a binder call, a transition) before the lock's would
- * only widen the window in which SystemUI's lockscreen shows un-occluded at a quick wake.
+ * [coverLocked]: design 32 step 2's keyguard cover is in force (debug switch) **and** its keyguard is
+ * locked at this sleep (read at the screen-off, qa-32-s2-code L4) - the lock alone, no Home under it:
+ * while the keyguard is locked nothing that isn't showWhenLocked can be on screen, so Home's stand-in
+ * adds nothing, and its start (a binder call, a transition) before the lock's would only widen the
+ * window in which SystemUI's lockscreen shows un-occluded at a quick wake. Not locked (an app's
+ * `KeyguardLock`, T briefly above the setting, a SystemUI restart): step 1's Home, the safe direction.
  */
-fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean, coverOn: Boolean = false): LockUpStart = when {
+fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean, coverLocked: Boolean = false): LockUpStart = when {
     !showLock -> LockUpStart.NONE
     interactive -> LockUpStart.LOCK
     callLive -> LockUpStart.LOCK
     lockOnTop -> LockUpStart.NONE
-    coverOn -> LockUpStart.LOCK
+    coverLocked -> LockUpStart.LOCK
     else -> LockUpStart.HOME_THEN_LOCK
 }
 

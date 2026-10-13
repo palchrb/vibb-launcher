@@ -899,6 +899,13 @@ adb shell dumpsys lock_settings | head -20     # no credential; the lockscreen n
   `held off until a lock resume with the screen on`. So switch it on with the PIN lock on screen and the screen on,
   or lock and wake once after the broadcast. The fallback's re-arm also waits for the next dark screen-off, so the
   dismissal falls back at most once per wake.
+- **A new process takes a leftover cover out** (qa-32-s2-code M2): prefs `keyguard_cover` `cover_written` says the
+  device policy may still hold the cover (an update, a crash, a reboot without `ACTION_SHUTDOWN`). The process start
+  then writes DISABLED at once (log `mode=DISABLED ... (a cover left by an earlier process)`), before any apply; the
+  cover comes back after the first apply at a lock resume with the screen on.
+- **"Stay awake" goes off.** DPMS writes `STAY_ON_WHILE_PLUGGED_IN = 0` whenever a max time to lock is set, and
+  nothing puts it back when T returns to 0. After switching the cover off, `adb shell svc power stayon true` again
+  where a check needs it (§6f, §6j).
 - **What it writes** (`lock/KeyguardCover`, the one writer of `setKeyguardDisabled`, the keyguard features and
   `setMaximumTimeToLock`):
   - the features first, read back (ALL), then T = the screen timeout in force, read back, then
@@ -912,9 +919,10 @@ adb shell dumpsys lock_settings | head -20     # no credential; the lockscreen n
   T first. Log `maxTimeToLock=<T> (<why>)`. Expected side effect: with T set, Settings greys out timeouts longer than
   T. In Release the kid can shorten the timeout but not lengthen it, while the cover is on.
 - **Under the cover, a lock-up starts the lock alone, without Home under it** (`Lock-up at screen-off: LOCK (...,
-  cover=true)`). Only `showWhenLocked` windows can show while the keyguard is locked, so Home's black stand-in adds
-  nothing. Its start ahead of the lock's would only widen the window in which SystemUI's bare lockscreen shows at a
-  quick wake.
+  cover=true, kg=true)`), but only while the keyguard is locked at that screen-off (`kg=`, qa-32-s2-code L4); with
+  `kg=false` it is step 1's `HOME_THEN_LOCK`. Only `showWhenLocked` windows can show while the keyguard is locked, so
+  Home's black stand-in adds nothing. Its start ahead of the lock's would only widen the window in which SystemUI's
+  bare lockscreen shows at a quick wake.
 - **Don't combine with §6e.** A 16d override that clears `LOCK_TASK_FEATURE_KEYGUARD` makes `LockTaskController`
   disable the keyguard in lock task (`setKeyguardState`), which silently turns the cover off (L5). (`LockTaskDebug`
   never clears that bit, but `LOCK_TASK_FEATURE_KEYGUARD` must stay on for this experiment.)
@@ -947,7 +955,9 @@ composer and not WM (2026-10-13). Check suspect frames with a different `-gpu` m
   a wake that cancels the screen-off fade (`SCREEN_OFF` with `interactive=true`, the lock started as a visible launch)
   finds the keyguard locked. The app is then hidden, and at most SystemUI's bare lockscreen shows until the lock
   occludes it. Count the frames with SystemUI's lockscreen (an accepted residual, §12) and fail on any frame of the
-  app. Note `Lock-up at screen-off: LOCK (call=false, interactive=true, cover=true)`.
+  app. Note `Lock-up at screen-off: LOCK (call=false, interactive=true, cover=true, kg=...)`.
+- [ ] (L4) A test app holding a `KeyguardManager.KeyguardLock` (`disableKeyguard()`), a timeout sleep, a quick wake:
+  the log says `kg=false` and `HOME_THEN_LOCK`, and the wake shows no frame of the app.
 - [ ] (e) Mashing, 5 presses: SOS is still reachable.
 - [ ] After the lock's first frame, logcat shows `dismissed` and `dumpsys window` shows the keyguard not showing.
   Then, as today: Recents, a VoIP call screen over the lock (sent only after the dismissal: `the VoIP call screen goes
@@ -957,7 +967,8 @@ composer and not WM (2026-10-13). Check suspect frames with a different `-gpu` m
   (VoIP IN_CALL)`). The call ends while dark: the cover comes back at the next lock resume with the screen on.
 - [ ] A system-dialer call that ends while dark, then wait 3 s and power on: black, then the lock (log `Lock-up while
   dark: LOCK (the re-front check, the keyguard cover)`).
-- [ ] Our call: power off and on during it gives black, the lock, then the call screen (after the dismissal).
+- [ ] Our call: power off and on during it gives black, the lock, then the call screen - at once, not waiting for the
+  dismissal (it is `showWhenLocked`, qa-32-s2-code L5).
 - [ ] 20 wakes with the kiosk on: no "probably Emergency SOS" line, and no lock pause or stop after a dismissal (L9).
 - [ ] After the dismissal: no `LockActivity` start and no lock re-front from the late `USER_PRESENT` (L4). Note
   whether the lock click and the unlock sound play.
@@ -971,18 +982,24 @@ composer and not WM (2026-10-13). Check suspect frames with a different `-gpu` m
 - [ ] Boot via the power menu or `adb shell svc power reboot` (`ACTION_SHUTDOWN`, log `disabled now (shutdown)`): the
   boot animation, then the 16b cover or Home's mark, then the lock, with no SystemUI lockscreen frame. `re-armed`
   follows at the first lock resume with the screen on. `smoke-test.sh REBOOT=1` is green.
-- [ ] Boot via `adb reboot` (no shutdown broadcast): SystemUI's Swipe screen shows until Home dismisses it (`The
-  keyguard cover is up at boot: Home asks for its dismissal`) or the boot's first apply disables it. This is the
-  accepted residual.
-- [ ] A crash-guard trip (a debug crash loop of the lock): `disabled now (crash guard)` at once (L8).
+- [ ] Boot via `adb reboot` (no shutdown broadcast): SystemUI's Swipe screen shows until the new process's start
+  writes DISABLED (`mode=DISABLED ... (a cover left by an earlier process)`), which dismisses it. This is the accepted
+  residual (Home can't dismiss it: it sleeps behind the keyguard, qa-32-s2-code L1).
+- [ ] An update (`adb install -r`) or `adb shell am crash $P` with the cover on: the new process logs the same
+  DISABLED write before its first apply; the cover is `re-armed` at the first lock resume with the screen on after
+  that apply, never `UNTOUCHED` (M2).
+- [ ] A crash-guard trip (a debug crash loop of the lock): `disabled now (crash guard)` at once, in the new process
+  where the guard trips (L8, M2).
 - [ ] The Jelly Star: note the Android version and its SystemUI's lock-after-timeout and notification behaviour. On
   Android 13 (legacy transitions), repeat (b) and (d) carefully.
 
-**The lock started with the screen on** (the double press, all builds, cover on or off; `smoke-test.sh`'s "Double
-press" step automates the first point):
-- [ ] `adb shell input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP` from Home and from an app: SystemUI logs no
-  `VRI[<last part of the package>]` (`debug` for the debug build), so there is no starting window. Frame-step a
-  screenrecord: the old frame stays until the lock's first frame, with no card shrink and no slide.
+**The lock started with the screen on** (the double press, all builds; `smoke-test.sh`'s "Double press" step
+automates the first point):
+- [ ] `adb shell input keyevent KEYCODE_SLEEP KEYCODE_WAKEUP` from an app, until the log says `interactive=true` (the
+  fade really cancelled): the lock comes up. **Known residual without the cover** (design 32 §12, qa-32-s2-code M1):
+  the lock's black splash (SystemUI logs `VRI[<last part of the package>]`, `debug` for the debug build) and Shell's
+  default close of the app the kid was already in (the card). Frame-step a screenrecord: the app, then that close and
+  black, then the lock - and no frame of any *other* app. With the cover on, see (d) above.
 - [ ] The next screen-off after a wake whose ScreenOn backstop re-started the lock on top (`START ... result code=3`,
   `wm_new_intent PinLock`) logs `NONE`, not `HOME_THEN_LOCK`, and there is no `Set visible without transition
   PinLock`.
