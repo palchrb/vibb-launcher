@@ -44,7 +44,7 @@ expected here. With `INSECURE_COOKIES` the session cookie is a plain `handy` (`_
 In the PWA, **before** enrolling the phone:
 1. Devices → New device, then "New code" on its page (shown once, valid 15 minutes).
 2. On the device page: turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
-3. Set a parent PIN (the "Parent PIN" card, 6-10 digits).
+3. Set a Parent PIN (the phone's Lock Screen & PINs page, 6-10 digits).
 
 ## 3. Emulator: fresh start and snapshot
 
@@ -91,9 +91,9 @@ default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android
 Jelly Star and stock GMS phones; adb above stays the fallback.
 
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
-replaces it (set the kid's PIN on the device page, "Screen lock" card; the parent PIN must be set
-first). An Android PIN keeps handy's lock off (no double lock) and the device page says "Remove
-the Android screen lock". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
+replaces it (set the Child PIN on the phone's Lock Screen & PINs page; the Parent PIN must be set
+first). An Android PIN keeps handy's lock off (no double lock) and Lock Screen & PINs says
+"Android's screen lock is still on". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
 Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
 `KEYGUARD_DISABLE_SECURE_CAMERA`) set an Android PIN on purpose, and remove it afterwards.
 
@@ -275,8 +275,8 @@ Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d b
 
 ## 6c. Step 10: handy's own PIN lock and the call screens
 
-Setup: device page -> set a parent PIN ("Parent PIN" card, 6-10 digits), then "Screen lock" ->
-kid's PIN (4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
+Setup: device page -> Lock Screen & PINs -> set the Parent PIN (6-10 digits), then the Child PIN
+(4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
 nudge). The emulator must have no Android screen lock:
 
 ```sh
@@ -318,11 +318,11 @@ while the glance page covers it.
    lock comes back at once; with a bedtime rule active the lock and then the bedtime screen.
 7. **Remote lock**: Locate page -> Lock -> lock shown, screen off, command result "locked (handy
    lock)".
-8. **Migration**: set an Android PIN -> next sync: device page "Remove the Android screen lock",
+8. **Migration**: set an Android PIN -> next sync: Lock Screen & PINs "Android's screen lock is still on",
    our lock off. `adb shell locksettings clear --old <PIN>` -> our lock active within seconds
    (onPasswordChanged), without a sync.
 9. **Crash guard** (debug only): three crashes of the lock screen within 2 minutes (`adb shell am
-   crash $P` right after each screen-on) -> lock off, device page "crashed several times".
+   crash $P` right after each screen-on) -> lock off, Lock Screen & PINs "Lock turned off after crashes".
 10. Screenshots (320x568 dp and 411 dp, nb + en): the lock's window is `FLAG_SECURE` since design 25,
     so `adb exec-out screencap` (and a screen recording) shows it black. Take them with the emulator
     console instead - `adb emu screenrecord screenshot /path/on/the/emulator/host/lock.png` (the file is
@@ -428,7 +428,7 @@ Camera lock follow-ups (qa-11b-code #5, after the fixes of #1-#4):
 - [ ] **Restart while LOCKED**: screen off (LOCKED), `adb reboot` and, separately, `adb shell am crash $P` ->
   after the restart `dumpsys package com.android.camera2 | grep suspended` is true again while the lock shows,
   false after the right PIN.
-- [ ] **Lock switched off while LOCKED**: with the screen off, remove the kid PIN on the device page (sync), or set
+- [ ] **Lock switched off while LOCKED**: with the screen off, remove the Child PIN on Lock Screen & PINs (sync), or set
   an Android PIN (`adb shell locksettings set-pin 1234`) -> the camera is unsuspended without an unlock (logcat
   `CameraLock` "Unlocked: camera apps unsuspended"); `locksettings clear --old 1234` afterwards.
 - [ ] **Sync during the unlock**: save something on the device page (it nudges the phone) and type the PIN right

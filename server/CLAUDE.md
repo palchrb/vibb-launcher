@@ -216,9 +216,9 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 ## Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
 
 - **Migration `0030_kid_lock.sql`**: `device_policy.kid_pin_hash/kid_pin_salt/kid_pin_length` (NULL hash = no lock), `device_status.lock_state_json`.
-- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on the device page's "Screen lock" card (`POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
+- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on Lock Screen & PINs (design 31 step 4; the device page's "Screen lock" card before; `POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
 - **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state`: only `active, inactive, locked, failures, backoff_until_ms, exempt_yields`, `inactive` capped at 64 chars), so no unlock times or PIN material can reach the DB. Capability `pin_lock_v1`.
-- **Device page**: the card shows privacy text (no Android code any more: forensic reading possible, bank/ID apps, no fingerprint, safe mode, don't reuse the PIN, ~100 tries a day), the phone's state, and warnings: launcher without `pin_lock_v1`, safe boot allowed, and every `inactive` but `no_pin` (`android_credential` with the removal runbook, `crash_guard`, `bad_hash`, `keyguard_not_disabled`, `unmanaged`). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The locate page explains what "Lock" does with and without a kid PIN (result "locked (handy lock)" / "locked (Android)").
+- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has the privacy text (calls and emergency calls work, the back-off, never erases, the Parent PIN opens it; nearby people kept out, not forensic reading, some bank/wallet apps), the phone's state as rows and warnings as typed `kid_lock::LockNote`s: launcher without `pin_lock_v1`, safe boot allowed, every `inactive` but `no_pin` (`kid_lock::Inactive`; `android_credential`'s adb removal behind the warning's ⓘ), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The locate page explains what "Lock" does with and without a kid PIN (result "locked (handy lock)" / "locked (Android)").
 - Tests: `src/tests/step10.rs`, `kid_lock::tests`, `security::tests::pin_hash_shared_vector` (same vector as the launcher's `PinHashTest`).
 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`)
@@ -230,18 +230,18 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `HTMLFormElement.prototype.submit` for the auto-saving controls - marked `data-autosave` and
   saved by `static/autosave.js` since design 31, which on a `<select>` changed from the keyboard
   waits for Enter or blur) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
-  redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
+  redirect with a `#fragment` (e.g. `/lock?notice=…#child-pin` with a flash) keeps its anchor instead. A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs nothing else as long as it redirects back to
   its own page. External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
-  "Screen timeout" card on the device page (`POST /devices/{id}/screen-timeout`, 400 for other
-  values), `PolicyResponse.screen_timeout_seconds` always sent (`policy_json_keys_snapshot`). The
+  Lock Screen & PINs › Screen › "Turn off after" (design 31 step 4; `POST /devices/{id}/screen-timeout`, 400 for
+  other values, back to `/devices/{id}/lock`), `PolicyResponse.screen_timeout_seconds` always sent (`policy_json_keys_snapshot`). The
   launcher applies it as device owner (`setSystemSetting(SCREEN_OFF_TIMEOUT)`) and reports the
   value it reads back as `screen_timeout_seconds` (`device_status`, kept only if 1 s..1 day),
-  shown on the card. Handy's PIN lock locks at screen-off, so this is the auto-lock delay.
+  shown ("On the phone now") while it differs from the chosen one. Handy's PIN lock locks at screen-off, so this is the auto-lock delay.
 - **Vibb night wallpaper** (migration `0033`): built-in `vibb_night` (`#0C0C14`, sort 5, so first
   and the default on phones added from now on; no fixed id). Existing phones don't get it
   automatically - their list and shown wallpaper stay as they were.
@@ -805,11 +805,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
 
-- **Its own card and save**: `#parent-pin` on the device page, right after "Screen lock"; `POST /devices/{id}/parent-pin` (`handlers::parent_pin::update_parent_pin`, full auth) takes `new_pin` or `clear_pin`. `update_policy` (the Quick Controls/VPN form) no longer touches the PIN columns. Refused with a notice and nothing written: not 6-10 ASCII digits (`parent_pin_invalid` - silently ignored before), the kid's PIN (`override_is_kid_pin`), removing it while a kid PIN is set (`override_needed_by_lock`, the SQL `CASE` keeps it even against a parallel kid-PIN save). Security events `override_pin_changed`/`_cleared`; nudges the phone, which then takes the new PIN - and a fresh lockout state with it. Every outcome redirects to `?notice=<code>#parent-pin`.
+- **Its own group and save**: `#parent-pin` on Lock Screen & PINs (design 31 step 4; a device page card before); `POST /devices/{id}/parent-pin` (`handlers::parent_pin::update_parent_pin`, full auth) takes `new_pin` or `clear_pin`. `update_policy` (the Quick Controls/VPN form) no longer touches the PIN columns. Refused with a notice and nothing written: not 6-10 ASCII digits (`parent_pin_invalid` - silently ignored before), the kid's PIN (`override_is_kid_pin`), removing it while a kid PIN is set (`override_needed_by_lock`, the SQL `CASE` keeps it even against a parallel kid-PIN save). Security events `override_pin_changed`/`_cleared`; nudges the phone, which then takes the new PIN - and a fresh lockout state with it. Every outcome redirects to `/devices/{id}/lock?notice=<code>#parent-pin`.
 - **Easy PINs are warned about, never refused** (user's answer; no date check): `parent_pin::easy` - all one digit, every step +1 or -1 mod 10 (890123, 1234567890), or `COMMON_PINS`. Saved with `override_pin_easy = 1` and `parent_pin_saved_easy`; the card and the Status card show the warning. PINs stored before the check get it once from a startup task (`parent_pin::run_easy_sweep` with `easy_candidates()`, the 187 PINs `easy` flags: PBKDF2 per candidate, one device at a time, `UPDATE ... WHERE override_pin_hash = ?` so a newer save wins). `override_pin_easy` is not in the policy JSON.
-- **Notices inside their cards**: the `?notice=` codes of the parent PIN render at the top of `#parent-pin` (`parent_pin::flash_text`), the kid lock's at the top of `#screen-lock` (`kid_lock::flash_text`, `(text, warning)`); nothing at the top of the page. "Parent PIN" replaces "unlock code (offline override PIN)" on the device page.
+- **Flashes inside their groups** (design 31 §3.0): the `?notice=` codes of the Parent PIN render in `#parent-pin` (`parent_pin::flash_text`), the Child PIN's in `#child-pin` (`kid_lock::flash_text`, `(text, warning)`), under the group's rows; a refusal opens the form again. Nothing at the top of the page.
 - **The phone's events** (`POST /api/devices/pin-events`, `handlers::parent_pin::pin_events`): read leniently field by field (`parent_pin::clean_event`) - a bad id (not 32 hex) or an unknown `kind`/`entry` is skipped and logged; a time outside 2020..now + 1 day is kept with the received time and `clock_off = 1`; an implausible `until_ms`/`failures`/`level` becomes null. `INSERT OR IGNORE` on `(device_id, event_id)`; only a newly stored `unlocked`/`lockout` also writes `parent_pin_used`/`parent_pin_lockout` to the security log, in the same transaction, its detail built only from the checked enums and numbers and saying when it happened on the phone (`parent_pin::log_line`: `device 3, 2026-10-09 14:02 UTC: ...`, the window's end dated) - the row's own time is its arrival. Wrong tries stay on the device page. **No `command_notify`**: a sync would end the override. Retention: 90 days by `received_at` (`retention::prune`).
-- **Device page**: the card lists the last 10 events ("2026-10-09 14:02 UTC (3 h ago): ..."), or says the launcher doesn't report yet (no `parent_pin_events_v1`). The Status card shows at most two notices from the last 24 h and since the PIN was last saved here (`device_policy.override_pin_set_at_ms`, so a new PIN ends them; `parent_pin::notices`): the latest use (with "Typed where your child could see?" for the time lock and the PIN lock), then a lockout (error) or else the count of wrong tries. The old `offline_override_used` banner shows only without the capability.
+- **PWA**: Lock Screen & PINs › "Recent use" lists the last 10 events as rows (`parent_pin::event_row`: a short title, the details under it, the local time with the exact one in `title`; a lockout red), or says Vibb doesn't report yet (no `parent_pin_events_v1`). The device page's Status card shows at most two notices from the last 24 h and since the PIN was last saved here (`device_policy.override_pin_set_at_ms`, so a new PIN ends them; `parent_pin::notices`, local times): the latest use (with "Typed where your child could see?" for the time lock and the PIN lock, linking to `/lock#parent-pin`), then a lockout (error) or else the count of wrong tries. The old `offline_override_used` flag shows (as a warning on Lock Screen & PINs) only without the capability. The security log keeps its UTC lines (`parent_pin::log_line`).
 - Tests: `parent_pin::tests` (every easy rule, the full 6-digit loop against the candidates, `clean_event`, every line and notice), `src/tests/parent_pin.rs`.
 
 ## Windows that lock again, unseen boots (design 24b, `docs/design/24b-override-relock.md`, migrations `0063_window_relock.sql`, `0064_unseen_boots.sql`, `0067_relock_blocks.sql`)
@@ -838,21 +838,22 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`app_display::valid_package_name`, the launcher's grammar). Cosmetic like the wallpapers: a failing query sends
   `apps: []` (missed calls only on the lock) and logs, never a 500. An older server's missing key reads as Element X,
   sender only on the phone; an older launcher ignores it - deploy order is free.
-- **PWA** (`handlers::lock_glance`, full auth, CSRF as every form): the Apps card's `<h3 id="lock-screen">On the lock
-  screen</h3>` (after the allow list, before "Names and icons"): the explanation, Low 8's warning (names show to anyone
-  holding the phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes
-  show too), the notes (`lock_glance::notes`: no kid PIN, `notification_listener_enabled` false, a reporting launcher
-  without `lock_glance_v1`), the switch (`POST /devices/{id}/lock-screen`, checkbox `show_text`, form
-  `#lock-screen-text`) and one auto-saving tick per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
+- **PWA** (`handlers::lock_glance`, full auth, CSRF as every form; Lock Screen & PINs since design 31 step 4, the
+  Apps card's "On the lock screen" before): the explanation and Low 8's warning (names show to anyone holding the
+  phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes show too) in
+  the Lock screen group's ⓘ, the warnings (typed `lock_glance::Note`: no Child PIN, `notification_listener_enabled`
+  false, a reporting launcher without `lock_glance_v1`), the switch "Show message text" (`POST
+  /devices/{id}/lock-screen`, checkbox `show_text`, form `#lock-screen-text`) and, under "Notifications on the lock
+  screen", one auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
   checkbox `on`, form `#lock-screen-app-<package>`). Listed: with an allowlist the allowed apps (the "Names and
   icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
-  too), never Play core or the launcher; every ticked package outside that list is added - "not allowed - ticked"
-  when the allowlist lacks it, else "not on the phone - ticked" (`lock_glance::unlisted_note`) - so any tick can be
+  too), never Play core or the launcher; every ticked package outside that list is added - "Not allowed"
+  when the allowlist lacks it, else "Not on the phone" (`lock_glance::unlisted_note`) - so any tick can be
   removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
   that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
   `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
-  the lock screen: on"); nudges; redirect to `/devices/{id}` without a fragment (scroll-restore keeps the place). The
-  Launcher card's listener warning and the Screen lock card's text name the lock's first page.
+  the lock screen: on"); nudges; redirect to `/devices/{id}/lock` without a fragment (scroll-restore keeps the place). The
+  Launcher card's listener warning and the Lock screen group's ⓘ name the lock's first page.
 - Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (the migration on an old database, the trigger, the
   cascade, the policy incl. a dropped table, both routes, refusals, the page and its notes), `policy_json_keys_snapshot`
   (`lock_glance` non-null, a fresh phone's `{"apps": ["io.element.android.x"], "show_text": false}`; the launcher's
@@ -1058,6 +1059,33 @@ needed to manage the phone, delete on a schedule, never store notification or me
   rendered forms, the `<details>` confirms, the live code without the code), and the repointed `hardening.rs`,
   `step11.rs`, `step9.rs`, `play.rs`, `sound_mode.rs`, `cleanup.rs` (crash pin), `enrollment.rs`, `edge.rs`,
   `device_api.rs`, `command_receipts.rs`, `window_relock.rs`, `devices_list.rs`, `shell.rs`.
+
+## Lock Screen & PINs (design 31 step 4, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/lock`, `device_pages::view_lock`, `device_lock.html`), reached from a row at the
+  bottom of the device page ("Lock Screen & PINs · PIN on/off"); also for a phone not set up yet (PINs can be set
+  before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN (+ "Recent use"), Screen, Lock screen,
+  Notifications on the lock screen.
+- **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
+  and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
+  `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
+  "Background" are inline `select.pick`s, "Show message text" and each app a switch - all `data-autosave` with a
+  `<noscript>` Save.
+- **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
+  `/lock?notice=…#child-pin`, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`,
+  `lock-wallpaper`, `lock-screen`, `lock-screen/apps` → `/devices/{id}/lock` with **no fragment** (scroll-restore
+  keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off →
+  `/lock#child-pin`; the Status card's links (foreign app, notices, easy PIN) and the no-PIN card point there too.
+- **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
+  `lock_glance::Note` the notes' sentences; `parent_pin::event_row` the PWA's event lines (`event_line`, `until_text`'s
+  same-day form) and `parent_pin::notices` takes the zone. A sub-page warning (`device_pages::Note`) may carry a `fix`
+  (an adb command) shown behind an ⓘ after its sentence (`partials/note_warning.html`), never in the visible text.
+- **Shared builders:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is the
+  device page's and Lock Screen & PINs' (`devices::lock_screen_card` takes it).
+- Tests: `src/tests/device_pages.rs` (the moved forms, the row's value, the groups' order, the confirm, the redirect
+  table, `<noscript>` Saves, a phone not set up, 404), repointed `parent_pin.rs`, `step10.rs`, `lock_glance.rs`,
+  `window_relock.rs`, `device_api.rs` (screen timeout), `wallpapers.rs` (lock background), `devices_list.rs`,
+  `shell.rs`; unit tests in `kid_lock`, `parent_pin` (rows and notices in Oslo time), `lock_glance`, `attention`.
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 

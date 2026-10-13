@@ -638,8 +638,6 @@ struct DeviceDetailTemplate {
     /// grammar doesn't support closures, so `apps.iter().any(|a| a.is_installing)` can't be
     /// written directly there.
     any_app_installing: bool,
-    pin_configured: bool,
-    offline_override_used: bool,
     restrictions_paused: bool,
     vpn_filter_enabled: bool,
     quick_control_wifi: bool,
@@ -669,35 +667,24 @@ struct DeviceDetailTemplate {
     home_columns: i64,
     /// The wallpaper card: every wallpaper, ticked when this phone may use it.
     wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
-    /// The lock shows Home's wallpaper (no lock wallpaper chosen, design 25 "Lock background").
-    lock_same_as_home: bool,
     /// The last status report says the launcher's notification listener has no access, so the
     /// home screen shows no unread badges on apps.
     badges_without_access: bool,
     /// "Time rules" card (handy step 6).
     time: TimeCard,
-    /// "Screen lock" card (handy step 10): the kid's PIN, the phone's lock state, warnings.
-    lock: crate::kid_lock::LockCard,
-    /// One-shot message after a kid-PIN save (`?notice=`, `kid_lock::flash_text`), shown in the
-    /// "Screen lock" card; `true` = a refusal.
-    lock_notice: Option<(&'static str, bool)>,
-    /// "Parent PIN" card (design 24, `#parent-pin`).
+    /// The Lock Screen & PINs row's value (design 31 step 4): "PIN on" with a Child PIN set.
+    lock_value: &'static str,
+    /// The Status card's Parent PIN notices and easy-PIN line (design 24); the PINs themselves
+    /// are on Lock Screen & PINs.
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// "Screen timeout" card (migrations/0032): the choice, every option, and what the phone
-    /// last reported it applied.
-    screen_timeout_seconds: i64,
-    screen_timeout_options: Vec<(i64, &'static str)>,
-    screen_timeout_applied: Option<String>,
     /// Apps card (design 13): `device_policy.app_updates_wifi_only`, and the last report's line
     /// about the phone's network.
     app_updates_wifi_only: bool,
     app_downloads_line: Option<String>,
     /// Apps card (design 14): "Name and icon" for every allowed app with a package name.
     display_forms: Vec<crate::app_display::AppDisplayForm>,
-    /// Apps card (design 25): "On the lock screen" - the text switch, notes and one tick per app.
-    lock_screen: crate::lock_glance::LockScreenCard,
     /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
     music: Option<crate::handlers::music::MusicCard>,
     /// The not-enrolled card's codes (design 22 §3.1); an enrolled phone's are on Advanced.
@@ -793,19 +780,19 @@ async fn app_display_forms(
         .collect()
 }
 
-/// The "On the lock screen" subsection (design 25 §3.3): with an allowlist the allowed apps (the
-/// "Names and icons" set), without one every app the phone reports (QA Low 7: a calls-only phone
-/// with a kid PIN still has the lock), and always every ticked package outside that list, so any
-/// tick can be removed. Never Play core or the launcher itself.
-async fn lock_screen_card(
+/// Lock Screen & PINs' Notifications group (design 25 §3.3; the Apps card's "On the lock screen"
+/// before design 31 step 4): with an allowlist the allowed apps (the "Names and icons" set),
+/// without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN still has
+/// the lock), and always every ticked package outside that list, so any tick can be removed. Never
+/// Play core or the launcher itself.
+pub(crate) async fn lock_screen_card(
     state: &AppState,
     policy: &DevicePolicy,
     latest_status: Option<&DeviceStatus>,
-    apps: &[UnifiedAppRow],
-    installed: &[InstalledApp],
-    allowed: &std::collections::HashSet<String>,
+    rows: &AppRows,
 ) -> crate::lock_glance::LockScreenCard {
     use crate::lock_glance::{self, LockScreenCard};
+    let (apps, installed, allowed) = (&rows.apps, &rows.installed, &rows.allowed);
     // The parsed allowlist, when the phone has one: a ticked package outside the list is "not
     // allowed" only when it isn't in it (code QA Low 6).
     let allowlist: Option<std::collections::BTreeSet<String>> = policy
@@ -1270,50 +1257,24 @@ pub async fn view_device(
     render_device(&state, id, &query, None).await
 }
 
-/// The device page; `entered` = a refused "Name and icon" save (that app's form opens with the
-/// entered values and the error, design 14).
-async fn render_device(
+/// The Apps list a phone's pages build on: one row per app the phone reports and per catalog app
+/// it doesn't have, the launcher first; the parsed allowlist (a corrupt one reads as empty and is
+/// flagged), what the phone reports installed, and its downloads. Lock Screen & PINs lists its
+/// Notifications from the same rows (design 31 step 4).
+pub(crate) struct AppRows {
+    apps: Vec<UnifiedAppRow>,
+    installed: Vec<InstalledApp>,
+    allowed: std::collections::HashSet<String>,
+    allowlist_corrupt: bool,
+    downloads: Option<crate::app_downloads::AppDownloads>,
+}
+
+pub(crate) async fn app_rows(
     state: &AppState,
     id: i64,
-    query: &std::collections::HashMap<String, String>,
-    entered: Option<(String, crate::app_display::Entered)>,
-) -> Response {
-    let state = state.clone();
-    let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-
-    let Some(device) = device else {
-        return (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response();
-    };
-
-    let policy =
-        sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(DevicePolicy {
-                device_id: id,
-                // See the matching comment in device_api::policy - bool::default() is false,
-                // but a never-configured device must still show/default to filtering on.
-                vpn_filter_enabled: true,
-                ..Default::default()
-            });
-
-    let latest_status = sqlx::query_as::<_, DeviceStatus>(
-        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+) -> AppRows {
     // A corrupt stored allowlist is shown as a warning, not silently as "nothing allowed" -
     // `build_policy` answers the phone with a 500 for it.
     let parsed_allowlist = policy
@@ -1329,8 +1290,7 @@ async fn render_device(
         .into_iter()
         .collect();
 
-    let installed: Vec<InstalledApp> = latest_status
-        .as_ref()
+    let installed: Vec<InstalledApp> = latest
         .and_then(|s| s.installed_apps_json.as_deref())
         .and_then(|j| serde_json::from_str(j).ok())
         .unwrap_or_default();
@@ -1369,11 +1329,8 @@ async fn render_device(
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
     // A fresh progress row above still wins for the live percentage - but not over a release the
     // phone refused (security review M10): its reason beats "Install failed".
-    let downloads = crate::app_downloads::parse(
-        latest_status
-            .as_ref()
-            .and_then(|s| s.app_downloads_json.as_deref()),
-    );
+    let downloads =
+        crate::app_downloads::parse(latest.and_then(|s| s.app_downloads_json.as_deref()));
     let download_of = |tracked_app_id: i64| {
         downloads
             .as_ref()
@@ -1482,21 +1439,69 @@ async fn render_device(
         );
     }
 
-    let offline_override_used = latest_status
-        .as_ref()
-        .map(|s| s.offline_override_used)
-        .unwrap_or(false);
+    AppRows {
+        apps,
+        installed,
+        allowed,
+        allowlist_corrupt,
+        downloads,
+    }
+}
+
+/// The device page; `entered` = a refused "Name and icon" save (that app's form opens with the
+/// entered values and the error, design 14).
+async fn render_device(
+    state: &AppState,
+    id: i64,
+    query: &std::collections::HashMap<String, String>,
+    entered: Option<(String, crate::app_display::Entered)>,
+) -> Response {
+    let state = state.clone();
+    let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+
+    let Some(device) = device else {
+        return (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response();
+    };
+
+    let policy =
+        sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(DevicePolicy {
+                device_id: id,
+                // See the matching comment in device_api::policy - bool::default() is false,
+                // but a never-configured device must still show/default to filtering on.
+                vpn_filter_enabled: true,
+                ..Default::default()
+            });
+
+    let latest_status = sqlx::query_as::<_, DeviceStatus>(
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let AppRows {
+        apps,
+        allowed,
+        allowlist_corrupt,
+        downloads,
+        ..
+    } = app_rows(&state, id, &policy, latest_status.as_ref()).await;
+
     let any_app_installing = apps.iter().any(|a| a.is_installing);
     let display_forms = app_display_forms(&state, id, &apps, entered.as_ref()).await;
-    let lock_screen = lock_screen_card(
-        &state,
-        &policy,
-        latest_status.as_ref(),
-        &apps,
-        &installed,
-        &allowed,
-    )
-    .await;
     let app_downloads_line = downloads
         .as_ref()
         .and_then(crate::app_downloads::network_line);
@@ -1546,31 +1551,18 @@ async fn render_device(
         };
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
-    let lock = {
-        let capable = latest_status
-            .as_ref()
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| {
-                caps.contains(&format!("\"{}\"", crate::kid_lock::PIN_LOCK_CAPABILITY))
-            });
-        let lock_state = crate::kid_lock::parse_lock_state(
-            latest_status
-                .as_ref()
-                .and_then(|s| s.lock_state_json.as_deref()),
-        );
-        crate::kid_lock::lock_card(
-            &policy,
-            lock_state.as_ref(),
-            capable,
-            latest_status.is_some(),
-            chrono::Utc::now().timestamp_millis(),
-        )
-    };
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
     let notice = query.get("notice").map(String::as_str);
-    let lock_notice = notice.and_then(crate::kid_lock::flash_text);
-    let parent_pin =
-        crate::handlers::parent_pin::card(&state.db, &policy, latest_status.as_ref(), notice).await;
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let parent_pin = crate::handlers::parent_pin::card(
+        &state.db,
+        &policy,
+        latest_status.as_ref(),
+        None,
+        &zone,
+        chrono::Utc::now(),
+    )
+    .await;
     let relock = crate::handlers::window_relock::card(
         &state.db,
         id,
@@ -1587,7 +1579,6 @@ async fn render_device(
             tracing::error!(device_id = id, %err, "couldn't load the wallpaper card");
             Vec::new()
         });
-    let lock_same_as_home = !wallpapers.iter().any(|w| w.lock);
 
     let music = crate::handlers::music::device_card(
         &state,
@@ -1617,7 +1608,6 @@ async fn render_device(
         ),
     );
 
-    let zone = crate::display_time::Zone::load(&state.db).await;
     Html(
         DeviceDetailTemplate {
             attention,
@@ -1637,20 +1627,14 @@ async fn render_device(
             app_updates_wifi_only: policy.app_updates_wifi_only,
             app_downloads_line,
             display_forms,
-            lock_screen,
             time,
-            lock,
-            lock_notice,
+            lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_some() {
+                "PIN on"
+            } else {
+                "PIN off"
+            },
             parent_pin,
             relock,
-            screen_timeout_seconds: crate::models::screen_timeout_seconds(
-                policy.screen_timeout_seconds,
-            ),
-            screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
-            screen_timeout_applied: latest_status
-                .as_ref()
-                .and_then(|s| s.screen_timeout_seconds)
-                .map(crate::models::screen_timeout_label),
             title: device.name.clone(),
             calls_summary,
             call_warnings,
@@ -1661,13 +1645,10 @@ async fn render_device(
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
             wallpapers,
-            lock_same_as_home,
             badges_without_access: latest_status
                 .as_ref()
                 .is_some_and(|s| s.notification_listener_enabled == Some(false)),
             any_app_installing,
-            pin_configured: policy.override_pin_hash.is_some(),
-            offline_override_used,
             restrictions_paused,
             vpn_filter_enabled: policy.vpn_filter_enabled,
             quick_control_wifi: policy.quick_controls_mask & QUICK_CONTROL_WIFI != 0,
@@ -2092,12 +2073,13 @@ pub async fn update_policy(
     Redirect::to(&format!("/devices/{id}"))
 }
 
-/// The "Screen lock" card (handy step 10): set or remove the kid's PIN for handy's own lock
-/// screen. A PIN must be 4-6 digits, needs an override PIN (the lock's parent code) and must not
+/// Lock Screen & PINs' Child PIN (handy step 10; design 31 step 4): set or remove the kid's PIN
+/// for handy's own lock screen. A PIN must be 4-6 digits, needs an override PIN (the lock's parent code) and must not
 /// be the override PIN (`kid_lock::decide_kid_pin`); a refused save writes nothing and says why.
 /// The first PIN also blocks safe mode (decision after QA review: safe mode skips our lock) -
 /// the parent can switch that off again in Advanced › Restrictions. 404 for an unknown device, 500 on
-/// a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges the phone.
+/// a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges the phone. Every
+/// outcome redirects to `/devices/{id}/lock?notice=<code>#child-pin` (the flash in its group).
 pub async fn update_kid_lock(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2122,7 +2104,7 @@ pub async fn update_kid_lock(
             }
         };
     let back = |code: &str| {
-        Redirect::to(&format!("/devices/{id}?notice={code}#screen-lock")).into_response()
+        Redirect::to(&format!("/devices/{id}/lock?notice={code}#child-pin")).into_response()
     };
 
     let (result, event, code) = if form.contains_key("clear_kid_pin") {
@@ -2319,8 +2301,9 @@ pub async fn update_launcher_ui(
     }
 }
 
-/// The "Screen timeout" card (migrations/0032): one auto-submitting select. Only a value from
-/// `SCREEN_TIMEOUTS` is accepted; anything else is a 400 and nothing is written.
+/// Lock Screen & PINs' "Turn off after" (migrations/0032; design 31 step 4): one auto-saving
+/// select. Only a value from `SCREEN_TIMEOUTS` is accepted; anything else is a 400 and nothing is
+/// written. Back to `/devices/{id}/lock` without a fragment (scroll-restore keeps the place).
 pub async fn update_screen_timeout(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2351,7 +2334,7 @@ pub async fn update_screen_timeout(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}/lock")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the screen timeout");

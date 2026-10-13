@@ -1,7 +1,7 @@
-//! The device page's "On the lock screen" subsection (design 25 §3.3, `crate::lock_glance`): the
-//! "Show the message text" switch and one tick per app. Both are auto-saving forms behind full
-//! admin auth (and the admin listener's CSRF check, as every form); each change is in the security
-//! log, nudges the phone and goes back to `/devices/{id}` without a fragment, so
+//! Lock Screen & PINs' "Show message text" switch and its Notifications group (design 25 §3.3,
+//! `crate::lock_glance`; design 31 step 4): one tick per app. Both are auto-saving forms behind
+//! full admin auth (and the admin listener's CSRF check, as every form); each change is in the
+//! security log, nudges the phone and goes back to `/devices/{id}/lock` without a fragment, so
 //! `scroll-restore.js` keeps the parent's place in a long app list (never a jump to the top).
 
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use crate::security::{self, CurrentAdmin};
 
 fn saved(state: &AppState, id: i64) -> Response {
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}")).into_response()
+    Redirect::to(&format!("/devices/{id}/lock")).into_response()
 }
 
 fn failed() -> Response {

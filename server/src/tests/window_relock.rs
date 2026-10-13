@@ -684,7 +684,11 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         "{card}"
     );
     assert!(card.contains("Pause restrictions for 2 hours"), "{card}");
-    assert!(card.contains("<a href=\"#parent-pin\">Change the parent PIN</a>"));
+    // The link goes to the Parent PIN on Lock Screen & PINs (design 31 step 4).
+    assert!(card.contains(&format!(
+        "<a href=\"{}#parent-pin\">Change the Parent PIN</a>",
+        super::device_page(id, super::Section::Lock)
+    )));
     // Logged once when it appears, not again while it stays.
     post_status(
         &app,

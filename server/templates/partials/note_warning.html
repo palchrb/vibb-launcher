@@ -1,5 +1,12 @@
 {#- A sub-page warning (design 31 §4.2): a bold title and its one sentence, orange, above the group
-    it belongs to (`device_pages::Note`, as `note`). -#}
+    it belongs to (`device_pages::Note`, as `note`); an expert fix (an adb command) behind an ⓘ
+    after the sentence. -#}
 <div class="attention attention-action" data-warning>
-    <span class="attention-text">{{ note.title }}{% if let Some(detail) = note.detail %}<span class="attention-sub">{{ detail }}</span>{% endif %}</span>
+    <div class="attention-text">{{ note.title }}{% if let Some(detail) = note.detail %}<div class="attention-sub">{{ detail }}
+        {%- if let Some(fix) = note.fix %}
+        <details class="info">
+            <summary aria-label="How to fix it"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>{{ fix }}</p></div>
+        </details>
+        {%- endif %}</div>{% endif %}</div>
 </div>

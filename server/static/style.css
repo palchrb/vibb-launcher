@@ -1800,3 +1800,66 @@ code.key {
         color: CanvasText;
     }
 }
+
+/* ---- Lock Screen & PINs (design 31 step 4) ---- */
+
+/* A row that opens its form under it (Child PIN, Parent PIN): a PIN is typed and saved, not
+   toggled, so it gets a field and a Save button instead of a picker. */
+details.edit > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+details.edit > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.edit > summary .chev {
+    transition: transform 0.2s;
+}
+
+details.edit[open] > summary .chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+
+.edit-body {
+    padding: 4px 16px 16px;
+}
+
+.edit-body .checkbox-row {
+    margin: 0 4px 16px;
+}
+
+.field-hint {
+    margin: -10px 4px 16px;
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    line-height: 1.35;
+}
+
+.edit-body > .field-hint:first-child {
+    margin-top: 0;
+}
+
+/* A warning's expert fix (an adb command): its ⓘ follows the sentence, the panel opens under it. */
+.attention-sub details.info {
+    display: inline;
+}
+
+.attention-sub details.info > summary:not(.row) {
+    min-width: 44px;
+    min-height: 44px;
+    margin: -12px -10px;
+    color: inherit;
+}
+
+.attention-sub .info-icon {
+    color: inherit;
+}
+
+.attention-sub .info-panel {
+    margin: 8px 0 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}

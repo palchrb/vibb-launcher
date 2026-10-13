@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Lock Screen &amp; PINs</h1>
+
+    {#- Child PIN: the row opens the change form (a Save button: a PIN is typed, not toggled);
+        Remove is a confirm (M6); the flash sits in the group, its id is the redirect's anchor. -#}
+    <section id="child-pin" aria-labelledby="child-pin-title">
+        <h2 class="group-header" id="child-pin-title">Child PIN</h2>
+        {% for note in child_warnings %}
+        {% include "partials/note_warning.html" %}
+        {% endfor %}
+        <div class="group">
+            <details class="edit cell"{% if child_open %} open{% endif %}>
+                <summary class="row">
+                    <span class="row-label">Child PIN</span>
+                    <span class="row-value" data-value="child-pin">{% if child.pin_set %}On · {{ child.pin_length }} digits{% else %}Off{% endif %}</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <form method="post" action="/devices/{{ device.id }}/kid-lock" class="edit-body">
+                    {% if !parent.pin_set %}
+                    <p class="field-hint">Set a Parent PIN first: it opens the lock if the Child PIN is forgotten.</p>
+                    {% endif %}
+                    <label class="field-label" for="new_kid_pin">{% if child.pin_set %}New Child PIN{% else %}Child PIN{% endif %}</label>
+                    <input type="text" id="new_kid_pin" name="new_kid_pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off" required aria-describedby="new_kid_pin-hint">
+                    <p class="field-hint" id="new_kid_pin-hint">4 to 6 digits; 4 is easiest for a child.</p>
+                    <button type="submit" class="button-wide">Save Child PIN</button>
+                </form>
+            </details>
+            {% for note in child_rows %}
+            {% include "partials/note_row.html" %}
+            {% endfor %}
+            {% if child.pin_set %}
+            <details class="confirm cell">
+                <summary class="row">Remove Child PIN&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/kid-lock" class="confirm-body">
+                    <input type="hidden" name="clear_kid_pin" value="on">
+                    <p>Remove {{ device.name }}'s Child PIN? The phone then opens without a code.</p>
+                    <button type="submit" class="button-destructive">Remove Child PIN</button>
+                </form>
+            </details>
+            {% endif %}
+            {% if let Some((text, refused)) = child_flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="child-pin">{{ text }}</p>
+            {% endif %}
+        </div>
+        <div class="group-footer">Locks the phone when the screen turns off.
+            <details class="info">
+                <summary aria-label="About the Child PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Calls from allowed contacts and emergency calls work while locked. After 5 wrong PINs the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries. It never erases itself. Your Parent PIN ("Parent code" on the lock) always opens it.</p>
+                    <p>This lock keeps people nearby out. It does not protect the phone's data from a thief with forensic tools, and some bank or wallet apps won't work.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="parent-pin" aria-labelledby="parent-pin-title">
+        <h2 class="group-header" id="parent-pin-title">Parent PIN</h2>
+        {% if no_parent_pin %}
+        <div class="attention attention-alarm" data-warning="no-parent-pin">
+            <span class="attention-text">No Parent PIN set<span class="attention-sub">Without one, nothing can be opened or lifted on the phone itself. If this server is lost, only a reset gets the phone back.</span></span>
+        </div>
+        {% endif %}
+        {% if parent.easy %}
+        <div class="attention attention-alarm" data-warning="easy-parent-pin">
+            <span class="attention-text">Parent PIN easy to guess<span class="attention-sub">It is all one digit, a run like 123456, or a common PIN. A child who guesses it can lift every restriction.</span></span>
+        </div>
+        {% endif %}
+        {% if offline_override_used && !parent.capable %}
+        <div class="attention attention-action" data-warning="override-used">
+            <span class="attention-text">Parent PIN used offline<span class="attention-sub">The time lock was lifted with it since the phone's last check-in.</span></span>
+        </div>
+        {% endif %}
+        <div class="group">
+            <details class="edit cell"{% if parent_open %} open{% endif %}>
+                <summary class="row">
+                    <span class="row-label">Parent PIN</span>
+                    <span class="row-value" data-value="parent-pin">{% if parent.pin_set %}Set{% else %}Not set{% endif %}</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <form method="post" action="/devices/{{ device.id }}/parent-pin" class="edit-body">
+                    <label class="field-label" for="new_pin">New Parent PIN</label>
+                    <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password" aria-describedby="new_pin-hint">
+                    <p class="field-hint" id="new_pin-hint">6 to 10 digits, not the Child PIN. 8 or more are much harder to crack; birthdays and years are easy to guess.</p>
+                    {% if parent.pin_set %}
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="clear_pin" value="on">
+                        <span>Remove it instead{% if child.pin_set %} (not while a Child PIN is set){% endif %}</span>
+                    </label>
+                    {% endif %}
+                    <button type="submit" class="button-wide">Save Parent PIN</button>
+                </form>
+            </details>
+            {% if let Some((text, warning)) = parent.notice %}
+            <p class="flash{% if warning %} flash-error{% endif %}" role="status" data-flash="parent-pin">{{ text }}</p>
+            {% endif %}
+        </div>
+        <div class="group-footer">Opens the phone's settings and lifts limits, even offline.
+            <details class="info">
+                <summary aria-label="About the Parent PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>It opens Vibb's Settings on the phone (and there, a pause and Play install mode) and the lock's "Parent code". On a time lock, "Enter unlock code" lifts the time rules and app limits for up to two hours. Calls and Restrictions stay.</p>
+                    <p>After 5 wrong tries it waits 15 minutes, then longer each time, up to a day. Saving a new PIN here ends the wait once the phone checks in.</p>
+                    <p>Typed it where your child could see? Change it here.</p>
+                </div>
+            </details>
+        </div>
+
+        <h3 class="group-header">Recent use</h3>
+        <div class="group" data-group="pin-events">
+            {% for e in parent.events %}
+            <div class="row" data-event>
+                <span class="row-label"><span{% if e.alarm %} class="text-alarm"{% endif %}>{{ e.title }}</span>{% if let Some(sub) = e.sub %}<span class="row-sub">{{ sub }}</span>{% endif %}</span>
+                <span class="row-value" title="{{ e.exact }}">{{ e.when }}</span>
+            </div>
+            {% else %}
+            <p class="row row-note">{% if parent.capable %}None reported yet.{% else %}Vibb on this phone doesn't report this yet.{% endif %}</p>
+            {% endfor %}
+        </div>
+    </section>
+
+    {#- The pickers save on change (autosave.js) and return here without a fragment, so
+        scroll-restore.js keeps the place; <noscript> Save without JS. -#}
+    <section id="screen" aria-labelledby="screen-title">
+        <h2 class="group-header" id="screen-title">Screen</h2>
+        <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="group">
+            <label class="row">
+                <span class="row-label">Turn off after</span>
+                <select class="pick" name="screen_timeout_seconds" data-autosave>
+                    {% for (seconds, label) in screen_timeout_options %}
+                    <option value="{{ seconds }}"{% if *seconds == screen_timeout_seconds %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            {% if let Some(applied) = screen_timeout_applied %}
+            <div class="row" data-row="timeout-applied">
+                <span class="row-label">On the phone now</span>
+                <span class="row-value">{{ applied }}</span>
+            </div>
+            {% endif %}
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <p class="group-footer">With a Child PIN, the phone locks when the screen turns off.</p>
+    </section>
+
+    <section id="lock-screen" aria-labelledby="lock-screen-title">
+        <h2 class="group-header" id="lock-screen-title">Lock screen</h2>
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/lock-wallpaper" class="cell" id="lock-wallpaper">
+                <label class="row">
+                    <span class="row-label">Background</span>
+                    <select class="pick" name="wallpaper" data-autosave>
+                        <option value=""{% if background_same_as_home %} selected{% endif %}>Same as Home</option>
+                        {% for w in backgrounds %}
+                        <option value="{{ w.id }}"{% if w.lock %} selected{% endif %}>{{ w.label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save Background</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ device.id }}/lock-screen" class="cell" id="lock-screen-text">
+                <label class="row">
+                    <span class="row-label">Show message text</span>
+                    <input type="checkbox" role="switch" class="sw" name="show_text" value="on"{% if lock_screen.show_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+        </div>
+        <div class="group-footer">Anyone holding the phone can read the message text.
+            <details class="info">
+                <summary aria-label="About the lock screen"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>The lock's first page shows the clock, what's playing and the newest notifications. Tapping one asks for the Child PIN, then opens it. Nothing can be answered or dismissed there, and it can't be screenshotted.</p>
+                    <p>Who wrote always shows, missed calls by their name in the contacts. With the text on, a ticked SMS app's login codes show too.</p>
+                    <p>The background picks from the wallpapers this phone has. A photo shows to anyone holding it.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="notifications" aria-labelledby="notifications-title">
+        <h2 class="group-header" id="notifications-title">Notifications on the lock screen</h2>
+        {% for note in lock_screen_warnings %}
+        {% include "partials/note_warning.html" %}
+        {% endfor %}
+        <div class="group">
+            {% if lock_screen.unreadable %}
+            <p class="row text-alarm" data-row="lock-screen-unreadable">The apps couldn't be read. Check the server log.</p>
+            {% else %}
+            {% for app in lock_screen.apps %}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" class="cell" id="lock-screen-app-{{ app.package_name }}">
+                <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                <label class="row">
+                    <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ note }}</span>{% endif %}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if app.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% else %}
+            <p class="row row-note" data-row="lock-screen-empty">{{ lock_screen.empty_text }}</p>
+            {% endfor %}
+            {% endif %}
+        </div>
+        <p class="group-footer">Missed calls always show.</p>
+    </section>
+</main>
+</body>
+</html>

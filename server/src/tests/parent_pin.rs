@@ -1,10 +1,10 @@
-//! Design 24: the parent PIN's own card and save (`/devices/{id}/parent-pin`), the easy-PIN
-//! warning and its sweep, and the notices inside their cards.
+//! Design 24: the parent PIN's save (`/devices/{id}/parent-pin`), the easy-PIN warning and its
+//! sweep, and the flashes inside their groups - on Lock Screen & PINs since design 31 step 4.
 
 use axum::http::{Method, StatusCode};
 use serde_json::Value;
 
-use super::TestApp;
+use super::{Section, TestApp, device_page};
 
 async fn policy(app: &TestApp, token: &str) -> Value {
     let res = app
@@ -72,7 +72,7 @@ async fn a_pin_is_saved_hashed_and_sent_with_a_nudge() {
         .await;
     super::assert_redirect(
         &res,
-        &format!("/devices/{id}?notice=parent_pin_saved"),
+        &format!("{}?notice=parent_pin_saved", device_page(id, Section::Lock)),
         Some("parent-pin"),
     );
     let row = stored(&app, id).await;
@@ -101,20 +101,27 @@ async fn an_easy_pin_is_saved_with_a_warning() {
         assert!(verifies(&row, pin), "{pin}");
         assert_eq!(row.2, Some(true), "{pin}");
     }
-    let html = app.get_page(&device_page(id), &cookie).await.text();
-    assert!(html.contains("This parent PIN is easy to guess"), "{html}");
-    // The status card links to the card.
-    assert!(html.contains("The parent PIN is easy to guess."), "{html}");
+    let lock = device_page(id, Section::Lock);
+    let html = app.get_page(&lock, &cookie).await.text();
+    assert!(html.contains("data-warning=\"easy-parent-pin\""), "{html}");
+    assert!(html.contains("Parent PIN easy to guess"), "{html}");
+    // The device page's Status card links to it.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(
+        summary.contains(&format!(
+            "The Parent PIN is easy to guess. <a href=\"{lock}#parent-pin\">"
+        )),
+        "{summary}"
+    );
 
     // A good PIN clears the warning.
     save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
     assert_eq!(stored(&app, id).await.2, Some(false));
-    let html = app.get_page(&device_page(id), &cookie).await.text();
-    assert!(!html.contains("easy to guess (all one digit"), "{html}");
-}
-
-fn device_page(id: i64) -> String {
-    format!("/devices/{id}")
+    let html = app.get_page(&lock, &cookie).await.text();
+    assert!(!html.contains("easy-parent-pin"), "{html}");
 }
 
 #[tokio::test]
@@ -285,17 +292,19 @@ async fn the_sweep_flags_an_easy_stored_pin_once() {
     assert_eq!(stored(&app, easy_id).await.2, Some(false));
 }
 
+/// The flashes show inside their groups on Lock Screen & PINs (§3.0), once, and never an unknown
+/// code.
 #[tokio::test]
-async fn notices_render_inside_their_cards() {
+async fn flashes_render_inside_their_groups() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
-    let page = |code: &str| format!("/devices/{id}?notice={code}");
-    let card = |html: &str, card_id: &str| -> String {
+    let page = |code: &str| format!("{}?notice={code}", device_page(id, Section::Lock));
+    let group = |html: &str, id: &str| -> String {
         let start = html
-            .find(&format!("id=\"{card_id}\""))
-            .unwrap_or_else(|| panic!("no #{card_id}"));
-        let end = html[start..].find("</form>\n").unwrap() + start;
+            .find(&format!("<section id=\"{id}\""))
+            .unwrap_or_else(|| panic!("no #{id}"));
+        let end = html[start..].find("</section>").unwrap() + start;
         html[start..end].to_string()
     };
 
@@ -304,28 +313,43 @@ async fn notices_render_inside_their_cards() {
         .await
         .text();
     let text = "Parent PIN not changed: it must be 6 to 10 digits.";
-    assert!(card(&html, "parent-pin").contains(text), "{html}");
+    assert!(group(&html, "parent-pin").contains(text), "{html}");
     assert_eq!(html.matches(text).count(), 1);
+    // A refusal opens the form again.
+    assert!(group(&html, "parent-pin").contains("<details class=\"edit cell\" open>"));
 
     let html = app
         .get_page(&page("parent_pin_saved"), &cookie)
         .await
         .text();
-    assert!(card(&html, "parent-pin").contains("<div class=\"success\">Parent PIN saved."));
+    assert!(group(&html, "parent-pin").contains(
+        "<p class=\"flash\" role=\"status\" data-flash=\"parent-pin\">Parent PIN saved."
+    ));
+    assert!(!group(&html, "parent-pin").contains("<details class=\"edit cell\" open>"));
 
     let html = app.get_page(&page("needs_override"), &cookie).await.text();
-    let text = "Not saved: set a parent PIN first.";
-    assert!(card(&html, "screen-lock").contains(text), "{html}");
+    let text = "Not saved: set a Parent PIN first.";
+    assert!(group(&html, "child-pin").contains(text), "{html}");
     assert_eq!(html.matches(text).count(), 1);
-    assert!(!card(&html, "parent-pin").contains(text));
+    assert!(!group(&html, "parent-pin").contains(text));
+    assert!(group(&html, "child-pin").contains("flash flash-error"));
 
     // Unknown codes show nothing.
     let html = app.get_page(&page("bogus"), &cookie).await.text();
-    for card_id in ["parent-pin", "screen-lock"] {
-        let inside = card(&html, card_id);
-        assert!(!inside.contains("class=\"success\""), "{inside}");
-        assert!(!inside.contains("bogus"), "{inside}");
-    }
+    assert!(!html.contains("class=\"flash"), "{html}");
+    assert!(!html.contains("bogus"), "{html}");
+    // The device page shows no PIN flash any more.
+    let summary = app
+        .get_page(
+            &format!(
+                "{}?notice=parent_pin_saved",
+                device_page(id, Section::Summary)
+            ),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(!summary.contains("Parent PIN saved"), "{summary}");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -538,73 +562,106 @@ async fn bad_events_are_skipped_or_cleaned_and_bad_bodies_refused() {
     );
 }
 
+/// Lock Screen & PINs lists what the phone reported ("Recent use", local times); the device page's
+/// Status card has the notices, which link there.
 #[tokio::test]
-async fn the_card_lists_events_and_the_status_card_has_notices() {
+async fn the_group_lists_events_and_the_status_card_has_notices() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let page = || async {
-        app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text()
+    let lock = device_page(id, Section::Lock);
+    let page = |path: String| {
+        let app = &app;
+        let cookie = &cookie;
+        async move { app.get_page(&path, cookie).await.text() }
+    };
+    let events_group = |html: &str| -> String {
+        let start = html.find("data-group=\"pin-events\"").unwrap();
+        let end = html[start..].find("</section>").unwrap() + start;
+        html[start..end].to_string()
     };
 
-    // An older launcher: no list, the old banner instead.
+    // An older launcher: no list, the old flag instead.
     post_status_caps(&app, &token, &["pin_lock_v1"], true).await;
-    let html = page().await;
-    assert!(html.contains("doesn't report parent-PIN use yet"), "{html}");
-    assert!(html.contains("The offline override was used"), "{html}");
+    let html = page(lock.clone()).await;
+    assert!(
+        events_group(&html).contains("Vibb on this phone doesn't report this yet."),
+        "{html}"
+    );
+    assert!(html.contains("data-warning=\"override-used\""), "{html}");
 
-    // A new one: the list (empty first), no old banner.
+    // A new one: the list (empty first), no old flag.
     post_status_caps(&app, &token, &["pin_lock_v1", "parent_pin_events_v1"], true).await;
-    let html = page().await;
-    assert!(html.contains("hasn't reported any use"), "{html}");
-    assert!(!html.contains("The offline override was used"), "{html}");
+    let html = page(lock.clone()).await;
+    assert!(events_group(&html).contains("None reported yet."), "{html}");
+    assert!(!html.contains("override-used"), "{html}");
 
+    // Minutes ago, so "N min ago" whatever the local time of day.
     let now = chrono::Utc::now().timestamp_millis();
     let body = serde_json::json!({ "events": [
-        event(&hex_id(1), "wrong", "override", now - 3 * 3_600_000, serde_json::json!({ "failures": 1 })),
-        event(&hex_id(2), "unlocked", "settings", now - 2 * 3_600_000, serde_json::json!({})),
-        event(&hex_id(3), "unlocked", "pin_lock", now - 3_600_000, serde_json::json!({})),
+        event(&hex_id(1), "wrong", "override", now - 30 * 60_000, serde_json::json!({ "failures": 1 })),
+        event(&hex_id(2), "unlocked", "settings", now - 20 * 60_000, serde_json::json!({})),
+        event(&hex_id(3), "unlocked", "pin_lock", now - 10 * 60_000, serde_json::json!({})),
     ]})
     .to_string();
     assert_eq!(
         post_events(&app, &token, &body).await,
         StatusCode::NO_CONTENT
     );
-    let html = page().await;
+    let html = page(lock.clone()).await;
+    let group = events_group(&html);
+    // Newest first, local times with the exact one in `title`, never UTC.
+    let opened = group.find("Lock screen opened").expect("the use");
+    let settings = group
+        .find("Vibb&#39;s Settings opened")
+        .expect("the other use");
+    let wrong = group.find("Wrong Parent PIN").expect("the wrong try");
+    assert!(opened < settings && settings < wrong, "{group}");
     assert!(
-        html.contains("(1 h ago): Lock screen opened with the parent code."),
-        "{html}"
+        group.contains("<span class=\"row-sub\">On the time-lock screen · 1 in a row</span>"),
+        "{group}"
+    );
+    assert_eq!(group.matches("data-event").count(), 3);
+    assert!(!group.contains("UTC"), "{group}");
+
+    // The Status card: the latest use with the watched-typing tail, and the wrong try.
+    let summary = page(device_page(id, Section::Summary)).await;
+    assert!(
+        summary.contains(
+            "The Parent PIN was used on the phone 10 min ago: Lock screen opened. 1 more in the \
+             last 24 hours."
+        ),
+        "{summary}"
     );
     assert!(
-        html.contains("(2 h ago): The launcher&#39;s Settings opened."),
-        "{html}"
+        summary.contains(&format!(
+            "Typed where your child could see? <a href=\"{lock}#parent-pin\">"
+        )),
+        "{summary}"
     );
     assert!(
-        html.contains("Wrong parent PIN on the time-lock screen (1 in a row)."),
-        "{html}"
-    );
-    // The status card: the latest use with the watched-typing tail, and the wrong try.
-    assert!(html.contains("The parent PIN was used on the phone 1 h ago: Lock screen opened with the parent code. (1 more in the last 24 hours - see Parent PIN)"), "{html}");
-    assert!(html.contains("Typed where your child could see?"), "{html}");
-    assert!(
-        html.contains("1 wrong parent PIN was typed on the phone in the last 24 hours."),
-        "{html}"
+        summary.contains("1 wrong Parent PIN was typed on the phone in the last 24 hours."),
+        "{summary}"
     );
 
-    // A lockout replaces the wrong-try notice.
+    // A lockout replaces the wrong-try notice, and is red in the list.
     let body =
         serde_json::json!({ "events": [ event(&hex_id(4), "lockout", "override", now - 60_000,
         serde_json::json!({ "level": 1, "until_ms": now + 14 * 60_000 })) ] })
         .to_string();
     post_events(&app, &token, &body).await;
-    let html = page().await;
+    let summary = page(device_page(id, Section::Summary)).await;
     assert!(
-        html.contains("The parent PIN was locked on the phone after repeated wrong tries"),
-        "{html}"
+        summary.contains("The Parent PIN was locked on the phone after repeated wrong tries"),
+        "{summary}"
     );
-    assert!(!html.contains("wrong parent PIN was typed"), "{html}");
+    assert!(!summary.contains("wrong Parent PIN was typed"), "{summary}");
+    let group = events_group(&page(lock).await);
+    assert!(
+        group.contains("<span class=\"text-alarm\">Parent PIN locked</span>"),
+        "{group}"
+    );
+    assert!(group.contains("Locked for 15 minutes, until "), "{group}");
 }
 
 async fn post_status_caps(app: &TestApp, token: &str, caps: &[&str], override_used: bool) {
@@ -645,7 +702,7 @@ async fn old_events_are_pruned_after_90_days() {
 }
 
 /// qa-24-code Low 4: once the parent saved a new PIN, the Status card stops telling them to - the
-/// card's list keeps every event.
+/// list on Lock Screen & PINs keeps every event.
 #[tokio::test]
 async fn a_new_pin_ends_the_notices_but_not_the_list() {
     let app = TestApp::new().await;
@@ -663,19 +720,19 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
         post_events(&app, &token, &body).await,
         StatusCode::NO_CONTENT
     );
-    let page = || async {
-        app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text()
+    let page = |section: Section| {
+        let (app, cookie) = (&app, &cookie);
+        async move { app.get_page(&device_page(id, section), cookie).await.text() }
     };
-    let notice = "The parent PIN was locked on the phone after repeated wrong tries";
-    assert!(page().await.contains(notice));
+    let notice = "The Parent PIN was locked on the phone after repeated wrong tries";
+    assert!(page(Section::Summary).await.contains(notice));
 
     save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
-    let html = page().await;
+    let html = page(Section::Summary).await;
     assert!(!html.contains(notice), "{html}");
+    let html = page(Section::Lock).await;
     assert!(
-        html.contains("5 wrong parent PINs in a row (the last on the lock screen)"),
+        html.contains("5 wrong in a row, the last on the lock screen"),
         "{html}"
     );
     // An event after the save shows again.
@@ -684,8 +741,8 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
     .to_string();
     post_events(&app, &token, &body).await;
     assert!(
-        page()
+        page(Section::Summary)
             .await
-            .contains("1 wrong parent PIN was typed on the phone")
+            .contains("1 wrong Parent PIN was typed on the phone")
     );
 }

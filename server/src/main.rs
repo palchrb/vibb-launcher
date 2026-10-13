@@ -742,6 +742,8 @@ pub fn build_admin_router(
             "/devices/{id}/advanced",
             get(handlers::device_pages::view_advanced),
         )
+        // Step 4: Lock Screen & PINs.
+        .route("/devices/{id}/lock", get(handlers::device_pages::view_lock))
         .route(
             "/devices/{id}/policy",
             post(handlers::devices::update_policy),

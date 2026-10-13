@@ -1,11 +1,12 @@
 //! Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md` in the handy
 //! workspace, with `qa-10-design.md` on top): the kid's PIN rules, the cross-check with the
-//! override PIN, and what the device page says about the phone's `lock_state`. Pure apart from
+//! override PIN, and what Lock Screen & PINs says about the phone's `lock_state`. Pure apart from
 //! the PBKDF2 calls in [decide_kid_pin]/[override_conflicts]; unit-tested here, end to end in
 //! `src/tests/step10.rs`.
 
 use serde::{Deserialize, Serialize};
 
+use crate::handlers::device_pages::Note;
 use crate::models::{DevicePolicy, KidLock};
 use crate::security;
 
@@ -135,18 +136,177 @@ pub fn parse_lock_state(json: Option<&str>) -> Option<LockState> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// The device page's "Screen lock" card: status lines and warnings.
+/// Lock Screen & PINs' Child PIN group (design 31 step 4): whether a Child PIN is set, its
+/// length, and what the phone says about its lock, typed (M5).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct LockCard {
     pub pin_set: bool,
     pub pin_length: i64,
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
+    pub notes: Vec<LockNote>,
 }
 
-/// What the parent should know: the phone's report (`state`, `None` = no report from a launcher
-/// that has the lock), whether the reporting launcher has the lock at all (`capable`), and the
-/// safe-boot switch (QA 10 #7: safe mode skips our lock). `now_ms` formats the backoff.
+/// Why the phone's lock is off (`lock_state.inactive`). `no_pin` (no Child PIN yet) is none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Inactive {
+    /// Not managed: no app list and calls not managed.
+    Unmanaged,
+    /// The phone still has Android's own PIN or pattern (no double lock).
+    AndroidCredential,
+    /// Android refused to switch its own lock screen off.
+    KeyguardNotDisabled,
+    /// The lock crashed several times in a row.
+    CrashGuard,
+    /// The phone can't read the Child PIN's hash.
+    BadHash,
+    /// A reason this server doesn't know (at most 64 characters, as stored).
+    Other(String),
+}
+
+impl Inactive {
+    pub fn parse(code: &str) -> Option<Inactive> {
+        Some(match code {
+            "no_pin" => return None,
+            "unmanaged" => Inactive::Unmanaged,
+            "android_credential" => Inactive::AndroidCredential,
+            "keyguard_not_disabled" => Inactive::KeyguardNotDisabled,
+            "crash_guard" => Inactive::CrashGuard,
+            "bad_hash" => Inactive::BadHash,
+            other => Inactive::Other(other.to_string()),
+        })
+    }
+}
+
+/// What the Child PIN group says about the lock: warnings above the group, states as rows in it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LockNote {
+    /// Safe mode is allowed while a Child PIN is set: safe mode skips the lock (QA 10 #7).
+    SafeModeAllowed,
+    /// The reporting launcher doesn't have the lock.
+    NeedsUpdate,
+    /// The lock is off on the phone, and why.
+    Off(Inactive),
+    /// An allowed VoIP app (a valid package name) can't show full-screen notifications, so its
+    /// calls can't ring over the lock (design 17, QA #11).
+    CallsCantRing(String),
+    /// No report yet from a launcher that has the lock.
+    Waiting,
+    /// The lock is on; whether the phone is locked right now.
+    On { locked: bool },
+    /// Wrong Child PINs in a row.
+    WrongPins(i64),
+    /// Too many wrong PINs: the next try in about this many minutes.
+    Backoff { minutes: i64 },
+    /// Times the lock stepped aside for a call, the emergency dialer or an alarm since the last
+    /// report.
+    SteppedAside(i64),
+}
+
+impl LockNote {
+    /// The words (§4.2): a warning's title and sentence, or a row's label and value; an adb fix
+    /// behind the ⓘ.
+    pub fn note(&self) -> Note {
+        let warning = |title: &str, detail: String, fix: Option<String>| Note {
+            warning: true,
+            title: title.to_string(),
+            value: None,
+            detail: Some(detail),
+            fix,
+        };
+        let row = |title: &str, value: String, detail: Option<&str>| Note {
+            warning: false,
+            title: title.to_string(),
+            value: Some(value),
+            detail: detail.map(str::to_string),
+            fix: None,
+        };
+        match self {
+            LockNote::SafeModeAllowed => warning(
+                "Safe mode is allowed",
+                "Safe mode starts the phone without Vibb, so it skips the lock. Turn on Block \
+                 safe mode in Advanced › Restrictions."
+                    .to_string(),
+                None,
+            ),
+            LockNote::NeedsUpdate => warning(
+                "Vibb needs an update",
+                "This version has no lock. Until it updates, the phone keeps its own screen lock, if any."
+                    .to_string(),
+                None,
+            ),
+            LockNote::Off(Inactive::Unmanaged) => warning(
+                "Lock off: phone not managed",
+                "The lock works only on a phone with an app list or managed calls.".to_string(),
+                None,
+            ),
+            LockNote::Off(Inactive::AndroidCredential) => warning(
+                "Android's screen lock is still on",
+                "Remove it so Vibb's lock can take over: enter the Parent PIN on the phone, then \
+                 Settings › Security › Screen lock › None."
+                    .to_string(),
+                Some("With USB debugging allowed: adb shell locksettings clear --old <PIN>".to_string()),
+            ),
+            LockNote::Off(Inactive::KeyguardNotDisabled) => warning(
+                "Android's lock can't be turned off",
+                "Android refused, so Vibb's lock stays off. Check that Vibb still manages the \
+                 phone (device owner)."
+                    .to_string(),
+                None,
+            ),
+            LockNote::Off(Inactive::CrashGuard) => warning(
+                "Lock turned off after crashes",
+                "It crashed several times in a row. The phone tries it again at its next sync, \
+                 at most every 10 minutes; update Vibb if this repeats."
+                    .to_string(),
+                None,
+            ),
+            LockNote::Off(Inactive::BadHash) => warning(
+                "Phone can't read the Child PIN",
+                "Only the Parent PIN (\"Parent code\" on the lock) opens it now. Set the Child PIN \
+                 again."
+                    .to_string(),
+                None,
+            ),
+            LockNote::Off(Inactive::Other(code)) => warning(
+                "Lock is off on the phone",
+                format!("The phone reported \"{code}\"."),
+                None,
+            ),
+            LockNote::CallsCantRing(package) => warning(
+                "Calls can't ring over the lock",
+                "An allowed call app rings only once the phone is unlocked.".to_string(),
+                Some(format!(
+                    "{package} may not show full-screen notifications. Allow it once with adb: \
+                     adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"
+                )),
+            ),
+            LockNote::Waiting => row("On the phone", "Waiting for a report".to_string(), None),
+            LockNote::On { locked } => row(
+                "On the phone",
+                if *locked { "Locked" } else { "Unlocked" }.to_string(),
+                None,
+            ),
+            LockNote::WrongPins(n) => row("Wrong PINs in a row", n.to_string(), None),
+            LockNote::Backoff { minutes } => row(
+                "Next try in",
+                format!("About {minutes} min"),
+                Some("Too many wrong PINs. The Parent PIN (\"Parent code\" on the lock) still opens it."),
+            ),
+            LockNote::SteppedAside(n) => row(
+                "Stepped aside",
+                if *n == 1 {
+                    "1 time".to_string()
+                } else {
+                    format!("{n} times")
+                },
+                Some("For a call, the emergency dialer or an alarm, since the last report."),
+            ),
+        }
+    }
+}
+
+/// The Child PIN group from the policy and the phone's report (`state`, `None` = no report from a
+/// launcher that has the lock), whether the reporting launcher has the lock at all (`capable`),
+/// and the safe-boot switch (QA 10 #7: safe mode skips our lock). `now_ms` for the backoff.
 pub fn lock_card(
     policy: &DevicePolicy,
     state: Option<&LockState>,
@@ -161,71 +321,50 @@ pub fn lock_card(
         ..Default::default()
     };
     if kid_lock.is_none() {
-        card.lines
-            .push("No kid PIN is set: the phone has no lock screen code.".to_string());
         return card;
     }
     if !policy.hardening.disallow_safe_boot {
-        card.warnings.push(
-            "Safe mode is allowed (Advanced › Restrictions). Safe mode starts the phone without \
-             the launcher, so it skips the kid's lock - block safe mode while the lock is on."
-                .to_string(),
-        );
+        card.notes.push(LockNote::SafeModeAllowed);
     }
     if reported && !capable {
-        card.warnings.push(
-            "This phone's launcher doesn't have handy's lock yet - update the launcher. Until \
-             then the phone keeps whatever screen lock it has."
-                .to_string(),
-        );
+        card.notes.push(LockNote::NeedsUpdate);
         return card;
     }
     let Some(state) = state else {
-        card.lines
-            .push("Waiting for the phone to report its lock.".to_string());
+        card.notes.push(LockNote::Waiting);
         return card;
     };
+    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse) {
+        card.notes.push(LockNote::Off(off));
+    }
+    card.notes.extend(
+        state
+            .voip_fsi_denied
+            .iter()
+            .map(|package| LockNote::CallsCantRing(package.clone())),
+    );
     if state.active {
-        card.lines.push(if state.locked {
-            "The lock is on and the phone is locked right now.".to_string()
-        } else {
-            "The lock is on (the phone is unlocked right now).".to_string()
+        card.notes.push(LockNote::On {
+            locked: state.locked,
         });
     }
     if state.failures > 0 {
-        card.lines
-            .push(format!("Wrong PINs in a row: {}.", state.failures));
+        card.notes.push(LockNote::WrongPins(state.failures));
     }
     if let Some(until) = state.backoff_until_ms.filter(|&u| u > now_ms) {
-        let mins = (until - now_ms + 59_999) / 60_000;
-        card.lines.push(format!(
-            "Too many wrong PINs: the phone waits about {mins} min before the next try. The \
-             parent PIN (\"Parent code\") still works on the lock."
-        ));
+        card.notes.push(LockNote::Backoff {
+            minutes: (until - now_ms + 59_999) / 60_000,
+        });
     }
     if state.exempt_yields > 0 {
-        card.lines.push(format!(
-            "The lock stepped aside {} time(s) for a call, the emergency dialer or an alarm \
-             since the last report.",
-            state.exempt_yields
-        ));
-    }
-    if let Some(warning) = state.inactive.as_deref().and_then(inactive_warning) {
-        card.warnings.push(warning);
-    }
-    for package in &state.voip_fsi_denied {
-        card.warnings.push(format!(
-            "{package} may not show full-screen notifications, so its calls can't ring over the \
-             lock (they only ring once the phone is unlocked). Allow it once with adb: \
-             adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"
-        ));
+        card.notes.push(LockNote::SteppedAside(state.exempt_yields));
     }
     card
 }
 
 /// A Child PIN is set, but the phone's own lock is off (design 31 L2, an Attention alarm): the
 /// reporting launcher doesn't have the lock, or reports it inactive for a reason other than "no
-/// PIN yet" - the [lock_card] warnings about the lock itself, typed.
+/// PIN yet" - [lock_card]'s warnings about the lock itself.
 pub fn lock_off(
     policy: &DevicePolicy,
     state: Option<&LockState>,
@@ -240,61 +379,34 @@ pub fn lock_off(
     }
     state
         .and_then(|s| s.inactive.as_deref())
-        .is_some_and(|inactive| inactive_warning(inactive).is_some())
+        .is_some_and(|inactive| Inactive::parse(inactive).is_some())
 }
 
-/// The warning for a `lock_state.inactive` value; `no_pin` (the parent hasn't set one) is none.
-pub fn inactive_warning(inactive: &str) -> Option<String> {
-    Some(match inactive {
-        "no_pin" => return None,
-        "unmanaged" => "The lock is off because this phone isn't managed (no app list and calls \
-            not managed)."
-            .to_string(),
-        "android_credential" => "Remove the Android screen lock to switch to handy's lock. The \
-            phone still has Android's own PIN/pattern, so handy's lock stays off (no double lock). \
-            Enter the parent PIN on the phone, then Settings > Security > Screen lock > None - or \
-            with USB debugging allowed: adb shell locksettings clear --old <PIN>."
-            .to_string(),
-        "keyguard_not_disabled" => "Android refused to switch its own lock screen off, so \
-            handy's lock stays off. Check the phone (is it still device owner?)."
-            .to_string(),
-        "crash_guard" => "Handy's lock crashed several times in a row and is switched off. The \
-            phone tries it again at the next sync (at most every 10 minutes). Update the launcher \
-            if this repeats."
-            .to_string(),
-        "bad_hash" => "The phone can't read the kid's PIN, so only the parent PIN (\"Parent \
-            code\") opens the lock. Set the kid's PIN again."
-            .to_string(),
-        other => format!("The lock is off on the phone: {other}."),
-    })
-}
-
-/// Flash text for `?notice=<code>` after a kid-PIN save, shown at the top of the `#screen-lock`
-/// card (design 24, QA #8); `true` = a refusal (error style). The parent PIN's codes are
-/// `parent_pin::flash_text`'s.
+/// The flash after a Child PIN save (`?notice=<code>`), inside the Child PIN group (design 31
+/// §3.0); `true` = a refusal. The Parent PIN's codes are `parent_pin::flash_text`'s.
 pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
         "saved" => (
-            "The kid's PIN is saved. The phone uses it after its next sync.",
+            "Child PIN saved. The phone uses it as soon as it checks in.",
             false,
         ),
         "saved_safe_boot" => (
-            "The kid's PIN is saved, and safe mode is now blocked (Phone \
-            hardening) - safe mode would skip the lock. The phone uses the PIN after its next sync.",
+            "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock.",
             false,
         ),
         "cleared" => (
-            "The kid's PIN is removed: the phone has no lock screen code after its next \
-            sync.",
+            "Child PIN removed. The phone opens without a code once it checks in.",
             false,
         ),
-        "invalid" => ("Not saved: the kid's PIN must be 4 to 6 digits.", true),
+        "invalid" => ("Not saved: a Child PIN is 4 to 6 digits.", true),
         "needs_override" => (
-            "Not saved: set a parent PIN first. It is the parent code on the phone's lock screen - \
-            without it, a forgotten kid PIN would lock the kid out.",
+            "Not saved: set a Parent PIN first. It opens the lock if the Child PIN is forgotten.",
             true,
         ),
-        "same_as_override" => ("Not saved: the kid's PIN must not be the parent PIN.", true),
+        "same_as_override" => (
+            "Not saved: the Child PIN must differ from the Parent PIN.",
+            true,
+        ),
         _ => return None,
     })
 }
@@ -413,39 +525,37 @@ mod tests {
     fn card_warns_about_safe_boot_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
         let card = lock_card(&p, None, false, true, 0);
-        assert!(
-            card.warnings
-                .iter()
-                .any(|w| w.contains("Safe mode is allowed"))
-        );
-        assert!(
-            card.warnings
-                .iter()
-                .any(|w| w.contains("doesn't have handy's lock"))
+        assert_eq!(
+            card.notes,
+            [LockNote::SafeModeAllowed, LockNote::NeedsUpdate]
         );
 
         p.hardening.disallow_safe_boot = true;
-        for inactive in [
-            "crash_guard",
-            "android_credential",
-            "bad_hash",
-            "keyguard_not_disabled",
+        for (inactive, typed) in [
+            ("crash_guard", Inactive::CrashGuard),
+            ("android_credential", Inactive::AndroidCredential),
+            ("bad_hash", Inactive::BadHash),
+            ("keyguard_not_disabled", Inactive::KeyguardNotDisabled),
+            ("unmanaged", Inactive::Unmanaged),
+            ("odd", Inactive::Other("odd".to_string())),
         ] {
             let state = LockState {
                 inactive: Some(inactive.to_string()),
                 ..Default::default()
             };
             let card = lock_card(&p, Some(&state), true, true, 0);
-            assert_eq!(card.warnings.len(), 1, "{inactive}");
+            assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
+            assert!(card.notes[0].note().warning, "{inactive}");
         }
         let state = LockState {
             inactive: Some("no_pin".to_string()),
             ..Default::default()
         };
-        assert!(
-            lock_card(&p, Some(&state), true, true, 0)
-                .warnings
-                .is_empty()
+        assert!(lock_card(&p, Some(&state), true, true, 0).notes.is_empty());
+        // No report yet from a launcher with the lock.
+        assert_eq!(
+            lock_card(&p, None, true, false, 0).notes,
+            [LockNote::Waiting]
         );
 
         let state = LockState {
@@ -453,16 +563,67 @@ mod tests {
             locked: true,
             failures: 6,
             backoff_until_ms: Some(90_000),
+            exempt_yields: 2,
             ..Default::default()
         };
         let card = lock_card(&p, Some(&state), true, true, 0);
-        assert!(card.warnings.is_empty());
-        assert!(card.lines.iter().any(|l| l.contains("about 2 min")));
-        assert!(
-            card.lines
-                .iter()
-                .any(|l| l.contains("Wrong PINs in a row: 6"))
+        assert_eq!(
+            card.notes,
+            [
+                LockNote::On { locked: true },
+                LockNote::WrongPins(6),
+                LockNote::Backoff { minutes: 2 },
+                LockNote::SteppedAside(2),
+            ]
         );
+        let words: Vec<(String, Option<String>)> = card
+            .notes
+            .iter()
+            .map(|n| n.note())
+            .map(|n| {
+                assert!(!n.warning);
+                (n.title, n.value)
+            })
+            .collect();
+        assert_eq!(
+            words,
+            [
+                ("On the phone".to_string(), Some("Locked".to_string())),
+                ("Wrong PINs in a row".to_string(), Some("6".to_string())),
+                ("Next try in".to_string(), Some("About 2 min".to_string())),
+                ("Stepped aside".to_string(), Some("2 times".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn warnings_are_short_and_keep_commands_behind_the_info() {
+        let notes = [
+            LockNote::SafeModeAllowed,
+            LockNote::NeedsUpdate,
+            LockNote::Off(Inactive::Unmanaged),
+            LockNote::Off(Inactive::AndroidCredential),
+            LockNote::Off(Inactive::KeyguardNotDisabled),
+            LockNote::Off(Inactive::CrashGuard),
+            LockNote::Off(Inactive::BadHash),
+            LockNote::Off(Inactive::Other("odd".to_string())),
+            LockNote::CallsCantRing("io.element.android.x".to_string()),
+        ];
+        for note in notes {
+            let words = note.note();
+            assert!(words.warning, "{note:?}");
+            // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
+            assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
+            let detail = words.detail.unwrap();
+            for hidden in ["adb ", "io.element", "appops"] {
+                assert!(!detail.contains(hidden), "{note:?}: {detail}");
+            }
+        }
+        let fix = LockNote::Off(Inactive::AndroidCredential)
+            .note()
+            .fix
+            .unwrap();
+        assert!(fix.contains("adb shell locksettings clear --old <PIN>"));
     }
 
     #[test]
@@ -475,9 +636,16 @@ mod tests {
             ..Default::default()
         };
         let card = lock_card(&p, Some(&state), true, true, 0);
-        assert_eq!(card.warnings.len(), 1);
-        assert!(card.warnings[0].contains("io.element.android.x"));
-        assert!(card.warnings[0].contains("USE_FULL_SCREEN_INTENT"));
+        assert_eq!(
+            card.notes,
+            [
+                LockNote::CallsCantRing("io.element.android.x".to_string()),
+                LockNote::On { locked: false },
+            ]
+        );
+        let fix = card.notes[0].note().fix.unwrap();
+        assert!(fix.contains("io.element.android.x"));
+        assert!(fix.contains("USE_FULL_SCREEN_INTENT"));
     }
 
     #[test]
@@ -507,6 +675,6 @@ mod tests {
     fn no_pin_no_warnings() {
         let card = lock_card(&DevicePolicy::default(), None, false, true, 0);
         assert!(!card.pin_set);
-        assert!(card.warnings.is_empty());
+        assert!(card.notes.is_empty());
     }
 }

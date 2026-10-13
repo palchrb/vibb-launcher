@@ -274,7 +274,7 @@ fn title(kind: Kind) -> String {
 /// The page that fixes it. Until each card has its sub-page (design 31 §8 steps 4-10) some are
 /// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
 /// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
-/// and the restart to Advanced.
+/// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs.
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
         Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
@@ -287,8 +287,8 @@ fn target(kind: Kind, id: i64) -> String {
             ("/advanced", "app-screens")
         }
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
-        Kind::NoParentPin | Kind::EasyParentPin => ("", "parent-pin"),
-        Kind::ChildLockOff => ("", "screen-lock"),
+        Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
+        Kind::ChildLockOff => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("", "launcher"),
         Kind::LedgerUnreadable | Kind::LauncherWithoutRules => ("", "time"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
@@ -638,7 +638,9 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(target("restrictions-paused"), "/devices/7#status");
-        assert_eq!(target("easy-parent-pin"), "/devices/7#parent-pin");
+        // Step 4: Lock Screen & PINs.
+        assert_eq!(target("easy-parent-pin"), "/devices/7/lock#parent-pin");
+        assert_eq!(target("no-parent-pin"), "/devices/7/lock#parent-pin");
         // Design 31 step 3: About This Phone and Advanced.
         assert_eq!(target("do-not-disturb"), "/devices/7/about#sound");
         assert_eq!(target("policy-problem"), "/devices/7/about#software");
@@ -659,7 +661,7 @@ mod tests {
             target("boot-cover-not-shown"),
             "/devices/7/advanced#updates"
         );
-        assert_eq!(target("child-lock-off"), "/devices/7#screen-lock");
+        assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
         assert_eq!(target("notification-access"), "/devices/7#launcher");
         assert_eq!(target("screen-time-record"), "/devices/7#time");
         assert_eq!(target("calls"), "/devices/7/calls");

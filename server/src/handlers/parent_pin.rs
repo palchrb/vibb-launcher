@@ -1,6 +1,7 @@
-//! The device page's "Parent PIN" card (`#parent-pin`), its save, and the phone's reports about
-//! the PIN (design 24 §3-§5): the PIN the phone checks offline - the launcher's Settings gate, the
-//! pause, Play install mode, the time lock's "Enter unlock code" and the PIN lock's "Parent code".
+//! Lock Screen & PINs' Parent PIN group (`#parent-pin`, design 31 step 4; a card on the device
+//! page before), its save, and the phone's reports about the PIN (design 24 §3-§5): the PIN the
+//! phone checks offline - the launcher's Settings gate, the pause, Play install mode, the time
+//! lock's "Enter unlock code" and the PIN lock's "Parent code".
 
 use std::collections::HashMap;
 
@@ -8,23 +9,25 @@ use axum::Extension;
 use axum::extract::{Form, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
+use chrono::{DateTime, Utc};
 
+use crate::display_time::Zone;
 use crate::models::{DevicePolicy, DeviceStatus};
 use crate::security::{self, AuthedDevice, CurrentAdmin};
 use crate::{AppState, parent_pin};
 
-/// What the card (and the Status card's parent-PIN lines) show.
+/// What the Parent PIN group (and the device page's Status card lines) show.
 pub struct ParentPinCard {
     pub pin_set: bool,
     /// The PIN is easy to guess (`device_policy.override_pin_easy`, saved or swept).
     pub easy: bool,
-    /// The one-shot message after a save, `(text, warning)` ([parent_pin::flash_text]).
+    /// The flash after a save, `(text, warning)` ([parent_pin::flash_text]).
     pub notice: Option<(&'static str, bool)>,
     /// The launcher reports parent-PIN events (`parent_pin_events_v1`) - or nothing reported yet.
-    /// Without it the old `offline_override_used` banner shows instead.
+    /// Without it the old `offline_override_used` flag shows instead.
     pub capable: bool,
-    /// The last [parent_pin::SHOWN] events, newest first: `(when, line)`.
-    pub events: Vec<(String, String)>,
+    /// The last [parent_pin::SHOWN] events, newest first, as "Recent use" rows.
+    pub events: Vec<parent_pin::EventRow>,
     /// The Status card's notices from the last 24 hours ([parent_pin::notices]).
     pub notices: Vec<parent_pin::Notice>,
 }
@@ -34,8 +37,10 @@ pub async fn card(
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
 ) -> ParentPinCard {
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = now.timestamp_millis();
     let pin_set = policy.override_pin_hash.is_some();
     let capable = latest.is_none_or(|s| {
         s.capabilities_json.as_deref().is_some_and(|caps| {
@@ -55,14 +60,9 @@ pub async fn card(
         capable,
         events: shown
             .iter()
-            .map(|e| {
-                (
-                    parent_pin::when_text(e.occurred_at_ms, now_ms),
-                    parent_pin::event_line(e),
-                )
-            })
+            .map(|e| parent_pin::event_row(e, zone, now))
             .collect(),
-        notices: parent_pin::notices(&recent, now_ms),
+        notices: parent_pin::notices(&recent, zone, now),
     }
 }
 
@@ -74,8 +74,8 @@ const SAVE_FAILED: &str = "Couldn't save - nothing was changed. Check the server
 /// - An easy PIN is saved with a warning (`parent_pin_saved_easy`, `override_pin_easy = 1`).
 /// - Security events `override_pin_changed`/`override_pin_cleared`; nudges the phone, which then
 ///   takes the new PIN - and with it a fresh lockout state (the launcher keys it to the PIN).
-/// - Every outcome redirects to `?notice=<code>#parent-pin`; 404 for an unknown device, 500 on a
-///   database error.
+/// - Every outcome redirects to Lock Screen & PINs, `?notice=<code>#parent-pin` (the flash in its
+///   group); 404 for an unknown device, 500 on a database error.
 pub async fn update_parent_pin(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -83,7 +83,7 @@ pub async fn update_parent_pin(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let back = |code: &str| {
-        Redirect::to(&format!("/devices/{id}?notice={code}#parent-pin")).into_response()
+        Redirect::to(&format!("/devices/{id}/lock?notice={code}#parent-pin")).into_response()
     };
     let current =
         match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
