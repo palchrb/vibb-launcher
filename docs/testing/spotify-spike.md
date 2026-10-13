@@ -377,6 +377,29 @@ downloads); Premium only; every command (play, skip, seek) is a Web API call ove
 limits (5 users, rate limits, 6-month refresh tokens for the server's token); the token must be refreshed (a
 server-side job or PKCE refresh on the phone); and Spotify can break it at any time since mobile isn't supported.
 
+## 7b. Results so far (the user's runs, recorded by the main session)
+
+**2026-10-12/13, emulator `jellystar` (Play image, Android System WebView 153.0.8010.57), the debug launcher with the
+kiosk on, the spike ticked Allowed.**
+
+- **Items 1-9 (App Remote): not run.** Spotify's app refuses the login on the emulator: password login answers
+  "wrong username or password" (the same credentials work on open.spotify.com in Chrome on the same device, so it is
+  the app's device check, not the account), and the e-mail-code flow reaches the code screen and then opens a Google
+  Play services activity, which lock task blocks ("App is not available - Google Play services is not available right
+  now"). Two findings for the design: a real "Spotify setup mode" must pin `com.google.android.gms` with Spotify while
+  the login runs, and items 1-9 need the Jelly Star.
+- **Item 10 (Web Playback SDK in the spike's WebView): PASS so far.** `Get token (PKCE)` logged in with e-mail and
+  password in the full-screen WebView; `Load player` (default user agent) reached `ready` with a device id;
+  `Play on this device` with a playlist the user owns played audio; pause/resume worked. The emulator was then left
+  with the screen off for about 10 hours (the app in the background); on waking, the probe screen resumed playback at
+  once on play/pause: the SDK's Connect session survived the night. `Load player` after that failed (the pasted
+  access token had expired: a rebuilt player needs a valid token), and `Get token (PKCE)` + `Load player` played
+  again without a new password. Consequence for a real build: the access token must be refreshed (PKCE refresh
+  token) before each hour ends; the running player does not need it, a rebuilt one does.
+- **Still to run for item 10:** the log's `poll:` lines for the night (was audio playing or paused, any
+  `authentication_error`/`not_ready`), the desktop-user-agent variant, the DNS log (item 7's host list for the web
+  path), and the same probe on the Jelly Star, where Doze is real (the emulator's is not).
+
 ## 8. What to send back
 
 1. The spike's log: `adb pull /sdcard/Android/data/me.vibb.spotifyspike/files/spike-log.txt` (or **Copy log** and
