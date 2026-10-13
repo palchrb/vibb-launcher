@@ -1,5 +1,5 @@
 {
-  "href": "https://api.spotify.com/v1/playlists/0FakePlaylistKveld0001/items?offset=0&limit=50&additional_types=track&market=from_token",
+  "href": "https://api.spotify.com/v1/playlists/0FakePlaylistKveld0001/items?offset=0&limit=50&additional_types=track%2Cepisode&market=from_token",
   "items": [
     {
       "added_at": "2026-09-01T18:00:00Z",

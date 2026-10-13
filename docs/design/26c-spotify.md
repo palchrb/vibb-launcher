@@ -408,7 +408,7 @@ hash of the same URI, so a Pi bookmark file and our entry key match).
 
 | Link | Mode | Listing (Web API, `market=from_token`) | Re-check | The tile |
 |---|---|---|---|---|
-| playlist | list (an account can read its items); else context | `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)` then `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track` pages, each `items[].item` | the interval, items only when `snapshot_id` changed or a day passed (vibb `_precache_due`) | Spotify · spor N av M |
+| playlist | list (an account can read its items); else context | `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)` then `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track,episode` pages, each `items[].item` (episodes asked for as such, so one comes as the documented `EpisodeObject` and is left out by its `type`; qa-26c-step2a-code L1) | the interval, items only when `snapshot_id` changed or a day passed (vibb `_precache_due`) | Spotify · spor N av M |
 | album | list | `GET /albums/{id}` (name, artists, images, the first 50 tracks) + `GET /albums/{id}/tracks?limit=50&offset=50..` | daily (immutable: vibb's daily re-ask) | Spotify · spor N av M |
 | track | list (one item) | `GET /tracks/{id}` | daily | Spotify |
 | artist | context (default); **option**: list as its albums' tracks | context: `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13]. Option: `GET /artists/{id}/albums?include_groups=album,single&limit=10` (not on the removed list; the reference's `limit` is at most 10, default 5 [verified 2026-10-13, qa-26c-step2a-code M2]; dev-mode paging [unverified]) then each album as the album row, newest album first, at most 20 albums and 500 tracks | daily | context: Spotify · Spotify velger; option: Spotify · spor N av M |
@@ -1978,3 +1978,36 @@ Spotify entry's `spotify` field in the library; an empty `items` for context mod
 QA checklist item 18 (the artist option on a real dev-mode app). The real Web API's shapes are from the reference and
 the February 2026 migration guide, not a run [unverified]: `items[].item`, `is_playable` with `market=from_token`, a
 403 (or 404) on another account's playlist items.
+
+### Fix round after QA's code review (qa-26c-step2a-code, 2026-10-13)
+
+All six findings fixed; none disputed (one premise corrected, L3). `cargo fmt --check` clean; `cargo clippy
+--all-targets` the same 12 pre-existing warnings, none added; `cargo test` all pass but the pre-existing, time-dependent
+`tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`; the library, listing and policy snapshots unchanged.
+- **M1** (a transient after a 403 made a listed playlist a context): `SpotifyReads::first` ends the read with
+  `refused: false` on any failure that doesn't pass to the next reader, and calls the read refused only when **every**
+  reader answered 403/404 (a reader that can't be used - another key, a login ended mid-check - isn't a refusal: its
+  code is reported, as the parent can mend it; stricter than the QA asked). Test
+  `a_transient_after_a_403_keeps_the_listed_playlist` (the QA's probe, kept: 403 then 503 / `QUOTA_EXCEEDED` / a key
+  that can't open the next login - the check fails with that code, list, mode, reader, version and revision unchanged;
+  red with the old flag), and the artist option's 403-then-503 fails in `the_artist_options_albums_page_by_ten`.
+- **M2** (`limit=50` on the artist's albums, documented maximum 10): `ARTIST_ALBUMS_LIMIT` = 10, offsets by 10,
+  `MAX_ARTIST_ALBUM_PAGES` kept at 10 = 100 albums and singles read before the newest 20 are picked (the endpoint's
+  order is undocumented, so it is read whole up to that and sorted; past it `capped`) - §3.3's "one request per page of
+  10 albums". The fixture's `limit` 10; test `the_artist_options_albums_page_by_ten` (pages at offsets 0..90, the 11th
+  never asked, the newest 20 across pages, `capped`).
+- **L1** (an episode in a playlist told apart by `type` only): the items read asks `additional_types=track,episode` -
+  the parameter the reference documents ("item types that your client supports besides the default track type ...
+  check against the type field"), so an episode arrives as an `EpisodeObject` with `type: "episode"` and is left out
+  by it; §3.1's URL updated. As defence for the undocumented track-shaped episode, a track with `"episode": true` or a
+  `uri` not starting `spotify:track:` is left out too (parser rows in `listing_parsers_read_the_fixtures`).
+- **L2** (four test gaps): `first_fills_readers_pages_and_repeats` - `no_items` on a first fill (an unplayable track
+  entry; no version, a failure; the card's sentence), the metadata read moving to the next reader (the kid 404, the
+  parent reads, `spotify_reader` = the parent), a track repeated on a later page listed once at its first place, and a
+  later page's 503 failing the check with the list, mode and version kept.
+- **L3** (raw codes on the card): `sweep_error_text("spotify", ..)` has `database` ("this server couldn't read its
+  Spotify login - it tries again later") and `refused` ("Spotify's address pointed somewhere this server won't go"),
+  rows in `spotify_entries_have_their_own_link_and_kind`. Premise corrected: `refused` can't reach the card today -
+  `FetchError::code` maps `Refused` to `network` - so that row is for a future code; `database` was real.
+- **L4** (`spotify_gate!()` on one line): written with `\` continuations, one clause per line, as `storytel_gate!()`
+  (a `\`-newline in the generator script had joined the lines).

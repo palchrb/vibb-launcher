@@ -108,7 +108,12 @@ pub const MAX_SHOW_EPISODES: usize = 100;
 pub const MAX_ARTIST_ALBUMS: usize = 20;
 /// ...and this many tracks.
 pub const MAX_ARTIST_TRACKS: usize = 500;
-/// The artist option reads at most this many pages of albums (sorted by date after).
+/// The page size of `GET /artists/{id}/albums`: the reference's maximum is 10 (default 5;
+/// qa-26c-step2a-code M2), not the 50 of the other list reads.
+pub const ARTIST_ALBUMS_LIMIT: usize = 10;
+/// The artist option reads at most this many pages of albums - 100 albums and singles - before
+/// it picks the newest [MAX_ARTIST_ALBUMS] (Spotify doesn't document the endpoint's order, so the
+/// whole of it is sorted by date; past 100 the oldest are cut and the list is `capped`).
 pub const MAX_ARTIST_ALBUM_PAGES: usize = 10;
 
 // --- links (the grammar; a short link is resolved by [resolve_short_link]) -----------------------
@@ -1774,7 +1779,9 @@ async fn record_error(state: &AppState, account: i64, generation: i64, code: &st
 pub enum Read<'a> {
     /// `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)`.
     Playlist(&'a str),
-    /// `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track&market=from_token`.
+    /// `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track,episode&market=from_token`
+    /// (episodes asked for as such, so one always comes as the documented `EpisodeObject` with its
+    /// `type`, and is left out by it - qa-26c-step2a-code L1).
     PlaylistItems(&'a str, usize),
     /// `GET /albums/{id}?market=from_token` (the first 50 tracks inside).
     Album(&'a str),
@@ -1784,8 +1791,8 @@ pub enum Read<'a> {
     Track(&'a str),
     /// `GET /artists/{id}`.
     Artist(&'a str),
-    /// `GET /artists/{id}/albums?include_groups=album,single&limit=50&offset=N&market=from_token`
-    /// (the artist option, §3.3).
+    /// `GET /artists/{id}/albums?include_groups=album,single&limit=10&offset=N&market=from_token`
+    /// (the artist option, §3.3; [ARTIST_ALBUMS_LIMIT]).
     ArtistAlbums(&'a str, usize),
     /// `GET /shows/{id}?market=from_token`.
     Show(&'a str),
@@ -1813,7 +1820,7 @@ impl Accounts {
                 vec![
                     ("limit", limit),
                     ("offset", offset.to_string()),
-                    ("additional_types", "track".to_string()),
+                    ("additional_types", "track,episode".to_string()),
                     ("market", "from_token".to_string()),
                 ],
             ),
@@ -1838,7 +1845,7 @@ impl Accounts {
                 format!("/v1/artists/{id}/albums"),
                 vec![
                     ("include_groups", "album,single".to_string()),
-                    ("limit", limit),
+                    ("limit", ARTIST_ALBUMS_LIMIT.to_string()),
                     ("offset", offset.to_string()),
                     ("market", "from_token".to_string()),
                 ],
@@ -2031,6 +2038,13 @@ fn duration(value: &Value) -> Option<i64> {
 /// album's own track list).
 fn track(value: &Value) -> Option<Listed> {
     if value.get("type").and_then(Value::as_str) != Some("track")
+        // An episode in a track's shape (the older answer without `additional_types=episode`:
+        // `"episode": true`), or anything whose URI isn't a track's (qa-26c-step2a-code L1).
+        || value.get("episode").and_then(Value::as_bool) == Some(true)
+        || value
+            .get("uri")
+            .and_then(Value::as_str)
+            .is_some_and(|uri| !uri.starts_with("spotify:track:"))
         || value.get("is_local").and_then(Value::as_bool) == Some(true)
         || value.get("is_playable").and_then(Value::as_bool) == Some(false)
     {
@@ -3593,6 +3607,31 @@ pub(crate) mod tests {
         let page = parse_playlist_items(older.to_string().as_bytes()).unwrap();
         assert_eq!(page.listed[0].title, "X — Y");
         assert!(page.next);
+        // qa-26c-step2a-code L1: an episode in a track's shape (`"episode": true`), or a URI that
+        // isn't a track's, is left out and counted, whatever its `type` says.
+        let shaped = serde_json::json!({
+            "items": [
+                {"is_local": false, "item": {"type": "track", "episode": true, "track": false,
+                    "id": "5FakeEpisode0000000009", "name": "Episode",
+                    "uri": "spotify:episode:5FakeEpisode0000000009"}},
+                {"is_local": false, "item": {"type": "track",
+                    "id": "5FakeEpisode0000000008", "name": "Episode",
+                    "uri": "spotify:episode:5FakeEpisode0000000008"}},
+                {"is_local": false, "item": {"type": "track", "episode": false,
+                    "id": "1FakeTrackA00000000001", "name": "X",
+                    "uri": "spotify:track:1FakeTrackA00000000001"}}
+            ],
+            "next": null
+        });
+        let page = parse_playlist_items(shaped.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            page.listed
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["1FakeTrackA00000000001"]
+        );
+        assert_eq!(page.skipped, 2);
         for junk in [&b"<html>"[..], b"[]", b"{}", br#"{"items": {}}"#] {
             assert_eq!(parse_playlist_items(junk), None, "{junk:?}");
         }
@@ -3731,7 +3770,7 @@ pub(crate) mod tests {
             (
                 Read::PlaylistItems(id, 50),
                 "/v1/playlists/0FakePlaylistKveld0001/items?limit=50&offset=50\
-                 &additional_types=track&market=from_token",
+                 &additional_types=track%2Cepisode&market=from_token",
             ),
             (
                 Read::Album(id),
@@ -3749,7 +3788,7 @@ pub(crate) mod tests {
             (
                 Read::ArtistAlbums(id, 0),
                 "/v1/artists/0FakePlaylistKveld0001/albums?include_groups=album%2Csingle\
-                 &limit=50&offset=0&market=from_token",
+                 &limit=10&offset=0&market=from_token",
             ),
             (
                 Read::Show(id),

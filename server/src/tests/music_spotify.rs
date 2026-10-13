@@ -2215,6 +2215,261 @@ mod listing {
         );
     }
 
+    /// qa-26c-step2a-code M1 (its probe, kept): a listed playlist whose remembered reader now
+    /// gets 403 and whose next reader hits anything that isn't a refusal - the quota, a 503 -
+    /// fails the check with that code and keeps the list, the mode, the version and the library
+    /// revision; only every reader refusing makes it a context. An account that can't be used
+    /// (another key) isn't a refusal either: its code, the list kept.
+    #[tokio::test]
+    async fn a_transient_after_a_403_keeps_the_listed_playlist() {
+        let app = TestApp::new().await;
+        app.state.music_sweep.set_art_per_check(0);
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        app.fetch
+            .answer_once(TOKEN_URL, 200, token("FAKE-ACCESS-KID"));
+        app.fetch
+            .answer(TOKEN_URL, 200, token("FAKE-ACCESS-PARENT"));
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        answer_playlist(&app);
+        let items_url = url(&app, Read::PlaylistItems(PLAYLIST, 0));
+        check(&app, id, t0()).await;
+        let good = listing(&app, id).await;
+        assert_eq!(good.spotify_reader, Some(kid));
+        let good_items = items(&app, id).await;
+        let mut at = t0();
+        for (second, code) in [
+            ((503, Vec::new()), "http_503"),
+            ((429, fixture("quota.json")), "quota"),
+        ] {
+            at += TimeDelta::hours(1);
+            app.fetch
+                .answer_once(&items_url, 403, fixture("forbidden.json"));
+            app.fetch.answer_once(&items_url, second.0, second.1);
+            let before = revision(&app).await;
+            sweep::request_check(&app.db, id, at).await.unwrap();
+            app.fetch.clear_calls();
+            let report = check(&app, id, at).await;
+            assert_eq!(report.error.as_deref(), Some(code));
+            assert_eq!(
+                bearers(&app, &items_url),
+                ["Bearer FAKE-ACCESS-KID", "Bearer FAKE-ACCESS-PARENT"],
+                "{code}"
+            );
+            let row = listing(&app, id).await;
+            assert_eq!(row.spotify_mode.as_deref(), Some("list"), "{code}");
+            assert_eq!(row.version, good.version, "{code}");
+            assert_eq!(row.spotify_reader, Some(kid), "{code}");
+            assert_eq!(items(&app, id).await, good_items, "{code}");
+            assert_eq!(revision(&app).await, before, "{code}");
+        }
+        app.state.spotify.advance(spotify::QUOTA_PAUSE);
+        // The kid refused, the parent's login sealed for another user (the key can't open it).
+        sqlx::query("UPDATE music_spotify_accounts SET spotify_user = 'moved' WHERE id = ?")
+            .bind(parent)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        app.state.spotify.forget(parent);
+        app.fetch
+            .answer_once(&items_url, 403, fixture("forbidden.json"));
+        at += TimeDelta::hours(1);
+        sweep::request_check(&app.db, id, at).await.unwrap();
+        let report = check(&app, id, at).await;
+        assert_eq!(report.error.as_deref(), Some("key"));
+        let row = listing(&app, id).await;
+        assert_eq!(row.spotify_mode.as_deref(), Some("list"));
+        assert_eq!(items(&app, id).await, good_items);
+        assert_eq!(
+            crate::music::sweep_error_text("spotify", "key"),
+            "a saved Spotify login was locked with another key - log in again"
+        );
+    }
+
+    /// The artist option's albums: a 403 then a 503 fails the check (not a context); the albums
+    /// are read 10 a page (the endpoint's maximum, qa-26c-step2a-code M2), at most 10 pages, the
+    /// newest 20 picked from all of them - `capped` when pages were left.
+    #[tokio::test]
+    async fn the_artist_options_albums_page_by_ten() {
+        let app = TestApp::new().await;
+        app.state.music_sweep.set_art_per_check(0);
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
+        let mut state = app.state.clone();
+        state.spotify = Arc::new(Accounts::new(Config::from_vars(
+            &[("SPOTIFY_ARTIST_ALBUMS".to_string(), "1".to_string())].into(),
+        )));
+        let id = entry(&app, "artist", ARTIST).await;
+        app.fetch.answer(
+            &url(&app, Read::Artist(ARTIST)),
+            200,
+            fixture("artist.json"),
+        );
+        let albums_url = |offset| state.spotify.read_url(Read::ArtistAlbums(ARTIST, offset));
+        assert!(albums_url(0).contains("&limit=10&offset=0&"));
+        // A 403 for the kid, a 503 for the parent: the check fails, nothing becomes a context.
+        app.fetch
+            .answer_once(&albums_url(0), 403, fixture("forbidden.json"));
+        app.fetch.answer_once(&albums_url(0), 503, "");
+        let report = sweep::check_entry(&state, id, t0()).await.unwrap().unwrap();
+        assert_eq!(report.error.as_deref(), Some("http_503"));
+        assert_eq!(listing(&app, id).await.spotify_mode, None);
+
+        // Eleven pages of ten albums (the 11th is never asked); album n released on day n, so
+        // the newest 20 are 99..=80, spread over the pages in Spotify's order.
+        for page in 0..11 {
+            let albums: Vec<Value> = (page * 10..page * 10 + 10)
+                .map(|n| {
+                    json!({"id": format!("2FakeAlbumN{n:011}"),
+                           "release_date": format!("2026-{:02}-{:02}", 1 + n / 28, 1 + n % 28)})
+                })
+                .collect();
+            app.fetch.answer(
+                &albums_url(page * 10),
+                200,
+                json!({"items": albums, "next": "https://api.spotify.com/next"}).to_string(),
+            );
+        }
+        for n in 0..110 {
+            let album = format!("2FakeAlbumN{n:011}");
+            app.fetch.answer(
+                &url(&app, Read::Album(&album)),
+                200,
+                json!({"name": format!("Plate {n}"), "artists": [{"name": "Ola Fjell"}],
+                       "tracks": {"items": [{"type": "track", "id": format!("1FakeTrackN{n:011}"),
+                           "name": format!("Spor {n}"), "artists": [{"name": "Ola Fjell"}]}],
+                           "next": null}})
+                .to_string(),
+            );
+        }
+        app.fetch.clear_calls();
+        let report = sweep::check_entry(&state, id, t0() + TimeDelta::hours(25))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.error, None);
+        assert_eq!(
+            calls_to(&app, &albums_url(10)),
+            1,
+            "the second page at offset 10"
+        );
+        assert_eq!(calls_to(&app, &albums_url(90)), 1);
+        assert_eq!(calls_to(&app, &albums_url(100)), 0, "at most 10 pages");
+        let list = items(&app, id).await;
+        assert_eq!(list.len(), spotify::MAX_ARTIST_ALBUMS);
+        assert_eq!(
+            list[0].key, "1FakeTrackN00000000099",
+            "the newest album first"
+        );
+        assert_eq!(list[19].key, "1FakeTrackN00000000080");
+        let row = listing(&app, id).await;
+        assert_eq!(row.spotify_mode.as_deref(), Some("list"));
+        assert!(row.capped);
+    }
+
+    /// qa-26c-step2a-code L2: a first fill with nothing playable is `no_items` (the card's
+    /// sentence); the metadata read moves to the next reader; a later page failing keeps the last
+    /// good list; a track repeated on a later page is listed once, at its first place.
+    #[tokio::test]
+    async fn first_fills_readers_pages_and_repeats() {
+        let app = TestApp::new().await;
+        app.state.music_sweep.set_art_per_check(0);
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        app.fetch
+            .answer_once(TOKEN_URL, 200, token("FAKE-ACCESS-KID"));
+        app.fetch
+            .answer(TOKEN_URL, 200, token("FAKE-ACCESS-PARENT"));
+        let _ = kid;
+
+        // A track entry whose one track isn't playable here: `no_items`, no list.
+        let track = entry(&app, "track", "1FakeTrackH00000000008").await;
+        let mut unplayable: Value = serde_json::from_slice(&fixture("track.json")).unwrap();
+        unplayable["is_playable"] = json!(false);
+        app.fetch.answer(
+            &url(&app, Read::Track("1FakeTrackH00000000008")),
+            200,
+            unplayable.to_string(),
+        );
+        let report = check(&app, track, t0()).await;
+        assert_eq!(report.error.as_deref(), Some("no_items"));
+        let row = listing(&app, track).await;
+        assert_eq!((row.version, row.failures), (None, 1));
+        assert_eq!(
+            crate::music::CheckError::Spotify("no_items".to_string()).message(),
+            "Nothing in it can be played here."
+        );
+        assert_eq!(
+            crate::music::sweep_error_text("spotify", "no_items"),
+            "nothing in it can be played here"
+        );
+
+        // An album the kid may not see (404) and the parent may: read by the parent.
+        let album = entry(&app, "album", ALBUM_X).await;
+        let album_url = url(&app, Read::Album(ALBUM_X));
+        app.fetch.answer_once(&album_url, 404, "");
+        app.fetch.answer(&album_url, 200, fixture("album.json"));
+        app.fetch.answer(
+            &url(&app, Read::AlbumTracks(ALBUM_X, 50)),
+            200,
+            fixture("album_tracks.json"),
+        );
+        app.fetch.clear_calls();
+        assert_eq!(check(&app, album, t0()).await.error, None);
+        assert_eq!(
+            bearers(&app, &album_url),
+            ["Bearer FAKE-ACCESS-KID", "Bearer FAKE-ACCESS-PARENT"]
+        );
+        assert_eq!(listing(&app, album).await.spotify_reader, Some(parent));
+
+        // A playlist over two pages, track 0 repeated on the second: once, at its first place.
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        app.fetch.answer(
+            &url(&app, Read::Playlist(PLAYLIST)),
+            200,
+            fixture("playlist.json"),
+        );
+        let page = |numbers: &[usize], next: bool| {
+            let items: Vec<Value> = numbers
+                .iter()
+                .map(|n| json!({"is_local": false, "item": synthetic_track(*n)}))
+                .collect();
+            json!({"items": items, "next": next.then_some("https://api.spotify.com/next")})
+                .to_string()
+        };
+        let first: Vec<usize> = (0..50).collect();
+        app.fetch.answer(
+            &url(&app, Read::PlaylistItems(PLAYLIST, 0)),
+            200,
+            page(&first, true),
+        );
+        let second_url = url(&app, Read::PlaylistItems(PLAYLIST, 50));
+        app.fetch
+            .answer(&second_url, 200, page(&[0, 50, 51], false));
+        assert_eq!(check(&app, id, t0()).await.error, None);
+        let list = items(&app, id).await;
+        assert_eq!(list.len(), 52);
+        assert_eq!(list[0].key, "1FakeTrackN00000000000");
+        assert_eq!(list[50].key, "1FakeTrackN00000000050");
+        let good = listing(&app, id).await;
+
+        // The second page fails next time: the check fails, the list stays.
+        app.fetch.answer(&second_url, 503, "");
+        let now = t0() + TimeDelta::hours(1);
+        sweep::request_check(&app.db, id, now).await.unwrap();
+        let report = check(&app, id, now).await;
+        assert_eq!(report.error.as_deref(), Some("http_503"));
+        let row = listing(&app, id).await;
+        assert_eq!(row.version, good.version);
+        assert_eq!(row.spotify_mode.as_deref(), Some("list"));
+        assert_eq!(items(&app, id).await, list);
+    }
+
     /// `QUOTA_EXCEEDED` (§2.4, QA L13): the check fails `quota`, and every Spotify check after
     /// it for 60 minutes fails `quota` without a request - the phones' play calls draw on the
     /// same developer account; the pass's other checks go on.

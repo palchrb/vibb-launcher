@@ -2583,8 +2583,9 @@ struct SpotifyReads<'s, 'j, 'a> {
     job: &'j mut Job<'a>,
 }
 
-/// Every reader failed: the error to report, and whether one of them answered 403 or 404 (the
-/// account may not see it - another may).
+/// Every reader failed: the error to report, and whether **every** reader answered 403 or 404 -
+/// no account may see it (qa-26c-step2a-code M1: only then is a playlist a context; any other
+/// failure fails the check and keeps the last good list).
 struct NoReader {
     err: SpotifyError,
     refused: bool,
@@ -2608,26 +2609,40 @@ impl SpotifyReads<'_, '_, '_> {
 
     /// The first reader that answers (§3.3), in `ids`' order: a reader whose failure says it may
     /// not see it, or can't be used now ([spotify::try_next_reader]), lets the next try; any other
-    /// failure ends the read. Every reader failing: 404 if one said so, else the first failure.
+    /// failure ends the read **as that failure, never a refusal** (qa-26c-step2a-code M1: a
+    /// transient on the next reader after a 403 isn't "no account may see it"). Every reader
+    /// failing: `refused` only when each answered 403/404; the error is the first account-level
+    /// one (the login, the key: what the parent can mend), else 404 if one said so, else 403.
     async fn first(&mut self, ids: &[i64], url: &str) -> Result<(i64, Vec<u8>), NoReader> {
-        let mut first: Option<SpotifyError> = None;
-        let mut refused = false;
+        let mut unusable: Option<SpotifyError> = None;
+        let mut refusals = 0;
+        let mut not_found = false;
         for &account in ids {
             match self.get(account, url).await {
                 Ok(body) => return Ok((account, body)),
-                Err(err) if spotify::try_next_reader(&err) => {
-                    refused |= matches!(err, SpotifyError::NotFound | SpotifyError::Status(403));
-                    if err == SpotifyError::NotFound || first.is_none() {
-                        first = Some(err);
-                    }
+                Err(err @ (SpotifyError::NotFound | SpotifyError::Status(403))) => {
+                    refusals += 1;
+                    not_found |= err == SpotifyError::NotFound;
                 }
-                Err(err) => return Err(NoReader { err, refused }),
+                Err(err) if spotify::try_next_reader(&err) => {
+                    unusable.get_or_insert(err);
+                }
+                Err(err) => {
+                    return Err(NoReader {
+                        err,
+                        refused: false,
+                    });
+                }
             }
         }
-        Err(NoReader {
-            err: first.unwrap_or(SpotifyError::NoAccount),
-            refused,
-        })
+        let refused = refusals > 0 && refusals == ids.len();
+        let err = match unusable {
+            Some(err) => err,
+            None if not_found => SpotifyError::NotFound,
+            None if refusals > 0 => SpotifyError::Status(403),
+            None => SpotifyError::NoAccount,
+        };
+        Err(NoReader { err, refused })
     }
 
     /// The pages after `page` (read as `account`): `next_read(offset)` for each next page, until
@@ -2951,7 +2966,7 @@ async fn artist_albums(
         spotify::parse_artist_albums(&body).ok_or(SpotifyError::BadAnswer)?;
     let mut pages = 1;
     while next && pages < spotify::MAX_ARTIST_ALBUM_PAGES {
-        let url = accounts.read_url(Read::ArtistAlbums(id, pages * spotify::PAGE_LIMIT));
+        let url = accounts.read_url(Read::ArtistAlbums(id, pages * spotify::ARTIST_ALBUMS_LIMIT));
         let body = reads.get(reader, &url).await?;
         let (more, more_next) =
             spotify::parse_artist_albums(&body).ok_or(SpotifyError::BadAnswer)?;

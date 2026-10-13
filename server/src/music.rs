@@ -870,7 +870,9 @@ macro_rules! storytel_gate {
 #[macro_export]
 macro_rules! spotify_gate {
     () => {
-        "(e.source != 'spotify' OR EXISTS (SELECT 1 FROM device_policy p          JOIN music_spotify_accounts a ON a.id = p.music_spotify_account          WHERE p.device_id = ?))"
+        "(e.source != 'spotify' OR EXISTS (SELECT 1 FROM device_policy p \
+         JOIN music_spotify_accounts a ON a.id = p.music_spotify_account \
+         WHERE p.device_id = ?))"
     };
 }
 
@@ -1742,6 +1744,14 @@ pub fn sweep_error_text(source: &str, code: &str) -> String {
             "a saved Spotify login was locked with another key - log in again".to_string()
         }
         ("spotify", "no_items") => "nothing in it can be played here".to_string(),
+        // qa-26c-step2a-code L3: a token mint that couldn't read its account row, and a refused
+        // address (`FetchError::Refused`, coded `network` today - mapped should it get its own).
+        ("spotify", "database") => {
+            "this server couldn't read its Spotify login - it tries again later".to_string()
+        }
+        ("spotify", "refused") => {
+            "Spotify's address pointed somewhere this server won't go".to_string()
+        }
         ("spotify", other) if other.starts_with("http_") => {
             format!("Spotify answered {}", &other[5..])
         }
@@ -2296,6 +2306,15 @@ mod tests {
         assert_eq!(
             sweep_error_text("nrk", "not_found"),
             "not found at the source"
+        );
+        // qa-26c-step2a-code L3: no raw word on the card.
+        assert_eq!(
+            sweep_error_text("spotify", "database"),
+            "this server couldn't read its Spotify login - it tries again later"
+        );
+        assert_eq!(
+            CheckError::Spotify("refused".to_string()).message(),
+            "Spotify's address pointed somewhere this server won't go."
         );
     }
 
