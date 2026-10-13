@@ -1,0 +1,10 @@
+{#- A form's result in its group (design 31 §3.0's flash, step 11): green when done, else a red title
+    with the reason behind ⓘ. Reads `flash` (tracked_apps::Flash), `flash_at` (the group, for
+    data-flash), `flash_class` (extra classes) and `flash_about` (the ⓘ's label). -#}
+{% if flash.ok -%}
+<p class="flash {{ flash_class }}" data-flash="{{ flash_at }}" role="status">{{ flash.title }}</p>
+{%- else if let Some(detail) = flash.detail -%}
+<details class="info cell {{ flash_class }}" data-flash="{{ flash_at }}"><summary class="row"><span class="row-label text-alarm">{{ flash.title }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ flash_about }}"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ detail }}</p></div></details>
+{%- else -%}
+<p class="row text-alarm {{ flash_class }}" data-flash="{{ flash_at }}">{{ flash.title }}</p>
+{%- endif %}

@@ -30,7 +30,7 @@ struct DeviceListRow {
 }
 
 /// The avatars' colours (white text 4.5:1 or more on each); a phone not set up is grey.
-const AVATAR_COLOURS: [&str; 6] = [
+pub(crate) const AVATAR_COLOURS: [&str; 6] = [
     "avatar-indigo",
     "avatar-orange",
     "avatar-teal",
@@ -133,11 +133,7 @@ async fn list_row(
     };
     DeviceListRow {
         initial: initial(&device.name),
-        avatar: if device.enrolled_at.is_none() {
-            "avatar-grey"
-        } else {
-            AVATAR_COLOURS[device.id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
-        },
+        avatar: avatar_class(&device),
         id: device.id,
         name: device.name,
         connection,
@@ -149,9 +145,18 @@ async fn list_row(
     }
 }
 
+/// A phone's avatar colour (also on the Apps tab): grey until it is set up, else by its id.
+pub(crate) fn avatar_class(device: &Device) -> &'static str {
+    if device.enrolled_at.is_none() {
+        "avatar-grey"
+    } else {
+        AVATAR_COLOURS[device.id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
+    }
+}
+
 /// The avatar's letter: the name's first letter or digit, upper-cased when that gives one
 /// letter ("ß" stays "ß"); an emoji or a flag is skipped rather than cut in half; "?" for none.
-fn initial(name: &str) -> String {
+pub(crate) fn initial(name: &str) -> String {
     name.chars()
         .find(|c| c.is_alphanumeric())
         .map(|c| {

@@ -41,7 +41,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
-- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/app_header.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
+- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/app_header.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; a rebuilt inner page with its own back link and large title also sets `{% let subpage = true %}` first and gets no brand bar; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
 
 ## About the developer
@@ -95,7 +95,7 @@ No prior programming experience - build features directly rather than explaining
   (`sync_app(.., forced)`) and "Forget" do (QA Low 5). **A release never allows
   anything by itself**: `device_api::allow_installed_catalog_apps` (every status report) allows, on that phone only,
   a checked catalog app's pinned package once the phone reports it installed by the launcher, and nudges it; checking
-  the app with a known package (`toggle_app`) allows it as before. "Forget the package and key" on the app's page clears both. `TrackedAppUpdate` carries
+  the app with a known package (`toggle_app`) allows it as before. "Forget Package and Key…" on the app's page (behind a confirm) clears both. `TrackedAppUpdate` carries
   `package_name` and `signer_sha256` (launcher DTO `signerSha256`, `PolicyResponseCompatTest`). The phone checks the
   APK itself before installing (launcher security wave, `CatalogApkCheck.kt`): the package and the pinned key in the
   APK's verified signers or their lineage (a v3.1 rotation the server doesn't read), the session held to the package
@@ -444,12 +444,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   regex and any filter over 256 chars (400, nothing written, the entered values kept, the error by the field and that
   field `autofocus`ed). Both forms post to their page's own path (`/apps/tracked/new`, `/apps/tracked/{id}` - there
   is no `/edit` any more), so the 400 page keeps the scroll position.
-- **Status card** shows the cached file, "202609040.apk (326.1 MB)" (`tracked_apps.latest_release_asset_name`/`_size`,
+- **The app page** (Source & Signing since design 31 step 11) shows the cached file, "202609040.apk (326.1 MB)" (`tracked_apps.latest_release_asset_name`/`_size`,
   set by a sync or an upload; rows synced earlier show nothing until the next sync).
 - **One sync per app** (`AppSyncs`, in memory, `AppState.app_syncs`): `sync_app` takes the app's guard or answers
   "already running"; the row is read under it, so a slower sync can't roll a newer cached release back. "Check now"
   starts the sync in its own task, waits up to 10 s, then redirects back to the app's page, which says a check is
-  running or shows how the last one (hourly or manual) failed. The hourly loop skips an app that is syncing.
+  running or shows how the last one (hourly or manual) failed (a short title from `SyncProblem`, the raw error behind ⓘ). The hourly loop skips an app that is syncing.
 - **Sync download** is streamed to `<file>.<random>.part` in the app's dir (`AppState.tracked_apps_dir`,
   `data/tracked_apps/<id>/`, a temp dir in tests) and renamed when complete (ZIP header and GitHub's size checked as
   it streams); the temp file goes on any failure, also when the future is dropped (`TempDownload`'s `Drop`); `.part`
@@ -1014,6 +1014,36 @@ needed to manage the phone, delete on a schedule, never store notification or me
   orange rows at the top (`auth::live_warning_row`/`login_warning_row`); the full sentences stay on Account. Tests:
   `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`, `src/tests/devices_list.rs`,
   `src/tests/attention.rs` (a row per fact).
+
+## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
+
+- **`/apps`** (`tracked_apps::list_apps`, `apps_list.html`): **On phones** - a row per phone with "N allowed"
+  (`allowed_count`: what the phone's Apps card ticks - reported apps on its allowlist, not Play's core, plus catalog
+  apps chosen for it and not reported installed; the launcher not counted; "Not set up" before enrolment) -, then the
+  **Catalog**: the icon tile (the catalog default's icon on its colour, else a letter), the name phones show with the
+  admin name in the sub-line, "N phones" (`device_tracked_apps`; the launcher "all phones"), the version from the tag
+  (`version_of`) or a badge instead (Off / Update failed - the in-memory last sync / No release yet), the launcher
+  first; the footer and Add App. Phone rows link through `phone_apps_href` (the device page, at `#app-<package>` from
+  an app page) until `/devices/{id}/apps` exists (step 6).
+- **`/apps/tracked/{id}`** (`render_detail_full`): the sub-page header; Version, Last checked (local, relative,
+  `display_time`), Check Now with the running state or the failed check's title + ⓘ; Show on phones as (the
+  `app_display_form` partial); On phones (the phones with it ticked, every set-up phone for the launcher); Source &
+  Signing (a `<details>`, open when a refused save/upload is in it): the release, file, package (+ candidates), key
+  (short, whole in ⓘ), Forget Package and Key… (a `<details>` confirm), the Details form, the three switches (one
+  form each, `<noscript>` Save), Upload for manual apps; Remove App…. Every POST target and redirect is as before
+  (`tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` posts each rendered form).
+- **Sync failures are typed** (`SyncProblem` + `Failure { problem, detail }`), set where the error happens
+  (`fetch_latest_release`, `sync_release`, `check_pins`, `check_new_package`); the page shows `title()` (at most 6
+  words) and keeps the raw reqwest/sqlx/file error behind ⓘ and in the log; a temp-file or rename error is `Server`,
+  an asset over 1 GB `TooBig` (`stream_to_file`/`download_asset` type their own errors), a 404 `RepoNotFound`
+  (`github_problem`), no match `NoRelease` (`release_from`). Upload and package-confirm results use the same title +
+  ⓘ (green when done) in their own group (`Note::Upload`/`Package`): both forms post to an action with the group's
+  fragment (`.../upload#upload`, `.../confirm-package#release`) and a success redirects to
+  `?notice=uploaded#upload` / `?notice=package_confirmed#release`, so the result is in view where the parent was
+  (qa-31-s11-code M1).
+- **Add App** (`tracked_app_add.html`): name, source (two radios before the rows, so CSS - no script - hides the
+  GitHub fields for an upload), repo; filter, tag prefix, package and pre-releases under More Options
+  (`TrackedAppAddTemplate::more_open`).
 
 ## Current status (2026-08-08, `v0.13.0`)
 
