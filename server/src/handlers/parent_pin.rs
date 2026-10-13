@@ -39,6 +39,8 @@ pub async fn card(
     notice: Option<&str>,
     zone: &Zone,
     now: DateTime<Utc>,
+    // The "Recent use" list: Lock Screen & PINs only; the device page needs the notices alone.
+    with_events: bool,
 ) -> ParentPinCard {
     let now_ms = now.timestamp_millis();
     let pin_set = policy.override_pin_hash.is_some();
@@ -47,7 +49,11 @@ pub async fn card(
             caps.contains(&format!("\"{}\"", parent_pin::PARENT_PIN_EVENTS_CAPABILITY))
         })
     });
-    let shown = device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await;
+    let shown = if with_events {
+        device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await
+    } else {
+        Vec::new()
+    };
     // The notices: the last 24 hours, and only since the PIN was last saved - after a new PIN
     // they stop telling the parent to change it (qa-24-code Low 4). The list keeps everything.
     let since =

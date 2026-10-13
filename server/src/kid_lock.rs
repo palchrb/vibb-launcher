@@ -203,8 +203,9 @@ pub enum LockNote {
 
 impl LockNote {
     /// The words (§4.2): a warning's title and sentence, or a row's label and value; an adb fix
-    /// behind the ⓘ.
-    pub fn note(&self) -> Note {
+    /// behind the ⓘ. `reported`: when the phone sent this ("10:59", "yesterday 21:40"), on the
+    /// "On the phone" row, so an old report doesn't read as now.
+    pub fn note(&self, reported: Option<&str>) -> Note {
         let warning = |title: &str, detail: String, fix: Option<String>| Note {
             warning: true,
             title: title.to_string(),
@@ -247,15 +248,14 @@ impl LockNote {
             ),
             LockNote::Off(Inactive::KeyguardNotDisabled) => warning(
                 "Android's lock can't be turned off",
-                "Android refused, so Vibb's lock stays off. Check that Vibb still manages the \
-                 phone (device owner)."
+                "Android refused, so Vibb's lock stays off. Vibb may no longer manage this phone."
                     .to_string(),
-                None,
+                Some("Check that Vibb is still the device owner: adb shell dpm list-owners".to_string()),
             ),
             LockNote::Off(Inactive::CrashGuard) => warning(
                 "Lock turned off after crashes",
-                "It crashed several times in a row. The phone tries it again at its next sync, \
-                 at most every 10 minutes; update Vibb if this repeats."
+                "It crashed several times in a row. The phone tries it again within 10 minutes of \
+                 its next check-in; update Vibb if this repeats."
                     .to_string(),
                 None,
             ),
@@ -268,8 +268,8 @@ impl LockNote {
             ),
             LockNote::Off(Inactive::Other(code)) => warning(
                 "Lock is off on the phone",
-                format!("The phone reported \"{code}\"."),
-                None,
+                "Vibb reported a reason this server doesn't know.".to_string(),
+                Some(format!("The phone reported \"{code}\".")),
             ),
             LockNote::CallsCantRing(package) => warning(
                 "Calls can't ring over the lock",
@@ -280,11 +280,17 @@ impl LockNote {
                 )),
             ),
             LockNote::Waiting => row("On the phone", "Waiting for a report".to_string(), None),
-            LockNote::On { locked } => row(
-                "On the phone",
-                if *locked { "Locked" } else { "Unlocked" }.to_string(),
-                None,
-            ),
+            LockNote::On { locked } => {
+                let state = if *locked { "Locked" } else { "Unlocked" };
+                row(
+                    "On the phone",
+                    match reported {
+                        Some(when) => format!("{state} · {when}"),
+                        None => state.to_string(),
+                    },
+                    reported.is_some().then_some("At the phone's last report."),
+                )
+            }
             LockNote::WrongPins(n) => row("Wrong PINs in a row", n.to_string(), None),
             LockNote::Backoff { minutes } => row(
                 "Next try in",
@@ -545,7 +551,7 @@ mod tests {
             };
             let card = lock_card(&p, Some(&state), true, true, 0);
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
-            assert!(card.notes[0].note().warning, "{inactive}");
+            assert!(card.notes[0].note(None).warning, "{inactive}");
         }
         let state = LockState {
             inactive: Some("no_pin".to_string()),
@@ -579,7 +585,7 @@ mod tests {
         let words: Vec<(String, Option<String>)> = card
             .notes
             .iter()
-            .map(|n| n.note())
+            .map(|n| n.note(None))
             .map(|n| {
                 assert!(!n.warning);
                 (n.title, n.value)
@@ -610,17 +616,24 @@ mod tests {
             LockNote::CallsCantRing("io.element.android.x".to_string()),
         ];
         for note in notes {
-            let words = note.note();
+            let words = note.note(None);
             assert!(words.warning, "{note:?}");
             // §4.2: a bold title of up to 6 words + 1 sentence; commands and packages in the ⓘ.
             assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
             let detail = words.detail.unwrap();
-            for hidden in ["adb ", "io.element", "appops"] {
+            for hidden in [
+                "adb ",
+                "io.element",
+                "appops",
+                "sync",
+                "device owner",
+                "\"odd\"",
+            ] {
                 assert!(!detail.contains(hidden), "{note:?}: {detail}");
             }
         }
         let fix = LockNote::Off(Inactive::AndroidCredential)
-            .note()
+            .note(None)
             .fix
             .unwrap();
         assert!(fix.contains("adb shell locksettings clear --old <PIN>"));
@@ -643,7 +656,7 @@ mod tests {
                 LockNote::On { locked: false },
             ]
         );
-        let fix = card.notes[0].note().fix.unwrap();
+        let fix = card.notes[0].note(None).fix.unwrap();
         assert!(fix.contains("io.element.android.x"));
         assert!(fix.contains("USE_FULL_SCREEN_INTENT"));
     }

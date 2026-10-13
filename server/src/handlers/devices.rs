@@ -1561,6 +1561,7 @@ async fn render_device(
         None,
         &zone,
         chrono::Utc::now(),
+        false,
     )
     .await;
     let relock = crate::handlers::window_relock::card(

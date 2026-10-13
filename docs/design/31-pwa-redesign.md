@@ -817,7 +817,8 @@ value.
   with QR code ›**, and today's notices, `access.typed_paused` included (L6);
 - Remove.
 
-The sub-page rows show greyed out with "After setup".
+The sub-page rows show greyed out with "After setup", except Lock Screen & PINs: the PINs can be set first (step 4,
+choice 11), so the phone's first policy already has its Parent PIN. Step 10 keeps that row live.
 
 ### 3.3 Apps
 
@@ -2318,7 +2319,26 @@ Choices made while building:
    warning while it is allowed, and the rest is §4.5's cut.
 10. **A ticked app outside the list** still shows its package name as its label (the server knows no other name for
     it), as before.
+11. **A phone not set up has the page** (qa-31-s4-code L6): its PINs can be set before setup, so the first policy the
+    phone fetches already has a Parent PIN and it is never managed without one (the old device page offered the PIN
+    cards before setup too). §3.2's not-enrolled paragraph now makes this row the exception to "After setup".
 
 Deferred, with the reason:
 - **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses only step 1-3
   components plus the four small rules above.
+
+**Fix round after the code QA** (`qa-31-s4-code.md`: 0 High, 0 Medium, 6 Low, 4 nits; all fixed):
+
+| # | Fix |
+|---|---|
+| L1 | `parent_pin::flashes_render_inside_their_groups` checks that a refused Child PIN (`needs_override`) opens its form and a saved one (`saved`) doesn't. The mutation `child_open: false` now fails it. |
+| L2 | `device_pages::lock_screen_and_pins_holds_the_moved_forms` checks `new_pin` is `type="password"` with `autocomplete="new-password"` and `new_kid_pin` plain text. The mutation `type="text"` now fails it. |
+| L3 | "On the phone" reads "Locked · 10:59" / "Unlocked · yesterday 21:40" (`Zone::when` of the report's `reported_at`), "At the phone's last report." behind its ⓘ; `LockNote::note` takes the time. Test: `device_pages::the_lock_state_says_when_it_was_reported` (a report from yesterday). |
+| L4 | `device_pages::load_policy` returns a `Result`: a missing row is the defaults, a DB error the 500 "Couldn't read this phone - check the server log." on Lock Screen & PINs, About and Advanced. Test: `device_pages::an_unreadable_policy_is_an_error_not_off`. |
+| L5 | CrashGuard: "…tries it again within 10 minutes of its next check-in…"; KeyguardNotDisabled: "Vibb may no longer manage this phone.", the device-owner check (`adb shell dpm list-owners`) in its `fix`. The warnings test hides "sync", "device owner" and an unknown code. |
+| L6 | Choice 11 above, and §3.2's not-enrolled paragraph amended. |
+| N1 | `server/CLAUDE.md`: the lock background returns to `/devices/{id}/lock`; wrong tries are on Lock Screen & PINs › Recent use and counted in the Status card. |
+| N2 | `parent_pin::card(…, with_events)`: the device page passes `false` and loads no event list. |
+| N3 | `device_pages::has_capability`, used by Lock Screen & PINs and `escapes_card`. |
+| N4 | An unknown `inactive` code: "Vibb reported a reason this server doesn't know.", the code behind the ⓘ. |
+| Checks | `cargo test` 759 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |

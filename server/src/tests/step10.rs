@@ -407,7 +407,7 @@ async fn lock_page_warns_about_the_lock_state() {
     assert!(!group.contains("data-warning"), "{group}");
     assert!(group.contains("<span class=\"row-label\">On the phone</span>"));
     assert!(
-        group.contains("<span class=\"row-value\">Unlocked</span>"),
+        group.contains("<span class=\"row-value\">Unlocked · "),
         "{group}"
     );
     assert!(group.contains("<span class=\"row-label\">Wrong PINs in a row</span>"));

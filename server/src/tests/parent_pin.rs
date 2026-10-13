@@ -333,6 +333,14 @@ async fn flashes_render_inside_their_groups() {
     assert_eq!(html.matches(text).count(), 1);
     assert!(!group(&html, "parent-pin").contains(text));
     assert!(group(&html, "child-pin").contains("flash flash-error"));
+    // A refused Child PIN opens its form again (qa-31-s4-code L1); a saved one doesn't.
+    assert!(group(&html, "child-pin").contains("<details class=\"edit cell\" open>"));
+    let html = app.get_page(&page("saved"), &cookie).await.text();
+    assert!(
+        group(&html, "child-pin").contains("Child PIN saved."),
+        "{html}"
+    );
+    assert!(!group(&html, "child-pin").contains("<details class=\"edit cell\" open>"));
 
     // Unknown codes show nothing.
     let html = app.get_page(&page("bogus"), &cookie).await.text();

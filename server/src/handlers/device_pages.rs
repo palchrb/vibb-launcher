@@ -356,18 +356,37 @@ async fn load_device(state: &AppState, id: i64) -> Result<Device, (StatusCode, &
     }
 }
 
-async fn load_policy(state: &AppState, id: i64) -> DevicePolicy {
-    sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
+/// The phone's settings: a missing row reads as the defaults, a DB error is a 500 (qa-31-s4-code
+/// L4: never "Child PIN · Off" because a read failed).
+async fn load_policy(
+    state: &AppState,
+    id: i64,
+) -> Result<DevicePolicy, (StatusCode, &'static str)> {
+    match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten()
-        .unwrap_or(DevicePolicy {
+    {
+        Ok(policy) => Ok(policy.unwrap_or(DevicePolicy {
             device_id: id,
             vpn_filter_enabled: true,
             ..Default::default()
-        })
+        })),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the device's settings");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            ))
+        }
+    }
+}
+
+/// The last report lists the launcher capability `name`.
+fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
+    latest
+        .and_then(|s| s.capabilities_json.as_deref())
+        .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
 }
 
 async fn load_latest(state: &AppState, id: i64) -> Option<DeviceStatus> {
@@ -446,7 +465,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = load_policy(&state, id).await;
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
     let latest = load_latest(&state, id).await;
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
@@ -661,7 +683,10 @@ pub async fn view_advanced(
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = load_policy(&state, id).await;
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
     let latest = load_latest(&state, id).await;
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
@@ -754,17 +779,14 @@ pub async fn view_lock(
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = load_policy(&state, id).await;
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
     let latest = load_latest(&state, id).await;
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
     let notice = query.get("notice").map(String::as_str);
-    let capability = |name: &str| {
-        latest
-            .as_ref()
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
 
     let child = crate::kid_lock::lock_card(
         &policy,
@@ -772,18 +794,30 @@ pub async fn view_lock(
             latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
         )
         .as_ref(),
-        capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
+        has_capability(latest.as_ref(), crate::kid_lock::PIN_LOCK_CAPABILITY),
         latest.is_some(),
         now.timestamp_millis(),
     );
+    // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
+    let reported = latest
+        .as_ref()
+        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
+        .map(|t| zone.when(t, now));
     let (child_warnings, child_rows): (Vec<Note>, Vec<Note>) = child
         .notes
         .iter()
-        .map(crate::kid_lock::LockNote::note)
+        .map(|n| n.note(reported.as_deref()))
         .partition(|n| n.warning);
-    let parent =
-        crate::handlers::parent_pin::card(&state.db, &policy, latest.as_ref(), notice, &zone, now)
-            .await;
+    let parent = crate::handlers::parent_pin::card(
+        &state.db,
+        &policy,
+        latest.as_ref(),
+        notice,
+        &zone,
+        now,
+        true,
+    )
+    .await;
 
     let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(&state, id)
         .await
@@ -842,11 +876,7 @@ pub(crate) fn escapes_card(
     now_ms: i64,
 ) -> crate::kiosk_escapes::EscapesCard {
     use crate::kiosk_escapes as ke;
-    let capability = |name: &str| {
-        latest
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
+    let capability = |name: &str| has_capability(latest, name);
     let mut card = ke::escapes_card(
         policy.update_fence,
         policy.notification_auto_cancel,

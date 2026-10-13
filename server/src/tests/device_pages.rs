@@ -563,6 +563,18 @@ async fn lock_screen_and_pins_holds_the_moved_forms() {
         let details = html[..input].rfind("<details class=\"edit cell\"").unwrap();
         assert!(!html[details..input].contains("</details>"), "{field}");
     }
+    // The Parent PIN stays off the screen and out of autofill (qa-31-s4-code L2); the Child PIN
+    // is read back to the child, so it is plain text.
+    let input_of = |name: &str| {
+        tags(&html, "input")
+            .into_iter()
+            .find(|tag| tag.attr("name") == Some(name))
+            .unwrap()
+    };
+    let parent = input_of("new_pin");
+    assert_eq!(parent.attr("type"), Some("password"));
+    assert_eq!(parent.attr("autocomplete"), Some("new-password"));
+    assert_eq!(input_of("new_kid_pin").attr("type"), Some("text"));
 
     set_pins(&app, &cookie, id).await;
     let summary = app
@@ -721,4 +733,65 @@ async fn a_phone_not_set_up_can_get_its_pins_first() {
     assert!(html.contains(&format!("action=\"/devices/{id}/kid-lock\"")));
     assert!(html.contains(&format!("action=\"/devices/{id}/parent-pin\"")));
     assert!(html.contains("None reported yet."));
+}
+
+/// "On the phone" says when the phone reported it, so an old report never reads as now
+/// (qa-31-s4-code L3).
+#[tokio::test]
+async fn the_lock_state_says_when_it_was_reported() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_pins(&app, &cookie, id).await;
+    report(
+        &app,
+        &token,
+        json!({ "capabilities": ["pin_lock_v1"],
+                "lock_state": { "active": true, "locked": true } }),
+    )
+    .await;
+    // The report is from yesterday (local, Phone Setup's Europe/Oslo).
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-1 day') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = app
+        .get_page(&device_page(id, Section::Lock), &cookie)
+        .await
+        .text();
+    let row = &html[html
+        .find("<span class=\"row-label\">On the phone</span>")
+        .expect("the row")..];
+    let row = &row[..row.find("</summary>").unwrap()];
+    assert!(
+        row.contains("<span class=\"row-value\">Locked · yesterday "),
+        "{row}"
+    );
+    assert!(!row.contains("UTC"), "{row}");
+}
+
+/// A failed read of the phone's settings is an error page, never "Child PIN · Off"
+/// (qa-31-s4-code L4); the other sub-pages fail the same way.
+#[tokio::test]
+async fn an_unreadable_policy_is_an_error_not_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // The settings table is gone: every read of it fails.
+    sqlx::query("ALTER TABLE device_policy RENAME TO device_policy_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for section in [Section::Lock, Section::About, Section::Advanced] {
+        let res = app.get_page(&device_page(id, section), &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{section:?}");
+        assert!(
+            res.text().contains("Couldn't read this phone"),
+            "{section:?}"
+        );
+        assert!(!res.text().contains("Not set"), "{section:?}");
+    }
 }
