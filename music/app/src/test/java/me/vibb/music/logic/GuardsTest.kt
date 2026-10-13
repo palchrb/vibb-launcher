@@ -585,7 +585,8 @@ class GuardsTest {
     @Test
     fun `the workers wire Storytel's news, report and cooldown, and the download job refreshes the Nytt notification`() {
         val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
-        assertTrue("a new book is news though url-less", sync.contains("markSeen(store, entry.id, listing.items.map { it.key }, newsEligible(entry, listing.items))"))
+        // A new book is news though url-less: listedOf's eligible set (NewItemsTest d29 12), built per entry here.
+        assertTrue(sync.contains("e.id to listedOf(e, snap.listed[e.id].orEmpty(), snap.onPhone[e.id].orEmpty(), missing, errors[e.id].orEmpty())"))
         assertTrue(sync.contains("val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()"))
         assertTrue(sync.contains("val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))"))
         assertTrue(sync.contains("val storytel = StorytelAccount.get(context).state()"))
@@ -595,5 +596,61 @@ class GuardsTest {
         val reports = Regex("""Sync\.writeReport\(applicationContext\)""").findAll(work).count()
         assertEquals(2, reports)
         assertEquals("a new book's notification right after its download, beside each report", reports, Regex("""NewNotifier\.update\(applicationContext, store\.snapshot\(\)\)\n\s*Sync\.writeReport\(applicationContext\)""").findAll(work).count())
+    }
+
+    /** Design 29 §1.6 and §4 (QA M2-M4): the order the pure rules assume, and the tray's writers serialised. */
+    @Test
+    fun `design 29's wiring - phase A before the listings, phase B before the prune, one sync at a time, one-statement tray writes`() {
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue(sync.contains("suspend fun run(context: Context) = withContext(Dispatchers.IO) { runLock.withLock { runLocked(context) } }"))
+        val order = listOf(
+            "val reset = dao.newsBeforeTx(lib.keyById)",
+            "for (file in store.inboxDir.listFiles().orEmpty())",
+            // after the loop: the snapshot holds this run's listings (qa-29-code M1 A)
+            "val current = newsListed(lib, store)",
+            "val applied = newsApplied(appliedIds, lib.entries, current)",
+            "dao.newsAfterTx(applied, current, System.currentTimeMillis())",
+            "for ((file, text) in read) if (runCatching { file.readText() }.getOrNull() == text) file.delete()",
+            "dao.pruneNews(ids)",
+        ).map { sync.indexOf(it) }
+        assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
+        assertEquals("built once", 1, Regex("""newsListed\(lib, store\)""").findAll(sync).count())
+        assertFalse("no tray write outside the DAO's transactions", sync.contains("replaceNews"))
+        // The DAO's half: a reset drops every per-id row (qa-29-code M1 C, QA H2's flood), and phase B reads the baseline.
+        val db = code("src/main/java/me/vibb/music/data/MusicDb.kt")
+        assertTrue(db.contains("for (id in r.reset) resetEntry(id)"))
+        assertTrue(
+            db.contains(
+                "suspend fun resetEntry(entryId: Long) {\n        deleteItems(entryId)\n        deleteListing(entryId)\n" +
+                    "        deleteSeen(entryId)\n        deleteNewsOf(entryId)\n        deleteItemErrors(entryId)\n    }",
+            ),
+        )
+        assertTrue(db.contains("val open = newsBaselineClosed() != true\n        val r = newsAfter(known, tray, seen, applied, current, now, open)"))
+        // A permanent failure of a tray item asks for the re-pick's sync (qa-29-code L4).
+        assertTrue(sync.contains("if (repickWanted(dao.news().map { NewsItem(it.entryId, it.key, it.seq) }, entryId, itemKey, code)) Sync.nudge(context)"))
+        assertTrue(service.contains("if (store.db.deleteNews(entryId, key) > 0) NewNotifier.update(this@PlaybackService, store.snapshot())"))
+        assertFalse(service.contains("replaceNews"))
+        val fetched = code("src/main/java/me/vibb/music/sync/Downloads.kt").substringAfter("run.fetchOne(w)").trimStart()
+        assertTrue(
+            "each Nytt item's copy updates the notification",
+            fetched.startsWith("if (dao.news().any { it.entryId == w.entry.id && it.key == w.item.key }) {\n                    NewNotifier.update(applicationContext, store.snapshot())"),
+        )
+    }
+
+    /** Design 29 step 4's glue (qa-29-code L2): the pure rules in OwnFilesTest, wired here. */
+    @Test
+    fun `own-file copies - the record written on arrival, judged at every pull, the report from the rule`() {
+        val inbox = code("src/main/java/me/vibb/music/sync/Inbox.kt")
+        assertTrue("G", inbox.contains("{ size, sha -> size == file.size && sha == file.sha256 }\n            .also { if (it) store.recordOwnSha(file.id, file.sha256) }"))
+        val bridge = code("src/main/java/me/vibb/music/bridge/BridgeSync.kt")
+        val pull = bridge.substringAfter("private fun pullFiles(").substringBefore("private suspend fun pullStorytel(")
+        assertTrue("F", pull.contains("val plan = ownFetchPlan(lib.files, store.ownCopies()) { keptCopy(store, it) }"))
+        assertTrue(pull.contains("for (id in plan.refetch) {"))
+        assertTrue(pull.contains("store.deleteOwnCopy(id)"))
+        assertTrue(pull.contains("for (file in plan.fetch) {"))
+        assertTrue(bridge.contains("keepOwnCopy(file.sha256, store.ownSha(file.id), { Inbox.sha256(store.ownFile(file.id)) }, { store.recordOwnSha(file.id, it) })"))
+        assertTrue("E", bridge.contains("val held = heldOwnFiles(lib?.files.orEmpty(), store.ownCopies()) { store.ownSha(it) }"))
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue("a pruned copy takes its record", sync.contains("store.ownCopies().filter { it !in lib.fileIds }.forEach { store.deleteOwnCopy(it) }"))
     }
 }

@@ -13,8 +13,10 @@ import com.kidslauncher.mdm.lock.glanceTicks
 
 /**
  * Vibb music on the PIN lock (design 21 step 4, design 25): the glance page's full and compact
- * tiles, bound while a session is live (the keypad stage has no music since 25b-G, user decision
- * 2026-10-12: it stays plain). No stage logic - the glance
+ * tiles, bound while a session is live and inside the listening window (design 28: playing, or 10
+ * minutes after the end of play or a fresh headset - Home's card's rule, [shown]; never the
+ * snapshot, which has no controls without opening the player) (the keypad stage has no music since
+ * 25b-G, user decision 2026-10-12: it stays plain). No stage logic - the glance
  * panel (lock/GlancePanel) decides whether a tile shows and which ([show], from its fit); this binds
  * the session's art, item, entry, progress and play/pause into them, watches the session between the
  * lock's onStart and onStop and tells the panel when it changed ([onChange]).
@@ -40,6 +42,8 @@ class MusicLockPanel(
         lookUp()
         onChange()
     }
+    /** The listening window's end while a paused session shows: the panel refits without the tile (design 28 §2.4). */
+    private val expiry = Runnable { changed() }
 
     init {
         glance.lockMediaPlay.setOnClickListener { playPause() }
@@ -48,28 +52,48 @@ class MusicLockPanel(
         glance.lockMediaCompactPlay.setOnClickListener { playPause() }
     }
 
-    /** onStart: watching the session. */
+    /** onStart: watching the session and the listening window. */
     fun start() {
         if (started) return
         started = true
         MusicSessions.addListener(activity, changed)
+        MusicListening.addListener(changed)
     }
 
     /** onStop (and onDestroy): nothing watched or ticking while the lock isn't shown. */
     fun stop() {
         handler.removeCallbacks(ticker)
+        handler.removeCallbacks(expiry)
         if (!started) return
         started = false
         MusicSessions.removeListener(changed)
+        MusicListening.removeListener(changed)
     }
 
-    /** The session the lock may show, looked up again (`shownSession`: none without listener access,
-     * with the music app suspended or gone). */
+    /** The session the lock may show, looked up again ([shown]); a paused one's window end is
+     * rechecked once (at least 1 ms later, so the end is never re-rendered in a loop). */
     fun lookUp(): MusicSession? {
+        handler.removeCallbacks(expiry)
         val reading = MusicSessions.reading
         usable = MusicSessions.usable(activity, reading.session?.packageName)
-        session = shownSession(reading.access, usable, reading.session)
+        val now = SystemClock.elapsedRealtime()
+        val tileNow = shown(now)
+        session = tileNow.session
+        // Only while started: stop() removes the expiry, and a post after it would outlive the lock.
+        if (started) musicRecheckInMs(tileNow.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }
         return session
+    }
+
+    /**
+     * The one read of what the lock shows, for [lookUp] and [render] alike: the pure
+     * [lockTileSession] (none without listener access, with the music app suspended or gone; kept only
+     * while it plays or inside the listening window - design 28, QA L7 - a live session only, never
+     * the snapshot), with the window's end for [lookUp]'s recheck (null while playing).
+     */
+    private fun shown(nowElapsedMs: Long = SystemClock.elapsedRealtime()): WindowedSession {
+        val reading = MusicSessions.reading
+        val now = BootStamp(nowElapsedMs, MusicListening.bootCount())
+        return lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)
     }
 
     /** The glance panel's choice: the full tile, the compact one or none; [page]: the glance page
@@ -84,11 +108,11 @@ class MusicLockPanel(
 
     private fun render() {
         handler.removeCallbacks(ticker)
-        session = shownSession(MusicSessions.reading.access, usable, MusicSessions.reading.session)
+        session = shown().session
         val s = session
-        val shown = if (s == null) GlanceTileSize.NONE else tile
-        glance.lockMediaTile.visibility = if (shown == GlanceTileSize.FULL) View.VISIBLE else View.GONE
-        glance.lockMediaCompact.visibility = if (shown == GlanceTileSize.COMPACT) View.VISIBLE else View.GONE
+        val size = if (s == null) GlanceTileSize.NONE else tile
+        glance.lockMediaTile.visibility = if (size == GlanceTileSize.FULL) View.VISIBLE else View.GONE
+        glance.lockMediaCompact.visibility = if (size == GlanceTileSize.COMPACT) View.VISIBLE else View.GONE
         if (s == null) return
         val playIcon = if (s.playing) R.drawable.ic_music_pause else R.drawable.ic_music_play
         val playLabel = activity.getString(if (s.playing) R.string.music_pause else R.string.music_play)
@@ -123,6 +147,6 @@ class MusicLockPanel(
             button.setImageResource(playIcon)
             button.contentDescription = playLabel
         }
-        if (glanceTicks(shown != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
+        if (glanceTicks(size != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
     }
 }

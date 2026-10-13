@@ -280,6 +280,8 @@ object MusicNowPlaying {
         }
         if (!playing) releaseWaitingInstall(context)
         if (playing != wasPlaying) listeningChanged(context)
+        // Design 28: the end of play opens the listening window - stamped before the surfaces re-render.
+        MusicListening.observePlay(context, wasPlaying, playing)
         changed()
     }
 
@@ -289,6 +291,7 @@ object MusicNowPlaying {
         MusicStore.prefs(context).edit().remove("playing_at").apply()
         releaseWaitingInstall(context)
         if (wasPlaying) listeningChanged(context)
+        MusicListening.observePlay(context, wasPlaying, playing = false)
         changed()
     }
 

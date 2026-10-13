@@ -10,6 +10,10 @@ import me.vibb.bridge.IMusicBridge
 import me.vibb.bridge.IStorytelCallback
 import me.vibb.music.data.Store
 import me.vibb.music.logic.WantedArt
+import me.vibb.music.logic.heldOwnFiles
+import me.vibb.music.logic.keepOwnCopy
+import me.vibb.music.logic.ownFetchPlan
+import me.vibb.music.model.OwnFile
 import me.vibb.music.model.Source
 import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.Inbox
@@ -68,13 +72,20 @@ object BridgeSync {
         }
     }
 
-    /** Own files (21 §2): copy, check size and SHA-256, close, release. The report at the end of the
-     * sync names the files held, so the launcher fetches the missing ones (and only those). */
+    /**
+     * Own files (21 §2): copy, check size and SHA-256, close, release. The report at the end of the
+     * sync names the files held, so the launcher fetches the missing ones (and only those). A held
+     * copy whose recorded SHA-256 isn't the library's (a file id reused after a server restore or on a
+     * new server, design 29 step 4) is deleted and fetched again.
+     */
     private fun pullFiles(store: Store, bridge: IMusicBridge) {
         val lib = store.library() ?: return
-        val copies = store.ownCopies()
-        for (file in lib.files) {
-            if (file.id in copies) continue
+        val plan = ownFetchPlan(lib.files, store.ownCopies()) { keptCopy(store, it) }
+        for (id in plan.refetch) {
+            Log.w(LOG_TAG, "Own file $id's copy is another file (a reused id): fetched again")
+            store.deleteOwnCopy(id)
+        }
+        for (file in plan.fetch) {
             val pfd = bridge.openFile(file.id) ?: continue
             val ok = ParcelFileDescriptor.AutoCloseInputStream(pfd).use { Inbox.putOwnFile(store, file, it) }
             if (ok) bridge.releaseFile(file.id, file.sha256) else Log.w(LOG_TAG, "Own file ${file.id} didn't match its size or SHA-256")
@@ -96,12 +107,19 @@ object BridgeSync {
             .onFailure { Log.w(LOG_TAG, "Couldn't store the Storytel login (${it.javaClass.simpleName})") }
     }
 
-    /** At the end of the sync: the report (21b §4.3) and the own files held (so the launcher never fetches them again). */
+    /** Is [file]'s held copy the library's file (its record, written by hashing it once when there is none)? */
+    private fun keptCopy(store: Store, file: OwnFile): Boolean =
+        keepOwnCopy(file.sha256, store.ownSha(file.id), { Inbox.sha256(store.ownFile(file.id)) }, { store.recordOwnSha(file.id, it) })
+
+    /**
+     * At the end of the sync: the report (21b §4.3) and the own files held (so the launcher never fetches
+     * them again) - not a copy known to be another file (design 29 step 4), so the launcher fetches a
+     * reused id's new file; a copy not judged yet still counts (qa-29-code L3).
+     */
     suspend fun push(context: Context, report: String) {
         val store = Store.get(context)
         val lib = store.library()
-        val copies = store.ownCopies()
-        val held = lib?.files.orEmpty().filter { it.id in copies }
+        val held = heldOwnFiles(lib?.files.orEmpty(), store.ownCopies()) { store.ownSha(it) }
         val state = Bundle().apply {
             putString(REPORT_KEY, report)
             putLongArray(HELD_FILES_KEY, held.map { it.id }.toLongArray())

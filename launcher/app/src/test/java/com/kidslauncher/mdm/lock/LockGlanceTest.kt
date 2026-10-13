@@ -249,7 +249,8 @@ class LockGlanceTest {
 /**
  * The glance page and the keypad's music row never weaken the PIN lock (design 21 step 4, design
  * 25): the music glue only plays, pauses and skips through the session's transport controls - no
- * app, session activity, setting, notification or intent of any kind.
+ * app, session activity, setting, notification or intent of any kind; since design 28 only a live
+ * session inside the listening window, never the snapshot.
  */
 class LockMediaGuardTest {
     private val ns = "http://schemas.android.com/apk/res/android"
@@ -269,6 +270,19 @@ class LockMediaGuardTest {
         }
         val calls = Regex("MusicSessions\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
         assertEquals(setOf("addListener", "removeListener", "reading", "usable", "playPause", "next", "previous"), calls)
+        // Design 28: the listening window only narrows what shows - its stamps are read, never written.
+        val window = Regex("MusicListening\\.(\\w+)").findAll(code).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("addListener", "removeListener", "listening", "bootCount"), window)
+    }
+
+    @Test
+    fun `the lock's tile is a live session only - never the snapshot`() {
+        // Design 28 §1: a snapshot has no session, so its play would open the player over the lock.
+        val code = code(panel)
+        for (forbidden in listOf("MusicNowPlaying", "snapshot", "Snapshot", "openPlayer", "EXTRA_RESUME", "musicCard")) {
+            assertFalse("MusicLockPanel must not use $forbidden", code.contains(forbidden))
+        }
+        assertTrue(code.contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
     }
 
     @Test

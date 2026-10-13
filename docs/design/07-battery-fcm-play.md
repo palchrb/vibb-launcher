@@ -289,6 +289,10 @@ Implemented on branch `handy` in both repos, local tests green; nothing device-t
   and ends when one begins; FCM health is the ack-based check, not "no nudge for 2 periods".
   Worst case with a silent FCM failure: ring/lock/lifts wait for the next backstop sync
   (<= 30 min); the switch to SSE follows after 2 unacked sends plus one sync.
+- **Design 28 step 1 (2026-10-13)**: the Play Store is also in the **drawer** (not on Home's grid) while the override
+  or the pause is open - they unsuspend it, so it must be reachable. `PlayRuntime.storeListable` (install mode or a
+  window) feeds `AppFilter`; Home drops the store outside install mode (`playPackageOnHome`); a `WindowRelock`
+  listener reloads the app list at every window edge. Play services and GSF stay off every list.
 
 ## Device checklist (implementation, Jelly Star release build + emulator with Play image)
 

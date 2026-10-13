@@ -89,7 +89,9 @@ fun lockStageDue(interactive: Boolean, decidedAtScreenOffs: Int?, screenOffs: In
 /**
  * The music tile (§1.1, user decision 2026-10-12, bug 25b-G): it shows whenever the music app has a
  * session ([session], `shownSession` - `null` without listener access, the app suspended or gone),
- * playing or paused - also at a lock-up - and goes when the session ends.
+ * playing or paused - also at a lock-up - and goes when the session ends. Since design 28 the
+ * session is the windowed one (`MusicLockPanel.shown`, `windowedSession`): a paused session only
+ * within 10 minutes of the end of play or a fresh headset, as Home's card - never the snapshot.
  */
 fun glanceTile(session: MusicSession?): Boolean = session != null
 

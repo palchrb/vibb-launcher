@@ -312,6 +312,11 @@ class Application : android.app.Application() {
         // The first loadApps also loads the parent's app names and icons (design 14), off the main
         // thread (qa-14-code #3).
         loadApps()
+        // The drawer lists the Play Store while the override or the pause is open (design 28): a
+        // window's open, its relock and "Lock again" reload the list - the flags are written
+        // before WindowRelock notifies. Play's own suspension edge can't be the trigger: on a GMS
+        // phone the store is never suspended (QA M1).
+        com.kidslauncher.mdm.server.WindowRelock.addListener { loadApps() }
 
         createNotificationChannels(this)
 
