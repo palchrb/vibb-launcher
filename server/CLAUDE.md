@@ -543,9 +543,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   no room, logged). `music_state.sonos_rooms` (the speakers the phone knows) is kept by `sanitize_music_state` as
   Sonos-shaped uids (`is_sonos_uid`, `RINCON_[A-Z0-9]{12,20}`) once each, names cut like `cut_title` (40), at most 32;
   a bad row drops only itself.
-- **PWA** (`handlers::music`, `templates/music*.html`): `/music` (add by link - one GET, `AppState.music_fetch`,
-  canned in tests; own-files entries; categories; Storytel; the music app's catalog row), `/music/entries/{id}`
-  (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
+- **PWA** (`handlers::music`, `templates/music*.html`; laid out as design 31's Music tab since step 12, below):
+  `/music` (add by link - one GET, `AppState.music_fetch`, canned in tests; own-files entries), `/music/categories`,
+  `/music/settings` (Storytel, the music app's catalog row), `/music/entries/{id}` (settings, cover, uploads), device
+  page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
   ticks, the `#music-settings` form - since design 30 two switches "Streaming may use mobile data" / "Downloads may use
   mobile data" (a hidden `v=2` marks today's page; a post without it is a page from before the update, and its one
   `mobile_data` checkbox sets both - `handlers::music::mobile_switches`), the "Music storage limit" select (1/2/5/10
@@ -578,7 +579,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   backed up. The same content again restores a `missing` row in place (id and path kept) or is refused as a double;
   the 300-file and 200-entry limits are the INSERT's own `WHERE`, and a tick's size check and write share one
   `BEGIN IMMEDIATE`. Own keys are `own-<12 random hex>` (ids repeat after a restore). Files no row names (an older
-  backup restored) show on `/music` with a delete button, never removed by themselves.
+  backup restored) show in Music › Settings behind Delete Files…, never removed by themselves.
 - **Library cache** (migration `0050`): triggers on `music_entries`, `music_categories`, `music_files` and
   `device_music_entries` move `music_library_revision`; `music::cached_library` (`AppState.music_libraries`) keeps each
   phone's built library under it, so the policy poll, the library route and the device card build once per change. A
@@ -596,10 +597,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   prefix only its tags; without one never `music-v*`), so the launcher row can't take `vibb-music.apk`. Editable on the
   app's page and the add form.
 - **Import from Vibb** (design 21a, `src/music_import.rs` pure, `handlers::music_import`): `POST /music/import`
-  (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` at `#import`; `POST
-  /music/import/confirm` re-reads the preview's hidden document with the same parser and re-checks in one transaction
-  (new categories, entries in file order after `NEXT_SORT`, ticks via `music::tick_fits`), then a session flash at
-  `/music#import` and one `music_library_imported` event. Targets only through `parse_link` (a `storytel:` one through
+  (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` on the import page
+  (`/music/import`, its GET the empty form); `POST /music/import/confirm` re-reads the preview's hidden document with
+  the same parser and re-checks in one transaction (new categories, entries in file order after `NEXT_SORT`, ticks via
+  `music::tick_fits`), then a session flash at `/music/import#import` and one `music_library_imported` event. Targets only through `parse_link` (a `storytel:` one through
   `storytel::parse_target`, a Storytel entry since design 26b, below): no outgoing request. Skips: Spotify, folders,
   `parse_link` refusals, `spotify_user` sections, no name, already in the library (target or key), repeats, past 200.
 - Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `music_import::tests`, `tracked_apps::tests`
@@ -654,10 +655,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   check then fails - and kept when the day's budget ran out; two items reported within 24 h re-resolve the whole entry
   (once a day); 300 manifests a day server-wide (expiry re-resolves count); a re-resolve answered 404/410 is `gone`;
   a flag that lands during a check survives its rewrite.
-- **PWA**: `#sweep` setting card, the library cards (`partials/music_card.html`: cover, source title, LAN, episodes,
-  capped/cut notes, a two-line `.music-status`, Check now within its limits, the offline select, per-phone lines from
-  `music_state.downloads`/`item_errors`), the entry page's `#status`, `GET /music/cards?ids=` (<= 200) +
-  `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times say UTC.
+- **PWA**: the setting on Music › Settings (`#sweep`), the library rows (`partials/music_card.html`: cover, "NRK
+  series · 98 episodes · 2 phones", LAN, a one-line `.music-status`, Check now within its limits, the offline
+  select), the entry page's `#status` (source title, episodes, capped/cut notes, the status, Check now) and its On
+  phones rows with each phone's line from `music_state.downloads`/`item_errors`, `GET /music/cards?ids=` (<= 200) +
+  `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times are local
+  (`display_time::Zone`, design 31 M4).
 - **Contract**: `music_listing_snapshot` pins `testdata/music_listing.json`; `music_library_snapshot` now shows
   `items`. Listings aren't counted against a phone (no listing budget; a library of long feeds is a few MB). The
   policy shape is unchanged. Revision triggers are on `music_listings` only (version, cover, kept end).
@@ -716,10 +719,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `IN` takes `'storytel'`), `device_listing`, `cover_in_library` (both entry branches) and `art_in_library`: a phone
   gets Storytel entries, listings and covers only while its `music_storytel` switch is on and a login is stored
   (else 404, and the library drops them - the phone then prunes the books, vibb's logout). 0072's triggers move
-  `music_library_revision` on the switch and on the login's presence. The library card knows the gate (`SweepView`:
-  "Ella: not sent - Storytel is off on this phone", `phone_count` counts only phones that get the entry; without a
-  login a failed check says "The phones don't get it until a login is saved."); a card says "N books" (no "newest", no
-  "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
+  `music_library_revision` on the switch and on the login's presence. The library knows the gate (`SweepView`: the
+  entry page's phone row "Not sent - Storytel is off on this phone", `phone_count` counts only phones that get the
+  entry; without a login a failed check says "The phones don't get it until a login is saved."); a Storytel entry
+  says "N books" (no "newest", no "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
   (`no_audio` "Storytel gave no audio for this book"). The device card: the phone's `music_state.storytel`
   (`none`/`ok`/`refused`, refused as a warning), "Storytel is off on this phone: its N Storytel entries aren't sent",
   and the downloads switch's text "... a Storytel book is often several hundred MB" (design 30).
@@ -798,7 +801,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   the walk finished within the budget.
 - **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
   from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
-  and after an entry is deleted. The card's count line adds "· N with episode art" (not on a Storytel card: "N books" only).
+  and after an entry is deleted. The entry page's episodes line adds "· N with episode art" (not for Storytel: "N books" only).
 - Tests: `src/tests/music_art.rs`, the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
   `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
   `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).
@@ -1150,6 +1153,38 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Add App** (`tracked_app_add.html`): name, source (two radios before the rows, so CSS - no script - hides the
   GitHub fields for an upload), repo; filter, tag prefix, package and pre-releases under More Options
   (`TrackedAppAddTemplate::more_open`).
+
+## The Music tab (design 31 step 12, `docs/design/31-pwa-redesign.md` §3.4)
+
+- **`/music`** (`handlers::music::show`, `music.html`): the Library (one row per entry: cover or category tile,
+  name, "NRK series · 98 episodes · 2 phones", the live status on one line, then Check now and the Offline select;
+  `?edit=1` shows ↑ ↓ instead, the move redirecting to `/music?edit=1#entry-<id>`), Add (Podcast or NRK link and
+  Upload your own files as `<details>` forms that open on a refusal, From Storytel › "Signed in"/"No login", Import
+  from Vibb ›), On phones ("Anna · 6 of 9": ticks of the whole library, linking through `phone_music_href` to the
+  device page's `#music` until step 7 builds `/devices/{id}/music`), Categories › and Settings ›. Its CSS is in `style.css` (`?v=14`, the
+  "Music tab" section; the code QA fix round moved it out of a per-page partial).
+- **Sub-pages** (sub-page header, `partials/tab_bar.html` alone): `/music/settings` (Check for new episodes as an
+  inline picker, the Storytel login with its notice and Remove Login…, the music app's catalog row, Files no entry
+  uses with Delete Files…), `/music/categories` (the `<details>` editors, Delete Category… for an unused one, Add a
+  category), `/music/import` (GET the form; `POST /music/import` renders this page with the preview). GETs chained
+  with their POSTs on one route (L5).
+- **Where forms return** (§5.1, `tests::music::every_form_on_the_music_pages_returns_to_its_page` posts every rendered
+  form): sweep and orphans → `/music/settings` (no fragment), the Storytel login and its removal →
+  `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories?open=<id>#category-<id>` (the editor stays open; delete:
+  no fragment), the import → `/music/import#import`; an entry's save → `/music/entries/<id>#settings`, Check now from
+  there `#status`, cover `#cover`, files `#files`/`#file-<id>`; the row's Check now and Offline → `/music#entry-<id>`;
+  delete → `/music#entries`. A form whose redirect has no fragment has none in its action either (a browser keeps the
+  action's over such a redirect). Every delete is a `<details>` confirm, no `confirm()` left
+  (`the_music_deletes_are_behind_a_confirm`).
+- **The entry page** (`music_entry.html`): Cover (with the kind and link) → Episodes/Books (`#status`) → Settings (one
+  form, the resume switch in it) → Files (each file's row opens its Delete File… confirm) → On phones (each phone's
+  report on the entry as its sub-line, `SweepView::phone_lines` → `(device, line)`; tests read it through
+  `tests::music::phone_line`) → Delete Entry…. The shelf (`music_storytel.html`) keeps its shape: a one-line intro, the
+  rest behind ⓘ; its links go to `/music/settings#storytel`.
+- **Local times** (M4): `SweepView`, `storytel_status` and `StorytelError::message` (the shelf's cooldown) take the
+  Phone Setup zone (`Zone::when` for what happened, `Zone::until` for "Next try", "Check again after" and the
+  cooldown's end; dates by the local day too). Every form posts to its group's fragment, every auto-saving form has a
+  `<noscript>` Save (`tests::music::check_forms`).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

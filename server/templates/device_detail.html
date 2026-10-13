@@ -289,7 +289,7 @@
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
         {% else %}
-        <p class="subtitle">The music app isn't in the Apps catalog yet - add it on the <a href="/music#app">Music</a> page.</p>
+        <p class="subtitle">The music app isn't in the Apps catalog yet - add it in <a href="/music/settings#app">Music › Settings</a>.</p>
         {% endif %}
 
         <h3>In the library on this phone</h3>
@@ -346,7 +346,7 @@
             </select>
             <label class="checkbox-row" style="margin-top:12px;">
                 <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} data-autosave>
-                <span>Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it on the <a href="/music#storytel">Music</a> page){% endif %}. Off removes it from the phone.</span>
+                <span>Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it in <a href="/music/settings#storytel">Music › Settings</a>){% endif %}. Off removes it from the phone.</span>
             </label>
             {% if let Some(note) = music.storytel_note %}
             <p class="subtitle">{{ note }}</p>
