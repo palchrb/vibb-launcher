@@ -11,6 +11,7 @@ import me.vibb.music.logic.Bookmark
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
 import me.vibb.music.logic.NewsItem
+import me.vibb.music.logic.SPOTIFY_PLAYABLE
 import me.vibb.music.logic.playOrder
 import me.vibb.music.logic.visibleKeys
 import me.vibb.music.model.Entry
@@ -78,6 +79,8 @@ data class Snapshot(
      * the phone, true = a Sonos room. Set only through [forRenderer], by each caller explicitly (26a §9).
      */
     val remote: Boolean = false,
+    /** Spotify items show (design 26c §4.2), false until step 5b's player ([SPOTIFY_PLAYABLE]). */
+    val spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
 ) {
     /**
      * This snapshot for a renderer: [remote] true for a Sonos room (the speaker fetches a Storytel book
@@ -88,10 +91,13 @@ data class Snapshot(
 
     /**
      * [entry]'s items that show and play, oldest first (21b §6: a withdrawn item without a copy is
-     * hidden; design 26b §3.2: a Storytel book, listed without a url, only with its copy - or on a room).
+     * hidden; design 26b §3.2: a Storytel book, listed without a url, only with its copy - or on a room;
+     * design 26c §4.2: a listed Spotify item in both views - it streams, a room's queue drops it - once
+     * [spotifyPlayable], and nowhere before).
      */
     fun visible(entry: Entry): List<PlayItem> {
         val all = listed[entry.id].orEmpty()
+        if (entry.source == Source.SPOTIFY) return if (spotifyPlayable) all else emptyList()
         if (remote && entry.source == Source.STORYTEL) return all
         val copies = onPhone[entry.id].orEmpty()
         // An own file has no url: it plays only from its copy (the phone never reaches the server).

@@ -56,6 +56,7 @@ import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.RendererState
 import me.vibb.music.sonos.RoomsView
+import me.vibb.music.spotify.spotifyEpisodes
 
 /**
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
@@ -110,6 +111,7 @@ fun PlayerScreen(
                     Kind.OWN -> R.string.track_of
                     Kind.AUDIOBOOK -> R.string.part_of
                     Kind.PODCAST -> R.string.episode_of
+                    Kind.SPOTIFY -> if (spotifyEpisodes(now.entry)) R.string.episode_of else R.string.track_of
                 }
                 Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
             }

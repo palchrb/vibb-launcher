@@ -136,6 +136,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         BlockedEventLog.setEnabled(context, freshPolicy.dnsLogEnabled)
         // Only actually re-fetches the (potentially 100k+ domain) full list if the version token
         // changed - see DnsFilterEngine's doc comment.
+        // Spotify's hosts pass the filter while this phone plays Spotify (design 26c §6.2); the
+        // version above moves with the binding, so the delivered list follows too.
+        DnsFilterEngine.setSpotify(com.kidslauncher.mdm.music.musicSpotify(freshPolicy.music))
         DnsFilterEngine.refreshIfNeeded(context, api, freshPolicy.dnsFilterVersion)
         // Only ever dispatched off a genuinely fresh fetch, never the cached fallback below - the
         // cached policy blob can still hold a `pendingCommand` from a past cycle that's already

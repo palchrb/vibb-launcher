@@ -3689,8 +3689,9 @@ mod entries {
             page.contains("Ella: logged in, log in again before"),
             "{page}"
         );
-        // The DNS note comes with step 3, which makes it true (qa-26c-step2b-code L3).
-        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
+        // The DNS note, now that step 3 makes it true (qa-26c-step2b-code L3): the delivered list
+        // and the launcher's filter leave Spotify's hosts out while the phone is bound.
+        assert!(page.contains("Spotify's hosts are allowed on this phone while Spotify is on"));
         // An account that isn't logged in here, or junk: refused, nothing changed.
         for junk in ["999".to_string(), "x".to_string()] {
             let res = save(ella, junk).await;
@@ -3924,5 +3925,330 @@ mod entries {
             "{page}"
         );
         let _ = lib_entry;
+    }
+}
+
+/// Step 3 (design 26c §2.6, §6.2, §8): the phone's token, the policy's `music.spotify`, the DNS
+/// version and the delivered blocklist.
+mod phones {
+    use std::time::Duration;
+
+    use axum::http::{Method, StatusCode, header};
+    use serde_json::{Value, json};
+
+    use super::super::music::music_policy;
+    use super::super::{TestApp, TestResponse};
+    use super::bind;
+    use super::listing::ready;
+    use crate::spotify::tests::{TOKEN_URL, fixture, store_account};
+    use crate::spotify::{PHONE_TOKENS_PER_WINDOW, remove_account};
+
+    const ROUTE: &str = "/api/devices/music/spotify/token";
+
+    async fn ask(app: &TestApp, token: &str) -> TestResponse {
+        app.request(Method::POST, ROUTE, Some(token), None).await
+    }
+
+    /// The answer's status, its JSON and whether it is `no-store`.
+    async fn answer(app: &TestApp, token: &str) -> (StatusCode, Value) {
+        let res = ask(app, token).await;
+        assert_eq!(
+            res.headers.get(header::CACHE_CONTROL).unwrap(),
+            "no-store",
+            "{}",
+            res.text()
+        );
+        assert_eq!(
+            res.headers.get(header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        let body = res.json();
+        if body["status"] != json!("ok") {
+            assert!(body.get("access_token").is_none(), "{body}");
+            assert!(!res.text().contains("FAKE-ACCESS"), "{body}");
+        }
+        (res.status, body)
+    }
+
+    fn token_requests(app: &TestApp) -> usize {
+        app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|u| u.as_str() == TOKEN_URL)
+            .count()
+    }
+
+    async fn dns_version(app: &TestApp, token: &str) -> String {
+        let res = app
+            .request(Method::GET, "/api/devices/policy", Some(token), None)
+            .await;
+        assert_eq!(res.status, StatusCode::OK);
+        res.json()["dns_filter_version"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// §2.6's six answers, each `no-store` JSON with no token outside `ok`; the token minted once
+    /// and kept; `account` = "<id>:<generation>".
+    #[tokio::test]
+    async fn the_token_route_answers() {
+        let app = TestApp::new().await;
+        let (ella, token) = app.enrolled_device("Ella").await;
+        // Nothing set up: off.
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::NOT_FOUND, json!({"status": "off"}))
+        );
+        let account = ready(&app).await;
+        // An app and an account, but this phone isn't bound: off, nothing asked of Spotify.
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::NOT_FOUND, json!({"status": "off"}))
+        );
+        assert_eq!(token_requests(&app), 0);
+        bind(&app, ella, account).await;
+        let (status, body) = answer(&app, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            json!({
+                "status": "ok",
+                "access_token": "FAKE-ACCESS-2",
+                "expires_in_s": 3540,
+                "account": format!("{account}:1"),
+            })
+        );
+        assert_eq!(token_requests(&app), 1);
+        // The kept token, while it has more than 10 minutes left; then a refresh.
+        app.state.spotify.advance(Duration::from_secs(2899));
+        let (_, body) = answer(&app, &token).await;
+        assert_eq!(body["expires_in_s"], json!(640));
+        assert_eq!(token_requests(&app), 1);
+        app.state.spotify.advance(Duration::from_secs(60));
+        let (_, body) = answer(&app, &token).await;
+        assert_eq!(body["expires_in_s"], json!(3540));
+        assert_eq!(token_requests(&app), 2, "under 10 minutes left: refreshed");
+
+        // Every failure of the accounts service, on a fresh mint.
+        let failing = |status: u16, body: Vec<u8>, retry_after: Option<&'static str>| {
+            let app = &app;
+            let token = token.clone();
+            async move {
+                app.state.spotify.forget(account);
+                app.fetch.answer(TOKEN_URL, status, body);
+                if let Some(value) = retry_after {
+                    app.fetch.retry_after(TOKEN_URL, value);
+                }
+                answer(app, &token).await
+            }
+        };
+        assert_eq!(
+            failing(429, fixture("rate_limited.json"), Some("7")).await,
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                json!({"status": "busy", "retry_after_s": 7})
+            )
+        );
+        assert_eq!(
+            failing(503, Vec::new(), None).await,
+            (StatusCode::BAD_GATEWAY, json!({"status": "unreachable"}))
+        );
+        assert_eq!(
+            failing(400, fixture("token_invalid_client.json"), None).await,
+            (StatusCode::CONFLICT, json!({"status": "reauthorize"}))
+        );
+        assert_eq!(
+            failing(400, fixture("token_invalid_grant.json"), None).await,
+            (StatusCode::CONFLICT, json!({"status": "reauthorize"}))
+        );
+        // The login ended: no request any more.
+        let before = token_requests(&app);
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::CONFLICT, json!({"status": "reauthorize"}))
+        );
+        assert_eq!(token_requests(&app), before);
+
+        // A login sealed with another key: key.
+        let other = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        sqlx::query("UPDATE music_spotify_accounts SET key_fingerprint = 'another' WHERE id = ?")
+            .bind(other)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        bind(&app, ella, other).await;
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::SERVICE_UNAVAILABLE, json!({"status": "key"}))
+        );
+
+        // No app any more (an environment's client ID gone between restarts): off, though bound.
+        sqlx::query("DELETE FROM music_spotify_app")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::NOT_FOUND, json!({"status": "off"}))
+        );
+        // The account removed: its phones are unbound - off.
+        crate::spotify::tests::save_app(&app, crate::spotify::LOOPBACK_REDIRECT).await;
+        remove_account(&app.state, other).await.unwrap();
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::NOT_FOUND, json!({"status": "off"}))
+        );
+        // Not a phone: the bearer is required.
+        let res = app.request(Method::POST, ROUTE, None, None).await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// §2.6: 20 asks a rolling hour per phone, then `busy` with the wait; another phone isn't
+    /// held back.
+    #[tokio::test]
+    async fn the_token_route_is_limited_per_phone() {
+        let app = TestApp::new().await;
+        let (ella, token) = app.enrolled_device("Ella").await;
+        let (ola, ola_token) = app.enrolled_device("Ola").await;
+        let account = ready(&app).await;
+        bind(&app, ella, account).await;
+        bind(&app, ola, account).await;
+        for _ in 0..PHONE_TOKENS_PER_WINDOW {
+            assert_eq!(answer(&app, &token).await.0, StatusCode::OK);
+        }
+        let (status, body) = answer(&app, &token).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body["status"], json!("busy"));
+        let wait = body["retry_after_s"].as_u64().unwrap();
+        assert!((3500..=3600).contains(&wait), "{wait}");
+        assert_eq!(answer(&app, &ola_token).await.0, StatusCode::OK);
+        assert_eq!(token_requests(&app), 1, "one refresh, the rest kept");
+        app.state.spotify.advance(Duration::from_secs(3600));
+        assert_eq!(answer(&app, &token).await.0, StatusCode::OK);
+    }
+
+    /// A refresh held past the route's budget answers `unreachable`; it isn't cancelled, and the
+    /// next ask gets its token without another request (qa-26c-step2b-code M1, step 1's note).
+    #[tokio::test]
+    async fn a_slow_refresh_is_unreachable_then_kept() {
+        let app = TestApp::new().await;
+        let (ella, token) = app.enrolled_device("Ella").await;
+        let account = ready(&app).await;
+        bind(&app, ella, account).await;
+        app.state
+            .spotify
+            .set_phone_token_budget(Duration::from_millis(100));
+        app.fetch.hold();
+        assert_eq!(
+            answer(&app, &token).await,
+            (StatusCode::BAD_GATEWAY, json!({"status": "unreachable"}))
+        );
+        app.fetch.release();
+        app.state
+            .spotify
+            .set_phone_token_budget(Duration::from_secs(10));
+        let (status, body) = answer(&app, &token).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["access_token"], json!("FAKE-ACCESS-2"));
+        assert_eq!(token_requests(&app), 1);
+    }
+
+    /// §6.2: `music.spotify` is the binding; the DNS version moves on bind and on unbind (QA M7)
+    /// and an unbound phone's version is what it was before step 3; the delivered list drops
+    /// Spotify's hosts - a suffix's subdomains and Spotify's own parents, the exact CDN hosts but
+    /// not their parent - for the bound phone only.
+    #[tokio::test]
+    async fn the_policy_and_the_blocklist_follow_the_binding() {
+        let app = TestApp::new().await;
+        let (ella, token) = app.enrolled_device("Ella").await;
+        let (_, ola_token) = app.enrolled_device("Ola").await;
+        {
+            let mut compiled = app.state.dns_compiled.write().await;
+            compiled.global_custom_block = [
+                "spotify.com",
+                "spclient.wg.spotify.com",
+                "scdn.co",
+                "audio-ak-spotify-com.akamaized.net",
+                "akamaized.net",
+                "evilspotify.com",
+                "ads.example",
+                "mtalk.google.com",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        }
+        let blocked = |token: String| {
+            let app = &app;
+            async move {
+                let res = app
+                    .request(
+                        Method::GET,
+                        "/api/devices/dns-blocklist",
+                        Some(&token),
+                        None,
+                    )
+                    .await;
+                assert_eq!(res.status, StatusCode::OK);
+                let mut domains: Vec<String> = res.json()[0]["domains"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|d| d.as_str().unwrap().to_string())
+                    .collect();
+                domains.sort();
+                domains
+            }
+        };
+        let everything = [
+            "ads.example",
+            "akamaized.net",
+            "audio-ak-spotify-com.akamaized.net",
+            "evilspotify.com",
+            "scdn.co",
+            "spclient.wg.spotify.com",
+            "spotify.com",
+        ];
+        assert_eq!(blocked(token.clone()).await, everything);
+        assert_eq!(music_policy(&app, &token).await["spotify"], json!(false));
+        let unbound = dns_version(&app, &token).await;
+        assert_eq!(
+            unbound,
+            dns_version(&app, &ola_token).await,
+            "no binding, no change to the version"
+        );
+
+        let account = ready(&app).await;
+        bind(&app, ella, account).await;
+        assert_eq!(music_policy(&app, &token).await["spotify"], json!(true));
+        let bound = dns_version(&app, &token).await;
+        assert_ne!(bound, unbound, "binding moves the version");
+        assert_eq!(
+            blocked(token.clone()).await,
+            ["ads.example", "akamaized.net", "evilspotify.com"]
+        );
+        // The other phone keeps the parent's list.
+        assert_eq!(
+            music_policy(&app, &ola_token).await["spotify"],
+            json!(false)
+        );
+        assert_eq!(blocked(ola_token.clone()).await, everything);
+        assert_eq!(dns_version(&app, &ola_token).await, unbound);
+
+        sqlx::query("UPDATE device_policy SET music_spotify_account = NULL WHERE device_id = ?")
+            .bind(ella)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(music_policy(&app, &token).await["spotify"], json!(false));
+        assert_eq!(
+            dns_version(&app, &token).await,
+            unbound,
+            "unbinding moves it back"
+        );
+        assert_eq!(blocked(token).await, everything);
     }
 }

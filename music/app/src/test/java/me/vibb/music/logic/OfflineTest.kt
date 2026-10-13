@@ -116,8 +116,8 @@ class OfflineTest {
         val lib = LibraryParser.parse(text)!!
         assertNull("hidden", lib.entry(2))
         assertTrue("but named", 2L in lib.entryIds)
-        val rows = listOf(done(2, "k1"), done(7, "x"))
-        assertEquals(listOf(7L), plan(snapshot(lib), rows).prune.map { it.entryId })
+        val rows = listOf(done(2, "k1"), done(99, "x"))
+        assertEquals(listOf(99L), plan(snapshot(lib), rows).prune.map { it.entryId })
     }
 
     // 21b §8 "Music app (step 2)": withdrawn copies, the bookmark, hidden null items.

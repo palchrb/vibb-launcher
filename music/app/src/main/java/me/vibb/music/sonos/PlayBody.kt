@@ -99,6 +99,9 @@ object PlayBodies {
         // is listed without a url and minted per play - downloaded or not, a speaker fetches it from the
         // CDN. Its URL's address is checked once it exists, in the play job ([mintedDropReason]).
         if (entry.source == Source.STORYTEL) return null
+        // design 26c §4.2: the web player streams a Spotify item on the phone only (Spotify on Sonos is
+        // a later step): a room's queue drops it - "nothing speaker-playable" (CANT_PLAY_ON_SONOS).
+        if (entry.source == Source.SPOTIFY) return "spotify"
         val url = item.url ?: return "withdrawn"
         val http = url.toHttpUrlOrNull() ?: return "not an http url"
         val nrkSeries = entry.nrkSerie && nrkSeriesSlug(entry.target) != null

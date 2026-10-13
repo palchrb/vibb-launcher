@@ -135,6 +135,12 @@ data class EnforcementPlan(
  *   not by the allowlist, SMS off or a time-rule lock - so quickstep and the gestures keep
  *   working on any phone, also one whose stock launcher has a launcher icon. AppFilter keeps it off
  *   Home and the drawer; only the update fence suspends it.
+ * - [webViewProvider]: the system WebView's package (design 26c §6.3,
+ *   [AppEnforcer.webViewProviderPackage]), in [EnforcementPlan.neverRestrict]: the music app plays
+ *   Spotify through a WebView, and a suspended or hidden provider breaks every WebView on the phone
+ *   (the launcher's own login screens too), so no allowlist, SMS rule or time-rule lock touches it.
+ *   It has no launcher icon, so `controllablePackages` already leaves it out on most phones; this is
+ *   the guard.
  */
 fun computeEnforcementPlan(
     allowlist: List<String>?,
@@ -160,8 +166,10 @@ fun computeEnforcementPlan(
     recentsPackage: String? = null,
     /** The Emergency SOS activity's package (bug 25b-H): never hidden or suspended. */
     emergencySos: String? = null,
+    /** The system WebView's package (design 26c §6.3): never hidden or suspended. */
+    webViewProvider: String? = null,
 ): EnforcementPlan {
-    val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos) + inputMethods + PLAY_NEVER_RESTRICT
+    val neverRestrict = setOfNotNull(ownPackage, systemDialer, recentsPackage, emergencySos, webViewProvider) + inputMethods + PLAY_NEVER_RESTRICT
     val features = lockTaskFeatures(serverLockTaskFeatures, blockActivityStart)
     val appsManaged = allowlist != null && !overrideActive
     val locked = scheduleLocked && !overrideActive

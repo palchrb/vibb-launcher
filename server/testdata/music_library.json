@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "version": "3250463627e4520c",
+  "version": "ceca94f70db5e7a0",
   "categories": [
     {
       "id": 1,
@@ -84,6 +84,38 @@
       "items": "00ff00ff00ff00ff",
       "lan": false,
       "sort": 50
+    },
+    {
+      "id": 6,
+      "key": "400584733efd",
+      "name": "Kveldsliste",
+      "category": 1,
+      "source": "spotify",
+      "target": "spotify:playlist:FAKEplaylist0000000001",
+      "order": "auto",
+      "cache": 0,
+      "resume": true,
+      "cover": null,
+      "items": "11ee11ee11ee11ee",
+      "lan": false,
+      "spotify": "list",
+      "sort": 60
+    },
+    {
+      "id": 7,
+      "key": "4f94c81c7059",
+      "name": "Fake Artist",
+      "category": 1,
+      "source": "spotify",
+      "target": "spotify:artist:FAKEartist000000000001",
+      "order": "auto",
+      "cache": 0,
+      "resume": true,
+      "cover": null,
+      "items": "22dd22dd22dd22dd",
+      "lan": false,
+      "spotify": "context",
+      "sort": 70
     }
   ],
   "files": [

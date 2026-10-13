@@ -63,16 +63,21 @@ music app keeps byte-identical copies in `music/app/src/test/resources/` (with `
 (`*/app/src/main/aidl/me/vibb/bridge/`) and the names both apps spell (`bridge_contract.json` in both apps'
 test resources) are byte-identical in `launcher/` and `music/` (`MusicPlanTest`, `BridgeTest`); new methods are
 appended. `server/testdata/music_state.json` is every `music_state` field: the server keeps them all, the launcher
-keeps the music app's, the music app sends exactly those.
+keeps the music app's, the music app sends exactly those. Spotify's host list `server/testdata/spotify_hosts.json`
+(design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
+(`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
+one commit.
 
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
-  shared snapshots, `music/gradle/` and `music.yml`; `music.yml` also on the shared `server/testdata/music_*.json`,
-  the launcher's copy of the bridge AIDL and `bridge_contract.json`, `scripts/fake-sonos.py` and
-  `scripts/fake-storytel.py`, whose `--selftest`s it runs after the build;
+  shared snapshots, the three `spotify_hosts.json`, `music/gradle/` and `music.yml`; `music.yml` also on the shared
+  `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
+  `bridge_contract.json` and `spotify_hosts.json`, `scripts/fake-sonos.py` and
+  `scripts/fake-storytel.py`, whose `--selftest`s it runs after the build; `server-ci.yml`'s build job also on
+  the apps' `spotify_hosts.json` copies;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

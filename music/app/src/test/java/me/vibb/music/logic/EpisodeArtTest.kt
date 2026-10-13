@@ -156,7 +156,8 @@ class EpisodeArtTest {
     fun `an older launcher drops wantArt without an error - it is oneway and appended last`() {
         val aidl = moduleFile("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()
         val methods = Regex("^\\s+(oneway )?[\\w\\[\\]]+ (\\w+)\\(", RegexOption.MULTILINE).findAll(aidl).map { it.groupValues[2] }.toList()
-        assertEquals("wantArt", methods.last())
+        // Design 26c's getSpotifyToken was appended after it (design 26c §8 item 2).
+        assertEquals(listOf("wantArt", "getSpotifyToken"), methods.takeLast(2))
         assertTrue(aidl.contains("oneway void wantArt(in String[] now, in String[] later);"))
     }
 

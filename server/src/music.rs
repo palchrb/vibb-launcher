@@ -1205,6 +1205,10 @@ pub struct MusicPolicy {
     /// Changes with every save and clear of the family's Storytel login; 0 unless this phone's
     /// Storytel switch is on and a login is stored. The phone compares with `!=` (QA #7).
     pub storytel_generation: i64,
+    /// This phone plays Spotify (design 26c §2.5, §6.2): it is bound to an account (the FK makes
+    /// the account exist). The launcher exempts Spotify's hosts from its DNS filter while it is
+    /// true; an older launcher ignores it.
+    pub spotify: bool,
 }
 
 pub async fn policy_music(
@@ -1230,6 +1234,7 @@ pub async fn policy_music(
         mobile_data: policy.music_mobile_data,
         volume_cap_pct: volume_cap(policy.music_volume_cap_pct),
         storytel_generation,
+        spotify: policy.music_spotify_account.is_some(),
     })
 }
 

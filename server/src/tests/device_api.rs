@@ -430,7 +430,8 @@ async fn policy_json_keys_snapshot() {
             "library_version": null,
             "mobile_data": false,
             "volume_cap_pct": null,
-            "storytel_generation": 0
+            "storytel_generation": 0,
+            "spotify": false
         })
     );
 }

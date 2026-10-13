@@ -926,7 +926,7 @@ async fn the_policy_carries_a_small_music_object() {
     let (device, token) = app.enrolled_device("phone").await;
     assert_eq!(
         music_policy(&app, &token).await,
-        json!({"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}),
+        json!({"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify": false}),
         "nothing ticked, everything off"
     );
     let id = add_nrk(&app, &cookie, "abels_taarn", "Abels tårn").await;
@@ -1038,7 +1038,13 @@ async fn a_failing_library_query_sends_music_null_and_never_fails_the_policy() {
     assert!(policy["time_policy"].is_object());
 }
 
-/// Fixed data for the snapshot: a podcast with a cover, an RSS feed and own files (one missing).
+/// The snapshot's two Spotify entries (design 26c §8 item 3): a playlist in list mode and an
+/// artist in context mode.
+pub(super) const SNAPSHOT_PLAYLIST: &str = "spotify:playlist:FAKEplaylist0000000001";
+pub(super) const SNAPSHOT_ARTIST: &str = "spotify:artist:FAKEartist000000000001";
+
+/// Fixed data for the snapshot: a podcast with a cover, an RSS feed, own files (one missing), a
+/// Storytel series and two Spotify entries.
 async fn snapshot_library(app: &TestApp, device: i64) {
     let cover = "a".repeat(64);
     let art = "b".repeat(64);
@@ -1051,10 +1057,16 @@ async fn snapshot_library(app: &TestApp, device: i64) {
           'newest_first', 3, 1, NULL, 20), \
          (3, 'Bilturen', 1, 'own', NULL, 'own-5c0ffee1d0e5', 'auto', -1, 0, NULL, 30), \
          (4, 'Not on this phone', 2, 'own', NULL, 'own-0b5e55ed4a11', 'auto', -1, 0, NULL, 40), \
-         (5, 'Kokosbananas', 3, 'storytel', 'storytel:series:26175', ?, 'auto', -1, 1, NULL, 50)",
+         (5, 'Kokosbananas', 3, 'storytel', 'storytel:series:26175', ?, 'auto', -1, 1, NULL, 50), \
+         (6, 'Kveldsliste', 1, 'spotify', ?, ?, 'auto', 0, 1, NULL, 60), \
+         (7, 'Fake Artist', 1, 'spotify', ?, ?, 'auto', 0, 1, NULL, 70)",
     )
     .bind(&cover)
     .bind(crate::music::state_key("storytel:series:26175"))
+    .bind(SNAPSHOT_PLAYLIST)
+    .bind(crate::music::state_key(SNAPSHOT_PLAYLIST))
+    .bind(SNAPSHOT_ARTIST)
+    .bind(crate::music::state_key(SNAPSHOT_ARTIST))
     .execute(&app.db)
     .await
     .unwrap();
@@ -1075,8 +1087,10 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .unwrap();
     sqlx::query(
         "INSERT INTO device_music_entries (device_id, entry_id) \
-         VALUES (?, 1), (?, 2), (?, 3), (?, 5)",
+         VALUES (?, 1), (?, 2), (?, 3), (?, 5), (?, 6), (?, 7)",
     )
+    .bind(device)
+    .bind(device)
     .bind(device)
     .bind(device)
     .bind(device)
@@ -1098,6 +1112,17 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // The Spotify entries (design 26c §3.6): the playlist listed (list mode: its tracks), the
+    // artist a context (Spotify's order, no items); neither has a cover yet.
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, cover_hash, keep_end, listed_at, \
+         spotify_mode) VALUES \
+         (6, '11ee11ee11ee11ee', NULL, 'first', '2026-10-13 12:00:00', 'list'), \
+         (7, '22dd22dd22dd22dd', NULL, 'first', '2026-10-13 12:00:00', 'context')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     // Storytel entries reach the phone only with its switch on and a login stored (26b §2.7).
     sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
         .bind(device)
@@ -1111,6 +1136,21 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // Spotify entries reach the phone only while it plays as an account (design 26c §3.6): a fake
+    // sealed login, never opened here.
+    sqlx::query(
+        "INSERT INTO music_spotify_accounts (id, spotify_user, display_name, ciphertext, nonce, \
+         key_fingerprint, scopes, authorized_at) \
+         VALUES (1, 'fakekid', 'Ella', x'00', x'00', 'fake', 'streaming', '2026-10-13 10:00:00')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE device_policy SET music_spotify_account = 1 WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
     // The parent limited the phone to one Sonos room (design 26a §5.5; NULL = every room).
     sqlx::query(
         "UPDATE device_policy SET music_sonos_rooms_json = '[\"RINCON_000E58A0B1C201400\"]' \
@@ -1269,7 +1309,7 @@ async fn music_library_snapshot() {
     category_keys.sort_unstable();
     assert_eq!(category_keys, ["color", "icon", "id", "name", "sort"]);
     // Only this phone's entries, their categories, files and covers.
-    assert_eq!(served["entries"].as_array().unwrap().len(), 4);
+    assert_eq!(served["entries"].as_array().unwrap().len(), 6);
     assert_eq!(served["categories"].as_array().unwrap().len(), 3);
     assert_eq!(served["files"].as_array().unwrap().len(), 2);
     assert_eq!(served["files"][1]["missing"], json!(true));
@@ -1306,6 +1346,65 @@ async fn music_library_snapshot() {
         ),
         (&json!(-1), &json!(true), &json!(false), &json!("auto"))
     );
+    assert!(
+        storytel.get("spotify").is_none(),
+        "the mode is a Spotify entry's only"
+    );
+    // The Spotify entries (design 26c §3.6, §8 item 3): streamed (cache 0), resume on, never on the
+    // LAN, their listing's version, and the new field `spotify` - the mode - on them alone.
+    let playlist = &served["entries"][4];
+    let artist = &served["entries"][5];
+    assert_eq!(
+        (&playlist["source"], &playlist["target"], &playlist["items"]),
+        (
+            &json!("spotify"),
+            &json!(SNAPSHOT_PLAYLIST),
+            &json!("11ee11ee11ee11ee")
+        )
+    );
+    assert_eq!(
+        (&artist["target"], &artist["items"]),
+        (&json!(SNAPSHOT_ARTIST), &json!("22dd22dd22dd22dd"))
+    );
+    assert_eq!(playlist["spotify"], json!("list"));
+    assert_eq!(artist["spotify"], json!("context"));
+    for spotify in [playlist, artist] {
+        assert_eq!(
+            (
+                &spotify["cache"],
+                &spotify["resume"],
+                &spotify["lan"],
+                &spotify["order"],
+                &spotify["cover"]
+            ),
+            (
+                &json!(0),
+                &json!(true),
+                &json!(false),
+                &json!("auto"),
+                &Value::Null
+            )
+        );
+    }
+    let mut spotify_keys: Vec<&str> = playlist
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    spotify_keys.sort_unstable();
+    assert_eq!(
+        spotify_keys,
+        [
+            "cache", "category", "cover", "id", "items", "key", "lan", "name", "order", "resume",
+            "sort", "source", "spotify", "target"
+        ]
+    );
+    for (i, e) in served["entries"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(e.get("spotify").is_some(), i >= 4, "{e}");
+    }
+    // The policy says the phone plays Spotify (design 26c §6.2).
+    assert_eq!(music_policy(&app, &token).await["spotify"], json!(true));
     // The policy names the same version as the document and its ETag.
     let version = served["version"].as_str().unwrap();
     assert_eq!(
@@ -1334,7 +1433,7 @@ async fn library_lan_only_for_a_lan_rss_feed() {
             .collect()
     };
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
-    assert_eq!(lan_of(&res.json()), [false, false, false, false]);
+    assert_eq!(lan_of(&res.json()), [false; 6]);
     sqlx::query("UPDATE music_listings SET lan = 1")
         .execute(&app.db)
         .await
@@ -1347,8 +1446,8 @@ async fn library_lan_only_for_a_lan_rss_feed() {
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
     assert_eq!(
         lan_of(&res.json()),
-        [false, true, false, false],
-        "never a Storytel entry"
+        [false, true, false, false, false, false],
+        "never a Storytel or a Spotify entry"
     );
 }
 

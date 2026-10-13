@@ -759,6 +759,9 @@
             <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
             Enable ad/content filtering on this device
         </label>
+        {% if let Some(music) = music %}{% if let Some(spotify) = music.spotify %}{% if spotify.bound.is_some() %}
+        <p class="subtitle">Spotify's hosts are allowed on this phone while Spotify is on (its Music card): a block of spotify.com or scdn.co in a blocklist or a custom domain doesn't apply to this phone then - for every app on it, not only the music app.</p>
+        {% endif %}{% endif %}{% endif %}
 
         <button type="submit">Save changes</button>
     </form>

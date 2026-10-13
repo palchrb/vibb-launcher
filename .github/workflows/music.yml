@@ -2,8 +2,9 @@ name: Music
 
 # The Vibb music app in music/ (design 21 §5). Two flows, like launcher.yml:
 # - Every push to master/main and every PR: music-build (debug, unsigned release, lint, unit tests)
-#   runs when music/, this workflow, the music files shared with the server, the launcher's copy
-#   of the bridge's AIDL (BridgeTest compares them), scripts/fake-sonos.py or scripts/fake-storytel.py
+#   runs when music/, this workflow, the music files shared with the server (Spotify's host list
+#   included), the launcher's copies of the bridge's AIDL and contract and of Spotify's host list
+#   (BridgeTest compares them), scripts/fake-sonos.py or scripts/fake-storytel.py
 #   (they serve the Sonos and Storytel fixtures in music/app/src/test/resources/; their --selftests run
 #   here) changed, and uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
@@ -61,7 +62,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/music_(library|listing|icons|state)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/bridge_contract\.json$|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$)'; then
           changed=true
         else
           changed=false

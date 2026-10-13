@@ -41,6 +41,7 @@ import me.vibb.music.logic.formatDuration
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.spotify.spotifyEpisodes
 
 @Composable
 private fun Header(backLabel: String, onBack: () -> Unit, title: String?, trailing: @Composable () -> Unit = { Box(Modifier.size(44.dp)) }) {
@@ -136,6 +137,7 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                                 Kind.OWN -> R.string.new_track
                                 Kind.AUDIOBOOK -> R.string.new_book
                                 Kind.PODCAST -> R.string.new_episode
+                                Kind.SPOTIFY -> if (spotifyEpisodes(row.entry)) R.string.new_episode else R.string.new_track
                             }
                             Line(stringResource(label), 12, 800, Palette.peach)
                             Line(row.item.title, 15, 800, Palette.white)

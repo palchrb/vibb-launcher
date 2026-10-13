@@ -4,6 +4,7 @@ import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.spotify.spotifyEpisodes
 import java.util.Locale
 
 /*
@@ -16,13 +17,15 @@ import java.util.Locale
  */
 
 /** What a cover says it is: NRK and RSS "Podkast", own files "Egne filer", Storytel "Lydbok" (design
- * 26b §3.5; Spotify comes with its phase). */
-enum class Kind { PODCAST, OWN, AUDIOBOOK }
+ * 26b §3.5), Spotify "Spotify" (design 26c §4.3: the attribution, Developer Policy §II; its items are
+ * tracks, or episodes for a show or an episode - [Hint.Started.episodes], `spotifyEpisodes`). */
+enum class Kind { PODCAST, OWN, AUDIOBOOK, SPOTIFY }
 
 fun kindOf(entry: Entry): Kind = when (entry.source) {
     Source.OWN -> Kind.OWN
     Source.STORYTEL -> Kind.AUDIOBOOK
     Source.NRK, Source.RSS -> Kind.PODCAST
+    Source.SPOTIFY -> Kind.SPOTIFY
 }
 
 /**
@@ -39,8 +42,8 @@ fun countedOrder(entry: Entry, visibleInPlayOrder: List<String>, readingOrder: L
 sealed interface Hint {
     val kind: Kind
 
-    /** Resume on and started: "<kind> · episode|spor|del N av M". */
-    data class Started(override val kind: Kind, val n: Int, val of: Int) : Hint
+    /** Resume on and started: "<kind> · episode|spor|del N av M"; [episodes] a Spotify show's or episode's ("episode"). */
+    data class Started(override val kind: Kind, val n: Int, val of: Int, val episodes: Boolean = false) : Hint
 
     /** Resume on, not started: "<kind> · fortsetter der du slapp". */
     data class NotStarted(override val kind: Kind) : Hint
@@ -57,7 +60,7 @@ fun started(order: List<String>, bookmark: Bookmark?): Boolean {
 
 fun hint(entry: Entry, order: List<String>, bookmark: Bookmark?): Hint = when {
     !entry.resume -> Hint.FromStart(kindOf(entry))
-    started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size)
+    started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size, spotifyEpisodes(entry))
     else -> Hint.NotStarted(kindOf(entry))
 }
 

@@ -15,6 +15,30 @@ private const val LOG_TAG = "DnsFilterEngine"
 private const val BLOCKLIST_FILE = "dns_blocklist.tsv"
 private const val VERSION_FILE = "dns_blocklist_version.txt"
 
+/** Walks label suffixes (same technique the server's own `is_blocked` uses in `dns_engine.rs`)
+ * so a block entry for "example.com" also matches "ads.example.com" - returns the matched
+ * category in [blocked], or null if not blocked: always for the FCM hosts
+ * ([com.kidslauncher.mdm.push.isFcmHost]), and for Spotify's hosts
+ * ([com.kidslauncher.mdm.music.isSpotifyHost]) while [spotify] - the cached policy's
+ * `music.spotify` - is true (design 26c §6.2: per phone, not global like FCM). Both exemptions come
+ * before the suffix walk, so a blocked parent (`google.com`, `akamaized.net`) never blocks them.
+ * Pure; DnsFilterEngineTest. */
+internal fun classifyDomain(blocked: Map<String, String>, domainRaw: String, spotify: Boolean): String? {
+    val domain = domainRaw.trimEnd('.').lowercase()
+    // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
+    // a parent (google.com, googleapis.com) would silently stop other apps' FCM (Element X).
+    if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
+    if (spotify && com.kidslauncher.mdm.music.isSpotifyHost(domain)) return null
+    var start = 0
+    while (start < domain.length) {
+        blocked[domain.substring(start)]?.let { return it }
+        val dot = domain.indexOf('.', start)
+        if (dot < 0) break
+        start = dot + 1
+    }
+    return null
+}
+
 /**
  * The launcher's on-device ad/content blocklist. [KidVpnService] is the actual DNS interception
  * point (see its doc comment for the full local-filtering architecture); this object just owns
@@ -36,6 +60,17 @@ object DnsFilterEngine {
     @Volatile
     private var loadedVersion: String? = null
 
+    /** The cached policy's `music.spotify` (design 26c §6.2): this phone plays Spotify, so its hosts
+     * pass ([classifyDomain]). Set by every sync ([setSpotify]) and from the cached policy when the
+     * VPN starts ([loadFromDisk]). */
+    @Volatile
+    private var spotifyOn: Boolean = false
+
+    /** The policy's `music.spotify`, from the sync (a fresh policy or the cached one). */
+    fun setSpotify(on: Boolean) {
+        spotifyOn = on
+    }
+
     private val upstreamServers = mapOf(
         "cloudflare" to Pair("1.1.1.1", "cloudflare-dns.com"),
         "quad9" to Pair("9.9.9.9", "dns.quad9.net"),
@@ -48,6 +83,9 @@ object DnsFilterEngine {
      * project's established policy-cache-miss handling elsewhere (fails open on missing data, not
      * closed, since there is no safe "assume blocked" default without a real list to check against). */
     fun loadFromDisk(context: Context) {
+        spotifyOn = runCatching {
+            com.kidslauncher.mdm.music.musicSpotify((cachedPolicy() as? CachedPolicy.Ok)?.policy?.music)
+        }.getOrDefault(false)
         try {
             val listFile = File(context.filesDir, BLOCKLIST_FILE)
             if (!listFile.exists()) return
@@ -101,23 +139,9 @@ object DnsFilterEngine {
         }
     }
 
-    /** Walks label suffixes (same technique the server's own `is_blocked` uses in `dns_engine.rs`)
-     * so a block entry for "example.com" also matches "ads.example.com" - returns the matched
-     * category, or null if not blocked (always for the FCM hosts, [com.kidslauncher.mdm.push.isFcmHost]). */
-    fun classify(domainRaw: String): String? {
-        val domain = domainRaw.trimEnd('.').lowercase()
-        // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
-        // a parent (google.com, googleapis.com) would silently stop other apps' FCM (Element X).
-        if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
-        var start = 0
-        while (start < domain.length) {
-            blockedDomains[domain.substring(start)]?.let { return it }
-            val dot = domain.indexOf('.', start)
-            if (dot < 0) break
-            start = dot + 1
-        }
-        return null
-    }
+    /** The category [domainRaw] is blocked by, or null ([classifyDomain] over the loaded list, with
+     * Spotify's hosts exempt while this phone plays Spotify). */
+    fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn)
 
     /**
      * Forwards an allowed DNS query to the admin-configured public upstream over DNS-over-TLS

@@ -29,11 +29,44 @@ class MusicPlanTest {
 
     @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl")) {
+        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl")) {
             val ours = module("src/main/aidl/me/vibb/bridge/$name")
             val theirs = repo("music/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from music/'s copy", theirs.readText(), ours.readText())
         }
+        // Appended, never reordered (the transaction codes follow the order): getSpotifyToken last.
+        val methods = Regex("^\\s+(?:oneway )?\\S+ (\\w+)\\(", RegexOption.MULTILINE)
+            .findAll(module("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()).map { it.groupValues[1] }.toList()
+        assertEquals("getSpotifyToken", methods.last())
+        assertEquals("wantArt", methods[methods.size - 2])
+    }
+
+    @Test
+    fun `Spotify's host list is the music app's and the server's (26c §8 item 5)`() {
+        val ours = javaClass.classLoader!!.getResource("spotify_hosts.json")!!.readText()
+        assertEquals("the music app's copy", repo("music/app/src/test/resources/spotify_hosts.json").readText(), ours)
+        assertEquals("the server's copy", repo("server/testdata/spotify_hosts.json").readText(), ours)
+    }
+
+    @Test
+    fun `the policy's spotify - true only as a JSON true, whatever else the music object holds (26c §6_2)`() {
+        fun with(value: kotlinx.serialization.json.JsonElement) = buildJsonObject {
+            put("library_version", JsonNull); put("mobile_data", false); put("storytel_generation", 0); put("spotify", value)
+        }
+        assertTrue(musicSpotify(with(JsonPrimitive(true))))
+        assertFalse(musicSpotify(with(JsonPrimitive(false))))
+        assertFalse("a string", musicSpotify(with(JsonPrimitive("true"))))
+        assertFalse(musicSpotify(with(JsonNull)))
+        assertFalse("an older server", musicSpotify(policyJson()))
+        assertFalse(musicSpotify(null))
+        assertFalse(musicSpotify(JsonPrimitive(true)))
+        assertTrue(
+            "read on its own: a malformed library_version doesn't drop it",
+            musicSpotify(buildJsonObject { put("library_version", 5); put("spotify", true) }),
+        )
+        // The music object as before: `spotify` changes nothing the music sync reads.
+        val withSpotify = buildJsonObject { policyJson().forEach { (k, v) -> put(k, v) }; put("spotify", true) }
+        assertEquals(musicPolicy(policyJson()), musicPolicy(withSpotify))
     }
 
     @Test
@@ -82,13 +115,14 @@ class MusicPlanTest {
         assertEquals(4, head.covers.size)
         assertEquals(listOf(1L, 2L), head.files.map { it.id })
         assertTrue(head.files[1].missing)
-        // A Storytel entry's listing rides the courier like any other (design 26b §2.7): no launcher change.
+        // A Storytel entry's listing rides the courier like any other (design 26b §2.7), and so do
+        // Spotify's - a list-mode playlist and a context-mode artist (design 26c §6.4): no launcher change.
         assertEquals(
             "own entries have no listing",
-            mapOf(1L to null, 2L to "0123456789abcdef", 5L to "00ff00ff00ff00ff"),
+            mapOf(1L to null, 2L to "0123456789abcdef", 5L to "00ff00ff00ff00ff", 6L to "11ee11ee11ee11ee", 7L to "22dd22dd22dd22dd"),
             head.listings,
         )
-        assertEquals(listOf(5L), listingsToFetch(head, mapOf(2L to "0123456789abcdef")))
+        assertEquals(listOf(5L, 6L, 7L), listingsToFetch(head, mapOf(2L to "0123456789abcdef")))
         assertNull(libraryHead("{\"v\": 2}"))
     }
 
@@ -303,7 +337,7 @@ class MusicPlanTest {
     fun `music_state - the app's known fields plus the package, version and bridge`() {
         val now = 1_800_000_000_000L
         val report = buildJsonObject {
-            put("library_version", "0123456789abcdef"); put("cache_bytes", 5); put("position_ms", 999); put("storytel", "ok")
+            put("library_version", "0123456789abcdef"); put("cache_bytes", 5); put("position_ms", 999); put("storytel", "ok"); put("spotify", "none")
             put("sonos_rooms", buildJsonArray {
                 add(buildJsonObject { put("uid", "RINCON_000E58A0B1C201400"); put("name", "Stua") })
             })
@@ -311,7 +345,7 @@ class MusicPlanTest {
         }
         val state = musicState("me.vibb.music", 1000000, report, now - 60_000, now)!!
         assertEquals("bound", state["bridge"]!!.let { (it as JsonPrimitive).content })
-        assertEquals(setOf("package", "version_code", "bridge", "library_version", "cache_bytes", "storytel", "sonos_rooms"), state.keys)
+        assertEquals(setOf("package", "version_code", "bridge", "library_version", "cache_bytes", "storytel", "spotify", "sonos_rooms"), state.keys)
         assertEquals("the rooms the music app knows pass as they are (design 26a §5.5)", report["sonos_rooms"], state["sonos_rooms"])
         assertEquals("unbound", (musicState("me.vibb.music", 1, null, null, now)!!["bridge"] as JsonPrimitive).content)
         assertEquals("unbound", (musicState("me.vibb.music", 1, report, now - REPORT_STALE_MS, now)!!["bridge"] as JsonPrimitive).content)
@@ -382,6 +416,10 @@ class MusicPlanTest {
                 "extra_resume" to MUSIC_EXTRA_RESUME,
             ),
         )
+        // The Spotify token's statuses and the launcher's wait (design 26c §6.1, §8 item 2).
+        val spotify = contract["spotify_token"] as kotlinx.serialization.json.JsonObject
+        assertEquals((spotify["statuses"] as kotlinx.serialization.json.JsonArray).map { (it as JsonPrimitive).content }, SPOTIFY_TOKEN_STATUSES)
+        assertEquals((spotify["timeout_ms"] as JsonPrimitive).content.toLong(), SPOTIFY_TOKEN_TIMEOUT_MS)
     }
 
     @Test
@@ -389,7 +427,7 @@ class MusicPlanTest {
         val source = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
         val binder = source.substringAfter("object : IMusicBridge.Stub() {").substringBefore("\n    }\n")
         val methods = Regex("override fun (\\w+)\\([^)]*\\)[^{]*\\{\\s*([^\\n]*)").findAll(binder).toList()
-        assertEquals("all of IMusicBridge's methods", 12, methods.size)
+        assertEquals("all of IMusicBridge's methods", 13, methods.size)
         for (m in methods) assertEquals("${m.groupValues[1]} must call check() first", "check()", m.groupValues[2].trim())
     }
 }

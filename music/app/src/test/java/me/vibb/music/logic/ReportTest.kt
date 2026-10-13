@@ -83,9 +83,11 @@ class ReportTest {
             sonosRooms = listOf(ReportedRoom("RINCON_000E58A0B1C201400", "Stua")),
         )
         assertEquals(
-            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel", "sonos_rooms"),
+            setOf("version_code", "library_version", "cache_bytes", "downloads_waiting", "entry_errors", "item_errors", "downloads", "storytel", "spotify", "sonos_rooms"),
             report.keys,
         )
+        assertEquals("design 26c §4.4: none until the player plays Spotify", "none", report["spotify"]!!.jsonPrimitive.content)
+        assertEquals("ok", stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = "ok")["spotify"]!!.jsonPrimitive.content)
         val room = (report["sonos_rooms"] as JsonArray).single().jsonObject
         assertEquals("uid and name only - never an ip", setOf("uid", "name"), room.keys)
         assertEquals("Stua", room["name"]!!.jsonPrimitive.content)

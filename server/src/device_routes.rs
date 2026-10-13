@@ -99,6 +99,10 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             "/api/devices/music/storytel",
             get(handlers::music_api::storytel),
         )
+        .route(
+            "/api/devices/music/spotify/token",
+            post(handlers::music_api::spotify_token),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,

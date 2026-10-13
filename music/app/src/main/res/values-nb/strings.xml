@@ -19,6 +19,7 @@
     <string name="kind_podcast">Podkast</string>
     <string name="kind_own">Egne filer</string>
     <string name="kind_audiobook">Lydbok</string>
+    <string name="kind_spotify">Spotify</string>
     <string name="hint_episode">%1$s · episode %2$d av %3$d</string>
     <string name="hint_track">%1$s · spor %2$d av %3$d</string>
     <string name="hint_part">%1$s · del %2$d av %3$d</string>

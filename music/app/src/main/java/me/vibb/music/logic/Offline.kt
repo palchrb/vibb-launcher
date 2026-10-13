@@ -20,7 +20,8 @@ import me.vibb.music.model.Entry
 /**
  * One listed item as keep/prune sees it: whether it has a url (visibility, [visibleKeys]) and whether
  * it can be downloaded ([fetchable]: a url, or a Storytel book whose url is minted per attempt; design
- * 26b §3.3 - visibility is not fetchability).
+ * 26b §3.3 - visibility is not fetchability). A Spotify item is never fetchable and its entry's
+ * cache is always 0 (design 26c §4.2): the plan, the keep set and the prune never see one.
  */
 data class KeepItem(val key: String, val hasUrl: Boolean, val fetchable: Boolean = hasUrl)
 

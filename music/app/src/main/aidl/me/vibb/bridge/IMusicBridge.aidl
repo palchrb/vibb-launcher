@@ -4,6 +4,7 @@
 // music app calls it off the main thread.
 package me.vibb.bridge;
 
+import me.vibb.bridge.ISpotifyTokenCallback;
 import me.vibb.bridge.IStorytelCallback;
 
 interface IMusicBridge {
@@ -45,4 +46,8 @@ interface IMusicBridge {
      *  network) and [later] (the kept episodes' and Nytt's, with the audio's network gate), 64-hex
      *  hashes it doesn't hold. Each call replaces the last; openCover hands them over. */
     oneway void wantArt(in String[] now, in String[] later);
+
+    /** A Spotify access token for this phone's account (design 26c §2.6, §6.1), through [callback]; the launcher
+     *  never caches or logs it. */
+    oneway void getSpotifyToken(ISpotifyTokenCallback callback);
 }

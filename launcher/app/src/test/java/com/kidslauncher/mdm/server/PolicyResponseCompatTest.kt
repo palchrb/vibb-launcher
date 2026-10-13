@@ -408,22 +408,27 @@ class PolicyResponseCompatTest {
 
     /** Design 21 (step 1): the server's `music` object - today's shape, `null` (the server couldn't
      * read the library), missing (an older server), or anything else: the policy always decodes,
-     * the cache round trip keeps it, and nothing reads it yet (the music sync comes in step 3). */
+     * the cache round trip keeps it; `spotify` (design 26c §6.2) is read on its own. */
     @Test
     fun `music never fails the policy and is carried as is (21)`() {
         fun withMusic(music: String) = serverResponse.replaceFirst("{", "{\"music\": $music,")
         val today = withMusic(
-            """{"library_version": "0123456789abcdef", "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""",
+            """{"library_version": "0123456789abcdef", "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify": true}""",
         )
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
         val music = policy.music!!.jsonObject
         assertEquals("0123456789abcdef", music["library_version"]!!.jsonPrimitive.content)
-        assertEquals(setOf("library_version", "mobile_data", "volume_cap_pct", "storytel_generation"), music.keys)
+        assertEquals(setOf("library_version", "mobile_data", "volume_cap_pct", "storytel_generation", "spotify"), music.keys)
+        // Design 26c §6.2: `spotify` (this phone plays Spotify) is read on its own, an older server's
+        // music object without it is false.
+        assertTrue(com.kidslauncher.mdm.music.musicSpotify(policy.music))
+        assertFalse(com.kidslauncher.mdm.music.musicSpotify((decodeCached(withMusic("""{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0}""")) as CachedPolicy.Ok).policy.music))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (odd in listOf(
             "null", "{}", "5", "\"x\"", "[]",
             """{"library_version": 5, "mobile_data": "yes", "volume_cap_pct": "60", "storytel_generation": null}""",
+            """{"library_version": null, "mobile_data": false, "volume_cap_pct": null, "storytel_generation": 0, "spotify": "yes"}""",
         )) {
             assertTrue(odd, decodeCached(withMusic(odd)) is CachedPolicy.Ok)
             assertTrue(odd, decodeFresh(withMusic(odd)) is FreshDecode.Ok)

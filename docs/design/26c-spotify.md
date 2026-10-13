@@ -2235,3 +2235,151 @@ only tolerated failure).
   play as Ella") and every phone word (`ok`, `reauthorize`, `refused`, `no_widevine` with no "Widevine" on the page,
   `unreachable`, `quota`) in `the_device_card_binds_a_phone_to_an_account`; `/music/spotify` in
   `tests::shell::every_page_marks_its_own_tab`.
+
+## Step 3 implementation status (2026-10-13)
+
+Built on branch `music-3-spotify` on top of step 2b and its fix round (`45a6b51`), one commit across `server/`,
+`launcher/` and `music/`: §11 step 3 / §8, the contract. No new dependency on any side, no migration (0073's
+`device_policy.music_spotify_account` is the binding). Nothing plays yet: no renderer, no WebView, no fake, and the
+token reaches the music app's bridge type only.
+
+- **Server.** `POST /api/devices/music/spotify/token` (`handlers::music_api::spotify_token`, in `device_routes`, behind
+  `require_device_token`; always JSON, `Cache-Control: no-store`): 404 `off` when the phone isn't bound or there is no
+  app (checked first, not counted), then the per-phone limit (`Accounts::phone_ask`: 20 a rolling hour, a refused ask
+  not counted, 429 `busy` with `retry_after_s` rounded up to when the oldest ask leaves the hour), then
+  `Accounts::access_token(account, PHONE_TOKEN_MIN_LEFT = 10 min)` under the route's own budget
+  (`PHONE_TOKEN_BUDGET` = 10 s; step 1's QA note): 200 `{"status": "ok", "access_token", "expires_in_s" (what is
+  left), "account": "<id>:<generation>"}`; `Off`/`NoAccount` 404 `off`; `Reauthorize`/`AppRefused` 409
+  `reauthorize`; Spotify's 429 429 `busy` (its `Retry-After`, else 30 s); `Key` 503 `key`; a database error 500
+  `unreachable`; anything else - the network, 5xx, `bad_answer`, the budget - 502 `unreachable`. The mint is 2b's
+  spawned `MintJob`, so a refresh the budget gives up on finishes and is kept for the next ask. The token is never
+  stored or logged (a debug line with the device and account ids only). `music::MusicPolicy.spotify` =
+  `DevicePolicy.music_spotify_account.is_some()` through `policy_music`. `handlers::device_api`: `plays_spotify` (the
+  same column), `compute_dns_filter_version` hashes `\nspotify:true` while bound, and `effective_blocklist` leaves out
+  every domain `spotify::is_spotify_host` names (categories and custom blocks) for a bound phone only. `spotify.rs`:
+  `HOST_SUFFIXES`, `EXACT_HOSTS`, `is_spotify_host` (equal to or under a suffix - Spotify's own parents included -, an
+  exact CDN host exactly; `akamaized.net` stays delivered, the launcher exempts the exact hosts before its walk), the
+  limit and the budget. `templates/device_detail.html`: the DNS note owed from 2b (qa-26c-step2b-code L3) is back in
+  the filter section while the phone is bound. `testdata/`: `spotify_hosts.json` (§6.2's block byte for byte,
+  provisional), `music_state.json` + `"spotify": "ok"` after `storytel`, `music_library.json` regenerated
+  (`MUSIC_LIBRARY_SNAPSHOT_WRITE=1`; version `ceca94f70db5e7a0`) with entry 6 "Kveldsliste"
+  (`spotify:playlist:FAKEplaylist0000000001`, Musikk, items `11ee11ee11ee11ee`, `"spotify": "list"`) and entry 7 "Fake
+  Artist" (`spotify:artist:FAKEartist000000000001`, items `22dd22dd22dd22dd`, `"spotify": "context"`), both `cache` 0,
+  resume on, order auto, no cover, `spotify` between `lan` and `sort` and on them alone; the phone is bound to a fake
+  account row (`x'00'` ciphertext, never opened). `music_listing.json` unchanged.
+- **Launcher.** `aidl/me/vibb/bridge/IMusicBridge.aidl` (the import, `getSpotifyToken` appended after `wantArt`) and
+  the new `ISpotifyTokenCallback.aidl`; `music/MusicServer.kt` (`spotifyToken()`, `@POST`); `MusicBridgeService.getSpotifyToken`
+  (`check()` first, then `answerSpotify` on IO: no server set up, a transport failure or `SPOTIFY_TOKEN_TIMEOUT_MS`
+  (10 s) -> `launcher`; no cache, no store, the log lines name the exception class only); `music/SpotifyTokenCourier.kt`
+  (pure `spotifyTokenAnswer(httpStatus, body)` -> `SpotifyTokenAnswer`, redacted `toString`); `music/SpotifyHosts.kt`
+  (`SPOTIFY_HOST_SUFFIXES`, `SPOTIFY_EXACT_HOSTS`, `isSpotifyHost`); `server/DnsFilterEngine.kt` (`classify` ->
+  the pure top-level `classifyDomain(blocked, domain, spotify)`: FCM's hosts always, Spotify's only with `spotify`,
+  both before the suffix walk; the flag from the policy's `music.spotify`, set by every fresh sync and read from the
+  cached policy in `loadFromDisk`); `MdmSyncWorker` sets it before `refreshIfNeeded`; `music/MusicPlan.kt`
+  (`musicSpotify(element)`, read on its own and leniently; `musicState` passes the music app's `spotify`);
+  `server/dto/PolicyResponse.kt` (the `music` doc: `spotify` and its readers - the field stays raw JSON);
+  `server/EnforcementPlan.kt` (`webViewProvider` in `neverRestrict`) + `AppEnforcer.kt`
+  (`webViewProviderPackage()`: `WebView.getCurrentWebViewPackage()` at each apply, off main). Test resources:
+  `bridge_contract.json` (`spotify_token`), `spotify_hosts.json`.
+- **Music.** The same two AIDL files byte for byte; `model/Library.kt` (`Source.SPOTIFY`; `Entry.spotifyMode`; a Spotify
+  entry needs `spotifyTarget` and a `spotify` of `list`/`context`, else hidden with its id kept; cache read as 0, never
+  `lan`; the field on another source is ignored; an unknown source is still dropped with its id kept);
+  `spotify/SpotifyRef.kt` (`SpotifyKind`, `SpotifyRef`, `spotifyTarget`, `uriOf` - show and episode entries to
+  `spotify:episode:`, step 2a's correction -, `spotifyEpisodes`, the mode constants); `logic/Spotify.kt`
+  (`SPOTIFY_PLAYABLE = false`, `isSpotify`); `data/Snapshot.kt` (`visible`: a Spotify entry's listed items in both
+  views when `spotifyPlayable`, a field defaulting to `SPOTIFY_PLAYABLE`, else none - so the library parses and shows
+  nothing); `logic/PlayOrder.kt` (a show newest first, every other kind the listing's order); `logic/Storytel.kt`
+  `fetchable` false for Spotify and `logic/Offline.kt`'s doc (cache 0: no keep, no plan, no prune);
+  `logic/NewItems.kt` (`newsEligible`/`listedOf` take a listed Spotify item once `spotifyPlayable`);
+  `logic/LibraryView.kt` (`Kind.SPOTIFY`, `Hint.Started.episodes`); the UI's three `when`s (`kind_spotify`;
+  `hint_track`/`hint_episode`, `track_of`/`episode_of`, `new_track`/`new_episode` by `spotifyEpisodes`);
+  `sonos/PlayBody.kt` (`speakerDropReason` = `spotify`); `logic/Report.kt` (`spotify`, default `none`);
+  `bridge/SpotifyBridgeToken.kt` (`TokenResult`, the pure `tokenResult`, `SpotifyBridgeToken.ask`/`get` with the 10 s
+  wait; used by nothing yet); strings `kind_spotify` "Spotify" in both locales; test resources `music_library.json`,
+  `bridge_contract.json`, `spotify_hosts.json`.
+- **CI** (§8 item 6): `launcher.yml` and `music.yml` watch the three `spotify_hosts.json` (and `music.yml` the
+  launcher's `bridge_contract.json`, as before), `server-ci.yml`'s build the two app copies; root `CLAUDE.md`'s shared
+  files and CI paths say so. `server/testdata/spotify/` and `scripts/fake-spotify.py` are step 4's.
+- **Tests.** Server: `spotify::tests::hosts_match_the_contract` (the constants against the file, both app copies byte
+  for byte, the rule), `phone_asks_are_limited_per_phone`; `tests::music_spotify::phones` -
+  `the_token_route_answers` (off unbound and without an app, ok with the exact body, kept above 10 minutes and
+  refreshed under, busy with Spotify's `Retry-After`, unreachable on a 503, reauthorize on `invalid_client` and
+  `invalid_grant` and then with no request, key, off after Remove, 401 without a bearer; every answer `no-store` JSON,
+  no token outside ok), `the_token_route_is_limited_per_phone`, `a_slow_refresh_is_unreachable_then_kept`,
+  `the_policy_and_the_blocklist_follow_the_binding` (`music.spotify`, the version moved by bind and back by unbind, an
+  unbound phone's version unchanged by step 3, the delivered list without Spotify's hosts for the bound phone only);
+  `music_library_snapshot` (the Spotify entries and their key set, `music.spotify` true),
+  `library_lan_only_for_a_lan_rss_feed`, the policy's music object in `tests::music` and `policy_json_keys_snapshot`,
+  the device card's DNS note. Launcher: `SpotifyTokenCourierTest`, `SpotifyHostsTest`, `DnsFilterEngineTest`,
+  `EnforcementPlanTest` (the WebView provider), `PolicyResponseCompatTest` (`spotify`), `MusicPlanTest` (three AIDL
+  files, `getSpotifyToken` last, 13 bridge methods each `check()` first, `spotify_token` against its constants, the
+  host list against the music app's and the server's, the snapshot's listings 6 and 7, `musicSpotify`, `music_state`
+  with `spotify`), `MusicFileDownloadsTest`'s fake server (the new method). Music: `SpotifyRulesTest` (new: the grammar, `uriOf` with an episode entry, hidden until step 5b on
+  both renderers, both views and the room's drop once playable, the natural order per kind and the setting, never
+  fetchable or kept, NY gated, the words), `ContractFilesTest` (the entries, a Spotify entry without its mode or
+  target hidden with its id kept, cache 0 and no `lan` whatever is sent, `spotify_hosts.json` equal to the server's),
+  `BridgeTest` (three AIDL files, appended, `spotify_token` and `tokenResult`), `ReportTest`, `NewItemsTest`
+  (`keyById`), `EpisodeArtTest` (`wantArt` then `getSpotifyToken` last), `OfflineTest` (its unnamed entry is now 99:
+  7 is the snapshot's artist).
+- **Validation.** Server (from `server/`): `cargo fmt --check` clean; `cargo clippy --all-targets` the 12 known
+  warnings, none new; `cargo test` 751 passed, 1 failed - `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`
+  (main's timing test, the tolerated one). Music: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+  -PwarningsAsErrors=true` BUILD SUCCESSFUL, 624 JVM tests, lint 0 errors (its 39 warnings none in a touched line).
+  Launcher: `./gradlew assembleDebug testDebugUnitTest` BUILD SUCCESSFUL (the debug build on the tsnet stub), 1108 JVM
+  tests.
+
+Deviations from the spec (each with its reason):
+1. **`ISpotifyTokenCallback.expiresInMs` also carries `busy`'s wait** (the server's `retry_after_s` in ms; §8 said "0
+   unless ok"): §5.5's `Busy(retryAfter)` and §2.6's `retry_after_s` had no field in the callback, and an AIDL file is
+   frozen once shipped (methods only appended). The doc comment says so; the courier and `tokenResult` read it.
+2. **The DNS version hashes the binding only while bound** (`\nspotify:true`), not `spotify:<bool>` always: an unbound
+   phone keeps the version it had, so the server's upgrade doesn't make every phone refetch its 100k-domain list; bind
+   and unbind still each move it (tested).
+3. **The token route's order and edges** (§2.6 names none): binding and app first (`off` is never counted against the
+   limit), the limit before any token work, a database error 500 `unreachable`, Spotify's 429 without a numeric
+   `Retry-After` 30 s, the route's own 10 s budget (502 `unreachable`; `Accounts::set_phone_token_budget` for the
+   tests). `expires_in_s` is whole seconds left.
+4. **`spotify::hosts` is three items** (`HOST_SUFFIXES`, `EXACT_HOSTS`, `is_spotify_host`), and the server's test also
+   compares both app copies byte for byte (like `phone::tests`), which is what `server-ci.yml` watching them needs.
+5. **The launcher reads `music.spotify` through a flag, not the cached policy per query**: `DnsFilterEngine.classify` is
+   the VPN's per-packet path; the flag is set at every fresh sync and from the cached policy when the VPN loads its
+   list (the cache is only written by the sync). `musicSpotify` reads the field on its own (`MusicPolicy` is
+   unchanged: a malformed other field must not lift the exemption, nor `spotify` fail the music sync). `PolicyResponse`
+   keeps `music` as raw JSON; only its doc changed.
+6. **The courier's mapping where §6.1 is silent**: an `ok` that isn't whole (no token, life outside 1..86 400 s, no
+   `<id>:<generation>` account, not HTTP 200) is `launcher`; without a status word an older server's 404 is `off`, a
+   5xx `unreachable`, the rest `launcher`; `busy` without a usable wait 30 s.
+7. **`logic/Spotify.kt` now** (in step 4's list) holds `SPOTIFY_PLAYABLE`, because step 5b flips it there; it is a
+   `val` (no constant-condition folding), and `Snapshot.spotifyPlayable` / the news rules' `spotifyPlayable` take it
+   as a default so the tests pin 5b's behaviour already.
+8. **NY is gated too** (§4.3 makes a listed Spotify item eligible): while nothing plays, a Spotify listing is only
+   acknowledged, so the first listings after the flip don't flood Nytt with a whole playlist.
+9. **Small UI branches for `Kind.SPOTIFY`** (step 5b's files; needed to compile): `Hint.Started.episodes` (default
+   false) picks `hint_episode` for a show or episode entry, the player and Nytt pick by `spotifyEpisodes`; only
+   `kind_spotify` is added - `hint_spotify_picks` and the state lines are steps 6 and 5b's.
+10. **`PlayBodies.speakerDropReason` = `spotify`** (§4.2, not in step 3's file list): so "visible in both views" is safe
+    the moment 5b flips the constant.
+11. **The music app's `SpotifyHosts.kt` and its `SpotifyHostsTest` are not built**: the constant is step 4's file
+    (`M/spotify/SpotifyHosts.kt` + `WebPolicy.kt`); step 3 lands the music copy and `ContractFilesTest`'s equality
+    with the server's. §8 item 5's "each side's constant" holds for the server and the launcher now, the music app in
+    step 4.
+12. **Report**: `spotify` is always sent, `none` by default (the service's file is step 5b's).
+13. **The snapshot's ids, names and versions** (§8 names targets and modes only): 6 and 7, Musikk, `11ee…`/`22dd…`, no
+    cover (so `covers` and the string replacements of `OfflineTest`, `BookmarksTest` and `ContractFilesTest` still hit
+    only what they meant), the phone bound to a fake account.
+
+Found in the spec:
+- §8 item 2's callback could not carry §2.6's / §5.5's `busy` wait (deviation 1).
+- §6.2's `spotify:<bool>` in the version would have made every phone refetch its blocklist at the upgrade (deviation 2).
+- §8 item 6 has `server-ci.yml` watch the app copies, but no server test read them (deviation 4 makes it meaningful).
+- §8 item 5's music `SpotifyHostsTest` checks a constant that §11 puts in step 4 (deviation 11).
+- Nothing in §11 step 3 was impossible.
+
+Owed: step 4 (the music app's host constant and `WebPolicy`, `TokenCache` over `SpotifyBridgeToken`, the fake and
+`server/testdata/spotify/`'s CI path); step 5b (`SPOTIFY_PLAYABLE = true`, the outcome file behind the report's
+`spotify`); step 6 (the context item, `hint_spotify_picks`); step 7 (`server/CLAUDE.md`, `launcher/CLAUDE.md`,
+`music/CLAUDE.md` for the token route, the courier, the gated exemption and the WebView provider). **The host list is
+provisional** (its comment says so; unverified as a whole): the spike's DNS capture replaces the three copies (and the
+server's and launcher's constants) in one commit, at the latest in step 6, before any stable tag. [device check]: the
+WebView provider read on the Jelly Star (`getCurrentWebViewPackage`), and the exemption with the family's categories on
+(QA checklist item 15).

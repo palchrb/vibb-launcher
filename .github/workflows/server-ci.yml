@@ -44,7 +44,8 @@ jobs:
           image=true
         else
           files="$(git diff --name-only "$base" "$GITHUB_SHA")"
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$)' <<<"$files"; then
+          # Plus the apps' copies of Spotify's host list (design 26c §8): spotify::tests compares them.
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$)' <<<"$files"; then
             changed=true
           else
             changed=false

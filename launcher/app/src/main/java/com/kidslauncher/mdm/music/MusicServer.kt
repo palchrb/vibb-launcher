@@ -8,6 +8,7 @@ import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.http.GET
 import retrofit2.http.Header
+import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Streaming
 import java.util.concurrent.TimeUnit
@@ -32,6 +33,9 @@ interface MusicServer {
 
     /** `GET /api/devices/music/files/{id}`: a blocking call, so the runner can cancel it (design 13 §4). */
     fun file(id: Long, range: String?, ifMatch: String?): Call<ResponseBody>
+
+    /** `POST /api/devices/music/spotify/token` (design 26c §2.6): always a JSON `status`; read by [spotifyTokenAnswer]. */
+    suspend fun spotifyToken(): Response<ResponseBody>
 }
 
 private interface MusicApi {
@@ -54,6 +58,9 @@ private interface MusicApi {
     @Streaming
     @GET("api/devices/music/files/{id}")
     fun file(@Path("id") id: Long, @Header("Range") range: String?, @Header("If-Match") ifMatch: String?): Call<ResponseBody>
+
+    @POST("api/devices/music/spotify/token")
+    suspend fun spotifyToken(): Response<ResponseBody>
 }
 
 /** Like `createMdmApi`: the bearer (to the server's own host only, review L8), the tailnet proxy when tsnet runs. */
@@ -76,5 +83,6 @@ fun createMusicServer(baseUrl: String, token: String): MusicServer {
         override suspend fun cover(hash: String) = api.cover(hash)
         override suspend fun storytel() = api.storytel()
         override fun file(id: Long, range: String?, ifMatch: String?) = api.file(id, range, ifMatch)
+        override suspend fun spotifyToken() = api.spotifyToken()
     }
 }

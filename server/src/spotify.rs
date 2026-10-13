@@ -6,7 +6,9 @@
 //! `items[].item`), the readers ([readers]: the accounts that may read, the listing's last reader
 //! first) and short links resolved one hop at a time ([resolve_short_link]). The sweep's check is
 //! `music_sweep::spotify_check`; the entries and the binding (2b) and the phones' token endpoint
-//! (step 3) build on it.
+//! (step 3: `handlers::music_api::spotify_token`, its per-phone limit [Accounts::phone_ask]) build
+//! on it, and the phone's DNS filter exempts [HOST_SUFFIXES] and [EXACT_HOSTS] while it plays
+//! Spotify (§6.2, [is_spotify_host]).
 //!
 //! - **The app** ([App]): one `music_spotify_app` row from the PWA, or `SPOTIFY_CLIENT_ID` (and
 //!   `SPOTIFY_REDIRECT_URI`) from the environment, which wins. A PKCE client ID is public (it is in
@@ -114,6 +116,54 @@ pub const ARTIST_ALBUMS_LIMIT: usize = 10;
 /// it picks the newest [MAX_ARTIST_ALBUMS] (Spotify doesn't document the endpoint's order, so the
 /// whole of it is sorted by date; past 100 the oldest are cut and the list is `capped`).
 pub const MAX_ARTIST_ALBUM_PAGES: usize = 10;
+/// A phone's token (§2.6) has at least this much left: the phone refreshes ahead of expiry at 10
+/// minutes left while it plays (§5.5), so a token handed out never needs a second ask at once.
+pub const PHONE_TOKEN_MIN_LEFT: Duration = Duration::from_secs(600);
+/// At most this many token asks per phone in [PHONE_TOKEN_WINDOW] (§2.6: about one an hour while
+/// it plays, plus a retry or two); past it a 429 `busy`.
+pub const PHONE_TOKENS_PER_WINDOW: usize = 20;
+/// The phone token limit's rolling window.
+pub const PHONE_TOKEN_WINDOW: Duration = Duration::from_secs(3600);
+/// The token route's own budget (qa-26c-step1-code's note): a refresh can wait for the gate behind
+/// a feed fetch, and the phone's bridge gives up after 10 s anyway. A refresh still running when
+/// it ends finishes on its own ([Accounts::access_token] runs it as a task) and is kept for the
+/// next ask.
+pub const PHONE_TOKEN_BUDGET: Duration = Duration::from_secs(10);
+
+// --- the phone's hosts (§6.2) --------------------------------------------------------------------
+
+/// Spotify's hosts for the Web Playback SDK (§6.2; `testdata/spotify_hosts.json`, byte-identical
+/// in both apps' test resources, `tests::hosts_match_the_contract`): a domain equal to or under one
+/// of these. **Provisional** (unverified) until the spike's DNS capture replaces the list (design
+/// 26c step 6 at the latest).
+pub const HOST_SUFFIXES: [&str; 5] = [
+    "spotify.com",
+    "scdn.co",
+    "spotifycdn.com",
+    "spotifycdn.net",
+    "pscdn.co",
+];
+/// Third-party CDN hosts of Spotify's audio, exempted by exact name only (never their parent).
+pub const EXACT_HOSTS: [&str; 2] = [
+    "audio-ak-spotify-com.akamaized.net",
+    "audio-akp-quic-spotify-com.akamaized.net",
+];
+
+/// A domain the delivered blocklist leaves out for a phone that plays Spotify (§6.2): equal to or
+/// under one of [HOST_SUFFIXES], or exactly one of [EXACT_HOSTS]. Unlike FCM's exemption
+/// (`play::is_fcm_protected`) a Spotify-owned parent (`spotify.com`) is dropped too - the list is
+/// Spotify's own names; a third-party parent (`akamaized.net`) stays, the launcher exempts the exact
+/// host before its suffix walk.
+pub fn is_spotify_host(domain: &str) -> bool {
+    let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    EXACT_HOSTS.contains(&domain.as_str())
+        || HOST_SUFFIXES.iter().any(|suffix| {
+            domain == *suffix
+                || domain
+                    .strip_suffix(suffix)
+                    .is_some_and(|rest| rest.ends_with('.') && rest.len() > 1)
+        })
+}
 
 // --- links (the grammar; a short link is resolved by [resolve_short_link]) -----------------------
 
@@ -1116,6 +1166,10 @@ pub struct Accounts {
     skew: std::sync::Mutex<Duration>,
     /// The add form's budget ([ADD_BUDGET]; the tests shorten it).
     add_budget: std::sync::Mutex<Duration>,
+    /// Each phone's token asks in the last [PHONE_TOKEN_WINDOW] ([Accounts::phone_ask]).
+    phone_asks: std::sync::Mutex<HashMap<i64, VecDeque<Instant>>>,
+    /// The token route's budget ([PHONE_TOKEN_BUDGET]; the tests shorten it).
+    phone_token_budget: std::sync::Mutex<Duration>,
 }
 
 impl Default for Accounts {
@@ -1137,7 +1191,46 @@ impl Accounts {
             quota_until: Default::default(),
             skew: Default::default(),
             add_budget: std::sync::Mutex::new(ADD_BUDGET),
+            phone_asks: Default::default(),
+            phone_token_budget: std::sync::Mutex::new(PHONE_TOKEN_BUDGET),
         }
+    }
+
+    /// The token route's budget for one mint ([PHONE_TOKEN_BUDGET]).
+    pub fn phone_token_budget(&self) -> Duration {
+        *lock(&self.phone_token_budget)
+    }
+
+    /// A shorter token route budget (the tests).
+    #[cfg(test)]
+    pub fn set_phone_token_budget(&self, budget: Duration) {
+        *lock(&self.phone_token_budget) = budget;
+    }
+
+    /// One token ask of `device` (§2.6): `Ok` within [PHONE_TOKENS_PER_WINDOW] asks a rolling
+    /// [PHONE_TOKEN_WINDOW], else `Err(seconds)` until the oldest ask leaves the window (at least
+    /// 1). A refused ask isn't counted. Phones with no ask left in the window are forgotten.
+    pub fn phone_ask(&self, device: i64) -> Result<(), u64> {
+        let now = self.now();
+        let mut asks = lock(&self.phone_asks);
+        asks.retain(|_, times| {
+            while times
+                .front()
+                .is_some_and(|at| now.saturating_duration_since(*at) >= PHONE_TOKEN_WINDOW)
+            {
+                times.pop_front();
+            }
+            !times.is_empty()
+        });
+        let times = asks.entry(device).or_default();
+        if times.len() >= PHONE_TOKENS_PER_WINDOW {
+            let oldest = times.front().copied().unwrap_or(now);
+            let wait = PHONE_TOKEN_WINDOW.saturating_sub(now.saturating_duration_since(oldest));
+            // Rounded up: asking again after it never meets the same refusal.
+            return Err((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1));
+        }
+        times.push_back(now);
+        Ok(())
     }
 
     /// The add form's budget for a short link and the add check together ([ADD_BUDGET]).
@@ -4370,5 +4463,101 @@ pub(crate) mod tests {
             );
             assert_eq!(config.artist_albums, on, "{value}");
         }
+    }
+
+    /// §6.2 / §8 item 5: the host list is `testdata/spotify_hosts.json`'s, byte-identical in both
+    /// apps' test resources (as `phone_vectors.json`; their own tests compare too), and a domain is
+    /// Spotify's when it equals or lies under a suffix, or equals an exact host - never a look-alike
+    /// or a third-party parent.
+    #[test]
+    fn hosts_match_the_contract() {
+        const HOSTS: &str = include_str!("../testdata/spotify_hosts.json");
+        for app in ["launcher", "music"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+                "../{app}/app/src/test/resources/spotify_hosts.json"
+            ));
+            let copy = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(copy, HOSTS, "{} differs", path.display());
+        }
+        let contract: Value = serde_json::from_str(HOSTS).unwrap();
+        let list = |key: &str| -> Vec<String> {
+            contract[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(list("suffixes"), HOST_SUFFIXES);
+        assert_eq!(list("exact"), EXACT_HOSTS);
+        assert!(
+            contract["comment"]
+                .as_str()
+                .unwrap()
+                .contains("PROVISIONAL"),
+            "the list says it is provisional until the capture replaces it"
+        );
+        for host in [
+            "spotify.com",
+            "api.spotify.com",
+            "accounts.spotify.com",
+            "gew1-spclient.spotify.com",
+            "SDK.scdn.co.",
+            "i.scdn.co",
+            "audio4-fa.scdn.co",
+            "x.spotifycdn.com",
+            "y.spotifycdn.net",
+            "anchor.pscdn.co",
+            "audio-ak-spotify-com.akamaized.net",
+            "audio-akp-quic-spotify-com.akamaized.net",
+        ] {
+            assert!(is_spotify_host(host), "{host}");
+        }
+        for host in [
+            "akamaized.net",
+            "other.akamaized.net",
+            "x.audio-ak-spotify-com.akamaized.net",
+            "evilspotify.com",
+            "spotify.com.evil.net",
+            "scdn.com",
+            ".spotify.com",
+            "spotify.co",
+            "",
+        ] {
+            assert!(!is_spotify_host(host), "{host}");
+        }
+    }
+
+    /// §2.6: at most 20 token asks a rolling hour per phone; a refused ask isn't counted, the
+    /// wait is until the oldest ask leaves the hour, and each phone has its own count.
+    #[test]
+    fn phone_asks_are_limited_per_phone() {
+        let accounts = Accounts::default();
+        for _ in 0..PHONE_TOKENS_PER_WINDOW {
+            assert_eq!(accounts.phone_ask(1), Ok(()));
+            accounts.advance(Duration::from_secs(60));
+        }
+        // 20 asks over 20 minutes: the first leaves the window 40 minutes from now.
+        assert_eq!(accounts.phone_ask(1), Err(40 * 60));
+        assert_eq!(
+            accounts.phone_ask(1),
+            Err(40 * 60),
+            "a refusal isn't counted"
+        );
+        assert_eq!(accounts.phone_ask(2), Ok(()), "another phone");
+        accounts.advance(Duration::from_secs(40 * 60));
+        assert_eq!(accounts.phone_ask(1), Ok(()), "the oldest left the hour");
+        assert!(
+            accounts.phone_ask(1).is_err(),
+            "and the next one is full again"
+        );
+        accounts.advance(PHONE_TOKEN_WINDOW);
+        assert_eq!(accounts.phone_ask(1), Ok(()));
+        assert_eq!(
+            lock(&accounts.phone_asks).len(),
+            1,
+            "phones with no ask left in the hour are forgotten"
+        );
     }
 }
