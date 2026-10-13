@@ -32,6 +32,7 @@ mod play;
 mod retention;
 mod security;
 mod sound_mode;
+mod spotify;
 mod startup;
 mod storytel;
 mod streams;
@@ -110,6 +111,10 @@ pub struct AppState {
     /// The server's one Storytel session (design 26b §2.1): the JWT and the last shelf in memory,
     /// one login at a time (`storytel::Account`).
     pub storytel: std::sync::Arc<storytel::Account>,
+    /// Spotify (design 26c §2): the environment's settings, the unfinished logins and each
+    /// account's access token in memory, one refresh per account at a time
+    /// (`spotify::Accounts`).
+    pub spotify: std::sync::Arc<spotify::Accounts>,
     /// Where this server listens and whom it believes (design 22 §2): `net::NetConfig`.
     pub net: std::sync::Arc<net::NetConfig>,
     /// Security events that come in floods, written at most once a minute per client
@@ -345,6 +350,21 @@ async fn main() {
         }
     };
 
+    // Spotify (design 26c §2.1, §9.3): the family's own client ID may come from .env, and the
+    // base overrides are honoured only on loopback (the fake Spotify).
+    let spotify_config = spotify::Config::from_env();
+    for warning in &spotify_config.warnings {
+        tracing::warn!("{warning}");
+    }
+    if spotify_config.accounts_override || spotify_config.api_override {
+        tracing::warn!(
+            "Spotify requests go to {} and {} (loopback overrides: the fake Spotify, design 26c \
+             §9.3)",
+            spotify_config.accounts_base,
+            spotify_config.api_base
+        );
+    }
+
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
@@ -370,6 +390,7 @@ async fn main() {
         music_sweep: Default::default(),
         music_libraries: Default::default(),
         storytel: Default::default(),
+        spotify: std::sync::Arc::new(spotify::Accounts::new(spotify_config)),
         net: std::sync::Arc::new(net_config),
         audit: Default::default(),
         limits: Default::default(),
@@ -666,7 +687,18 @@ pub fn build_admin_router(
                 .post(handlers::auth::verify_2fa)
                 .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
-        .route("/sw.js", get(handlers::sw::serve_sw));
+        .route("/sw.js", get(handlers::sw::serve_sw))
+        // Spotify's redirect back after a login (design 26c §2.3): the admin cookie is
+        // SameSite=Strict, so the browser doesn't send it on this navigation from
+        // accounts.spotify.com. It does nothing without a live pending `state` and its
+        // `spotify_login` cookie; the admin gate still applies.
+        .route(
+            "/music/spotify/callback",
+            get(handlers::music_spotify::callback),
+        )
+        // Where the callback's 303 lands: a same-site step to the Spotify page, so the Strict
+        // admin cookie is sent again (no code, no session needed).
+        .route("/music/spotify/done", get(handlers::music_spotify::done));
 
     // Reachable with a valid session, even mid-onboarding (forced password
     // change / mandatory 2FA setup) - these routes ARE the onboarding gate,
@@ -979,6 +1011,22 @@ pub fn build_admin_router(
             get(handlers::music::storytel_shelf).post(handlers::music::save_storytel),
         )
         .route("/music/storytel/add", post(handlers::music::add_storytel))
+        // Spotify (design 26c step 1): the developer app, the accounts, the PKCE login.
+        .route("/music/spotify", get(handlers::music_spotify::show))
+        .route(
+            "/music/spotify/app",
+            post(handlers::music_spotify::save_app),
+        )
+        .route(
+            "/music/spotify/app/clear",
+            post(handlers::music_spotify::clear_app),
+        )
+        .route("/music/spotify/login", post(handlers::music_spotify::login))
+        .route("/music/spotify/paste", post(handlers::music_spotify::paste))
+        .route(
+            "/music/spotify/accounts/{id}/remove",
+            post(handlers::music_spotify::remove_account),
+        )
         .route(
             "/music/storytel/clear",
             post(handlers::music::clear_storytel),

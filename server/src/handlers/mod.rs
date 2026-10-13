@@ -11,6 +11,7 @@ pub mod lock_glance;
 pub mod music;
 pub mod music_api;
 pub mod music_import;
+pub mod music_spotify;
 pub mod parent_pin;
 pub mod provisioning;
 pub mod schedules;

@@ -40,6 +40,9 @@ pub enum Kind {
     Login,
     /// The Storytel bookshelf.
     Shelf,
+    /// Spotify's accounts service: the token exchange and refresh, and `/v1/me` at a login
+    /// (design 26c §2.4; a token answer is a few hundred bytes).
+    Token,
 }
 
 impl Kind {
@@ -51,6 +54,7 @@ impl Kind {
             Kind::Image => 10_000_000,
             Kind::Login => 64_000,
             Kind::Shelf => 8_000_000,
+            Kind::Token => 64_000,
         }
     }
 
@@ -62,6 +66,7 @@ impl Kind {
             Kind::Image => 60,
             Kind::Login => 20,
             Kind::Shelf => 30,
+            Kind::Token => 20,
         })
     }
 }
@@ -76,7 +81,8 @@ pub enum Reach {
 }
 
 /// One request. No `Debug`: a Storytel login's URL carries the e-mail and the encrypted password
-/// (`pwd=`), and its bookshelf request the bearer (design 26b §0).
+/// (`pwd=`), and its bookshelf request the bearer (design 26b §0); a Spotify token request's body
+/// the refresh token or the code and its verifier, a Web API request the bearer (design 26c §7.1).
 pub struct SourceRequest {
     pub url: String,
     pub kind: Kind,
@@ -115,6 +121,8 @@ pub struct SourceResponse {
     pub truncated: bool,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// `Retry-After` as sent (design 26c §2.4: Spotify's 429s), at most 500 characters.
+    pub retry_after: Option<String>,
 }
 
 /// Without the body (design 26b QA L4): a Storytel login's body holds the session token.
@@ -126,6 +134,7 @@ impl std::fmt::Debug for SourceResponse {
             .field("truncated", &self.truncated)
             .field("etag", &self.etag)
             .field("last_modified", &self.last_modified)
+            .field("retry_after", &self.retry_after)
             .finish()
     }
 }
@@ -428,6 +437,7 @@ impl Source for HttpSource {
             let status = response.status().as_u16();
             let etag = header(&response, reqwest::header::ETAG);
             let last_modified = header(&response, reqwest::header::LAST_MODIFIED);
+            let retry_after = header(&response, reqwest::header::RETRY_AFTER);
             let limit = request.kind.limit();
             let mut body = Vec::new();
             let mut truncated = false;
@@ -446,6 +456,7 @@ impl Source for HttpSource {
                 truncated,
                 etag,
                 last_modified,
+                retry_after,
             })
         })
     }

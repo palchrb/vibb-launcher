@@ -1677,3 +1677,115 @@ so the user can overturn them.
 - **L13**: the quota is shared with the phones: a `QUOTA_EXCEEDED` stops Spotify checks for 60 minutes, the phone
   reports `quota` (§2.4, §3.4, §4.4, §5.4).
 - **L14**: shuffle decided off by the phone's rule, removed from the questions (§4.2, §12, §14).
+
+## Step 1 implementation status (2026-10-13)
+
+Built on branch `music-3-spotify` on top of the design commits (`2c95349`), one commit: §11 step 1, server only. No new
+dependency; no device-facing change (no policy key, no device route, no library change: `music_library_snapshot`,
+`music_listing_snapshot` and `policy_json_keys_snapshot` pass unchanged).
+
+- **In**: `S/spotify.rs` (new): the link grammar of §3.1 (`parse_link` -> `Link::Ref(SpotifyRef)` / `Link::Short`,
+  `parse_target`, the refused kinds with their sentences; no request, short links only recognised - resolving them is
+  2a's), PKCE (`Verifier`, 64 characters of RFC 7636's alphabet from `OsRng`, unbiased; `s256`; a 32-hex `state`; the
+  cookie's hex SHA-256), `authorize_url` (the exact query of §2.3), `Config` (`SPOTIFY_CLIENT_ID`,
+  `SPOTIFY_REDIRECT_URI`, `SPOTIFY_ACCOUNTS_BASE`/`SPOTIFY_API_BASE` honoured only as `http://127.0.0.1:<port>` or
+  `http://[::1]:<port>` - anything else ignored with one warning at start -, `INSECURE_COOKIES`), `App` (the environment
+  over the row), `valid_client_id`, `valid_redirect_uri`, `suggested_redirect` (https only when a trusted proxy said
+  `X-Forwarded-Proto: https`), and `Accounts` (`AppState.spotify`: the pending logins - at most 8, 10 minutes, memory
+  only -, the per-account `tokio::sync::Mutex` around the cached access token, `quota_until`, a test clock offset):
+  `start_login`, `take_pending`, `complete_login` (exchange, `/v1/me`, the upsert by `spotify_user`, the seal),
+  `access_token` (refresh with rotation written before use, `unsaved` on a failed write, `invalid_grant` ->
+  `needs_login` + `spotify_login_needed`, `invalid_client` -> `app_refused`), `api_get` (bearer, 401 once, `Retry-After`
+  <= 5 s once, `QUOTA_EXCEEDED` -> 60 minutes without a Web API read, 404 `not_found`, `too_big`), the error codes of
+  §2.4, `remove_account`/`remove_all` (phones unbound first). `S/music_secret.rs`: `seal_with`/`open_with` with an
+  AAD (`spotify-v1:<fingerprint>:<spotify user>`); `seal`/`open` are Storytel's `storytel-v1` path as before.
+  `S/music_net.rs`: `Kind::Token` (64 KB / 20 s). `S/main.rs`: `AppState.spotify`, the routes, the callback (and
+  `/music/spotify/done`, below) among `public_routes`, the start's warnings. `S/handlers/music_spotify.rs` (new): the
+  page, `POST /music/spotify/app`, `/app/clear`, `/login`, `/paste`, `/accounts/{id}/remove`, `GET
+  /music/spotify/callback` (303, the `spotify_login` cookie checked and cleared). `templates/music_spotify.html` (new:
+  the app card with the last four and the redirect URI large, "How to set it up" with §2.1's five steps - open while not
+  configured -, Clear; the accounts card with each 6-month line and its 14-day warning, Remove, "Log in with Spotify",
+  the private-window and 5-account hints, the paste for the loopback redirect); `templates/music.html` (a "Spotify"
+  card linking to the page). `migrations/0073_music_spotify.sql`: §3.7's block byte for byte (its header already says
+  that `pre_migration_backup` compares `MAX(version)` only); nothing else in `migrations/` changed.
+  `server/testdata/spotify/`: `me_parent.json`, `me_kid.json`, `me_not_registered.json`, `token_code.json`,
+  `token_refresh.json`, `token_refresh_rotated.json`, `token_invalid_grant.json`, `token_invalid_client.json`,
+  `rate_limited.json`, `quota.json` (fakes only: `FAKE-ACCESS-<n>`, `FAKE-REFRESH-<n>`, users `fakeparent`/`fakekid`).
+- **Tests**: `spotify::tests` 17 - the link grammar (every form of §3.1, `intl-xx`, `?si=`, junk, ids, refused kinds),
+  PKCE (RFC 7636 appendix B, the alphabet and length, the state and its cookie), the authorize URL's exact query (and no
+  `user-read-playback-state`), token answers (rotation, none, `invalid_grant`, `invalid_client`, 429, junk), the app
+  settings' checks, the redirect suggestion, the loopback-only overrides and `Reach::Any` only with them (also over
+  CannedFetch), a refresh's exact request and the cache's margin and generation, rotation written before use and the
+  `unsaved` retry after a failed write, refusals (`invalid_grant` -> no request ever after), a key that can't open the
+  token (another key, no key, a row moved to another user: the AAD), the per-account lock (two mints, one refresh),
+  `api_get` (401, 404, `too_big`, `Retry-After`, the quota pause), `secret_types_have_no_debug`,
+  `no_secret_in_errors` (a dropped connection and a redirect loop over loopback; answers echoing the token), the
+  180-day line. `music_secret::tests::seal_with_binds_the_associated_data`. `tests::music_spotify` 14 - sessions
+  (every POST and the page; the callback and the done page need none), "not configured" (the steps, no login button,
+  the CSP, a phone's library unchanged), the app setting's 400s by field, the environment winning, the suggestion from
+  `Host`/`X-Forwarded-*`, the start (303, the query, the cookie's attributes, 8 pending, no key = 503), the callback
+  (the exchange with the verifier whose S256 the URL carried, the row, the seal, the kept access token, the event, the
+  page's "Logged in as Ella.", a replay), the state and cookie checks (none, another browser's, unknown, 10 minutes:
+  nothing asked of Spotify), refusals storing nothing (cancel, `/me` 403, `invalid_grant`, `invalid_client`, 503, no
+  refresh token, the network, an app changed since the start), a new login of the same account (row and binding kept,
+  generation + 1, `needs_login` cleared, the clock restarted), the paste (refusals never shown back, single use, another
+  admin's login refused, cancel), Remove / a new client ID / Clear (the box, 404, phones unbound, the revision moves,
+  tokens forgotten), the 6-month line and its warnings, and no code, token or verifier in any log line (a capturing
+  subscriber at TRACE), event, page or stored text.
+
+Deviations from the spec (each with its reason):
+1. **The callback's 303 goes to `/music/spotify/done?login=<outcome>`**, a public page with no secret that moves on to
+   `/music/spotify?login=<outcome>#accounts` by a `<meta http-equiv="refresh">` (and a link). §2.3's direct 303 to the
+   session page can't work: the admin cookie is `SameSite=Strict`, and a browser withholds Strict cookies for the whole
+   redirect chain of a navigation another site (accounts.spotify.com) started, so the page would answer with `/login`.
+   The done page's own navigation is same-site, so the cookie is sent. The code still never sits on a page's URL. The
+   paste (already same-site) goes straight to the page.
+2. **The Spotify page carries its own CSP** - `ADMIN_CSP` with `form-action 'self' https://accounts.spotify.com` (the
+   loopback fake's origin with the override) - and `admin_auth::admin_headers` now keeps a CSP a handler set (only this
+   page does; every other page gets `ADMIN_CSP` as before, pinned by `not_configured_shows_the_steps`). Without it the
+   login form's 303 to Spotify breaks: browsers enforce `form-action` on a form's redirect. `admin_auth.rs` is outside
+   §11 step 1's file list.
+3. **The paste checks the session's admin** (the one who started the login) instead of the `spotify_login` cookie,
+   whose `Path` is the callback's (§2.3), so a POST to `/music/spotify/paste` never carries it.
+4. **Two more login outcomes**: `off` (no app or no music key any more at the callback) and `error` (the account
+   couldn't be stored). `expired` also covers a missing or mismatched cookie (the pending login is left in place then,
+   so the right browser can still finish it) and an app whose client ID or redirect URI changed since the start.
+5. **`LOGIN_BUDGET` = 45 s** for the exchange and `/me`, the gate's wait included (26b's probe budget; a feed fetch can
+   hold the gate for 120 s); past it `unreachable`.
+6. **`SourceResponse.retry_after`** (the `Retry-After` header, read by `HttpSource`; `CannedFetch::retry_after` in the
+   tests): §2.4's 429 handling needs it and `music_net` didn't carry it.
+7. **`api_get` itself refuses (`quota`, no request) during the 60-minute pause**, so the sweep (2a) and the add check
+   (2b) both honour it; the accounts service (refreshes) goes on (§2.4).
+8. **A 429 from the token endpoint is `RateLimited` (`rate_limited`)**, §2.4's `Busy` under the code list's name; step
+   3's route maps it to `busy`.
+9. **`refresh_error` codes**: as §2.2 plus `bad_answer`/`too_big`; a timeout is recorded as `network`; a 4xx error
+   other than `invalid_grant`/`invalid_client` as `http_<n>`.
+10. **The exchange's access token is kept** for its hour (no refresh right after a login); a new login also clears
+    `refresh_ok_at` (a new token, not refreshed yet).
+11. **Migration 0073 is §3.7 whole** (with 2a/2b's listing columns, the binding column and both triggers): a migration
+    is frozen once pushed, and no later step lists one. Remove and Clear already unbind phones through the column.
+12. **The link grammar's edges** (no vibb source at hand for them): `http://open.spotify.com` is taken too; `intl-` is
+    followed by 2-8 letters or hyphens; the legacy `spotify:user:<id>:playlist:<id>` is no link;
+    `open.spotify.com/collection/...` and `spotify:collection:...` get the Liked Songs sentence. Until 2a the grammar
+    is `allow(dead_code)` outside the tests.
+13. **The page**: the client ID is shown whole in its editable field (it is public, §2.1) and by its last four in the
+    summary; with `SPOTIFY_CLIENT_ID` the field is read-only and a save stores the environment's ID with the redirect
+    URI; Remove and Clear take a confirm checkbox (a 400 by the box without it). `/me`'s display name loses control
+    characters; its `id` must be 1-128 visible ASCII characters.
+14. **Events**: `spotify_app_saved` (the last four and the redirect URI; how many accounts a new client ID removed) is
+    new; `spotify_login_failed` also records `authorize_error` (Spotify's `error` other than `access_denied`, as a fixed
+    code) and `no_refresh_token`; a cancel records none.
+
+Found in the spec: 1-3 and 6 above (§2.3's 303 against `SameSite=Strict`; `form-action 'self'`; the cookie's path
+against the paste; `Retry-After`). Nothing in §11 step 1 was impossible.
+
+Validation (from `server/`): `cargo fmt --check` clean; `cargo clippy --all-targets` 12 warnings, all on `437eb84`
+already (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`) - none added; `cargo test`: all pass but the
+pre-existing, time-dependent `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`.
+
+Owed: QA checklist items 1-2 [device check] (a real dev-mode app, the https login and the paste, a refused account);
+the page at 360 px in a browser (no browser here: the URIs wrap, `max-width: 100%` on fields); whether `tailscale serve`
+sends `X-Forwarded-Proto` [unverified] (if not, the parent edits the field); the browser behaviour behind deviations 1-2
+is from the cookie and CSP specifications, not a run. `server/CLAUDE.md`'s Spotify section is step 7's; for the main
+session's `DEPLOY.md`: `SPOTIFY_CLIENT_ID`, `SPOTIFY_REDIRECT_URI`, the two loopback-only base overrides, and that a
+login needs the PWA on https or the paste.

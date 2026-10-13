@@ -10,6 +10,10 @@
 //! backup copies `data/keys/`: the zip holds the database and the image stores, the live mirror and
 //! the external drive copy the database and `data/backups/`, `update.sh` the database files. A
 //! lost key means re-entering the login; nothing else depends on it.
+//!
+//! Since design 26c the same key seals each Spotify account's refresh token
+//! ([MusicKey::seal_with], the associated data `spotify-v1:<fingerprint>:<spotify user>`); a lost
+//! key means logging those accounts in again.
 
 use std::io::Write;
 use std::path::Path;
@@ -43,12 +47,26 @@ impl MusicKey {
         }
     }
 
+    /// Storytel's associated data: `storytel-v1:<fingerprint>` (unchanged since design 21).
     fn aad(fingerprint: &str) -> Vec<u8> {
         format!("storytel-v1:{fingerprint}").into_bytes()
     }
 
-    /// `(ciphertext, nonce)` of `plaintext`, bound to this key's fingerprint.
+    /// `(ciphertext, nonce)` of `plaintext`, bound to this key's fingerprint (the Storytel login).
     pub fn seal(&self, plaintext: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        self.seal_with(&Self::aad(&self.fingerprint), plaintext)
+    }
+
+    /// The plaintext, or `None` when it was sealed with another key, was changed, or isn't ours.
+    pub fn open(&self, ciphertext: &[u8], nonce: &[u8], fingerprint: &str) -> Option<Vec<u8>> {
+        self.open_with(&Self::aad(fingerprint), ciphertext, nonce, fingerprint)
+    }
+
+    /// `(ciphertext, nonce)` of `plaintext` under the associated data `aad`, which the caller
+    /// builds with this key's fingerprint in it (design 26c §2.2: a Spotify refresh token is
+    /// bound to `spotify-v1:<fingerprint>:<spotify user>`, so a row's token can't be moved to
+    /// another account's row).
+    pub fn seal_with(&self, aad: &[u8], plaintext: &[u8]) -> (Vec<u8>, Vec<u8>) {
         let mut nonce = [0u8; NONCE_BYTES];
         OsRng.fill_bytes(&mut nonce);
         let ciphertext = self
@@ -57,15 +75,22 @@ impl MusicKey {
                 &nonce.into(),
                 Payload {
                     msg: plaintext,
-                    aad: &Self::aad(&self.fingerprint),
+                    aad,
                 },
             )
             .expect("AES-GCM encryption of a short message can't fail");
         (ciphertext, nonce.to_vec())
     }
 
-    /// The plaintext, or `None` when it was sealed with another key, was changed, or isn't ours.
-    pub fn open(&self, ciphertext: &[u8], nonce: &[u8], fingerprint: &str) -> Option<Vec<u8>> {
+    /// [MusicKey::open] with the associated data `aad`: `None` for another key (the stored
+    /// `fingerprint` isn't this key's), another `aad`, a changed byte or a bad nonce.
+    pub fn open_with(
+        &self,
+        aad: &[u8],
+        ciphertext: &[u8],
+        nonce: &[u8],
+        fingerprint: &str,
+    ) -> Option<Vec<u8>> {
         if fingerprint != self.fingerprint {
             return None;
         }
@@ -75,7 +100,7 @@ impl MusicKey {
                 &nonce.into(),
                 Payload {
                     msg: ciphertext,
-                    aad: &Self::aad(fingerprint),
+                    aad,
                 },
             )
             .ok()
@@ -225,6 +250,41 @@ mod tests {
         );
         // A fresh nonce every time.
         assert_ne!(key.seal(b"secret").1, nonce);
+    }
+
+    /// Design 26c §2.2: a sealed value opens only with the associated data it was sealed with,
+    /// and Storytel's path is the `storytel-v1` one as before.
+    #[test]
+    fn seal_with_binds_the_associated_data() {
+        let key = MusicKey::from_bytes(&[7; 32]);
+        let aad = format!("spotify-v1:{}:fakekid", key.fingerprint);
+        let (ciphertext, nonce) = key.seal_with(aad.as_bytes(), b"FAKE-REFRESH-1");
+        assert_eq!(
+            key.open_with(aad.as_bytes(), &ciphertext, &nonce, &key.fingerprint)
+                .as_deref(),
+            Some(&b"FAKE-REFRESH-1"[..])
+        );
+        // Another account's AAD, Storytel's path, another key: nothing.
+        let other_user = format!("spotify-v1:{}:fakeparent", key.fingerprint);
+        assert!(
+            key.open_with(other_user.as_bytes(), &ciphertext, &nonce, &key.fingerprint)
+                .is_none()
+        );
+        assert!(key.open(&ciphertext, &nonce, &key.fingerprint).is_none());
+        let other = MusicKey::from_bytes(&[8; 32]);
+        assert!(
+            other
+                .open_with(aad.as_bytes(), &ciphertext, &nonce, &key.fingerprint)
+                .is_none()
+        );
+        // Storytel's seal is `storytel-v1:<fingerprint>`, readable through open_with too.
+        let (sealed, nonce) = key.seal(b"login");
+        let storytel = format!("storytel-v1:{}", key.fingerprint);
+        assert_eq!(
+            key.open_with(storytel.as_bytes(), &sealed, &nonce, &key.fingerprint)
+                .as_deref(),
+            Some(&b"login"[..])
+        );
     }
 
     #[test]

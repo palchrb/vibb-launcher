@@ -65,6 +65,8 @@ pub struct CannedFetch {
     pub conditional: Mutex<Vec<(String, Option<String>)>>,
     /// Which addresses each request was allowed to reach.
     pub reaches: Mutex<Vec<(String, crate::music_net::Reach)>>,
+    /// `Retry-After` sent with every answer for a URL ([CannedFetch::retry_after], design 26c).
+    retry_after: Mutex<HashMap<String, String>>,
     delay_ms: std::sync::atomic::AtomicU64,
     /// While armed ([CannedFetch::hold]), every request waits here until [CannedFetch::release].
     gate: Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
@@ -106,6 +108,14 @@ impl CannedFetch {
     pub fn fail(&self, url: &str, err: crate::music_net::FetchError) {
         self.answers.lock().unwrap().remove(url);
         self.failures.lock().unwrap().insert(url.to_string(), err);
+    }
+
+    /// Every answer for `url` carries `Retry-After: value` (design 26c §2.4).
+    pub fn retry_after(&self, url: &str, value: &str) {
+        self.retry_after
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), value.to_string());
     }
 
     pub fn dns(&self, host: &str, ips: &[&str]) {
@@ -251,6 +261,7 @@ impl crate::music_net::Source for CannedFetch {
                 body: answer.body[..answer.body.len().min(limit)].to_vec(),
                 etag: answer.etag,
                 last_modified: answer.last_modified,
+                retry_after: self.retry_after.lock().unwrap().get(&request.url).cloned(),
             })
         })
     }

@@ -1,0 +1,9 @@
+{
+  "display_name": "Ella",
+  "external_urls": {"spotify": "https://open.spotify.com/user/fakekid"},
+  "href": "https://api.spotify.com/v1/users/fakekid",
+  "id": "fakekid",
+  "images": [],
+  "type": "user",
+  "uri": "spotify:user:fakekid"
+}

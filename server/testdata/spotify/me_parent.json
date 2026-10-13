@@ -1,0 +1,9 @@
+{
+  "display_name": "Pål",
+  "external_urls": {"spotify": "https://open.spotify.com/user/fakeparent"},
+  "href": "https://api.spotify.com/v1/users/fakeparent",
+  "id": "fakeparent",
+  "images": [],
+  "type": "user",
+  "uri": "spotify:user:fakeparent"
+}
