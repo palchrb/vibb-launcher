@@ -5,7 +5,8 @@
 // The page bridge, both ways (SpotifyPage in WebPolicy.kt holds the names; PlayerJsTest checks this
 // file against them):
 // - page -> host: the one interface object VibbSpotify - ready(deviceId), notReady(deviceId),
-//   needToken(requestId), state(json), error(kind, message). The host validates and caps each.
+//   needToken(requestId), state(json), error(kind, message). The host validates and caps each; the
+//   kind `csp` (a CSP violation) is for the debug log only.
 // - host -> page: vibb.connect(name), vibb.token(requestId, tokenOrNull), vibb.pause(), vibb.resume(),
 //   vibb.seek(ms), vibb.next(), vibb.previous(), vibb.volume(v), vibb.state(), vibb.disconnect().
 //
@@ -71,7 +72,9 @@
       artists: artists(t.artists),
       next: uris(w.next_tracks),
       prev: uris(w.previous_tracks),
-      context: s.context ? text(s.context.uri) : null
+      context: s.context ? text(s.context.uri) : null,
+      shuffle: !!s.shuffle,
+      repeat: Math.min(2, num(s.repeat_mode))
     };
   }
 
@@ -122,6 +125,13 @@
     sdkReady = true;
     start();
   };
+
+  // What our CSP refused (design 26c §5.2): the directive and the blocked origin only, for the debug log -
+  // a loader that needs more than the policy gives would otherwise never reach `ready` without a trace.
+  document.addEventListener('securitypolicyviolation', function (e) {
+    var blocked = String((e && e.blockedURI) || '').split('/').slice(0, 3).join('/');
+    report('csp', String((e && e.violatedDirective) || '') + ' ' + blocked);
+  });
 
   // A script that failed to load (the SDK's: offline, a blocked host) - no inline onerror needed.
   window.addEventListener('error', function (e) {

@@ -11,7 +11,7 @@ import kotlinx.serialization.json.doubleOrNull
 /*
  * The web player's state as the page posts it (design 26c §5.3): `player.js` compacts the SDK's
  * `WebPlaybackState` into `{"paused", "position", "duration", "uri", "linked", "type", "name",
- * "artists", "next", "prev", "context"}` (at most 8 KB), or `null` when this player isn't the active
+ * "artists", "next", "prev", "context", "shuffle", "repeat"}` (at most 8 KB), or `null` when this player isn't the active
  * device. Parsed here, every field capped; a post that isn't one of the two is junk and ignored.
  * Pure; SdkStateTest.
  */
@@ -42,7 +42,16 @@ data class SdkState(
     val artists: List<String>,
     /** The context's uri (a playlist or an artist in context mode, design 26c §5.9); null for a list of uris. */
     val contextUri: String?,
+    /** The account's shuffle (`shuffle`; design 26c §5.4: our list plays in our order only with it off). */
+    val shuffle: Boolean = false,
+    /** The account's repeat (`repeat_mode`: 0 off, 1 the context, 2 the track). */
+    val repeat: Int = 0,
 ) : SdkSnapshot {
+    /** Shuffle or repeat is on: the order Spotify plays isn't ours (qa-26c-step4-code M1). */
+    val reordered: Boolean get() = shuffle || repeat != 0
+
+    /** A state that names no track (no uri, no name): evidence of nothing (qa-26c-step4-code L2). */
+    val trackless: Boolean get() = uri == null && name == null
     /** The track's title as the server builds the listing's (§3.4): `"<name> — <artist>, <artist>"`. */
     val title: String? get() = name?.let { listingTitle(it, artists) }
 
@@ -60,7 +69,7 @@ data class SdkState(
         private const val TIME_MAX = 24L * 3_600_000L
 
         /** The keys of a posted state, exactly as `player.js` writes them (PlayerJsTest). */
-        val KEYS = listOf("paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next", "prev", "context")
+        val KEYS = listOf("paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next", "prev", "context", "shuffle", "repeat")
 
         private val TYPES = setOf("track", "episode", "ad")
         private val URI = Regex("spotify:[a-z]{1,16}:[A-Za-z0-9]{1,64}")
@@ -91,6 +100,8 @@ data class SdkState(
                 name = text(root["name"])?.let { cut(it, NAME_MAX) },
                 artists = (root["artists"] as? JsonArray).orEmpty().mapNotNull { a -> text(a)?.let { cut(it, NAME_MAX) } }.take(ARTISTS_MAX),
                 contextUri = text(root["context"])?.takeIf { CONTEXT.matches(it) },
+                shuffle = (root["shuffle"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull ?: false,
+                repeat = (root["repeat"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull?.toInt()?.takeIf { it in 0..2 } ?: 0,
             )
         }
 

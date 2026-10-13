@@ -1,5 +1,5 @@
 {
-  "about": "The exact Web API requests the phone sends (design 26c §5.4): SpotifyApiTest and SpotifyHttpTest build them and compare, scripts/fake-spotify.py accepts exactly these shapes. Fake values only.",
+  "about": "The exact Web API requests the phone sends (design 26c §5.4; shuffle and repeat off before a device session's first play, qa-26c-step4-code M1): SpotifyApiTest and SpotifyHttpTest build them and compare, scripts/fake-spotify.py accepts exactly these shapes. Fake values only.",
   "token": "FAKE-ACCESS-1",
   "device_id": "fakedevice0000000000000000000000000000001",
   "play": {
@@ -19,6 +19,18 @@
     "path": "/v1/me/player",
     "query": null,
     "body": "{\"device_ids\":[\"fakedevice0000000000000000000000000000001\"],\"play\":false}"
+  },
+  "shuffle": {
+    "method": "PUT",
+    "path": "/v1/me/player/shuffle",
+    "query": "state=false&device_id=fakedevice0000000000000000000000000000001",
+    "body": null
+  },
+  "repeat": {
+    "method": "PUT",
+    "path": "/v1/me/player/repeat",
+    "query": "state=off&device_id=fakedevice0000000000000000000000000000001",
+    "body": null
   },
   "queue": {
     "method": "POST",

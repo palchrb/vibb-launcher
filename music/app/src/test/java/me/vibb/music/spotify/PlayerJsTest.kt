@@ -3,6 +3,7 @@ package me.vibb.music.spotify
 import me.vibb.music.Fixtures.moduleFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,6 +71,16 @@ class PlayerJsTest {
         assertFalse("enableMediaSession stays off: our Media3 session is the one", code.contains("enableMediaSession"))
         assertTrue("getOAuthToken asks the host", options.contains("bridge.needToken(id)"))
         assertTrue("and the host's answer goes only to the callback", code.contains("if (cb) cb(typeof token === 'string' ? token : null);"))
+        // qa-26c-step4-code L5: which SDK event reports which kind - a swap would read no Widevine as no Premium
+        val pairs = Regex("addListener\\('([a-z_]+)', function \\([a-z]*\\) \\{ report\\('([a-z]+)'").findAll(code)
+            .associate { it.groupValues[1] to it.groupValues[2] }
+        assertEquals(
+            mapOf(
+                "autoplay_failed" to "autoplay", "initialization_error" to "initialization", "authentication_error" to "authentication",
+                "account_error" to "account", "playback_error" to "playback",
+            ),
+            pairs,
+        )
         val events = Regex("addListener\\('([a-z_]+)'").findAll(code).map { it.groupValues[1] }.toSet()
         assertEquals(
             setOf("ready", "not_ready", "player_state_changed", "autoplay_failed", "initialization_error", "authentication_error", "account_error", "playback_error"),
@@ -94,6 +105,15 @@ class PlayerJsTest {
         assertTrue("null is posted as null", code.contains("if (!s) return null;") && code.contains("bridge.state(JSON.stringify(c))"))
         val maxPost = 11 * 40 + 200 * (2 + 10) + 64 * 9 + 400
         assertTrue("a post fits the host's 8 KB with every field at its cap", maxPost * 2 < SdkState.MAX_BYTES)
+    }
+
+    @Test
+    fun `a CSP violation is reported for the debug log - the directive and the blocked origin only (qa-26c-step4-code L6)`() {
+        val listener = code.substringAfter("document.addEventListener('securitypolicyviolation', function (e) {").substringBefore("\n  });")
+        assertTrue(listener.contains("report('csp', String((e && e.violatedDirective) || '') + ' ' + blocked)"))
+        assertTrue("the origin, never the path or query", listener.contains(".split('/').slice(0, 3).join('/')"))
+        assertTrue("csp" in SpotifyPage.ERROR_KINDS)
+        assertNull("debug log only: no problem, no line", me.vibb.music.logic.sdkErrorProblem("csp"))
     }
 
     @Test

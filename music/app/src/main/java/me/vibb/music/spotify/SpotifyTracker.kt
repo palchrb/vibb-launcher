@@ -4,27 +4,39 @@ import me.vibb.music.logic.nextQueueAdd
 import kotlin.math.abs
 
 /*
- * The web player's state against what we told it (design 26c §5.4, QA H4, M5, L11): the commands we
- * sent and the states the page posts give the current queue index, measured positions, the natural
- * advance, the end of the window and of the queue, pauses, "not ours", "elsewhere" and unplayable
- * tracks. vibb's `play_origin` rule ("only a box-initiated session may write") is its ownership rule:
+ * The web player's state against what we told it (design 26c §5.4, QA H4, M5, L11; qa-26c-step4-code
+ * H1, M1, L1, L2): the commands we sent and the states the page posts give the current queue index,
+ * measured positions, the natural advance, the end of the window and of the queue, pauses, "not ours",
+ * "elsewhere" and unplayable tracks. vibb's `play_origin` rule ("only a box-initiated session may
+ * write") is its ownership rule:
  *
  * - **Only our uris are ours.** A state is ours when its track is the one we sent for the current
  *   index, or the expected next item (the next of our queue) - matched by uri, by the SDK's `linked`
  *   (undocumented; the Web API dropped `linked_from` in February 2026), or by title and duration (the
  *   server's listing title built from the state equals the item's, and the durations are within 2 s:
- *   a relinked copy of the same recording). A later uri of the window Spotify skipped to is ours too
- *   (by uri only): the tracks between were skipped as unplayable.
+ *   a relinked copy of the same recording).
+ * - **A later uri of ours is a skip only on evidence** (H1): every item between is named in the state's
+ *   `prev` (Spotify played past it) and none of them, nor the state's own track, is one we added to
+ *   Spotify's queue. Our own add left in Spotify's queue (it survives a new play) is recognised by its
+ *   uri - remembered across plays until it is seen playing - and is not ours where it plays: paused, and
+ *   our list goes on from where it was ([Event.NewWindow]). Any other later uri of ours is the same:
+ *   not a skip, no item error.
  * - **Anything else is not ours** (the account's Autoplay after the window or the queue, another app
  *   transferring playback to "Vibb", a leftover session): [Event.NotOurs] - paused at once, never
  *   measured, never mapped to an index - and from then on every playing state is paused until our next
  *   play. After [Event.Ended], three unplayable in a row, or a confirmed `null`, the same.
+ * - **A start passes over what played before it** (H1, L1): the track of the last state seen before the
+ *   play call is stale in a start, unless it is the sent track near the sent position (a restart of the
+ *   same track from 0 isn't its old tick).
+ * - **Shuffle or repeat on** (M1): a state that says so is read for nothing - no start, skip, end or
+ *   foreign track; one [Event.ShuffleOrRepeat] asks the renderer to turn both off and play again.
+ * - **A state naming no track** (no uri, no name; L2) is evidence of nothing: passed over.
  * - **The end of a track** is read from the state: our current track paused at position 0 after its
- *   last playing position came within 3 s of its duration, with no pause of ours pending (or a track
- *   not ours playing then: Autoplay). Spotify's own advance shows as the expected next uri.
+ *   last playing position, carried on by the time since (the page posts every 5 s), came within 3 s of
+ *   its duration, with no pause of ours pending (or a track not ours playing then: Autoplay). Spotify's
+ *   own advance shows as the expected next uri.
  * - **Unplayable** (QA M5) only from the SDK: a `playback_error` on our current track, or Spotify
- *   skipping past one of ours (a later uri of ours before the current one played 3 s). After three in
- *   a row the renderer stops.
+ *   skipping past one of ours on the evidence above. After three in a row the renderer stops.
  * - **A `null` state** is confirmed before it counts (QA L11): [Event.Look] asks the page again; a
  *   `null` 2 s or more after the first, or a `not_ready`, is [Event.Elsewhere].
  *
@@ -60,11 +72,21 @@ class SpotifyTracker {
         /** The queue's last item played out (`clear_state`, design 21). */
         data object Ended : Event
 
-        /** Spotify's list ran out before ours (a queue add that failed or came late): start a new window at [index]. */
-        data class NewWindow(val index: Int) : Event
+        /**
+         * Play our list again from [index]: Spotify's list ran out before ours (a queue add that failed or
+         * came late) - from 0 - or Spotify played something of ours out of our order while ours was
+         * playing ([resume]: the current item, from its [measured] position).
+         */
+        data class NewWindow(val index: Int, val resume: Boolean = false) : Event
 
         /** Add queue item [index] to Spotify's queue now: one track ahead (§5.4, "Past the window"). */
         data class QueueAdd(val index: Int) : Event
+
+        /**
+         * The account's shuffle or repeat is on (qa-26c-step4-code M1): turn both off, then play from
+         * [index] (at its [measured] position). States are read for nothing until that play.
+         */
+        data class ShuffleOrRepeat(val index: Int) : Event
 
         /** A first `null` state: ask the page for its state again ([LOOK_MS]). */
         data object Look : Event
@@ -113,6 +135,17 @@ class SpotifyTracker {
     private var lastPaused = true
     private var nullAt: Long? = null
 
+    /** The uris we asked Spotify to queue, not yet seen playing: Spotify's queue survives a new play (H1). */
+    private val adds = LinkedHashSet<String>()
+
+    /** The track of the last state seen, and of the last one before the current play call (H1, L1). */
+    private var lastSeenUri: String? = null
+    private var prePlayUri: String? = null
+    private var sentPositionMs = 0L
+
+    /** A [Event.ShuffleOrRepeat] was asked for: nothing is read until the next play (M1). */
+    private var correcting = false
+
     /** The current item's first and furthest playing positions, and its last one (the end rule). */
     private var firstPlaying: Long? = null
     private var furthest = 0L
@@ -131,24 +164,34 @@ class SpotifyTracker {
         known = -1
         addAsked = -1
         measured = null
+        correcting = false
         reported.clear()
         unplayableRun = 0
         resetItem()
     }
 
+    /** A new player device (the host's `ready` with another device id): its Spotify queue is empty. */
+    fun newDevice() {
+        adds.clear()
+        lastSeenUri = null
+    }
+
     /**
-     * A play call for [index] answered 204, its window ending at [known] (`index + window size - 1`).
-     * [fresh] = the kid's command (a tap, a step, a resume after a drop):
-     * the unplayable run starts again; false = the renderer moving on by itself (after an unplayable
-     * item, a window's gap).
+     * A play call for [index] answered 204, its window ending at [known] (`index + window size - 1`),
+     * started at [positionMs]. [fresh] = the kid's command (a tap, a step, a resume after a drop): the
+     * unplayable run starts again; false = the renderer moving on by itself (after an unplayable item, a
+     * window's gap).
      */
-    fun played(index: Int, known: Int, fresh: Boolean = true): List<Event> {
+    fun played(index: Int, known: Int, positionMs: Long = 0, fresh: Boolean = true): List<Event> {
         if (index !in queue.indices) return emptyList()
         this.index = index
         this.known = known.coerceIn(index, queue.size - 1)
         mode = Mode.STARTING
         addAsked = -1
         pausePending = false
+        correcting = false
+        prePlayUri = lastSeenUri
+        sentPositionMs = positionMs.coerceAtLeast(0)
         reported.clear()
         if (fresh) unplayableRun = 0
         resetItem()
@@ -158,7 +201,9 @@ class SpotifyTracker {
 
     /** Queue item [index] was added to Spotify's queue (the add's 204). */
     fun queued(index: Int): List<Event> {
-        if (index !in queue.indices || index <= known) return emptyList()
+        if (index !in queue.indices) return emptyList()
+        remember(queue[index].uri)
+        if (index <= known) return emptyList()
         known = index
         return if (mode == Mode.OURS) aheadAdd() else emptyList()
     }
@@ -196,8 +241,21 @@ class SpotifyTracker {
     /** One posted state ([SdkState.parse]) at [nowMs] (the elapsed clock). */
     fun onState(snapshot: SdkSnapshot, nowMs: Long): List<Event> {
         val s = when (snapshot) {
-            Inactive -> return onInactive(nowMs)
+            Inactive -> {
+                lastSeenUri = null
+                return onInactive(nowMs)
+            }
             is SdkState -> snapshot
+        }
+        if (s.uri != null) lastSeenUri = s.uri
+        if (mode == Mode.STARTING || mode == Mode.OURS) {
+            if (mode == Mode.OURS) nullAt = null
+            if (s.trackless) return emptyList() // L2: evidence of nothing
+            if (correcting) return emptyList()
+            if (s.reordered) {
+                correcting = true
+                return listOf(Event.ShuffleOrRepeat(index))
+            }
         }
         return when (mode) {
             Mode.IDLE, Mode.ENDED, Mode.LOST -> if (s.paused) emptyList() else listOf(Event.NotOurs(playing = true))
@@ -220,40 +278,77 @@ class SpotifyTracker {
     }
 
     private fun onStarting(s: SdkState, nowMs: Long): List<Event> {
+        if (stale(s)) return emptyList() // what played before our play took effect
         if (matches(s, index)) {
             if (s.paused) return emptyList() // loaded, not playing yet
             mode = Mode.OURS
+            forget(s)
             observe(s, nowMs)
             return listOf(Event.Started(index)) + aheadAdd()
         }
-        // Spotify skipped our first track(s) at once: a later uri of the window, playing, with ours among its previous ones.
-        val j = s.uri?.let { uri -> (index + 1..minOf(known, queue.size - 1)).firstOrNull { queue[it].uri == uri } }
-        if (j != null && !s.paused && queue[index].uri in s.prevUris) {
-            val events = mutableListOf<Event>()
-            for (k in index until j) events += unplayable(k)
-            if (mode == Mode.LOST) return events
-            moveTo(j)
-            mode = Mode.OURS
-            observe(s, nowMs)
-            events += Event.Started(j)
-            events += aheadAdd()
-            return events
-        }
-        return emptyList() // a stale state of what played before our play took effect
+        // Spotify skipped our first track(s) at once: a later uri of the window, playing, past every one
+        // of them on the evidence of its `prev`, none of them an add of ours (H1).
+        val uri = s.uri ?: return emptyList()
+        val j = (index + 1..minOf(known, queue.size - 1)).firstOrNull { queue[it].uri == uri } ?: return emptyList()
+        if (s.paused || !skipProven(s, index until j)) return emptyList()
+        val events = mutableListOf<Event>()
+        for (k in index until j) events += unplayable(k)
+        if (mode == Mode.LOST) return events
+        moveTo(j)
+        mode = Mode.OURS
+        forget(s)
+        observe(s, nowMs)
+        events += Event.Started(j)
+        events += aheadAdd()
+        return events
+    }
+
+    /** A state of the track that played before the play call (H1, L1), unless it is the sent track near the sent position. */
+    private fun stale(s: SdkState): Boolean {
+        val before = prePlayUri ?: return false
+        if (s.uri != before) return false
+        return !(before == queue[index].uri && abs(s.positionMs - sentPositionMs) <= START_NEAR_MS)
     }
 
     private fun onOurs(s: SdkState, nowMs: Long): List<Event> {
-        nullAt = null
         if (matches(s, index)) return ourState(s, nowMs)
         val next = index + 1
-        if (next in queue.indices && matches(s, next)) return advance(next, s, nowMs)
-        val later = laterOfOurs(s)
-        if (later != null) return advance(later, s, nowMs)
-        // Not ours. When our track had just played out, this is Spotify's Autoplay after our list.
+        if (next in queue.indices && matches(s, next)) {
+            val skipped = if (!playedEnough(nowMs) && skipProven(s, index..index)) listOf(index) else emptyList()
+            return advance(next, skipped, s, nowMs)
+        }
+        val later = s.uri?.let { uri -> (index + 2 until queue.size).firstOrNull { queue[it].uri == uri } }
+        if (later != null && !isAdd(s) && later <= known) {
+            val between = (index + 1 until later)
+            val current = if (playedEnough(nowMs)) IntRange.EMPTY else index..index
+            if (skipProven(s, between) && skipProven(s, current)) return advance(later, current.toList() + between.toList(), s, nowMs)
+        }
+        if (later != null || isAdd(s)) {
+            // Ours by uri but out of our order, with no evidence of a skip: our own add left in Spotify's
+            // queue (H1), or anything else that would take the list away from us. Paused; our list goes on.
+            forget(s)
+            return notOurs(s, nowMs, goOn = true)
+        }
+        return notOurs(s, nowMs, goOn = false)
+    }
+
+    /**
+     * Not ours: [Event.NotOurs], and - when our track had just played out - the end ([Event.NewWindow]
+     * from the next index, or [Event.Ended]: Autoplay); with [goOn] and ours still playing mid-track, a
+     * new window from the current item at its place.
+     */
+    private fun notOurs(s: SdkState, nowMs: Long, goOn: Boolean): List<Event> {
         val ended = ranOut(nowMs)
+        val wasPlaying = !lastPaused
         mode = Mode.LOST
         val events = mutableListOf<Event>(Event.NotOurs(playing = !s.paused))
-        if (ended) events += end()
+        when {
+            ended -> events += end()
+            goOn && wasPlaying -> {
+                lastPaused = true
+                events += Event.NewWindow(index, resume = true)
+            }
+        }
         return events
     }
 
@@ -274,13 +369,13 @@ class SpotifyTracker {
         return if (wasPaused) listOf(Event.Resumed) else emptyList()
     }
 
-    /** Spotify moved on to [to] (the expected next, or a later uri of ours past skipped ones). */
-    private fun advance(to: Int, s: SdkState, nowMs: Long): List<Event> {
+    /** Spotify moved on to [to] (the expected next, or a later uri of ours past [skipped] ones it proved it skipped). */
+    private fun advance(to: Int, skipped: List<Int>, s: SdkState, nowMs: Long): List<Event> {
         val events = mutableListOf<Event>()
-        if (!playedEnough(nowMs)) events += unplayable(index)
-        for (k in index + 1 until to) events += unplayable(k)
+        for (k in skipped) events += unplayable(k)
         if (mode == Mode.LOST) return events
         moveTo(to)
+        forget(s)
         events += Event.ItemChanged(to, auto = true)
         observe(s, nowMs)
         if (s.paused) {
@@ -316,7 +411,29 @@ class SpotifyTracker {
         val add = nextQueueAdd(index, known, queue.size) ?: return emptyList()
         if (add == addAsked) return emptyList()
         addAsked = add
+        remember(queue[add].uri)
         return listOf(Event.QueueAdd(add))
+    }
+
+    /**
+     * Spotify skipped every item of [items] (H1): each is named in the state's `prev`, and neither it nor
+     * the state's own track is one we added to Spotify's queue. No evidence, no skip.
+     */
+    private fun skipProven(s: SdkState, items: IntRange): Boolean =
+        !isAdd(s) && items.all { k -> queue[k].uri in s.prevUris && queue[k].uri !in adds }
+
+    private fun isAdd(s: SdkState): Boolean = (s.uri != null && s.uri in adds) || (s.linkedUri != null && s.linkedUri in adds)
+
+    private fun remember(uri: String) {
+        adds.remove(uri)
+        adds.add(uri)
+        while (adds.size > ADDS_MAX) adds.remove(adds.first())
+    }
+
+    /** [s]'s track was seen playing where it plays: an add of it is used up. */
+    private fun forget(s: SdkState) {
+        s.uri?.let { adds.remove(it) }
+        s.linkedUri?.let { adds.remove(it) }
     }
 
     private fun moveTo(to: Int) {
@@ -376,13 +493,6 @@ class SpotifyTracker {
         return duration > 0 && now >= duration - END_MARGIN_MS
     }
 
-    /** A later uri of the window Spotify knows (by uri only), past the expected next. */
-    private fun laterOfOurs(s: SdkState): Int? {
-        val uri = s.uri ?: return null
-        for (k in index + 2..minOf(known, queue.size - 1)) if (queue[k].uri == uri) return k
-        return null
-    }
-
     /** Is [s]'s track queue item [k]: by uri, by `linked`, or by title and duration within 2 s. */
     private fun matches(s: SdkState, k: Int): Boolean {
         val item = queue.getOrNull(k) ?: return false
@@ -414,5 +524,11 @@ class SpotifyTracker {
 
         /** After this many unplayable items in a row the renderer stops (§5.4: at most three calls). */
         const val UNPLAYABLE_STOP = 3
+
+        /** A start's first state of the track that played before is ours only within this of the sent position (L1). */
+        const val START_NEAR_MS = 3_000L
+
+        /** At most this many remembered adds (one per window's end; a session never needs many). */
+        const val ADDS_MAX = 64
     }
 }

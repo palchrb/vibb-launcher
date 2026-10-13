@@ -7,15 +7,15 @@
   ],
   "steps": [
     {"at": 0, "played": {"index": 0, "known": 2}},
-    {"at": 500, "state": {"paused": false, "position": 30, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": ["Started 0"]},
-    {"at": 5500, "state": {"paused": false, "position": 5030, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": []},
+    {"at": 500, "state": {"paused": false, "position": 30, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 5500, "state": {"paused": false, "position": 5030, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
     {"at": 6000, "state": null, "expect": ["Look"]},
     {"at": 6500, "state": null, "expect": []},
-    {"at": 7000, "state": {"paused": false, "position": 6530, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": []},
+    {"at": 7000, "state": {"paused": false, "position": 6530, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
     {"at": 9000, "state": null, "expect": ["Look"]},
     {"at": 11000, "state": null, "expect": ["Elsewhere"]},
     {"at": 12000, "state": null, "expect": []},
-    {"at": 13000, "state": {"paused": false, "position": 6600, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": ["NotOurs playing"]}
+    {"at": 13000, "state": {"paused": false, "position": 6600, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
   ],
   "end": {"index": 0, "mode": "LOST", "measured": {"index": 0, "position": 6530, "at": 7000, "playing": true}}
 }

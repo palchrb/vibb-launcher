@@ -40,7 +40,9 @@ The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switc
     PUT  /v1/me/player/play?device_id=<id>           the body checked against play_request.json's shapes;
                                                      404 for an unknown device; --not-premium 403
                                                      PREMIUM_REQUIRED; handed to the stub device
-    PUT  /v1/me/player                               transfer; POST /v1/me/player/queue?uri=&device_id=
+    PUT  /v1/me/player                               transfer; POST /v1/me/player/queue?uri=&device_id=;
+    PUT  /v1/me/player/shuffle?state=&device_id=,    shuffle and repeat (the phone turns both off;
+         /v1/me/player/repeat?state=&device_id=      qa-26c-step4-code M1)
     --rate-limit N: every Nth Web API request 429 with Retry-After: 2; --quota: 429 QUOTA_EXCEEDED
 The stub SDK (the phone's web player reaches it as https://fake-spotify.invalid/ through the debug
 build's interceptor, design 26c §9.3; every URL is relative to the script's own origin, and every
@@ -57,7 +59,9 @@ request is a plain GET - the interceptor sees no request body):
 Player options: --elsewhere S (a null state S s after the first play), --autoplay (after the last uri a
 track that isn't ours), --transfer-in S (a foreign track starts S s after the first play), --unplayable
 <id,...> (a playback_error and a skip), --relink <id>:<other> (the track plays as <other>, linked_from
-<id>), --no-eme, --not-premium, --slow-ready S, --token-ttl S.
+<id>), --no-eme, --not-premium, --slow-ready S, --token-ttl S, --shuffle and --repeat context|track (the
+account's settings until the phone turns them off: PUT /v1/me/player/shuffle?state=false and
+/repeat?state=off). Spotify's queue (the phone's add-to-queue) survives a new play, as Spotify's does.
 """
 
 import argparse
@@ -92,6 +96,7 @@ AUTOPLAY = {"uri": "spotify:track:FAKEautoplay0000000001", "name": "Something Sp
 FOREIGN = {"uri": "spotify:track:FAKEforeign0000000001", "name": "Another app's song",
            "artists": ["Someone Else"], "duration_ms": 30000, "type": "track"}
 FOREIGN_CONTEXT = "spotify:playlist:FAKEforeignList000001"
+REPEAT = {"off": 0, "context": 1, "track": 2}
 
 
 def log(msg):
@@ -457,6 +462,8 @@ def handler_for(sp):
                 return self.read(path, q, user)
             if method == "PUT" and path == "/v1/me/player/play":
                 return self.play(q, body, user)
+            if method == "PUT" and path in ("/v1/me/player/shuffle", "/v1/me/player/repeat"):
+                return self.setting(path.rsplit("/", 1)[1], q, user)
             if method == "PUT" and path == "/v1/me/player":
                 return self.transfer(body, user)
             if method == "POST" and path == "/v1/me/player/queue":
@@ -549,6 +556,20 @@ def handler_for(sp):
             d.push({"type": "transfer", "play": bool(body["play"])})
             self.answer("ok")
 
+        def setting(self, name, q, user):
+            """Toggle Playback Shuffle / Set Repeat Mode (qa-26c-step4-code M1): play_request.json's query keys."""
+            want = set(urllib.parse.parse_qs(sp.shapes[name]["query"]))
+            d = self.device_for(q.get("device_id"), user)
+            if d is None:
+                log(f"{name}: 404 (device unknown)")
+                return self.answer("device_unknown")
+            values = {"shuffle": {"true": True, "false": False}, "repeat": REPEAT}[name]
+            if set(q) != want or q.get("state") not in values:
+                return self.send(400, {"error": {"status": 400, "message": "Illegal state"}})
+            d.push({"type": name, "state": values[q["state"]]})
+            log(f"{name}: {q['state']} on {d.id}")
+            self.answer("ok")
+
         def queue(self, q, user):
             d = self.device_for(q.get("device_id"), user)
             if d is None:
@@ -580,7 +601,8 @@ def handler_for(sp):
             with sp.lock:
                 sp.devices[device_id] = Device(device_id, (q.get("name") or "")[:64], user)
             log(f"connect: {device_id} \"{q.get('name')}\" for {user}")
-            self.send(200, {"device_id": device_id, "token_ttl_s": sp.args.token_ttl})
+            self.send(200, {"device_id": device_id, "token_ttl_s": sp.args.token_ttl,
+                            "shuffle": sp.args.shuffle, "repeat": REPEAT[sp.args.repeat]})
 
         def device(self, device_id, what, q):
             with sp.lock:
@@ -685,8 +707,13 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     this._deviceId = null;
     this._seq = 0;
     this._active = false;
-    this._queue = [];
+    this._queue = [];        // the context: the uris of the last play
     this._index = 0;
+    this._current = null;    // what plays: a context track, or one from Spotify's queue
+    this._userQueue = [];    // Spotify's queue (our adds): it survives a new play, as Spotify's does
+    this._history = [];
+    this._shuffle = false;
+    this._repeat = 0;        // 0 off, 1 the context, 2 the track
     this._context = null;
     this._autoplay = null;
     this._ended = false;
@@ -729,6 +756,8 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
         return false;
       }
       self._deviceId = d.device_id;
+      self._shuffle = !!d.shuffle;
+      self._repeat = d.repeat || 0;
       self._emit('ready', { device_id: d.device_id });
       self._polling = true;
       self._poll();
@@ -762,15 +791,25 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
 
   Player.prototype._command = function (c) {
     if (c.type === 'play' || c.type === 'foreign') {
-      this._queue = c.type === 'play' ? c.tracks.slice() : [c.track];
+      var tracks = c.type === 'play' ? c.tracks.slice() : [c.track];
+      if (this._shuffle) tracks.sort(function () { return Math.random() - 0.5; });
+      if (this._current) this._history.push(this._current);
+      this._queue = tracks;
       this._index = 0;
+      this._current = tracks[0];
       this._context = c.context_uri || null;
       this._autoplay = c.type === 'play' ? c.autoplay : null;
       this._active = true;
       this._ended = false;
       this._start(c.position_ms || 0);
     } else if (c.type === 'queue') {
-      this._queue.push(c.track);
+      this._userQueue.push(c.track);
+      this._changed();
+    } else if (c.type === 'shuffle') {
+      this._shuffle = !!c.state;
+      this._changed();
+    } else if (c.type === 'repeat') {
+      this._repeat = c.state;
       this._changed();
     } else if (c.type === 'transfer') {
       this._active = true;
@@ -783,7 +822,7 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   };
 
   Player.prototype._start = function (positionMs) {
-    var t = this._queue[this._index];
+    var t = this._current;
     if (!t) return;
     if (t.unplayable) {
       this._emit('playback_error', { message: 'fake: this track cannot be played' });
@@ -799,16 +838,31 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     this._changed();
   };
 
+  // After a track: repeat-track, then Spotify's queue, then the context (repeat-context wraps), then
+  // Autoplay (--autoplay), else paused at 0 on the played-out track.
   Player.prototype._advance = function () {
-    if (this._index + 1 < this._queue.length) {
+    if (this._repeat === 2 && this._current) {
+      this._start(0);
+      return;
+    }
+    if (this._current) this._history.push(this._current);
+    if (this._userQueue.length) {
+      this._current = this._userQueue.shift();
+      this._start(0);
+    } else if (this._index + 1 < this._queue.length) {
       this._index++;
+      this._current = this._queue[this._index];
+      this._start(0);
+    } else if (this._repeat === 1 && this._queue.length) {
+      this._index = 0;
+      this._current = this._queue[0];
       this._start(0);
     } else if (this._autoplay && !this._ended) {
       this._ended = true;
-      this._queue.push(this._autoplay);
-      this._index++;
+      this._current = this._autoplay;
       this._start(0);
     } else {
+      this._history.pop();
       this._audio.pause();
       this._audio.currentTime = 0;
       this._changed();
@@ -816,7 +870,7 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   };
 
   Player.prototype._state = function () {
-    var t = this._queue[this._index];
+    var t = this._current;
     if (!this._active || !t) return null;
     return {
       context: { uri: this._context, metadata: {} },
@@ -824,13 +878,13 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
       paused: this._audio.paused,
       position: Math.floor((this._audio.currentTime || 0) * 1000),
       duration: t.duration_ms,
-      repeat_mode: 0,
-      shuffle: false,
+      repeat_mode: this._repeat,
+      shuffle: this._shuffle,
       timestamp: Date.now(),
       track_window: {
         current_track: trackObject(t),
-        previous_tracks: this._queue.slice(Math.max(0, this._index - 2), this._index).map(trackObject),
-        next_tracks: this._queue.slice(this._index + 1, this._index + 3).map(trackObject)
+        previous_tracks: this._history.slice(-2).map(trackObject),
+        next_tracks: this._userQueue.concat(this._queue.slice(this._index + 1)).slice(0, 2).map(trackObject)
       }
     };
   };
@@ -839,17 +893,17 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   Player.prototype.getCurrentState = function () { return Promise.resolve(this._state()); };
   Player.prototype.pause = function () { this._audio.pause(); return Promise.resolve(); };
   Player.prototype.resume = function () {
-    if (this._active && this._queue[this._index]) this._audio.play();
+    if (this._active && this._current) this._audio.play();
     return Promise.resolve();
   };
   Player.prototype.togglePlay = function () { return this._audio.paused ? this.resume() : this.pause(); };
   Player.prototype.seek = function (ms) { this._audio.currentTime = ms / 1000; this._changed(); return Promise.resolve(); };
   Player.prototype.previousTrack = function () {
-    if (this._index > 0) { this._index--; this._start(0); }
+    if (this._index > 0) { this._index--; this._current = this._queue[this._index]; this._start(0); }
     return Promise.resolve();
   };
   Player.prototype.nextTrack = function () {
-    if (this._index + 1 < this._queue.length) { this._index++; this._start(0); }
+    this._advance();
     return Promise.resolve();
   };
   Player.prototype.setVolume = function (v) { this._audio.volume = Math.min(1, Math.max(0, v)); return Promise.resolve(); };
@@ -884,7 +938,7 @@ def defaults(**over):
     ns = argparse.Namespace(port=0, as_user="parent", deny=False, rotate=False, access_ttl=3600.0, expire_refresh=False,
                             bad_client=False, snapshot=None, rate_limit=0, quota=False, not_premium=False, no_eme=False,
                             slow_ready=0.0, token_ttl=0, track_seconds=None, elsewhere=None, autoplay=False,
-                            transfer_in=None, unplayable="", relink="")
+                            transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off")
     for k, v in over.items():
         setattr(ns, k, v)
     return ns
@@ -905,7 +959,7 @@ def selftest():
     assert server_fixture("token_invalid_grant.json")["error"] == "invalid_grant"
     assert server_fixture("token_invalid_client.json")["error"] == "invalid_client"
     shapes, answers, tokens = music_fixture("play_request.json"), music_fixture("play_answers.json"), music_fixture("token_answers.json")
-    for key in ("play", "play_context", "transfer", "queue"):
+    for key in ("play", "play_context", "transfer", "queue", "shuffle", "repeat"):
         r = shapes[key]
         assert r["method"] in ("PUT", "POST") and r["path"].startswith("/v1/me/player"), key
     assert play_body_ok(json.loads(shapes["play"]["body"]), shapes)
@@ -1042,6 +1096,14 @@ def selftest():
         status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after=1&wait=1")
         assert [c["type"] for c in cmds["commands"]] == ["play", "transfer", "queue"], cmds
         assert cmds["commands"][2]["track"]["uri"] == "spotify:track:FAKEtrack0000000000004" and cmds["seq"] == 4
+        bare = {"Authorization": "Bearer " + kid_access}
+        for name, sent in (("shuffle", False), ("repeat", 0)):
+            query = shapes[name]["query"].replace("fakedevice0000000000000000000000000000001", device)
+            assert call(sp, "PUT", f"{shapes[name]['path']}?{query}", None, bare)[0] == 204, name
+            assert call(sp, "PUT", f"{shapes[name]['path']}?state=sideways&device_id={device}", None, bare)[0] == 400, name
+            assert call(sp, "PUT", f"{shapes[name]['path']}?state=off&device_id=nobody", None, bare)[0] == 404, name
+        status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after=4&wait=1")
+        assert [(c["type"], c["state"]) for c in cmds["commands"]] == [("shuffle", False), ("repeat", 0)], cmds
         assert call(sp, "GET", f"/fake/device/{device}/token?token={kid_access}")[2] == {"ok": True}
         assert call(sp, "GET", f"/fake/device/{device}/token?token=FAKE-ACCESS-99")[2] == {"ok": False}
         status, headers, t = call(sp, "GET", "/fake/token?user=kid")
@@ -1050,7 +1112,7 @@ def selftest():
         status, _, me = call(sp, "GET", "/v1/me", headers={"Authorization": "Bearer " + t["access_token"]})
         assert me["id"] == "fakekid", "the phone's token is the kid's"
         print("4. the stub device: connect, the play body of play_request.json (and its context form), the long-poll "
-              "(play, transfer, queue), 404/400 for a stranger, the phone's token route OK")
+              "(play, transfer, queue, shuffle off, repeat off), 404/400 for a stranger, the phone's token route OK")
 
         # 5. the tone: a WAV of the track's length; Range 206 and 416
         status, headers, wav = call(sp, "GET", "/fake/audio/FAKEtrack0000000000001.wav")
@@ -1120,11 +1182,12 @@ def selftest():
     finally:
         srv.shutdown()
     sp, srv = start(elsewhere=0.2, transfer_in=0.3, autoplay=True, unplayable="FAKEtrack0000000000002",
-                    relink="FAKEtrack0000000000003:FAKErelink00000000003", token_ttl=600, track_seconds=5)
+                    relink="FAKEtrack0000000000003:FAKErelink00000000003", token_ttl=600, track_seconds=5,
+                    shuffle=True, repeat="track")
     try:
         token = sp.mint_access("fakekid")
         d = call(sp, "GET", "/fake/device/connect?token=" + token)[2]
-        assert d["token_ttl_s"] == 600
+        assert d["token_ttl_s"] == 600 and d["shuffle"] is True and d["repeat"] == 2, d
         put = {"Authorization": "Bearer " + token, "Content-Type": "application/json"}
         assert call(sp, "PUT", "/v1/me/player/play?device_id=" + d["device_id"], shapes["play"]["body"], put)[0] == 204
         time.sleep(0.5)
@@ -1139,7 +1202,7 @@ def selftest():
         srv.shutdown()
     print("6. --rotate, --rate-limit 3, --expire-refresh, --bad-client, --deny, --quota, --not-premium (403 and account_error), "
           "--no-eme, --slow-ready, --elsewhere, --transfer-in, --autoplay, --unplayable, --relink, --token-ttl, "
-          "--track-seconds OK")
+          "--track-seconds, --shuffle, --repeat OK")
 
     # 7. the stub SDK: the documented surface, and everything player.js uses of it
     for name in ("Spotify = { Player: Player }", "onSpotifyWebPlaybackSDKReady", "track_window", "current_track",
@@ -1158,9 +1221,16 @@ def selftest():
             "account_error", "playback_error", "autoplay_failed"} == events, events
     assert "http://" not in STUB_SDK and "https://" not in STUB_SDK, "every URL relative to the script's origin"
     assert "method:" not in STUB_SDK and "headers:" not in STUB_SDK, "plain GETs only"
+    play_branch = STUB_SDK.split("if (c.type === 'play' || c.type === 'foreign') {")[1].split("} else if")[0]
+    assert "_userQueue" not in play_branch and "this._userQueue.push(c.track)" in STUB_SDK, \
+        "Spotify's queue (our adds) survives a new play (qa-26c-step4-code H1)"
+    assert "this._userQueue.length" in STUB_SDK.split("Player.prototype._advance = function () {")[1].split("};")[0], \
+        "after a track, Spotify's queue plays before the context"
+    assert "repeat_mode: this._repeat" in STUB_SDK and "shuffle: this._shuffle" in STUB_SDK
     assert re.search(r"new Spotify\.Player\(|new window\.Spotify\.Player\(", js), "player.js makes a Spotify.Player"
-    print(f"7. the stub SDK: {len(documented)} documented methods, the events and errors, the state's fields; "
-          f"player.js's {len(used)} calls and {len(events)} events all in it; relative URLs, plain GETs OK")
+    print(f"7. the stub SDK: {len(documented)} documented methods, the events and errors, the state's fields (shuffle and "
+          f"repeat_mode too); player.js's {len(used)} calls and {len(events)} events all in it; Spotify's queue kept across "
+          f"a play; relative URLs, plain GETs OK")
 
     # 8. the debug feed's documents
     sp = Spotify(defaults())
@@ -1202,6 +1272,8 @@ def main():
     p.add_argument("--transfer-in", type=float, metavar="S", help="a foreign track starts S seconds after the first play")
     p.add_argument("--unplayable", default="", metavar="ID,...", help="tracks that answer playback_error and are skipped")
     p.add_argument("--relink", default="", metavar="ID:OTHER,...", help="track ID plays as OTHER with linked_from ID")
+    p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone turns it off")
+    p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone turns it off")
     p.add_argument("--print-listing", type=int, metavar="ENTRY",
                    help="print the fixture playlist's listing for library entry ENTRY (debug-feed/items/ENTRY.json) and exit")
     p.add_argument("--tracks", type=int, metavar="N", help="--print-listing: N generated tracks instead (0: a context's empty list)")

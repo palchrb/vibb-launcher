@@ -69,16 +69,20 @@ class SpotifyApiTest {
 
     @Test
     fun `the exact requests - play, the context form, transfer, the queue add`() {
-        val http = Script({ answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
+        val http = Script({ answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
         val a = api(http)
         assertEquals(PlayOutcome.Ok, a.play(token, device, body))
         assertEquals(PlayOutcome.Ok, a.play(token, device, PlayBody.Context("spotify:playlist:FAKEplaylist0000000001", "spotify:track:FAKEtrack0000000000002", 42_000)))
         assertEquals(PlayOutcome.Ok, a.transfer(token, device))
         assertEquals(PlayOutcome.Ok, a.queue(token, device, "spotify:track:FAKEtrack0000000000004"))
+        assertEquals(PlayOutcome.Ok, a.shuffle(token, device, false))
+        assertEquals(PlayOutcome.Ok, a.repeat(token, device, "off"))
         expect("play", http.sent[0])
         expect("play_context", http.sent[1])
         expect("transfer", http.sent[2])
         expect("queue", http.sent[3])
+        expect("shuffle", http.sent[4])
+        expect("repeat", http.sent[5])
         assertEquals("an artist context: no offset, no position", """{"context_uri":"spotify:artist:FAKEartist000000000001"}""",
             PlayBody.Context("spotify:artist:FAKEartist000000000001", null, 5_000).json())
         assertEquals("the call's timeout", 10_000L, http.sent[0].timeoutMs)
@@ -110,6 +114,7 @@ class SpotifyApiTest {
         for ((result, problem) in listOf(
             StartResult.NotPremium to SpotifyProblem.NOT_PREMIUM, StartResult.Refused to SpotifyProblem.REFUSED,
             StartResult.Quota to SpotifyProblem.QUOTA, StartResult.Unreachable("x") to SpotifyProblem.UNREACHABLE,
+            StartResult.TokenRefused to SpotifyProblem.REFUSED,
             StartResult.NoToken(TokenResult.Reauthorize) to SpotifyProblem.REAUTHORIZE, StartResult.NoToken(TokenResult.Off) to SpotifyProblem.OFF,
             StartResult.NoToken(TokenResult.Busy(30_000)) to SpotifyProblem.UNREACHABLE, StartResult.NoToken(TokenResult.Unreachable) to SpotifyProblem.UNREACHABLE,
         )) {
@@ -150,7 +155,7 @@ class SpotifyApiTest {
         assertEquals("the second ask renews", listOf(false, true), tokens.asked)
         assertEquals("Bearer FAKE-ACCESS-2", http.sent[1].headers.first { it.first == "Authorization" }.second)
         val twice = Script({ answer("unauthorized") }, { answer("unauthorized") })
-        assertEquals("never a third play", StartResult.Unreachable("unauthorized"), start(twice, Tokens(ok1, ok2)))
+        assertEquals("never a third play: Spotify refused the account's token (L4)", StartResult.TokenRefused, start(twice, Tokens(ok1, ok2)))
         assertEquals(2, twice.sent.size)
         assertEquals("no new token: its answer", StartResult.NoToken(TokenResult.Reauthorize), start(Script({ answer("unauthorized") }), Tokens(ok1, TokenResult.Reauthorize)))
         assertEquals("no token at all: no request", StartResult.NoToken(TokenResult.Off), start(Script(), Tokens(TokenResult.Off)))
@@ -196,9 +201,54 @@ class SpotifyApiTest {
         assertEquals("longer than 5 s", StartResult.Unreachable("rate_limited"), start(Script({ long }), Tokens(ok1)))
         assertEquals("no number", StartResult.Unreachable("rate_limited"), start(Script({ SpotifyResponse(429, null, ByteArray(0)) }), Tokens(ok1)))
         assertEquals(StartResult.Quota, start(Script({ answer("quota") }), Tokens(ok1)))
-        assertEquals(StartResult.NotPremium, start(Script({ answer("not_premium") }), Tokens(ok1)))
+        assertEquals(StartResult.NotPremium, start(Script({ answer("not_premium") }, { answer("not_premium") }), Tokens(ok1)))
         assertEquals(StartResult.Refused, start(Script({ answer("refused") }), Tokens(ok1)))
         assertEquals(StartResult.Unreachable("http_503"), start(Script({ answer("unavailable") }), Tokens(ok1)))
+    }
+
+    @Test
+    fun `the same token back after a 401 can't help - refused at once, an adult's matter (qa-26c-step4-code L4)`() {
+        val http = Script({ answer("unauthorized") })
+        val tokens = Tokens(ok1, ok1)
+        assertEquals(StartResult.TokenRefused, start(http, tokens))
+        assertEquals("no second play with the refused token", 1, http.sent.size)
+        assertEquals(listOf(false, true), tokens.asked)
+        assertEquals(SpotifyProblem.REFUSED, StartResult.TokenRefused.problem())
+        assertEquals(me.vibb.music.logic.SpotifyLine.ASK_ADULT, StartResult.TokenRefused.problem()!!.line)
+    }
+
+    @Test
+    fun `a 403 PREMIUM_REQUIRED is tried once more after 1 s before it counts (qa-26c-step4-code L7)`() {
+        val slept = mutableListOf<Long>()
+        assertEquals(StartResult.Sent, start(Script({ answer("not_premium") }, { answer("ok") }), Tokens(ok1), slept = slept))
+        assertEquals(listOf(1_000L), slept)
+        assertEquals("once", StartResult.NotPremium, start(Script({ answer("not_premium") }, { answer("not_premium") }), Tokens(ok1)))
+        assertEquals("another 403 isn't retried", StartResult.Refused, start(Script({ answer("refused") }), Tokens(ok1)))
+        clock = 24_500
+        assertEquals("no room before the deadline", StartResult.NotPremium, start(Script({ answer("not_premium") }), Tokens(ok1)))
+    }
+
+    @Test
+    fun `settings - shuffle and repeat off before the play, each awaited, sharing the start's retries (qa-26c-step4-code M1)`() {
+        val http = Script({ answer("ok") }, { answer("ok") }, { answer("ok") })
+        assertEquals(StartResult.Sent, runBlocking { api(http).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(listOf("/v1/me/player/shuffle", "/v1/me/player/repeat", "/v1/me/player/play"), http.sent.map { it.url.encodedPath })
+        expect("shuffle", http.sent[0])
+        expect("repeat", http.sent[1])
+        assertEquals("without settings: the play alone", StartResult.Sent, start(Script({ answer("ok") }), Tokens(ok1)))
+        // the device unknown at the first setting: one transfer, then the setting again, the other, the play
+        val unknown = Script({ answer("device_unknown") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
+        assertEquals(StartResult.Sent, runBlocking { api(unknown).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(
+            listOf("/v1/me/player/shuffle", "/v1/me/player", "/v1/me/player/shuffle", "/v1/me/player/repeat", "/v1/me/player/play"),
+            unknown.sent.map { it.url.encodedPath },
+        )
+        // a failed setting ends the start like a failed play: nothing plays shuffled
+        val refused = Script({ answer("ok") }, { answer("refused") })
+        assertEquals(StartResult.Refused, runBlocking { api(refused).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals("no play after it", 2, refused.sent.size)
+        val down = Script({ answer("unavailable") })
+        assertEquals(StartResult.Unreachable("http_503"), runBlocking { api(down).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
     }
 
     @Test

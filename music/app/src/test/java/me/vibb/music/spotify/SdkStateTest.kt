@@ -1,8 +1,10 @@
 package me.vibb.music.spotify
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The page's state posts (design 26c §5.3): the shape, the caps, null, junk; and the listing title the tracker compares. */
@@ -72,6 +74,21 @@ class SdkStateTest {
     }
 
     @Test
+    fun `shuffle and repeat are read, junk is off, and a post without a track is trackless (qa-26c-step4-code M1, L2)`() {
+        fun post(extra: String) = SdkState.parse("""{"paused":false,"position":0,"uri":"spotify:track:FAKEtrack0000000000001","name":"x"$extra}""") as SdkState
+        assertEquals(false to 0, post("").let { it.shuffle to it.repeat })
+        assertTrue(post(",\"shuffle\":true").reordered)
+        assertEquals(2, post(",\"repeat\":2").repeat)
+        assertTrue(post(",\"repeat\":1").reordered)
+        for (junk in listOf(",\"shuffle\":\"true\"", ",\"repeat\":3", ",\"repeat\":-1", ",\"repeat\":\"2\"")) {
+            assertFalse(junk, post(junk).reordered)
+        }
+        assertFalse(post("").reordered)
+        assertTrue((SdkState.parse("""{"paused":false,"position":0}""") as SdkState).trackless)
+        assertFalse("a name alone is a track", (SdkState.parse("""{"paused":false,"position":0,"name":"x"}""") as SdkState).trackless)
+    }
+
+    @Test
     fun `the listing title is the server's - track_title then cut_title`() {
         assertEquals("Stille natt — Ola Fjell, Kari Li", listingTitle("Stille natt", listOf("Ola Fjell", "Kari Li")))
         assertEquals("no artists: the name alone", "Stille natt", listingTitle(" Stille natt ", emptyList()))
@@ -80,6 +97,9 @@ class SdkStateTest {
         assertEquals("control characters go after the join (Rust's order)", "a  b", cutTitle("a \u0001 b"))
         assertEquals(200, cutTitle("x".repeat(300)).length)
         assertEquals("code points, not chars", 200, cutTitle("🎵".repeat(300)).codePointCount(0, 400))
-        assertEquals(SdkState.KEYS, listOf("paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next", "prev", "context"))
+        assertEquals(
+            SdkState.KEYS,
+            listOf("paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next", "prev", "context", "shuffle", "repeat"),
+        )
     }
 }

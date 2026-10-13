@@ -38,7 +38,9 @@ class SpotifyHttpTest {
             assertEquals(PlayOutcome.Ok, api.play(token, device, PlayBody.Uris(uris, 42_000)))
             assertEquals(PlayOutcome.Ok, api.transfer(token, device))
             assertEquals(PlayOutcome.Ok, api.queue(token, device, "spotify:track:FAKEtrack0000000000004"))
-            for ((i, name) in listOf("play", "transfer", "queue").withIndex()) {
+            assertEquals(PlayOutcome.Ok, api.shuffle(token, device, false))
+            assertEquals(PlayOutcome.Ok, api.repeat(token, device, "off"))
+            for ((i, name) in listOf("play", "transfer", "queue", "shuffle", "repeat").withIndex()) {
                 val want = fixture[name]!!.jsonObject
                 val got = server.requests[i]
                 val query = want["query"]!!.let { if (it is kotlinx.serialization.json.JsonNull) "" else "?" + it.jsonPrimitive.content }
@@ -52,6 +54,7 @@ class SpotifyHttpTest {
                 if (body.isNotEmpty()) assertEquals(name, headerOf("content-type"), got.headers["content-type"])
             }
             assertEquals("the queue add's empty POST", "0", server.requests[2].headers["content-length"])
+            assertEquals("the settings' empty PUTs", listOf("0", "0"), server.requests.drop(3).map { it.headers["content-length"] })
         }
     }
 

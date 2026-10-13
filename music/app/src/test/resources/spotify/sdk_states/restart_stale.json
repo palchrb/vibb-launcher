@@ -1,0 +1,16 @@
+{
+  "about": "A restart of the playing track from 0 (qa-26c-step4-code L1): the old play's tick of the same track at 2:05 is no measurement of the new play; the state near the sent position is.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 200000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 200000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 1}},
+    {"at": 500, "state": {"paused": false, "position": 120000, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 5500, "state": {"paused": false, "position": 125000, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 6000, "played": {"index": 0, "known": 1, "position": 0}},
+    {"at": 6100, "state": {"paused": false, "position": 125500, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 6400, "state": {"paused": false, "position": 300, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]}
+  ],
+  "end": {"index": 0, "mode": "OURS", "measured": {"index": 0, "position": 300, "at": 6400, "playing": true}}
+}

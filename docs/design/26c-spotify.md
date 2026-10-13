@@ -704,9 +704,9 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
 | `spotify/SpotifyApi.kt` + `SpotifyHttp.kt` | the Web API play/transfer calls over a seam (`SpotifyHttp`, like `StorytelHttp`), outcomes as a sealed `PlayOutcome` | pure, IO only; `SpotifyApiTest`, `SpotifyHttpTest` (`TinyHttp`) |
 | `spotify/SdkState.kt` | the page's state JSON parsed, length-capped (`SdkState(paused, positionMs, durationMs, uri, linkedUri, nextUris, prevUris, type, name, artists)`, or `Inactive`) | pure, `SdkStateTest` |
 | `spotify/SpotifyTracker.kt` | the state machine: commands sent vs states seen -> the current index, measured positions, `ItemChanged(auto)`, `Ended`, `Paused(cause)`, `Elsewhere`, `Unplayable` | pure, `SpotifyTrackerTest` (synthetic sequences + the fake's recorded ones) |
-| `spotify/SpotifyHosts.kt` + `WebPolicy.kt` | the host list (= `spotify_hosts.json`), `WebPolicy.decide(url)`: `Asset(path)` / `Pass` / `Block` | pure, `SpotifyHostsTest` |
+| `spotify/SpotifyHosts.kt` + `WebPolicy.kt` | the host list (= `spotify_hosts.json`), `WebPolicy.decide(url)`: `Asset(path)` / `NotFound` (our origin, no asset) / `Pass` (also `blob:`/`data:`) / `Proxy(url)` (the debug switch's fake) / `Block`; `SpotifyPage` (the page's CSP, its substitution, the bridge's names) | pure, `SpotifyHostsTest`, `WebPolicyTest` |
 | `spotify/SpotifyEndpoints.kt` | the API base, the SDK URL, the debug switch (§9.3) | pure |
-| `spotify/TokenCache.kt` | the access token in memory, `get(minLeftMs, deadlineMs)`, the cooldowns | pure, `TokenCacheTest` |
+| `spotify/TokenCache.kt` | the access token in memory, `get(deadlineMs, minLeftMs, atStart)`, the cooldowns, the prompt retry, the refresh ahead of expiry | pure, `TokenCacheTest` |
 | `bridge/SpotifyBridgeToken.kt` | the AIDL call `getSpotifyToken` with a 10 s timeout -> `TokenResult` | Android, IO |
 | `spotify/SpotifyWebHost.kt` | the one WebView: create, settings, the interceptor, the page bridge, destroy, clear | Android, main |
 | `spotify/SpotifyRenderer.kt` | `Renderer` + `SpotifyPlayer` (`SimpleBasePlayer`), focus, noisy, locks, the sleep fade | Android, main |
@@ -739,7 +739,8 @@ rule (§5.10's table names each site).
   `loadDataWithBaseURL("https://appassets.androidplatform.net/spotify/", html, ...)` (the spike's secure origin; no
   `androidx.webkit` dependency). The HTML has no inline script: it loads
   `player.js` from the same origin and the SDK from `SpotifyEndpoints.sdkUrl()` (`https://sdk.scdn.co/spotify-player.js`,
-  or `https://fake-spotify.invalid/sdk/spotify-player.js` with the debug switch), the only substitution in the template.
+  or `https://fake-spotify.invalid/sdk/spotify-player.js` with the debug switch), the template's only substituted value
+  - in two slots: the URL in the script tag, its origin in the CSP's `script-src` and `frame-src` (step 4's deviation 2).
   A CSP meta tag: `default-src 'none';
 
   script-src https://appassets.androidplatform.net https://sdk.scdn.co; frame-src https://sdk.scdn.co; connect-src https:
@@ -774,10 +775,12 @@ each validates and caps its inputs and does nothing privileged):
 - `needToken(requestId)` (an int): the SDK's `getOAuthToken` - at `connect()` and whenever the token expired.
 - `state(json)` (at most 8 KB): every `player_state_changed`, and every 5 s while not paused (`setInterval` in
   `player.js`, started by a playing state, cleared by a paused or null one) - the compact JSON `SdkState` parses:
-  `{"paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next": [<=3 uris], "prev": [<=3 uris]}`,
-  or `null` (this player isn't the active device).
+  `{"paused", "position", "duration", "uri", "linked", "type", "name", "artists", "next": [<=3 uris], "prev": [<=3 uris],
+  "context", "shuffle", "repeat"}` (`context` the state's context uri for §5.9, `shuffle` and `repeat` - 0 off, 1 context,
+  2 track - for §5.4's settings; step 4 and its QA fix round), or `null` (this player isn't the active device).
 - `error(kind, message)`: `kind` in `initialization`, `authentication`, `account`, `playback`, `autoplay`, `script`
-  (the SDK script failed to load); `message` cut to 200 characters, kept only in the debug log.
+  (the SDK script failed to load), `csp` (a CSP violation in our frame - the directive and the blocked origin only;
+  qa-26c-step4-code L6); `message` cut to 200 characters, kept only in the debug log.
 
 Kotlin -> JS (`evaluateJavascript`, main thread; every argument `JSONObject.quote`d): `vibb.connect(name)` (creates
 `new Spotify.Player({name, getOAuthToken, volume: 1.0})` - `enableMediaSession` stays false, our Media3 session is the
@@ -806,17 +809,33 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
      - 404 (the device not known yet) -> `PUT /v1/me/player {"device_ids": [<id>], "play": false}`, **wait for its 204
        and then for a state or `ready` from the SDK (at most 3 s)** - the Player API doesn't order calls (§1.1) - and the
        play once more;
-     - 401 -> `TokenCache.invalidate()`, one new token, once more;
+     - 401 -> `TokenCache.invalidate()`, one new token, once more. **This helps only when the server already holds a
+       newer token**: the token route can't be told which token Spotify refused (the server's `Accounts::mint` takes a
+       `rejected` token, but the route doesn't pass one) and answers its kept token while 10 minutes are left. So a
+       renewed token equal to the refused one ends the start at once, and so does a second 401: `TokenRefused` -
+       Spotify refused the account's token, an adult's matter (a revoked login or app access), shown as
+       `SPOTIFY_ASK_ADULT` with the outcome `refused`, not as "trenger internett" (qa-26c-step4-code L4). A later
+       contract change could add an optional `{"rejected": true}` to the token route through a new appended bridge
+       method;
      - **403 -> an account or app outcome, never the track's** (QA M5): a user not in User Management, the app owner's
        Premium lapsed, `PREMIUM_REQUIRED`, `DEVICE_NOT_CONTROLLABLE`, `REMOTE_CONTROL_DISALLOW` - a track the account
        can't play starts and is skipped by the SDK, it isn't refused by the call. The body's `reason`
        `PREMIUM_REQUIRED` -> outcome `not_premium`, any other 403 -> `refused`; the renderer pauses with
-       `SPOTIFY_ASK_ADULT`; no item error, no move to the next item;
+       `SPOTIFY_ASK_ADULT`; no item error, no move to the next item. A 403 `PREMIUM_REQUIRED` is tried once more after
+       about 1 s (inside the start's deadline) before it counts: intermittent ones on Premium accounts are reported
+       (qa-26c-step4-code L7);
      - 429 -> with `QUOTA_EXCEEDED` the outcome `quota` (paused, `SPOTIFY_NEEDS_INTERNET`'s wording "Spotify er ikke
        tilgjengelig nå"); else wait `Retry-After` if at most 5 s, once, else `unreachable`;
      - 5xx/IO -> `unreachable`.
   4. `position_ms` carries phase 1's resume position, so the track starts there - no audible second from 0:00 [device
      check] (Sonos needed its hush; Spotify starts at the position).
+  5. **Shuffle and repeat off** (qa-26c-step4-code M1): they are the account's player state, set from any of the kid's
+     Spotify apps, and our list plays in our order only with both off. Before a device session's first play, and again
+     whenever a state says either is on (the tracker's `ShuffleOrRepeat`; such a state is read for nothing), the start
+     first sends `PUT /v1/me/player/shuffle?state=false&device_id=<id>` and `PUT /v1/me/player/repeat?state=off&device_id=<id>`,
+     each 204 awaited before the next call (the Player API doesn't order calls), with the play's retries; a failed one
+     ends the start like a failed play (nothing plays shuffled). Two Web API requests per device session, from the
+     developer account's shared quota (§1.1).
 - **The Media3 state** (QA M1; like 26a §3.2's table, `SpotifyPlayer` = the `SimpleBasePlayer`):
 
 | Situation | `playWhenReady` | `playbackState` | `showsPlaying` |
@@ -850,7 +869,10 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   such an added item becomes current - always one item ahead, so the list never runs out under Spotify's control and
   nothing is cut (re-sending a window in a track's last seconds, QA H4's proposal, would restart the playing track: not
   taken). If the add call fails, the item's end is a gap: the renderer starts a new window from the next index (one
-  `PUT`). [device check: the queue call on the SDK's device]
+  `PUT`). [device check: the queue call on the SDK's device] **Spotify's queue survives a new play**: an add the kid's
+  pick of an earlier track left there plays after the picked track, out of our order. The tracker remembers the uris it
+  asked to add (until each is seen playing, or a new device) and reads such a leftover as not ours - paused, and our
+  list goes on from the next item (`NewWindow`), never as skipped tracks (qa-26c-step4-code H1).
 - **Ownership: only our uris are ours** (QA H4). A state's current uri is ours when it is the uri we sent for the
   current index, or **the expected next item** - the next uri of our queue - matched by uri, or by the SDK's `linked`
   when it gives one (undocumented; the Web API removed `linked_from` in February 2026), or **by title and duration**:
@@ -859,14 +881,26 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   recommended track after the window or the queue (the account's Autoplay), another Spotify app transferring playback
   to "Vibb", a leftover session - it is paused at once (`vibb.pause()`), never saved, never mapped to an index, and the
   player shows paused with nothing new. After `Ended` (the queue's last item played out) every later playing state is
-  paused at once. vibb's `play_origin` rule ("only a box-initiated session may write") is this rule.
-- **The end of a track** is read from the state: a state for the current uri with `paused`, position 0 and the last
-  playing position within 3 s of the duration (or the duration known and passed) without a pause of ours pending =
-  ended; Spotify's own advance shows as the expected next uri. `SpotifyTrackerTest` pins: the advance, the end of the
+  paused at once. vibb's `play_origin` rule ("only a box-initiated session may write") is this rule. As built (step 4
+  and its QA fix round): the relinking matches apply to the sent item too (an episode also by its name alone: the
+  server lists an episode by its name); while nothing was sent every playing state is paused; a playing state while
+  our pause is pending is passed over; a state naming no track is evidence of nothing; **a start passes over what
+  played before it** - the track of the last state seen before the play call is stale in a start, unless it is the
+  sent track within 3 s of the sent position (a restart from 0 isn't the old play's tick: qa-26c-step4-code H1, L1); a
+  later uri of ours that isn't proven a skip (below) and isn't our leftover add is not ours either - paused, our list
+  going on from the current item at its place.
+- **The end of a track** is read from the state: a state for the current uri with `paused`, position 0 (under 1 s) and
+  the last playing position - carried on by the time since that state, for reading the end only, since the page posts
+  every 5 s - within 3 s of the duration (or the duration known and passed), after a playing state and without a pause
+  of ours pending = ended; a track not ours playing right then is Autoplay after it (`NewWindow` from the next index, or
+  `Ended` after the queue); Spotify's own advance shows as the expected next uri. `SpotifyTrackerTest` pins: the advance, the end of the
   window (the queue add), the end of the queue, autoplay after the window and after the queue (paused, nothing saved),
   a relink matched by title and duration, a foreign transfer.
 - **Unplayable** (QA M5): only from the SDK - a `playback_error` while one of our uris is current, or Spotify skipping
-  past one of our uris (the next state names a later uri of ours without the first having played 3 s). Then
+  past one of our uris **on evidence** (qa-26c-step4-code H1): the state names a later uri of ours, every item before
+  it that counts as skipped is named in the state's `prev` (the current one only when it hadn't played 3 s), and none
+  of them - nor the state's track - is one we added to Spotify's queue. `prev` names at most three tracks, so a longer
+  skip is no skip (paused, our list goes on); a stale state or our own leftover add can never read as one. Then
   `Error("unplayable")`: the service records it (§5.10) and the queue moves on; **after 3 unplayable items in a row the
   renderer stops** (paused, the row "Kan ikke spilles", no more calls) - a whole list the account can't play costs at
   most three calls.
@@ -880,8 +914,11 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
 
 ### 5.5 Tokens on the phone (`TokenCache`, `SpotifyBridgeToken`)
 - In memory only (never a file, Room, `renderer.json`, a log or a `toString`: `TokenResult.Ok.toString()` redacted,
-  pinned). `get(minLeftMs = 5 min, deadline)`: the kept token when it has 5 minutes left; else one bridge call (one at
-  a time: a waiter shares the call in flight).
+  pinned). `get(deadlineMs, minLeftMs = 5 min, atStart)`: the kept token when it has 5 minutes left; else one bridge
+  call (one at a time: a waiter shares the call in flight; a call its waiter gave up on is kept when it answers).
+  **"The same token back"** - the refresh ahead of expiry getting the server's kept token again - is told by the
+  token's value, not its expiry (the server answers whole seconds left; qa-26c-step4-code L3): no refresh, tried again
+  in 2 minutes. After a 401 the renewal is §5.4's; it can't help when the route answers the refused token again.
 - **The bridge** (§8): `getSpotifyToken(callback)`, 10 s; `status` -> `TokenResult`: `ok` -> `Ok(token, expiresAt =
   elapsed + expiresInMs, account)`; `off` -> `Off` (the host cleared and destroyed; the library will drop the entries);
   `reauthorize` -> `Reauthorize`; `busy` -> `Busy(retryAfter)`; `unreachable`, `key`, `launcher` (the launcher couldn't
@@ -968,8 +1005,8 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
 | no Wi-Fi (mobile data not allowed) | no start, paused | `SPOTIFY_NEEDS_WIFI`: "Spotify - trenger Wi-Fi" / "Spotify - needs Wi-Fi" | unchanged |
 | offline, the SDK script or `ready` not reached in 20 s, the play call unreachable, no state for 30 s | paused | `SPOTIFY_NEEDS_INTERNET`: "Spotify - trenger internett" / "Spotify - needs the internet" | `unreachable` |
 | `Reauthorize` (refresh token ended, app refused) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome: "Spotify - spør en voksen" / "Spotify - ask a grown-up" | `reauthorize` |
-| the play call's 403 (not `PREMIUM_REQUIRED`) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `refused` |
-| `account_error`, or the play call's 403 `PREMIUM_REQUIRED` | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `not_premium` |
+| the play call's 403 (not `PREMIUM_REQUIRED`), or a 401 the one renewal can't cure (the same token back, or a second 401; qa-26c-step4-code L4) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `refused` |
+| `account_error`, or the play call's 403 `PREMIUM_REQUIRED` twice (one retry after about 1 s, L7) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `not_premium` |
 | the play call's 429 `QUOTA_EXCEEDED` | paused | `SPOTIFY_NEEDS_INTERNET` with the text "Spotify er ikke tilgjengelig nå" / "Spotify isn't available right now" + the stored outcome | `quota` |
 | `initialization_error` (no EME/Widevine) | paused, the host destroyed | `SPOTIFY_NOT_ON_PHONE`: "Spotify virker ikke på denne telefonen" / "Spotify doesn't work on this phone" + the stored outcome | `no_widevine` |
 | `playback_error` on one of our tracks, or Spotify skipping it (region, the Family explicit filter, removed) | `Error("unplayable")`: the queue moves on; after 3 in a row, paused | `PlayerHub.Message.CANT_PLAY`; the list's row "Kan ikke spilles" | `item_errors` `unplayable` |
@@ -1260,13 +1297,15 @@ B (the real SDK on the emulator with the user's account, the spike's recipe) and
 
 ### 9.2 `scripts/fake-spotify.py` (GPL, Python 3 stdlib, `-I`, `--selftest`)
 Built like `fake-storytel.py`, answering from the **same fixtures the tests read** (vibb's "two fakes" rule):
-`server/testdata/spotify/` (the accounts and Web API answers: `me_parent.json`, `me_kid.json`, `token_code.json`,
-`token_refresh.json`, `token_refresh_rotated.json`, `token_invalid_grant.json`, `playlist_meta.json`,
-`playlist_items_1.json`, `playlist_items_2.json`, `playlist_items_403.json`, `playlist_404.json`, `album.json`,
-`album_tracks_2.json`, `track.json`, `artist.json`, `show.json`, `show_episodes.json`, `episode.json`,
-`rate_limited.json`, `quota.json`) and `music/app/src/test/resources/spotify/` (`play_request.json` - the exact body
-the phone sends -, `play_answers.json`, `sdk_states/*.json` - state sequences: start, advance, end of window, end of
-queue, pause, elsewhere, relinked, unplayable).
+`server/testdata/spotify/` (the accounts and Web API answers as step 2a named them: `me_parent.json`, `me_kid.json`,
+`token_code.json`, `token_refresh.json`, `token_refresh_rotated.json`, `token_invalid_grant.json`,
+`token_invalid_client.json`, `playlist.json`, `playlist_items.json`, `forbidden.json`, `album.json`,
+`album_tracks.json`, `track.json`, `artist.json`, `artist_albums.json`, `show.json`, `show_episodes.json`,
+`episode.json`, `rate_limited.json`, `quota.json`) and `music/app/src/test/resources/spotify/` (`play_request.json` -
+the exact requests the phone sends: play, the context form, transfer, queue, shuffle, repeat -, `play_answers.json`,
+`token_answers.json`, `sdk_states/*.json` - state sequences: start, advance, end of window and its gap, end of queue,
+pause, elsewhere, relinked three ways, unplayable, autoplay, transfer-in, our queue add left over, a stale state after
+a step back or a restart, a trackless state, shuffle/repeat on).
 - **Accounts**: `/authorize` (an auto-consent page that 302s to `redirect_uri?code=FAKE-CODE-<n>&state=<state>`,
   remembering the challenge; `--deny` sends `error=access_denied`; `--as kid|parent` picks the user), `/api/token`
   (`authorization_code`: the verifier's S256 must match the remembered challenge, single-use code; `refresh_token`:
@@ -1276,7 +1315,8 @@ queue, pause, elsewhere, relinked, unplayable).
   `--snapshot` to change its `snapshot_id`), `/v1/albums/<id>` (+ `/tracks`), `/v1/tracks/<id>`, `/v1/artists/<id>`,
   `/v1/shows/<id>` (+ `/episodes`), `/v1/episodes/<id>`, `PUT /v1/me/player/play` (checks the body against
   `play_request.json`'s shape, 404 for an unknown device, `--not-premium` -> 403 `PREMIUM_REQUIRED`; records it and
-  hands it to the stub device), `PUT /v1/me/player` (transfer), `--rate-limit N` (every Nth request a 429 with
+  hands it to the stub device), `PUT /v1/me/player` (transfer), `PUT /v1/me/player/shuffle` and `/repeat` (checked
+  against `play_request.json`'s queries, handed to the stub), `--rate-limit N` (every Nth request a 429 with
   `Retry-After: 2`), `--quota` (429 `QUOTA_EXCEEDED`).
 - **The stub SDK** `/sdk/spotify-player.js`: our own JavaScript implementing the documented `Spotify.Player` surface
   (constructor, `connect`, `disconnect`, `addListener`/`on`, `getCurrentState`, `pause`, `resume`, `togglePlay`,
@@ -1284,14 +1324,18 @@ queue, pause, elsewhere, relinked, unplayable).
   fake's play endpoint received: a generated tone per track (`/fake/audio/<id>.wav`, the fixture's duration or
   `--track-seconds 20`) through an `<audio>` element - real audio through the WebView, no DRM. It long-polls
   `/fake/device/<id>/commands` - every URL relative to the script's own origin, so under the debug build's
-  `https://fake-spotify.invalid/` they all pass the interceptor's proxy (§9.3) - calls `getOAuthToken` at `connect` and
-  every `--token-ttl` seconds, emits
+  `https://fake-spotify.invalid/` they all pass the interceptor's proxy (§9.3), and every one a plain GET (the
+  interceptor sees no request body; no header that would need a CORS preflight: the stub's own connect and token check
+  carry the fake token in their query, to the fake only) - calls `getOAuthToken` at `connect` and
+  every `--token-ttl` seconds, keeps Spotify's queue (the phone's adds) across a new play as Spotify does, emits
   `player_state_changed` like the documented `WebPlaybackState`, and serves `POST /v1/me/player/queue`. Options:
   `--elsewhere 60` (a `null` state at 60 s), `--autoplay` (after the last uri it plays a track that isn't in the list),
   `--transfer-in 30` (at 30 s a foreign context starts on the device),
 
   `--unplayable <id>` (a `playback_error` and a skip), `--no-eme` (`initialization_error`), `--not-premium`
-  (`account_error`), `--slow-ready 15`, `--relink <id>:<other>`.
+  (`account_error`), `--slow-ready 15`, `--relink <id>:<other>`, `--shuffle` and `--repeat context|track` (the
+  account's settings until the phone turns them off). `GET /fake/as?user=kid|parent` switches the auto-consent's user
+  while running; `GET /fake/token?user=kid` answers as the server's token route (the debug switch's `debugTokens`).
 - `--print-library` / `--print-listing ENTRY` print the debug feed's documents for a run without a server (26b's way).
 - `--selftest`: every route against its fixture, the S256 check, rotation, the stub's JS parsed for the documented
   names, the play body checked against `play_request.json`. `music.yml` runs it after the build and watches
@@ -1344,7 +1388,9 @@ phone running a debug build must never send a token elsewhere). Spotify does the
   app's data folder and the server's journal hold no `FAKE-ACCESS`, `FAKE-REFRESH`, `FAKE-CODE` or verifier.
 - **Part B, the real SDK** (the user's account, the spike's emulator image): the real login on the PWA (https or the
   paste), a real playlist the parent owns, play, pause, skip, resume after a restart; the debug log's permission line
-  (which origin asked for protected media), the blocked-hosts counter (should stay 0), and the DNS capture of §6.2.
+  (which origin asked for protected media), the blocked-hosts counter (should stay 0), no `csp` error line in the debug
+  log (the page's CSP admits what the real SDK's loader needs; qa-26c-step4-code L6), each compact state post logged
+  (fixed keys, no token) so a few real sequences can go into `sdk_states/`, and the DNS capture of §6.2.
 
 ## 10. Tests
 
@@ -1643,6 +1689,11 @@ mode), 7 (docs).
 19. **A refused play** (QA M5): remove the kid's account from the app's User Management, play - the tile says "Spotify -
     spør en voksen", the device card says Spotify refused the play, and no track shows "Kan ikke spilles"; put it back
     and play again.
+20. **Our queue add left over** (qa-26c-step4-code H1): a playlist over 50 tracks, let track 50 start (the add of 51),
+    pick track 3, let it play out: the next track is 4 (or a short pause and 4), no "Kan ikke spilles" anywhere; the
+    debug log shows whether Spotify played the leftover add.
+21. **Shuffle and repeat** (qa-26c-step4-code M1): shuffle on and repeat on (one track) in the kid's Spotify app, then
+    play a list on the phone - it plays in order, once; the kid's Spotify app shows both off afterwards.
 
 
 ## Release
@@ -2641,3 +2692,60 @@ tracker's index hasn't moved past it already), runs the prefetch timer under its
 context ownership through `SdkState.contextUri`. [unverified]: the 404's reason `NO_ACTIVE_DEVICE` in
 play_answers.json, the real SDK's state shapes beyond the documented ones (`linked_from`), episodes in a `uris` list
 (§3.1, `SHOWS_PLAYABLE`).
+
+### Fix round after QA's code review (qa-26c-step4-code, 2026-10-13)
+
+All ten findings fixed; none disputed (one detail chosen differently, L3). No contract file changed, `SPOTIFY_PLAYABLE`
+still false, no new dependency. From `music/`: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` BUILD SUCCESSFUL, then `testDebugUnitTest --rerun-tasks`: 692 JVM tests (679 before), 0
+failures; lint 0 errors, the same 39 warnings, none in a Spotify file. The three fakes' `--selftest`s OK under `-I`.
+Checked by mutation (each red): a skip without `prev` evidence, no stale pre-play state, a trackless state read, the
+shuffle flag ignored, "the same token" by its expiry, `initialization`/`account` swapped in `player.js`, no 403 retry,
+the refused token retried.
+- **H1** (a later uri of ours read as skipped tracks): a skip needs evidence - each item counted skipped named in the
+  state's `prev`, none of them nor the state's track an add of ours (`skipProven`); the tracker remembers the uris it
+  asked to add across plays (until seen playing, or `newDevice()`), and a leftover add - or any later uri of ours
+  without evidence - is `NotOurs` plus `NewWindow` (from the next index when ours played out, else from the current
+  item at its place: `NewWindow(index, resume = true)`); a start passes over the track of the last state seen before
+  the play call (`played(.., positionMs)`) unless it is the sent track within 3 s of the sent position. The QA's two
+  counter-examples are `SpotifyTrackerTest` cases (no `Unplayable`; `Started 1`, no `NotOurs`), with `sdk_states/`
+  `queue_leftover` and `step_back_stale`, plus a skip `prev` can't prove and a new device's empty queue; the stub keeps
+  Spotify's queue across a new play and plays it before the context (selftest part 7); QA checklist item 20. Step 4's
+  deviation 6b is replaced by this rule (§5.4 amended).
+- **M1** (shuffle and repeat): `player.js` posts `shuffle` and `repeat` (`repeat_mode`, at most 2), `SdkState` reads
+  them (`reordered`; junk is off), `SdkState.KEYS` has 13 keys; the tracker reads nothing from a state with either on
+  and emits one `ShuffleOrRepeat(index)` until the next play; `SpotifyApi.shuffle`/`repeat` and `start(.., settings =
+  true)`: shuffle off then repeat off, each 204 awaited, sharing the play's retries (a 404 transfers, a 401 renews...),
+  a failed one ending the start like a failed play; `play_request.json` has both requests; the fake's routes
+  (`PUT /v1/me/player/shuffle`, `/repeat`, queries checked against the fixture, handed to the stub), `--shuffle`,
+  `--repeat context|track`, the stub shuffling and repeating until told; `sdk_states/shuffled`; §5.4 step 5, QA
+  checklist item 21. The QA's counter-example is a `SpotifyTrackerTest` case. (Two Web API requests per device
+  session; when the renderer sends them - its first play per device, and on `ShuffleOrRepeat` - is step 5a's.)
+- **L1** (a stale same-track state at a restart measured): with H1's start rule; the QA's test and `sdk_states/restart_stale`.
+- **L2** (a track-less state paused ours): `SdkState.trackless` (no uri, no name) is passed over in a start and while
+  ours plays; the QA's test and `sdk_states/trackless`.
+- **L3** ("the same token" by its expiry): by the token's value (and account); a same token keeps the earlier of the two
+  expiry estimates - the QA suggested the later; the earlier errs towards refreshing sooner, and the two differ by a
+  second at most. A test with the same token one second "later".
+- **L4** (the 401 renewal handing back the refused token): a renewed token equal to the refused one ends the start at
+  once, as does a second 401: `StartResult.TokenRefused` -> `SpotifyProblem.REFUSED` (`SPOTIFY_ASK_ADULT`, outcome
+  `refused`) instead of "trenger internett" - Spotify refused the account's token, an adult's matter; §5.4's 401 row,
+  §5.5 and §5.8's table say what the renewal can and can't do, and the later contract note (`{"rejected": true}`
+  through an appended bridge method).
+- **L5** (event-to-kind pairs unpinned): `PlayerJsTest` pins each `addListener` event to its `report` kind.
+- **L6** (a CSP violation silent): a `securitypolicyviolation` listener reports `error('csp', <directive> <blocked
+  origin>)` - origin only, never a path or query; `csp` in `SpotifyPage.ERROR_KINDS`, no problem and no line
+  (`sdkErrorProblem`), debug log only; §5.3, and §9.4 part B's "no `csp` line in the debug log".
+- **L7** (one 403 decides "not Premium"): a 403 `PREMIUM_REQUIRED` is tried once more after 1 s inside the deadline
+  (`PREMIUM_RETRY_MS`); another 403 isn't; §5.4 and §5.8 say so.
+- **L8** (the spec body behind the deviations): §5.1's `WebPolicy` and `TokenCache` rows, §5.2's substitution, §5.3's
+  post (`context`, `shuffle`, `repeat`) and error kinds, §5.4 (the skip evidence, the leftover add, the start rule, the
+  end rule's carried position, the readings of deviation 6, shuffle/repeat, the 401 and 403 rows), §5.5 (`get`'s
+  signature, the same token), §5.8's table, §9.2's fixture list, the stub's GET protocol and new options, §9.4 part B.
+
+Owed by step 5a (from the QA's notes, not findings): the debug proxy logs the host only (the stub's query carries a fake
+token) and forwards `Range` plus the status, `Content-Type`, `Content-Range`, `Accept-Ranges` and
+`Access-Control-Allow-Origin`; the bridge's `state(json)` cap counts what `SdkState.MAX_BYTES` counts (UTF-16
+characters); the token's deadline at a start leaves room for the play call (e.g. `get(deadline - SPOTIFY_CALL_MS, ..)`);
+`newDevice()` on each new device id, `settings = true` on a device session's first start and after `ShuffleOrRepeat`;
+`SourceScanTest`'s Spotify assignment check becomes the exact `listOf("DebugSpotify.kt")` once that file exists.

@@ -97,7 +97,7 @@ class TokenCache(
 
     /**
      * The refresh ahead of expiry: one ask whatever is kept (shared with one in flight), within
-     * [deadlineMs]. A new token replaces the kept one only when it lasts longer; anything else keeps the
+     * [deadlineMs]. Another token replaces the kept one; the same token back, or any failure, keeps the
      * old one and is tried again [PREFETCH_RETRY_MS] later.
      */
     suspend fun prefetch(deadlineMs: Long): TokenResult {
@@ -153,10 +153,13 @@ class TokenCache(
         val now = elapsedMs()
         val old = kept
         when (result) {
-            is TokenResult.Ok -> if (old == null || result.expiresAtMs > old.expiresAtMs || result.account != old.account) {
+            // "The same token back" is the token's value, not its expiry (qa-26c-step4-code L3): the server
+            // answers its kept token with whole seconds left, so the same token can come back a moment "later".
+            is TokenResult.Ok -> if (old == null || result.token != old.token || result.account != old.account) {
                 kept = result
                 refreshFailedAt = null
             } else {
+                if (result.expiresAtMs < old.expiresAtMs) kept = result // the earlier of the two estimates
                 refreshFailedAt = now // the same token back: not a refresh
             }
             TokenResult.Off -> clear()

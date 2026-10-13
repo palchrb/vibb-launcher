@@ -91,8 +91,8 @@ object SpotifyPage {
     /** The page's entry points, host -> page (`evaluateJavascript`, every argument quoted by [call]). */
     val TO_PAGE = listOf("connect", "token", "pause", "resume", "seek", "next", "previous", "volume", "state", "disconnect")
 
-    /** `error(kind, message)`'s kinds. */
-    val ERROR_KINDS = listOf("initialization", "authentication", "account", "playback", "autoplay", "script")
+    /** `error(kind, message)`'s kinds; `csp` (a CSP violation, qa-26c-step4-code L6) goes to the debug log only. */
+    val ERROR_KINDS = listOf("initialization", "authentication", "account", "playback", "autoplay", "script", "csp")
 
     /** The player's name in the account's device list (Policy §VI: never "Spot..."). */
     const val PLAYER_NAME = "Vibb"

@@ -182,6 +182,24 @@ class TokenCacheTest {
     }
 
     @Test
+    fun `the same token back is told by its value, not its expiry (qa-26c-step4-code L3)`() = runBlocking {
+        val answers = mutableListOf<() -> TokenResult>({ ok(1, life = 12 * min) })
+        val c = TokenCache(this, ask = { asks += clock; answers.removeAt(0)() }, elapsedMs = { clock })
+        val first = c.get(far) as TokenResult.Ok
+        clock += 2 * min // 10 minutes left
+        assertTrue(c.prefetchDue(true))
+        answers += { TokenResult.Ok("FAKE-ACCESS-1", first.expiresAtMs + 1_000, "2:1") } // whole seconds and latency: a second "later"
+        c.prefetch(far)
+        assertFalse("the same token: no refresh, tried again in 2 minutes", c.prefetchDue(true))
+        assertEquals(clock + 2 * min, c.nextPrefetchAtMs())
+        assertEquals("the earlier estimate of its expiry kept", first.expiresAtMs, (c.get(far, minLeftMs = 1) as TokenResult.Ok).expiresAtMs)
+        clock += 2 * min
+        answers += { TokenResult.Ok("FAKE-ACCESS-2", first.expiresAtMs - 1_000, "2:1") }
+        c.prefetch(far)
+        assertEquals("another token is a refresh, whatever its expiry says", "FAKE-ACCESS-2", (c.get(far, minLeftMs = 1) as TokenResult.Ok).token)
+    }
+
+    @Test
     fun `never a token in a toString, and each answer's problem`() {
         val ok = TokenResult.Ok("FAKE-ACCESS-7", 1, "2:1")
         assertFalse(ok.toString().contains("FAKE-ACCESS-7"))

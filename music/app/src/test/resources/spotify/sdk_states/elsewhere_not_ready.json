@@ -7,7 +7,7 @@
   ],
   "steps": [
     {"at": 0, "played": {"index": 0, "known": 2}},
-    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": ["Started 0"]},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
     {"at": 1000, "not_ready": true, "expect": []},
     {"at": 2000, "state": null, "expect": ["Look"]},
     {"at": 2500, "not_ready": true, "expect": ["Elsewhere"]}

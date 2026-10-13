@@ -1,0 +1,16 @@
+{
+  "about": "A state naming no track (qa-26c-step4-code L2) is evidence of nothing - at a start or while ours plays - and pauses nothing.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 2}},
+    {"at": 200, "state": {"paused": false, "position": 0, "duration": 20000, "uri": null, "linked": null, "type": null, "name": null, "artists": [], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 3000, "state": {"paused": false, "position": 2500, "duration": 20000, "uri": null, "linked": null, "type": null, "name": null, "artists": [], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 5500, "state": {"paused": false, "position": 5000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []}
+  ],
+  "end": {"index": 0, "mode": "OURS", "measured": {"index": 0, "position": 5000, "at": 5500, "playing": true}}
+}
