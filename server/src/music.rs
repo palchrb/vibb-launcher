@@ -170,10 +170,17 @@ pub fn storage_line(
             format!(
                 "Kept episodes and books alone use {} of the {gb} GB limit - lower an entry's \
                  offline depth or raise the limit.",
-                gigabytes(kept)
+                gigabytes_up(kept)
             )
         });
     (line, warning)
+}
+
+/// Bytes as "2.1 GB", rounded **up** to the tenth (qa-30-s1-code L1): a figure over the limit never
+/// reads as the limit itself ("2.0 GB of the 2 GB limit"). Negative bytes read as 0.
+pub fn gigabytes_up(bytes: i64) -> String {
+    let tenths = bytes.max(0).saturating_add(99_999_999) / 100_000_000;
+    format!("{}.{} GB", tenths / 10, tenths % 10)
 }
 
 pub fn icon_known(key: &str) -> bool {
@@ -1728,11 +1735,6 @@ pub fn megabytes(bytes: i64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
-/// Bytes as "3.2 GB".
-pub fn gigabytes(bytes: i64) -> String {
-    format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1753,7 +1755,9 @@ mod tests {
         assert_eq!(DEFAULT_STORAGE_LIMIT_GB, 2);
         assert_eq!(storage_limit_label(Some(2)), "2 GB");
         assert_eq!(storage_limit_label(None), "no limit");
-        assert_eq!(gigabytes(3_249_000_000), "3.2 GB");
+        assert_eq!(gigabytes_up(3_200_000_000), "3.2 GB");
+        assert_eq!(gigabytes_up(3_200_000_001), "3.3 GB");
+        assert_eq!(gigabytes_up(-5), "0.0 GB");
     }
 
     #[test]
