@@ -262,7 +262,7 @@ async fn a_2fa_reset_signs_out_every_other_session() {
         .await;
     // QA 22 M5 (user decision): it asks for the current password, like a password change.
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(res.text().contains("two-factor login was not reset"));
+    assert!(res.text().contains("Two-factor login was not reset."));
     let res = app
         .request_form(
             Method::POST,
@@ -732,7 +732,12 @@ async fn ipv6_login_failures_are_banned_by_their_64() {
             &[("ip", &banned)],
         )
         .await;
-    assert_eq!(res.status, StatusCode::OK);
+    // Back to Blocked Addresses, the address in the flash (design 31 step 14).
+    super::assert_redirect(
+        &res,
+        "/security?unbanned=fd7a%3A115c%3Aa1e0%3A1%3A%3A%2F64",
+        Some("banned"),
+    );
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM banned_ips")
         .fetch_one(&app.db)
         .await

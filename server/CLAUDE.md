@@ -928,8 +928,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   requests can't slip past it - QA 22 H2; locked = no code checked): 5 attempts lock 15 min, each further lock doubles
   (`lock_count`) up to 24 h, a lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
   account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
-  complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
-  via `partials/login_warning.html`, `POST /account/dismiss-warning`, back to the page it was on); a signed-in session
+  complete login with earlier failures the session carries a banner (`login_warning`, a short orange row on Devices
+  and the full sentence on Account, `POST /account/dismiss-warning`, back to the page it was on); a signed-in session
   also sees wrong codes entered since its sign-in and the lock (`auth::live_warning`, from the `AdminUser` row - QA 22
   Low 9), and a password change lifts the counter and the lock. Sessions: `cycle_id()` after each step; the
   session stores `session_epoch`, and a password change, a 2FA reset (asks for the current password - user
@@ -960,8 +960,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`/healthz` on `BIND_ADDR`, 0.0.0.0 -> 127.0.0.1, :: -> ::1, 3 s), `selftest-tls` (api.github.com through
   reqwest/rustls, any status passes), `reset-2fa <user>`. In docker: the root-helper routes (`/update/*`,
   `/system/*`, `/backups/format-drive`) aren't registered, the live mirror and app-update scheduler aren't
-  spawned, the Updates page (`updates::page`, pure) says "Set `HANDY_VERSION=X` in `.env`, then `docker compose pull
-  && docker compose up -d`" with no OS/Tailscale/helper cards, the Backups page has no external drive or mirror.
+  spawned, Software Updates (`updates::page`, pure) says "Version X is out" with "Set `HANDY_VERSION=X` in `.env`, then
+  `docker compose pull && docker compose up -d`" behind its ⓘ, no OS/Tailscale/installer groups, and Backups has no
+  external drive or mirror.
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
   Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
@@ -1118,11 +1119,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   to the device page; another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
   500 on a DB error (it used to log and redirect).
 - **`back`** (§5.1) on the domain and list routes (`dns_filter::back_to`): `back=filter` returns to the phone's Web
-  Filter page - the phone from the path or the deleted row, never from the form -, anything else to `/dns`. Every form
-  on both pages returns to its page with **no fragment** (scroll-restore keeps the place), pinned by
+  Filter page - the phone from the path or the deleted row, never from the form -, anything else to the form's group on
+  `/dns` (step 14). Every form on the two phone pages returns to its page with **no fragment** (scroll-restore keeps
+  the place), pinned by
   `tests::device_pages::home_and_filter_forms_return_to_their_page`.
 - **Old URLs** (L5): `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`. `/dns`
-  lists each phone's page at the bottom (the rest is step 14's); `/dns/log` is a list of phones ("Log on/off" ›).
+  and `/dns/log` are in "The rest of Settings" below.
 - Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, the old URLs, bad
   input, unreadable parts, a phone not set up), repointed `launcher_ui.rs`, `wallpapers.rs`, `sound_mode.rs`,
   `cleanup.rs` (the log), `dns_blocklist.rs` (the phone's list problem), `lock_glance.rs`, `devices_list.rs`, `shell.rs`.
@@ -1221,6 +1223,43 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - Tests: `src/tests/locate_page.rs` (the redirect table, the erase refusal, the switcher and the list, local times
   and the answer, Recent's labels and Cancel, the warnings and pickers, unknown phones and failed reads),
   `handlers::locate::tests`, repointed `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`.
+
+## The rest of Settings (design 31 step 14, `docs/design/31-pwa-redesign.md` §3.6)
+
+- **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
+  Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
+  Password (`/account`), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+- **Where forms return** (§5.1; every action carries its group's fragment, so a save near the bottom never lands at the
+  top, with or without JS; `tests::settings_pages::check_forms`): Web Filter → `/dns#lists|blocked|allowed|server`
+  (`dns_filter::back_to` takes the group; a refused domain `?notice=not_a_domain_block|allow#blocked|allowed`, a list
+  without a name or an http(s) address `?notice=bad_list#lists` with Add a List… open; a second tap on Remove goes to
+  the group the form's hidden `list_type` names); a photo's switch → `/wallpapers#wallpaper-<id>`, an upload to the new
+  photo's row, a delete (a `<details>` confirm, idempotent) → `#all`, a refused upload renders at `#add` with the reason
+  under the field; Phone Setup → `?saved=1#saved` (a refusal renders the form again, 400, with what was typed - never the
+  key - and the reason under the field); Unban → `/security?unbanned=<address>#banned`. Account, Backups and Software
+  Updates render their answer in the POST's response (a password never goes into a URL; a restore or an update restarts
+  the server) and post to their group (`#password`, `#two-factor`; `#backups`, `#upload`, `#schedule`, `#drive`; `#app`,
+  `#os`, `#tailscale`, `#app-schedule`, `#os-schedule`), the result inside that group (`settings::Flash` +
+  `partials/group_flash.html`: green, or red with the reason behind ⓘ). A refused Restore… or Format renders with that
+  confirm open and the reason under the typed field.
+- **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a photo's Delete Photo…, a backup's Restore… and
+  Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
+  Updates and Update Tailscale stay one tap.
+- **Robust**: every page read is a 500 on a DB error, never an empty page (Web Filter, Blocked Activity, Phone Setup,
+  Security Log); every Web Filter write too (it used to redirect as if saved); a password change and a 2FA reset move
+  the hash or TOTP and the session epoch in one UPDATE, so another session is signed out exactly when the change is
+  stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
+- **Texts (M5)**: the security log's event ids are labels (`admin::event_label`, an unknown id as its words), the row
+  says who and from where, the time local (`Zone::when`, the exact one in `title`), the stored detail and the id behind
+  the row's ⓘ; a ban's end with `Zone::until`; the live sign-in warning's lock end local (`auth::live_warning(admin,
+  zone, now)`); a backup's time local. The schedule summaries are gone (the forms show the values); the update, backup
+  and restore results are short `Flash`es; the installer command and the Docker commands sit behind ⓘ.
+- Tests: `src/tests/settings_pages.rs` (the redirect table for Web Filter, Wallpapers, Phone Setup and the Security
+  Log; Web Filter's refusals, rows and unreadable page; Blocked Activity's values; Wallpapers' confirm and refused
+  upload; Phone Setup's refusal and flash; Account's field errors, confirms and local lock time; the Security Log's
+  labels, escaping and local times; Backups' refusals in their groups), `tests::docker` (Software Updates on both
+  kinds, its confirms and where each result shows), `admin::tests`, repointed `admin_auth.rs`, `intake_limits.rs`,
+  `provisioning.rs`, `wallpapers.rs`, `dns_blocklist.rs`, `deploy_scripts.rs`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

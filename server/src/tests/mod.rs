@@ -33,6 +33,7 @@ mod music_sweep;
 mod parent_pin;
 mod play;
 mod provisioning;
+mod settings_pages;
 mod shell;
 mod sound_mode;
 mod step10;

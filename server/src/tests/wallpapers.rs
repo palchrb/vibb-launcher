@@ -24,14 +24,14 @@ async fn wallpapers(app: &TestApp, token: &str) -> Vec<serde_json::Value> {
         .clone()
 }
 
-fn encode(image: &DynamicImage, format: ImageFormat) -> Vec<u8> {
+pub(super) fn encode(image: &DynamicImage, format: ImageFormat) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
     image.write_to(&mut out, format).unwrap();
     out.into_inner()
 }
 
 /// `w`×`h`, the top half black and the bottom half white.
-fn top_black(w: u32, h: u32) -> DynamicImage {
+pub(super) fn top_black(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |_, y| {
         if y < h / 2 {
             Rgb([0, 0, 0])
@@ -74,7 +74,7 @@ fn jpeg_with_orientation_6(image: &DynamicImage) -> Vec<u8> {
     out
 }
 
-async fn upload(
+pub(super) async fn upload(
     app: &TestApp,
     cookie: &str,
     label: &str,
@@ -233,8 +233,10 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
         &jpeg_with_orientation_6(&left_black(2400, 1600)),
     )
     .await;
-    assert_eq!(res.location(), Some("/wallpapers"), "{}", res.text());
     let (portrait, hash) = newest(&app).await;
+    // Back to the new photo's row (design 31 §5.1).
+    let back = format!("wallpaper-{portrait}");
+    super::assert_redirect(&res, "/wallpapers", Some(back.as_str()));
     assert_eq!(files(&app.state.wallpaper_dir), [format!("{hash}.jpg")]);
     // Nothing reached the contact-photo store.
     assert!(files(&app.state.photo_dir).is_empty());
@@ -450,7 +452,7 @@ async fn unticking_or_deleting_takes_it_off_the_phone_and_prunes_only_wallpapers
             &[],
         )
         .await;
-    assert_eq!(res.location(), Some("/wallpapers"));
+    super::assert_redirect(&res, "/wallpapers", Some("all"));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert!(files(&app.state.wallpaper_dir).is_empty());
     assert_eq!(files(&app.state.photo_dir), [stray]);
@@ -515,7 +517,8 @@ async fn lock_screen_choice_reaches_the_phone() {
             &[("lock_screen", "on")],
         )
         .await;
-    assert_eq!(res.location(), Some("/wallpapers"));
+    let back = format!("wallpaper-{a}");
+    super::assert_redirect(&res, "/wallpapers", Some(back.as_str()));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         wallpapers(&app, &token).await[0]["lock_screen"],

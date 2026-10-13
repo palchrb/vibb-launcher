@@ -18,12 +18,13 @@
 
 use axum::Extension;
 use axum::extract::State;
-use axum::response::{Html, IntoResponse};
+use axum::response::{IntoResponse, Response};
 use axum::{Form, http};
 use serde::Deserialize;
 use std::time::Duration;
 
 use crate::AppState;
+use crate::handlers::settings::Flash;
 use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
@@ -159,33 +160,6 @@ impl ScheduleConfig {
             self.auto_reboot,
         )
     }
-
-    /// Plain-language readout of what's actually configured right now, same
-    /// idea as BackupScheduleConfig::summary in handlers/backups.rs.
-    fn summary(&self) -> String {
-        let when = match self.frequency.as_str() {
-            "weekly" => format!(
-                "every {} at {}",
-                crate::handlers::backups::day_of_week_name(&self.day_of_week),
-                self.check_time
-            ),
-            "monthly" => format!(
-                "on day {} of the month at {}",
-                self.day_of_month, self.check_time
-            ),
-            _ => format!("daily at {}", self.check_time),
-        };
-        let os = if self.auto_apply_os { "on" } else { "off" };
-        let tailscale = if self.auto_apply_tailscale {
-            "on"
-        } else {
-            "off"
-        };
-        let reboot = if self.auto_reboot { "on" } else { "off" };
-        format!(
-            "Checking for updates {when}. Auto-install OS updates: {os}. Auto-update Tailscale: {tailscale}. Auto-reboot if needed: {reboot}."
-        )
-    }
 }
 
 /// Everything the combined updates page needs to know about the OS/Tailscale
@@ -198,12 +172,10 @@ pub(crate) struct OsUpdateData {
     pub(crate) tailscale_upstream: Option<String>,
     pub(crate) tailscale_update_available: bool,
     pub(crate) schedule: ScheduleConfig,
-    pub(crate) schedule_summary: String,
 }
 
 /// Nothing to report: the container has no OS or Tailscale of its own to manage (design 22 §6).
 pub(crate) fn not_managed() -> OsUpdateData {
-    let schedule = ScheduleConfig::defaults();
     OsUpdateData {
         watcher_busy: false,
         os_update_count: None,
@@ -211,8 +183,7 @@ pub(crate) fn not_managed() -> OsUpdateData {
         tailscale_current: None,
         tailscale_upstream: None,
         tailscale_update_available: false,
-        schedule_summary: schedule.summary(),
-        schedule,
+        schedule: ScheduleConfig::defaults(),
     }
 }
 
@@ -244,9 +215,6 @@ pub(crate) async fn gather() -> OsUpdateData {
             )
         };
 
-    let schedule = ScheduleConfig::load().await;
-    let schedule_summary = schedule.summary();
-
     OsUpdateData {
         watcher_busy: busy,
         os_update_count,
@@ -254,39 +222,44 @@ pub(crate) async fn gather() -> OsUpdateData {
         tailscale_current,
         tailscale_upstream,
         tailscale_update_available,
-        schedule,
-        schedule_summary,
+        schedule: ScheduleConfig::load().await,
     }
 }
 
+/// Asks the root helper for `action`; the page renders with `started` in its group, or with why
+/// nothing started when the request file can't be written.
 async fn request_action(
     state: &AppState,
     admin: &crate::models::AdminUser,
     action: &str,
     event_type: &str,
-    started_message: &str,
-) -> Html<String> {
-    let message = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
+    started: Flash,
+) -> Response {
+    let flash = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
         security::record_security_event(&state.db, event_type, Some(&admin.username), None, None)
             .await;
-        started_message.to_string()
+        started
     } else {
-        "Couldn't write the request file - the update watcher may not be set up on this install."
-            .to_string()
+        updates::not_requested(started.at)
     };
-    updates::render_page(state, Some(message)).await
+    updates::render_page(state, Some(flash))
+        .await
+        .into_response()
 }
 
 pub async fn trigger_os_check(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+) -> Response {
     request_action(
         &state,
         &admin,
         "os_check",
         "os_check_triggered",
-        "Refreshing the package list now. Refresh this page in a few seconds.",
+        Flash::done(
+            "os",
+            "Checking for updates. Open this page again in a few seconds.",
+        ),
     )
     .await
 }
@@ -294,14 +267,17 @@ pub async fn trigger_os_check(
 pub async fn trigger_os_upgrade(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+) -> Response {
     request_action(
         &state,
         &admin,
         "os_upgrade",
         "os_upgrade_triggered",
-        "Installing OS updates now - this can take a long time on a Pi's first upgrade. \
-         This page will show \"still working\" until it's done - feel free to check back later.",
+        Flash::done(
+            "os",
+            "Installing updates. This can take a long time on a Pi's first upgrade; open this \
+             page again later.",
+        ),
     )
     .await
 }
@@ -309,13 +285,16 @@ pub async fn trigger_os_upgrade(
 pub async fn trigger_tailscale_update(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+) -> Response {
     request_action(
         &state,
         &admin,
         "tailscale_update",
         "tailscale_update_triggered",
-        "Updating Tailscale now. Refresh this page in a few seconds.",
+        Flash::done(
+            "tailscale",
+            "Updating Tailscale. Open this page again in a few seconds.",
+        ),
     )
     .await
 }
@@ -323,13 +302,16 @@ pub async fn trigger_tailscale_update(
 pub async fn trigger_reboot(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+) -> Response {
     request_action(
         &state,
         &admin,
         "reboot",
         "reboot_triggered",
-        "Rebooting now - the app will be unreachable for about a minute.",
+        Flash::done(
+            "os",
+            "Restarting the Pi. Vibb Phone is back in about a minute.",
+        ),
     )
     .await
 }
@@ -347,17 +329,18 @@ pub struct ScheduleForm {
 
 const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 
+/// Saves the OS/Tailscale schedule (one form, §5.6). A bad frequency or a time that isn't HH:MM
+/// writes nothing (400, the reason in the group).
 pub async fn save_schedule(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ScheduleForm>,
-) -> impl IntoResponse {
+) -> Response {
+    let refuse = |why: &str| Flash::refused("os-schedule", why);
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
-        return (
-            http::StatusCode::BAD_REQUEST,
-            updates::render_page(&state, Some("Invalid frequency.".to_string())).await,
-        )
-            .into_response();
+        let flash = refuse("Unknown frequency - nothing was saved.");
+        let page = updates::render_page(&state, Some(flash)).await;
+        return (http::StatusCode::BAD_REQUEST, page).into_response();
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
@@ -367,15 +350,9 @@ pub async fn save_schedule(
     } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
     } else {
-        return (
-            http::StatusCode::BAD_REQUEST,
-            updates::render_page(
-                &state,
-                Some("The time must look like 03:00 - nothing was saved.".to_string()),
-            )
-            .await,
-        )
-            .into_response();
+        let flash = refuse("The time must look like 03:00 - nothing was saved.");
+        let page = updates::render_page(&state, Some(flash)).await;
+        return (http::StatusCode::BAD_REQUEST, page).into_response();
     };
 
     let config = ScheduleConfig {
@@ -388,7 +365,7 @@ pub async fn save_schedule(
         auto_reboot: form.auto_reboot.is_some(),
     };
 
-    let message = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
+    let flash = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
         .await
         .is_ok()
     {
@@ -400,12 +377,11 @@ pub async fn save_schedule(
             None,
         )
         .await;
-        "Schedule saved.".to_string()
+        Flash::done("os-schedule", "Schedule saved.")
     } else {
-        "Couldn't save the schedule.".to_string()
+        refuse("Couldn't save the schedule.")
     };
-
-    updates::render_page(&state, Some(message))
+    updates::render_page(&state, Some(flash))
         .await
         .into_response()
 }

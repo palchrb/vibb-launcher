@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use crate::AppState;
 use crate::config::SERVER_RELEASE_TAG_PREFIX;
+use crate::handlers::settings::Flash;
 use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
@@ -164,29 +165,6 @@ impl AppUpdateScheduleConfig {
             self.auto_install_enabled,
         )
     }
-
-    /// Plain-language readout of what's actually configured right now, same
-    /// idea as BackupScheduleConfig::summary in handlers/backups.rs.
-    fn summary(&self) -> String {
-        let when = match self.frequency.as_str() {
-            "weekly" => format!(
-                "every {} at {}",
-                crate::handlers::backups::day_of_week_name(&self.day_of_week),
-                self.check_time
-            ),
-            "monthly" => format!(
-                "on day {} of the month at {}",
-                self.day_of_month, self.check_time
-            ),
-            _ => format!("daily at {}", self.check_time),
-        };
-        let auto_install = if self.auto_install_enabled {
-            "on"
-        } else {
-            "off"
-        };
-        format!("Checking for a new version {when}. Auto-install: {auto_install}.")
-    }
 }
 
 /// Everything the combined updates page needs to know about the app's own
@@ -200,7 +178,6 @@ pub(crate) struct AppUpdateData {
     pub(crate) watcher_needs_update: bool,
     pub(crate) reinstall_hint: String,
     pub(crate) schedule: AppUpdateScheduleConfig,
-    pub(crate) schedule_summary: String,
 }
 
 pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
@@ -210,8 +187,6 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
     let update_available = latest_version
         .as_deref()
         .is_some_and(|latest| is_newer(latest, &current_version));
-    let schedule = AppUpdateScheduleConfig::load().await;
-    let schedule_summary = schedule.summary();
 
     AppUpdateData {
         current_version,
@@ -221,27 +196,27 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
         watcher_version: security::installed_watcher_version().await,
         watcher_needs_update: security::watcher_needs_update().await,
         reinstall_hint: security::reinstall_hint(&state.config.server_release_repo),
-        schedule,
-        schedule_summary,
+        schedule: AppUpdateScheduleConfig::load().await,
     }
 }
 
+/// Asks the root helper for `action`; the page renders with `started` in its group, or with why
+/// nothing started when the request file can't be written.
 async fn request_action(
     state: &AppState,
     admin: &crate::models::AdminUser,
     action: &str,
     event_type: &str,
-    started_message: &str,
+    started: Flash,
 ) -> Html<String> {
-    let message = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
+    let flash = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
         security::record_security_event(&state.db, event_type, Some(&admin.username), None, None)
             .await;
-        started_message.to_string()
+        started
     } else {
-        "Couldn't write the request file - the update watcher may not be set up on this install."
-            .to_string()
+        updates::not_requested(started.at)
     };
-    updates::render_page(state, Some(message)).await
+    updates::render_page(state, Some(flash)).await
 }
 
 pub async fn trigger_update(
@@ -249,29 +224,30 @@ pub async fn trigger_update(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
     if let Some(reason) = update_blocked_reason(&state).await {
-        return updates::render_page(&state, Some(reason)).await;
+        let flash = Flash::refused("app", "Run the installer again first").because(reason);
+        return updates::render_page(&state, Some(flash)).await;
     }
     // A failed check doesn't block the button (update.sh refuses a downgrade on its own), but a
     // known release that isn't newer does.
     if let Some(latest) = latest_release_tag(&state.config.server_release_repo).await
         && !is_newer(&latest, crate::APP_VERSION)
     {
-        return updates::render_page(
-            &state,
-            Some(format!(
-                "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
-                crate::APP_VERSION
-            )),
-        )
-        .await;
+        let flash = Flash::refused("app", "Already on the newest version").because(format!(
+            "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
+            crate::APP_VERSION
+        ));
+        return updates::render_page(&state, Some(flash)).await;
     }
     request_action(
         &state,
         &admin,
         "update",
         "system_update_triggered",
-        "Update started. The app will download the new version and restart automatically - \
-         this can take about a minute. Refresh this page shortly.",
+        Flash::done(
+            "app",
+            "Updating. The server downloads the new version and restarts by itself; open this \
+             page again in a minute.",
+        ),
     )
     .await
 }
@@ -285,7 +261,7 @@ pub async fn trigger_restart(
         &admin,
         "restart",
         "system_restart_triggered",
-        "Restarting now. Refresh this page in a few seconds.",
+        Flash::done("app", "Restarting. Open this page again in a few seconds."),
     )
     .await
 }
@@ -301,6 +277,8 @@ pub struct AppUpdateScheduleForm {
 
 const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 
+/// Saves when the server looks for (and maybe installs) a new version - one form (§5.6). A time
+/// that isn't HH:MM writes nothing (400, the reason in the group).
 pub async fn save_app_update_schedule(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -319,13 +297,13 @@ pub async fn save_app_update_schedule(
     } else if security::valid_clock_time(form.check_time.trim()) {
         form.check_time.trim().to_string()
     } else {
+        let flash = Flash::refused(
+            "app-schedule",
+            "The time must look like 04:00 - nothing was saved.",
+        );
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            updates::render_page(
-                &state,
-                Some("The time must look like 04:00 - nothing was saved.".to_string()),
-            )
-            .await,
+            updates::render_page(&state, Some(flash)).await,
         )
             .into_response();
     };
@@ -338,7 +316,7 @@ pub async fn save_app_update_schedule(
         auto_install_enabled: form.auto_install_enabled.is_some(),
     };
 
-    let message = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
+    let flash = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
         .await
         .is_ok()
     {
@@ -350,12 +328,12 @@ pub async fn save_app_update_schedule(
             None,
         )
         .await;
-        "Update-check schedule saved.".to_string()
+        Flash::done("app-schedule", "Schedule saved.")
     } else {
-        "Couldn't save the schedule.".to_string()
+        Flash::refused("app-schedule", "Couldn't save the schedule.")
     };
 
-    updates::render_page(&state, Some(message))
+    updates::render_page(&state, Some(flash))
         .await
         .into_response()
 }

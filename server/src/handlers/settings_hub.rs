@@ -130,7 +130,7 @@ fn plural(n: i64, zero: &str, one: &str, many: &str) -> String {
 
 /// Midnight of `now`'s day in its own zone, as the UTC text `received_at` is stored in
 /// (`datetime('now')`).
-fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
+pub(crate) fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
     let zone = now.timezone();
     let midnight = now
         .date_naive()

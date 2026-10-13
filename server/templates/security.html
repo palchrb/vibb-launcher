@@ -5,83 +5,73 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Security log</h1>
-    </div>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
+    <h1 class="page-title">Security Log</h1>
 
-    {% if let Some(s) = success %}
-    <div class="success">{{ s }}</div>
-    {% endif %}
-
-    <div class="card">
-        <h2>Banned IPs</h2>
-        {% if banned_ips.is_empty() %}
-        <p class="empty-state">No IPs are currently banned.</p>
-        {% else %}
-        <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>IP address</th>
-                    <th>Banned until</th>
-                    <th>Reason</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for b in banned_ips %}
-                <tr>
-                    <td>{{ b.ip_address }}</td>
-                    <td>{{ b.banned_until }}</td>
-                    <td>{% if let Some(r) = b.reason %}{{ r }}{% endif %}</td>
-                    <td>
-                        <form method="post" action="/security/unban">
-                            <input type="hidden" name="ip" value="{{ b.ip_address }}">
-                            <button type="submit" class="button-small">Unban</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    {#- Unban is one tap (§5.6): it can be blocked again. It comes back to this group (#banned). -#}
+    <section id="banned" aria-labelledby="banned-title">
+        <h2 class="group-header" id="banned-title">Blocked Addresses</h2>
+        <div class="group">
+            {% for b in bans %}
+            <div class="row" data-ban>
+                <span class="row-label">{{ b.ip }}<span class="row-sub"{% if !b.exact.is_empty() %} title="{{ b.exact }}"{% endif %}>Until {{ b.until }}{% if let Some(reason) = b.reason %} · {{ reason }}{% endif %}</span></span>
+                <form method="post" action="/security/unban#banned" class="row-end">
+                    <input type="hidden" name="ip" value="{{ b.ip }}">
+                    <button type="submit" class="row-action" aria-label="Unban {{ b.ip }}">Unban</button>
+                </form>
+            </div>
+            {% else %}
+            <p class="row row-note">No addresses are blocked.</p>
+            {% endfor %}
+            {% if let Some(ip) = unbanned %}<p class="flash" data-flash="banned" role="status">{{ ip }} is unbanned.</p>{% endif %}
         </div>
-        {% endif %}
-    </div>
+        <p class="group-footer">Too many wrong passwords block an address for a while.</p>
+    </section>
 
-    <div class="card">
-        <h2>{% if paged %}Older activity{% else %}Recent activity{% endif %}</h2>
-        {% if paged %}<p><a href="/security">&larr; Newest events</a></p>{% endif %}
-        <p class="subtitle">200 events a page, newest first: sign-ins and failed ones, lockouts, IP bans, refused requests, enrollments, and the parent-PIN use and lockouts the phones report. Kept 180 days. Floods (refused requests, failed enrollments and device logins) are one row per address per minute, with a count. An IPv6 address counts as its whole /64.</p>
-        <div class="table-wrap">
-        <table>
-            <thead>
-                <tr>
-                    <th>When</th>
-                    <th>Event</th>
-                    <th>Username</th>
-                    <th>IP address</th>
-                    <th>Detail</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for e in events %}
-                <tr>
-                    <td>{{ e.created_at }}</td>
-                    <td>{{ e.event_type }}</td>
-                    <td>{% if let Some(u) = e.username %}{{ u }}{% endif %}</td>
-                    <td>{% if let Some(ip) = e.ip_address %}{{ ip }}{% endif %}</td>
-                    <td>{% if let Some(d) = e.detail %}{{ d }}{% endif %}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <section id="activity" aria-labelledby="activity-title">
+        <h2 class="group-header" id="activity-title">{% if paged %}Older Activity{% else %}Recent Activity{% endif %}</h2>
+        <div class="group">
+            {% if paged %}
+            <a class="row" href="/security#activity" data-row="newest">
+                <span class="row-label">Newest events</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
+            {% for e in events %}
+            <details class="info cell" data-event>
+                <summary class="row">
+                    <span class="row-label">{{ e.label }}{% if !e.who.is_empty() %}<span class="row-sub">{{ e.who }}</span>{% endif %}</span>
+                    <span class="row-value"{% if !e.exact.is_empty() %} title="{{ e.exact }}"{% endif %}>{{ e.when }}</span>
+                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Details" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                </summary>
+                <div class="info-panel">
+                    {% if !e.exact.is_empty() %}<p>{{ e.exact }}</p>{% endif %}
+                    {% if let Some(detail) = e.detail %}<p>{{ detail }}</p>{% endif %}
+                    <p>Logged as {{ e.kind }}.</p>
+                </div>
+            </details>
+            {% else %}
+            <p class="row row-note">Nothing logged yet.</p>
+            {% endfor %}
+            {% if let Some(id) = older_than %}
+            <a class="row" href="/security?before={{ id }}#activity" data-row="older">
+                <span class="row-label">Older events</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
         </div>
-        {% if let Some(id) = older_than %}
-        <p><a href="/security?before={{ id }}">Older events &rarr;</a></p>
-        {% endif %}
-    </div>
+        <div class="group-footer">200 a page, newest first, kept 180 days.
+            <details class="info">
+                <summary aria-label="About the security log"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Sign-ins and failed ones, blocked addresses, refused requests, phones connecting, your changes, and what the phones report about the Parent PIN.</p>
+                    <p>Floods (refused requests, wrong setup codes, phone sign-ins) are one row per address and minute, with a count. An IPv6 address counts as its whole /64.</p>
+                </div>
+            </details>
+        </div>
+    </section>
 </main>
 </body>
 </html>

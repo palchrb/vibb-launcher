@@ -557,45 +557,57 @@ pub async fn setup_2fa_verify(
     Redirect::to("/").into_response()
 }
 
-/// Voluntary account settings, reachable any time from the nav (unlike
+/// Voluntary account settings, reachable any time from Settings (unlike
 /// `/auth/change-password` and `/auth/setup-2fa` above, which are only ever
 /// reached as forced onboarding steps and bounce back to `/` once already
 /// satisfied). Lets an admin change their password whenever they want, and
 /// recover from a lost authenticator app by resetting 2FA and re-enrolling.
+///
+/// Its forms render their answer in the POST's response (a password never goes into a URL), each
+/// posting to its group's fragment, so the answer lands on the form that sent it (design 31 §5.1).
 #[derive(Template)]
 #[template(path = "account.html")]
 struct AccountTemplate {
     title: String,
     username: String,
     totp_enabled: bool,
-    error: Option<String>,
-    success: Option<String>,
+    /// The password form's result: done (green) or why it was refused.
+    flash: Option<crate::handlers::settings::Flash>,
+    /// The field a refused password change names ("current_password", ...).
+    password_field: &'static str,
+    /// Why the two-factor reset was refused; its confirm then renders open.
+    reset_error: Option<&'static str>,
     login_warning: Option<String>,
     live_warning: Option<String>,
-    warning_back: &'static str,
+}
+
+/// What a form on Account sent back, besides the page.
+#[derive(Default)]
+struct AccountAnswer {
+    flash: Option<crate::handlers::settings::Flash>,
+    password_field: &'static str,
+    reset_error: Option<&'static str>,
 }
 
 async fn render_account(
+    state: &AppState,
     session: &Session,
     admin: &AdminUser,
-    error: Option<String>,
-    success: Option<String>,
+    status: StatusCode,
+    answer: AccountAnswer,
 ) -> axum::response::Response {
-    Html(
-        AccountTemplate {
-            title: "Account".to_string(),
-            username: admin.username.clone(),
-            totp_enabled: admin.totp_enabled,
-            error,
-            success,
-            login_warning: login_warning_of(session).await,
-            live_warning: live_warning(admin),
-            warning_back: "/account",
-        }
-        .render()
-        .unwrap(),
-    )
-    .into_response()
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let page = AccountTemplate {
+        title: "Account & Password".to_string(),
+        username: admin.username.clone(),
+        totp_enabled: admin.totp_enabled,
+        flash: answer.flash,
+        password_field: answer.password_field,
+        reset_error: answer.reset_error,
+        login_warning: login_warning_of(session).await,
+        live_warning: live_warning(admin, &zone, chrono::Utc::now()),
+    };
+    (status, Html(page.render().unwrap())).into_response()
 }
 
 /// The banner after a sign-in that followed failed 2FA codes, until dismissed.
@@ -608,10 +620,18 @@ pub async fn login_warning_of(session: &Session) -> Option<String> {
 }
 
 pub async fn account_page(
+    State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    render_account(&session, &admin, None, None).await
+    render_account(
+        &state,
+        &session,
+        &admin,
+        StatusCode::OK,
+        AccountAnswer::default(),
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -621,29 +641,37 @@ pub struct UpdatePasswordForm {
     confirm_password: String,
 }
 
+/// Changes the password. A refusal (too short, the two differ, a wrong current password) writes
+/// nothing and says why under that field (400). Done: the new hash and the session epoch move in
+/// one UPDATE, so either every other session is signed out with it or nothing changed (a DB error
+/// is a 500, never "Password changed").
 pub async fn update_account_password(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<UpdatePasswordForm>,
 ) -> impl IntoResponse {
-    if form.new_password.len() < security::MIN_PASSWORD_LEN {
-        return render_account(
-            &session,
-            &admin,
-            Some("New password must be at least 12 characters.".to_string()),
-            None,
-        )
-        .await;
-    }
-    if form.new_password != form.confirm_password {
-        return render_account(
-            &session,
-            &admin,
-            Some("New passwords don't match.".to_string()),
-            None,
-        )
-        .await;
+    use crate::handlers::settings::Flash;
+    let refuse = |field: &'static str, why: &'static str| AccountAnswer {
+        flash: Some(Flash::refused("password", why)),
+        password_field: field,
+        reset_error: None,
+    };
+    let refused = if form.new_password.len() < security::MIN_PASSWORD_LEN {
+        Some(refuse(
+            "new_password",
+            "Use at least 12 characters. Nothing was changed.",
+        ))
+    } else if form.new_password != form.confirm_password {
+        Some(refuse(
+            "confirm_password",
+            "The new passwords don't match. Nothing was changed.",
+        ))
+    } else {
+        None
+    };
+    if let Some(answer) = refused {
+        return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
     }
     let new_hash = match state
         .passwords
@@ -656,29 +684,35 @@ pub async fn update_account_password(
     {
         Ok(Some(hash)) => hash,
         Ok(None) => {
-            return render_account(
-                &session,
-                &admin,
-                Some("Current password is incorrect.".to_string()),
-                None,
-            )
-            .await;
+            let answer = refuse(
+                "current_password",
+                "The current password is wrong. Nothing was changed.",
+            );
+            return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
         }
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
 
     // A new password makes the old one's wrong codes moot: the counter and the lock go too, so
     // the parent can sign in elsewhere again.
-    sqlx::query(
+    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
-         locked_until = NULL WHERE id = ?",
+         locked_until = NULL, session_epoch = session_epoch + 1 WHERE id = ? \
+         RETURNING session_epoch",
     )
     .bind(&new_hash)
     .bind(admin.id)
-    .execute(&state.db)
-    .await
-    .ok();
-    signed_out_elsewhere(&state, &session, admin.id).await;
+    .fetch_optional(&state.db)
+    .await;
+    let Ok(Some(epoch)) = epoch else {
+        tracing::error!(?epoch, "couldn't save the new password");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't save the new password - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    };
+    session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // The warning said to change the password: done.
     session
         .remove::<String>(admin_auth::LOGIN_WARNING_KEY)
@@ -694,13 +728,19 @@ pub async fn update_account_password(
     )
     .await;
 
-    render_account(
-        &session,
-        &admin,
-        None,
-        Some("Password changed. Every other session is signed out.".to_string()),
-    )
-    .await
+    let admin = AdminUser {
+        failed_login_attempts: 0,
+        locked_until: None,
+        ..admin
+    };
+    let answer = AccountAnswer {
+        flash: Some(Flash::done(
+            "password",
+            "Password changed. Every other browser and phone is signed out.",
+        )),
+        ..AccountAnswer::default()
+    };
+    render_account(&state, &session, &admin, StatusCode::OK, answer).await
 }
 
 /// The "Reset two-factor login" form: the current password.
@@ -714,11 +754,12 @@ pub struct ResetTotpForm {
 /// admin straight back through mandatory 2FA setup (`require_full_auth`
 /// redirects there for any account with `totp_enabled = false`) with a
 /// brand-new QR code - the recovery path for a lost/uninstalled
-/// authenticator app while still signed in. Every other session ends. (Signed out and locked
-/// out: `kid_phone_server reset-2fa <user>`.)
+/// authenticator app while still signed in. Every other session ends, in the same UPDATE. (Signed
+/// out and locked out: `kid_phone_server reset-2fa <user>`.)
 ///
 /// It asks for the current password, like a password change (user decision on QA 22 M5): a
-/// stolen session can't swap in its own authenticator and sign the parent out.
+/// stolen session can't swap in its own authenticator and sign the parent out. A wrong one renders
+/// Account with the confirm open and the reason under the field (400).
 pub async fn reset_totp(
     State(state): State<AppState>,
     session: Session,
@@ -740,32 +781,30 @@ pub async fn reset_totp(
                 Some("wrong current password"),
             )
             .await;
-            return (
-                StatusCode::BAD_REQUEST,
-                render_account(
-                    &session,
-                    &admin,
-                    Some(
-                        "Current password is incorrect - two-factor login was not reset."
-                            .to_string(),
-                    ),
-                    None,
-                )
-                .await,
-            )
-                .into_response();
+            let answer = AccountAnswer {
+                reset_error: Some("The current password is wrong. Two-factor login was not reset."),
+                ..AccountAnswer::default()
+            };
+            return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
         }
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     }
-    sqlx::query(
-        "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL \
-         WHERE id = ?",
+    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
+         session_epoch = session_epoch + 1 WHERE id = ? RETURNING session_epoch",
     )
     .bind(admin.id)
-    .execute(&state.db)
-    .await
-    .ok();
-    signed_out_elsewhere(&state, &session, admin.id).await;
+    .fetch_optional(&state.db)
+    .await;
+    let Ok(Some(epoch)) = epoch else {
+        tracing::error!(?epoch, "couldn't reset two-factor login");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't reset two-factor login - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    };
+    session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
 
     security::record_security_event(
         &state.db,
@@ -779,13 +818,22 @@ pub async fn reset_totp(
     Redirect::to("/auth/setup-2fa").into_response()
 }
 
-/// "Sign out everywhere" (design 22 §3.2.2): every session of this account ends, this one too.
+/// "Sign Out Everywhere…" (design 22 §3.2.2, behind a confirm since design 31): every session of
+/// this account ends, this one too. If the epoch can't be moved, nothing is signed out and the
+/// parent is told so (500) - this session is kept, so they know it failed.
 pub async fn sign_out_everywhere(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
-    admin_auth::bump_epoch(&state.db, admin.id).await;
+) -> axum::response::Response {
+    if admin_auth::bump_epoch(&state.db, admin.id).await.is_none() {
+        tracing::error!("couldn't sign out everywhere");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't sign out the other sessions - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    }
     security::record_security_event(
         &state.db,
         "signed_out_everywhere",
@@ -795,7 +843,7 @@ pub async fn sign_out_everywhere(
     )
     .await;
     session.flush().await.ok();
-    Redirect::to("/login")
+    Redirect::to("/login").into_response()
 }
 
 /// Hides the failed-2FA banner (it stays in the security log).
@@ -878,23 +926,28 @@ pub fn login_warning_row(warning: Option<&str>) -> Option<WarningRow> {
 
 /// For a signed-in parent (QA 22 Low 9): wrong 2FA codes entered since their last complete
 /// sign-in, and the lock they caused - the post-sign-in banner can't say it, since the lock keeps
-/// new sign-ins out. `admin` is the row `require_full_auth` just read.
-pub fn live_warning(admin: &AdminUser) -> Option<String> {
+/// new sign-ins out. `admin` is the row `require_full_auth` just read; the lock's end in the Phone
+/// Setup zone ("until 14:05", "until 00:05 tomorrow").
+pub fn live_warning(
+    admin: &AdminUser,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
     if admin.failed_login_attempts <= 0 {
         return None;
     }
-    let locked = admin
+    let lock = admin
         .locked_until
         .as_deref()
-        .and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok())
-        .filter(|until| until.and_utc() > chrono::Utc::now());
-    let lock = match locked {
-        Some(until) => format!(
-            ", and new sign-ins are locked until {} UTC",
-            until.format("%Y-%m-%d %H:%M")
-        ),
-        None => String::new(),
-    };
+        .and_then(crate::display_time::parse_db_utc)
+        .filter(|until| *until > now)
+        .map(|until| {
+            format!(
+                ", and new sign-ins are locked until {}",
+                zone.until(until, now)
+            )
+        })
+        .unwrap_or_default();
     let n = admin.failed_login_attempts;
     Some(format!(
         "{n} wrong two-factor code{} entered since your last sign-in{lock}. Whoever entered them \
