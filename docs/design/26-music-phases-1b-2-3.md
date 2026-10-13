@@ -79,6 +79,14 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   in logs. The credentials are never shown back in the PWA and never logged.
 
 ### 3 - Spotify (a spike first)
+- **Status (2026-10-13):** the spike ran (`docs/testing/spotify-spike.md`, branch `spotify-spike`): App Remote's login
+  failed on the emulator (and needs Play services activities lock task blocks), the Web Playback SDK in the spike's
+  WebView passed (item 10, forced Doze included). The user chose that WebView route and defined the product (a share
+  link in the PWA, ticked phones, a tile that behaves like a podcast). The buildable spec is
+  **`docs/design/26c-spotify.md`** (branch `music-3-spotify`, from `main` at `fff8c28`, rebased on `437eb84`): the
+  family's own developer app, PKCE logins in the parent's browser, the server's Web API listing, a `SpotifyRenderer`
+  around a headless WebView, the launcher's token courier and DNS exemption, a fake Spotify; Spotify on Sonos is its
+  later step 8. The App Remote bullets below are history.
 - **New ground:** the Pi's Spotify path (go-librespot) doesn't carry over to Android (`vibb-spotify-options.md`: the
   audio-key denial for new accounts). Only `tests/sonos_spotify_queue.py` (Sonos owning a Spotify queue via ShareLink)
   is reusable, for Spotify on Sonos. Everything else is designed from scratch, from the spike's answers.

@@ -115,8 +115,14 @@ speakers) and the device checks with the family's Storytel account. Its server m
 (`0072_music_storytel.sql`, after design 27's 0070 and 1b's 0071, applied in that order). Release after the user's
 merge (26b "Release"): the server (a version bump past 0.24.0 if that is tagged first), the launcher, then
 `music-v0.3.0-rc.1` (versionCode 2999) on the merge commit - instead of 1b's `music-v0.2.0-rc.1` when both land
-together. Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
-(`docs/testing/spotify-spike.md` there).
+together. **Phase 3, Spotify** (design 26c, `docs/design/26c-spotify.md`, architect draft 2026-10-13 on branch
+`music-3-spotify`): the spike (`docs/testing/spotify-spike.md`, branch `spotify-spike`) passed item 10 on the emulator,
+and the user chose the WebView route - Spotify's Web Playback SDK in a headless WebView in the music app, no Spotify
+app on the phone. The parent adds a share link in the PWA with per-phone ticks; the server lists it like an RSS feed
+with the family's own developer app (bring your own client ID, PKCE logins in the parent's browser, refresh tokens
+sealed); the phone plays it as a third renderer with a server-minted token. Next: design QA, then steps 1-7 (server
+0.26.0, migration 0073, a launcher tag, `music-v0.4.0`); owed by the user: the spike's DNS capture and Jelly Star Doze
+run (26c §14).
 
 ## Repos
 
@@ -346,7 +352,8 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
   calls in/out, one-call rule, emergency from lock, call notification cleared,
   screenshots — run after every change and before allowing Android updates.
 - **Vibb music on Android: Spotify via App Remote (option A) is the main plan**
-  (user, 2026-10-06; docs/design/vibb-spotify-options.md). Requires a Play account
+  (user, 2026-10-06; docs/design/vibb-spotify-options.md). **Superseded 2026-10-13**: after the spike the
+  user chose the Web Playback SDK in a WebView (design 26c), no Spotify app and no engine-app state. Requires a Play account
   on the phone and an "engine app" state in handy for Spotify. Start with the
   device spike.
 - **Custom DNS upstream** (user, 2026-10-06): DNS page option "own DNS server"
