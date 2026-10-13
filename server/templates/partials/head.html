@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=8">
+<link rel="stylesheet" href="/static/style.css?v=9">
 
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
@@ -18,5 +18,6 @@
      deferred, so form.submit() is hooked before any control can call it. -->
 <script src="/static/scroll-restore.js?v=1"></script>
 <!-- Controls marked data-autosave save their form on change (design 31 §5.2), through the hooked
-     form.submit(). Deferred: it only listens on the document. -->
-<script src="/static/autosave.js?v=1" defer></script>
+     form.submit(). Not deferred either: it only listens on the document, so a switch tapped while a
+     long page is still loading saves too (qa-31-s1-code L1). -->
+<script src="/static/autosave.js?v=2"></script>

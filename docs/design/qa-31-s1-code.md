@@ -340,3 +340,21 @@ Run the server from `design-31-s1` (plus fixes). Use a phone, or desktop Chrome'
      ask).
    - iPhone: the icon keeps its old name until it is re-added.
    - Neither should reinstall or lose the session.
+
+## Fixes (implementer, 2026-10-13, on `design-31-s1`)
+
+| # | Fix |
+|---|---|
+| M1 | `style.css`: inside a grouped list the focus ring is drawn inside the row: `.group .row:focus`, `.group summary:focus`, `.group .cell > button:focus` and `.device-card:focus` get `outline-offset: -2px`, so `overflow: hidden` can't clip it (Sign Out, a lone phone, a lone app). Still an outline, so it shows in forced colours. The Tab check on a desktop browser is owed (user check 5). |
+| L1 | `autosave.js` is loaded without `defer`, right after `scroll-restore.js` (`autosave.js?v=2`); the head comment, the script's header and §5.2 say so. `the_app_is_called_vibb_phone_with_a_stable_identity` pins the un-deferred tag. |
+| L2 | `autosave.js`: an Enter on a select a key went to, with nothing pending, is remembered (`entered`); the `change` that follows saves at once. Any other key forgets it, and so does `focusout`. Two jstests: "keydown Enter, then change" saves once; an Enter without a change doesn't make a later arrow key save. |
+| L3 | The hub says "No lists" when no shared list is on (doc comment, unit test and `hub_values_say_none_when_there_is_nothing`). |
+| L4 | `provision_qr.html`'s two blocking cards are `card card-alarm`: a 1.5 px `var(--red)` border in both themes. |
+| L5 | `style.css`: `.glyph-grid`/`.color-grid`/`.glyph-choice`/`.color-choice` use margins instead of flex `gap`; `word-break: break-word` comes before each of the six `overflow-wrap: anywhere`; `wallpapers.html` gives `div.wallpaper-swatch` `height: 0; padding-top: 177.78%` under `@supports not (aspect-ratio: 1)` (the `<img>` keeps its own 9:20 shape). The status sentence now says what `style.css` does and lists what is left, with the step that rebuilds each page: inline flex `gap` in `device_detail.html`, `dns_filter.html`, `device_locate.html` and the `music*.html` style blocks, and `overflow-wrap: anywhere` without the fallback in the `music*.html` pages. |
+| L6 | `.knob` has `display: inline-block`. |
+| L7 | Dark `--strong-hover` is `#0956B5` (white 6.98:1), like light. |
+| L8 | `utc_start_of_day<Tz: TimeZone>`: exact strings for +02:00, -05:00 and UTC, and a test zone without a midnight (the 24 h fallback). The backup test writes two zips with set mtimes (40 and 3 days old), a newer `notes.txt` and a newer `.zip.part`, and expects the 3-day-old zip's label. `template_files_in(root)` is tested on a temp tree (`a.html`, `device/b.html`, `device/deeper/c.html`; `partials/p.html` and `sw.js` left out). |
+| Nits | `scroll-restore.js`'s comment names `data-autosave`; `DEPLOY.md` says "Settings > Phone Setup" there too; the manifest's `background_color` is `#F2F2F7`; input, select and textarea borders use `--field-border` (`#86868B` light, `#6E6E73` dark; 3:1 or more against the field and the card); `.row` drops the margin of the first visible child after leading hidden inputs or a `[hidden]` first child, and the CSS says hidden inputs go first. The spec names step 15 as the step that removes the brand bar from the tab landing pages (§3.0, §8), and notes that "today" is UTC midnight on the Docker image until step 2. |
+
+Checks after the fixes: `cargo test` 676 passed; `node --test jstest/*.test.js` 16 passed; `cargo fmt --check`
+clean; `cargo clippy --all-targets` 13 warnings, all in files the step doesn't touch.

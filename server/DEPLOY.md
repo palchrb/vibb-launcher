@@ -180,7 +180,7 @@ that lets `tag:kid` reach only the phones' port (`8444` above) on this box (secu
 One-time means one key per phone setup. Settings > Phone Setup holds a single key, and every setup QR carries it:
 before setting up a phone (or setting one up again), make a new key in the Tailscale admin console and paste it
 there. The phone uses it once; after that the key, and any photo of the QR, is worth nothing. Remove it from
-Provisioning afterwards if you like - it is dead either way. A phone already set up keeps working on its stored node
+Settings > Phone Setup afterwards if you like - it is dead either way. A phone already set up keeps working on its stored node
 state; the key only matters for a setup. The key is write-only on Settings > Phone Setup since 0.23.0. The launcher
 deletes its copy once the phone is on the tailnet (launcher security wave, M12) and comes up from the stored node state
 after that - its Settings then say "On the tailnet - the key was deleted". A phone whose node was removed from the

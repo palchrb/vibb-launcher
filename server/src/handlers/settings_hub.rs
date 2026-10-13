@@ -13,7 +13,7 @@
 use askama::Template;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};
-use chrono::{DateTime, Local, NaiveDateTime, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use sqlx::SqlitePool;
 use std::path::Path;
 
@@ -33,7 +33,8 @@ struct SettingsHubTemplate {
 pub struct HubValues {
     /// Everyone's rules: "2 rules".
     pub time_rules: Option<String>,
-    /// Shared blocklists switched on: "3 lists", "Off".
+    /// Shared blocklists switched on: "3 lists", "No lists" (custom domains and a phone's own
+    /// lists may still filter, so never "Off").
     pub web_filter: Option<String>,
     /// Blocked domains the phones reported today: "12 today".
     pub blocked_today: Option<String>,
@@ -71,7 +72,7 @@ pub async fn hub_values(db: &SqlitePool, backup_dir: &Path, now: DateTime<Local>
         None,
     )
     .await;
-    let since = utc_start_of_local_day(now);
+    let since = utc_start_of_day(now);
     let blocked = count(
         db,
         "SELECT COUNT(*) FROM device_dns_events WHERE received_at >= ?",
@@ -81,7 +82,7 @@ pub async fn hub_values(db: &SqlitePool, backup_dir: &Path, now: DateTime<Local>
     let wallpapers = count(db, "SELECT COUNT(*) FROM wallpapers", None).await;
     HubValues {
         time_rules: rules.map(|n| plural(n, "No rules", "rule", "rules")),
-        web_filter: lists.map(|n| plural(n, "Off", "list", "lists")),
+        web_filter: lists.map(|n| plural(n, "No lists", "list", "lists")),
         blocked_today: blocked.map(|n| {
             if n == 0 {
                 "None today".to_string()
@@ -120,13 +121,15 @@ fn plural(n: i64, zero: &str, one: &str, many: &str) -> String {
     }
 }
 
-/// Local midnight today as the UTC text `received_at` is stored in (`datetime('now')`).
-fn utc_start_of_local_day(now: DateTime<Local>) -> String {
+/// Midnight of `now`'s day in its own zone, as the UTC text `received_at` is stored in
+/// (`datetime('now')`).
+fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
+    let zone = now.timezone();
     let midnight = now
         .date_naive()
         .and_hms_opt(0, 0, 0)
-        .and_then(|m| m.and_local_timezone(Local).earliest())
-        // No local midnight (a DST gap at 00:00): the last 24 hours.
+        .and_then(|m| m.and_local_timezone(zone).earliest())
+        // No midnight that day (a DST gap at 00:00): the last 24 hours.
         .unwrap_or(now - chrono::Duration::hours(24));
     midnight
         .with_timezone(&Utc)
@@ -191,15 +194,94 @@ mod tests {
     fn counts_read_as_short_values() {
         assert_eq!(plural(0, "No rules", "rule", "rules"), "No rules");
         assert_eq!(plural(1, "No rules", "rule", "rules"), "1 rule");
-        assert_eq!(plural(3, "Off", "list", "lists"), "3 lists");
+        assert_eq!(plural(0, "No lists", "list", "lists"), "No lists");
+        assert_eq!(plural(3, "No lists", "list", "lists"), "3 lists");
+    }
+
+    fn zoned(offset_hours: i32, local: &str) -> DateTime<chrono::FixedOffset> {
+        chrono::FixedOffset::east_opt(offset_hours * 3600)
+            .unwrap()
+            .from_local_datetime(&at(local))
+            .unwrap()
     }
 
     #[test]
-    fn today_starts_at_local_midnight_in_stored_utc() {
-        let now = Local::now();
-        let start = utc_start_of_local_day(now);
-        let parsed = NaiveDateTime::parse_from_str(&start, "%Y-%m-%d %H:%M:%S").unwrap();
-        let age = now.with_timezone(&Utc).naive_utc() - parsed;
-        assert!(age >= chrono::Duration::zero() && age <= chrono::Duration::hours(25));
+    fn today_starts_at_the_zones_midnight_in_stored_utc() {
+        // Oslo in summer: midnight local is 22:00 UTC the day before.
+        assert_eq!(
+            utc_start_of_day(zoned(2, "2026-10-13 10:00")),
+            "2026-10-12 22:00:00"
+        );
+        // New York: midnight local is 05:00 UTC the same day.
+        assert_eq!(
+            utc_start_of_day(zoned(-5, "2026-10-13 10:00")),
+            "2026-10-13 05:00:00"
+        );
+        assert_eq!(
+            utc_start_of_day(zoned(0, "2026-10-13 00:00")),
+            "2026-10-13 00:00:00"
+        );
+    }
+
+    /// A zone whose clocks jump from 00:00 to 01:00 on 2026-03-29 (UTC+1 before, UTC+2 after):
+    /// that day has no midnight.
+    #[derive(Clone, Copy, Debug)]
+    struct MidnightGap;
+
+    impl MidnightGap {
+        fn switch() -> NaiveDateTime {
+            at("2026-03-28 23:00") // 00:00 local, in UTC
+        }
+        fn offset_at_utc(utc: &NaiveDateTime) -> chrono::FixedOffset {
+            let hours = if *utc < Self::switch() { 1 } else { 2 };
+            chrono::FixedOffset::east_opt(hours * 3600).unwrap()
+        }
+    }
+
+    impl TimeZone for MidnightGap {
+        type Offset = chrono::FixedOffset;
+        fn from_offset(_: &chrono::FixedOffset) -> Self {
+            MidnightGap
+        }
+        fn offset_from_local_date(
+            &self,
+            local: &chrono::NaiveDate,
+        ) -> chrono::LocalResult<chrono::FixedOffset> {
+            self.offset_from_local_datetime(&local.and_hms_opt(12, 0, 0).unwrap())
+        }
+        fn offset_from_local_datetime(
+            &self,
+            local: &NaiveDateTime,
+        ) -> chrono::LocalResult<chrono::FixedOffset> {
+            let gap_start = at("2026-03-29 00:00");
+            let gap_end = at("2026-03-29 01:00");
+            if *local >= gap_start && *local < gap_end {
+                chrono::LocalResult::None
+            } else if *local < gap_start {
+                chrono::LocalResult::Single(chrono::FixedOffset::east_opt(3600).unwrap())
+            } else {
+                chrono::LocalResult::Single(chrono::FixedOffset::east_opt(7200).unwrap())
+            }
+        }
+        fn offset_from_utc_date(&self, utc: &chrono::NaiveDate) -> chrono::FixedOffset {
+            Self::offset_at_utc(&utc.and_hms_opt(0, 0, 0).unwrap())
+        }
+        fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> chrono::FixedOffset {
+            Self::offset_at_utc(utc)
+        }
+    }
+
+    #[test]
+    fn a_day_without_midnight_counts_the_last_24_hours() {
+        // 10:00 local (UTC+2) on the gap day = 08:00 UTC; 24 h before that.
+        let now = MidnightGap
+            .from_local_datetime(&at("2026-03-29 10:00"))
+            .unwrap();
+        assert_eq!(utc_start_of_day(now), "2026-03-28 08:00:00");
+        // The next day has its midnight again: 00:00 local = 22:00 UTC.
+        let next = MidnightGap
+            .from_local_datetime(&at("2026-03-30 10:00"))
+            .unwrap();
+        assert_eq!(utc_start_of_day(next), "2026-03-29 22:00:00");
     }
 }

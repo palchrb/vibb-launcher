@@ -19,6 +19,8 @@
     --chev: #C4C4C7;
     --row-active: #E5E5EA;
     --field-bg: #F2F2F7;
+    /* A field's edge: 3:1 against the field and the card (WCAG 1.4.11). */
+    --field-border: #86868B;
 
     --tint: #0B66D6;
     --tint-hover: #084C9E;
@@ -90,11 +92,12 @@
         --chev: #5A5A5F;
         --row-active: #2C2C2E;
         --field-bg: #000000;
+        --field-border: #6E6E73;
 
         --tint: #4A9BFF;
         --tint-hover: #7AB6FF;
         --strong: #0B66D6;
-        --strong-hover: #1A75E5;
+        --strong-hover: #0956B5;
         --destructive: #D70015;
         --destructive-hover: #E5172B;
 
@@ -181,6 +184,15 @@ summary:focus:not(:focus-visible) {
     outline: none;
 }
 
+/* Inside a grouped list (overflow: hidden, for the rounded corners) the ring is drawn inside the
+   row, or the group would clip it - a lone row would show no focus at all (qa-31-s1-code M1). */
+.group .row:focus,
+.group summary:focus,
+.group .cell > button:focus,
+.device-card:focus {
+    outline-offset: -2px;
+}
+
 input[type="checkbox"],
 input[type="radio"] {
     accent-color: var(--switch-on);
@@ -221,6 +233,7 @@ input[type="radio"] {
     font-weight: 700;
     line-height: 1.15;
     margin: 4px 0 20px;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -240,6 +253,7 @@ input[type="radio"] {
     line-height: 1.2;
     margin: 0 12px 0 0;
     min-width: 0;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -368,6 +382,14 @@ input[type="radio"] {
     margin-left: 12px;
 }
 
+/* The spacing follows the DOM order: hidden inputs go first in a row (or outside it), and the
+   first visible child after them gets no margin. */
+.row > input[type="hidden"]:first-child + *,
+.row > input[type="hidden"]:first-child + input[type="hidden"] + *,
+.row > [hidden]:first-child + * {
+    margin-left: 0;
+}
+
 a.row:hover {
     color: var(--label);
 }
@@ -428,6 +450,7 @@ summary.row:active {
 .row-label {
     flex: 1 1 auto;
     min-width: 0;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -445,6 +468,7 @@ summary.row:active {
     color: var(--label-2);
     font-size: 1rem;
     text-align: right;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -525,6 +549,7 @@ summary.row:active {
 }
 
 .knob {
+    display: inline-block;
     flex: none;
     width: 27px;
     height: 27px;
@@ -844,6 +869,11 @@ details.confirm > summary.row {
     margin-bottom: 20px;
 }
 
+/* A card that blocks the task (the provisioning page's missing setup). */
+.card-alarm {
+    border: 1.5px solid var(--red);
+}
+
 .auth-page .card {
     width: 100%;
     max-width: 400px;
@@ -887,7 +917,7 @@ select,
 textarea {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid var(--sep-light);
+    border: 1px solid var(--field-border);
     border-radius: 10px;
     background: var(--field-bg);
     color: var(--label);
@@ -1019,6 +1049,7 @@ button:hover,
     padding: 10px 14px;
     margin-bottom: 16px;
     font-size: 0.9375rem;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -1205,6 +1236,7 @@ th {
 
 .checkbox-row > span {
     min-width: 0;
+    word-break: break-word;
     overflow-wrap: anywhere;
 }
 
@@ -1344,10 +1376,15 @@ th {
 .color-grid {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
     border: none;
     padding: 0;
     margin: 0 0 16px;
+}
+
+/* Spaced with margins, not flex gap (Safari 14.0). */
+.glyph-grid > *,
+.color-grid > * {
+    margin-bottom: 8px;
 }
 
 .glyph-grid legend,
@@ -1361,9 +1398,13 @@ th {
 .color-choice {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
     font-weight: normal;
-    margin: 0 8px 0 0;
+    margin: 0 8px 8px 0;
+}
+
+.glyph-choice > * + *,
+.color-choice > * + * {
+    margin-left: 4px;
 }
 
 .glyph-choice input,

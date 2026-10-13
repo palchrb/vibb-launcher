@@ -798,6 +798,11 @@ async fn screen_timeout_policy_form_and_report() {
 /// Every page template under `templates/`, subfolders included; `partials/` holds pieces of
 /// pages, not pages.
 pub(super) fn template_files() -> Vec<std::path::PathBuf> {
+    template_files_in(std::path::Path::new("templates"))
+}
+
+/// The page templates under `root` (see `template_files`).
+pub(super) fn template_files_in(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -811,7 +816,7 @@ pub(super) fn template_files() -> Vec<std::path::PathBuf> {
         }
     }
     let mut found = Vec::new();
-    walk(std::path::Path::new("templates"), &mut found);
+    walk(root, &mut found);
     found.sort();
     found
 }

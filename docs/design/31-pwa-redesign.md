@@ -632,7 +632,8 @@ The ones marked † are 40 words or more.
 - **Sub-page header.**
   - A back link ("‹ Anna") at the top left.
   - The page title, large, under it.
-  - No other header chrome; the brand header goes away on inner pages.
+  - No other header chrome; the brand header goes away on inner pages, page by page as each is rebuilt, and from
+    the tab landing pages in step 15 (the clean-up).
 - **Switches** are a real `<input type="checkbox" role="switch">` with a sibling `<span class="knob">`, inside a
   `<label>` (§5.7). The mockups draw the knob as `::before` on the input; the build uses the sibling span.
 - **The bottom bar** has 5 items, with labels at least 12px and active state from `aria-current="page"`. The server
@@ -1335,11 +1336,12 @@ The redesign keeps both and **fixes the gaps** (§2.3 item 10):
 - The ⓘ panels and the "Pause a rule…" and "Unlock for 2 h…" sheets are `<details>`.
 - Switches are real checkboxes.
 - **`autosave.js` (L7):**
-  - The 54 inline `onchange="this.form.submit()"` become `data-autosave`, handled by one deferred
+  - The 54 inline `onchange="this.form.submit()"` become `data-autosave`, handled by one
     `static/autosave.js`. It calls `form.submit()`, which `scroll-restore.js` already hooks; that script loads
-    un-deferred first.
+    un-deferred first, and `autosave.js` right after it, also un-deferred, so a control changed while a long page
+    is still loading saves too (qa-31-s1-code L1).
   - A `<select>` saves on `change` from a pointer. From the keyboard it saves on Enter or blur, not on every arrow
-    key. This settles §5.4's open decision.
+    key; a choice confirmed with Enter in an open dropdown saves at once. This settles §5.4's open decision.
   - CSP still allows inline script "until S7" (`admin_auth.rs:442-447`). This removes most of what needs it.
 - No new behaviour may depend on JS. JS stays limited to these extras:
   - `autosave.js`;
@@ -1841,6 +1843,8 @@ at a time. Each moved card leaves a navigation row behind until step 10 turns wh
     - **Templates:** the 3-step add flow (`device_add.html`, `provision_qr.html`, `enroll_code.html`, with "Server
       setup needed" + ⓘ), and the sign-in pages.
     - **Static files:** the old CSS classes nothing uses are deleted.
+    - **The brand bar** ("Vibb Phone", 44 px, kept on every page since step 1) leaves the tab landing pages, which
+      open on their large title as the mockups draw them; by then every inner page has its sub-page header.
     - **Docs:** the remaining cross-references (L8).
     - **Tests:** `provisioning.rs`, `enrollment.rs`, `edge.rs`.
 
@@ -1880,8 +1884,8 @@ This revision makes the following changes:
 
 Built on branch `design-31-s1` (from `69aee48b`); server only, no new crate, no migration.
 - **Shell.** `partials/head.html`: "{title} · Vibb Phone", `color-scheme` meta, the two `theme-color` metas
-  (`#F9F9FA` / `#161618`), `apple-mobile-web-app-title` "Vibb Phone", `style.css?v=8`, `autosave.js` (deferred, after
-  the un-deferred `scroll-restore.js`). `partials/app_header.html`: the brand "Vibb Phone" and the 5-tab bar
+  (`#F9F9FA` / `#161618`), `apple-mobile-web-app-title` "Vibb Phone", `style.css?v=9`, `autosave.js` (un-deferred, right
+  after `scroll-restore.js`). `partials/app_header.html`: the brand "Vibb Phone" and the 5-tab bar
   (Devices · Apps · Locate · Music · Settings, 12px labels, `aria-hidden` icons from the TabBar mockup,
   `data-tab` per item); every page sets `{% let tab = "…" %}` right before the include and the server writes
   `aria-current="page"`; the active-tab script is gone. The Apps|Music switch and its inline CSS are gone from
@@ -1889,7 +1893,7 @@ Built on branch `design-31-s1` (from `69aee48b`); server only, no new crate, no 
 - **Settings hub** (`handlers::settings_hub`, `settings_hub.html`): the Settings mockup's four groups - Time Rules,
   Web Filter, Blocked Activity, Wallpapers · Phone Setup, Backups, Software Updates · Account & Password, Security
   Log, About · Sign Out (`POST /logout`) - with outline icons on tinted tiles. Values (M3): "2 rules" (everyone's
-  rules), "3 lists" / "Off" (enabled blocklists), "12 today" / "None today" (`device_dns_events.received_at` since
+  rules), "3 lists" / "No lists" (enabled blocklists), "12 today" / "None today" (`device_dns_events.received_at` since
   local midnight), the wallpaper count, the newest backup zip's time ("Today 03:00"), "Server 0.24.0"; Software
   Updates has none. The hub's module takes only `state.db` and the backup directory.
 - **Rename** (§5.3): manifest `id "/"`, `name` and `short_name` "Vibb Phone", the new description, `theme_color`
@@ -1901,28 +1905,39 @@ Built on branch `design-31-s1` (from `69aee48b`); server only, no new crate, no 
   `<details>` holding a row, `.row-button`/`.row-danger`, the switch `.sw` + sibling `.knob`, `select.pick`,
   `details.info` + `.info-panel`, `.badge`/`.dot`/`.count`/`.meter`, `.attention-alarm|action|state|result`,
   `.flash`, `details.confirm` + `.button-destructive`, `.field-error`, `.nav-back`, `.page-title`), and today's
-  `.card`, `.error`, `.success`, `.button-*`, inputs, tables and the device/app lists restyled with the tokens. Browser
-  floor (§5.7): no `:has()`, nesting, `color-mix()` or `gap` where Safari 14.0 needs it; `:focus` +
-  `:focus:not(:focus-visible)`; 1px hairlines, 0.5px under 2dppx; forced colours show a real checkbox; reduced motion
-  drops transitions; the tab bar is opaque unless `backdrop-filter` works. `register-sw.js` is ES5.
+  `.card`, `.error`, `.success`, `.button-*`, inputs (3:1 borders), tables and the device/app lists restyled with the
+  tokens. Browser floor (§5.7) in `style.css`: no `:has()`, nesting, `color-mix()`, `aspect-ratio` or flex `gap`
+  (grid `gap` only, Safari 12+); `word-break: break-word` before every `overflow-wrap: anywhere`; `:focus` +
+  `:focus:not(:focus-visible)`, drawn inside the row in a grouped list; 1px hairlines, 0.5px under 2dppx; forced
+  colours show a real checkbox; reduced motion drops transitions; the tab bar is opaque unless `backdrop-filter`
+  works. `register-sw.js` is ES5. `wallpapers.html`'s swatch has a padding fallback for `aspect-ratio`.
+  **Left below the floor, for the steps that rebuild those pages:** inline flex `gap` in `device_detail.html`
+  (steps 3-10), `dns_filter.html` (14), `device_locate.html` (13) and the `music*.html` style
+  blocks (12); `overflow-wrap: anywhere` without the fallback in the `music*.html` pages (12). On Safari 14.0 those
+  items only touch, and a long word can widen the page.
 - **`autosave.js`** (L7): the 54 `onchange="this.form.submit()"` are `data-autosave`; one delegated listener calls
   `form.submit()` (so `music-cards.js`'s swapped cards keep working). A `<select>` changed from the keyboard waits
-  for Enter or blur. `jstest/autosave.test.js` (7 tests).
+  for Enter or blur; Enter in an open dropdown saves its choice at once. Loaded un-deferred.
+  `jstest/autosave.test.js` (9 tests).
 - **Tests**: `tests/mod.rs` helpers `input_checked`, `autosaves`, `form_action_of`, `nav_current`,
   `device_page(id, Section)` (Summary, Calls so far), `assert_redirect`; the `onchange` assertions in `hardening.rs`,
   `music.rs` and `lock_glance.rs` and the pinned Locations in `enrollment.rs` and `parent_pin.rs` use them.
   `tests/shell.rs`: `nav_current` on a landing and an inner page per tab, every template sets a valid tab, the name
   and manifest, no inline auto-submit, the helpers, the hub's links and values, and that the hub names no network
   client and fetches nothing. `pages_restore_scroll_after_auto_save` walks subfolders of `templates/`
-  (`template_files`). `cargo test`: 674 passed; fmt clean; clippy: no new warnings.
+  (`template_files`, tested on a temp tree). `cargo test`: 676 passed; `node --test jstest/*.test.js`: 16
+  passed; fmt clean; clippy: no new warnings. Code QA: `qa-31-s1-code.md` (0 High, 1 Medium, 8 Low), all fixed - see
+  its "Fixes" table.
 
 Choices made while building:
 1. The brand bar ("Vibb Phone", 44px, no border) stays on every page until the sub-page header replaces it page by
-   page (§3.0); the mockups' tab pages start with the large title, which the hub now has (`.page-title`).
+   page (§3.0); step 15 removes it from the tab landing pages (§8). The mockups' tab pages start with the large
+   title, which the hub now has (`.page-title`).
 2. The hub follows the mockup's grouping (four groups, no headers) rather than the table's Rules/Content/Server
    labels; the labels are the spec's ("Software Updates", "Web Filter" with the list count, not the mockup's "On").
 3. "Today" and the backup time use the server's local time (as the Backups page does) until step 2's
-   `display_time` takes the Phone Setup zone.
+   `display_time` takes the Phone Setup zone. On the Docker image (TZ = UTC) "today" starts at UTC midnight until
+   then.
 4. Pages whose name left the navigation were renamed in place: `/dns` is titled "Web Filter", `/settings/provisioning`
    "Phone Setup", and links saying "DNS/Filters tab" / "Provisioning settings" point at Settings › Web Filter / Phone
    Setup. Their content is unchanged (steps 14 and 15).

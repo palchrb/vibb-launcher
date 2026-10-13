@@ -1,7 +1,7 @@
 // No POST may make the page jump to the top (server/CLAUDE.md). Every form posts and redirects
 // back, which used to land at the top. Remember the scroll position just before any form leaves
-// the page - a submit button (submit event) or script (form.submit(), as the auto-saving
-// onchange="this.form.submit()" controls do) - per path in sessionStorage for 20 s, and restore
+// the page - a submit button (submit event) or script (form.submit(), as static/autosave.js does
+// for the data-autosave controls) - per path in sessionStorage for 20 s, and restore
 // it on the page that comes back. A redirect to another path or with a #fragment keeps its own
 // position. Loaded from the head partial on every page. No framework, no DOM writes.
 // Tested with node (jstest/scroll-restore.test.js).

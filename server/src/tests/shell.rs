@@ -132,7 +132,8 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         "<meta name=\"theme-color\" content=\"#161618\" media=\"(prefers-color-scheme: dark)\">",
         // The manifest URL stays: older Chrome keys a WebAPK to it.
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
-        "<script src=\"/static/autosave.js",
+        // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
+        "<script src=\"/static/autosave.js?v=2\"></script>",
     ] {
         assert!(html.contains(needle), "{needle}");
     }
@@ -321,16 +322,63 @@ async fn hub_values_say_none_when_there_is_nothing() {
     let values =
         crate::handlers::settings_hub::hub_values(&app.db, &dir.path().join("none"), now).await;
     assert_eq!(values.time_rules.as_deref(), Some("No rules"));
-    assert_eq!(values.web_filter.as_deref(), Some("Off"));
+    assert_eq!(values.web_filter.as_deref(), Some("No lists"));
     assert_eq!(values.blocked_today.as_deref(), Some("None today"));
     assert_eq!(values.backups, None, "no backup directory");
 
-    // The newest backup zip by its time; other files don't count.
-    std::fs::write(dir.path().join("backup-20261013-030000.zip"), b"zip").unwrap();
-    std::fs::write(dir.path().join("notes.txt"), b"not a backup").unwrap();
+    // The newest backup zip by its time; other files don't count, however new.
+    let day = std::time::Duration::from_secs(86_400);
+    let made = std::time::SystemTime::now();
+    let put = |name: &str, age: std::time::Duration| -> std::time::SystemTime {
+        let path = dir.path().join(name);
+        std::fs::write(&path, b"x").unwrap();
+        let time = made - age;
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        time
+    };
+    put("backup-20260904-030000.zip", day * 40);
+    let newest = put("backup-20261010-030000.zip", day * 3);
+    put("notes.txt", std::time::Duration::ZERO);
+    put("backup-20261013-030000.zip.part", std::time::Duration::ZERO);
     let values = crate::handlers::settings_hub::hub_values(&app.db, dir.path(), now).await;
-    let label = values.backups.expect("a backup");
-    assert!(label.starts_with("Today "), "{label}");
+    let expected = crate::handlers::settings_hub::day_time_label(
+        chrono::DateTime::<chrono::Local>::from(newest).naive_local(),
+        now.naive_local(),
+    );
+    assert!(!expected.starts_with("Today"), "{expected}");
+    assert_eq!(values.backups.as_deref(), Some(expected.as_str()));
+}
+
+/// The head-partial check walks subfolders (M8), and skips `partials/`.
+#[test]
+fn template_files_walk_subfolders_but_not_partials() {
+    let dir = tempfile::tempdir().unwrap();
+    for file in [
+        "a.html",
+        "device/b.html",
+        "device/deeper/c.html",
+        "partials/p.html",
+        "sw.js",
+    ] {
+        let path = dir.path().join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    let found: Vec<String> = super::device_api::template_files_in(dir.path())
+        .iter()
+        .map(|p| {
+            p.strip_prefix(dir.path())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(found, ["a.html", "device/b.html", "device/deeper/c.html"]);
 }
 
 /// The hub never waits for the network (M3): its module names no client or remote, its

@@ -78,6 +78,38 @@ test("arrow keys on a select don't save on every key, Enter does", () => {
     assert.strictEqual(select.form.submits, 1, "saved once");
 });
 
+test("a choice confirmed with Enter in an open dropdown saves at once", () => {
+    const { doc, fire } = fakeDocument();
+    install(doc);
+    const select = control("SELECT");
+    // Space or Alt+Down opens the list, Down moves, Enter picks: Enter's keydown comes first.
+    fire("keydown", select, { key: " " });
+    fire("keydown", select, { key: "ArrowDown" });
+    fire("keydown", select, { key: "Enter" });
+    assert.strictEqual(select.form.submits, 0);
+    fire("change", select);
+    assert.strictEqual(select.form.submits, 1, "saved on the change Enter made");
+    fire("focusout", select);
+    assert.strictEqual(select.form.submits, 1, "once");
+    // The next arrow key starts over: no save per key.
+    fire("keydown", select, { key: "ArrowDown" });
+    fire("change", select);
+    assert.strictEqual(select.form.submits, 1);
+});
+
+test("an Enter with no change after it doesn't make a later arrow key save", () => {
+    const { doc, fire } = fakeDocument();
+    install(doc);
+    const select = control("SELECT");
+    fire("keydown", select, { key: "ArrowDown" });
+    fire("keydown", select, { key: "Enter" });
+    fire("keydown", select, { key: "ArrowDown" });
+    fire("change", select);
+    assert.strictEqual(select.form.submits, 0, "waits for Enter or blur");
+    fire("focusout", select);
+    assert.strictEqual(select.form.submits, 1);
+});
+
 test("a keyboard change saves when the select loses focus", () => {
     const { doc, fire } = fakeDocument();
     install(doc);
