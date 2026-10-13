@@ -63,29 +63,50 @@ class PlayInvariantsTest {
         assertTrue("PhoneBookActivity::class.java" in pin)
     }
 
+    /** A source file's code without its comment lines, so a commented-out call doesn't pass a scan
+     * (qa-28-s1-code L2). */
+    private fun code(name: String): String = sources.walkTopDown().first { it.name == name }.readText()
+        .lines()
+        .filterNot { line -> line.trimStart().let { it.startsWith("//") || it.startsWith("*") || it.startsWith("/*") } }
+        .joinToString("\n")
+
     /** Design 28: the drawer lists the Play Store while the override or the pause is open. */
     @Test
     fun `the filter asks the Play rule with the windows`() {
-        val filter = sources.walkTopDown().first { it.name == "AppFilter.kt" }.readText()
+        val filter = code("AppFilter.kt")
         assertTrue("PlayRuntime.storeListable(context)" in filter)
         assertTrue("PlayRuntime.installModeActive(" !in filter)
+        // The rule gets the windows - the same predicate as buildEnforcementPlan's overrideActive.
+        val runtime = code("PlayRuntime.kt")
+        assertTrue("fun storeListable(context: Context): Boolean = playStoreListable(installModeActive(context), overrideActive())" in runtime)
+        assertTrue("private fun overrideActive() = OfflineOverride.isActive() || RestrictionsPause.isActive()" in runtime)
     }
 
     /** Design 28 (QA L8): in a window the store is in the drawer only, not on Home's grid. */
     @Test
     fun `Home drops the store outside install mode`() {
-        val home = sources.walkTopDown().first { it.name == "HomeActivity.kt" }.readText()
-        val refresh = home.substringAfter("private fun refreshApps(").substringBefore("\n    }\n")
-        assertTrue("playPackageOnHome(" in refresh)
+        val refresh = code("HomeActivity.kt").substringAfter("private fun refreshApps(").substringBefore("\n    }\n")
+        assertTrue(".filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }" in refresh)
         assertTrue("PlayRuntime.installModeActive(context)" in refresh)
+        assertTrue("storeListable" !in refresh)
     }
 
     /** Design 28 (QA M1): the list refresh comes from the window's own edges, not from Play's
      * suspension, which on a GMS phone never happens. */
     @Test
     fun `a window's edges reload the app list`() {
-        val app = sources.walkTopDown().first { it.name == "Application.kt" }.readText()
-        val initRest = app.substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        val initRest = code("Application.kt").substringAfter("private fun initRest(").substringBefore("\n    }\n")
         assertTrue("WindowRelock.addListener { loadApps() }" in initRest)
+    }
+
+    /** qa-28-s1-code L1: the drawer's filter can clear an expired window, whose preference listener
+     * re-enters updateAppsList on main - the list must be filtered before it is replaced. */
+    @Test
+    fun `the drawer filters before it replaces its list`() {
+        val update = code("AppsRecyclerAdapter.kt").substringAfter("fun updateAppsList(").substringBefore("\n    }\n")
+        val filter = update.indexOf("appFilter(")
+        val clear = update.indexOf("appsListDisplayed.clear()")
+        assertTrue(filter >= 0 && clear > filter)
+        assertTrue("appsListDisplayed.addAll(appFilter(" !in update)
     }
 }

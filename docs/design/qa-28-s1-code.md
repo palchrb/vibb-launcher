@@ -158,3 +158,17 @@ finding gives the kid anything:
     applies to the listener scan.
   - Give the GMS assertion a one-line comment ("`playPackageOnHome` narrows only the store; `playPackageLaunchable`
     keeps Play services off"), or move it to the Home test.
+
+## Fixes (fix round, branch `design-28-s1`, one commit on top of `b3d268d0`)
+
+| Finding | Commit | What changed |
+| --- | --- | --- |
+| L1 | this commit | `AppsRecyclerAdapter.updateAppsList` filters first, then clears and adds, so a nested call from the preference listener can't double the list. This was chosen over a non-clearing `isOpen()` for `storeListable` because: it is a three-line re-entrancy fix in the MIT file with no new logic; it covers any writer the filter can reach; and the lists, the enforcement and the relock keep one predicate for "a window is open" (`isActive()`), where a second, non-clearing predicate would have to stay in step with it. The relock is untouched: `openWindows()` still self-clears at the edge. Test: `PlayInvariantsTest` `the drawer filters before it replaces its list` (a source scan, because the adapter needs Android) |
+| L2 | this commit | `PlayInvariantsTest`'s design 28 scans read the code without its comment lines (`//`, `/*`, `*`). The filter scan pins `PlayRuntime.storeListable`'s line and the two windows in `overrideActive()`. The Home scan pins the exact `.filter { playPackageOnHome((it.getRawInfo() as? AppInfo)?.packageName, installMode) }` and checks that `refreshApps` has no `storeListable`. In `PlayPolicyTest`, the `playPackageOnHome(PLAY_SERVICES, ...)` assertion moved to the Home test, with a comment saying that Home's filter narrows only the store |
+
+**Mutation check.** QA's run 1 plus the L1 revert were applied all at once, then reverted, and run with `--tests` on
+`play.*` and `apps.*` and `-PwarningsAsErrors=true`. Result: 4 red, each the intended test:
+- the listener line commented out: red `a window's edges reload the app list`;
+- `storeListable` with `false` for the windows: red `the filter asks the Play rule with the windows`;
+- Home with `installMode || PlayRuntime.storeListable(context)`: red `Home drops the store outside install mode`;
+- `updateAppsList` back to clear-then-add: red `the drawer filters before it replaces its list`.

@@ -93,8 +93,12 @@ class AppsRecyclerAdapter(
     }
 
     fun updateAppsList() {
+        // Filter first, then replace: the filter can write preferences (a parent-PIN window that
+        // ran out clears itself), and that listener calls this again, synchronously, on the main
+        // thread - clearing first let the nested and the outer call both add (every app twice).
+        val filtered = apps.value?.let { appFilter(it) }.orEmpty()
         appsListDisplayed.clear()
-        apps.value?.let { appsListDisplayed.addAll(appFilter(it)) }
+        appsListDisplayed.addAll(filtered)
 
         notifyDataSetChanged()
     }

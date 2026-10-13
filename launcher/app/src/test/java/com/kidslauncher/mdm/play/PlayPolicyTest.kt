@@ -158,7 +158,6 @@ class PlayPolicyTest {
                 val listable = playStoreListable(installMode, windowOpen)
                 assertFalse(playPackageLaunchable(PLAY_SERVICES, listable))
                 assertFalse(playPackageLaunchable(GOOGLE_SERVICES_FRAMEWORK, listable))
-                assertTrue(playPackageOnHome(PLAY_SERVICES, installMode))
             }
         }
     }
@@ -171,6 +170,9 @@ class PlayPolicyTest {
         for (installMode in listOf(false, true)) {
             assertTrue(playPackageOnHome(GAME, installMode))
             assertTrue(playPackageOnHome(null, installMode))
+            // Home's extra filter narrows only the store; playPackageLaunchable (the drawer's
+            // filter, which Home runs first) keeps Play services and GSF off.
+            assertTrue(playPackageOnHome(PLAY_SERVICES, installMode))
         }
     }
 
