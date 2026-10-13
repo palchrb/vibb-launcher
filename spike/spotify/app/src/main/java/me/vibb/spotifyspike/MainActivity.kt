@@ -34,12 +34,17 @@ class MainActivity : Activity() {
     private lateinit var seekMs: EditText
     private lateinit var stateView: TextView
     private lateinit var logView: TextView
+    private lateinit var logStatus: TextView
     private val main = Handler(Looper.getMainLooper())
-    private val refreshLog: () -> Unit = { logView.text = SpikeLog.recentText().lines().asReversed().joinToString("\n") }
+    private val refreshLog: () -> Unit = {
+        logView.text = SpikeLog.recentText().lines().asReversed().joinToString("\n")
+        logStatus.text = SpikeLog.fileStatus()
+    }
     private val refreshState: () -> Unit = { renderState() }
     private val tick = object : Runnable {
         override fun run() {
             renderState()
+            logStatus.text = SpikeLog.fileStatus()
             main.postDelayed(this, 1_000)
         }
     }
@@ -54,6 +59,7 @@ class MainActivity : Activity() {
         seekMs = findViewById(R.id.seek_ms)
         stateView = findViewById(R.id.state)
         logView = findViewById(R.id.log)
+        logStatus = findViewById(R.id.log_status)
         findViewById<TextView>(R.id.redirect).text = getString(R.string.redirect_fmt, Prefs.REDIRECT_URI)
 
         clientId.setText(Prefs.clientId(this))

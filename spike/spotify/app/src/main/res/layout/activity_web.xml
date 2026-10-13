@@ -125,6 +125,14 @@
         android:fontFamily="monospace"
         android:textIsSelectable="true" />
 
+    <TextView
+        android:id="@+id/log_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fontFamily="monospace"
+        android:textIsSelectable="true"
+        android:textSize="11sp" />
+
 </LinearLayout>
 </ScrollView>
 

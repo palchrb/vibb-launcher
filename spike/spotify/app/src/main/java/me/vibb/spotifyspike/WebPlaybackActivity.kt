@@ -37,6 +37,8 @@ class WebPlaybackActivity : Activity() {
     private lateinit var tokenField: EditText
     private lateinit var desktopUa: CheckBox
     private lateinit var status: TextView
+    private lateinit var logStatus: TextView
+    private val refreshLogStatus: () -> Unit = { logStatus.text = SpikeLog.fileStatus() }
     private lateinit var playerWeb: WebView
     private lateinit var loginWeb: WebView
     private var deviceId: String? = null
@@ -64,6 +66,7 @@ class WebPlaybackActivity : Activity() {
         tokenField = findViewById(R.id.token)
         desktopUa = findViewById(R.id.desktop_ua)
         status = findViewById(R.id.web_status)
+        logStatus = findViewById(R.id.log_status)
         playerWeb = findViewById(R.id.player_web)
         loginWeb = findViewById(R.id.login_web)
 
@@ -248,7 +251,14 @@ class WebPlaybackActivity : Activity() {
         SpikeLog.log("WebPlaybackActivity window focus ${if (hasFocus) "gained" else "LOST"}")
     }
 
+    override fun onStart() {
+        super.onStart()
+        SpikeLog.addListener(refreshLogStatus)
+        refreshLogStatus()
+    }
+
     override fun onStop() {
+        SpikeLog.removeListener(refreshLogStatus)
         // No WebView.onPause()/pauseTimers(): the player must keep running with the screen off.
         SpikeLog.log("WebPlaybackActivity onStop (player keeps running)")
         super.onStop()

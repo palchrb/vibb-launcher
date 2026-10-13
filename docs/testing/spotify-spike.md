@@ -73,7 +73,12 @@ One screen (`MainActivity`) and the Web Playback screen. Everything goes into on
   access.
 - **Log**: timestamped lines in logcat (tag `SpotifySpike`), on screen (newest first) and in
   `/sdcard/Android/data/me.vibb.spotifyspike/files/spike-log.txt`; **Copy log** puts the last 3000 lines on the
-  clipboard. Also logged: process start, the activity's lifecycle and **window focus** (a `window focus LOST` right
+  clipboard. The file is opened and closed for every line; a line that can't be written waits and goes out with the
+  next one (one logcat warning per failure streak). After three failed writes in a row, or without an external-files
+  dir, the log moves to the internal files dir for the rest of the run
+  (`adb exec-out run-as me.vibb.spotifyspike cat files/spike-log.txt`). Both screens show
+  `log file: <path>, <n> lines, last write <time>` (and `WRITES FAILING ...` while they do), so a dead file log is
+  visible at once. Also logged: process start, the activity's lifecycle and **window focus** (a `window focus LOST` right
   after a kid-mode connect means something came up over the spike), screen on/off, network changes.
 - **Web Playback probe** (item 10): see §7, item 10.
 
@@ -388,22 +393,37 @@ kiosk on, the spike ticked Allowed.**
   Play services activity, which lock task blocks ("App is not available - Google Play services is not available right
   now"). Two findings for the design: a real "Spotify setup mode" must pin `com.google.android.gms` with Spotify while
   the login runs, and items 1-9 need the Jelly Star.
-- **Item 10 (Web Playback SDK in the spike's WebView): PASS so far.** `Get token (PKCE)` logged in with e-mail and
-  password in the full-screen WebView; `Load player` (default user agent) reached `ready` with a device id;
-  `Play on this device` with a playlist the user owns played audio; pause/resume worked. The emulator was then left
-  with the screen off for about 10 hours (the app in the background); on waking, the probe screen resumed playback at
-  once on play/pause: the SDK's Connect session survived the night. `Load player` after that failed (the pasted
-  access token had expired: a rebuilt player needs a valid token), and `Get token (PKCE)` + `Load player` played
-  again without a new password. Consequence for a real build: the access token must be refreshed (PKCE refresh
-  token) before each hour ends; the running player does not need it, a rebuilt one does.
-- **Still to run for item 10:** the log's `poll:` lines for the night (was audio playing or paused, any
-  `authentication_error`/`not_ready`), the desktop-user-agent variant, the DNS log (item 7's host list for the web
-  path), and the same probe on the Jelly Star, where Doze is real (the emulator's is not).
+- **Item 10 (Web Playback SDK in the spike's WebView): PASS on the emulator, forced Doze included.**
+  `Get token (PKCE)` logged in with e-mail and password in the full-screen WebView; `Load player` (default user agent)
+  reached `ready` with a device id; `Play on this device` with a playlist the user owns played audio; pause/resume
+  worked.
+  - **Screen off, forced Doze:** with Keep alive on, the screen off and `adb shell dumpsys deviceidle force-idle`,
+    audio continued across track changes, and the SDK's JavaScript kept running: logcat has the page's `poll:` line
+    every minute and the `player_state_changed` events throughout.
+  - **The night (about 10 h, screen off, the app in the background):** the player was **paused** - the silence
+    21:58-05:13 is a paused player, not a frozen one; the file log was alive then (its `poll:` lines are there). On
+    waking, play/pause on the probe screen resumed at once: the SDK's Connect session survived the night.
+  - **The file log died, the player didn't:** in the forced-Doze run the spike's log file stopped at 07:16 while
+    logcat kept every line through 07:46 and later. The "JS frozen with the screen off" worry came from that gap; it
+    was the spike's file writer (an exception swallowed on every line), fixed since: the file is reopened per line,
+    a failed line is retried with the next, failures go to logcat, and the screens show the file's state (§2).
+  - **Token refresh:** `Load player` after the night failed because the pasted access token had expired (a rebuilt
+    player needs a valid token); `Get token (PKCE)` + `Load player` played again without a new password. Consequence
+    for a real build: refresh the access token (PKCE refresh token) before each hour ends; a running player doesn't
+    need it, a rebuilt one does.
+- **Still to run for item 10:** the desktop-user-agent variant, the DNS log (item 7's host list for the web path),
+  and the same probe on the Jelly Star, where Doze is real. **Open question for the Jelly Star:** does the page's
+  JavaScript keep running under real Doze without a wake lock? The spike's Keep alive is a foreground service and
+  holds **no wake lock**. Read it from `adb logcat -s SpotifySpike`: a `poll:` line every minute = yes. If the
+  Jelly Star run shows gaps in the polls while audio continues, the design consequence is a partial wake lock held
+  while the web player plays.
 
 ## 8. What to send back
 
-1. The spike's log: `adb pull /sdcard/Android/data/me.vibb.spotifyspike/files/spike-log.txt` (or **Copy log** and
-   paste), per device, plus the `spike-logcat-item*.txt` captures and the screenshots.
+1. The spike's log: `adb pull /sdcard/Android/data/me.vibb.spotifyspike/files/spike-log.txt` (or, if the screen's
+   `log file:` line names the internal path, `adb exec-out run-as me.vibb.spotifyspike cat files/spike-log.txt >
+   spike-log.txt`; or **Copy log** and paste), per device, plus `adb logcat -d -s SpotifySpike > spike-logcat.txt`
+   (logcat has every line too), plus the `spike-logcat-item*.txt` captures and the screenshots.
 2. PASS/FAIL per item 0-10 with the config used (K-/K0/K1/K2) and the device (emulator / Jelly Star), and for the
    kill criteria (1, 2, 3a) the log lines that prove no Spotify activity started.
 3. The DNS hosts from items 7 and 10 (blocked ones from the DNS log; all queried ones from the emulator capture).
