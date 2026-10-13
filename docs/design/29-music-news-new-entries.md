@@ -492,3 +492,36 @@ first check, play any item for 20 s first: the stored position closes the baseli
 **Outside the design (orchestrator):** own-file copies after an id reuse are step 4. A held copy whose recorded
 SHA-256 differs from the library's is fetched again. The hash is recorded in an `own/<id>.sha256` sidecar, and a copy
 without one is hashed once.
+
+## Implementation status (2026-10-13, branch `design-29-impl` from `73787e7d`)
+
+**Steps 1-3 done.** `1eee7975` (step 1: the pure rules and `d29 1`-`d29 27`), `22aea0c3` (step 2: Room 3, the glue,
+`d29 28`), then the docs (§4's list: `music/CLAUDE.md`, design 21 §4.5, `docs/testing/emulator.md` §6f with §7's
+checks, `PLAN.md`). Green on `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` (604 unit tests). The port (`markNewSeen`, `NewItemsTest` 1-8) is unchanged; the header of
+`NewItems.kt` names design 29's functions as ours.
+
+**Choices made while building (within the spec):**
+- `newsBefore` gives a key the library doesn't name `entryId = null` ("null = none now"); a removed entry's per-id
+  state goes with the prune, so nothing is lost by forgetting its id.
+- With no candidate, a pending entry's listing is still acknowledged into `seen` (the mark stays); the next listing
+  with a candidate gives the item and acknowledges the rest (`d29 14`).
+- A re-pick whose next candidate is already in the tray (as ordinary news) drops the old slot instead of
+  duplicating it; with none left the row keeps its last `item` (nothing in the tray to match any more).
+- `listedOf` (pure, in `NewItems.kt`) builds a `Listed` from the phone's items: eligible as `newsEligible` (url, or
+  any Storytel book; own files all), unplayable a Storytel book whose item error is permanent (`no_audio`) and a
+  `missing` own file without a copy. `Sync` builds every entry's `Listed` from one snapshot after the loop, so the
+  applied ones and `current` agree.
+- The tray prune is a DAO transaction too (`pruneNews`): it was a read-modify-write that could bring back a row the
+  player had just deleted. A reset also drops the id's entry errors (the report's `bad_listing`).
+- A read inbox file is deleted after phase B only while it still holds what was read: the debug feed writes from a
+  receiver, so a deferred delete could otherwise drop a newer file.
+- `d29 26`: the same entry applied twice in one run gives one item, and the second application falls inside the 24 h
+  window (acknowledged), as the rules say.
+- Test names use " - " or "," where the spec has ";" (`d29 7`, `d29 14`, `d29 24`): a JVM method name can't hold
+  a semicolon.
+- `GuardsTest`'s old pin on `markSeen(... newsEligible ...)` now pins the `listedOf` line, and a new pin holds §4's
+  order (phase A, the inbox loop, phase B, the deferred delete, the prune), `Sync.runLock`, `startedPlaying`'s
+  `deleteNews` and the download job's per-item update.
+
+**Owed:** §7's device checks (the emulator loop; none could run here, there is no emulator in this environment).

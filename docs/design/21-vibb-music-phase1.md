@@ -187,7 +187,8 @@ no Firebase/GMS (`checkReleaseHasNoGoogleServices`); Nunito, night palette. Edge
   progressive and HLS. Wanted: the newest N by publication (vibb), all for -1, none for 0, plus the bookmarked item and
   the next in play order. NOT_METERED unless `mobile_data`, storage not low, paused while roaming. Items beyond the
   depth and removed entries are deleted (`prune_cache`). Streams aren't cached.
-- **New** (`_mark_new_seen`): an entry's first listing acknowledges all; later, unseen item keys join the Nytt tray
+- **New** (`_mark_new_seen`): an entry's first listing acknowledges all (and design 29: a new entry's one item);
+  later, unseen item keys join the Nytt tray
   (Room, newest first, <= 30, dropped with their entry) and leave it when they start playing by any path or on "Fjern
   alle". While it holds N > 0: one LOW-channel notification "N nye i Musikk", `setNumber(N)`, silent, clearable, not
   ongoing (what the badge listener counts); the tap opens Nytt; cancelled when empty; a swipe only hides it.

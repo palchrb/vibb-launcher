@@ -6,7 +6,8 @@ launcher, released as `music-v*` and installed through the launcher's catalog. D
 step 2, QA decisions, the step 2 status) and `21b-music-server-sweep.md` §6 (the server lists NRK/RSS; the phone never
 does); Sonos (phase 1b) is `26a-sonos.md` (§0-§6 the spec, §9 the deviations from vibb, then each step's status and
 choices); Storytel (phase 2) is `26b-storytel.md` (§0-§6 the spec, §9 the deviations, then each step's status and
-choices). Behaviour comes from palchrb/vibb (MIT), ported, never reinvented: each ported file credits it.
+choices); a new entry as Nytt news is `29-music-news-new-entries.md` (ours, not vibb). Behaviour comes from
+palchrb/vibb (MIT), ported, never reinvented: each ported file credits it.
 
 ## Stack and layout
 
@@ -237,6 +238,12 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
   in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
   room only the session player's item, no SOAP).
+- A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item
+  (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; known keys only grow;
+  an id that changes key is reset like a removed entry; the sync runs under `Sync.runLock`. The rules are the pure
+  `newsBefore`/`newsAfter` in `logic/NewItems.kt` (`NewItemsTest`'s `d29` tests); `Sync` only runs them in
+  `MusicDao.newsBeforeTx` (before the inbox loop) and `newsAfterTx` (after it, the tray read inside the
+  transaction), and every other tray write is one statement (`deleteNews`, `clearNews`, `pruneNews`).
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

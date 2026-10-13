@@ -511,7 +511,8 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
 - Own files are checked against the library's size and SHA-256 and covers against their hash; a mismatch is
   logged and skipped. A listing that doesn't parse becomes the report's `bad_listing`. The sync runs at once
   (the bridge's nudge waits 15 s). Push a changed feed and broadcast again to test NY/Nytt (the first listing of
-  an entry is never new; a later one with a new key is).
+  an entry known at the baseline (closed by the first play) is never new; a later one with a new key is). The
+  design 29 checks (a new entry is news) are below.
 - What to check (21 §6 step 2): every screen at 320x569 dp in nb and en; the carousel (drag, the spring snap,
   a tap on a neighbour, a tap during a slide, "Remove animations" on: it jumps); resume (a cover tap continues,
   the list shows ✓ for heard items), shuffle on an own-files entry with resume off, the sleep timer (fade and
@@ -519,6 +520,34 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   Wi-Fi" and the queue moves on); restart (`adb shell am force-stop`, or a reboot): the now-playing bar is back,
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
+
+**A new entry is news (design 29 §7)**, with the launcher's bridge (§6i for Storytel). Grant `POST_NOTIFICATIONS`
+and watch `adb shell dumpsys notification --noredact | grep -A3 me.vibb.music` and the launcher's Home badge. Except
+in the first check, play any item for 20 s first: the stored position closes the baseline.
+- **Fresh install, no flood:** uninstall the debug music app, install it with nothing ticked, then tick at least 6
+  entries **one at a time** (podcasts, an NRK serie, an own entry, the Storytel entry), letting a sync run between
+  ticks. Expect no notification, an empty Nytt and no NY. Repeat after `adb shell pm clear me.vibb.music.debug`.
+  Then play something for 20 s and tick one more new show: "1 ny".
+- **A new NRK serie** (a short one, natural order): tick it, wait until the server has listed it, sync the
+  launcher. After the music app's sync: exactly one notification, "1 ny i Musikk", Home's badge at 1, Nytt holds one
+  row (episode 1) and its tile shows NY. Tap the row: episode 1 plays, the notification and NY go.
+- **A new podcast:** the same with a 30+ episode NRK podkast: "1 ny", the newest episode.
+- **A new Storytel series** (§6i, `--books 111:300,222:300,333:300`): take the baseline with a library without entry
+  5, then play something. Push the library with entry 5 and its listing: while 111 downloads, no notification and no
+  tile; "1 ny i Musikk" with book 111 in Nytt **while 222 is still downloading**. Push a library without entry 5,
+  then with it again: no notification (the same key). With `--locked 111`: once 111 is `no_audio`, the next sync
+  makes 222 the item, and "1 ny" comes once 222 is downloaded.
+- **A new own-files entry:** create it and upload 3 files: "1 ny" (the first file) once copied. Upload 2 more within
+  the hour: still "1 ny".
+- **Nothing ticked:** untick everything (the app empties), then tick two of the old entries and one brand-new show:
+  "1 ny" only.
+- **Re-enrolment / restore:** note the entry ids in the PWA, back up the server, delete two entries and create other
+  shows (they take new ids), then restore the backup - or point the phone at a fresh server with the same shows
+  (design 22, "Re-enrolling"). Either way no notification, and no old show's back catalogue in Nytt
+  (`adb logcat -s Sync` names the reset ids).
+- **Unchanged:** a new episode in a known podcast (outside a 24 h window) still adds one; a swipe hides the
+  notification until the count changes; "Fjern alle" cancels it; tapping a Nytt row while a sync runs doesn't bring
+  the row back.
 
 ## 6g. The launcher's security wave (`docs/review/security-review-2026-10-10.md`)
 

@@ -115,7 +115,10 @@ speakers) and the device checks with the family's Storytel account. Its server m
 (`0072_music_storytel.sql`, after design 27's 0070 and 1b's 0071, applied in that order). Release after the user's
 merge (26b "Release"): the server (a version bump past 0.24.0 if that is tagged first), the launcher, then
 `music-v0.3.0-rc.1` (versionCode 2999) on the merge commit - instead of 1b's `music-v0.2.0-rc.1` when both land
-together. Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
+together. **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
+stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
+(2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a
+`music-v*` release. Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
 (`docs/testing/spotify-spike.md` there).
 
 ## Repos
