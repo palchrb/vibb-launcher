@@ -495,10 +495,11 @@ without one is hashed once.
 
 ## Implementation status (2026-10-13, branch `design-29-impl` from `73787e7d`)
 
-**Steps 1-3 done.** `1eee7975` (step 1: the pure rules and `d29 1`-`d29 27`), `22aea0c3` (step 2: Room 3, the glue,
-`d29 28`), then the docs (§4's list: `music/CLAUDE.md`, design 21 §4.5, `docs/testing/emulator.md` §6f with §7's
-checks, `PLAN.md`). Green on `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
--PwarningsAsErrors=true` (604 unit tests). The port (`markNewSeen`, `NewItemsTest` 1-8) is unchanged; the header of
+**Steps 1-4 done.** `1eee7975` (step 1: the pure rules and `d29 1`-`d29 27`), `22aea0c3` (step 2: Room 3, the glue,
+`d29 28`), `402ef47d` (step 3: the docs - §4's list: `music/CLAUDE.md`, design 21 §4.5, `docs/testing/emulator.md` §6f
+with §7's checks, `PLAN.md`), then step 4 in its own commit (own-file copies after an id reuse, `OwnFilesTest`). Green
+on `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` (607 unit tests;
+lint 0 errors, its 40 warnings all older). The port (`markNewSeen`, `NewItemsTest` 1-8) is unchanged; the header of
 `NewItems.kt` names design 29's functions as ours.
 
 **Choices made while building (within the spec):**
@@ -524,4 +525,18 @@ checks, `PLAN.md`). Green on `./gradlew assembleDebug assembleRelease testDebugU
   order (phase A, the inbox loop, phase B, the deferred delete, the prune), `Sync.runLock`, `startedPlaying`'s
   `deleteNews` and the download job's per-item update.
 
-**Owed:** §7's device checks (the emulator loop; none could run here, there is no emulator in this environment).
+**Step 4's choices:**
+- `logic/OwnFiles.kt`: `ownCopyVerdict` as specified, plus `keepOwnCopy` (the hash-once flow behind seams, so
+  `OwnFilesTest` covers "hashed once, then judged"). A record that isn't 64 lowercase hex counts as none; a copy
+  that can't be read is fetched again.
+- The record is written after the copy's rename (`Store.recordOwnSha`); a crash in between leaves a copy without one,
+  which is hashed once. Every copy delete goes through `Store.deleteOwnCopy` (the copy and its record).
+- The report's `held` names a copy only when its record is the library's SHA-256. The mismatch is logged
+  (`BridgeSync`), and the right file arrives one sync later, once the launcher has fetched it.
+- §6 step 4's device check as written ("replace a copy with another file's bytes, keeping its name") isn't caught:
+  the record is trusted, and swapping only the bytes leaves it matching the library. The check in
+  `docs/testing/emulator.md` §6f also deletes the record, so the copy is hashed (as a pre-design-29 copy is). A real
+  restore changes the library's SHA-256, which is what the rule compares.
+
+**Owed:** §7's device checks and step 4's (the emulator loop, `docs/testing/emulator.md` §6f; none could run here,
+there is no emulator in this environment), then a `music-v*` release.

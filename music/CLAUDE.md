@@ -19,7 +19,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
 - `logic/` - every rule, pure and unit-tested: resume (`Bookmarks`), play order, queue/shuffle, previous/next,
   keep/prune (`Offline`), NY/Nytt, the network gate, cache keys, the public-address guard, the report, the screens'
   words. Put new rules here, not in the Android classes.
-- `data/` - `Store` (files: library, received listings, covers, own-file copies in noBackupFilesDir, the report),
+- `data/` - `Store` (files: library, received listings, covers, own-file copies in noBackupFilesDir - each with the
+  SHA-256 checked on arrival in `own/<id>.sha256`, so a copy under a reused file id is fetched again, design 29 step
+  4, `logic/OwnFiles.kt` - the report),
   Room (`MusicDb`), `Snapshot` (what the screens and the player read; `visible()` hides url-null items without a copy;
   `forRenderer(remote)` is the view for a renderer - on a room every Storytel book, on the phone only those with a copy).
 - `sync/` - the sync and download workers (WorkManager; never a dataSync FGS, QA #1), `DownloadPlan` and the pure

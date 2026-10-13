@@ -545,6 +545,13 @@ in the first check, play any item for 20 s first: the stored position closes the
   shows (they take new ids), then restore the backup - or point the phone at a fresh server with the same shows
   (design 22, "Re-enrolling"). Either way no notification, and no old show's back catalogue in Nytt
   (`adb logcat -s Sync` names the reset ids).
+- **An own file's copy under a reused id** (design 29 step 4): replace an own file's copy with another file's bytes,
+  keeping its name, and delete its record (`adb shell run-as me.vibb.music.debug sh -c 'cp no_backup/own/<other id>
+  no_backup/own/<id> && rm no_backup/own/<id>.sha256'`): a copy without a record is hashed once, as one from before
+  this version is. The record alone is trusted, so swapping only the bytes isn't caught; after a real restore it is
+  the library's SHA-256 that changes. The next sync logs "copy is another file" (`adb logcat -s BridgeSync`), the
+  report no longer names it held, the launcher fetches the right file and a later sync copies it; it plays the right
+  audio.
 - **Unchanged:** a new episode in a known podcast (outside a 24 h window) still adds one; a swipe hides the
   notification until the count changes; "Fjern alle" cancels it; tapping a Nytt row while a sync runs doesn't bring
   the row back.

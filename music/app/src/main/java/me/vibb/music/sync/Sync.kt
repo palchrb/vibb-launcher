@@ -164,7 +164,7 @@ object Sync {
             dao.itemErrors().map { it.entryId }.distinct().filter { it !in ids }.forEach { dao.deleteItemErrors(it) }
             entryErrors.removeAll { it.entry !in ids }
             // Own files' copies of files the library no longer names (a `missing` one is still named, QA #3).
-            store.ownCopies().filter { it !in lib.fileIds }.forEach { store.ownFile(it).delete() }
+            store.ownCopies().filter { it !in lib.fileIds }.forEach { store.deleteOwnCopy(it) }
         }
         writeEntryErrors(store, entryErrors)
         // Covers and episode pictures (design 27 §2.3, vibb `prune_cache`): only on a parsed library,
