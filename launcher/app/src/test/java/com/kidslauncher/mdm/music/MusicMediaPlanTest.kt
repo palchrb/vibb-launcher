@@ -233,4 +233,29 @@ class MusicSuspensionGuardTest {
         assertEquals(125_000, positionNow(room, nowElapsedMs = 55_000))
         assertEquals(120_000, positionNow(room.copy(play = SessionPlay.PAUSED), nowElapsedMs = 55_000))
     }
+
+    @Test
+    fun `the end of play is fed by the bridge`() {
+        // Design 28 §2.1/§4: every setNowPlaying and the token's death, stamped before the surfaces re-render.
+        val bridge = file("music/MusicBridgeService.kt")
+        assertTrue(body(bridge, "fun store(context: Context, nowPlaying: Bundle?)").contains("MusicListening.observePlay(context, wasPlaying, playing)\n        changed()"))
+        assertTrue(body(bridge, "fun playerGone(context: Context)").contains("MusicListening.observePlay(context, wasPlaying, playing = false)\n        changed()"))
+        assertEquals(2, Regex("MusicListening\\.observePlay\\(").findAll(bridge).count())
+    }
+
+    @Test
+    fun `the headset watch starts with the process, its baseline read before the callback, the stamps loaded on first use`() {
+        // Design 28 §2.3/§4 (QA L4): after the call rule (the pin above), in its own try; the state never waits for it.
+        assertTrue(file("music/MusicSessions.kt").contains("MusicCalls.init(app)\n            MusicListening.init(app)"))
+        val listening = file("music/MusicListening.kt")
+        val init = body(listening, "fun init(")
+        val baseline = init.indexOf("am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)")
+        val register = init.indexOf("am.registerAudioDeviceCallback(")
+        assertTrue("baseline at $baseline, register at $register", baseline in 0 until register)
+        assertTrue(init.contains("} catch (e: Exception) {"))
+        assertFalse("init loads no stamps", init.contains("load("))
+        for (entry in listOf("fun listening()", "fun observePlay(", "fun devicesAdded(")) {
+            assertTrue(entry, listening.substringAfter(entry).substringBefore("\n\n").contains("load("))
+        }
+    }
 }

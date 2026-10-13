@@ -509,3 +509,36 @@ lists by accident; note the device page's `play_store_suspendable`: false on thi
     drops it in `HomeActivity` through `playPackageOnHome`.
   - The whole-store and LE Audio hearing-aid notes are user-facing notes in §9, and the 60 s rejoin is listed.
   - The boot count is read once per process.
+
+## Step 2 implementation status (2026-10-13)
+
+Branch `design-28-s2` on `84e29547`. Not pushed. Nothing was run on a device or the emulator. **No surface reads the
+window yet** (step 3), so the phone behaves as before; the stamps are written and the headset is watched.
+
+- **Pure rules** `music/MusicWindow.kt` as §3 names them (`BootStamp`, `Listening`, the three constants,
+  `musicShownUntil`, `windowedSession`, `playedStampAfter`, `playStampNotifies`, `AudioOut`, `countsAsHeadset`,
+  `HeadsetWatch`, `headsetAdded`, `headsetRemoved`, `musicRecheckInMs`). A stamp is valid when its boot count is today's
+  and known and its elapsed time isn't in the future. The end is exclusive, and the recheck is
+  `(end - now).coerceAtLeast(1)`; `Long.MAX_VALUE` (playing) gives no recheck. The rejoin window is
+  `0 <= now - removedAt < 60 s`; older entries are dropped at every step. A device's key is `"type/address"`.
+- **`music/MusicListening.kt`**: `init(app)` (its own try: the baseline from `getDevices(GET_DEVICES_OUTPUTS)`, then
+  `registerAudioDeviceCallback` on main), `listening()`, `bootCount()`, `observePlay(context, wasPlaying, playing)`,
+  `devicesAdded(outs)`, `devicesRemoved(outs)`, `addListener`/`removeListener` (main thread; notified by a post only on
+  an end of play that moved the stamp or a fresh headset). The stamps load lazily under the object's lock. The context
+  is the caller's, else `init`'s, else `Application.instance`. A read before the first unlock (CE prefs throw
+  `IllegalStateException`) shows nothing and loads later. Keys as §2.2. The boot count is read once, and read again
+  only while it is still -1.
+- **Feed**: `MusicNowPlaying.store` calls `observePlay(context, wasPlaying, playing)` right before its `changed()`, and
+  `playerGone` calls it with `playing = false`. `MusicMedia.init` calls `MusicListening.init(app)` right after
+  `MusicCalls.init(app)`.
+- **Debug hook**: `src/debug/.../music/HeadsetDebugReceiver.kt` (id `-999 - n` = -1000, -1001, ...; address
+  `debug-<n>`, n from 1). It calls `MusicListening.devicesAdded`, then reports the headset stamp, the uptime and the
+  boot count (logcat `HeadsetDebug` and the broadcast's result data). Exported and guarded by DUMP in
+  `src/debug/AndroidManifest.xml`. It is in `CheckDebugHook`'s names (`checkDebugHasDebugHook` finds it) and in
+  `DebugHookAbsentTest`'s banned list. That test's manifest check now covers all three debug receivers.
+- **Tests**: `MusicWindowTest` (§6's 17 cases). `MusicMediaPlanTest`: `the end of play is fed by the bridge`, plus a pin
+  for the headset watch: `MusicListening.init(app)` after `MusicCalls.init(app)`, the baseline read before the
+  registration, `init`'s own catch, and the stamps loaded by `listening`/`observePlay`/`devicesAdded`, not `init`.
+  `DebugHookAbsentTest`: the banned name, the three receivers, the hook's own id and address.
+- **Left for step 3**: the launcher `CLAUDE.md` (also a line on the new debug receiver next to the 16d hook's bullet)
+  and `docs/testing/emulator.md` §6j.
