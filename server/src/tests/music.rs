@@ -1214,6 +1214,14 @@ async fn a_page_from_before_the_update_sets_both_switches_from_mobile_data() {
         (&json!(true), &json!(true), &json!(true))
     );
     assert_eq!(music["storage_limit_gb"], json!(10), "the limit unchanged");
+    // The event names the limit in force, not the absent posted one (qa-30-s1-code L2).
+    assert_eq!(
+        events(&app, "music_phone_settings").await.last().unwrap(),
+        &format!(
+            "device {device}: streaming on mobile data true, downloads on mobile data true, \
+             storage limit 10 GB, volume cap off, Storytel false"
+        )
+    );
     // Its checkbox off: both off. Today's switch names without `v` aren't read.
     app.request_form(
         Method::POST,
@@ -1503,10 +1511,23 @@ fn the_card_warns_when_kept_items_alone_pass_the_limit() {
         storage_line(0, Some(2_000_000_000), Some(0), Some(2)).1,
         None
     );
+    // Just over the limit reads over it, never "2.0 GB of the 2 GB limit" (qa-30-s1-code L1).
+    let just_over = |kept: i64| storage_line(0, Some(kept), Some(0), Some(2)).1.unwrap();
+    for kept in [2_000_000_001, 2_040_000_000, 2_099_999_999, 2_100_000_000] {
+        assert_eq!(
+            just_over(kept),
+            "Kept episodes and books alone use 2.1 GB of the 2 GB limit - lower an entry's \
+             offline depth or raise the limit.",
+            "{kept}"
+        );
+    }
+    assert!(just_over(2_100_000_001).contains("use 2.2 GB of the 2 GB limit"));
     assert!(
-        storage_line(0, Some(2_000_000_001), Some(0), Some(2))
+        storage_line(0, Some(i64::MAX), Some(0), Some(10))
             .1
-            .is_some()
+            .unwrap()
+            .contains("of the 10 GB limit"),
+        "the round-up never overflows"
     );
     // No limit: never a warning. An older app (no `audio_bytes`): never a warning.
     assert_eq!(storage_line(0, Some(i64::MAX), Some(0), None).1, None);

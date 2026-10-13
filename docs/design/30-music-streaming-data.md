@@ -800,7 +800,7 @@ Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in,
 - `migrations/0073_music_data_and_storage.sql` (main was at 0072): the two switches from `music_mobile_data`, the old
   column dropped, `music_storage_limit_gb INTEGER DEFAULT 2`.
 - `models.rs` `DevicePolicy`; `music.rs`: `MusicPolicy` in §3's order, `mobile_data_wire`, `STORAGE_LIMITS`,
-  `DEFAULT_STORAGE_LIMIT_GB`, `storage_limit`, `storage_limit_label`, `older_phone_note`, `storage_line`, `gigabytes`.
+  `DEFAULT_STORAGE_LIMIT_GB`, `storage_limit`, `storage_limit_label`, `older_phone_note`, `storage_line`, `gigabytes_up` (`gigabytes` until the QA fix round).
 - `handlers/music.rs`: `MusicCard` (the switches, `data_note`, `storage_limit(s)`; the storage line and its warning go
   into the card's `lines`/`warnings`), `mobile_switches`, `save_device_settings` (one `UPDATE ... RETURNING` that keeps
   the stored limit when the post has none, so the event names the limit in force).
@@ -829,3 +829,13 @@ Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in,
   launcher carries `music` as a raw object, so the new keys break nothing.
 - Docs: `server/CLAUDE.md` (Vibb music library: data, PWA, wire; the Storytel note).
 - Not device-tested: §8 check 1.
+- **Code QA fix round** (`qa-30-s1-code.md`, 0 High, 0 Medium, 4 Low):
+  - L1: the over-the-limit warning rounds the kept figure **up** to the tenth (`music::gigabytes_up`), so 2.04 GB
+    against 2 GB reads "2.1 GB of the 2 GB limit", never "2.0 GB"; tested from 2,000,000,001 bytes up.
+  - L2: `a_page_from_before_the_update_sets_both_switches_from_mobile_data` pins the event of an old page's post (the
+    kept limit, "storage limit 10 GB"); QA's mutation M11 (logging the posted limit) now goes red.
+  - L3 (no code change): **steps 1 and 2 merge to `main` together.** Step 2 updates the launcher's
+    `PolicyResponseCompatTest` to the seven-key music object, so `main` never has the two pins disagreeing.
+  - L4 (no code change, the note's wording kept): **release order: no `server-v*` release with step 1 before the
+    `launcher-v*` and `music-v*` releases that read the two switches (steps 2 and 3a).** Until then the card's "Update
+    both" would name an update that doesn't exist yet. The orchestrator holds the server tag.

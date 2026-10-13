@@ -156,3 +156,12 @@ by key, and `mobile_data` stays as AND. Counts: 0 High, 0 Medium, 4 Low.
     parent sets the switches apart. Then an old phone does the conservative thing (AND), and the card says so.
 - **Docs.** `server/CLAUDE.md` (data, PWA, wire, the Storytel note) matches the code. The step 1 status in the spec
   lists the interpretations and says §8 check 1 wasn't run on a device.
+
+## Fixes (2026-10-13, branch `design-30-s1`, on `7d821b05`)
+
+| Finding | Fix |
+|---|---|
+| L1 | `storage_line`'s warning prints the kept bytes through the new `music::gigabytes_up` (rounded **up** to the tenth, saturating, negatives as 0), so a figure over the limit never reads as the limit: 2,000,000,001 / 2,040,000,000 / 2,099,999,999 / 2,100,000,000 bytes all read "2.1 GB of the 2 GB limit", 2,100,000,001 "2.2 GB"; `i64::MAX` doesn't overflow (`the_card_warns_when_kept_items_alone_pass_the_limit`). The storage line itself keeps `megabytes`; `gigabytes` (now unused) is gone. |
+| L2 | `a_page_from_before_the_update_sets_both_switches_from_mobile_data` asserts the old page's event: "streaming on mobile data true, downloads on mobile data true, storage limit 10 GB, volume cap off, Storytel false". M11 re-run (event from `limit.flatten()`): the test goes red at that assertion; reverted. |
+| L3 | No code change. Steps 1 and 2 merge to `main` together (step 2 carries the launcher's `PolicyResponseCompatTest` with the seven keys); noted in the spec's step 1 status. |
+| L4 | No code change; the note's wording kept. Release order added to the spec's step 1 status: no `server-v*` release with step 1 before the `launcher-v*` and `music-v*` releases of steps 2 and 3a. |
