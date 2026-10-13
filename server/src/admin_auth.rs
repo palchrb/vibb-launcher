@@ -440,9 +440,9 @@ fn normalize_host(host: &str) -> String {
 }
 
 /// CSP phase 1 (§3.2.4): inline scripts and handlers still allowed until S7 moves them to
-/// `/static`.
+/// `/static`. Images are same-origin only: the map's tiles come through `/tiles/` (design 33).
 pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
      connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; \
      object-src 'none'";
 

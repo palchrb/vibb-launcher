@@ -127,7 +127,8 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     })
 }
 
-/// Background task (spawned from `main` only): [prune] at startup and every hour.
+/// Background task (spawned from `main` only): [prune] at startup and every hour, and the map tile
+/// cache kept under its bound (`tiles::prune_cache`).
 pub async fn run_pruning(state: AppState) {
     let mut interval = tokio::time::interval(PRUNE_INTERVAL);
     loop {
@@ -136,6 +137,18 @@ pub async fn run_pruning(state: AppState) {
             Ok(pruned) if pruned != Pruned::default() => tracing::info!(?pruned, "Pruned old data"),
             Ok(_) => {}
             Err(err) => tracing::error!(%err, "Pruning old data failed"),
+        }
+        // The map tile cache's bound (design 33): the least recently fetched tiles go first.
+        let dir = state.tiles.dir.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::tiles::prune_cache(&dir, crate::tiles::CACHE_LIMIT_BYTES)
+        })
+        .await
+        {
+            Ok(Ok(pruned)) if pruned.tiles > 0 => tracing::info!(?pruned, "Pruned map tiles"),
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => tracing::error!(%err, "Pruning the map tiles failed"),
+            Err(err) => tracing::error!(%err, "Pruning the map tiles failed"),
         }
     }
 }

@@ -37,6 +37,7 @@ mod storytel;
 mod streams;
 #[cfg(test)]
 mod tests;
+mod tiles;
 mod time_rules;
 mod wallpapers;
 mod window_relock;
@@ -124,6 +125,9 @@ pub struct AppState {
     pub enrollment: std::sync::Arc<enrollment::Enrollment>,
     /// argon2 off the async workers, one at a time with a short queue (`admin_auth`).
     pub passwords: std::sync::Arc<admin_auth::PasswordGate>,
+    /// The Locate map's tiles, fetched from OSM and cached in `data/tiles` (design 33, `tiles`);
+    /// a canned fetcher in the tests.
+    pub tiles: std::sync::Arc<tiles::Tiles>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -376,6 +380,10 @@ async fn main() {
         tokens: Default::default(),
         enrollment: Default::default(),
         passwords: Default::default(),
+        tiles: std::sync::Arc::new(tiles::Tiles::new(
+            std::path::PathBuf::from(tiles::TILE_DIR),
+            std::sync::Arc::new(tiles::HttpTiles::new()),
+        )),
     };
     state
         .tokens
@@ -838,6 +846,8 @@ pub fn build_admin_router(
         )
         .route("/settings/calls", post(handlers::calls::save_call_settings))
         .route("/devices/locate", get(handlers::locate::show_locate))
+        // The map's tiles through the server (design 33): never on the phone listener.
+        .route("/tiles/{z}/{x}/{y}", get(tiles::serve))
         .route(
             "/devices/{id}/locations.json",
             get(handlers::locate::locations_json),

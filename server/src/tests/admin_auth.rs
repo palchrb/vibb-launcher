@@ -521,7 +521,9 @@ async fn admin_responses_carry_the_security_headers_and_cache_rules() {
             .to_str()
             .unwrap();
         assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
-        assert!(csp.contains("https://tile.openstreetmap.org"), "{csp}");
+        // The map's tiles are same-origin (design 33): no third-party image host.
+        assert!(csp.contains("img-src 'self' data:;"), "{csp}");
+        assert!(!csp.contains("openstreetmap"), "{csp}");
         assert_eq!(
             res.headers
                 .get(header::CACHE_CONTROL)

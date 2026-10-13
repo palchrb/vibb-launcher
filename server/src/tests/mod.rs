@@ -34,6 +34,7 @@ mod sound_mode;
 mod step10;
 mod step11;
 mod step9;
+mod tiles;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
@@ -60,6 +61,8 @@ pub struct TestApp {
     /// Every music source fetch's canned answers (designs 21, 21b): `fetch.answer(url, status,
     /// body)`.
     pub fetch: std::sync::Arc<music::CannedFetch>,
+    /// The map tiles' canned upstream (design 33): `tiles.answer(...)`, `tiles.requests`.
+    pub tiles: std::sync::Arc<tiles::CannedTiles>,
     _dir: tempfile::TempDir,
 }
 
@@ -150,6 +153,7 @@ impl TestApp {
 
         let (command_notify, _) = tokio::sync::broadcast::channel(64);
         let fetch = std::sync::Arc::new(music::CannedFetch::default());
+        let canned_tiles = std::sync::Arc::new(tiles::CannedTiles::default());
         let state = AppState {
             db: db.clone(),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
@@ -181,6 +185,10 @@ impl TestApp {
             tokens: Default::default(),
             enrollment: Default::default(),
             passwords: Default::default(),
+            tiles: std::sync::Arc::new(crate::tiles::Tiles::new(
+                dir.path().join("tiles"),
+                canned_tiles.clone(),
+            )),
         };
 
         TestApp {
@@ -188,6 +196,7 @@ impl TestApp {
             state,
             db,
             fetch,
+            tiles: canned_tiles,
             _dir: dir,
         }
     }

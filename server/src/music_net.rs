@@ -283,8 +283,9 @@ pub fn strip_tracking(url: &str) -> String {
 }
 
 /// Resolves a name and keeps only public answers - the resolver of [Reach::Public]'s client, so a
-/// public name that (re)binds to a private address can't be connected to.
-struct PublicResolver;
+/// public name that (re)binds to a private address can't be connected to. The map tiles' client
+/// uses it too (`tiles::HttpTiles`, design 33).
+pub(crate) struct PublicResolver;
 
 impl reqwest::dns::Resolve for PublicResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {

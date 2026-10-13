@@ -91,6 +91,7 @@ async fn the_device_router_serves_nothing_but_the_device_api() {
         "/static/style.css",
         "/sw.js",
         "/auth/verify-2fa",
+        "/tiles/1/0/0.png",
     ];
     for path in paths {
         for method in [Method::GET, Method::POST] {

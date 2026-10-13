@@ -600,6 +600,14 @@ Release note for the parent app's rename and new tab bar:
 - The manifest keeps its URL and gets `"id": "/"` (the id it already had implicitly), so an installed app is not
   reinstalled. The two-factor issuer in authenticator apps stays "Kids Device MDM" (it only labels new entries).
 
+## Map tiles through the server (design 33)
+
+The Locate page's map no longer loads its tiles from OpenStreetMap in the browser: **the server now contacts
+`tile.openstreetmap.org` (HTTPS, port 443)** itself, so allow that in an outbound firewall. It identifies itself as
+`VibbPhoneServer/<version>` with the project's URL, as OSM's tile usage policy asks, and sends nothing about you or
+the phones. Tiles are cached in `data/tiles/` (at most 200 MB, kept 7 days or more before OSM is asked again, never
+backed up - deleting the directory is always safe). Without a connection to OSM the map shows the tiles it has.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`
