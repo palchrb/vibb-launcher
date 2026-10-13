@@ -13,7 +13,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
 - `music/` - the Vibb music app (Kotlin, Compose, Media3; applicationId `me.vibb.music`, debug
-  `me.vibb.music.debug`), designs 20/21/21b. Details: `music/CLAUDE.md`.
+  `me.vibb.music.debug`), designs 20/21/21b, Sonos 26a, Storytel 26b, Spotify 26c. Details: `music/CLAUDE.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
   now `main` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup

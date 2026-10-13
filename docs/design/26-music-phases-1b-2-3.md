@@ -26,6 +26,17 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   real speakers (26b "Device checks", and 26a's); the merge to `main` is the user's - merging `music-2-storytel` brings
   1b with it - then the server bump, and `music-v0.3.0-rc.1` on the merge commit (26b "Release", which also lists the
   open points for the user).
+- **Phase 3 (Spotify) is built on `music-3-spotify`** (status 2026-10-13; spec and every step's status in
+  `26c-spotify.md`): steps 1-7 done (the server's app, PKCE logins and token cache; the Web API listing in list and
+  context mode; entries, the gate and the binding in the PWA; the contract commit - the phone's token route, the
+  launcher's courier, gated DNS exemption and WebView guard, the music app's parsing; the Android-free core and
+  `scripts/fake-spotify.py`; the WebView host and `SpotifyRenderer`; the service, the UI and §6l; context mode and the
+  debug-only state recorder; the docs), each code step with QA's code review and its fix round; main merged in twice
+  (`a5d30b9`, then `571f86f` with design 30, which took 0073: Spotify's migration is **0074**). **Not done yet:**
+  `docs/testing/emulator.md` §6l (parts A1 and A2 never ran - steps 5b and 6's acceptance; part B needs the user's
+  account), the DNS capture that replaces the provisional `spotify_hosts.json`, the Jelly Star checks (26c's QA
+  checklist, the 2.5-hour Doze run); the merge to `main` is the user's, then the tags in 26c "Release" (a launcher tag,
+  `music-v0.4.0-rc.1` = 3999, `server-v0.26.0` after design 30's server), which also lists the open points.
 - **Read first:** root `CLAUDE.md`, `music/CLAUDE.md`, `docs/design/20-vibb-music.md` (its decision sections win over
   its §1-§5), `21-vibb-music-phase1.md`, `21b-music-server-sweep.md`, `vibb-spotify-options.md`, the mockup
   `docs/design/mockups/vibb-music/` (v15, published at https://claude.ai/artifact/2np6veF8YP3bJeQCAct9fY).
@@ -86,7 +97,8 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   **`docs/design/26c-spotify.md`** (branch `music-3-spotify`, from `main` at `fff8c28`, rebased on `437eb84`): the
   family's own developer app, PKCE logins in the parent's browser, the server's Web API listing, a `SpotifyRenderer`
   around a headless WebView, the launcher's token courier and DNS exemption, a fake Spotify; Spotify on Sonos is its
-  later step 8. The App Remote bullets below are history.
+  later step 8. Steps 1-7 are built on `music-3-spotify` ("Where things stand" above; 26c's status sections and
+  "Release"). The App Remote bullets below are history.
 - **New ground:** the Pi's Spotify path (go-librespot) doesn't carry over to Android (`vibb-spotify-options.md`: the
   audio-key denial for new accounts). Only `tests/sonos_spotify_queue.py` (Sonos owning a Spotify queue via ShareLink)
   is reusable, for Spotify on Sonos. Everything else is designed from scratch, from the spike's answers.

@@ -6,7 +6,10 @@ launcher, released as `music-v*` and installed through the launcher's catalog. D
 step 2, QA decisions, the step 2 status) and `21b-music-server-sweep.md` §6 (the server lists NRK/RSS; the phone never
 does); Sonos (phase 1b) is `26a-sonos.md` (§0-§6 the spec, §9 the deviations from vibb, then each step's status and
 choices); Storytel (phase 2) is `26b-storytel.md` (§0-§6 the spec, §9 the deviations, then each step's status and
-choices); a new entry as Nytt news is `29-music-news-new-entries.md` (ours, not vibb). Behaviour comes from
+choices); Spotify (phase 3, new ground: Spotify's Web Playback SDK in a headless WebView) is `26c-spotify.md` (§0-§10
+the spec, §12 the deviations from vibb, then each step's status with its fix round and the two merges of main - the
+status sections say what was built where the spec differs); a new entry as Nytt news is
+`29-music-news-new-entries.md` (ours, not vibb). Behaviour comes from
 palchrb/vibb (MIT), ported, never reinvented: each ported file credits it.
 
 ## Stack and layout
@@ -23,7 +26,10 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   SHA-256 checked on arrival in `own/<id>.sha256`, so a copy under a reused file id is fetched again, design 29 step
   4, `logic/OwnFiles.kt` - the report),
   Room (`MusicDb`), `Snapshot` (what the screens and the player read; `visible()` hides url-null items without a copy;
-  `forRenderer(remote)` is the view for a renderer - on a room every Storytel book, on the phone only those with a copy).
+  `forRenderer(remote)` is the view for a renderer - on a room every Storytel book, on the phone only those with a copy;
+  a listed Spotify item shows in both views, a context-mode Spotify entry as one synthetic item). Spotify's own files
+  in noBackupFilesDir: `spotify_state.json` (the account word), `spotify_context.json` (a context's live track), both
+  the store's, and the web player's `spotify_page_account`.
 - `sync/` - the sync and download workers (WorkManager; never a dataSync FGS, QA #1), `DownloadPlan` and the pure
   `DownloadRun` (the worker's decisions behind a `DownloadIo` seam), `ArtPlan` (the art want set), `Inbox` (what the
   bridge hands over, checked), the Nytt notification, `CacheThrough` (design 30: a played stream settled into a
@@ -35,7 +41,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   live state for the screens, same process) and the renderer axis (26a §0, §3): `Renderer` (who makes the sound),
   `LocalRenderer` (the ExoPlayer, the phone's 10 s sleep fade, audio focus) and `RendererGate` (the startup gate).
   The output axis (`Output` keys `phone`/`dev:<id>`/`sonos:<uid>`, `setPreferredAudioDevice`, the headset callbacks)
-  stays the phone's and always goes to `LocalRenderer`.
+  stays the phone's and always goes to `LocalRenderer`. The third renderer is `spotify/SpotifyRenderer` (26c §5);
+  `RendererRules.kt` holds the pure rules of which renderer an entry gets, a Spotify item's playability, the queue's
+  kind and its claim, and the call test (`RendererRulesTest`).
 - `sonos/` - the Sonos port (26a §1-§2, from vibb `pi/sonosd.py`, `pi/vibb/renderer.py` and `pi/daemon.py`'s
   `_sonos_*`): Android-free `Ssdp`, `Soap` (OkHttp + javax.xml DOM, our own UPnP client, no library), `Topology`,
   `SpeakerCache` (`noBackupFilesDir/sonos.json`; players merge, groups replace) + `RoomDirectory` (the sheet's rows,
@@ -52,19 +60,30 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   the asset call's 302 captured as a `Mint`, the login lock), `StorytelHttp` (the seam and `OkHttpStorytelHttp`),
   `StorytelEndpoints` (Storytel's hosts and the debug switch), `StorytelAccount` (Android: the process's one
   `StorytelApi`, the sealed login, `FileCooldownStore`, `mint`, `state`). The rules are in `logic/Storytel.kt`.
+- `spotify/` - the phone's Spotify player (26c §4-§5; the server lists, the phone never does): pure `SpotifyRef` (the
+  stored target `spotify:<kind>:<id>`, `uriOf`), `SpotifyApi` + `SpotifyHttp` (the Web API's play, transfer, queue,
+  shuffle and repeat calls behind a seam, their outcomes and the start's retries), `SdkState` (the page's compact
+  state, capped), `SpotifyTracker` (the state machine: what is ours, ends, unplayable, elsewhere, context mode),
+  `SpotifyHosts` + `WebPolicy` (the host list = `spotify_hosts.json`; what the WebView may load; the page's CSP and
+  bridge names), `SpotifyEndpoints` (Spotify's bases and the debug switch), `TokenCache` (the access token, memory
+  only); Android: `SpotifyWebHost` (the one headless WebView), `SpotifyRenderer` (the `Renderer` with its
+  `SimpleBasePlayer`, focus, noisy, the fade), `SpotifyLocks`, `SpotifyRecording` (the debug-only recorder's hook).
+  `assets/spotify/player.html` + `player.js` are our page and its glue (GPL; the SDK is loaded from Spotify at run
+  time, never copied); `bridge/SpotifyBridgeToken.kt` is the AIDL token call. The rules are in `logic/Spotify.kt`.
 - `ui/` - the screens of `Main.dc.html` v12; `MusicGlyphs.kt` and `res/drawable/music_glyph_*` are generated by
   `scripts/material-symbols.sh`.
 - `src/debug/` - the debug feed (`DebugFeedReceiver`, docs/testing/emulator.md §6f; `debug-feed/sonos.json` seeds the
   speaker cache with ip and port for the fake speakers, §6h; `DebugStorytel.kt`: `config.json`'s `storytel_base` and
-  `storytel.json`'s fake login for the fake Storytel, §6i). Never in a release
+  `storytel.json`'s fake login for the fake Storytel, §6i; `DebugSpotify.kt`: `config.json`'s `spotify_base` for the
+  fake Spotify and `record_spotify_states` for the state recorder, §6l). Never in a release
   (`checkReleaseHasNoDebugFeed` scans the APK; `SourceScanTest`).
 
 ## Build and test
 
 From `music/` with JDK 17 and `local.properties` (`sdk.dir=...`):
 `./gradlew assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (CI: `./gradlew build`). The
-shared files in `src/test/resources/` must equal `server/testdata/music_{library,listing,icons}.json`
-(`ContractFilesTest`). A release build without the signing properties is unsigned, as the launcher's. Dependencies
+shared files in `src/test/resources/` must equal `server/testdata/music_{library,listing,icons}.json` and
+`server/testdata/spotify_hosts.json` (`ContractFilesTest`; `SpotifyHostsTest` checks the constant against it). A release build without the signing properties is unsigned, as the launcher's. Dependencies
 are verified against `gradle/verification-metadata.xml` and the wrapper pins its distribution (security review L9,
 root `CLAUDE.md` "Build and test"; `BuildChainTest`). The canned SOAP replies in `src/test/resources/sonos/`
 (`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule): change a fixture
@@ -76,7 +95,18 @@ what `scripts/fake-storytel.py` answers from (`--selftest`, CI too): its options
 a room) and `--print-listing ENTRY` (the debug feed's listing) drive docs/testing/emulator.md §6i; every value in it
 is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`). `scripts/fake-audio.py` is a fake podcast
 host for design 30's checks (silent WAV episodes with Range; `--vary` serves another length per request, the
-changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testing/emulator.md §6f).
+changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testing/emulator.md §6f). Spotify's
+`src/test/resources/spotify/` (`play_request.json` - the exact play, context play, transfer, queue, shuffle and repeat
+requests -, `play_answers.json`, `token_answers.json`, and `sdk_states/*.json`, the state sequences
+`SpotifyTrackerTest` replays) and `server/testdata/spotify/` (the accounts and Web API answers) are what
+`scripts/fake-spotify.py` answers from (`--selftest`, CI too): the accounts service with PKCE (`--as`, `--deny`,
+`--rotate`, `--access-ttl`, `--expire-refresh`, `--bad-client`), the Web API the server and the phone use
+(`--snapshot`, `--rate-limit N`, `--quota`, `--not-premium`, `--offset-404`) and a stub Web Playback SDK playing a tone
+per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--unplayable`, `--relink`, `--no-eme`,
+`--slow-ready`, `--shuffle`, `--repeat`, `--token-ttl`, `--track-seconds`), plus `--print-library` and
+`--print-listing ENTRY [--tracks N]`; they drive docs/testing/emulator.md §6l. Every value in it is fake
+(`FAKE-ACCESS-<n>`, `FAKE-REFRESH-<n>`, `FAKE-CODE-<n>`, client id `0123456789abcdef0123456789abcdef`, users
+`fakeparent`/`fakekid`, never a `BQ...`/`AQ...` token shape).
 
 ## Rules that are easy to break
 
@@ -103,7 +133,7 @@ changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testin
   `SourceChangedException`, never retried by the player's `SourceChangedPolicy`; the job refetches from 0, the player
   drops the row and loads the queue again with the item uncached and without a cache key - never `replaceItem`,
   which Media3 turns into an in-place update of the same cache-backed source). The HLS rendition is pinned to the download's
-  (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos and Storytel never write through.
+  (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos, Storytel and Spotify never write through.
 - Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
   hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
   `clear_state` at a queue's natural end (partial positions only). Above depth 0 the bookmarked item is never
@@ -122,7 +152,8 @@ changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testin
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).
 - Behaviour questions default to what the vibb Pi player does (`pi/daemon.py`, `pi/vibb/*.py`, `tests/`).
-- The kid's screens open nothing else: no settings, links, share or web views (`SourceScanTest`).
+- The kid's screens open nothing else: no settings, links, share or web views (`SourceScanTest`; the one WebView is
+  the Spotify web player's, headless and never attached to a window - below).
 - The bridge (design 21 step 3, `bridge/`): the launcher is the only way to the server. `BridgeSync.pull` runs first
   in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
   under a Keystore key) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
@@ -220,6 +251,113 @@ changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testin
   tap, RESUME, `restoreThen`, a headset's play, coming home: "Ikke lastet ned", never another book, the bookmark
   unmoved (`bookNotOnPhone`). A signed URL is never logged or printed (`redactUri`; the `toString`s of `PlayBody`,
   `PlayResult`, `Fields`, `Moved`, `PositionInfo`).
+- **Spotify is the third renderer, the web player** (design 26c §5, §5.10): a Spotify entry on a phone output gets
+  `SpotifyRenderer` (`phoneRendererFor`; made once per service and kept; `local.standDown()` when it attaches), every
+  other entry the `LocalRenderer`, a room its `SonosRenderer` - a room's queue drops Spotify (`speakerDropReason`
+  `spotify`, "Kan ikke spilles på Sonos"; Spotify on Sonos is 26c's later step 8). `RendererKind.onPhone` (LOCAL,
+  SPOTIFY) replaces `=== local` at every site `GuardsTest` lists. The sound is local audio (focus, noisy, the volume
+  cap, the 10 s sleep fade through `vibb.volume`; no hush). **List mode plays our list**: `PUT /me/player/play` with
+  the track uris of a window of at most 50 from the current item and `position_ms` (the resume place, so nothing
+  sounds from 0:00), past the window the next item added with `POST /me/player/queue` one track ahead, shuffle and
+  repeat turned off first (a device session's first play, and whenever a state says either is on). Pause, resume and
+  seek are the SDK's (no Web API call); steps within 300 ms coalesce into one play; Spotify's own advance sends
+  nothing (the natural-advance seek is the phone's own player's only, `resumesOnAdvance`).
+- **Only our tracks are ours** (`SpotifyTracker`, 26c §5.4): a state counts only when it names the uri we sent for the
+  current item or the expected next one (by uri, the SDK's `linked`, or the server's title + a duration within 2 s);
+  anything else - Autoplay after the list, another Spotify app transferring to "Vibb", our own queue add left in
+  Spotify's queue, a stale state from before a start - is paused at once, never saved, never mapped to an index;
+  after `Ended` every playing state is paused. Unplayable comes only from the SDK (a `playback_error`, or a skip the
+  state's `prev` proves), three in a row stop; the play call's 403 is an account matter (`refused`/`not_premium`,
+  "spør en voksen"), never an item error. A `null` state counts only when a second look 2 s later confirms it:
+  "Spotify spiller et annet sted", the bookmark kept. `saveNow` writes only a measured position (the last state's
+  of the current item, as received).
+- **Nothing starts by itself on Spotify either**: the page - and with it the Connect device "Vibb" - exists only from
+  the first Spotify play, never at a restore (a stored Spotify queue loads paused: no page, no network); a play the
+  renderer would start on its own (`NewWindow`, `ShuffleOrRepeat`, the move-on after an unplayable, the gain after a
+  transient focus loss, a step Spotify plays while paused) goes on only with a play the kid wants now
+  (`playWhenReady`, not suppressed, `playAllowed`). The page is destroyed at every suspension (`suspended()`: the
+  bookmark with force, the pause - no Connect device while suspended), 5 minutes after the last pause (the SDK's
+  `disconnect()` first), when the renderer process dies, on the token's `off` and when the token's account changes.
+  **A detached web player owns nothing**: its queue is null while another renderer plays (`queue = {
+  active.takeIf { renderer === spotify } }`) and `detached()` pauses every playing state until its next `load`
+  (qa-26c-step5b-code M1). `onError` stays synchronous on main for a Spotify item: the renderer reads the
+  `seekTo`/`prepare`/`play` made inside its `Error("unplayable")` as its own move-on (`GuardsTest`).
+- **Context mode** (26c §5.9; the library's `spotify: "context"`: an artist, a playlist no family account may list):
+  the snapshot gives the entry one synthetic item (`contextItem`: key `context`, no url, no duration, titled by the
+  live track once one played), so the tile, the stored queue and resume work. A start is `context_uri` - a playlist
+  from `offset.uri` = the live track at its place (an offset no longer in it: one more play from the top), an artist
+  from Spotify's start (no resume: `contextResumes`, its place shows 0). Next and previous are the SDK's, sent only
+  while a track of our context is on the player. Every track of the context is ours (a `null` context only for our
+  live track or the one named next); anything else is paused; the end only on evidence; no unplayable item, no
+  "Spor N av M", never marked done (`keepsDuration`). The live track (uri and title) is
+  `noBackupFilesDir/spotify_context.json` - the store's, written through the renderer's ports, pruned on a parsed
+  library, dropped at the context's end.
+- **Spotify streams under the streaming switch** (design 30's `stream_mobile_data`, never the downloads switch or the
+  storage limit; `spotifyPlayability` = `streamAllowed`, never `GONE`; the web player's own `networkLine` reads the
+  same switch). Refused, the queue is loaded paused at its place with "Spotify - trenger Wi-Fi" / "trenger internett"
+  (`refused(line)`), never `NOT_DOWNLOADED`, never another item. Nothing of Spotify is fetchable, kept, written
+  through, a played extra or a claim: `KeepItem.fetchable` false, `downloadPlan` prunes any Spotify row,
+  `markPlayed`/`updateHeld` only on the phone's own player, and a queue's claim follows **its** kind -
+  `queueKind(renderer.kind, entry)` in `playEntry`, `playItem` and `restore`, then `claimsQueue` (never the attached
+  renderer's kind, which is still the web player right after a Spotify play: qa-26c-merge-code M1). No shuffle
+  (every Spotify entry resumes).
+- **The lines and the word**: the renderer's `RendererState` (`SPOTIFY_*`, `remote` false - `callStep` reads
+  `remote != true`) is the player's quiet line and the loaded tile's; the account word (`ok`, `reauthorize`,
+  `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`; `none` from the token's `off` and from `forget()`)
+  is `noBackupFilesDir/spotify_state.json`, written only on a change, shown on **every** Spotify tile and sent as the
+  report's `spotify`. The player shows the word "Spotify" under the title (the Policy's attribution, 26c §7.3).
+- **The web player's WebView** (26c §5.2, §7.2): one WebView in the process, `SpotifyWebHost`'s, made with the
+  application context by the service and **never attached to a window** (`SourceScanTest`: `WebView(`,
+  `android.webkit` and `addJavascriptInterface` only in that file, no `addView`); JavaScript and DOM storage on, media
+  without a gesture, file and content access off, no geolocation or multiple windows, `RENDERER_PRIORITY_IMPORTANT`,
+  third-party cookies (the SDK's iframe), Safe Browsing and metrics off (the manifest), no `androidx.webkit`. Our page
+  is `assets/spotify/player.html` under `https://appassets.androidplatform.net/spotify/` with a CSP; the SDK comes from
+  `https://sdk.scdn.co/spotify-player.js` at every load, **never pinned and never copied** (Spotify's terms). Every
+  request of every frame, and of service workers (`ServiceWorkerController`), passes `WebPolicy.decide`: our two
+  assets, https on 443 to a host of the Spotify list, `blob:`/`data:`, else an empty 403 (counted; the host only, in
+  the debug log). WebSockets and a redirect's target bypass it - bounded only by the launcher's DNS filter and the
+  CSP. No navigation; the protected-media permission only, only to `sdk.scdn.co` or our origin. The bridge
+  `VibbSpotify` exposes exactly `SpotifyPage.FROM_PAGE` (`ready`, `notReady`, `needToken`, `state` at most 8 KB,
+  `error`), each validating and posting to main; calls into the page go through `SpotifyPage.call`, every argument
+  quoted. The stores (web storage, the HTTP cache, cookies - awaited) are cleared on an account change, the token's
+  `off` and a library without Spotify (`forget()`); the page's account (`"<id>:<generation>"`) is kept in
+  `noBackupFilesDir/spotify_page_account`, so no token of another account reaches a page whose storage is the old one's.
+- **The Spotify token** (26c §5.5, §6.1): from the launcher only - `getSpotifyToken` (appended to the AIDL, answered on
+  `ISpotifyTokenCallback`, 10 s; the launcher asks `POST /api/devices/music/spotify/token` and caches nothing) ->
+  `TokenResult`. `TokenCache` keeps it in memory only (never a file, Room, the report or a `toString`), hands out one
+  with 5 minutes left, shares one call in flight, cools down (`reauthorize` 10 minutes, `busy` its wait), asks once
+  more 5 s after an `unreachable` at a start (the server's 8 s budget), and while playing refreshes at 10 minutes left
+  (again every 2 minutes until the old one expires), so the SDK's hourly `getOAuthToken` is answered from memory
+  with the screen off. A 401 renews once; the same token back or a second 401 is `refused`. `Authorization`/`Bearer`
+  appear only in `StorytelApi.kt` and `spotify/SpotifyApi.kt`; the Web API calls use the guarded public-only client.
+- **Spotify secrets** (26c §7.1): the access token, the SDK's device id and the page's state never reach a log, Room,
+  `music_state`, the report or a `toString`. **No `Log.` in `spotify/`** at all: the host, the locks and the renderer
+  log through the function the service gives them, `spotifyLog` (`Log.d` under `BuildConfig.DEBUG` - the service's one
+  Spotify log line; a release logs nothing), with fixed words only (hosts, statuses, kinds; never a token, a uri list
+  or a state JSON), the SDK's error text only in a debug build. **The page's console is a log channel too**:
+  `onConsoleMessage` returns true always (a debug build notes the level and the source's host only). The token
+  reaches the page only as a quoted `evaluateJavascript` argument. **The state recorder is debug-only**:
+  `SpotifyRecording.recorder` is null in main and assigned only by `DebugSpotify.kt` while `config.json` says
+  `"record_spotify_states": true` (one daemon thread, `debug-feed/sdk_states/<UTC>.jsonl`, 32 MiB a file, the page's
+  compact states, its events and our calls by name - never a token or the SDK's text); `HostEvent.State`'s
+  `toString` leaves the JSON out.
+- **The Spotify debug switch** (26c §9.3, 26b's pattern): `SpotifyEndpoints.debugBase` is null unless the debug feed's
+  `config.json` sets `spotify_base` (`http://10.0.2.2:8731`); only `DebugSpotify.kt` assigns it (the receiver and
+  `DebugStartup`). Exactly six readers, all in `SpotifyEndpoints.kt`, each taking the base only for 10.0.2.2 or
+  loopback: `apiBase()`, `apiOverLan()`, `sdkUrl()` (`https://fake-spotify.invalid/sdk/spotify-player.js`),
+  `webHosts()`, `webProxy()` (the interceptor fetches `https://fake-spotify.invalid/<path>` from the base over the LAN
+  client, `Range` forwarded, so the page sees https only and mixed content stays blocked) and `debugTokens()` (the
+  fake's token route, only while the app is unmanaged; a managed phone's token comes through the bridge). With the
+  switch set only a `FAKE-ACCESS-` token goes on (`debugSwitchToken`). The cleartext config doesn't widen the web
+  player: `WebPolicy` refuses every http URL. The emulator loop is docs/testing/emulator.md §6l: A1 the whole chain
+  (the PWA, the server with its loopback bases, the debug launcher, the managed music app), A2 the phone alone on the
+  debug feed, B the real SDK with the user's account (the recorder, the DNS capture).
+- **Owed for Spotify** (26c "Release"): §6l A1 and A2 have never run (no emulator where it was built) - steps 5b and
+  6's acceptance; part B, its recorded real `sdk_states/` and the DNS capture that replaces the provisional host list
+  (three `spotify_hosts.json` copies and three constants, one commit); the Jelly Star checks of 26c's QA checklist
+  (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus, the
+  protected-media origin, episodes in a `uris` list - `SHOWS_PLAYABLE` -, the `context` field around track changes,
+  Autoplay after a list and after a context, the leftover queue add, shuffle and repeat).
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key

@@ -120,9 +120,17 @@ together. **Phase 3, Spotify** (design 26c, `docs/design/26c-spotify.md`, archit
 and the user chose the WebView route - Spotify's Web Playback SDK in a headless WebView in the music app, no Spotify
 app on the phone. The parent adds a share link in the PWA with per-phone ticks; the server lists it like an RSS feed
 with the family's own developer app (bring your own client ID, PKCE logins in the parent's browser, refresh tokens
-sealed); the phone plays it as a third renderer with a server-minted token. Next: design QA, then steps 1-7 (server
-0.26.0, migration 0074 - renumbered past design 30's 0073 at the merge -, a launcher tag, `music-v0.4.0`); owed by
-the user: the spike's DNS capture and Jelly Star Doze run (26c §14). **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
+sealed); the phone plays it as a third renderer with a server-minted token. **Built** (2026-10-13): steps 1-7, each
+code step with QA's code review and its fix round, main merged in at `571f86f` (design 30; Spotify's migration is
+0074, after design 30's 0073). Owed: the DNS capture that replaces the provisional host list (three
+`spotify_hosts.json` copies and three constants, before any tag of this release), `docs/testing/emulator.md` §6l
+(parts A1/A2 never ran; part B with the user's account), the Jelly Star checks (26c's QA checklist, the 2.5-hour Doze
+run). Release after the user's merge (`--no-ff`; 26c "Release"): the launcher (`launcher-v0.26.0`, above
+`launcher-v0.25.0-rc.1`, unless `main` tags a launcher first), `music-v0.4.0-rc.1` (versionCode 3999), then the
+server - design 30's 0073 as 0.25.0 first (or in the same release), Spotify as **0.26.0** with 0074 (the bump a
+commit on `main` after the merge), never before 0073; the stable `music-v0.4.0` after the owed checks. `server-v0.24.0`
+is tagged (`6ae54e8`, Storytel's 0072) but its release run failed at the signing step - no release yet (main's).
+**Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
 stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
 (2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a
 `music-v*` release. **Design 30** (two mobile-data switches, streaming and downloads; a stream saved to the cache as
@@ -132,8 +140,8 @@ the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 
 3b, the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
 release order of its step 1 status (no `server-v*` with step 1 before the `launcher-v*` and `music-v*` that read
 the two switches).
-Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, which merged this main on 2026-10-13 - its
-migration is `0074_music_spotify.sql`, after design 30's 0073).
+Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-7 built, which merged this main on
+2026-10-13 - its migration is `0074_music_spotify.sql`, after design 30's 0073).
 
 ## Repos
 
@@ -364,7 +372,8 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
   screenshots — run after every change and before allowing Android updates.
 - **Vibb music on Android: Spotify via App Remote (option A) is the main plan**
   (user, 2026-10-06; docs/design/vibb-spotify-options.md). **Superseded 2026-10-13**: after the spike the
-  user chose the Web Playback SDK in a WebView (design 26c), no Spotify app and no engine-app state. Requires a Play account
+  user chose the Web Playback SDK in a WebView (design 26c, built on `music-3-spotify` 2026-10-13; its "Release"
+  says what is owed), no Spotify app and no engine-app state. Requires a Play account
   on the phone and an "engine app" state in handy for Spotify. Start with the
   device spike.
 - **Custom DNS upstream** (user, 2026-10-06): DNS page option "own DNS server"
