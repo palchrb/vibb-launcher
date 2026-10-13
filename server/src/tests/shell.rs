@@ -318,9 +318,11 @@ async fn hub_values_say_none_when_there_is_nothing() {
         .await
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let now = chrono::Local::now();
+    let now = chrono::Utc::now();
+    let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
     let values =
-        crate::handlers::settings_hub::hub_values(&app.db, &dir.path().join("none"), now).await;
+        crate::handlers::settings_hub::hub_values(&app.db, &dir.path().join("none"), &zone, now)
+            .await;
     assert_eq!(values.time_rules.as_deref(), Some("No rules"));
     assert_eq!(values.web_filter.as_deref(), Some("No lists"));
     assert_eq!(values.blocked_today.as_deref(), Some("None today"));
@@ -345,10 +347,11 @@ async fn hub_values_say_none_when_there_is_nothing() {
     let newest = put("backup-20261010-030000.zip", day * 3);
     put("notes.txt", std::time::Duration::ZERO);
     put("backup-20261013-030000.zip.part", std::time::Duration::ZERO);
-    let values = crate::handlers::settings_hub::hub_values(&app.db, dir.path(), now).await;
-    let expected = crate::handlers::settings_hub::day_time_label(
-        chrono::DateTime::<chrono::Local>::from(newest).naive_local(),
-        now.naive_local(),
+    let values = crate::handlers::settings_hub::hub_values(&app.db, dir.path(), &zone, now).await;
+    let expected = crate::handlers::settings_hub::backup_label(
+        &zone,
+        chrono::DateTime::<chrono::Utc>::from(newest),
+        now,
     );
     assert!(!expected.starts_with("Today"), "{expected}");
     assert_eq!(values.backups.as_deref(), Some(expected.as_str()));

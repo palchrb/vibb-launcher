@@ -771,6 +771,41 @@ details.info > summary:not(.row) {
     opacity: 0.6;
 }
 
+.attention-icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+}
+
+/* A second line under an Attention row's text: what to do. */
+.attention-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8125rem;
+    font-weight: 400;
+}
+
+/* A row whose text is a link and that has a button too (the sign-in warning's Dismiss). */
+.attention a.attention-text,
+.attention a.attention-text:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+.attention-dismiss {
+    flex: none;
+    min-height: 44px;
+    margin: -11px -8px -11px 0;
+    padding: 0 8px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
 .attention-alarm,
 .attention-alarm:hover { background: var(--red-bg); color: var(--red-text); }
 .attention-action,
@@ -1151,6 +1186,93 @@ th {
 .empty-state {
     color: var(--label-2);
 }
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ---- The Devices list (design 31 §3.2): avatar + dot, name, status line, bar, count ---- */
+
+.device-row {
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.device-row-name {
+    display: block;
+    font-weight: 600;
+}
+
+.device-line {
+    font-size: 0.875rem;
+}
+
+.device-meter {
+    max-width: 210px;
+    margin-top: 7px;
+}
+
+.device-meter + .row-sub {
+    margin-top: 4px;
+}
+
+.row-icon {
+    flex: none;
+    width: 22px;
+    height: 22px;
+}
+
+/* The phone's initial; decorative (aria-hidden), the name is beside it. White text is 4.5:1 or
+   more on every colour. */
+.avatar {
+    flex: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #636366;
+    color: #FFFFFF;
+    font-size: 1.1875rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.avatar-indigo { background: #5E5CE6; }
+.avatar-orange { background: #C2410C; }
+.avatar-teal { background: #0E7C91; }
+.avatar-green { background: #2E8540; }
+.avatar-pink { background: #C2306B; }
+.avatar-purple { background: #8944AB; }
+.avatar-grey { background: #636366; }
+
+/* The connection dot on the avatar; the state is also the word in the status line. */
+.avatar-dot {
+    position: absolute;
+    right: -1px;
+    bottom: -1px;
+    box-sizing: content-box;
+    width: 13px;
+    height: 13px;
+    border: 2.5px solid var(--surface);
+    border-radius: 50%;
+    background: var(--dot-grey);
+}
+
+.dot-online { background: var(--dot-green); }
+.dot-away { background: var(--dot-orange); }
+.dot-offline { background: var(--dot-grey); }
 
 /* The Devices and Apps lists: one grouped list of rows. */
 .device-list {

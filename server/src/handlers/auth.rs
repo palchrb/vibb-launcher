@@ -822,6 +822,60 @@ pub async fn dismiss_login_warning(
     })
 }
 
+/// A sign-in warning as the Devices list's orange row (design 31 §3.2, qa-31-s2-code L3): a short
+/// title and the action; the full sentence stays on Account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WarningRow {
+    pub title: String,
+    pub sub: String,
+}
+
+/// [live_warning] as a row: "3 wrong two-factor codes since sign-in", "Someone knows your
+/// password - change it · sign-ins locked until 14:05" (the lock's end in the Phone Setup zone).
+pub fn live_warning_row(
+    admin: &AdminUser,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<WarningRow> {
+    let n = admin.failed_login_attempts;
+    if n <= 0 {
+        return None;
+    }
+    let mut sub = "Someone knows your password - change it".to_string();
+    if let Some(until) = admin
+        .locked_until
+        .as_deref()
+        .and_then(crate::display_time::parse_db_utc)
+        .filter(|until| *until > now)
+    {
+        let tomorrow = if zone.local(until).date_naive() == zone.today(now) {
+            ""
+        } else {
+            " tomorrow"
+        };
+        sub.push_str(&format!(
+            " · sign-ins locked until {}{tomorrow}",
+            zone.clock(until)
+        ));
+    }
+    Some(WarningRow {
+        title: format!(
+            "{n} wrong two-factor code{} since sign-in",
+            if n == 1 { "" } else { "s" }
+        ),
+        sub,
+    })
+}
+
+/// The post-sign-in banner ([login_warning_of]) as a row; its counts and addresses stay on
+/// Account.
+pub fn login_warning_row(warning: Option<&str>) -> Option<WarningRow> {
+    warning.map(|_| WarningRow {
+        title: "Wrong two-factor codes before this sign-in".to_string(),
+        sub: "Someone knew your password - change it".to_string(),
+    })
+}
+
 /// For a signed-in parent (QA 22 Low 9): wrong 2FA codes entered since their last complete
 /// sign-in, and the lock they caused - the post-sign-in banner can't say it, since the lock keeps
 /// new sign-ins out. `admin` is the row `require_full_auth` just read.

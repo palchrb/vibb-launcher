@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, see "Step 1 implementation status" at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -705,6 +705,10 @@ Below the rows:
      optimisation. A battery percentage needs a launcher and API change, which is out of scope here.
 2. **Attention.** Only the rows that apply, from `attention::collect`. Each row has a short title of at most 8
    words, built from a typed value (M5), and links to the page that fixes it.
+   - **Which rows count** (the user's decision, qa-31-s2-code L5): a phone not set up has none (its "Not set up" is
+     enough). An Offline or Disconnected phone keeps the rows read from its last report, marked "At last report";
+     the server's own facts (no or easy Parent PIN, access removed, incoming calls not blocked) stay unmarked. The
+     list's count and the summary count the same rows.
    - **Alarms (red):**
      - restrictions paused;
      - possible PIN leak (foreign app);
@@ -1005,8 +1009,10 @@ look:
   `music::device_card`. Each sub-page handler calls only its own builders (M1).
 - **`attention::collect(state, device) -> Vec<AttentionItem>`.**
   - Each item has a kind, a level (alarm / action), a short title and a target URL.
-  - It reads about 10 sources per phone: relock, parent PIN, play, escapes, `call_report`, music, sound, boots,
-    policy problem, notification access, Google backup, kid lock, time state.
+  - It reads about 10 sources per phone: relock, parent PIN, play, `call_report`, sound, boots, policy problem,
+    notification access, Google backup, kid lock, time state. (Music and escapes have no row in §3.2's list.)
+  - As built (step 2): `attention::facts` gathers them into typed `Facts`, `attention::items` makes the rows; the
+    device page passes the cards it has already built to `facts_of`.
   - The summary renders it. The Devices list shows its length as the badge.
   - A test checks that the list's count equals the summary's rows.
   - On the list this is about 10 small reads per phone. That is fine at 1-5 phones. Do not attempt a single query.
@@ -1117,19 +1123,31 @@ Notes for the build:
   - Each has its derivation in a comment that names `BACKSTOP_INTERVAL_MS`, `BACKSTOP_SSE_DOWN_INTERVAL_MS` and the
     0.75 inexact window. Nothing links the two files at compile time.
   - A launcher change to the backstop must revisit them.
-- **Right after a server restart**, the memory is empty. A phone with a fresh `last_seen_at` shows **Away** for the
-  5-15 s until its stream reconnects. That is honest and harmless, so there is no special case.
-- **The lock badge's end time and "stale" wording** (M4):
-  - The report has the rule's name and the phone's local `day`, not the window's end. The end comes from the rule's
-    days on the server.
-  - The end shows only when the phone's `day` and the day before give the same end for that rule. Otherwise the
-    badge shows the rule name alone.
+- **Right after a server restart**, the memory is empty. A phone shows **Away**, or **Offline** if its last report
+  is over 45 min old (as an idle phone's often is), until its stream reconnects: seconds after a clean stop, up to
+  5 min after a crash or a power cut (no FIN reaches the phones; they reconnect after 300 s of silence). That is
+  honest and harmless, so there is no special case (qa-31-s2-code L4).
+- **The lock badge's end time and "stale" wording** (M4; the step 2 fix round, qa-31-s2-code M1-M3):
+  - **The end shows only when it is provably right** (the parent's rule). The report has the rule's name and the
+    phone's local `day`, not the window's end, so the end comes from the rules' days on the server, and only when
+    all of these hold:
+    - the phone reports its own time zone (`time_state.zone`) and it is the Phone Setup zone, since the windows are
+      the phone's wall clock. **No launcher sends a zone yet, so no end shows today**; a launcher `zone` (or better,
+      `active_until`) field is an API change in both directories, left out of design 31;
+    - the report is fresh, from the server's local today, and its local time lies inside one window of the active
+      rule (a report a few seconds after the end is outside it);
+    - at that window's end no effective rule has a window running or starting (the same rule's next day, an all-day
+      rule, a legacy morning/evening pair, an adjacent or overlapping rule), and the screen time isn't used up: the
+      end is a real unlock.
   - An end on the next local day says so: "Leggetid until 07:00 tomorrow". On the same day it is "Skole until 14:30".
   - When the report's `day` isn't the server's local today, neither the badge's end nor the screen-time bar shows.
-    The badge then says "Leggetid · at last report (yesterday 21:40)".
-  - Offline always adds "at last report". Away adds it once the report is older than 15 min (L2).
-  - A launcher `active_until` field would remove the guess. That is an API change in both directories, left out of
-    design 31.
+    The badge then says "Leggetid · at last report (yesterday 21:40)". An end already passed does the same.
+  - Offline always adds "at last report". Away adds it once the report is older than 15 min (L2). A stale badge
+    never has an end.
+  - **The fallback zone** (Phone Setup's zone empty or unknown): no end; the report's `day` counts as current within
+    a day of the UTC date, and the bar names the phone's day ("42 of 90 min on 13 Oct") instead of "today" (M2).
+  - **"· calls off"** only while calls are managed and the launcher screens them (no "Calls aren't screened" or
+    "Anyone can call this phone" in the call report), as the device page says (M3).
 - **Local and relative time** come from `display_time` (M4):
   - It uses `chrono-tz` (MIT/Apache-2.0; the IANA data is compiled in, so the distroless image needs no
     `zoneinfo`), with the zone from Phone Setup (`provisioning_settings.time_zone`).
@@ -1944,3 +1962,71 @@ Choices made while building:
 5. `/updates` isn't fetched by the tab test (it asks GitHub when it renders); its tab is checked in the template.
 6. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox) - owed on a phone or
    desktop browser before merging.
+
+## Step 2 implementation status (2026-10-13)
+
+Built on branch `design-31-s2` (from `60872f24`); server only, no migration. New crate: `chrono-tz` 0.10.4
+(MIT/Apache-2.0, `std` only; adds `phf`, `phf_shared`, `siphasher` to `Cargo.lock`).
+- **`display_time`** (`src/display_time.rs`): `Zone::load` reads the Phone Setup zone; empty or unknown (case-sensitive
+  IANA ids, so "Europe/Olso" and "europe/oslo") is UTC and every clock time says "UTC". `parse_db_utc`
+  (`datetime('now')` text with or without a fraction, and RFC 3339), `local`, `clock` ("14:30"), `exact` for `title=`
+  ("2026-10-13 10:59:13 CEST"), `relative` (§3.10's steps; "12 Oct 2025" in another year; up to 5 min ahead is "just
+  now", further ahead its date). Unit tests: Oslo DST both ways, an empty and an unknown zone, yesterday, a time
+  2 min ahead, the steps. The Settings hub's "today" and backup time now use the Phone Setup zone (step 1 choice 3).
+- **`connection_state`** (`streams.rs`, pure, `ONLINE_WINDOW_MINUTES` 60 / `AWAY_WINDOW_MINUTES` 45 with their
+  derivation): Online, Away, Offline, Disconnected, Not seen yet, Not set up; last contact is the newest of last
+  access, `last_seen_at` and an open stream's `since`. `devices::connection_of` feeds it. Table tests for every row,
+  50 min / 61 min with a stream, 30 / 45 / 46 min without, revoked, the restart case.
+- **Lock badge and screen time** (`src/time_state.rs`): the typed `time_state` (`TimeReport`), `LockBadge` and
+  `ScreenTime` with §3.10's rules (M4; the end time as tightened by the fix round below); another day's report shows
+  no end and no bar and says "at last report (yesterday 21:40)"; Offline always and Away after 15 min add "at last
+  report"; an end already passed drops the end and says "at last report".
+- **`attention::facts` + `items`** (`src/attention.rs`; `collect` in the spec): §3.2's 11 alarms and 6 needs-action kinds from typed sources -
+  `kid_lock::lock_off` (new: a Child PIN set but the lock off on the phone), `calls::CallProblem` (new: the call
+  report's warnings typed, one per warning, each with a title of at most 8 words), the relock card's foreign access
+  and blocks, `admin_policy_notice`, the sound filter, the backup flag, the policy state, the boots, the rules.
+  `devices::managed_without_pin` and `launcher_without_rules` are shared with the device page.
+- **Devices list** (`devices_list.html`, `devices::list_row`): large title, the sign-in warnings as orange rows
+  (live: a link to Account; after sign-in: with Dismiss), "Phones" group (avatar with initial and connection dot,
+  name, "Online · seen 3 min ago" with the exact time in `title`, the lock part, the bar and "42 of 90 min today",
+  the red count), "No phones yet.", the Add Phone row. The intro paragraph moved to `device_add.html`.
+  `style.css?v=10` (avatar, dot, row, `.visually-hidden`, the warning rows' sub-line and Dismiss).
+- **Stub summary** (until step 10): the device page shows the Attention rows in an "Attention" group under its
+  title, linking to the cards (`#status`, `#time`, `#launcher`, `#hardening` are new ids; `#parent-pin`, `#access`,
+  `#screen-lock`, `#play-kiosk`; calls rows to `/devices/{id}/calls`). Each later step repoints its targets
+  (`attention::target`).
+- **Tests**: unit tests in `display_time`, `streams`, `time_state`, `attention`, `kid_lock`, `settings_hub`;
+  `tests/devices_list.rs` (every connection state on the list, the lock part and bar, yesterday's report, the badge
+  equal to the device page's rows, the UTC fallback, the empty list). `cargo test`: 703 passed; `node --test
+  jstest/*.test.js`: 16 passed; fmt clean; clippy: the same 13 warnings as before, none in the step's files.
+
+Choices made while building:
+1. **The list's status line**: Online with a lock shows the lock instead of "seen ..." (the Main mockup's "Online ·
+   Skole until 14:30"); Away and Offline keep "seen ..." and add the lock. When "at last report" would repeat the
+   seen time, the list leaves the time out ("Skole · at last report").
+2. **The bar**: shown with a limit; without a limit "42 min today" without a bar, and nothing at 0 min.
+3. **Calls rows** are orange (§3.2 lists "calls problems" under needs action), one per warning but not "waiting for
+   the phone"; "Anyone can call this phone" is the §4.5 #17 title.
+4. **`parent_pin::when_text`** is not folded in yet: its callers (Status notices, PIN events, relock and boot notes)
+   switch to `display_time` in the steps that rebuild their cards (3, 4, 10), and it goes with the last.
+5. **Attention's music and escapes sources**: §3.8 names them, but §3.2's list has no row for them; nothing added.
+6. **The avatars** use darker shades of the mockup's hues (white text 4.5:1 or more; decorative, `aria-hidden`); a
+   phone not set up is grey. The mockup's "+" in the top bar is left out: the brand bar is still there (step 15),
+   and the Add Phone row does the same.
+7. Not checked here: the 390 px light/dark/no-JS pass in a browser (no browser in the sandbox).
+
+**Fix round after the code QA** (`qa-31-s2-code.md`: 3 Medium, 5 Low, nits; all fixed, with `main` merged first -
+designs 30, 32 step 1 and 33):
+
+| # | Fix |
+|---|---|
+| M1 | `time_state::provable_end`: an end only when the phone reports its zone (`time_state.zone`) and it is Phone Setup's, the report is fresh and today's and lies inside one window of the active rule, and at that end no effective rule locks (same rule's next day, all-day, legacy pair, adjacent or overlapping rules) and the screen time isn't used up. A stale badge never has an end. No launcher sends a zone yet, so **no end time shows today**; a launcher `zone`/`active_until` field is an API change left out of design 31. Tests: the three QA probes (a report at 14:30:05, a London phone, windows that meet), all-day every day, a one-day 24 h window, the day before's 24 h window, overlap, adjacency, used-up screen time; the devices-list test now expects "Skole" with no end for an every-day all-day rule. |
+| M2 | The fallback zone shows no end (its `name()` is none); the report's `day` counts as current within a day of the UTC date, and the bar says "42 of 90 min on 13 Oct" instead of "today". Test: a New York phone at 20:30 local. |
+| M3 | "· calls off" only with `Facts::calls_enforced` (calls managed, no `NotEnforced`/`AnyoneCanCall` in the call report); a list test with calls unmanaged. |
+| L1 | `tests/attention.rs`: one test per fact (each report field or setting raises exactly its row on an otherwise clean phone, and nothing on the clean one), and every call warning has its typed problem (a report that sets every flag). |
+| L2 | Away's stale boundary tested at 15 and 16 min; the report's date check and the day before's 24 h window each have a case. |
+| L3 | The sign-in warnings on Devices are short rows (`auth::live_warning_row`: "5 wrong two-factor codes since sign-in", "Someone knows your password - change it · sign-ins locked until 14:05" in the Phone Setup zone; `login_warning_row`); the full sentences stay on Account. Kept orange, as §3.2 says. |
+| L4 | §3.10, `server/CLAUDE.md` and the `connection_state` doc: Away, or Offline past 45 min, until the stream is back - seconds after a clean stop, up to 5 min after a crash. |
+| L5 | The user's decision (§3.2 item 2): no rows for a phone not set up; an Offline or Disconnected phone's report-based rows say "At last report" and still count; list and summary count the same `items`. |
+| Checks | `cargo test` 725 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+| Nits | A time more than 5 min ahead reads "today 16:00" on the same day; the key test uses a set and documents that calls rows share "calls"; the device page passes its built cards to `attention::facts_of` (`call_warnings` is gone, the page uses `call_report`); the avatar letter is the first letter or digit, one character ("ß" kept, emoji and flags skipped); the Backups page labels its times "server time" (it matches the file names; the hub uses the Phone Setup zone); the `title=` on the list's "seen" stays (the header's ⓘ is step 10's). §3.8 no longer names music and escapes as sources. |

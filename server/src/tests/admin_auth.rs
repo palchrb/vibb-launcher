@@ -120,11 +120,15 @@ async fn totp_failures_survive_a_correct_password_and_the_lock_doubles() {
     assert_eq!(res.location(), Some("/"), "{}", res.text());
     let session = cookie_of(&res).unwrap();
     assert_eq!(counters(&app).await, (0, 0, false));
-    let page = app.get_page("/devices", &session).await.text();
+    // The full sentence on Account; a short orange row on Devices (design 31 §3.2).
+    let page = app.get_page("/account", &session).await.text();
     assert!(
         page.contains("13 failed 2FA attempts since your last sign-in (from 127.0.0.1)"),
         "{page}"
     );
+    let page = app.get_page("/devices", &session).await.text();
+    assert!(page.contains("id=\"login-warning\""), "{page}");
+    assert!(page.contains("Wrong two-factor codes before this sign-in"));
     // Dismissed, it's gone.
     let res = app
         .request_form(
@@ -136,6 +140,8 @@ async fn totp_failures_survive_a_correct_password_and_the_lock_doubles() {
         .await;
     assert_eq!(res.location(), Some("/devices"));
     let page = app.get_page("/devices", &session).await.text();
+    assert!(!page.contains("id=\"login-warning\""));
+    let page = app.get_page("/account", &session).await.text();
     assert!(!page.contains("failed 2FA attempts"));
 }
 
@@ -860,13 +866,25 @@ async fn a_live_session_sees_wrong_codes_and_the_lock() {
         let (_, cookie) = password_step(&app, PASSWORD).await;
         totp_step(&app, &cookie.unwrap(), "000000").await;
     }
-    for page in ["/devices", "/account"] {
-        let text = app.get_page(page, &session).await.text();
-        assert!(
-            text.contains("5 wrong two-factor codes were entered since your last sign-in, and new sign-ins are locked until"),
-            "{page}: {text}"
-        );
-    }
+    let text = app.get_page("/account", &session).await.text();
+    assert!(
+        text.contains("5 wrong two-factor codes were entered since your last sign-in, and new sign-ins are locked until"),
+        "{text}"
+    );
+    // Devices: a short row, the lock's end as a local clock time (Phone Setup's Oslo).
+    let text = app.get_page("/devices", &session).await.text();
+    assert!(
+        text.contains("5 wrong two-factor codes since sign-in"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Someone knows your password - change it · sign-ins locked until "),
+        "{text}"
+    );
+    assert!(
+        !text.contains("locked until 2026"),
+        "a clock time, not a UTC date"
+    );
     let res = app
         .request_form(
             Method::POST,
