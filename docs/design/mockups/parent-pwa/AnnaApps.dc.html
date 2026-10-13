@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Anna's apps</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;align-items:center;height:44px;padding:0 16px}
+.back{display:flex;align-items:center;gap:4px;font-size:17px;color:#0B66D6}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:9px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:60px;right:0;border-top:.5px solid #D1D1D6}
+.lbl{flex:1;min-width:0}
+.s2{display:block;font-size:13px;color:#6B6B70;margin-top:2px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.icon{flex:none;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700}
+.sw{appearance:none;-webkit-appearance:none;flex:none;width:51px;height:31px;border-radius:16px;background:#E3E3E8;position:relative;margin:0;cursor:pointer;transition:background .2s}
+.sw:before{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
+.sw:checked{background:#34C759}
+.sw:checked:before{left:22px}
+.sw:focus-visible{outline:3px solid #0B66D6;outline-offset:2px}
+.prog{height:4px;border-radius:2px;background:#E5E5EA;margin-top:6px;width:150px;overflow:hidden}
+.prog i{display:block;height:100%;width:40%;background:#0B66D6}
+.search{display:flex;align-items:center;gap:8px;background:#E3E3E8;border-radius:10px;margin:6px 16px 0;padding:8px 10px;color:#6B6B70;font-size:17px}
+.search input{border:none;background:none;font:inherit;flex:1;outline:none;color:#000}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 900px">
+  <div class="top">
+    <a class="back" href="DeviceSummary.dc.html">
+      <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Anna
+    </a>
+  </div>
+  <h1 class="lt">Apps</h1>
+  <label class="search">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    <input type="search" placeholder="Search" aria-label="Search apps">
+  </label>
+
+  <div class="sh">Allowed</div>
+  <div class="grp">
+    <label class="row"><span class="icon" style="background: #34C759">T</span><span class="lbl">Telefon</span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #34C759">M</span><span class="lbl">Meldinger</span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #FF375F">M</span><span class="lbl">Musikk</span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #0A84FF">C</span><span class="lbl">Chat<span class="s2">Installing · 40 %</span><span class="prog"><i></i></span></span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #8E8E93">K</span><span class="lbl">Kamera</span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #FF9F0A">K</span><span class="lbl">Klokke</span><input class="sw" type="checkbox" role="switch" checked></label>
+    <label class="row"><span class="icon" style="background: #636366">K</span><span class="lbl">Kalkulator</span><input class="sw" type="checkbox" role="switch" checked></label>
+  </div>
+
+  <div class="sh">Not allowed</div>
+  <div class="grp">
+    <label class="row"><span class="icon" style="background: #E66000">F</span><span class="lbl">Firefox</span><input class="sw" type="checkbox" role="switch"></label>
+    <label class="row"><span class="icon" style="background: #4285F4">C</span><span class="lbl">Chrome</span><input class="sw" type="checkbox" role="switch"></label>
+  </div>
+  <div class="ft">Turning an app off hides it, and uninstalls it where possible.</div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="devices" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
