@@ -486,7 +486,7 @@
             </select>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
-        <p class="hint" style="margin-top:4px;">Use the child's own Spotify account (Premium): the phone gets an hour's access at a time to the account it plays as, its private playlists included. Off: the phone gets no Spotify entries. Accounts are logged in on the <a href="/music/spotify#accounts">Spotify page</a>.</p>
+        <p class="hint" style="margin-top:4px;">Use your child's own Premium account: the phone can read its playlists. Accounts are on the <a href="/music/spotify#accounts">Spotify page</a>.</p>
         {% for warning in spotify.warnings %}
         <div class="error">{{ warning }}</div>
         {% endfor %}
@@ -759,9 +759,6 @@
             <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
             Enable ad/content filtering on this device
         </label>
-        {% if let Some(music) = music %}{% if let Some(spotify) = music.spotify %}{% if spotify.bound.is_some() %}
-        <p class="subtitle">Spotify's hosts are allowed on this phone while Spotify is on (its Music card): a block of spotify.com or scdn.co in a blocklist or a custom domain doesn't apply to this phone then - for every app on it, not only the music app.</p>
-        {% endif %}{% endif %}{% endif %}
 
         <button type="submit">Save changes</button>
     </form>

@@ -1675,6 +1675,8 @@ struct EntryTemplate {
     spotify: bool,
     spotify_context: bool,
     spotify_link: Option<String>,
+    /// The status card's title: "Tracks", or "Episodes" (a feed, a Spotify podcast or episode).
+    list_title: &'static str,
     form: EntryForm,
     categories: Vec<(i64, String)>,
     orders: Vec<(&'static str, &'static str)>,
@@ -1824,6 +1826,18 @@ async fn render_entry(
             spotify,
             spotify_context,
             spotify_link,
+            list_title: match entry
+                .target
+                .as_deref()
+                .filter(|_| spotify)
+                .and_then(crate::spotify::parse_target)
+                .map(|r| r.kind)
+            {
+                Some(crate::spotify::LinkKind::Show | crate::spotify::LinkKind::Episode) | None => {
+                    "Episodes"
+                }
+                Some(_) => "Tracks",
+            },
             form,
             categories,
             orders: ORDERS.to_vec(),
@@ -2865,13 +2879,11 @@ impl SweepView {
                     .contains(&device)
                     .then_some("Storytel is off on this phone")
             }
-            "spotify" => {
-                if !self.spotify_configured {
-                    return Some("no Spotify app is set up");
-                }
-                (!self.spotify_bound.contains_key(&device))
-                    .then_some("Spotify is off on this phone")
-            }
+            // As `spotify_gate!()`: the binding decides (qa-26c-step2b-code L1). Without an app a
+            // bound phone still gets the entry; its line says it can't play.
+            "spotify" if self.spotify_bound.contains_key(&device) => None,
+            "spotify" if !self.spotify_configured => Some("no Spotify app is set up"),
+            "spotify" => Some("Spotify is off on this phone"),
             _ => None,
         }
     }
@@ -3284,6 +3296,9 @@ impl SweepView {
         current: Option<&str>,
     ) -> String {
         let mut line = match self.spotify_bound.get(&device) {
+            Some(account) if !self.spotify_configured => {
+                format!("{name}: plays as {account} - no Spotify app is set up, so it can't play")
+            }
             Some(account) => format!("{name}: plays as {account}"),
             None => format!("{name}: Spotify is off on this phone"),
         };
@@ -4004,7 +4019,8 @@ async fn spotify_binding_card(
                     .to_string(),
             ),
             Some("no_widevine") => warnings.push(
-                "On the phone: this phone's web player can't play Spotify (no Widevine)."
+                "On the phone: this phone can't play Spotify (its web player lacks the copy \
+                 protection Spotify needs)."
                     .to_string(),
             ),
             Some("unreachable") => lines.push(

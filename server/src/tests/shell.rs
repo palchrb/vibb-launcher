@@ -28,6 +28,7 @@ async fn every_page_marks_its_own_tab() {
         (format!("/devices/locate?device={id}"), "locate"),
         ("/music".to_string(), "music"),
         (format!("/music/entries/{entry}"), "music"),
+        ("/music/spotify".to_string(), "music"),
         ("/settings".to_string(), "settings"),
         ("/schedules".to_string(), "settings"),
         ("/dns".to_string(), "settings"),

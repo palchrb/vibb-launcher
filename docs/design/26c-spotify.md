@@ -561,8 +561,9 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
   "podcast" / "episode"; "42 tracks · read as Pål" (the reader's display name), "· 3 left out", context mode's notice;
   per-phone lines: "Ella: plays as Ella", "Ola: not sent - Spotify is off on this phone" (not counted in "on N phones":
   `SweepView::gated` and `phone_count`, `handlers/music.rs:2786-2806`, Storytel-only today, gain the Spotify rule - a
-  `spotify` entry is gated on a phone with no account bound, and on every phone while no app is set up, "no Spotify app
-  is set up");
+  `spotify` entry is gated on a phone with no account bound (its line: "not sent - Spotify is off on this phone", or
+  "not sent - no Spotify app is set up" while there is no app); without an app the bound phones still get it, as
+  `spotify_gate!()` says, and their lines say it can't play - qa-26c-step2b-code L1);
 
   item errors from `music_state` (`unplayable` "Spotify couldn't play this track on the phone"). A link back to
   Spotify on the card ("Open in Spotify": `https://open.spotify.com/<kind>/<id>`, `rel="noopener noreferrer"`) - the
@@ -2105,8 +2106,9 @@ skipped when absent); `testdata/music_state.json` is unchanged too (`MusicState.
   own account." on every such card, the phone's `music_state.spotify` in words ("On the phone: Spotify plays." / ...
   `not_premium`, `no_widevine`, `reauthorize`, `refused` as warnings), "Spotify is off on this phone: its N Spotify
   entries aren't sent." for ticked entries on an unbound phone, no app set up as a warning. The mobile-data text gains
-  "This includes Spotify, which streams (about 60-150 MB an hour)."; the DNS section (the VPN card) says "Spotify's
-  hosts are allowed on this phone while Spotify is on ..." while the phone is bound. `DevicePolicy.music_spotify_account`.
+  "This includes Spotify, which streams (about 60-150 MB an hour)." (The DNS section's note "Spotify's hosts are
+  allowed on this phone while Spotify is on ..." was built here and moved to step 3 by the fix round: L3.)
+  `DevicePolicy.music_spotify_account`.
 - **Due after a login or an app save** (2a's owed item, Storytel's L1): `schedule` reads the app's `saved_at` and the
   newest `authorized_at`; a Spotify entry failing `spotify_off`, `no_account`, `reauthorize`, `key` or `app_refused`
   since before either is due at once (`Why::Rework`). `complete_login` and the app's save wake the sweep.
@@ -2137,8 +2139,8 @@ skipped when absent); `testdata/music_state.json` is unchanged too (`MusicState.
   context mode's card; no app = every phone gated, "on 0 phones"),
   `the_entry_page_has_no_offline_and_in_context_mode_no_order`, `the_device_card_binds_a_phone_to_an_account` (absent
   before an app; bind, revision, nudge, event; junk and unknown refused at `#music-spotify`; 404; one account on two
-  phones on both cards; `not_premium`; `needs_login`; off; the ticked-but-off note; the mobile-data text; the DNS note
-  only while bound), `a_new_login_or_app_save_makes_the_waiting_entries_due` (`spotify_off` cured by an app save,
+  phones on both cards; `not_premium`; `needs_login`; off; the ticked-but-off note; the mobile-data text; no DNS note
+  yet - step 3's), `a_new_login_or_app_save_makes_the_waiting_entries_due` (`spotify_off` cured by an app save,
   `no_account` by a newer login, not by an older one), `a_vibb_library_imports_spotify_entries_on_no_phone` (through
   the confirm route: no request, the RSS row ticked, the Spotify rows not, the short link's reason). `routes_need_a_session`
   covers the two new routes. `music::tests::spotify_words_and_labels`, a `LibEntry.spotify` row in
@@ -2190,4 +2192,46 @@ now on its card); the PWA at 360/390 px, light and dark, JS off, in a browser (n
 fixed width; every save redirects to its anchor - `#added`, `#music-spotify`, `#entry-<id>`); step 3: the token
 endpoint, `music.spotify` in the policy through `policy_music` (which then reads `DevicePolicy.music_spotify_account`),
 the delivered blocklist's drop and `compute_dns_filter_version`'s binding, the library snapshot with a Spotify entry
-(its `spotify` field) and `music_state.json`'s `spotify` - the device card's DNS note is true only from then on.
+(its `spotify` field) and `music_state.json`'s `spotify`, **and the device page's DNS note** (§6.2: "Spotify's hosts
+are allowed on this phone while Spotify is on", in the Web Filter section while the phone is bound, with its test
+lines) - beside the change that makes it true (qa-26c-step2b-code L3).
+
+### Fix round after QA's code review (qa-26c-step2b-code, 2026-10-13)
+
+All six findings fixed; none disputed. `cargo fmt --check` clean; `cargo clippy --all-targets` the same 12 known
+warnings, none new; `cargo test` twice: 745 passed, 1 failed both times - the failure is
+`tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` (main's timing-dependent test, the QA's note; the
+only tolerated failure).
+- **M1** (a dropped caller could cancel a refresh and lose a rotated refresh token): `Accounts::mint` takes the
+  account's lock as an `OwnedMutexGuard` and runs everything under it - the cached path's retried write of an
+  `unsaved` token, the refresh request, the rotated token's write, the `refresh_ok_at` stamp, the slot's update - as a
+  `tokio::spawn`ed `MintJob` that owns what it needs (a clone of `AppState`, the `Config`, the clock's now); the caller
+  only awaits the `JoinHandle`, so dropping it (the add form's budget, step 3's token route, a client gone) cancels
+  nothing, and a second caller still waits for the one refresh. `token_request` and `refresh_failed` became free
+  functions; `MintJob` is in `secret_types_have_no_debug`. Test `a_dropped_caller_never_loses_a_rotated_token`: a
+  refresh held at the gate when its caller gives up still writes `FAKE-REFRESH-2` and keeps the access token (the next
+  call makes no request); a rotated token whose write failed survives a caller dropped during the retried write and is
+  written. Red with the task inlined (checked).
+- **L1** (the card said "not sent" while the gate sent it): `gated` follows the binding as `spotify_gate!()` does -
+  a bound phone is never gated; without an app its line reads "Ella: plays as Ella - no Spotify app is set up, so it
+  can't play" and it counts in "on N phones"; an unbound phone is "not sent - no Spotify app is set up" (no app) or
+  "not sent - Spotify is off on this phone". §3.6's sentence amended; `the_cards_and_check_now`'s last block (and the
+  bound phone still getting the entry) pinned.
+- **L2** (the binding read before the network): the add decides each picked phone's tick inside its `BEGIN
+  IMMEDIATE` transaction with the gate's own `EXISTS` (`PLAYS_SPOTIFY`); the up-front read only refuses a phone that
+  doesn't exist.
+- **L3** (the DNS note before step 3 makes it true): removed from `device_detail.html`; its test now pins its absence;
+  owed to step 3 (above).
+- **L4** (copy): `add_refusal` - `Quota` "Spotify's limit for this app was reached - try again in an hour.", `Status`,
+  `TooBig`, `BadAnswer` "Spotify couldn't open it just now - try again." (no status code on the form); the entry page's
+  status card is "Episodes" for a Spotify podcast or episode (`list_title`), "Tracks" for the rest; `no_widevine` reads
+  "this phone can't play Spotify (its web player lacks the copy protection Spotify needs)"; the binding hint is two
+  short sentences ("Use your child's own Premium account: the phone can read its playlists. Accounts are on the
+  Spotify page.").
+- **L5** (test gaps): `the_size_the_budget_and_the_entry_limit` (a phone whose library would pass 3 MB named and not
+  ticked; the shared budget - `Accounts::set_add_budget`, cfg(test) - outlasted by a held check and a held short link:
+  "Spotify couldn't be reached - try again.", nothing stored; 200 entries refused after the check); the 401 and quota
+  rows in `the_add_form_refuses_with_nothing_stored`; the three-phone wording ("Ella's, Kari's and Ola's phones all
+  play as Ella") and every phone word (`ok`, `reauthorize`, `refused`, `no_widevine` with no "Widevine" on the page,
+  `unreachable`, `quota`) in `the_device_card_binds_a_phone_to_an_account`; `/music/spotify` in
+  `tests::shell::every_page_marks_its_own_tab`.

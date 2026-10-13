@@ -978,6 +978,12 @@ pub async fn remove_account(
     }
 }
 
+/// Whether a phone plays as an account (the gate's condition, `spotify_gate!()`); no row = no such
+/// phone.
+const PLAYS_SPOTIFY: &str = "SELECT EXISTS(SELECT 1 FROM device_policy p \
+     JOIN music_spotify_accounts a ON a.id = p.music_spotify_account \
+     WHERE p.device_id = d.id) FROM devices d WHERE d.id = ?";
+
 /// At most this many fields in the add form (a phone per `device`; Storytel's Add's bound).
 const MAX_ADD_FIELDS: usize = 200;
 
@@ -1065,21 +1071,15 @@ pub async fn add(
         Ok(Some(_)) => refused!("Log in with a Spotify account first.", "link"),
         Err(err) => return server_error(err, "couldn't read the Spotify accounts"),
     }
-    // The phones picked, each with whether it plays as an account (the gate's condition).
-    let mut bound: HashMap<i64, bool> = HashMap::new();
+    // The phones picked must exist (before any request); whether each plays as an account is
+    // decided in the insert's transaction (qa-26c-step2b-code L2).
     for &device in &devices {
-        let row: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM device_policy p \
-               JOIN music_spotify_accounts a ON a.id = p.music_spotify_account \
-               WHERE p.device_id = d.id) FROM devices d WHERE d.id = ?",
-        )
-        .bind(device)
-        .fetch_optional(&state.db)
-        .await;
+        let row: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(PLAYS_SPOTIFY)
+            .bind(device)
+            .fetch_optional(&state.db)
+            .await;
         match row {
-            Ok(Some(plays)) => {
-                bound.insert(device, plays);
-            }
+            Ok(Some(_)) => {}
             Ok(None) => bad_device = true,
             Err(err) => return server_error(err, "couldn't read the phones"),
         }
@@ -1090,7 +1090,7 @@ pub async fn add(
             "device"
         );
     }
-    let deadline = tokio::time::Instant::now() + spotify::ADD_BUDGET;
+    let deadline = tokio::time::Instant::now() + state.spotify.add_budget();
     let reference = match spotify::parse_link(&link_text) {
         Ok(spotify::Link::Ref(reference)) => reference,
         Ok(spotify::Link::Short(short)) => {
@@ -1178,7 +1178,11 @@ pub async fn add(
             return Ok(None);
         };
         for &device in &devices {
-            if !bound.get(&device).copied().unwrap_or(false) {
+            let plays: Option<bool> = sqlx::query_scalar(PLAYS_SPOTIFY)
+                .bind(device)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if plays != Some(true) {
                 off.push(device);
                 continue;
             }

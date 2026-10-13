@@ -2742,6 +2742,8 @@ mod listing {
 /// routes, the library cards and the entry page, Check now, the device card's "Spotify plays as",
 /// and the entries a new login or app save makes due.
 mod entries {
+    use std::time::Duration;
+
     use axum::http::{Method, StatusCode};
     use chrono::TimeDelta;
     use serde_json::{Value, json};
@@ -3041,6 +3043,25 @@ mod entries {
             add(&app, &cookie, &[("link", link.as_str())]).await,
             "Spotify couldn't be reached - try again.",
         );
+        // No status code on the form (qa-26c-step2b-code L4): a 401 after the refresh.
+        app.fetch
+            .answer(&url(&app, Read::Playlist(PLAYLIST)), 401, "{}");
+        let page = refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Spotify couldn't open it just now - try again.",
+        );
+        assert!(!page.contains("Spotify answered"));
+        // The quota: when to try again, not "it tries again later".
+        app.fetch.answer(
+            &url(&app, Read::Playlist(PLAYLIST)),
+            429,
+            fixture("quota.json"),
+        );
+        let page = refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Spotify's limit for this app was reached - try again in an hour.",
+        );
+        assert!(!page.contains("tries again later"));
         assert_eq!(entry_count(&app).await, 0);
         // Already in the library: a link to its card.
         let id = entry(&app, "playlist", PLAYLIST).await;
@@ -3306,7 +3327,7 @@ mod entries {
         let app = TestApp::new().await;
         let cookie = app.admin_cookie().await;
         let kid = ready(&app).await;
-        let (ella, _) = app.enrolled_device("Ella").await;
+        let (ella, ella_token) = app.enrolled_device("Ella").await;
         let (ola, _) = app.enrolled_device("Ola").await;
         let id = entry(&app, "playlist", PLAYLIST).await;
         tick_on(&app, ella, id).await;
@@ -3406,18 +3427,21 @@ mod entries {
             "{page}"
         );
         assert!(page.contains("No logged-in account owns this playlist or collaborates on it"));
-        // No app: every phone gated, counted on none.
+        // No app (an environment client ID gone after a restart, bindings left): the card says
+        // what the gate does (qa-26c-step2b-code L1) - the bound phone still gets the entry and
+        // its line says it can't play; the unbound one isn't sent it.
         sqlx::query("DELETE FROM music_spotify_app")
             .execute(&app.db)
             .await
             .unwrap();
+        assert!(in_library(&app, &ella_token, id).await.is_some());
         let page = music().await;
         assert!(
-            page.contains("Ella: not sent - no Spotify app is set up"),
+            page.contains("Ella: plays as Ella - no Spotify app is set up, so it can't play"),
             "{page}"
         );
         assert!(page.contains("Ola: not sent - no Spotify app is set up"));
-        assert!(page.contains("on 0 phones"));
+        assert!(page.contains("on 1 phone"));
     }
 
     /// The entry page (§3.6): the kind, the link back to Spotify, no offline choice; in context
@@ -3488,6 +3512,116 @@ mod entries {
         assert_eq!(row, ("newest_first".to_string(), 0, false));
     }
 
+    /// The add route's other limits (§3.2, qa-26c-step2b-code L5): a picked phone whose library
+    /// would pass 3 MB isn't ticked and is named; the shared budget - a check or a short link
+    /// that outlasts it - answers "couldn't be reached" with nothing stored; a full library
+    /// refuses.
+    #[tokio::test]
+    async fn the_size_the_budget_and_the_entry_limit() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let kid = ready(&app).await;
+        let (ella, _) = app.enrolled_device("Ella").await;
+        bind(&app, ella, kid).await;
+        // Ella's library just under 3 MB (one own-files entry with a padding title).
+        let own: i64 = sqlx::query_scalar(
+            "INSERT INTO music_entries (name, category_id, source, key) VALUES ('Egne', 1, \
+             'own', ?) RETURNING id",
+        )
+        .bind(crate::music::new_own_key())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        tick_on(&app, ella, own).await;
+        sqlx::query(
+            "INSERT INTO music_files (entry_id, path, original_name, size, sha256, title) \
+             VALUES (?, ?, 'pad.mp3', 1, ?, 'x')",
+        )
+        .bind(own)
+        .bind(format!("{own}/pad.mp3"))
+        .bind("0".repeat(64))
+        .execute(&app.db)
+        .await
+        .unwrap();
+        let size = crate::music::device_library(&app.db, ella)
+            .await
+            .unwrap()
+            .unwrap()
+            .json
+            .len();
+        sqlx::query("UPDATE music_files SET title = ? WHERE entry_id = ?")
+            .bind("x".repeat(crate::music::MAX_LIBRARY_BYTES - size - 50))
+            .bind(own)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        answer_playlist(&app);
+        let ella_id = ella.to_string();
+        let res = add(
+            &app,
+            &cookie,
+            &[
+                ("link", format!("spotify:playlist:{PLAYLIST}").as_str()),
+                ("device", ella_id.as_str()),
+            ],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let location = res.location().unwrap().to_string();
+        assert!(
+            location.ends_with(&format!("&big={ella}#added")),
+            "{location}"
+        );
+        let id: i64 = sqlx::query_scalar("SELECT id FROM music_entries WHERE source = 'spotify'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert!(ticks(&app, id).await.is_empty());
+        let page = page_text(
+            &app.get_page(location.trim_end_matches("#added"), &cookie)
+                .await,
+        );
+        assert!(page.contains("Ella: not ticked - its music library would be bigger than 3 MB"));
+
+        // The budget: a check held past it, then a short link held past it - nothing stored.
+        app.state.spotify.set_add_budget(Duration::from_millis(100));
+        app.fetch
+            .answer(&url(&app, Read::Album(ALBUM_X)), 200, fixture("album.json"));
+        app.fetch.hold();
+        for link in [
+            format!("spotify:album:{ALBUM_X}"),
+            "https://spotify.link/AbC123".to_string(),
+        ] {
+            let res = add(&app, &cookie, &[("link", link.as_str())]).await;
+            assert_eq!(res.status, StatusCode::BAD_REQUEST, "{link}");
+            assert!(page_text(&res).contains("Spotify couldn't be reached - try again."));
+        }
+        app.fetch.release();
+        assert_eq!(entry_count(&app).await, 2);
+        app.state.spotify.set_add_budget(crate::spotify::ADD_BUDGET);
+
+        // A full library: refused after the check, nothing stored.
+        sqlx::query(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 198) \
+             INSERT INTO music_entries (name, category_id, source, target, key, sort) \
+             SELECT 'F' || i, 4, 'rss', 'https://example.org/' || i || '.rss', 'k' || i, 100 + i \
+             FROM n",
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(entry_count(&app).await, crate::music::MAX_ENTRIES);
+        let res = add(
+            &app,
+            &cookie,
+            &[("link", format!("spotify:album:{ALBUM_X}").as_str())],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert!(page_text(&res).contains("The library has 200 entries - delete one first."));
+        assert_eq!(entry_count(&app).await, crate::music::MAX_ENTRIES);
+    }
+
     /// The device card's "Spotify plays as" (§2.5, §3.6): absent until an app is set up; the
     /// select binds (the revision moves, the phone is nudged, the event), "off" unbinds, an unknown
     /// account is refused back at `#music-spotify` with nothing changed, an unknown phone is a
@@ -3519,7 +3653,7 @@ mod entries {
             page.contains(&format!("<option value=\"{kid}\" >Ella</option>")),
             "{page}"
         );
-        assert!(page.contains("Use the child's own Spotify account"));
+        assert!(page.contains("Use your child's own Premium account"));
         assert!(!page.contains("Spotify's hosts are allowed on this phone"));
         let save = |device: i64, account: String| {
             let cookie = cookie.clone();
@@ -3555,7 +3689,8 @@ mod entries {
             page.contains("Ella: logged in, log in again before"),
             "{page}"
         );
-        assert!(page.contains("Spotify's hosts are allowed on this phone while Spotify is on"));
+        // The DNS note comes with step 3, which makes it true (qa-26c-step2b-code L3).
+        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
         // An account that isn't logged in here, or junk: refused, nothing changed.
         for junk in ["999".to_string(), "x".to_string()] {
             let res = save(ella, junk).await;
@@ -3587,12 +3722,48 @@ mod entries {
                  both play as Ella - give each child their own account."
             ));
         }
+        let (kari, _) = app.enrolled_device("Kari").await;
+        save(kari, kid.to_string()).await;
+        assert!(card(kari).await.contains(
+            "Ella's, Kari's and Ola's phones all play as Ella - give each child their own account."
+        ));
+        save(kari, "off".to_string()).await;
         save(ola, parent.to_string()).await;
         assert!(
             !card(ella)
                 .await
                 .contains("one device at a time per account")
         );
+        // Every word the phone reports, in words (§3.6).
+        for (word, text) in [
+            ("ok", "On the phone: Spotify plays."),
+            (
+                "reauthorize",
+                "On the phone: the Spotify login needs renewing on the Spotify page.",
+            ),
+            (
+                "refused",
+                "On the phone: Spotify refused this account or the app",
+            ),
+            (
+                "no_widevine",
+                "On the phone: this phone can't play Spotify (its web player lacks the copy \
+                 protection Spotify needs).",
+            ),
+            (
+                "unreachable",
+                "On the phone: the phone couldn't reach Spotify the last time it tried.",
+            ),
+            (
+                "quota",
+                "On the phone: Spotify's limit for this app was reached - it tries again later.",
+            ),
+        ] {
+            report(&app, ella, json!({"spotify": word})).await;
+            let page = card(ella).await;
+            assert!(page.contains(text), "{word}: {page}");
+            assert!(!page.contains("Widevine"));
+        }
         // The phone's own outcome, and the account's state.
         report(&app, ella, json!({"spotify": "not_premium"})).await;
         assert!(card(ella).await.contains(

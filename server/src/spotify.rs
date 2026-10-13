@@ -1061,6 +1061,26 @@ impl LoginOutcome {
     }
 }
 
+/// The accounts service's token request (§2.4): a form POST to `<accounts base>/api/token`.
+fn token_request(config: &Config, form: String) -> SourceRequest {
+    use reqwest::header::{ACCEPT, CONTENT_TYPE};
+    let mut request = SourceRequest::new(
+        format!("{}/api/token", config.accounts_base),
+        Kind::Token,
+        config.accounts_reach(),
+    );
+    request.method = reqwest::Method::POST;
+    request.headers = vec![
+        (
+            CONTENT_TYPE,
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+        (ACCEPT, "application/json".to_string()),
+    ];
+    request.body = Some(form.into_bytes());
+    request
+}
+
 /// A cached access token. No `Debug`, no `Display`.
 struct Access {
     token: AccessToken,
@@ -1094,6 +1114,8 @@ pub struct Accounts {
     quota_until: std::sync::Mutex<Option<Instant>>,
     /// The tests move the tokens' and the quota's clock forward.
     skew: std::sync::Mutex<Duration>,
+    /// The add form's budget ([ADD_BUDGET]; the tests shorten it).
+    add_budget: std::sync::Mutex<Duration>,
 }
 
 impl Default for Accounts {
@@ -1114,7 +1136,19 @@ impl Accounts {
             access: Default::default(),
             quota_until: Default::default(),
             skew: Default::default(),
+            add_budget: std::sync::Mutex::new(ADD_BUDGET),
         }
+    }
+
+    /// The add form's budget for a short link and the add check together ([ADD_BUDGET]).
+    pub fn add_budget(&self) -> Duration {
+        *lock(&self.add_budget)
+    }
+
+    /// A shorter add budget (the tests).
+    #[cfg(test)]
+    pub fn set_add_budget(&self, budget: Duration) {
+        *lock(&self.add_budget) = budget;
     }
 
     pub fn config(&self) -> &Config {
@@ -1187,22 +1221,7 @@ impl Accounts {
     }
 
     fn token_request(&self, form: String) -> SourceRequest {
-        use reqwest::header::{ACCEPT, CONTENT_TYPE};
-        let mut request = SourceRequest::new(
-            format!("{}/api/token", self.config.accounts_base),
-            Kind::Token,
-            self.config.accounts_reach(),
-        );
-        request.method = reqwest::Method::POST;
-        request.headers = vec![
-            (
-                CONTENT_TYPE,
-                "application/x-www-form-urlencoded".to_string(),
-            ),
-            (ACCEPT, "application/json".to_string()),
-        ];
-        request.body = Some(form.into_bytes());
-        request
+        token_request(&self.config, form)
     }
 
     fn api_request(&self, url: &str, kind: Kind, token: &AccessToken) -> SourceRequest {
@@ -1424,6 +1443,12 @@ impl Accounts {
     /// token is used only when it is another one - a concurrent 401 refreshed it already - else
     /// it is refreshed (code QA L3: two 401s with one token make one refresh). `sent` counts the
     /// requests made (the sweep's budget).
+    ///
+    /// Everything under the account's lock runs as a task of its own (qa-26c-step2b-code M1): the
+    /// caller only awaits it, so a caller dropped partway - the add form's 45 s budget, a phone's
+    /// request that went away - never cancels a refresh after Spotify answered, the rotated
+    /// refresh token's write, or the in-memory copy of one whose write failed. The lock moves into
+    /// the task, so a second caller still waits for the one refresh.
     async fn mint(
         &self,
         state: &AppState,
@@ -1432,8 +1457,52 @@ impl Accounts {
         rejected: Option<&AccessToken>,
         sent: &mut u32,
     ) -> Result<Minted, SpotifyError> {
-        let slot = self.slot(account);
-        let mut slot = slot.lock().await;
+        let slot = self.slot(account).lock_owned().await;
+        let job = MintJob {
+            state: state.clone(),
+            config: self.config.clone(),
+            now: self.now(),
+            account,
+            min_left,
+            rejected: rejected.cloned(),
+        };
+        let (minted, made) = tokio::spawn(job.run(slot)).await.map_err(|err| {
+            tracing::error!(account, %err, "spotify: the token task failed");
+            SpotifyError::Database("the token task failed".to_string())
+        })?;
+        *sent += made;
+        minted
+    }
+}
+
+/// One [Accounts::mint] under the account's lock, owning everything it needs (it runs as a
+/// spawned task: see `mint`). No `Debug`: it holds a token.
+struct MintJob {
+    state: AppState,
+    config: Config,
+    now: Instant,
+    account: i64,
+    min_left: Duration,
+    rejected: Option<AccessToken>,
+}
+
+impl MintJob {
+    /// The minted token (or why not) and how many requests it made.
+    async fn run(
+        self,
+        mut slot: tokio::sync::OwnedMutexGuard<Slot>,
+    ) -> (Result<Minted, SpotifyError>, u32) {
+        let mut sent = 0;
+        let minted = self.mint(&mut slot, &mut sent).await;
+        (minted, sent)
+    }
+
+    async fn mint(&self, slot: &mut Slot, sent: &mut u32) -> Result<Minted, SpotifyError> {
+        let state = &self.state;
+        let account = self.account;
+        let min_left = self.min_left;
+        let rejected = self.rejected.as_ref();
+        let now = self.now;
         let Some(row) = sealed_row(&state.db, account).await? else {
             *slot = Slot::default();
             return Err(SpotifyError::NoAccount);
@@ -1446,7 +1515,6 @@ impl Accounts {
         {
             slot.unsaved = Some((generation, token));
         }
-        let now = self.now();
         if let Some(access) = &slot.access
             && access.generation == row.generation
         {
@@ -1506,7 +1574,11 @@ impl Accounts {
             .append_pair("client_id", &app.client_id)
             .finish();
         *sent += 1;
-        let answer = match state.music_fetch.get(self.token_request(form)).await {
+        let answer = match state
+            .music_fetch
+            .get(token_request(&self.config, form))
+            .await
+        {
             Ok(response) => read_token_answer(&response),
             Err(err) => Err(TokenError::Other(SpotifyError::Fetch(err))),
         };
@@ -1516,7 +1588,7 @@ impl Accounts {
                 // A rotated token not yet written stays for the next try.
                 slot.unsaved = kept.map(|token| (row.generation, token));
                 slot.access = None;
-                return Err(self.refresh_failed(state, account, &row, err).await);
+                return Err(refresh_failed(state, account, &row, err).await);
             }
         };
         // A rotated refresh token is written before the access token is used (a refresh that
@@ -1553,73 +1625,74 @@ impl Accounts {
             generation: row.generation,
         })
     }
+}
 
-    /// A refresh that got no token: the row's outcome and the error (§2.4).
-    async fn refresh_failed(
-        &self,
-        state: &AppState,
-        account: i64,
-        row: &SealedRow,
-        err: TokenError,
-    ) -> SpotifyError {
-        match err {
-            TokenError::InvalidGrant => {
-                tracing::info!(account, "spotify: the login ended (invalid_grant)");
-                let marked = sqlx::query(
-                    "UPDATE music_spotify_accounts SET needs_login = 1, \
-                     refresh_error = 'invalid_grant', refresh_error_at = ? \
-                     WHERE id = ? AND generation = ?",
-                )
-                .bind(stamp(state.music_sweep.now()))
-                .bind(account)
-                .bind(row.generation)
-                .execute(&state.db)
-                .await;
-                match marked {
-                    Ok(done) if done.rows_affected() > 0 => {
-                        crate::security::record_security_event(
-                            &state.db,
-                            "spotify_login_needed",
-                            None,
-                            None,
-                            Some(&format!(
-                                "Spotify account {}: log in again",
-                                row.display_name
-                            )),
-                        )
-                        .await;
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::error!(account, %err, "spotify: couldn't mark a login ended")
-                    }
+/// A refresh that got no token: the row's outcome and the error (§2.4).
+async fn refresh_failed(
+    state: &AppState,
+    account: i64,
+    row: &SealedRow,
+    err: TokenError,
+) -> SpotifyError {
+    match err {
+        TokenError::InvalidGrant => {
+            tracing::info!(account, "spotify: the login ended (invalid_grant)");
+            let marked = sqlx::query(
+                "UPDATE music_spotify_accounts SET needs_login = 1, \
+                 refresh_error = 'invalid_grant', refresh_error_at = ? \
+                 WHERE id = ? AND generation = ?",
+            )
+            .bind(stamp(state.music_sweep.now()))
+            .bind(account)
+            .bind(row.generation)
+            .execute(&state.db)
+            .await;
+            match marked {
+                Ok(done) if done.rows_affected() > 0 => {
+                    crate::security::record_security_event(
+                        &state.db,
+                        "spotify_login_needed",
+                        None,
+                        None,
+                        Some(&format!(
+                            "Spotify account {}: log in again",
+                            row.display_name
+                        )),
+                    )
+                    .await;
                 }
-                SpotifyError::Reauthorize
-            }
-            TokenError::InvalidClient => {
-                tracing::warn!(
-                    account,
-                    "spotify: the accounts service refused the client ID"
-                );
-                record_error(state, account, row.generation, "invalid_client").await;
-                SpotifyError::AppRefused
-            }
-            TokenError::Other(err) => {
-                tracing::warn!(account, code = %err.code(), "spotify: a refresh failed");
-                let code = match &err {
-                    SpotifyError::RateLimited(_) => None,
-                    SpotifyError::Fetch(_) => Some("network".to_string()),
-                    SpotifyError::Status(status) => Some(format!("http_{status}")),
-                    other => Some(other.code()),
-                };
-                if let Some(code) = code {
-                    record_error(state, account, row.generation, &code).await;
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::error!(account, %err, "spotify: couldn't mark a login ended")
                 }
-                err
             }
+            SpotifyError::Reauthorize
+        }
+        TokenError::InvalidClient => {
+            tracing::warn!(
+                account,
+                "spotify: the accounts service refused the client ID"
+            );
+            record_error(state, account, row.generation, "invalid_client").await;
+            SpotifyError::AppRefused
+        }
+        TokenError::Other(err) => {
+            tracing::warn!(account, code = %err.code(), "spotify: a refresh failed");
+            let code = match &err {
+                SpotifyError::RateLimited(_) => None,
+                SpotifyError::Fetch(_) => Some("network".to_string()),
+                SpotifyError::Status(status) => Some(format!("http_{status}")),
+                other => Some(other.code()),
+            };
+            if let Some(code) = code {
+                record_error(state, account, row.generation, &code).await;
+            }
+            err
         }
     }
+}
 
+impl Accounts {
     // --- reads ---
 
     /// The quota pause's end, while it lasts.
@@ -2084,6 +2157,13 @@ pub fn add_refusal(none: &NoReader) -> String {
         }
         SpotifyError::Status(status) if *status >= 500 => {
             "Spotify couldn't be reached - try again.".to_string()
+        }
+        SpotifyError::Quota => {
+            "Spotify's limit for this app was reached - try again in an hour.".to_string()
+        }
+        // No status codes or parser words on the form (qa-26c-step2b-code L4).
+        SpotifyError::Status(_) | SpotifyError::TooBig | SpotifyError::BadAnswer => {
+            "Spotify couldn't open it just now - try again.".to_string()
         }
         SpotifyError::NoAccount => "Log in with a Spotify account first.".to_string(),
         SpotifyError::Reauthorize => {
@@ -3161,6 +3241,99 @@ pub(crate) mod tests {
         );
     }
 
+    /// qa-26c-step2b-code M1: a caller dropped while its refresh is under way (the add form's
+    /// budget, a phone's request that went away) cancels nothing - Spotify's rotated refresh
+    /// token is still written, the access token kept, and the next call needs no request; and a
+    /// rotated token whose write failed (memory its only copy) survives a dropped caller too.
+    #[tokio::test]
+    async fn a_dropped_caller_never_loses_a_rotated_token() {
+        let app = TestApp::new().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let account = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let spotify = &app.state.spotify;
+        let stored_soon = |want: &'static str| {
+            let app = &app;
+            async move {
+                for _ in 0..500 {
+                    if stored_refresh(app, account).await.as_deref() == Some(want) {
+                        return true;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                false
+            }
+        };
+        // The refresh is held at the gate (Spotify's answer pending) when the caller gives up.
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh_rotated.json"));
+        app.fetch.hold();
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(30),
+            spotify.access_token(&app.state, account, READ_MIN_LEFT),
+        )
+        .await;
+        assert!(dropped.is_err(), "the caller gave up");
+        app.fetch.release();
+        assert!(
+            stored_soon("FAKE-REFRESH-2").await,
+            "the rotated token is written"
+        );
+        app.fetch.answer(TOKEN_URL, 500, "");
+        app.fetch.clear_calls();
+        let cached = spotify
+            .access_token(&app.state, account, READ_MIN_LEFT)
+            .await
+            .unwrap();
+        assert_eq!(cached.token.secret(), "FAKE-ACCESS-3", "kept by the task");
+        assert_eq!(app.fetch.count(), 0);
+
+        // A rotated token whose write fails stays in memory; a caller dropped at the next call
+        // (while the write is retried) doesn't lose it: the call after writes it.
+        sqlx::query(
+            "CREATE TRIGGER no_token_writes BEFORE UPDATE OF ciphertext ON music_spotify_accounts \
+             BEGIN SELECT RAISE(ABORT, 'read-only'); END",
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+        app.fetch.answer(
+            TOKEN_URL,
+            200,
+            fixture("token_refresh_rotated.json").replace_token(),
+        );
+        spotify
+            .access_token(&app.state, account, Duration::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_refresh(&app, account).await.as_deref(),
+            Some("FAKE-REFRESH-2"),
+            "the write failed: FAKE-REFRESH-3 is in memory only"
+        );
+        // Dropped while the write is retried (100 + 200 ms apart).
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(20),
+            spotify.access_token(&app.state, account, READ_MIN_LEFT),
+        )
+        .await;
+        assert!(dropped.is_err());
+        sqlx::query("DROP TRIGGER no_token_writes")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        app.fetch.clear_calls();
+        let cached = spotify
+            .access_token(&app.state, account, READ_MIN_LEFT)
+            .await
+            .unwrap();
+        assert_eq!(cached.token.secret(), "FAKE-ACCESS-3");
+        assert_eq!(app.fetch.count(), 0);
+        assert!(
+            stored_soon("FAKE-REFRESH-3").await,
+            "the in-memory copy survived the dropped caller and is written"
+        );
+    }
+
     /// `FAKE-REFRESH-2` -> `FAKE-REFRESH-3` in a fixture.
     trait ReplaceToken {
         fn replace_token(self) -> Vec<u8>;
@@ -3532,6 +3705,7 @@ pub(crate) mod tests {
             Access,
             Slot,
             Minted,
+            MintJob,
             Accounts,
             SealedRow
         );

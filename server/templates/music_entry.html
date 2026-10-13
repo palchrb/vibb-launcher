@@ -31,7 +31,7 @@ input, select { max-width: 100%; }
 
     {% if let Some(sweep) = sweep %}
     <div class="card" id="status">
-        <h2>{% if spotify %}Tracks{% else %}Episodes{% endif %}</h2>
+        <h2>{{ list_title }}</h2>
         {% if let Some(title) = sweep.source_title %}
         <p class="subtitle music-oneline">At the source: {{ title }}</p>
         {% endif %}
