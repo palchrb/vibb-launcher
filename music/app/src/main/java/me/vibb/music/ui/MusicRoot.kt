@@ -33,6 +33,7 @@ import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.categoryTiles
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.holdEndsAt
+import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.listRows
 import me.vibb.music.logic.offlineSummary
@@ -49,6 +50,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val hub by PlayerHub.state.collectAsStateWithLifecycle()
     val row by vm.nowRow.collectAsStateWithLifecycle()
+    val spotifyOutcome by vm.spotifyOutcome.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<PlayerHub.Message?>(null) }
     LaunchedEffect(Unit) {
         PlayerHub.messages.collect {
@@ -94,7 +96,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             vm.screen = Screen.PLAYER
         }
         when (screen) {
-            Screen.LIBRARY -> Library(vm, s, now, actions, playEntry)
+            Screen.LIBRARY -> Library(vm, s, now, hub, spotifyOutcome, actions, playEntry)
             Screen.PLAYER -> now?.let { n ->
                 val (_, of) = playerNumber(s, n)
                 val position = livePosition(n)
@@ -140,7 +142,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 ListScreen(
                     n.entry,
                     listRows(listOrder(s, n), n.item.key, heard, onPhone),
-                    offlineSummary(s.visible(n.entry).map { it.key }, onPhone),
+                    // Spotify streams only: no "N av M lastet ned", no offline marks (design 26c §4.2)
+                    if (isSpotify(n.entry)) null else offlineSummary(s.visible(n.entry).map { it.key }, onPhone),
                     onBack = { vm.screen = Screen.PLAYER },
                     onPick = { playItem(n.entry.id, it.key) },
                 )
@@ -183,12 +186,13 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
 }
 
 @Composable
-private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, actions: Actions, playEntry: (Long) -> Unit) {
+private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerHub.State, spotifyOutcome: String?, actions: Actions, playEntry: (Long) -> Unit) {
     val all = s.entries
     val selected = effectiveCategory(all, vm.category)
     val shown = shownEntries(all, selected)
     LibraryScreen(
-        entries = shown.map { entryUi(s, it) },
+        // a Spotify tile's line: the loaded entry's web player state, else the stored outcome (design 26c §5.8)
+        entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome) },
         tiles = categoryTiles(s.library?.categories.orEmpty(), all),
         selected = selected,
         startIndex = vm.carouselIndex,

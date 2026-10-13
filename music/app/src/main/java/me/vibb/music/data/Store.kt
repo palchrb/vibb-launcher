@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.SpotifyOutcome
 import me.vibb.music.logic.coversToDelete
 import me.vibb.music.logic.isArtHash
 import me.vibb.music.logic.recentArt
@@ -23,8 +24,8 @@ import java.io.File
 /**
  * Where the app keeps what it received and what it plays: the library file, received listings
  * (applied into Room by the sync), covers, own files' copies (noBackupFilesDir, never backed up),
- * the report, and the one setting from the launcher's restrictions (`mobile_data`; step 2's debug
- * feed sets it).
+ * the report, Spotify's last outcome (design 26c §4.4), and the one setting from the launcher's
+ * restrictions (`mobile_data`; step 2's debug feed sets it).
  */
 class Store private constructor(context: Context) {
     private val app = context.applicationContext
@@ -45,6 +46,17 @@ class Store private constructor(context: Context) {
     val entryErrorsFile = File(dir, "entry_errors.json")
     val db: MusicDao = MusicDb.get(app).dao()
     private val prefs = app.getSharedPreferences("music", Context.MODE_PRIVATE)
+
+    /**
+     * The phone's last Spotify outcome (design 26c §4.4, QA L8): `{"outcome": "<word>", "at": <wall ms>}`,
+     * written by the Spotify renderer through the service only when the word changes ([recordSpotifyOutcome],
+     * tmp + rename), read by the report (`Sync.writeReport`, from the file) and every Spotify tile
+     * ([spotifyOutcomes]). Never a token, an account or a device id.
+     */
+    val spotifyStateFile = File(app.noBackupFilesDir, "spotify_state.json")
+    private val spotifyOutcomeState = MutableStateFlow<SpotifyOutcome?>(null)
+
+    @Volatile private var spotifyOutcomeLoaded = false
 
     /** The parsed library, read from its file on first use (never in the constructor, which may run
      * on the main thread); null = none (the app is unmanaged or never fed: "Ingen bibliotek"). */
@@ -73,6 +85,35 @@ class Store private constructor(context: Context) {
     }
 
     fun coverFile(hash: String): File = File(coversDir, hash)
+
+    /** The stored Spotify outcome as the file holds it now (null: none stored, or junk) - call off the main thread. */
+    fun readSpotifyOutcome(): SpotifyOutcome? = SpotifyOutcome.decode(runCatching { spotifyStateFile.readText() }.getOrNull())
+
+    @Synchronized
+    private fun spotifyOutcome(): SpotifyOutcome? {
+        if (!spotifyOutcomeLoaded) {
+            spotifyOutcomeState.value = readSpotifyOutcome()
+            spotifyOutcomeLoaded = true
+        }
+        return spotifyOutcomeState.value
+    }
+
+    /**
+     * The renderer's outcome [word] at [nowMs] (wall clock): written only when the word changes
+     * (`SpotifyOutcome.next`; an unknown word never), atomically. Off the main thread (the service's writer).
+     */
+    @Synchronized
+    fun recordSpotifyOutcome(word: String, nowMs: Long) {
+        val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return
+        runCatching { writeAtomic(spotifyStateFile, next.encode().toByteArray()) }.onFailure { return }
+        spotifyOutcomeState.value = next
+    }
+
+    /** The stored Spotify outcome, live (read from its file on first collection - collect off the main thread). */
+    fun spotifyOutcomes(): Flow<SpotifyOutcome?> = flow {
+        spotifyOutcome()
+        emitAll(spotifyOutcomeState)
+    }
 
     /** The cover files on the phone (library covers and episode art, design 27 §2.3). */
     fun coverHashes(): Set<String> = coversDir.list().orEmpty().filter(::isArtHash).toSet()

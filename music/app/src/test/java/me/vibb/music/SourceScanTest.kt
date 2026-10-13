@@ -429,6 +429,33 @@ class SourceScanTest {
         assertFalse("never a logging interceptor", http.contains("Interceptor"))
     }
 
+    /**
+     * Design 26c step 5b (§7.1, qa-26c-step5a-code L8): the web player is made only by the service, with a log that is
+     * a debug build's only and writes the renderer's fixed words as they are; the outcome file is the store's alone
+     * and holds a word; the tile and the player say "Spotify" in both languages.
+     */
+    @Test
+    fun `5b - the web player's log is debug-only, it is made by the service alone, and the outcome file holds a word`() {
+        val made = sources("src/main/java").filter { code(it).contains("SpotifyRenderer.create(") }.map { it.name }
+        assertEquals(listOf("PlaybackService.kt"), made)
+        val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
+        val logs = service.lines().filter { it.contains("Log.") }
+        assertEquals(listOf("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"), logs.map { it.trim() })
+        assertTrue(service.contains("log = ::spotifyLog,"))
+        // the outcome's file: written by the store only, read by the report through the store's name
+        val files = sources("src/main/java").filter { code(it).contains("spotify_state.json") }.map { it.name }
+        assertEquals(listOf("Store.kt"), files)
+        val store = code(moduleFile("src/main/java/me/vibb/music/data/Store.kt"))
+        assertTrue(store.contains("val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return"))
+        assertTrue("tmp + rename", store.contains("writeAtomic(spotifyStateFile, next.encode().toByteArray())"))
+        val logic = code(moduleFile("src/main/java/me/vibb/music/logic/Spotify.kt"))
+        assertTrue("the file is the word and its time", logic.contains("put(\"outcome\", outcome)\n        put(\"at\", atMs)\n    }.toString()"))
+        // the attribution and the lines, in both languages
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            assertEquals(path, "Spotify", strings(path)["kind_spotify"])
+        }
+    }
+
     @Test
     fun `a Storytel download never follows a redirect, so no token reaches the cache index`() {
         val downloads = code(moduleFile("src/main/java/me/vibb/music/sync/Downloads.kt"))

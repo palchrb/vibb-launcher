@@ -19,6 +19,7 @@ import me.vibb.music.model.Library
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.model.toPlayItem
+import me.vibb.music.spotify.SPOTIFY_MODE_LIST
 
 /** Builds a [Snapshot] from rows (pure, so the rules are testable). */
 fun buildSnapshot(
@@ -79,7 +80,7 @@ data class Snapshot(
      * the phone, true = a Sonos room. Set only through [forRenderer], by each caller explicitly (26a §9).
      */
     val remote: Boolean = false,
-    /** Spotify items show (design 26c §4.2), false until step 5b's player ([SPOTIFY_PLAYABLE]). */
+    /** Spotify items show (design 26c §4.2), since step 5b's player ([SPOTIFY_PLAYABLE]; the tests may turn it off). */
     val spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
 ) {
     /**
@@ -93,11 +94,12 @@ data class Snapshot(
      * [entry]'s items that show and play, oldest first (21b §6: a withdrawn item without a copy is
      * hidden; design 26b §3.2: a Storytel book, listed without a url, only with its copy - or on a room;
      * design 26c §4.2: a listed Spotify item in both views - it streams, a room's queue drops it - once
-     * [spotifyPlayable], and nowhere before).
+     * [spotifyPlayable], and nowhere before; a context-mode entry shows nothing yet: its one synthetic
+     * item is step 6's, §5.9, and the web player loads nothing for it until then).
      */
     fun visible(entry: Entry): List<PlayItem> {
         val all = listed[entry.id].orEmpty()
-        if (entry.source == Source.SPOTIFY) return if (spotifyPlayable) all else emptyList()
+        if (entry.source == Source.SPOTIFY) return if (spotifyPlayable && entry.spotifyMode == SPOTIFY_MODE_LIST) all else emptyList()
         if (remote && entry.source == Source.STORYTEL) return all
         val copies = onPhone[entry.id].orEmpty()
         // An own file has no url: it plays only from its copy (the phone never reaches the server).

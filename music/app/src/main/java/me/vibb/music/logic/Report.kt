@@ -99,7 +99,8 @@ fun stateReport(
     /**
      * The phone's last Spotify outcome (design 26c §4.4): one of `none`, `ok`, `reauthorize`,
      * `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota` - never a token, an account or a
-     * device id. `none` until the player plays Spotify (step 5b reads it from its file).
+     * device id. The sync reads it from `spotify_state.json` (`SpotifyOutcome.reported`: `none` without
+     * the file); a track the account can't play is an `item_errors` row (`unplayable`), never this.
      */
     spotify: String = "none",
 ): JsonObject = buildJsonObject {

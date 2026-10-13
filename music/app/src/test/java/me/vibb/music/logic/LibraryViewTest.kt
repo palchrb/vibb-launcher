@@ -50,6 +50,23 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `a Spotify tile - Spotify's hint over its visible list, the web player's or the stored line in its place (26c §4_3, §5_8)`() {
+        val playlist = entry(6, Source.SPOTIFY, target = "spotify:playlist:FAKEid6", cache = 0).copy(spotifyMode = "list")
+        val show = entry(7, Source.SPOTIFY, target = "spotify:show:FAKEid7", cache = 0).copy(spotifyMode = "list")
+        val rows = listOf("t1", "t2", "t3").mapIndexed { i, k -> me.vibb.music.data.ItemRow(6, k, i, "Song $k — A", null, false, 180_000, null) } +
+            listOf("p1", "p2").mapIndexed { i, k -> me.vibb.music.data.ItemRow(7, k, i, "Episode $k", null, false, 900_000, null) }
+        val snap = snapshot(library(listOf(playlist, show)), rows, bookmarks = mapOf(playlist.key to ("t3" to 5_000L), show.key to ("p1" to 9_000L)))
+        assertEquals(Hint.Started(Kind.SPOTIFY, 3, 3), entryUi(snap, playlist).hint)
+        assertEquals("a show newest first, its items episodes", Hint.Started(Kind.SPOTIFY, 2, 2, episodes = true), entryUi(snap, show).hint)
+        assertEquals(Kind.SPOTIFY, entryUi(snap, playlist).kind)
+        assertEquals(me.vibb.music.playback.RendererState.SPOTIFY_NEEDS_WIFI, entryUi(snap, playlist, 6, me.vibb.music.playback.RendererState.SPOTIFY_NEEDS_WIFI).state)
+        assertEquals(me.vibb.music.playback.RendererState.SPOTIFY_ASK_ADULT, entryUi(snap, show, 6, null, "reauthorize").state)
+        assertNull(entryUi(snap, show, 6, null, "ok").state)
+        // no offline marks: nothing of it is ever on the phone
+        assertTrue(snap.onPhone[6].orEmpty().isEmpty())
+    }
+
+    @Test
     fun `search - entries and items, at most 12, nothing found`() {
         val a = entry(1).copy(name = "Abels tårn")
         val b = entry(2).copy(name = "Bilturen")

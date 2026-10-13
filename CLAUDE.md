@@ -25,7 +25,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Storytel - the login, the asset call's 302, a CDN of silent books - answering from the music app's Storytel test
   fixtures; §6i), `fake-spotify.py` (a fake Spotify - the accounts service with PKCE, the Web API the server and the
   phone use, a stub Web Playback SDK playing a tone - answering from `server/testdata/spotify/` and the music app's
-  Spotify test fixtures; design 26c §9, §6j).
+  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6k).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.

@@ -13,7 +13,7 @@ import me.vibb.music.model.Source
 /*
  * Spotify's rules on the phone (design 26c §4, §5). Step 3 (the contract) brought the library's side:
  * a Spotify entry parses, its items are streamed - never fetched, never kept - and, until the player
- * can play them (step 5b), shown nowhere. Step 4 adds the player's pure rules: the network gate
+ * could play them (step 5b), shown nowhere. Step 4 adds the player's pure rules: the network gate
  * (`spotifyPlayability`, H1), the context item (H3), the play window and the add-to-queue one track
  * ahead, the start's budgets, what each failure shows and reports (§5.8), and the stored outcome
  * (`SpotifyOutcome`, L8). Pure; SpotifyRulesTest.
@@ -21,12 +21,12 @@ import me.vibb.music.model.Source
 
 /**
  * Whether Spotify items show and play (design 26c §11 step 3, 26b step 1's way): false until step 5b
- * builds the renderer and flips it, so a library with Spotify entries parses and shows nothing, and
- * a Spotify item never joins Nytt while it can't be played (its first listings are only
- * acknowledged, so nothing old floods the tray at the flip). [me.vibb.music.data.Snapshot] and the
- * news rules take it as their default.
+ * built the service's sites and flipped it (a library with Spotify entries parsed and showed nothing,
+ * and a Spotify item never joined Nytt while it couldn't be played). [me.vibb.music.data.Snapshot] and
+ * the news rules take it as their default; a context-mode entry still shows nothing until step 6's
+ * synthetic item (`Snapshot.visible`).
  */
-val SPOTIFY_PLAYABLE: Boolean = false
+val SPOTIFY_PLAYABLE: Boolean = true
 
 /** A Spotify entry: everything it lists is streamed by the web player (no url, no copy). */
 fun isSpotify(entry: Entry): Boolean = entry.source == Source.SPOTIFY
@@ -226,5 +226,11 @@ data class SpotifyOutcome(val outcome: String, val atMs: Long) {
             if (word == (stored?.outcome ?: SpotifyWords.NONE)) return null
             return SpotifyOutcome(word, nowMs)
         }
+
+        /**
+         * `music_state.spotify` from the stored file's [text] (§4.4, step 5b): its word, else `none` (no
+         * file - never played on this phone -, junk, or a word this app doesn't know). Never more than the word.
+         */
+        fun reported(text: String?): String = decode(text)?.outcome ?: SpotifyWords.NONE
     }
 }

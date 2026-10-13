@@ -90,14 +90,32 @@ class SpotifyRulesTest {
     }
 
     @Test
-    fun `until step 5b a listed Spotify entry shows nothing, on the phone or a room`() {
-        assertFalse("flipped in step 5b", SPOTIFY_PLAYABLE)
+    fun `step 5b flipped it - a listed Spotify entry shows by default, and with the switch off nothing shows`() {
+        assertTrue("flipped in step 5b", SPOTIFY_PLAYABLE)
         val playlist = spotify(6, "playlist")
-        val snap = snapshot(library(listOf(playlist, entry(2))), items = rows(6, listOf("t1", "t2")) + Fixtures.items(2, listOf("e1")))
+        val lib = library(listOf(playlist, entry(2)))
+        val rows = rows(6, listOf("t1", "t2")) + Fixtures.items(2, listOf("e1"))
+        val snap = snapshot(lib, items = rows)
+        assertEquals("the default snapshot shows it", listOf("t1", "t2"), snap.visible(playlist).map { it.key })
+        assertEquals(listOf(2L, 6L), snap.entries.map { it.id })
+        // the switch the tests can still turn off (as before step 5b): nothing shows, listed all the same
+        val off = snap.copy(spotifyPlayable = false)
+        assertTrue(off.visible(playlist).isEmpty())
+        assertTrue(off.forRenderer(true).visible(playlist).isEmpty())
+        assertEquals("only the feed's tile", listOf(2L), off.entries.map { it.id })
+        assertEquals("listed all the same", listOf("t1", "t2"), off.listed[6]!!.map { it.key })
+    }
+
+    @Test
+    fun `a context-mode entry shows nothing in step 5b - its one synthetic item is step 6's (26c §5_9)`() {
+        val artist = spotify(7, "artist", mode = SPOTIFY_MODE_CONTEXT)
+        val playlist = spotify(6, "playlist", mode = SPOTIFY_MODE_CONTEXT)
+        // a playlist that went to context mode may still carry its last good list: neither shows a tile until step 6
+        val snap = snapshot(library(listOf(artist, playlist)), items = rows(6, listOf("t1", "t2")))
         assertTrue(snap.visible(playlist).isEmpty())
         assertTrue(snap.forRenderer(true).visible(playlist).isEmpty())
-        assertEquals("only the feed's tile", listOf(2L), snap.entries.map { it.id })
-        assertEquals("listed all the same", listOf("t1", "t2"), snap.listed[6]!!.map { it.key })
+        assertTrue(snap.visible(artist).isEmpty())
+        assertEquals(emptyList<Long>(), snap.entries.map { it.id })
     }
 
     @Test
@@ -145,10 +163,12 @@ class SpotifyRulesTest {
     fun `NY - a listed Spotify item is news once Spotify plays, only acknowledged before (26c §4_3)`() {
         val playlist = spotify(6, "playlist")
         val listing = listOf(ListingItem("t1", "Song — Artist", null, false, 180_000, null), ListingItem("t2", "Song 2 — Artist", null, false, 180_000, null))
-        assertEquals(emptySet<String>(), newsEligible(playlist, listing))
+        assertEquals("step 5b: the default", setOf("t1", "t2"), newsEligible(playlist, listing))
+        assertEquals(emptySet<String>(), newsEligible(playlist, listing, spotifyPlayable = false))
         assertEquals(setOf("t1", "t2"), newsEligible(playlist, listing, spotifyPlayable = true))
         val items = listing.map { PlayItem(6, it.key, it.title, null, false, it.durationMs) }
-        assertEquals(emptySet<String>(), listedOf(playlist, items, emptySet(), emptySet(), emptyMap()).eligible)
+        assertEquals(setOf("t1", "t2"), listedOf(playlist, items, emptySet(), emptySet(), emptyMap()).eligible)
+        assertEquals(emptySet<String>(), listedOf(playlist, items, emptySet(), emptySet(), emptyMap(), spotifyPlayable = false).eligible)
         assertEquals(setOf("t1", "t2"), listedOf(playlist, items, emptySet(), emptySet(), emptyMap(), spotifyPlayable = true).eligible)
         assertEquals("a withdrawn feed episode still never is", emptySet<String>(), newsEligible(entry(2), listOf(ListingItem("x", "X", null, false, null, null)), spotifyPlayable = true))
     }
@@ -266,5 +286,8 @@ class SpotifyRulesTest {
         assertEquals(SpotifyOutcome("quota", 20), SpotifyOutcome.next(SpotifyOutcome("ok", 10), "quota", 20))
         assertNull("an unknown word is never stored", SpotifyOutcome.next(SpotifyOutcome("ok", 10), "FAKE-ACCESS-1", 20))
         assertNull(SpotifyOutcome.next(SpotifyOutcome("ok", 10), null, 20))
+        // the report's word from the file (step 5b): its word, else none
+        assertEquals("not_premium", SpotifyOutcome.reported(o.encode()))
+        for (none in listOf(null, "", "{", """{"outcome":"FAKE-ACCESS-1","at":1}""", """{"at":1}""")) assertEquals(none, "none", SpotifyOutcome.reported(none))
     }
 }

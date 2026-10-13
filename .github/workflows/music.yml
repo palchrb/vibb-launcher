@@ -110,7 +110,7 @@ jobs:
       run: python3 -I ../scripts/fake-storytel.py --selftest
     - name: Fake Spotify selftest
       # The emulator's fake Spotify answers from the same fixtures the tests read (design 26c §9.2,
-      # docs/testing/emulator.md §6j): server/testdata/spotify/ and music's spotify/ - the accounts
+      # docs/testing/emulator.md §6k): server/testdata/spotify/ and music's spotify/ - the accounts
       # service with PKCE and rotation, the Web API routes, the play body, the stub SDK's surface against
       # what player.js uses, the tone - against itself. Stdlib only.
       run: python3 -I ../scripts/fake-spotify.py --selftest

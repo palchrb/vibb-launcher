@@ -36,6 +36,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import me.vibb.music.BuildConfig
+import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.SpotifyBridgeToken
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.data.Store
@@ -105,7 +106,7 @@ import kotlin.coroutines.resume
  *
  * Android stays at the edges ([SpotifyPorts], [SpotifyHost], the SimpleBasePlayer): SpotifyRendererTest
  * drives the rest with a scripted page, a scripted Web API and a virtual clock. Design 26c step 5a; the
- * service's sites are step 5b's (`create`, `suspended`, `forget`, the outcome's store).
+ * service's sites are step 5b's (`create`, `refused`, `suspended`, `forget`, the outcome's store).
  */
 
 /** A change of the audio focus as the renderer reads it. */
@@ -568,6 +569,16 @@ internal class SpotifyRenderer(
         pause(PauseCause.OTHER)
         destroyHost()
         changed()
+    }
+
+    /**
+     * The service's network gate said no (§5.10, QA H1: a start, a step or Spotify's own advance on a network the
+     * gate refuses): paused with [line] - "trenger Wi-Fi" or "trenger internett" - and its word, nothing moves on.
+     * The renderer's own gate before every start says the same (its belt).
+     */
+    fun refused(line: SpotifyLine) {
+        if (released) return
+        refuse(line)
     }
 
     /** Spotify off on this phone, or no Spotify entry left (§5.2's clearing): the page and its storage go, and the token. */
@@ -1562,6 +1573,12 @@ internal class SpotifyRenderer(
             Player.COMMAND_GET_AUDIO_ATTRIBUTES,
         ).build()
 
+        /**
+         * The page's account marker (qa-26c-step5a-code M1): `noBackupFilesDir/spotify_page_account`. The service
+         * asks whether one exists when the library has no Spotify entry left (§5.2's clearing after a restart).
+         */
+        fun pageAccountFile(context: Context): File = File(context.noBackupFilesDir, "spotify_page_account")
+
         /** Local playback: the volume keys are the phone's STREAM_MUSIC (and the launcher's cap), §5.6. */
         private val DEVICE_INFO = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_LOCAL).build()
 
@@ -1586,11 +1603,15 @@ internal class SpotifyRenderer(
             val http = OkHttpSpotifyHttp(MediaCache.httpClient(publicOnly = !lan), "VibbMusic/${BuildConfig.VERSION_NAME}")
             val base = SpotifyEndpoints.apiBase()
             val fakeTokens = SpotifyEndpoints.debugTokens()
-            val ask: suspend () -> TokenResult = if (fakeTokens != null) {
-                val api = SpotifyApi(http, base, SystemClock::elapsedRealtime)
-                suspend { runInterruptible(Dispatchers.IO) { api.debugToken(fakeTokens) } }
-            } else {
-                suspend { withContext(Dispatchers.IO) { SpotifyBridgeToken.get(app) } }
+            val fakeApi = SpotifyApi(http, base, SystemClock::elapsedRealtime)
+            // the fake's token route only for a run without a launcher (§9.3): a managed phone - the debug launcher
+            // with the server on the fake's accounts base, §6k part A - takes its token through the bridge
+            val ask: suspend () -> TokenResult = suspend {
+                if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {
+                    runInterruptible(Dispatchers.IO) { fakeApi.debugToken(fakeTokens) }
+                } else {
+                    withContext(Dispatchers.IO) { SpotifyBridgeToken.get(app) }
+                }
             }
             val ports = AndroidSpotifyPorts(app, store, scope, writer, SpotifyLocks(app, log), outcome, log)
             return SpotifyRenderer(SpotifyWebHost(app, log), http, base, ask, ports, Dispatchers.Main, queue, Looper.getMainLooper())
@@ -1685,7 +1706,7 @@ private class AndroidSpotifyPorts(
 
     override fun outcome(word: String) = outcomeSink(word)
 
-    private val accountFile = File(app.noBackupFilesDir, "spotify_page_account")
+    private val accountFile = SpotifyRenderer.pageAccountFile(app)
 
     override fun pageAccount(): String? = runCatching { accountFile.readText().trim() }.getOrNull()?.takeIf { ACCOUNT.matches(it) }
 

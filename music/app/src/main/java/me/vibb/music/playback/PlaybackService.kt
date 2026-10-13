@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
@@ -46,6 +47,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import me.vibb.music.BuildConfig
 import me.vibb.music.R
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.LAUNCHER_PACKAGES
@@ -62,7 +64,6 @@ import me.vibb.music.logic.CallAction
 import me.vibb.music.logic.CallPause
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.NetCaps
-import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.callMode
@@ -73,14 +74,13 @@ import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
-import me.vibb.music.logic.firstPlayable
+import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
 import me.vibb.music.logic.nowWindow
 import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.playAllowed
-import me.vibb.music.logic.playability
 import me.vibb.music.logic.previousAction
 import me.vibb.music.logic.publicOnly
 import me.vibb.music.logic.homePlan
@@ -90,6 +90,7 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.swipeTarget
@@ -117,6 +118,7 @@ import me.vibb.music.sonos.groupAllowed
 import me.vibb.music.sonos.mustLeaveRoom
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
+import me.vibb.music.spotify.SpotifyRenderer
 import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
@@ -159,8 +161,9 @@ internal class Active(
  * - the sleep timer fades out over ~10 s and pauses; a manual pause cancels it;
  * - "Spill av på": the phone or a connected Bluetooth/wired output (`setPreferredAudioDevice`)
  *   until that device goes - or, for the phone, until headphones arrive; or a Sonos room.
- * Who plays is the [Renderer] (design 26a §0): the phone's [LocalRenderer] (the ExoPlayer) or a
- * Sonos room's [SonosRenderer], changed only by [attach]; the session wraps `KidPlayer(renderer.player)`.
+ * Who plays is the [Renderer] (design 26a §0): the phone's [LocalRenderer] (the ExoPlayer), Spotify's
+ * web player on the phone ([SpotifyRenderer], design 26c §5.10: a Spotify entry's) or a Sonos room's
+ * [SonosRenderer], changed only by [attach]; the session wraps `KidPlayer(renderer.player)`.
  * Nothing here ever starts playback by itself.
  */
 @OptIn(UnstableApi::class)
@@ -179,6 +182,13 @@ class PlaybackService : MediaSessionService() {
 
     /** The wake and Wi-Fi locks a Sonos session holds while it plays (design 26a §6.3). */
     private lateinit var locks: SonosLocks
+
+    /**
+     * Spotify's web player on the phone (design 26c §5.10): made at the first Spotify start (never at a restore
+     * of nothing Spotify: no page, no Connect device by itself), kept for the service's life, released in
+     * [onDestroy]. A renderer like the others: only [attach] makes it the current one.
+     */
+    private var spotify: SpotifyRenderer? = null
     private var session: MediaSession? = null
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
@@ -278,6 +288,16 @@ class PlaybackService : MediaSessionService() {
         }
         // A picture landing (the sync copied it) refreshes the current item's artwork (QA M5/H2).
         scope.launch { store.coversVersion.collect { refreshArt() } }
+        // Design 26c §5.2: a parsed library with no Spotify entry (the phone unbound, the parent removed them): the
+        // web player's page, its cookies and storage, the account marker and the token go - also for a page an
+        // earlier run left on disk (its marker). An unreadable library keeps everything (qa-21-step2-code H1).
+        scope.launch {
+            store.libraries().map { lib -> lib != null && lib.entries.none { isSpotify(it) } }.distinctUntilChanged().flowOn(Dispatchers.IO).collect { none ->
+                if (none && (spotify != null || withContext(Dispatchers.IO) { SpotifyRenderer.pageAccountFile(this@PlaybackService).exists() })) {
+                    spotifyRenderer().forget()
+                }
+            }
+        }
         publish()
     }
 
@@ -316,6 +336,8 @@ class PlaybackService : MediaSessionService() {
         session?.release()
         session = null
         if (renderer !== local) local.release()
+        // Spotify's web player (design 26c §5.10): its page destroyed, its locks and focus let go (the current one's below)
+        spotify?.let { if (it !== renderer) it.release() }
         if (sonos != null) {
             // the dead service hears nothing more (qa-26a-step3b-code L1); the place now, from the last
             // poll (its age term capped at 5 s), and the live second's again in the hand-off
@@ -477,7 +499,7 @@ class PlaybackService : MediaSessionService() {
                 rendererReady.await()
                 switching.withLock {
                     lookAgainBeforePlaying()
-                    if (renderer.kind == RendererKind.SONOS) {
+                    if (!renderer.kind.onPhone) {
                         // Design 26a §4.7: on Sonos a Bluetooth play button starts the speaker - the queue it
                         // holds, else the stored one, gated (playAllowed above; the controller's mayPlay before
                         // anything is sent) - and hands the session no local items.
@@ -493,8 +515,17 @@ class PlaybackService : MediaSessionService() {
                     } else if (restored !is Restored.Queue) {
                         Resumable.set(this@PlaybackService, false)
                         future.setException(UnsupportedOperationException("nothing to resume"))
+                    } else if (isSpotify(restored.active.entry)) {
+                        // Design 26c §5.10 (QA H2): a stored Spotify queue takes the room's shape - the web player
+                        // attached and the stored queue started through start (gated: playAllowed above, the
+                        // renderer's own belt and the network gate), the session handed no local items
+                        val (a, index, pos) = restored
+                        start(a, QueuePlan(a.items.map { it.key }, index, pos))
+                        future.setException(UnsupportedOperationException("playing on Spotify"))
                     } else {
                         val (a, index, pos) = restored
+                        // the phone's own player takes Media3's items (never Spotify's web player)
+                        usePhoneRenderer(a.entry)
                         active = a
                         lastIndex = index
                         clearFault()
@@ -517,7 +548,7 @@ class PlaybackService : MediaSessionService() {
     private suspend fun load(remote: Boolean): Pair<Snapshot, List<DownloadRow>> = withContext(Dispatchers.IO) { store.snapshot().forRenderer(remote) to store.db.downloads() }
 
     /** The queue for whoever plays now (design 26b §5.6's first row). */
-    private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = renderer.kind == RendererKind.SONOS)
+    private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = !renderer.kind.onPhone)
 
     /**
      * The queue of [keys] as renderer [kind] plays it. A Sonos room gets only what a speaker can play
@@ -528,7 +559,7 @@ class PlaybackService : MediaSessionService() {
     private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean, kind: RendererKind): Active? {
         val order = snap.order(entry)
         val byKey = order.associateBy { it.key }
-        val items = keys.mapNotNull { byKey[it] }.filter { kind == RendererKind.LOCAL || PlayBodies.speakerPlayable(entry, it) }
+        val items = keys.mapNotNull { byKey[it] }.filter { kind.onPhone || PlayBodies.speakerPlayable(entry, it) }
         if (items.isEmpty()) return null
         // The entry's cover is made now; an item's own picture only where its small copy exists - the
         // rest when it becomes current (refreshArt), never a decode per queue item up front (QA H2).
@@ -554,7 +585,7 @@ class PlaybackService : MediaSessionService() {
      * changes (vibb's `nothing-remote-playable`: the renderer stays).
      */
     private suspend fun queueFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, plan: QueuePlan, shuffled: Boolean, kind: RendererKind): Pair<Active, QueuePlan>? {
-        val p = if (kind == RendererKind.SONOS) {
+        val p = if (!kind.onPhone) {
             val byKey = snap.order(entry).associateBy { it.key }
             val dropped = plan.keys.mapNotNull { k -> byKey[k]?.let { PlayBodies.speakerDropReason(entry, it) } }
             if (dropped.isNotEmpty()) SonosHome.log("sonos: ${dropped.size} item(s) a speaker can't play left out (${dropped.distinct().joinToString()})")
@@ -664,33 +695,85 @@ class PlaybackService : MediaSessionService() {
         return true
     }
 
+    /**
+     * [a] from [plan] on whoever plays: the phone's renderer for the entry ([usePhoneRenderer], design 26c
+     * §5.10), or the room. An item that can't play now moves the start on to the next that can ("Ikke lastet
+     * ned"); a Spotify entry the network gate refuses (§5.10, QA H1) is loaded paused at its place - the
+     * player and its tile carry the renderer's line, "trenger Wi-Fi" or "trenger internett" - and never moves
+     * to another item or says NOT_DOWNLOADED. Loading never touches the network or the web player (§5.4).
+     */
     private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
         renderer.saveNow()
         clearFault()
         var index = plan.startIndex.coerceIn(a.items.indices)
         var pos = plan.startPosMs
         val first = playableFrom(a, index, forward = true, wrap = true)
-        if (first == null) {
+        if (first == null && !isSpotify(a.entry)) {
             if (play) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             return
         }
-        if (first != index) {
+        if (first != null && first != index) {
             if (play) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             index = first
             pos = startPos(a, index)
         }
+        // the old renderer saves its own place and pauses before the queue changes (attach)
+        usePhoneRenderer(a.entry)
         active = a
         lastIndex = index
         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
         // Loaded paused: the wake mode goes between prepare and play, as before step 2.
         renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)
         wakeModeFor(a, index)
-        if (play) {
+        if (play && (first != null || !refuseSpotify())) {
             renderer.play()
             startedPlaying(a, index)
         }
         publish()
         wantArtSoon()
+    }
+
+    /**
+     * The phone's renderer for [entry] (design 26c §5.10, "Which renderer"): Spotify's web player for a Spotify
+     * entry, the phone's own player for every other ([phoneRendererFor]); a room keeps its SonosRenderer (its
+     * queue never holds a Spotify item, §4.2). The change goes through [attach] (the old one saved with force
+     * and paused first), and the phone's ExoPlayer stands down for the web player as it does for a room (§5.6,
+     * QA L1: a paused Exo keeps its audio focus).
+     */
+    private fun usePhoneRenderer(entry: Entry) {
+        if (!renderer.kind.onPhone) return
+        val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local
+        if (next === renderer) return
+        attach(next)
+        if (next !== local) local.standDown()
+    }
+
+    /** Spotify's web player, made once and kept (design 26c §5.10; qa-26c-step5a-code: the log is debug-only). */
+    private fun spotifyRenderer(): SpotifyRenderer = spotify ?: SpotifyRenderer.create(
+        this, store, scope, writer,
+        // its queue only while it renders: a detached web player's late events never write another entry's place
+        queue = { active.takeIf { renderer === spotify } },
+        outcome = { word -> scope.launch(writer) { store.recordSpotifyOutcome(word, System.currentTimeMillis()) } },
+        log = ::spotifyLog,
+    ).also { spotify = it }
+
+    /**
+     * The web player's debug log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host
+     * and the locks - never a token, a uri list or a state - and nothing at all in a release build.
+     */
+    private fun spotifyLog(message: String) {
+        if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)
+    }
+
+    /**
+     * A Spotify entry the network gate refuses now (design 26c §5.10): the web player paused with the gate's line
+     * and its word (`SpotifyRenderer.refused`); false when the gate lets it stream after all.
+     */
+    private fun refuseSpotify(): Boolean {
+        val line = spotifyNetworkLine(netCaps(this), store.mobileData) ?: return false
+        (renderer as? SpotifyRenderer)?.refused(line)
+        publish()
+        return true
     }
 
     /** Where item [index] starts when the queue jumps to it: its own position when resume is on. */
@@ -701,20 +784,21 @@ class PlaybackService : MediaSessionService() {
     private fun hasCopy(a: Active, item: PlayItem) = item.fileId != null || item.key in a.copies
 
     private fun playable(a: Active, index: Int, caps: NetCaps? = netCaps(this), mobileData: Boolean = store.mobileData): Boolean {
-        // A speaker fetches by itself and its queue holds only what it can play (§4.2): the phone's gate is the phone's.
-        if (renderer.kind == RendererKind.SONOS) return true
+        // A speaker fetches by itself and its queue holds only what it can play (§4.2): the phone's gate is the phone's;
+        // a Spotify item's is the network alone (design 26c §5.10, QA H1: never GONE).
         val item = a.items[index]
-        return playability(hasCopy(a, item), item.url != null, caps, mobileData).let { it == Playability.LOCAL || it == Playability.STREAM }
+        return itemPlayable(renderer.kind, a.entry, hasCopy(a, item), item.url != null, caps, mobileData)
     }
 
-    /** The first index from [index] on (or back) that can play now; null when none. */
+    /** The first index from [index] on (or back) that can play now; null when none. A Spotify entry: [index] or null (§5.10). */
     private fun playableFrom(a: Active, index: Int, forward: Boolean, wrap: Boolean): Int? {
         val caps = netCaps(this)
         val mobileData = store.mobileData
-        return firstPlayable(a.items.size, index, forward, wrap) { playable(a, it, caps, mobileData) }
+        return playableIndex(a.entry, a.items.size, index, forward, wrap) { playable(a, it, caps, mobileData) }
     }
 
-    /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). */
+    /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). A no-op on Spotify's web
+     * player (its own locks, design 26c §5.7) and on a room. */
     private fun wakeModeFor(a: Active, index: Int) {
         val item = a.items.getOrNull(index) ?: return
         renderer.setWakeMode(if (hasCopy(a, item)) C.WAKE_MODE_LOCAL else C.WAKE_MODE_NETWORK)
@@ -726,6 +810,11 @@ class PlaybackService : MediaSessionService() {
         if (item.fileId != null) {
             b.setUri(Uri.fromFile(store.ownFile(item.fileId)))
             b.setTag(ItemTag(null, false, false))
+        } else if (isSpotify(a.entry)) {
+            // Design 26c §5.10: the web player plays it by its Spotify uri - no ItemTag, no cache key, no url.
+            // Only SpotifyRenderer ever loads it (usePhoneRenderer; a room's queue drops it, §4.2; playback
+            // resumption never hands it to the session), so it never reaches ItemMediaSourceFactory.
+            spotifyItemUri(a.entry, item.key)?.let { b.setUri(it) }
         } else if (a.entry.source == Source.STORYTEL) {
             // Download-only (design 26b §4.4): the book plays from its copy and nothing else. Its uri is
             // the source id (no network scheme, never a minted URL); the data source has no upstream.
@@ -880,7 +969,8 @@ class PlaybackService : MediaSessionService() {
     private fun goTo(a: Active, index: Int, forward: Boolean) {
         renderer.saveNow()
         val target = playableFrom(a, index, forward, wrap = true) ?: run {
-            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            // design 26c §5.10: Spotify's gate is the network, not the item - its line, no jump, never NOT_DOWNLOADED
+            if (isSpotify(a.entry)) refuseSpotify() else PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             return
         }
         if (target != index) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
@@ -1053,7 +1143,11 @@ class PlaybackService : MediaSessionService() {
         wakeModeFor(a, index)
         wantArtSoon()
         refreshArt()
-        if (!playable(a, index)) {
+        if (isSpotify(a.entry)) {
+            // Design 26c §5.10: a load or a step was gated before it; Spotify's own advance on a network the gate
+            // refuses now (mobile data not allowed, roaming) pauses with the line - never moved on.
+            if (auto && !playable(a, index)) refuseSpotify()
+        } else if (!playable(a, index)) {
             // The queue moves on (21 §4.2's one line beyond the mockup).
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             val nextIndex = playableFrom(a, index, forward = true, wrap = false)
@@ -1066,9 +1160,10 @@ class PlaybackService : MediaSessionService() {
             }
             return
         }
-        if (auto && renderer.kind == RendererKind.LOCAL) {
+        if (resumesOnAdvance(auto, renderer.kind)) {
             // A natural advance resumes an item heard before (vibb: in-session jumps resume too); on a
-            // speaker the next item starts at 0 (vibb `_sonos_poller`, design 26a §4.3).
+            // speaker the next item starts at 0 (vibb `_sonos_poller`, design 26a §4.3), and on Spotify
+            // where Spotify starts it - nothing is sent (design 26c §5.10, QA M4).
             val pos = startPos(a, index)
             if (pos > 0) renderer.seekTo(index, pos)
         }
@@ -1115,7 +1210,8 @@ class PlaybackService : MediaSessionService() {
             callRenderer = null
         }
         val playing = r.showsPlaying
-        val paused = !playing && r.itemCount() > 0 && r.rendererState == null
+        // a Spotify line is a paused web player; a room's four mean the speaker isn't ours to count (design 26c §5.8)
+        val paused = pausedForCall(playing, r.itemCount(), r.rendererState)
         val (next, action) = callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))
         callPause = next
         when (action) {
@@ -1161,9 +1257,14 @@ class PlaybackService : MediaSessionService() {
                     store.db.deleteDownload(entryId, item.key)
                 }
             }
-            item.url != null -> scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
+            // a listed url's stream, or a Spotify track the account can't play (`unplayable`, design 26c §5.8); only
+            // the record goes to the writer - the move-on below stays synchronous on the main thread (§5.10: the
+            // web player reads the seekTo/prepare/play made inside its Error("unplayable") as its own move-on)
+            recordsItemError(a.entry, hasUrl = item.url != null) ->
+                scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
         }
-        val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.mobileData)
+        // Spotify's offline isn't the item's (its gate is the network, §5.10): always "Kan ikke spilles"
+        val offline = !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.mobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
         val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
@@ -1363,7 +1464,8 @@ class PlaybackService : MediaSessionService() {
         SonosTail.join()
         lastRoomLook = SystemClock.elapsedRealtime()
         val uid = choice.uid ?: return
-        if (renderer !== local) return
+        // a room is looked at before the phone plays - its own player or Spotify's web player (design 26c §5.10)
+        if (!renderer.kind.onPhone) return
         // the room's view (design 26b §5.6, QA H2): a Storytel book that isn't on the phone plays there too -
         // the phone's view would lose it, and the look would stop the kid's book (stopUnadopted)
         val (snap, rows) = load(remote = true)
@@ -1379,7 +1481,7 @@ class PlaybackService : MediaSessionService() {
         val verdict = roomVerdict(choice, live, ofEntry)
         val uri = live?.uri?.takeIf { verdict == RoomVerdict.OURS_LIVE }.orEmpty()
         val queue = if (verdict == RoomVerdict.OURS_LIVE && entry != null) adoptedQueue(snap, rows, entry, uri) else null
-        if (queue == null || live == null || renderer !== local) {
+        if (queue == null || live == null || !renderer.kind.onPhone) {
             if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()
             sonos.release()
             if (verdict == RoomVerdict.NO_ANSWER) {
@@ -1442,7 +1544,7 @@ class PlaybackService : MediaSessionService() {
      * playing there (§4.7's trap). Nothing recorded: nothing to do.
      */
     private suspend fun lookAgainBeforePlaying() {
-        if (renderer !== local || SystemClock.elapsedRealtime() - lastRoomLook < ROOM_LOOK_MS) return
+        if (!renderer.kind.onPhone || SystemClock.elapsedRealtime() - lastRoomLook < ROOM_LOOK_MS) return
         val choice = withContext(writer) { home.choice() }
         if (choice.sonos) lookAtRoom(choice)
     }
@@ -1456,9 +1558,12 @@ class PlaybackService : MediaSessionService() {
     private suspend fun suspendStop() {
         rendererReady.await()
         switching.withLock {
+            // Design 26c §5.7 (QA L11): Spotify's page goes whatever the state - the bookmark with force, the pause,
+            // the page destroyed - so no Connect device "Vibb" exists while the app is suspended
+            spotify?.suspended()
             val sonos = renderer as? SonosRenderer
             if (sonos == null) {
-                renderer.pause()
+                if (renderer !== spotify) renderer.pause()
                 // a room still recorded after an unanswered look (M1): the standalone look, stop and park
                 if (withContext(writer) { home.choice() }.sonos) SonosSuspension.standalone(this@PlaybackService)
                 return@withLock
@@ -1475,7 +1580,7 @@ class PlaybackService : MediaSessionService() {
     private suspend fun output(key: String) {
         val uid = Output.sonosUid(key)
         if (uid != null) return toRoom(uid)
-        if (renderer.kind == RendererKind.SONOS) toPhone(resume = null)
+        if (!renderer.kind.onPhone) toPhone(resume = null)
         setOutput(key)
     }
 
@@ -1601,7 +1706,9 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val plan = homePlan(order, item.key, resumeFrom(a0.positions[item.key]))
-        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, RendererKind.LOCAL)
+        // the phone's renderer for the entry (design 26c §5.10): start attaches it - a Spotify entry never reaches a
+        // room (toRoom keeps the phone playing), so this is the phone's own player in practice
+        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, phoneRendererFor(a0.entry))
         if (a == null) {
             publish()
             return
@@ -1653,5 +1760,8 @@ class PlaybackService : MediaSessionService() {
 
         /** How often the household's groups are read while a session plays under a limited room scope (§5.5, M1). */
         const val SCOPE_WATCH_MS = 60_000L
+
+        /** The web player's debug log (design 26c §7.1; a debug build only). */
+        const val SPOTIFY_LOG_TAG = "VibbSpotify"
     }
 }

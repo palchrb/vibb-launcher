@@ -52,20 +52,25 @@ private fun Header(backLabel: String, onBack: () -> Unit, title: String?, traili
     }
 }
 
-/** "Liste" (`onList`): the offline summary and the rows in the order they play. */
+/** "Liste" (`onList`): the offline summary (none for Spotify, which streams only: [summary] null) and the rows in the order they play. */
 @Composable
-fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
+fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header(stringResource(R.string.back_player), onBack, entry.name)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-            Glyph(Icons.downloadAll, 16.dp, Palette.peach)
-            Line(
-                when (summary) {
-                    OfflineSummary.All -> stringResource(R.string.all_downloaded)
-                    is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
-                },
-                12, 800, Palette.sub,
-            )
+        if (summary != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                Glyph(Icons.downloadAll, 16.dp, Palette.peach)
+                Line(
+                    when (summary) {
+                        OfflineSummary.All -> stringResource(R.string.all_downloaded)
+                        is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
+                    },
+                    12, 800, Palette.sub,
+                )
+            }
+        } else {
+            // the attribution (design 26c §4.3, Developer Policy §II): the list's source
+            Line(stringResource(R.string.kind_spotify), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
         }
         val state = rememberLazyListState(initialFirstVisibleItemIndex = (rows.indexOfFirst { it.playing }).coerceAtLeast(0))
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -226,7 +226,8 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
         val e = entries.firstOrNull { it.entry.id == id } ?: current
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Line(e.entry.name, 21, 800, Palette.white)
-            Line(hintText(e.hint), 13, 700, Palette.sub)
+            // a Spotify tile's line replaces the hint (design 26c §5.8): the loaded one's state, the stored outcome
+            Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)
             if (e.progress != null) {
                 Box(Modifier.padding(top = 3.dp).width(140.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
                     Box(Modifier.width(140.dp * e.progress).height(4.dp).background(Palette.peach))

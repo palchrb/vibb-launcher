@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -42,6 +43,10 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         snap.forRenderer(onRoom)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** The phone's last Spotify outcome (design 26c §4.4, §5.8): every Spotify tile's account line reads it. */
+    val spotifyOutcome: StateFlow<String?> = store.spotifyOutcomes().map { it?.outcome }.flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     var screen by mutableStateOf(Screen.LIBRARY)
     var sheet by mutableStateOf<SheetKind?>(null)

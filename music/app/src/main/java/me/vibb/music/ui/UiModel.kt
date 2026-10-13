@@ -12,6 +12,7 @@ import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
+import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
 import me.vibb.music.logic.pickPlan
@@ -19,13 +20,16 @@ import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.showsCarousel
 import me.vibb.music.logic.skipTarget
+import me.vibb.music.logic.spotifyTileLine
 import me.vibb.music.logic.started
 import me.vibb.music.logic.swipeVia
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.PlayerHub
+import me.vibb.music.playback.RendererState
 import me.vibb.music.sonos.PlayBodies
+import me.vibb.music.spotify.rendererStateOf
 
 /** A carousel cover. */
 data class EntryUi(
@@ -36,9 +40,15 @@ data class EntryUi(
     /** The thin overall-progress line of a started resume entry; null = not shown. */
     val progress: Float?,
     val isNew: Boolean,
+    /** In place of the hint (design 26c §5.8): a Spotify tile's line - the loaded one's state, else the stored outcome's. */
+    val state: RendererState? = null,
 )
 
-fun entryUi(snap: Snapshot, entry: Entry): EntryUi {
+/**
+ * A cover of [entry]: its kind, hint, progress and NY - and for a Spotify entry the line that replaces the hint
+ * ([spotifyTileState]: [loadedId]'s renderer [loadedState] from `PlayerHub.State`, the stored [spotifyOutcome]).
+ */
+fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: RendererState? = null, spotifyOutcome: String? = null): EntryUi {
     val visible = snap.order(entry).map { it.key }
     val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
     val bookmark = snap.bookmarks[entry.key]
@@ -51,7 +61,21 @@ fun entryUi(snap: Snapshot, entry: Entry): EntryUi {
         hint(entry, order, bookmark),
         if (showProgress) overallProgress(order, bookmark, duration) else null,
         isNew(snap.news.filter { n -> visible.contains(n.key) }, entry.id),
+        spotifyTileState(entry, loadedId, loadedState, spotifyOutcome),
     )
+}
+
+/**
+ * What a Spotify tile says in place of its hint (design 26c §5.8, QA M6): the loaded entry ([loadedId]) shows its
+ * web player's line ([loadedState], `PlayerHub.State.rendererState` - "trenger Wi-Fi", "trenger internett",
+ * "spiller et annet sted" ...); every Spotify tile shows the stored outcome's account line ("Spotify - spør en
+ * voksen", "Spotify er ikke tilgjengelig nå": `spotifyTileLine`) until a play succeeds; else null (the hint).
+ * Never for another source, and never a room's line (`remote`).
+ */
+fun spotifyTileState(entry: Entry, loadedId: Long?, loadedState: RendererState?, spotifyOutcome: String?): RendererState? {
+    if (!isSpotify(entry)) return null
+    if (entry.id == loadedId && loadedState != null && !loadedState.remote) return loadedState
+    return spotifyTileLine(spotifyOutcome)?.let { rendererStateOf(it) }
 }
 
 /** What is playing (live from the player) or was playing (the stored queue, shown paused). */

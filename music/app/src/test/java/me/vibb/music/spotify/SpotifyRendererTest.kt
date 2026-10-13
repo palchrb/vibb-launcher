@@ -1132,6 +1132,67 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- step 5b: what the service relies on ---
+
+    @Test
+    fun `5b - the service's network gate refused - loaded paused with the line, nothing sent, nothing moves`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 2, 30_000, playNow = false)
+        settle()
+        r.refused(SpotifyLine.NEEDS_INTERNET)
+        settle()
+        assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        assertEquals("paused and ready, never idle: a tap tries again", Player.STATE_READY, r.spec().playbackState)
+        assertFalse(r.showsPlaying)
+        assertEquals("the item stays (never another index)", 2, r.currentIndex())
+        assertEquals(listOf("unreachable"), ports.outcomes)
+        assertEquals("no page, no call, no token", 0, page.opens + api.all().size + asks)
+        r.refused(SpotifyLine.NEEDS_WIFI)
+        settle()
+        assertEquals(RendererState.SPOTIFY_NEEDS_WIFI, r.rendererState)
+        assertEquals("no Wi-Fi leaves the word unchanged (§5.8)", listOf("unreachable"), ports.outcomes)
+        // the network back: the kid's play starts at the place
+        r.play()
+        advance(0)
+        post(state(2, 30_000))
+        assertNull(r.rendererState)
+        assertEquals(30_000L, body(api.plays().single())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `5b - the gate refusing Spotify's own advance pauses our track on the page`() = runBlocking {
+        val r = playing()
+        advance(4_000)
+        post(state(1, 0, prev = listOf(0)))
+        assertEquals(1, r.currentIndex())
+        r.refused(SpotifyLine.NEEDS_WIFI) // the service's onItemChanged: roaming, or mobile data not allowed
+        settle()
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        assertEquals(RendererState.SPOTIFY_NEEDS_WIFI, r.rendererState)
+        assertEquals("never moved on", 1, r.currentIndex())
+        assertEquals(1, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `5b - detached, its queue is null - the web player's late events never write another entry's place`() = runBlocking {
+        val r = playing()
+        advance(3_000)
+        post(state(0, 3_000))
+        r.saveNow()
+        assertEquals(1, ports.saves.size)
+        val ours = active
+        active = null // the service's `active.takeIf { renderer === spotify }` once another renderer plays
+        r.pause()
+        r.saveNow(force = true)
+        r.suspended()
+        assertEquals("nothing written while it doesn't render", 1, ports.saves.size)
+        active = ours
+        r.release()
+    }
+
     private companion object {
         const val DEVICE = "FAKEdevice1"
         const val DURATION = 200_000L

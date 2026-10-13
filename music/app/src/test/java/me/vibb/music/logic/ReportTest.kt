@@ -103,6 +103,32 @@ class ReportTest {
         assertTrue(report.keys.none { it.contains("position") || it.contains("playing") })
     }
 
+    /** Design 26c §4.4 (step 5b): the `spotify` word from spotify_state.json, an unplayable track as an item error. */
+    @Test
+    fun `the report's spotify is the stored outcome's word, and an unplayable track is an item error`() {
+        val file = SpotifyOutcome("not_premium", 1_760_000_000_000).encode()
+        val report = stateReport(
+            1, "v", 0, emptyList(),
+            listOf(ItemError(6, "11ee11ee11ee11ee", "1FakeTrackA00000000001", "unplayable")),
+            emptyList(),
+            spotify = SpotifyOutcome.reported(file),
+        )
+        assertEquals("not_premium", report["spotify"]!!.jsonPrimitive.content)
+        val error = (report["item_errors"] as JsonArray).single().jsonObject
+        assertEquals("unplayable", error["error"]!!.jsonPrimitive.content)
+        assertEquals("the track's id, never a uri or a token", "1FakeTrackA00000000001", error["item"]!!.jsonPrimitive.content)
+        for (word in SpotifyWords.ALL) {
+            assertEquals(word, stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(SpotifyOutcome(word, 1).encode()))["spotify"]!!.jsonPrimitive.content)
+        }
+        assertEquals("no file: none", "none", stateReport(1, null, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(null))["spotify"]!!.jsonPrimitive.content)
+        // the stored file holds the word and its time, nothing else
+        assertEquals(setOf("outcome", "at"), kotlinx.serialization.json.Json.parseToJsonElement(file).jsonObject.keys)
+        // one row per track, the latest (a track unplayable twice is one row)
+        var log = addItemError(emptyList(), ItemError(6, "v", "t1", "unplayable"))
+        log = addItemError(log, ItemError(6, "v", "t1", "unplayable"))
+        assertEquals(1, log.size)
+    }
+
     /** Design 26b §4.5 (QA M4): a Storytel entry's waiting, and the account's word. */
     @Test
     fun `a Storytel entry waits for the login, then the 1_5 GB floor, else the shared rule`() {

@@ -62,8 +62,9 @@ import me.vibb.music.spotify.spotifyEpisodes
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
  * (it shrinks to fit the Jelly Star), the item's marquee title, "Episode|Spor N av M", the seek
  * line, [shuffle] previous / play-pause / next [slot] (v15's compact sizes on a 320 dp phone, [controlRow]),
- * then Liste / Sov / "Spill av på". On a Sonos room a quiet line under the entry name says why the
- * speaker isn't playing what we sent it ([rendererState], design 26a §5.2); nothing acts on it but the kid.
+ * then Liste / Sov / "Spill av på". On a Sonos room, or with Spotify's web player, a quiet line under the entry name
+ * says why it isn't playing what we sent it ([rendererState], design 26a §5.2, 26c §5.8); nothing acts on it but the
+ * kid. A Spotify entry's player says "Spotify" under the title (design 26c §4.3).
  */
 @Composable
 fun PlayerScreen(
@@ -114,6 +115,8 @@ fun PlayerScreen(
                     Kind.SPOTIFY -> if (spotifyEpisodes(now.entry)) R.string.episode_of else R.string.track_of
                 }
                 Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                // every Spotify playback shows its source (design 26c §4.3, §7.3: Developer Policy §II's attribution)
+                if (kindOf(now.entry) == Kind.SPOTIFY) Line(stringResource(R.string.kind_spotify), 11, 800, Palette.dim)
             }
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)

@@ -866,6 +866,217 @@ Play emulator: the store is the package verifier and is never suspended).
 - [ ] **P6**: in no case do Play services or GSF show. Install mode is unchanged (§6b): the store is in the drawer and
   on Home.
 
+## 6k. Vibb music with Spotify (design 26c): the fake Spotify (part A), then the real SDK (part B)
+
+Design 26c §9.4 calls this "§6j"; §6j is design 28's (merged from `main` first), so Spotify's is §6k. **Part A uses no
+Spotify account**: `scripts/fake-spotify.py` on the VM is the accounts service (the PWA's login and the server's
+refreshes), the Web API (the server's listings, the phone's play, transfer, queue, shuffle and repeat calls) and a
+**stub Web Playback SDK** that the debug music app's headless web player loads and that plays a real tone per track
+through the WebView. Its answers come from the fixtures the tests read (`server/testdata/spotify/`,
+`music/app/src/test/resources/spotify/`); every value is fake (`FAKE-ACCESS-<n>`, `FAKE-REFRESH-<n>`, `FAKE-CODE-<n>`,
+users `fakeparent`/`fakekid`, client id `0123456789abcdef0123456789abcdef`), and it logs every request (it prints its
+own fake tokens - that is the fake's log, not the app's). The server honours `SPOTIFY_ACCOUNTS_BASE` and
+`SPOTIFY_API_BASE` only as `http://127.0.0.1:<port>`; the music app reaches the fake through its one debug switch
+(`spotify_base` in the debug feed's `config.json`, `src/debug` only, only `10.0.2.2` or loopback): the Web API calls go
+to the fake over the LAN client, and the web player loads `https://fake-spotify.invalid/sdk/spotify-player.js`, which
+its request interceptor fetches from the fake (the page sees https only). With the switch and **no launcher** (the
+app unmanaged) the token comes from the fake's `/fake/token?user=kid`; on a **managed** phone it comes through the
+launcher's bridge from the server, as on a real phone. Python 3, stdlib only.
+
+```
+python3 -I scripts/fake-spotify.py --selftest                 # fixtures, the fake against itself (no emulator)
+python3 -I scripts/fake-spotify.py | tee /tmp/fake-spotify.log    # port 8731, the fixtures' track lengths; Ctrl+C ends it
+#   --as kid|parent      who the PWA's login consents as (GET /fake/as?user=kid switches it while running)
+#   --rotate --access-ttl 600 --expire-refresh --bad-client      the accounts service's refresh answers
+#   --track-seconds 20   every track's length       --slow-ready 15     the SDK's ready after 15 s
+#   --elsewhere 60 | --transfer-in 30 | --autoplay | --unplayable ID,... | --relink ID:OTHER
+#   --not-premium | --no-eme | --quota | --rate-limit N | --shuffle | --repeat track | --token-ttl S
+adb logcat -s VibbSpotify VibbMusicDebugFeed MusicBridge BridgeSync    # the web player's debug log (fixed words)
+```
+
+**Restarting the fake** forgets its devices, codes and tokens: after a restart force-stop the music app (`adb shell am
+force-stop me.vibb.music.debug`; the next play makes a new page and device), and in A1 log the two accounts in again
+(the server's refresh tokens are the old fake's; restart the server too - its access tokens live in memory only, and
+one the new fake doesn't know is refused, not refreshed). So A1 runs with one fake process, and the option checks are
+A2's.
+
+### Part A1. The whole chain: the PWA, the server, the launcher, the music app
+
+§2's server with the two base variables, §4's enrolled debug launcher (device owner) and §6f's debug music app (both
+debug APKs from one machine's key):
+
+```sh
+cd ~/repos/handy/server
+SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731 SPOTIFY_API_BASE=http://127.0.0.1:8731 RUST_LOG=debug \
+  ADMIN_PASSWORD='change-me' BIND_ADDR=0.0.0.0:3100 INSECURE_COOKIES=true cargo run 2>&1 | tee /tmp/server.log
+```
+
+- [ ] **Not configured**: Musikk → Spotify (`/music/spotify`) shows the registration text and no add form; the
+  library snapshot and the device's policy are unchanged (`music.spotify` false).
+- [ ] **The app**: client id `0123456789abcdef0123456789abcdef`, Redirect URI `http://127.0.0.1:43117/callback` (the
+  page came over http, so it offers the loopback form and the paste flow); saved, the page shows `…cdef`.
+- [ ] **The parent's login**: "Log in with Spotify" → the fake logs `authorize: consented as fakeparent ->
+  FAKE-CODE-1`; the browser lands on `http://127.0.0.1:43117/callback?code=FAKE-CODE-1&state=…` ("can't connect").
+  Copy that whole address into "Paste the address your browser shows after logging in" → the fake logs `token: code
+  exchanged for fakeparent`; the accounts card lists `fakeparent` with "log in again before <date>".
+- [ ] **The kid's login**: `curl -s 'http://127.0.0.1:8731/fake/as?user=kid'`, then the same login and paste:
+  `fakekid` is listed too.
+- [ ] **Plays as**: the device page's Music card, "Spotify plays as": `fakekid`. The DNS note shows; the next sync's
+  policy has `music.spotify` true.
+- [ ] **Links**, each with the phone ticked on the add form, then "Check now" on its card:
+  `https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=x` (list mode: the fake logs `GET
+  /v1/playlists/0FakePlaylistKveld0001/items?…: 200 (fakeparent)`; the card lists 3 tracks - the fixture's episode,
+  local file, unplayable track and duplicate left out), `spotify:album:2FakeAlbumX00000000001`,
+  `spotify:show:4FakeShow0000000000001` (newest first) and `spotify:artist:3FakeArtist00000000001` (context mode: the
+  card says Spotify picks the order).
+- [ ] **The phone**: the debug switch, then a launcher sync (§6f; the music app follows on `BRIDGE_CHANGED`):
+
+```
+mkdir -p debug-feed && echo '{"spotify_base": "http://10.0.2.2:8731"}' > debug-feed/config.json
+R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
+adb shell am broadcast -n $R        # once: the app creates its debug-feed folder
+adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
+adb shell am broadcast -n $R        # "spotify: http://10.0.2.2:8731"
+adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify": "none" until the first play
+```
+
+- [ ] **The tiles**: the playlist, the album and the show, each "Spotify · fortsetter der du slapp" (the show's
+  hints and rows say "episode"); **no artist tile** (context mode's one item is step 6's). The list ("Liste") shows the
+  tracks with their durations, the word "Spotify" in place of "N av M lastet ned", no download marks.
+- [ ] **A cover tap** (the playlist): the play button shows pause at once; the fake's log in this order - at most one
+  `token: refreshed for fakekid: FAKE-ACCESS-<n>` (the server's refresh through the launcher's courier; none while the
+  server still holds the login's token), `sdk: the stub's script`, `connect: fakedevice… "Vibb" for fakekid`,
+  `device …: getOAuthToken ok`, `shuffle: false on …`, `repeat: off on …`, then **one** `play: 3 uris from
+  spotify:track:1FakeTrackA00000000001 at 0 ms on …` and an `audio 1FakeTrackA00000000001: …` line (200, or 206 with
+  a `Range`). The tone sounds; the player shows "Stille natt — Ola Fjell, Kari Li", "Spor 1 av 3" and "Spotify" under
+  it; logcat `spotify: the web player is ready` and `spotify: wake and Wi-Fi locks held` (a `spotify: permission asked
+  by …` line only if the page asks for protected media - the stub plays no DRM; part B's line is the one that counts).
+  `report.json` after the next sync: `"spotify": "ok"`.
+- [ ] **Pause, resume, seek**: no new `play:` line in the fake's log (the SDK's own calls). A seek past what the
+  player has buffered shows `audio …: 206 Range bytes=<n>-` (the debug proxy forwards `Range`) and the tone jumps.
+- [ ] **Next, a mashed next**: next once → one `play:` from track 2; next three times quickly → **one** `play:` line,
+  from the last target. Previous within the first 3 s goes back (one `play:`); later it restarts the track through
+  the SDK (no `play:` line).
+- [ ] **A pick from the list**: one `play:`, from the picked track, at its saved place. (The carousel's swipe needs
+  per-track pictures: part B.)
+- [ ] **The queue's end**: seek near the end of the last track and let it play out: no `play:` line, the player
+  closes to the library, and the tile is "fortsetter der du slapp" again (`clear_state`: the partial positions and
+  the bookmark gone).
+- [ ] **Resume after a restart**: play to the middle of track 2, pause, `adb shell am force-stop me.vibb.music.debug`,
+  open the app: the bar is back paused at track 2 and **the fake's log shows nothing** (no page, no request); play:
+  one `play:` with `at <the place> ms`, no second from 0:00.
+- [ ] **A headset's play after a restart**: force-stop again, then `adb shell input keyevent MEDIA_PLAY`: the stored
+  Spotify queue starts on the web player (one `play:` line, the tone); nothing plays through ExoPlayer (`adb logcat
+  -s ExoPlayerImpl` stays silent).
+- [ ] **Screen off and Doze**: playing, `adb shell dumpsys battery unplug`, screen off, `adb shell dumpsys deviceidle
+  force-idle`; for 30 minutes the tone goes on and track changes keep coming (the fake's `audio` lines); `adb shell
+  dumpsys power | grep vibb:spotify` shows the wake lock while playing and none 1 s after a pause. Then `adb shell
+  dumpsys deviceidle unforce` and `adb shell dumpsys battery reset`.
+- [ ] **The sleep timer**: Sov → 15 min: in its last 10 s the tone fades out, then paused; the volume is back at full
+  on the next play.
+- [ ] **A bedtime edge**: playing, `adb shell pm suspend me.vibb.music.debug` (or a time rule from the PWA): paused
+  within a second, logcat `spotify: web player destroyed`; the headset's play (`adb shell input keyevent MEDIA_PLAY`)
+  and the app's play start nothing (no `play:` line); `adb shell pm unsuspend me.vibb.music.debug` - still paused
+  until a tap.
+- [ ] **A call**: in the emulator console `gsm call 4799999999` while it plays → paused (the launcher's `CALL_HOLD`, or
+  the focus loss); `gsm cancel` → it plays on (only what we paused). A VoIP call's `CALL_HOLD` (Element X) is a device
+  check (QA checklist item 10).
+- [ ] **Design 28**: while it plays, Home's "Spilles nå" card and the lock's tile show it (title, playing); pause: both
+  show paused and go 10 minutes later (§6j's checks with Spotify playing).
+- [ ] **The output picker**: "Spill av på" with §6h's fake rooms: pick Stua while Spotify plays → "Kan ikke spilles på
+  Sonos", the phone plays on; no `SetAVTransportURI` in `fake-sonos`'s log.
+- [ ] **A refused refresh** (the last A1 check): stop the fake, start it with `--expire-refresh`, restart the server
+  (it then has no access token and must refresh), force-stop the music app; a cover tap: the fake logs `token: 400
+  invalid_grant …`; "Spotify - spør en voksen" on the player's line and on **every** Spotify tile; the report's
+  `"spotify": "reauthorize"`; the device card and the PWA's accounts card say the account must log in again. Restart
+  the fake without the flag, log both accounts in again, play: `"spotify": "ok"`, the tiles' line gone.
+- [ ] **No secrets** (none of these may match): `adb logcat -d | grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|Bearer '`,
+  `adb shell run-as me.vibb.music.debug sh -c 'grep -raE -l "FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE" .'` (Room, the
+  report, `no_backup/` with `spotify_state.json` - `{"outcome":…,"at":…}` only - and `spotify_page_account` -
+  `<id>:<generation>` only - and the WebView's own folders), and `grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|verifier'
+  /tmp/server.log` (the server's lines carry ids and statuses only).
+
+### Part A2. The phone alone: the debug feed, the fake's options
+
+The music app unmanaged (no launcher as device owner: a second AVD, or the snapshot from before §4's provisioning),
+the library and the listing from the fake, the token from the fake's own route:
+
+```
+mkdir -p debug-feed/items
+python3 -I scripts/fake-spotify.py --print-library > debug-feed/library.json        # entry 6 "Kveldsliste", 7 the artist
+python3 -I scripts/fake-spotify.py --print-listing 6 > debug-feed/items/6.json      # the fixture playlist, 3 tracks
+echo '{"spotify_base": "http://10.0.2.2:8731"}' > debug-feed/config.json
+R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
+adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
+adb shell am broadcast -n $R
+```
+
+A cover tap on "Kveldsliste" logs `phone token for kid: FAKE-ACCESS-<n>` in place of A1's refresh, the rest as A1.
+Each check below restarts the fake with its option (`python3 -I scripts/fake-spotify.py --track-seconds 20 <option>`;
+20 s tracks make the ends quick) and force-stops the music app first:
+
+- [ ] **The window's end and the queue add** (60 tracks): `--print-listing 6 --tracks 60 > debug-feed/items/6.json`,
+  push and broadcast. A cover tap: `play: 50 uris from spotify:track:FAKEtrack0000000000001`; when track 50 starts the
+  fake logs `queue: spotify:track:FAKEtrack0000000000051 on …`, track 51 follows with no gap and no second `play:`, and
+  each later track is added one ahead. Pick track 3 then: one `play:` from track 3; when it ends track 4 plays (the
+  leftover add of 51 is paused if Spotify plays it - logcat `spotify: a track that isn't ours was paused` - and our
+  list goes on), never "Kan ikke spilles" (QA checklist item 20). Put the 3-track listing back afterwards.
+- [ ] **A cold start**: `--slow-ready 15`: the play button shows pause throughout the 15 s, a second tap during it
+  sends nothing (one `connect:`, one `play:`).
+- [ ] **Elsewhere**: `--elsewhere 30`: 30 s after the first play the fake logs `device …: -> elsewhere`; within about
+  2 s (the look) the player shows paused, "Spotify spiller et annet sted"; the bookmark is the last measured place
+  (force-stop and reopen: there). Play takes it back (a new `play:` at that place).
+- [ ] **Unplayable**: `--unplayable 1FakeTrackC00000000003`: track 2 is skipped ("Kan ikke spilles"), track 3 plays;
+  `report.json` after the next sync (`adb shell run-as me.vibb.music.debug cat files/music/report.json`) holds
+  `{"entry": 6, …, "item": "1FakeTrackC00000000003", "error": "unplayable"}`. With all three unplayable
+  (`--unplayable 1FakeTrackA00000000001,1FakeTrackC00000000003,1FakeTrackD00000000004`): at most three `play:` lines,
+  then paused.
+- [ ] **Autoplay after the list**: `--autoplay`: after the last track the fake's stub plays "Something Spotify picked":
+  paused at once (logcat `spotify: a track that isn't ours was paused`), nothing of it saved, the player shows the
+  end of our list.
+- [ ] **A foreign transfer**: `--transfer-in 20`: 20 s after the first play another app's song starts on "Vibb":
+  paused at once, our item and place unchanged.
+- [ ] **Relinked**: `--relink 1FakeTrackC00000000003:FAKErelink00000000001`: track 2 plays as the relinked copy and
+  counts as ours (no pause, "Spor 2 av 3").
+- [ ] **Shuffle and repeat on the account**: `--shuffle --repeat track`: the first play turns both off first
+  (`shuffle: false`, `repeat: off` before `play:`); the list plays in order, once.
+- [ ] **No Premium**: `--not-premium`: "Spotify - spør en voksen" on the player and every Spotify tile;
+  `"spotify": "not_premium"` in the report; no item error.
+- [ ] **No Widevine**: `--no-eme`: "Spotify virker ikke på denne telefonen", logcat `spotify: web player destroyed`;
+  `"spotify": "no_widevine"`.
+- [ ] **The quota**: `--quota`: "Spotify er ikke tilgjengelig nå" (player and tiles); `"spotify": "quota"`; the fake
+  logs one `… 429 QUOTA_EXCEEDED (--quota)` (the start's first call) and no `play:`.
+- [ ] **The token refused**: `--expire-refresh` (the fake's token route answers `reauthorize`): "Spotify - spør en
+  voksen" on the player and the tiles, `"spotify": "reauthorize"`, no `connect:` line.
+- [ ] **No Wi-Fi, offline**: `adb shell cmd connectivity airplane-mode enable`, a cover tap: "Spotify - trenger
+  internett" under the title and on the tile, nothing in the fake's log, the item unchanged (never "Ikke lastet ned",
+  never the next track); next and previous say the same and don't move. `adb shell cmd connectivity airplane-mode
+  disable`. Wi-Fi off with only mobile data (`adb shell svc wifi disable`; `{"mobile_data": false, "spotify_base":
+  …}` in `config.json`, pushed and broadcast): "Spotify - trenger Wi-Fi"; with `"mobile_data": true` it plays over
+  mobile data. `adb shell svc wifi enable` afterwards.
+- [ ] **No Spotify entry left**: push a library without entries 6 and 7 (`--print-library` edited) and broadcast: the
+  tiles go, logcat `spotify: web player's cookies, storage and cache cleared`, and
+  `adb shell run-as me.vibb.music.debug ls no_backup/` has no `spotify_page_account`.
+
+### Part B. The real SDK (the user's account, the spike's emulator image)
+
+The spike's image (WebView with Widevine L3), the debug launcher and music app, the server **without** the two base
+variables, and no `spotify_base` in the debug feed (push a `config.json` without the key and broadcast: logcat
+`spotify: the real hosts`). A real playlist the parent owns, the real login (the PWA on https, or the paste), the phone
+bound to the kid's account.
+
+- [ ] Play, pause, next, previous, a pick, the carousel's swipe, resume after `adb shell am force-stop
+  me.vibb.music.debug`; the title, the picture and "Spotify" in the player, the notification, Home's card and the
+  lock's tile. A show's episode in the `uris` list plays (design 26c §3.1, `SHOWS_PLAYABLE`).
+- [ ] logcat: `spotify: permission asked by <host>: protected media granted` - **note the host** (`sdk.scdn.co` or
+  `appassets.androidplatform.net`; design 26c §5.2's device check); no `spotify: blocked a request to …` line (the
+  counter stays 0; a redirect's target never shows there - read the parent's DNS log for hosts outside the list,
+  qa-26c-step5a-code L2); no `the web player said csp:` line (the page's CSP admits the real SDK's loader).
+- [ ] The state sequences: the debug log names state kinds only (§7.1: never a state's JSON), so recording real
+  sequences into `sdk_states/` needs a recorder this step doesn't build (owed; design 26c "Step 5b implementation
+  status").
+- [ ] The DNS capture of design 26c §6.2 (the host list), as `docs/testing/spotify-spike.md` describes.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and
