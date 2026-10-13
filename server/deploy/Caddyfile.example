@@ -1,0 +1,43 @@
+# Caddy in front of the Vibb Phone server - server/DEPLOY.md, "With your own Caddy".
+# Option (c): the phones' API on a public name, the parent app on the tailnet only.
+#
+# - Never add `encode`: the phones' event stream must not be compressed.
+# - Never set `trusted_proxies` for these sites: Caddy must replace any X-Forwarded-For a client sends.
+# - Never point a TCP-level forwarder (layer4, socat, `tailscale funnel --tcp`) at port 3100.
+# - .env needs DEVICE_BIND_ADDR=127.0.0.1:3101.
+# Replace phones.example.com, pi.tail1234.ts.net and 100.101.102.103 (`tailscale ip -4`).
+{
+	email parent@example.com
+	servers {
+		timeouts {
+			read_header 10s
+		}
+	}
+}
+
+# A public DNS record (with a CAA record) -> the phone listener only.
+phones.example.com {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:3101 {
+		header_up -Tailscale-User-Login
+	}
+}
+
+# The tailnet name -> the parent app, on the tailnet IP only. For the *.ts.net certificate set
+# TS_PERMIT_CERT_UID=caddy in /etc/default/tailscaled and turn on HTTPS Certificates in the Tailscale console.
+pi.tail1234.ts.net {
+	bind 100.101.102.103
+	reverse_proxy 127.0.0.1:3100 {
+		header_up -Tailscale-User-Login
+	}
+}
+
+# The same tailnet name -> the phones, on their own port (so the tailnet policy can allow phones this port only).
+pi.tail1234.ts.net:8444 {
+	bind 100.101.102.103
+	reverse_proxy 127.0.0.1:3101 {
+		header_up -Tailscale-User-Login
+	}
+}

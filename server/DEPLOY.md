@@ -91,6 +91,8 @@ Funnel requests to the admin anyway).
 
 ### With your own Caddy
 
+The example below is also `server/deploy/Caddyfile.example`.
+
 Caddy gets its own certificates and replaces any `X-Forwarded-For` a client sends (never set `trusted_proxies` in
 Caddy for this site). Don't add `encode`: the phones' event stream must not be compressed. Strip
 `Tailscale-User-Login` in every site, so nobody can send it through Caddy. Put `DEVICE_BIND_ADDR=127.0.0.1:3101` in
@@ -225,7 +227,8 @@ The server also ships as a multi-arch image (`linux/amd64`, `linux/arm64`): `ghc
 as uid 65532 with no shell, keeps everything in `/app/data`, and listens on `127.0.0.1:3100` by default.
 
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
-never hides the client's address. `compose.yaml`:
+never hides the client's address. The files are in the repo: `server/deploy/compose.yaml`, `server/deploy/env.example`
+(copy it as `.env`) and `server/deploy/Caddyfile.example` (option (c) above). `compose.yaml`:
 
 ```yaml
 services:
