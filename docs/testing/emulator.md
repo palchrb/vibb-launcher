@@ -214,7 +214,7 @@ Screenshots of every step go into `OUT_DIR` (the lock screen may be black if it 
 emergency call** - it prints that manual step at the end.
 
 The command stream by hand (design 19, QA #8 - the SSE stream is the only nudge): with the phone
-enrolled and the device page saying "Instant changes: connected", freeze the server for more than
+enrolled and About This Phone saying "Online since ...", freeze the server for more than
 300 s, then let it go on:
 
 ```sh
@@ -257,7 +257,7 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
    reloads itself until the next report, then shows the real state (never "waiting" for more
    than 5 minutes). `adb logcat -b events | grep -E "am_kill|wm_create_activity"` shows no
    `am_kill` of our package when calls go ON -> OFF -> ON.
-8. Step 9 kiosk app block (device page "Play and kiosk", on by default), kiosk on: from an
+8. Step 9 kiosk app block (Advanced › App screens, "Block other apps' screens", on by default), kiosk on: from an
    allowed app, `adb shell am start -n com.android.vending/.AssetBrowserActivity` and
    `adb shell am start -a android.settings.SETTINGS` end on the system's "app blocked" screen;
    share sheet, photo picker and a runtime permission dialog of an allowed app still work.
@@ -339,7 +339,7 @@ Home back afterwards (`MY_PACKAGE_REPLACED`) and releases a stale fence (our `la
 moves even when the debug versionCode doesn't). Only a self-update through the server's
 launcher row (A4) exercises the fence and the window.
 
-Setup: device page -> "Launcher updates and notifications": tick **Update fence** and
+Setup: the phone's Advanced -> "Updates & notifications": tick **Update fence** and
 **Notification filter** (both default off until A3/B5 pass). A test self-update for the debug
 build: `./gradlew assembleDebug -PversionCode=<higher than installed>`, PWA Apps -> add a manual
 app (package `me.vibb.launcher.debug`), mark it as the launcher on its page, upload the APK
@@ -618,7 +618,7 @@ Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - 
    **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
    this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
    "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
-   page's "Play and kiosk" card says "Restart the phone once: ..." (the report's `admin_policies_pending`). Restart:
+   page's Attention and Advanced › App screens say "Restart the phone once" (the report's `admin_policies_pending`). Restart:
    the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
    keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
 2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
@@ -1043,8 +1043,8 @@ automates the first point):
 
 ## 6b. Step 7: Play (optional)
 
-FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and
-kiosk" card says "Instant changes: connected since ..." while the phone holds it. For Play tests:
+FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online
+since ..." while the phone holds it. For Play tests:
 
 - Use an AVD with a **Google Play** system image (Play Store + Play services).
 - Provisioning order changes when a Google account is wanted: wipe -> `dpm set-device-owner`
@@ -1053,7 +1053,7 @@ kiosk" card says "Instant changes: connected since ..." while the phone holds it
   starts the kiosk). The full runbook (account settings, Play settings, FRP, an enrolled phone,
   the open Play-services check) is `docs/setup/google-account.md`.
 - Quick checks: `adb shell bmgr enabled` -> "Backup Manager is not activated for user 0" (the
-  device page's "Phone hardening" card says "Backup to Google: off");
+  phone's Advanced › Restrictions says "Backup to Google · Off");
   `adb shell dumpsys alarm | grep -i backstop`;
   `adb shell dumpsys package com.android.vending | grep -i suspended` (true while managed);
   `adb shell am start -a android.intent.action.VIEW -d market://details?id=org.example`

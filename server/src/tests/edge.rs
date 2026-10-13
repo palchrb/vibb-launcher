@@ -360,17 +360,20 @@ async fn bodies_are_capped_and_responses_are_private() {
 }
 
 #[tokio::test]
-async fn the_device_page_shows_the_last_access() {
+async fn about_shows_the_last_access() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(
-        page.text()
-            .contains("Last access: none since this server started."),
-        "{}",
-        page.text()
-    );
+    // About This Phone's Network row (design 31 step 3; the Access card's line until then).
+    let network = |html: &str| {
+        let row = &html[html.find("data-row=\"network\"").expect("Network row")..];
+        row[..row.find("</details>").or(row.find("</div>")).unwrap()].to_string()
+    };
+    let page = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(network(&page).contains("None since restart"), "{page}");
     // Through the local proxy from the internet, then over the tailnet.
     for client in ["203.0.113.7", "198.51.100.2", "100.101.102.103"] {
         let mut request = device_request(Method::GET, "/api/devices/policy", Some(&token), "");
@@ -382,11 +385,20 @@ async fn the_device_page_shows_the_last_access() {
             .await;
         assert_eq!(res.status, StatusCode::OK);
     }
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    let text = page.text();
-    assert!(text.contains("UTC over the tailnet."), "{text}");
+    let text = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    let row = network(&text);
+    assert!(row.contains(">Over the tailnet</span>"), "{text}");
+    // The outside addresses from before, behind the row's ⓘ.
     assert!(
-        text.contains("newest first: 198.51.100.2, 203.0.113.7."),
+        row.contains("newest first: 198.51.100.2, 203.0.113.7."),
+        "{text}"
+    );
+    // The contact made it Away (no stream).
+    assert!(
+        text.contains("<span class=\"state-away\">Away</span>"),
         "{text}"
     );
 }

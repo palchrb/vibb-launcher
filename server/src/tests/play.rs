@@ -1,6 +1,6 @@
 //! Handy step 7's Play parts (Play as an app source, the DNS exceptions for other apps' FCM, DNS
 //! nudges), the SSE keepalive, and design 19: FCM is gone - an old launcher's `push` report is
-//! accepted and dropped, `device_push` is gone, and the device page says whether the phone holds
+//! accepted and dropped, `device_push` is gone, and About This Phone says whether the phone holds
 //! the command stream.
 
 use axum::body::Body;
@@ -36,6 +36,27 @@ async fn device_page(app: &TestApp, id: i64) -> String {
     )
     .await
     .into_response();
+    super::read_response(response).await.text()
+}
+
+/// About This Phone (design 31 step 3): the connection, Battery optimisation.
+async fn about_page(app: &TestApp, id: i64) -> String {
+    let response = crate::handlers::device_pages::view_about(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+    )
+    .await;
+    super::read_response(response).await.text()
+}
+
+/// Advanced (design 31 step 3): App screens has the Play state.
+async fn advanced_page(app: &TestApp, id: i64) -> String {
+    let response = crate::handlers::device_pages::view_advanced(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+        axum::extract::Query(Default::default()),
+    )
+    .await;
     super::read_response(response).await.text()
 }
 
@@ -88,7 +109,9 @@ async fn an_old_launchers_push_report_is_accepted_and_dropped() {
 
     let page = device_page(&app, id).await;
     assert!(!page.contains("FCM"), "{page}");
-    assert!(page.contains("Play and kiosk"), "{page}");
+    let page = advanced_page(&app, id).await;
+    assert!(!page.contains("FCM"), "{page}");
+    assert!(page.contains("App screens"), "{page}");
 }
 
 #[tokio::test]
@@ -134,14 +157,19 @@ async fn migration_0048_drops_device_push_and_clears_stored_push_reports() {
     );
 }
 
-/// Design 19 Q1: an open command stream is counted in memory while its response lives.
+/// Design 19 Q1: an open command stream is counted in memory while its response lives; About This
+/// Phone's Status row says Online while it is open (design 31 §3.10, replacing "Instant changes").
 #[tokio::test]
-async fn the_device_page_says_whether_the_phone_holds_the_stream() {
+async fn about_says_whether_the_phone_holds_the_stream() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let page = device_page(&app, id).await;
+    let status = |page: &str| {
+        let row = &page[page.find("data-row=\"status\"").expect("Status row")..];
+        row[..row.find("</div>").unwrap()].to_string()
+    };
+    let page = about_page(&app, id).await;
     assert!(
-        page.contains("Instant changes: not connected since this server started"),
+        status(&page).contains("<span class=\"state-offline\">Not seen yet</span>"),
         "{page}"
     );
 
@@ -165,15 +193,20 @@ async fn the_device_page_says_whether_the_phone_holds_the_stream() {
         "the launcher's SSE client refuses anything else"
     );
     assert_eq!(app.state.command_streams.state(id).unwrap().open, 1);
-    let page = device_page(&app, id).await;
-    assert!(page.contains("Instant changes: connected since"), "{page}");
-    assert!(page.contains("as far as this server can tell"), "{page}");
+    let page = about_page(&app, id).await;
+    assert!(
+        status(&page).contains("<span class=\"state-online\">Online</span> since "),
+        "{page}"
+    );
+    // The exact time is in the title, the visible one is local and short.
+    assert!(status(&page).contains("title=\"20"), "{page}");
 
     drop(response);
     assert_eq!(app.state.command_streams.state(id).unwrap().open, 0);
-    let page = device_page(&app, id).await;
+    let page = about_page(&app, id).await;
+    // The stream's request was a contact: Away, not Offline.
     assert!(
-        page.contains("Instant changes: not connected since 20"),
+        status(&page).contains("<span class=\"state-away\">Away</span>"),
         "{page}"
     );
 }
@@ -257,8 +290,10 @@ async fn status_stores_install_mode_installer_and_logs() {
     );
     assert_eq!(security_details(&app, "play_install_mode").await.len(), 1);
 
+    let page = advanced_page(&app, id).await;
+    assert!(page.contains("Play Store open until"), "{page}");
+    assert!(page.contains("Install mode is on"), "{page}");
     let page = device_page(&app, id).await;
-    assert!(page.contains("Play install mode is on"), "{page}");
     assert!(page.contains("Installed from Play"), "{page}");
 
     // The same window again isn't logged twice.
@@ -450,9 +485,10 @@ async fn dns_blocklist_never_blocks_fcm() {
 // Design 19b phase 1: the battery-optimisation exemption
 // ---------------------------------------------------------------------------------------------
 
-/// `battery_optimization_exempt`: true and false are stored and shown as a plain line on the
-/// "Play and kiosk" card; a report without the key (an older launcher, or unreadable) stores NULL
-/// and shows nothing.
+/// `battery_optimization_exempt`: true and false are stored and shown as About This Phone's
+/// "Battery optimisation" row (the "Play and kiosk" card's line until design 31 step 3), the fix
+/// behind its ⓘ; a report without the key (an older launcher, or unreadable) stores NULL and
+/// shows nothing.
 #[tokio::test]
 async fn battery_exemption_is_stored_and_shown() {
     let app = TestApp::new().await;
@@ -478,23 +514,20 @@ async fn battery_exemption_is_stored_and_shown() {
     )
     .await;
     assert_eq!(stored(&app).await, Some(false));
-    let html = device_page(&app, id).await;
-    assert!(
-        html.contains("Battery optimisation: on - instant changes may lag"),
-        "{html}"
-    );
-    assert!(html.contains("Background connection"), "{html}");
+    let html = about_page(&app, id).await;
+    let row = &html[html.find("data-row=\"battery\"").expect("the row")..];
+    assert!(row.contains(">On</span>"), "{html}");
+    assert!(row.contains("Changes may arrive late"), "{html}");
+    assert!(row.contains("Background connection"), "{html}");
 
     post_status(&app, &token, json!({ "battery_optimization_exempt": true })).await;
     assert_eq!(stored(&app).await, Some(true));
-    let html = device_page(&app, id).await;
-    assert!(
-        html.contains("Battery optimisation: off for the launcher."),
-        "{html}"
-    );
-    assert!(!html.contains("instant changes may lag"), "{html}");
+    let html = about_page(&app, id).await;
+    let row = &html[html.find("data-row=\"battery\"").expect("the row")..];
+    assert!(row.contains(">Off</span>"), "{html}");
+    assert!(!html.contains("Changes may arrive late"), "{html}");
 
     post_status(&app, &token, json!({})).await;
     assert_eq!(stored(&app).await, None);
-    assert!(!device_page(&app, id).await.contains("Battery optimisation"));
+    assert!(!about_page(&app, id).await.contains("Battery optimisation"));
 }

@@ -546,12 +546,12 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
+    // About This Phone › Diagnostics (design 31 step 3; the device page's card until then).
     let cookie = app.admin_cookie().await;
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(page.contains("Launcher crashes"));
+    let about = format!("/devices/{id}/about");
+    let page = app.get_page(&about, &cookie).await.text();
+    assert!(page.contains("Crash reports"));
+    assert!(page.contains("1 kind"));
     assert!(page.contains("java.lang.IllegalStateException"));
     assert!(page.contains("3&times;") || page.contains("3×"));
     assert!(!page.contains("4791234567"));
@@ -562,11 +562,9 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .await
         .unwrap();
     assert_eq!(crate::retention::prune(&app.db).await.unwrap().crashes, 1);
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(page.contains("No crashes reported in the last 30 days."));
+    let page = app.get_page(&about, &cookie).await.text();
+    assert!(page.contains("None in 30 days"));
+    assert!(!page.contains("java.lang.IllegalStateException"));
 }
 
 #[tokio::test]

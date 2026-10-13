@@ -176,11 +176,11 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             &[],
         )
         .await;
-    assert!(res.status.is_redirection());
-    // Back to the card, not the top of the page (qa-19-code #4).
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}#play-kiosk").as_str())
+    // Back to its group on Advanced, not the top of the page (qa-19-code #4, design 31 step 3).
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/advanced"),
+        Some("app-screens"),
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
@@ -219,8 +219,16 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             .await
             .unwrap();
     assert_eq!(stored, Some(false));
-    let html = page(&app, &cookie, &format!("/devices/{id}")).await;
-    assert!(html.contains("kiosk app block below is off"), "{html}");
+    let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
+    assert!(
+        html.contains("Play can&#39;t be paused on this phone"),
+        "{html}"
+    );
+    assert!(html.contains("the switch above is off"), "{html}");
+    assert_eq!(
+        super::input_checked(&html, "block_activity_start", "on"),
+        Some(false)
+    );
 }
 
 #[tokio::test]

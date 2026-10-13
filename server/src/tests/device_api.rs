@@ -608,9 +608,26 @@ async fn status_report_stores_policy_state_and_pause() {
     assert_eq!(state.as_deref(), Some("cache_corrupt"));
     assert!(paused);
 
+    // The device page: an Attention row; About This Phone: the problem and what it means (design
+    // 31 step 3).
     let page = device_page(&app, id).await;
-    assert!(page.contains("read its saved policy"), "{page}");
+    assert!(
+        page.contains("Phone can&#39;t apply its settings"),
+        "{page}"
+    );
     assert!(page.contains("All restrictions are paused"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains("Saved settings unreadable"), "{about}");
+    assert!(about.contains("read its saved settings"), "{about}");
+}
+
+async fn about_page(app: &TestApp, id: i64) -> String {
+    let response = crate::handlers::device_pages::view_about(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+    )
+    .await;
+    super::read_response(response).await.text()
 }
 
 #[tokio::test]
@@ -631,8 +648,10 @@ async fn status_report_from_older_launcher_has_no_warnings() {
 
     post_status(&app, &token, json!({ "policy_state": "ok" })).await;
     let page = device_page(&app, id).await;
-    assert!(!page.contains("saved policy"));
+    assert!(!page.contains("apply its settings"));
     assert!(!page.contains("All restrictions are paused"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains(">Applied</span>"), "{about}");
 }
 
 async fn toggle(app: &TestApp, id: i64, package: &str, selected: bool) -> axum::http::StatusCode {
@@ -718,7 +737,13 @@ async fn server_error_policy_state_is_shown() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
-    assert!(device_page(&app, id).await.contains("answered the phone"));
+    let about = about_page(&app, id).await;
+    assert!(about.contains(">Server error</span>"), "{about}");
+    assert!(
+        about.contains("This server answered with an error"),
+        "{about}"
+    );
+    assert!(about.contains("failed to build device policy"), "{about}");
 }
 
 async fn timeout(app: &TestApp, token: String) -> serde_json::Value {

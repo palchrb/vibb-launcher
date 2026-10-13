@@ -1,29 +1,9 @@
 {#- The brand bar and the 5-tab bar (design 31 §3.1). The page sets its tab before including this:
     {% let tab = "devices" %} - one of devices, apps, locate, music, settings - and the server marks
-    that tab aria-current="page", so no script is needed. -#}
+    that tab aria-current="page", so no script is needed. A rebuilt inner page has the sub-page
+    header instead of the brand bar (§3.0) and includes partials/tab_bar.html alone, the same way. -#}
 <header class="app-header">
     <a href="/" class="brand">Vibb Phone</a>
 </header>
 
-<nav class="tab-bar" aria-label="Main">
-    <a href="/devices" class="tab" data-tab="devices"{% if tab == "devices" %} aria-current="page"{% endif %}>
-        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><rect x="7.5" y="2.5" width="11" height="21" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11.3 20h3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <span>Devices</span>
-    </a>
-    <a href="/apps" class="tab" data-tab="apps"{% if tab == "apps" %} aria-current="page"{% endif %}>
-        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><rect x="3.5" y="3.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14.5" y="3.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3.5" y="14.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14.5" y="14.5" width="8" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-        <span>Apps</span>
-    </a>
-    <a href="/devices/locate" class="tab" data-tab="locate"{% if tab == "locate" %} aria-current="page"{% endif %}>
-        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M13 23s7.5-7 7.5-12.6A7.5 7.5 0 0 0 5.5 10.4C5.5 16 13 23 13 23z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="13" cy="10.5" r="2.7" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-        <span>Locate</span>
-    </a>
-    <a href="/music" class="tab" data-tab="music"{% if tab == "music" %} aria-current="page"{% endif %}>
-        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><path d="M10 19V5.5l11-2.5v13.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><ellipse cx="7.2" cy="19.2" rx="3" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="18.2" cy="16.6" rx="3" ry="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-        <span>Music</span>
-    </a>
-    <a href="/settings" class="tab" data-tab="settings"{% if tab == "settings" %} aria-current="page"{% endif %}>
-        <svg class="tab-icon" viewBox="0 0 26 26" aria-hidden="true" focusable="false"><circle cx="13" cy="13" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 2.8v2.6M13 20.6v2.6M2.8 13h2.6M20.6 13h2.6M5.8 5.8l1.8 1.8M18.4 18.4l1.8 1.8M5.8 20.2l1.8-1.8M18.4 7.6l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="13" cy="13" r="7.4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-        <span>Settings</span>
-    </a>
-</nav>
+{% include "partials/tab_bar.html" %}

@@ -15,8 +15,9 @@
 //!   the visible value.
 //!
 //! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its callers
-//! (the Status card's notices, the PIN events, the relock and boot notes) move here as the steps
-//! that rebuild their pages switch them to typed values (design 31 §8, steps 3, 4 and 10).
+//! (the Status card's notices, the PIN events, the relock notes) move here as the steps that
+//! rebuild their pages switch them to typed values (design 31 §8, steps 4 and 10; step 3 moved
+//! the boot notes).
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use chrono_tz::Tz;
@@ -141,6 +142,20 @@ impl Zone {
         self.date(t, now)
     }
 
+    /// When something happened, as a value in a row: "10:59" today, "yesterday 21:40", else
+    /// "12 Oct" ("12 Oct 2025" in another year). A time ahead of `now` on the same day is its
+    /// clock time too.
+    pub fn when(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        if day == today {
+            self.clock(t)
+        } else if today.pred_opt() == Some(day) {
+            format!("yesterday {}", self.clock(t))
+        } else {
+            self.date(t, now)
+        }
+    }
+
     /// "12 Oct", or "12 Oct 2025" in another year than `now`'s.
     fn date(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
         let local = self.local(t);
@@ -246,6 +261,27 @@ mod tests {
         assert_eq!(
             zone.relative(utc("2026-10-12 21:50:00"), after_midnight),
             "20 min ago"
+        );
+    }
+
+    #[test]
+    fn when_is_a_clock_time_today_and_a_date_before() {
+        let zone = oslo();
+        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
+        let when = |s: &str| zone.when(utc(s), now);
+        assert_eq!(when("2026-10-13 06:12:00"), "08:12");
+        assert_eq!(
+            when("2026-10-12 22:00:00"),
+            "00:00",
+            "local midnight is today"
+        );
+        assert_eq!(when("2026-10-12 21:59:00"), "yesterday 23:59");
+        assert_eq!(when("2026-10-11 21:59:00"), "11 Oct");
+        assert_eq!(when("2025-12-31 12:00:00"), "31 Dec 2025");
+        assert_eq!(when("2026-10-13 14:00:00"), "16:00", "ahead, same day");
+        assert_eq!(
+            Zone::utc_fallback().when(utc("2026-10-13 06:12:00"), now),
+            "06:12 UTC"
         );
     }
 

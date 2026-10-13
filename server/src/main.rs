@@ -733,6 +733,15 @@ pub fn build_admin_router(
             get(handlers::provisioning::provision_form).post(handlers::provisioning::provision_qr),
         )
         .route("/devices/{id}", get(handlers::devices::view_device))
+        // Design 31 step 3: About This Phone and Advanced (their forms keep their POST routes).
+        .route(
+            "/devices/{id}/about",
+            get(handlers::device_pages::view_about),
+        )
+        .route(
+            "/devices/{id}/advanced",
+            get(handlers::device_pages::view_advanced),
+        )
         .route(
             "/devices/{id}/policy",
             post(handlers::devices::update_policy),

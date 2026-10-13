@@ -13,6 +13,7 @@ mod command_expiry;
 mod command_receipts;
 mod deploy_scripts;
 mod device_api;
+mod device_pages;
 mod devices_list;
 mod dns_blocklist;
 mod docker;
@@ -579,12 +580,20 @@ pub enum Section {
     Summary,
     /// `/devices/{id}/calls`: Calls & Contacts.
     Calls,
+    /// `/devices/{id}/about`: About This Phone (design 31 step 3) - the connection, sound,
+    /// software, crash reports, starts without Vibb and the time lock.
+    About,
+    /// `/devices/{id}/advanced`: Advanced (step 3) - Restrictions, App screens, Updates &
+    /// notifications, Connection, Remove Phone.
+    Advanced,
 }
 
 pub fn device_page(id: i64, section: Section) -> String {
     match section {
         Section::Summary => format!("/devices/{id}"),
         Section::Calls => format!("/devices/{id}/calls"),
+        Section::About => format!("/devices/{id}/about"),
+        Section::Advanced => format!("/devices/{id}/advanced"),
     }
 }
 

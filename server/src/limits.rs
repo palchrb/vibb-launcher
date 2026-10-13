@@ -323,28 +323,30 @@ impl Limits {
     }
 }
 
-/// The device page's "last access" line (§3.1), from memory: since this server started.
-pub fn last_access_line(last: Option<&LastAccess>) -> String {
-    let Some(last) = last else {
-        return "Last access: none since this server started.".to_string();
-    };
-    let at = last.at.format("%Y-%m-%d %H:%M:%S");
-    let how = match last.via {
-        Via::Tailnet => "over the tailnet".to_string(),
-        Via::Loopback => {
-            "from this machine (no proxy, or a proxy that sent no client address)".to_string()
+impl Via {
+    /// About This Phone's "Network" value (design 31 §3.2; it replaces the Access card's "Last
+    /// access" sentence).
+    pub fn label(self) -> &'static str {
+        match self {
+            Via::Tailnet => "Over the tailnet",
+            Via::Loopback => "This machine",
+            Via::Public => "Outside the tailnet",
         }
-        Via::Public => "from outside the tailnet".to_string(),
-    };
-    let ips = if last.public_ips.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " Addresses outside the tailnet, newest first: {}.",
-            last.public_ips.join(", ")
-        )
-    };
-    format!("Last access: {at} UTC {how}.{ips}")
+    }
+}
+
+impl LastAccess {
+    /// The ⓘ under the "Network" row: the outside addresses, or why it says "This machine".
+    pub fn detail(&self) -> Option<String> {
+        if !self.public_ips.is_empty() {
+            return Some(format!(
+                "Addresses outside the tailnet, newest first: {}.",
+                self.public_ips.join(", ")
+            ));
+        }
+        (self.via == Via::Loopback)
+            .then(|| "No proxy, or a proxy that sent no client address.".to_string())
+    }
 }
 
 /// Held for one device request; dropping it frees the in-flight slot.
@@ -676,26 +678,37 @@ mod tests {
     }
 
     #[test]
-    fn the_last_access_line() {
-        assert_eq!(
-            last_access_line(None),
-            "Last access: none since this server started."
-        );
+    fn the_network_row() {
         let at = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
-        let line = last_access_line(Some(&LastAccess {
+        let outside = LastAccess {
             at,
             via: Via::Public,
             public_ips: vec!["203.0.113.7".into(), "198.51.100.2".into()],
-        }));
-        assert!(line.starts_with("Last access: 2026-"), "{line}");
-        assert!(line.contains("from outside the tailnet"));
-        assert!(line.ends_with("newest first: 203.0.113.7, 198.51.100.2."));
-        let line = last_access_line(Some(&LastAccess {
+        };
+        assert_eq!(outside.via.label(), "Outside the tailnet");
+        assert_eq!(
+            outside.detail().unwrap(),
+            "Addresses outside the tailnet, newest first: 203.0.113.7, 198.51.100.2."
+        );
+        // Over the tailnet now, the outside addresses from before still show.
+        let tailnet = LastAccess {
+            via: Via::Tailnet,
+            ..outside
+        };
+        assert_eq!(tailnet.via.label(), "Over the tailnet");
+        assert!(tailnet.detail().unwrap().contains("203.0.113.7"));
+        let clean = LastAccess {
             at,
             via: Via::Tailnet,
             public_ips: Vec::new(),
-        }));
-        assert!(line.ends_with("UTC over the tailnet."), "{line}");
+        };
+        assert_eq!(clean.detail(), None);
+        let local = LastAccess {
+            via: Via::Loopback,
+            ..clean
+        };
+        assert_eq!(local.via.label(), "This machine");
+        assert!(local.detail().unwrap().contains("no client address"));
     }
 
     #[test]

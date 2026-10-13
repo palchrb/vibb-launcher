@@ -454,8 +454,8 @@ broken, fix it forward by releasing the old (or fixed) code under a higher `laun
 FCM is gone: the phones' own connection to this server (the SSE stream) is the only way changes reach them at once, and
 every phone also checks in by itself every 30 minutes (15 while its connection is down). One launcher APK now works the
 same with anyone's server, and no nudge goes through Google. Other apps' notifications (Element X) still use Google's
-push service: Play services stays installed and is never restricted. The device page's "Play and kiosk" card says
-whether the phone is connected right now.
+push service: Play services stays installed and is never restricted. The Devices list and the phone's About This Phone
+say whether it is connected right now (Online / Away / Offline).
 
 Order, if this server ever had FCM configured:
 
@@ -559,8 +559,8 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
   stored now; typed codes last 15 minutes, setup-QR codes 30). The provisioning page makes its QR code with a button
   now, and the Tailscale key is no longer shown on Settings > Phone Setup.
 - Limits on the phones' API: a phone's own token is never slowed by other clients; an address that keeps sending bad
-  tokens or wrong typed codes gets 429 for 10 minutes. The device page's Access card shows when and how each phone last
-  reached the server, and can revoke its access.
+  tokens or wrong typed codes gets 429 for 10 minutes. About This Phone shows when and how each phone last
+  reached the server; Advanced › Connection can disconnect it (revoke its access).
 - Rolling back to 0.22 means restoring the `update.sh` backup: 0.22 refuses a database with migration 0052 (and 0053).
 
 ## Server 0.24.0 (security review, server part)

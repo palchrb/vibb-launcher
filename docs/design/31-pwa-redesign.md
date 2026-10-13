@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2030,3 +2030,91 @@ designs 30, 32 step 1 and 33):
 | L5 | The user's decision (§3.2 item 2): no rows for a phone not set up; an Offline or Disconnected phone's report-based rows say "At last report" and still count; list and summary count the same `items`. |
 | Checks | `cargo test` 725 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
 | Nits | A time more than 5 min ahead reads "today 16:00" on the same day; the key test uses a set and documents that calls rows share "calls"; the device page passes its built cards to `attention::facts_of` (`call_warnings` is gone, the page uses `call_report`); the avatar letter is the first letter or digit, one character ("ß" kept, emoji and flags skipped); the Backups page labels its times "server time" (it matches the file names; the hub uses the Phone Setup zone); the `title=` on the list's "seen" stays (the header's ⓘ is step 10's). §3.8 no longer names music and escapes as sources. |
+
+## Step 3 implementation status (2026-10-13)
+
+Built on branch `design-31-s3` (from `main` at `4d225da4`, step 2 merged); server only, no migration, no new crate.
+- **Routes:** `GET /devices/{id}/about` and `GET /devices/{id}/advanced` (`handlers::device_pages`). Unknown phone: 404.
+  Every POST route is unchanged; only where the forms return moved.
+- **About This Phone** (`device_about.html`, read-only, the About mockup plus Time lock): Connection (Status "Online
+  since 08:12" / Away / Offline / Disconnected "access removed" / Not seen yet / Not set up; Last contact "10:59 · 3
+  min ago"; Last full report; Network from `LastAccess`, the outside addresses behind ⓘ; the mockup's footer, the
+  check-in cadence behind its ⓘ), Sound (Ringer, Do Not Disturb red while on), Software (Vibb "0.23.6", full version
+  behind ⓘ; Music app; Settings from server "Applied" or a `PolicyProblem` title, the old sentence behind ⓘ; Battery
+  optimisation, the fix behind ⓘ), Diagnostics (Crash reports "None in 30 days" / "N kinds" with one row per crash,
+  the trace behind its ⓘ; Starts without Vibb; Time lock). Local times, the exact one in `title`.
+- **Advanced** (`device_advanced.html`): Restrictions (all 10 switches as **one** `hardening` form, H1, in three
+  groups so each has its footer and ⓘ, then the Backup to Google row, with the alarm above the group while it is on);
+  App screens (`kiosk-block` "Block other apps' screens" + the Play state); Updates & notifications (`kiosk-escapes`,
+  one form: Update fence, Notification filter, Boot cover, each with a one-line subtitle, the details behind the
+  footer's ⓘ; the phone's state as rows, warnings above; "Removed since last report"); Connection (live code row,
+  New Setup Code, Set Up with QR Code ›, **Disconnect Phone…** as a `<details>` confirm keeping the required box, the
+  flash in the group); **Remove Phone…** as a `<details>` confirm. Sub-page header (back link + large title), the
+  tab bar alone (`partials/tab_bar.html`, split out of `app_header.html`).
+- **Redirects** (§5.1): `hardening` → `/devices/{id}/advanced` (first group, no fragment); `kiosk-block` →
+  `#app-screens`; `kiosk-escapes` → `#updates`; `revoke` → `/advanced?notice=…#connection`; `delete` → `/devices`.
+  `enroll_code.html`'s Back: `/advanced#connection` (enrolled), `#access` (the not-enrolled card).
+- **The device page:** the Access, Play and kiosk, Launcher updates and notifications, Launcher crashes and Phone
+  hardening cards and Remove are gone; the Status card lost the time lock line, app version, sound lines, "Last
+  reported", the policy problem and the unseen-boots text. Two rows at the bottom: **About This Phone · Vibb 0.23.6 ›**
+  and **Advanced ›** (the DeviceSummary mockup's icon tiles). Attention targets moved (Do Not Disturb `/about#sound`,
+  policy problem `/about#software`, unseen restarts `/about#diagnostics`, Backup to Google `/advanced#restrictions`,
+  access removed `/advanced#connection`, restart once `/advanced#app-screens`).
+- **Rust texts (M5):** typed siblings, and the sentence builders deleted with their unit tests: `ConnectionState`
+  (+ `online_since`) for `instant_changes_line`; `Via::label` / `LastAccess::detail` for `last_access_line`;
+  `sound_mode::state` (`Ringer`, `Dnd`) for `status_lines`; `boot_witness::unseen` (`UnseenBoots`, `BootAdvice`) for
+  `warning`; `device_pages::PolicyProblem` for `policy_problem_text`; `PlayNote` for the play lines and
+  `battery_line`; `models::admin_policy_effects` for `admin_policy_notice`; `kiosk_escapes::EscapeNote` (`Release`,
+  `Handover`) for the escapes card's lines, warnings, `release_text` and the boot-cover notes. `Zone::when` ("10:59",
+  "yesterday 21:40", "12 Oct") is new in `display_time`. CSS `?v=11` (the footer ⓘ inline, alarm/action values, the
+  trace in a panel).
+- **Tests:** `tests/device_pages.rs` (About's rows and their values for a full report and a healthy one, a phone not
+  set up, 404s, the **redirect table** built from the rendered forms on Advanced, the `<details>` confirms and the
+  unconfirmed revoke, a live code shown without the code); repointed through `device_page(id, Section::About |
+  Advanced)`: `hardening.rs`, `step11.rs`, `step9.rs`, `play.rs`, `sound_mode.rs`, `cleanup.rs` (the crash pin keeps
+  its no-free-text assertions), `enrollment.rs` (the `#access` redirects → `#connection`), `edge.rs`, `device_api.rs`,
+  `command_receipts.rs`, `window_relock.rs`, `devices_list.rs`, `shell.rs` (the sub-pages' tab, a sub-page includes the
+  bar alone and has a back link); unit tests in `sound_mode`, `boot_witness`, `kiosk_escapes`, `limits`, `streams`,
+  `display_time`, `attention`, `device_pages`. `cargo test`: 735 passed; `node --test jstest/*.test.js`: 16 passed;
+  fmt clean; clippy: the same 13 warnings, none in the step's files.
+- **Browser pass** (headless Chromium, 390 px, light and dark, JS on and off, every `<details>` opened): no
+  horizontal scroll on About, Advanced, the device page, or a phone not set up. Still owed on a real phone (iOS Safari
+  14's inline `<details>` in a footer).
+
+Choices made while building:
+1. **A phone not set up:** its "Not enrolled yet" card (New code, QR, notices, `typed_paused`) stays on the device page
+   until step 10 makes it "Connect this phone"; Advanced shows Restrictions (they can be set before setup, as the
+   launcher docs advise for USB debugging) and Remove Phone only, not App screens, Updates or Connection; About shows
+   "Not set up". The About and Advanced rows are live, not greyed "After setup" (§3.2): Restrictions and Remove must
+   stay reachable.
+2. **Where the two rows sit:** at the bottom of the device page, where the DeviceSummary mockup has them, though other
+   cards still follow the Status card until step 10.
+3. **Restrictions in three groups of one form:** a switch row can't hold an ⓘ (§4.4: a control never sits in a
+   summary), so the explanations are footers with ⓘ: the plain switches; Block USB debugging; Block safe mode. Labels:
+   Block factory reset, Block new users and guests, Block account changes, Block VPN settings, Block USB file transfer,
+   Keep location on, Block airplane mode, Lock the phone's language, Block USB debugging, Block safe mode. The old
+   per-switch notes moved into the footers' ⓘ.
+4. **Dropped as redundant:** the escapes card's "Update fence off: …" line (the switch says it) and the Status card's
+   "Whether a time rule was locking" footer. The "Update waiting" value is the version without `launcher-v` (the tag in
+   the ⓘ).
+5. **"Starts without Vibb"** shows "2 times", not §3.2's "2 in 30 days": the phone's count is all-time; the row shows
+   while the last one is under 30 days old, its time behind ⓘ.
+6. **Music app version** comes from its versionCode (the phone reports no version name) by the repo's scheme; a
+   release candidate reads one patch below (2999 → "0.2.999"); the package and code are behind ⓘ.
+7. **Battery optimisation** "Off" means the launcher is exempt (good), "On" (orange) that it may lag, as the old line
+   said.
+8. **Time lock** shows the reported rule's name ("Skole") when the phone sends one, else the kind (Bedtime, School,
+   Screen time used up, A time rule, or "Locked" for an unknown code - no raw code).
+9. **Play install mode** is an orange warning ("Play Store open until 14:30"), as it was red before; the update window
+   is a row. **Restart the phone once** shows on App screens with its reasons, and stays an Attention row.
+10. **New Setup Code** stays one tap: making a code changes nothing, using it does (§5.6 doesn't list it).
+11. **Remove Phone** now redirects to `/devices` (was `/`, which redirects there).
+12. **The enroll code page's Back** goes to Advanced › Connection for an enrolled phone (where New Setup Code is),
+    not to `/devices/{id}` as §3.7 says.
+13. **Crash rows** are labelled with the exception's class name ("IllegalStateException"); the full trace, build and
+    hash are in the row's ⓘ.
+14. References to the moved cards were renamed where they name a place: the kid-lock warning and the Screen lock
+    card ("Advanced › Restrictions"), Phone Setup's language hint, `server/CLAUDE.md`, `DEPLOY.md`,
+    `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md`.
+15. `play_card` moved from `devices.rs` to `device_pages.rs` (with the pure `play_notes`); `DeviceStatus` derives
+    `Default` for the pure note tests.

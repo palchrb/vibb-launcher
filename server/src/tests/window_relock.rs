@@ -757,8 +757,10 @@ async fn unauthenticated_posts_queue_nothing() {
     assert!(commands(&app, id).await.is_empty());
 }
 
+/// Do Not Disturb on is an Attention alarm on the device page, linking to About This Phone's
+/// Sound group, where it is a red value (design 31 step 3; a red line in the Status card before).
 #[tokio::test]
-async fn do_not_disturb_is_a_warning_on_the_status_card() {
+async fn do_not_disturb_is_an_alarm_that_links_to_about() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -768,9 +770,18 @@ async fn do_not_disturb_is_a_warning_on_the_status_card() {
         .await
         .text();
     assert!(
-        status_card(&html)
-            .contains("<p class=\"error\">Do Not Disturb at the last sync: on (alarms only)"),
+        html.contains(&format!(
+            "<a class=\"attention attention-alarm\" href=\"/devices/{id}/about#sound\" data-attention=\"do-not-disturb\">"
+        )),
         "{html}"
+    );
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(
+        about.contains("<span class=\"row-value row-value-alarm\">Alarms only</span>"),
+        "{about}"
     );
     post_status(
         &app,
@@ -782,9 +793,16 @@ async fn do_not_disturb_is_a_warning_on_the_status_card() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(!html.contains("Do Not Disturb at the last sync"), "{html}");
     assert!(
-        html.contains("<p>Sound at the last sync: on.</p>"),
+        !html.contains("data-attention=\"do-not-disturb\""),
         "{html}"
+    );
+    let about = app
+        .get_page(&format!("/devices/{id}/about"), &cookie)
+        .await
+        .text();
+    assert!(
+        about.contains("<span class=\"row-value\">Off</span>"),
+        "{about}"
     );
 }

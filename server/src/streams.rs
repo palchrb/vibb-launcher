@@ -1,12 +1,12 @@
 //! Which phones hold the SSE command stream open right now (design 19, open question 1): an
-//! in-memory count per device and when it last changed, for the device page's "Instant changes"
-//! line and the PWA's Online / Away / Offline ([connection_state], design 31 §3.10). Nothing is
+//! in-memory count per device and when it last changed, for the PWA's Online / Away / Offline
+//! ([connection_state], design 31 §3.10; About This Phone shows "Online since 08:12"). Nothing is
 //! stored and nothing reaches the device API - a server restart starts empty.
 //!
 //! The count goes up when `handlers::device_api::commands_stream` answers and down when its
 //! response stream is dropped ([StreamGuard]). A phone that vanishes without closing its
 //! connection (no FIN: lost network, a phone switched off) still counts until this server's TCP
-//! gives up on the peer - so the page says "as far as this server can tell".
+//! gives up on the peer - so Online also needs a recent contact.
 //!
 //! Every open stream also has a close signal (design 22 §2): [CommandStreams::close_all] ends
 //! them at shutdown, so a graceful stop doesn't wait for phones that never hang up.
@@ -155,22 +155,6 @@ impl Drop for StreamGuard {
     }
 }
 
-/// The device page's line about the stream (design 19 QA #11).
-pub fn instant_changes_line(state: Option<StreamState>) -> String {
-    let at = |t: DateTime<Utc>| t.format("%Y-%m-%d %H:%M:%S").to_string();
-    match state {
-        Some(s) if s.open > 0 => format!(
-            "Instant changes: connected since {} UTC, as far as this server can tell. The phone also checks in by itself every 30 minutes.",
-            at(s.since)
-        ),
-        Some(s) => format!(
-            "Instant changes: not connected since {} UTC - changes reach the phone when it reconnects or at its next check-in (every 30 minutes, 15 while it can't connect).",
-            at(s.since)
-        ),
-        None => "Instant changes: not connected since this server started - changes reach the phone when it connects or at its next check-in (every 30 minutes).".to_string(),
-    }
-}
-
 /// Online: a stream is open and the last contact is at most this old (design 31 §3.10, H2).
 ///
 /// With the stream up, nothing else reaches the server on a quiet night (the keepalive goes from
@@ -281,6 +265,14 @@ impl ConnectionState {
         }
     }
 
+    /// While Online: since when its stream is open.
+    pub fn online_since(&self) -> Option<DateTime<Utc>> {
+        match *self {
+            ConnectionState::Online { since, .. } => Some(since),
+            _ => None,
+        }
+    }
+
     pub fn last_contact(&self) -> Option<DateTime<Utc>> {
         match *self {
             ConnectionState::Online { last_contact, .. }
@@ -332,11 +324,17 @@ mod tests {
             }
         );
         assert_eq!(
+            state(phone(now, Some((1, 30)), Some(3), None)).online_since(),
+            Some(minutes_ago(now, 30)),
+            "About's \"Online since\""
+        );
+        assert_eq!(
             state(phone(now, None, Some(12), Some(20))),
             ConnectionState::Away {
                 last_contact: minutes_ago(now, 12)
             }
         );
+        assert_eq!(state(phone(now, None, Some(12), None)).online_since(), None);
         assert_eq!(
             state(phone(now, None, None, Some(120))),
             ConnectionState::Offline {
@@ -502,23 +500,5 @@ mod tests {
         assert!(*late.closed().borrow(), "opened during shutdown");
         drop(first);
         assert_eq!(streams.state(1).unwrap().open, 0);
-    }
-
-    #[test]
-    fn the_line_says_what_the_server_can_tell() {
-        let since = DateTime::from_timestamp(1_790_000_000, 0).unwrap();
-        let connected = instant_changes_line(Some(StreamState { open: 1, since }));
-        assert!(
-            connected.starts_with("Instant changes: connected since 2026-"),
-            "{connected}"
-        );
-        assert!(connected.contains("as far as this server can tell"));
-        assert!(connected.contains("every 30 minutes"));
-        let down = instant_changes_line(Some(StreamState { open: 0, since }));
-        assert!(
-            down.starts_with("Instant changes: not connected since 2026-"),
-            "{down}"
-        );
-        assert!(instant_changes_line(None).contains("since this server started"));
     }
 }

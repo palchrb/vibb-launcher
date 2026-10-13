@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Advanced</h1>
+
+    {#- Restrictions: the 10 switches are one form (H1: a missing box is off), in groups so each
+        can have its footer. -#}
+    <section id="restrictions" aria-labelledby="restrictions-title">
+        <h2 class="group-header" id="restrictions-title">Restrictions</h2>
+        {% match backup_service_enabled %}
+        {% when Some(true) %}
+        <div class="attention attention-alarm" data-warning="google-backup">
+            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync. If it stays on, something on the phone keeps turning it on.</span></span>
+        </div>
+        {% when _ %}
+        {% endmatch %}
+        <form method="post" action="/devices/{{ device.id }}/hardening">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Block factory reset</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Block new users and guests</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Block account changes</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Block VPN settings</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Block USB file transfer</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Keep location on</span>
+                    <input type="checkbox" role="switch" class="sw" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Block airplane mode</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Lock the phone's language</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <div class="group-footer">A pause or the Parent PIN doesn't lift these.
+                <details class="info">
+                    <summary aria-label="About the restrictions"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>A reset from the phone's recovery menu can't be blocked; the phone then stops reporting.</p>
+                        <p>Keep location on also locks the location settings: Locate needs it. Airplane mode is allowed by default, for travel. Vibb's own language is set under Launcher, on the phone's page.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Block USB debugging</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <div class="group-footer">Turn it off before you work on the phone with a computer.
+                <details class="info">
+                    <summary aria-label="About USB debugging"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>It also hides the developer options. While it is blocked, a computer can't repair the phone: if Vibb ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Block safe mode</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <div class="group-footer">Turned on with the first Child PIN: safe mode skips the lock.
+                <details class="info">
+                    <summary aria-label="About safe mode"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>Safe mode starts the phone without Vibb, so your child can use it unfiltered; the restrictions above still apply there. It repairs nothing.</p>
+                        <p>If an update breaks Vibb, the ways back are: this server sending a fixed version (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu.</p>
+                    </div>
+                </details>
+            </div>
+
+            {% if let Some(on) = backup_service_enabled %}
+            <div class="group">
+                <details class="info cell" data-row="google-backup">
+                    <summary class="row">
+                        <span class="row-label">Backup to Google</span>
+                        <span class="row-value{% if on %} row-value-alarm{% endif %}">{% if on %}On{% else %}Off{% endif %}</span>
+                        <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
+                    </summary>
+                    <div class="info-panel"><p>When on, Android may copy the phone's app data, call history, SMS and settings to its Google account. Vibb keeps it off while the phone is managed; there is no switch for it.</p></div>
+                </details>
+            </div>
+            {% endif %}
+            <noscript><div class="group"><button type="submit" class="row row-button">Save Restrictions</button></div></noscript>
+        </form>
+    </section>
+
+    {% if device.enrolled_at.is_some() %}
+    <section id="app-screens" aria-labelledby="app-screens-title">
+        <h2 class="group-header" id="app-screens-title">App screens</h2>
+        {% for note in play_warnings %}
+        {% include "partials/note_warning.html" %}
+        {% endfor %}
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/kiosk-block" class="cell">
+                <label class="row">
+                    <span class="row-label">Block other apps' screens</span>
+                    <input type="checkbox" role="switch" class="sw" name="block_activity_start" value="on" {% if block_activity_start %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% for note in play_rows %}
+            {% include "partials/note_row.html" %}
+            {% endfor %}
+        </div>
+        <div class="group-footer">Turn it off only if something breaks.
+            <details class="info">
+                <summary aria-label="About blocking other apps' screens"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Screens of apps that aren't allowed never open, also when an allowed app opens them (Play Store, Google sign-in, payment sheets). Emergency calls, permission questions, the share sheet and photo and file pickers keep working.</p>
+                    <p>The Play Store stays paused, except in install mode and a nightly update window. Play services stays on: other apps' notifications come through it.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="updates" aria-labelledby="updates-title">
+        <h2 class="group-header" id="updates-title">Updates &amp; notifications</h2>
+        {% for note in escape_warnings %}
+        {% include "partials/note_warning.html" %}
+        {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/kiosk-escapes" class="group">
+            <label class="row">
+                <span class="row-label">Update fence<span class="row-sub">Hides Android's home screen while Vibb updates.</span></span>
+                <input type="checkbox" role="switch" class="sw" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Notification filter<span class="row-sub">Removes notifications that open blocked screens.</span></span>
+                <input type="checkbox" role="switch" class="sw" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Boot cover<span class="row-sub">Shows the Vibb logo while the phone starts.</span></span>
+                <input type="checkbox" role="switch" class="sw" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% for note in escape_rows %}
+            {% include "partials/note_row.html" %}
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Vibb installs its own updates at night, with the screen off.
+            <details class="info">
+                <summary aria-label="About these switches"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Update fence: leave it off until it is checked on this phone model.</p>
+                    <p>Notification filter: allowed apps, calls, alarms and emergency alerts always stay. It reads only which app and channel a notification comes from, never its title or text.</p>
+                    <p>Boot cover: from the next restart. Test it on this phone first: restart it twice and check that Vibb comes up both times.</p>
+                </div>
+            </details>
+        </div>
+        {% if !escapes.removed.is_empty() %}
+        <h3 class="group-header">Removed since last report</h3>
+        <div class="group" data-removed>
+            {% for r in escapes.removed %}
+            <div class="row">
+                <span class="row-label">{{ r.package_name }}{% if let Some(channel) = r.channel %} ({{ channel }}){% endif %}{% if r.snoozed > 0 %}<span class="row-sub">{{ r.snoozed }} snoozed for an hour: it kept coming back</span>{% endif %}</span>
+                <span class="row-value">{{ r.cancelled }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% if escapes.more_removed > 0 %}
+        <p class="group-footer">And {{ escapes.more_removed }} more.</p>
+        {% endif %}
+        {% endif %}
+    </section>
+
+    <section id="connection" aria-labelledby="connection-title">
+        <h2 class="group-header" id="connection-title">Connection</h2>
+        {% if !access.has_token %}
+        <div class="attention attention-alarm" data-warning="access-removed">
+            <span class="attention-text">Access removed<span class="attention-sub">It can't reach this server until it connects again with a new setup code. It keeps its last settings.</span></span>
+        </div>
+        {% endif %}
+        {% if let Some(until) = access.typed_paused_until %}
+        <div class="attention attention-action" data-warning="typed-paused">
+            <span class="attention-text">Typed codes paused until {{ until }}<span class="attention-sub">{{ access.pause_failures() }} wrong codes were tried this hour. A setup QR code still works.</span></span>
+        </div>
+        {% endif %}
+        <div class="group">
+            {% if let Some((kind, until)) = access.live_code %}
+            <div class="row" data-row="live-code">
+                <span class="row-label">{{ kind }}</span>
+                <span class="row-value">Works until {{ until }}, once</span>
+            </div>
+            {% endif %}
+            <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
+                <button type="submit" class="row row-button">New Setup Code</button>
+            </form>
+            <a class="row" href="/devices/{{ device.id }}/provision">
+                <span class="row-label">Set Up with QR Code</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% if access.has_token %}
+            <details class="confirm cell">
+                <summary class="row">Disconnect Phone&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/revoke" class="confirm-body">
+                    <p>Disconnect {{ device.name }}? It can't reach this server until it connects again with a new setup code. It keeps its last settings.</p>
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="confirm" value="yes" required>
+                        <span>Yes, disconnect it</span>
+                    </label>
+                    <button type="submit" class="button-destructive">Disconnect Phone</button>
+                </form>
+            </details>
+            {% endif %}
+            {% if let Some((text, error)) = access.notice %}
+            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
+            {% endif %}
+        </div>
+        <p class="group-footer">A new code reconnects the phone after a reset, replacing its current connection.</p>
+    </section>
+    {% endif %}
+
+    <section id="remove" aria-label="Remove phone">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">Remove Phone&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/delete" class="confirm-body">
+                    <p>Remove {{ device.name }}? Its settings and history are deleted, and it can't reach this server any more. This can't be undone.</p>
+                    <button type="submit" class="button-destructive">Remove Phone</button>
+                </form>
+            </details>
+        </div>
+    </section>
+</main>
+</body>
+</html>

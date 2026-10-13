@@ -167,8 +167,8 @@ pub fn lock_card(
     }
     if !policy.hardening.disallow_safe_boot {
         card.warnings.push(
-            "Safe mode is allowed (Phone hardening). Safe mode starts the phone without the \
-             launcher, so it skips the kid's lock - block safe mode while the lock is on."
+            "Safe mode is allowed (Advanced › Restrictions). Safe mode starts the phone without \
+             the launcher, so it skips the kid's lock - block safe mode while the lock is on."
                 .to_string(),
         );
     }

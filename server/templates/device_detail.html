@@ -26,14 +26,11 @@
     {% if device.enrolled_at.is_none() %}
     <div class="card enrollment-card" id="access">
         <h2>Not enrolled yet</h2>
-        {% if let Some(text) = access.notice %}
-        <div class="error">{{ text }}</div>
+        {% if let Some((kind, until)) = access.live_code %}
+        <p>{{ kind }} works until {{ until }}, once.</p>
         {% endif %}
-        {% if let Some(line) = access.live_code %}
-        <p>{{ line }}</p>
-        {% endif %}
-        {% if let Some(text) = access.typed_paused %}
-        <div class="error">{{ text }}</div>
+        {% if let Some(until) = access.typed_paused_until %}
+        <div class="error">Typed codes are paused until {{ until }}: {{ access.pause_failures() }} wrong ones were tried this hour. A setup QR code still works.</div>
         {% endif %}
         <p>Make a code and type it in the launcher's Settings ("Enroll now"), or set the phone up with a QR code. A code is shown once, works once and replaces the one before it.</p>
         <div class="admin-actions">
@@ -46,19 +43,7 @@
     {% else %}
     <div class="card" id="status">
         <h2>Status</h2>
-        {% if let Some(status) = latest_status %}
-        <p>Time lock at the last report: <strong>{% match status.lock_reason.as_str() %}{% when "NONE" %}none{% when "BEDTIME" %}bedtime{% when "SCHOOL" %}school{% when "SCREEN_TIME" %}screen time used up{% when "RULE" %}a time rule{% when other %}{{ other }}{% endmatch %}</strong></p>
-        <p class="subtitle">Whether a time rule (bedtime, school, screen time) was locking the phone. The kid's PIN lock is shown under "Screen lock".</p>
-        {% if let Some(v) = status.app_version %}
-        <p>App version: {{ v }}</p>
-        {% endif %}
-        {% for line in sound_lines %}
-        <p{% if line.starts_with("Do Not Disturb") %} class="error"{% endif %}>{{ line }}</p>
-        {% endfor %}
-        <p class="subtitle">Last reported {{ status.reported_at }}</p>
-        {% if let Some(problem) = policy_problem %}
-        <div class="error">{{ problem }}</div>
-        {% endif %}
+        {% if latest_status.is_some() %}
         {% if restrictions_paused %}
         {% if relock.capable %}
         <div class="error">All restrictions are paused on the phone (from here, or someone entered the parent PIN in its Settings). The pause ends by itself, or press "Lock the phone again now".</div>
@@ -76,9 +61,6 @@
                 <li><a href="#parent-pin">Change the parent PIN</a>: the app may have read it.</li>
             </ol>
         </div>
-        {% endif %}
-        {% if let Some(text) = unseen_boots %}
-        <div class="error">{{ text }}</div>
         {% endif %}
         {% for line in relock.notes.lines %}
         <div class="error">{{ line }}</div>
@@ -133,42 +115,6 @@
         <div class="error">The parent PIN is easy to guess. <a href="#parent-pin">Change the parent PIN.</a></div>
         {% endif %}
     </div>
-
-    <div class="card" id="access">
-        <h2>Access</h2>
-        {% if let Some(text) = access.notice %}
-        <div class="error">{{ text }}</div>
-        {% endif %}
-        <p>{{ last_access }}</p>
-        {% if !access.has_token %}
-        <div class="error">This phone's access is revoked: it can't reach this server until it is enrolled again with a new code. It keeps enforcing its last policy.</div>
-        {% endif %}
-        {% if let Some(line) = access.live_code %}
-        <p>{{ line }}</p>
-        {% endif %}
-        {% if let Some(text) = access.typed_paused %}
-        <div class="error">{{ text }}</div>
-        {% endif %}
-        <p class="subtitle">A new code enrolls the phone again - after a reset, or with its access revoked. Using it disconnects the phone that is enrolled now.</p>
-        <div class="admin-actions">
-            <form method="post" action="/devices/{{ device.id }}/regenerate-code">
-                <button type="submit" class="button-small button-secondary">New code</button>
-            </form>
-            <a href="/devices/{{ device.id }}/provision" class="button-small">Provision by QR code</a>
-        </div>
-        {% if access.has_token %}
-        <details>
-            <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none; margin-top:12px;">Revoke access&hellip;</summary>
-            <form method="post" action="/devices/{{ device.id }}/revoke" style="margin-top:12px;">
-                <label class="checkbox-row">
-                    <input type="checkbox" name="confirm" value="yes" required>
-                    <span>Cut {{ device.name }} off now: its token stops working and it can't sync until it is enrolled again. It keeps enforcing its last policy.</span>
-                </label>
-                <button type="submit" class="button-danger">Revoke access</button>
-            </form>
-        </details>
-        {% endif %}
-    </div>
     {% endif %}
 
     {% if managed_without_pin %}
@@ -176,67 +122,6 @@
         <div class="error">No parent PIN is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. <a href="#parent-pin">Set a PIN below.</a></div>
     </div>
     {% endif %}
-
-    {% if device.enrolled_at.is_some() %}
-    <div class="card" id="play-kiosk">
-        <h2>Play and kiosk</h2>
-        {% for line in play.lines %}
-        <p>{{ line }}</p>
-        {% endfor %}
-        {% for warning in play.warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        <form method="post" action="/devices/{{ device.id }}/kiosk-block">
-            <label class="checkbox-row">
-                <input type="checkbox" name="block_activity_start" value="on" {% if play.block_activity_start %}checked{% endif %} data-autosave>
-                Kiosk app block: in kiosk mode, screens of apps that aren't allowed never open - also when an allowed app opens them (Play Store, Google sign-in and payment sheets). Emergency calls, permission questions, the share sheet and photo/file pickers keep working. Install and sign in during install mode instead. Turn it off only if it breaks something on this phone.
-            </label>
-            <noscript><button type="submit" class="button-small">Save</button></noscript>
-        </form>
-        <p class="subtitle">Changes reach the phone at once over its own connection to this server, which it keeps open. While that connection is down, a ring, lock or lift waits for the phone's own check-in (every 30 minutes, every 15 while it can't connect). The Play Store stays paused on the phone except during install mode (in the phone's Settings, with the PIN) and a nightly update window while the screen is off; Play services always stays on, since other apps' notifications (Element X) come through it.</p>
-    </div>
-
-    <div class="card" id="kiosk-escapes">
-        <h2>Launcher updates and notifications</h2>
-        {% for line in escapes.lines %}
-        <p>{{ line }}</p>
-        {% endfor %}
-        {% for warning in escapes.warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        <form method="post" action="/devices/{{ device.id }}/kiosk-escapes">
-            <label class="checkbox-row">
-                <input type="checkbox" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave>
-                Update fence: while the launcher installs its own update (at night, screen off, no call - about a minute), Android's own home screens and the notification shade are paused, so the phone never shows them. Leave it off until it is checked on this phone model.
-            </label>
-            <label class="checkbox-row">
-                <input type="checkbox" name="notification_auto_cancel" value="on" {% if escapes.notification_auto_cancel %}checked{% endif %} data-autosave>
-                Notification filter: remove other apps' notifications (setup reminders, "set a screen lock", tips) whose tap would open a screen outside the allowed apps. Allowed apps, calls, alarms and public-safety alerts (cell broadcast, earthquake) always stay.
-            </label>
-            <label class="checkbox-row">
-                <input type="checkbox" name="boot_cover" value="on" {% if escapes.boot_cover %}checked{% endif %} data-autosave>
-                Boot cover: while the phone starts, show the Vibb logo instead of the phone's own home screen until the launcher is ready (a few seconds after switching on). Takes effect from the next shutdown or restart. Test it on this phone first: restart it twice and check that the launcher comes up both times.
-            </label>
-            <noscript><button type="submit" class="button-small">Save</button></noscript>
-        </form>
-        <p class="subtitle">Launcher updates are downloaded at once and installed at night (02:00-05:00) when the screen has been off for 30 seconds and no call is on - or, once one has waited a day, at any such quiet moment. The notification filter uses the launcher's notification listener ("App badges" in Android's notification access): it reads only which app and channel a notification comes from and its type, never its title or text, and reports only those names and how many it removed.</p>
-    </div>
-    {% endif %}
-
-    <div class="card" id="crashes">
-        <h2>Launcher crashes</h2>
-        {% if crashes.is_empty() %}
-        <p class="subtitle">No crashes reported in the last 30 days.</p>
-        {% else %}
-        <p class="subtitle">The launcher restarts by itself after a crash; nothing is shown on the phone. Each report has only where in the code it happened (no messages or personal data). Kept 30 days after the last one.</p>
-        {% for c in crashes %}
-        <details>
-            <summary><code>{{ c.exception() }}</code> - {{ c.count }}&times;, last {{ c.last_at() }}, build {{ c.app_version_code }} <span class="subtitle">({{ c.hash }})</span></summary>
-            <pre style="white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px;">{{ c.trace }}</pre>
-        </details>
-        {% endfor %}
-        {% endif %}
-    </div>
 
     <div class="card" id="time">
         <h2>Time rules</h2>
@@ -599,7 +484,7 @@
         <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
         {% endif %}
         <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Its first page shows the clock, the music and new missed calls and messages (Apps -> On the lock screen); "Lås opp" leads to the PIN. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
-        <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Phone hardening). Lock and wipe on the Locate page still work.</p>
+        <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Advanced › Restrictions). Lock and wipe on the Locate page still work.</p>
         {% for line in lock.lines %}
         <p>{{ line }}</p>
         {% endfor %}
@@ -680,61 +565,6 @@
         <noscript><button type="submit">Save</button></noscript>
     </form>
 
-    <form method="post" action="/devices/{{ device.id }}/hardening" class="card" id="hardening">
-        <h2>Phone hardening</h2>
-        <p class="subtitle">Android restrictions the launcher sets while this phone is managed. Each switch saves itself immediately. The parent PIN and "pause all restrictions" don't lift these - only turning a switch off here does.</p>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_factory_reset" value="on" {% if hardening.disallow_factory_reset %}checked{% endif %} data-autosave>
-            Block factory reset from Settings (a reset from the phone's recovery menu can't be blocked; the phone then stops reporting)
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_add_user" value="on" {% if hardening.disallow_add_user %}checked{% endif %} data-autosave>
-            Block adding users and guests
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_modify_accounts" value="on" {% if hardening.disallow_modify_accounts %}checked{% endif %} data-autosave>
-            Block adding or removing accounts
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_config_vpn" value="on" {% if hardening.disallow_config_vpn %}checked{% endif %} data-autosave>
-            Block VPN settings
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_usb_file_transfer" value="on" {% if hardening.disallow_usb_file_transfer %}checked{% endif %} data-autosave>
-            Block copying files over USB
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="lock_location" value="on" {% if hardening.lock_location %}checked{% endif %} data-autosave>
-            Keep location on and block location settings (Find my device needs it)
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_airplane_mode" value="on" {% if hardening.disallow_airplane_mode %}checked{% endif %} data-autosave>
-            Block airplane mode (off by default, so it can be used when travelling)
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} data-autosave>
-            Lock the phone's language (the launcher's own language is set on this page, under Launcher)
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_debugging_features" value="on" {% if hardening.disallow_debugging_features %}checked{% endif %} data-autosave>
-            Block USB debugging (adb) and developer options
-        </label>
-        <p class="subtitle">With USB debugging blocked, a computer can't repair the phone: if the launcher ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again. Turn it off here before you work on the phone with adb.</p>
-        <label class="checkbox-row">
-            <input type="checkbox" name="disallow_safe_boot" value="on" {% if hardening.disallow_safe_boot %}checked{% endif %} data-autosave>
-            Block safe mode
-        </label>
-        <p class="subtitle">Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher, so the kid can use it unfiltered (the app restrictions above still apply there). It does not repair anything: the restrictions, the blocked USB debugging and the blocked factory reset all stay in safe mode. If a launcher update breaks the phone, the ways back are: this server sending a fixed launcher (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Only turn this on once this launcher version has been tested on the phone.</p>
-        {% match backup_service_enabled %}
-        {% when Some(true) %}
-        <div class="error">Backup to Google is on: Android may copy this phone's app data, call history, SMS and settings to its Google account. The launcher switches it off whenever the phone is managed (an app list or managed calls; the PIN and a pause don't change that) - if it is still on after the next sync (launcher Settings -> "Sync now"), report it: something on the phone keeps turning it on.</div>
-        {% when Some(false) %}
-        <p class="subtitle">Backup to Google: off</p>
-        {% when None %}
-        {% endmatch %}
-        <noscript><button type="submit">Save</button></noscript>
-    </form>
-
     <form method="post" action="/devices/{{ device.id }}/policy" class="card">
         <h2>Quick Controls (swipe-left screen)</h2>
         <p class="subtitle">These appear on a screen the kid can reach by swiping left from the home screen. This is the intended way for a kid to reach these controls instead of Android's own Quick Settings shade, which can't be fully locked down - a third-party app can publish its own tile there (Tailscale does) that bypasses restrictions below.</p>
@@ -765,14 +595,20 @@
         <button type="submit">Save changes</button>
     </form>
 
-    <div class="card">
-        <details>
-            <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none;">Remove this device&hellip;</summary>
-            <form method="post" action="/devices/{{ device.id }}/delete" style="margin-top:12px;">
-                <div class="error">This removes {{ device.name }} along with its policy and status history. This cannot be undone.</div>
-                <button type="submit" class="button-danger">Yes, remove {{ device.name }}</button>
-            </form>
-        </details>
+    {#- Design 31 step 3: the Status/Access/Play/crash facts and the set-once controls moved to
+        their sub-pages; the rows stay where the summary (step 10) has them, at the bottom. -#}
+    <div class="group group-icons" id="more">
+        <a class="row" href="/devices/{{ device.id }}/about" data-row="about">
+            <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.6v4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.5" cy="5.2" r="1" fill="currentColor"/></svg></span>
+            <span class="row-label">About This Phone</span>
+            {% if let Some(value) = about_value %}<span class="row-value">{{ value }}</span>{% endif %}
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/devices/{{ device.id }}/advanced" data-row="advanced">
+            <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M3 4.5h11M3 8.5h11M3 12.5h11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="6" cy="4.5" r="1.7" fill="currentColor"/><circle cx="11" cy="8.5" r="1.7" fill="currentColor"/><circle cx="7.5" cy="12.5" r="1.7" fill="currentColor"/></svg></span>
+            <span class="row-label">Advanced</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
     </div>
 </main>
 </body>

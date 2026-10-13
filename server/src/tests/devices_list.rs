@@ -319,18 +319,34 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     }
     // Alarms first, each row a link to its fix.
     assert!(anna_page.contains(&format!(
-        "<a class=\"attention attention-alarm\" href=\"/devices/{anna}#status\" data-attention=\"do-not-disturb\">"
+        "<a class=\"attention attention-alarm\" href=\"/devices/{anna}/about#sound\" data-attention=\"do-not-disturb\">"
     )));
     assert!(anna_page.contains(&format!(
-        "<a class=\"attention attention-alarm\" href=\"/devices/{anna}#hardening\" data-attention=\"google-backup\">"
+        "<a class=\"attention attention-alarm\" href=\"/devices/{anna}/advanced#restrictions\" data-attention=\"google-backup\">"
     )));
     assert!(anna_page.contains(">Do Not Disturb is on</span>"));
     assert!(anna_page.contains(&format!(
         "<a class=\"attention attention-action\" href=\"/devices/{anna}#time\" data-attention=\"launcher-without-rules\">"
     )));
-    // The targets exist on the page.
-    for anchor in ["status", "hardening", "parent-pin", "time"] {
+    // The targets exist on their pages.
+    for anchor in ["status", "parent-pin", "time"] {
         assert!(anna_page.contains(&format!("id=\"{anchor}\"")), "{anchor}");
+    }
+    for (page, anchor) in [
+        ("about", "sound"),
+        ("about", "diagnostics"),
+        ("advanced", "restrictions"),
+        ("advanced", "app-screens"),
+        ("advanced", "connection"),
+    ] {
+        let html = app
+            .get_page(&format!("/devices/{anna}/{page}"), &cookie)
+            .await
+            .text();
+        assert!(
+            html.contains(&format!("id=\"{anchor}\"")),
+            "{page}#{anchor}"
+        );
     }
     assert!(badge(row(&list, anna)) >= 4);
     assert!(

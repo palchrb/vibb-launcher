@@ -651,8 +651,8 @@ async fn the_locate_page_says_when_a_wipe_would_be_refused() {
 }
 
 /// A device-admin policy a launcher update added may only count after the phone restarts once; the
-/// phone lists those not granted yet, and the device page asks for a restart (the lock-screen camera
-/// switch was refused that way on an Android 16 emulator).
+/// phone lists those not granted yet, and Attention and Advanced ask for a restart (the lock-screen
+/// camera switch was refused that way on an Android 16 emulator).
 #[tokio::test]
 async fn the_device_page_asks_for_a_restart_while_admin_policies_are_pending() {
     let app = TestApp::new().await;
@@ -676,8 +676,19 @@ async fn the_device_page_asks_for_a_restart_while_admin_policies_are_pending() {
             )
             .await;
         assert_eq!(res.status, StatusCode::NO_CONTENT);
+        // An Attention row on the device page, the reasons on Advanced › App screens (design 31
+        // step 3).
         let page = app
             .get_page(&format!("/devices/{device}"), &cookie)
+            .await
+            .text();
+        assert_eq!(page.contains(notice), shown, "{pending}");
+        assert_eq!(
+            page.contains(&format!("/devices/{device}/advanced#app-screens")),
+            shown
+        );
+        let page = app
+            .get_page(&format!("/devices/{device}/advanced"), &cookie)
             .await
             .text();
         assert_eq!(page.contains(notice), shown, "{pending}");
@@ -696,7 +707,7 @@ async fn the_device_page_asks_for_a_restart_while_admin_policies_are_pending() {
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
     let page = app
-        .get_page(&format!("/devices/{device}"), &cookie)
+        .get_page(&format!("/devices/{device}/advanced"), &cookie)
         .await
         .text();
     assert!(page.contains(notice));
