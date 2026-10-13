@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-{% include "partials/music_style.html" %}
 {% import "partials/music_status.html" as music_status %}
 </head>
 <body>
@@ -21,7 +20,13 @@
             {% endif %}
             <span class="row-label">{{ kind }}{% if let Some(target) = entry.target %}<span class="row-sub" style="overflow-wrap:anywhere;">{% if storytel %}{{ target }}{% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</span>{% endif %}<span class="row-sub">{% if entry.cover_hash.is_some() %}Your photo{% else %}The source's picture{% if own %} (the first file's art){% endif %}{% endif %}</span></span>
         </div>
-        <details class="cell add-form"{% if cover_error.is_some() %} open{% endif %}>
+        {% if storytel %}
+        <a class="row" href="/music/storytel" data-row="shelf">
+            <span class="row-label">Storytel Shelf</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endif %}
+        <details class="cell disclosure"{% if cover_error.is_some() %} open{% endif %}>
             <summary class="row"><span class="row-label">Upload a Photo</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
             <form method="post" action="/music/entries/{{ entry.id }}/cover#cover" enctype="multipart/form-data" class="form-group">
                 <div class="field">

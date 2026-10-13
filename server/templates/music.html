@@ -2,17 +2,19 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-{% include "partials/music_style.html" %}
 </head>
 <body>
 {% let tab = "music" %}
 {% include "partials/app_header.html" %}
 <main class="container">
-    {% if edit %}
-    <div class="title-bar"><a class="title-action" href="/music#entries" data-edit="done">Done</a></div>
-    {% else if entries.len() > 1 %}
-    <div class="title-bar"><a class="title-action" href="/music?edit=1#entries" data-edit="start">Edit</a></div>
-    {% endif %}
+    {#- The bar is always there, so the title doesn't move when Edit appears with the second entry. -#}
+    <div class="title-bar">
+        {% if edit %}
+        <a class="title-action" href="/music#entries" data-edit="done">Done</a>
+        {% else if entries.len() > 1 %}
+        <a class="title-action" href="/music?edit=1#entries" data-edit="start">Edit</a>
+        {% endif %}
+    </div>
     <h1 class="page-title">Music</h1>
 
     <h2 class="group-header">Library</h2>
@@ -30,7 +32,7 @@
 
     <h2 class="group-header">Add</h2>
     <div class="group group-icons">
-        <details class="cell add-form" id="add-link"{% if add.error.is_some() %} open{% endif %}>
+        <details class="cell disclosure" id="add-link"{% if add.error.is_some() %} open{% endif %}>
             <summary class="row">
                 <span class="tile tile-blue" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><path d="M6.5 9.5l3-3M5.5 7.3L4 8.8a2.4 2.4 0 0 0 3.4 3.4l1.5-1.5M10.5 8.7L12 7.2a2.4 2.4 0 0 0-3.4-3.4L7.1 5.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
                 <span class="row-label">Podcast or NRK link</span>
@@ -55,7 +57,7 @@
                 <button type="submit" class="button-wide">Add</button>
             </form>
         </details>
-        <details class="cell add-form" id="add-own"{% if own.error.is_some() %} open{% endif %}>
+        <details class="cell disclosure" id="add-own"{% if own.error.is_some() %} open{% endif %}>
             <summary class="row">
                 <span class="tile tile-orange" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><path d="M8 11V3M5 6l3-3 3 3M3 11v2h10v-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                 <span class="row-label">Upload your own files</span>

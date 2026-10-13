@@ -3164,3 +3164,63 @@ async fn the_card_says_checking_while_a_check_runs() {
             .contains("Checking…")
     );
 }
+
+/// The rows' times are local (design 31 M4, qa-31-s12-code L4): "Check again after" and "Next try"
+/// in the Phone Setup zone, without "UTC" - here Tokyo, UTC+9 all year.
+#[tokio::test]
+async fn the_rows_times_are_in_the_phone_setup_zone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Asia/Tokyo' WHERE id = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let t0 = DateTime::parse_from_rfc3339("2026-10-13T10:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    app.state.music_sweep.set_clock(Some(t0));
+    let fresh = entry(
+        &app,
+        "https://example.org/fresh.rss",
+        "Fersk",
+        "auto",
+        "2026-10-01 10:00:00",
+    )
+    .await;
+    let failing = entry(
+        &app,
+        "https://example.org/fails.rss",
+        "Feiler",
+        "auto",
+        "2026-10-01 10:00:00",
+    )
+    .await;
+    // A check failed a minute ago: the next try is 15 minutes after it (10:14 UTC).
+    let failed_at = stamp(t0 - TimeDelta::minutes(1));
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, listed_at, checked_at, error, error_at, \
+           failing_since, failures) VALUES (?, '1111111111111111', '2026-10-08 10:00:00', ?, \
+           'http_404', ?, ?, 1)",
+    )
+    .bind(failing)
+    .bind(&failed_at)
+    .bind(&failed_at)
+    .bind(&failed_at)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // Check now at 10:00 UTC: again after 10:15 UTC.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{fresh}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("Check again after 19:15"), "{page}");
+    assert!(page.contains("Next try 19:14"), "{page}");
+    assert!(!page.contains("UTC"), "{page}");
+}

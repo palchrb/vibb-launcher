@@ -216,6 +216,8 @@ pub struct CategoryView {
     pub entries: i64,
     pub first: bool,
     pub last: bool,
+    /// The editor is open: asked for (`?open=`) or refused.
+    pub open: bool,
     pub error: Option<String>,
     pub error_field: &'static str,
 }
@@ -410,8 +412,11 @@ async fn music_page(
             let (file_count, missing) = files.get(&e.id).copied().unwrap_or((0, 0));
             let sweep = view.card(e);
             let phones = view.phone_count(e);
-            let mut sub = vec![music::kind_label(&e.source, e.target.as_deref()).to_string()];
+            let kind = music::kind_label(&e.source, e.target.as_deref());
+            let mut sub = vec![kind.to_string()];
             match &sweep {
+                // "Storytel book" already says it is one book.
+                Some(_) if kind == "Storytel book" => {}
                 Some(card) => sub.extend(card.count.clone()),
                 None => sub.push(plural(file_count as usize, "file", "files")),
             }
@@ -442,9 +447,10 @@ async fn music_page(
         .collect();
 
     // "Anna · 6 of 9": the entries each phone has ticked.
-    let devices: Vec<crate::models::Device> = sqlx::query_as("SELECT * FROM devices ORDER BY name")
-        .fetch_all(&state.db)
-        .await?;
+    let devices: Vec<crate::models::Device> =
+        sqlx::query_as("SELECT * FROM devices ORDER BY name, id")
+            .fetch_all(&state.db)
+            .await?;
     let ticks: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
         "SELECT device_id, COUNT(*) FROM device_music_entries GROUP BY device_id",
     )
@@ -465,11 +471,7 @@ async fn music_page(
     )
     .fetch_one(&state.db)
     .await?;
-    let signed_in = stored
-        && state
-            .music_key
-            .as_ref()
-            .is_some_and(|key| fingerprint.as_deref() == Some(key.fingerprint.as_str()));
+    let signed_in = stored && login_opens(state, fingerprint.as_deref());
 
     Ok(MusicTemplate {
         title: "Music".to_string(),
@@ -484,6 +486,15 @@ async fn music_page(
         storytel_value: if signed_in { "Signed in" } else { "No login" },
         phones,
     })
+}
+
+/// Whether a stored Storytel login, sealed under the key `fingerprint`, opens with this server's
+/// key: the tab's "Signed in" and Settings' "Enter the login again" both ask this.
+fn login_opens(state: &AppState, fingerprint: Option<&str>) -> bool {
+    state
+        .music_key
+        .as_ref()
+        .is_some_and(|key| fingerprint == Some(key.fingerprint.as_str()))
 }
 
 /// `GET /music/settings`; shows (once) how the last Storytel save went (a session flash).
@@ -538,21 +549,17 @@ async fn settings_page(
         sqlx::query_scalar("SELECT COUNT(*) FROM device_policy WHERE music_storytel = 1")
             .fetch_one(&state.db)
             .await?;
+    let zone = crate::display_time::Zone::load(&state.db).await;
     let saved_on = stored.0.as_ref().map(|_| {
         stored
             .2
             .as_deref()
-            .and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok())
-            .map(|t| t.format("%-d %b %Y").to_string())
+            .and_then(crate::music_sweep::parse_stamp)
+            .map(|t| zone.local(t).format("%-d %b %Y").to_string())
             .unwrap_or_else(|| "earlier".to_string())
     });
-    let stale = stored.0.is_some()
-        && state
-            .music_key
-            .as_ref()
-            .is_none_or(|key| stored.1.as_deref() != Some(key.fingerprint.as_str()));
+    let stale = stored.0.is_some() && !login_opens(state, stored.1.as_deref());
     let (status, status_error) = if stored.0.is_some() && !stale {
-        let zone = crate::display_time::Zone::load(&state.db).await;
         storytel_status(
             &zone,
             stored.3,
@@ -610,9 +617,14 @@ async fn settings_page(
     })
 }
 
-/// `GET /music/categories`.
-pub async fn show_categories(State(state): State<AppState>) -> Response {
-    render_categories(&state, StatusCode::OK, None, None).await
+/// `GET /music/categories[?open=<id>]`: `open` keeps that category's editor open, so a save or
+/// a move comes back to it as it was (qa-31-s12-code N8).
+pub async fn show_categories(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let open = query.get("open").and_then(|v| v.parse().ok());
+    render_categories(&state, StatusCode::OK, None, None, open).await
 }
 
 async fn render_categories(
@@ -620,8 +632,9 @@ async fn render_categories(
     status: StatusCode,
     new_category: Option<NewCategoryForm>,
     refused: Option<RefusedCategory>,
+    open: Option<i64>,
 ) -> Response {
-    let page = categories_page(state, new_category, refused).await;
+    let page = categories_page(state, new_category, refused, open).await;
     html(status, page, "couldn't load the music categories")
 }
 
@@ -629,6 +642,7 @@ async fn categories_page(
     state: &AppState,
     new_category: Option<NewCategoryForm>,
     refused: Option<RefusedCategory>,
+    open: Option<i64>,
 ) -> Result<MusicCategoriesTemplate, sqlx::Error> {
     let categories: Vec<MusicCategory> =
         sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
@@ -655,6 +669,7 @@ async fn categories_page(
                 entries: in_use.get(&c.id).copied().unwrap_or(0),
                 first: index == 0,
                 last: index + 1 == count,
+                open: open == Some(c.id),
                 error: None,
                 error_field: "",
             };
@@ -666,6 +681,7 @@ async fn categories_page(
                 view.color = color.clone();
                 view.tile = tile_of(color);
                 view.error = Some(error.clone());
+                view.open = true;
                 view.error_field = error_field;
             }
             view
@@ -1056,7 +1072,8 @@ pub async fn add_category(
                 error: Some(error),
                 error_field,
             };
-            return render_categories(&state, StatusCode::BAD_REQUEST, Some(form), None).await;
+            return render_categories(&state, StatusCode::BAD_REQUEST, Some(form), None, None)
+                .await;
         }
     };
     let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
@@ -1079,7 +1096,7 @@ pub async fn add_category(
         &format!("category {id}: {checked}"),
     )
     .await;
-    Redirect::to(&format!("/music/categories#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}`: renames it and sets its icon and colour.
@@ -1098,7 +1115,8 @@ pub async fn save_category(
         Ok(checked) => checked,
         Err((error, error_field)) => {
             let refused = (id, name, icon, color, error, error_field);
-            return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused)).await;
+            return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None)
+                .await;
         }
     };
     let updated =
@@ -1129,7 +1147,7 @@ pub async fn save_category(
         &format!("category {id}: {checked}"),
     )
     .await;
-    Redirect::to(&format!("/music/categories#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}/move` (`direction` up/down): the tiles' order on the phones.
@@ -1164,7 +1182,7 @@ pub async fn move_category(
         &format!("category {id}"),
     )
     .await;
-    Redirect::to(&format!("/music/categories#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}/delete`: only while no entry uses it (else 400, the card says so).
@@ -1208,7 +1226,7 @@ pub async fn delete_category(
             ),
             "delete",
         );
-        return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused)).await;
+        return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None).await;
     }
     if let Err(err) = sqlx::query("DELETE FROM music_categories WHERE id = ?")
         .bind(id)
@@ -1276,13 +1294,13 @@ fn storytel_status(
                 crate::storytel::cooldown_until(refused_at, refused_generation, generation, now),
             ) {
                 (Some(at), Some(until)) => format!(
-                    "Storytel refused the login at {}. Nothing is tried again before {} - save \
+                    "Storytel refused the login ({}). Nothing is tried again before {} - save \
                      the password again to try now.",
                     zone.when(at, now),
                     zone.until(until, now)
                 ),
                 (Some(at), None) => format!(
-                    "Storytel refused the login at {}. It is tried again the next time the shelf \
+                    "Storytel refused the login ({}). It is tried again the next time the shelf \
                      is read - save the password again if it changed.",
                     zone.when(at, now)
                 ),
@@ -1549,7 +1567,11 @@ async fn render_picker(
         let (no_login, error, groups) = match shelf {
             Ok(groups) => (false, None, groups),
             Err(StorytelError::NotConfigured) => (true, None, Default::default()),
-            Err(err) => (false, Some(err.message()), Default::default()),
+            Err(err) => {
+                let zone = crate::display_time::Zone::load(&state.db).await;
+                let text = err.message(&zone, state.music_sweep.now());
+                (false, Some(text), Default::default())
+            }
         };
         let rows = groups
             .iter()
@@ -2839,9 +2861,9 @@ pub async fn view_cover(State(state): State<AppState>, Path(hash): Path<String>)
 // The sweep on the cards (design 21b §3)
 // ------------------------------------------------------------------------------------------------
 
-/// "9 Oct".
-fn day_text(time: DateTime<Utc>) -> String {
-    time.format("%-d %b").to_string()
+/// "9 Oct", the local date.
+fn day_text(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
+    zone.local(time).format("%-d %b").to_string()
 }
 
 /// "just now", "5 min ago", "2 h ago", "3 days ago".
@@ -3076,7 +3098,7 @@ impl SweepView {
                         .unwrap_or_default(),
                     music::sweep_error_text(&entry.source, &code),
                     listed_at
-                        .map(|t| format!(" from {}", day_text(t)))
+                        .map(|t| format!(" from {}", day_text(&self.zone, t)))
                         .unwrap_or_default(),
                 ),
                 (None, _) => format!(
@@ -3133,7 +3155,7 @@ impl SweepView {
                     text.push_str(&format!(" · newest: {title}"));
                 }
                 if let Some(date) = date.as_deref().and_then(parse_stamp) {
-                    text.push_str(&format!(" · {}", day_text(date)));
+                    text.push_str(&format!(" · {}", day_text(&self.zone, date)));
                 }
             }
             text

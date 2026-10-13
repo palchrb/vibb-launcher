@@ -235,7 +235,15 @@ async fn save_probes_then_seals() {
             "{status}"
         );
         assert!(!text.contains("refused that e-mail and password"));
+        assert_no_secret(&text, "tom", "a refused page");
     }
+    // A malformed e-mail is refused without being shown back either (qa-31-s12-code L4).
+    let res = save(&app, &cookie, "ikke-en-adresse", "tom").await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let text = res.text();
+    assert!(text.contains("Enter the Storytel account"));
+    assert!(!text.contains("ikke-en-adresse"));
+    assert_no_secret(&text, "tom", "a refused e-mail");
     assert_eq!(row(&app).await.1, 1);
     assert_eq!(stored(&app).await, Some((EMAIL.into(), PASSWORD.into())));
 
@@ -305,7 +313,7 @@ async fn save_probes_then_seals() {
         .text()
         .replace("&#39;", "'");
     assert!(page.contains(
-        "Storytel refused the login at 12:02. Nothing is tried again before 13:02 - save \
+        "Storytel refused the login (12:02). Nothing is tried again before 13:02 - save \
          the password again to try now."
     ));
     app.fetch.clear_calls();
@@ -318,7 +326,7 @@ async fn save_probes_then_seals() {
         .text()
         .replace("&#39;", "'");
     assert!(
-        picker.contains("Nothing is tried again before 11:02 UTC"),
+        picker.contains("Nothing is tried again before 13:02 -"),
         "{picker}"
     );
     assert_eq!(app.fetch.count(), 0, "inside the cooldown nothing is asked");
@@ -1232,7 +1240,8 @@ async fn the_sweep_lists_a_series_like_a_feed() {
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("3 books"), "{page}");
-    assert!(page.contains("Storytel book · 1 book ·"));
+    assert!(page.contains("Storytel book · "));
+    assert!(!page.contains("Storytel book · 1 book"));
     assert!(!page.contains("newest: Kokosbananas"));
     assert!(page.contains(&format!("action=\"/music/entries/{series}/check\"")));
     assert!(page.contains("Storytel series"));

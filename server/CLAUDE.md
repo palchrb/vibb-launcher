@@ -1099,8 +1099,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `?edit=1` shows ↑ ↓ instead, the move redirecting to `/music?edit=1#entry-<id>`), Add (Podcast or NRK link and
   Upload your own files as `<details>` forms that open on a refusal, From Storytel › "Signed in"/"No login", Import
   from Vibb ›), On phones ("Anna · 6 of 9": ticks of the whole library, linking through `phone_music_href` to the
-  device page's `#music` until step 7 builds `/devices/{id}/music`), Categories › and Settings ›. Every page includes
-  `partials/music_style.html` (the tab's own CSS; `style.css` unchanged).
+  device page's `#music` until step 7 builds `/devices/{id}/music`), Categories › and Settings ›. Its CSS is in `style.css` (`?v=14`, the
+  "Music tab" section; the code QA fix round moved it out of a per-page partial).
 - **Sub-pages** (sub-page header, `partials/tab_bar.html` alone): `/music/settings` (Check for new episodes as an
   inline picker, the Storytel login with its notice and Remove Login…, the music app's catalog row, Files no entry
   uses with Delete Files…), `/music/categories` (the `<details>` editors, Delete Category… for an unused one, Add a
@@ -1108,7 +1108,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   with their POSTs on one route (L5).
 - **Where forms return** (§5.1, `tests::music::every_form_on_the_music_pages_returns_to_its_page` posts every rendered
   form): sweep and orphans → `/music/settings` (no fragment), the Storytel login and its removal →
-  `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories#category-<id>` (delete:
+  `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories?open=<id>#category-<id>` (the editor stays open; delete:
   no fragment), the import → `/music/import#import`; an entry's save → `/music/entries/<id>#settings`, Check now from
   there `#status`, cover `#cover`, files `#files`/`#file-<id>`; the row's Check now and Offline → `/music#entry-<id>`;
   delete → `/music#entries`. A form whose redirect has no fragment has none in its action either (a browser keeps the
@@ -1119,9 +1119,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   report on the entry as its sub-line, `SweepView::phone_lines` → `(device, line)`; tests read it through
   `tests::music::phone_line`) → Delete Entry…. The shelf (`music_storytel.html`) keeps its shape: a one-line intro, the
   rest behind ⓘ; its links go to `/music/settings#storytel`.
-- **Local times** (M4): `SweepView` and `storytel_status` take the Phone Setup zone (`Zone::when` for what happened,
-  `Zone::until` for "Next try" and "Check again after"); `storytel::StorytelError`'s cooldown text (shown on the shelf)
-  still says UTC.
+- **Local times** (M4): `SweepView`, `storytel_status` and `StorytelError::message` (the shelf's cooldown) take the
+  Phone Setup zone (`Zone::when` for what happened, `Zone::until` for "Next try", "Check again after" and the
+  cooldown's end; dates by the local day too). Every form posts to its group's fragment, every auto-saving form has a
+  `<noscript>` Save (`tests::music::check_forms`).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

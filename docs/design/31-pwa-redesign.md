@@ -2331,3 +2331,23 @@ Choices made while building:
    open the Music tab, one tap from Settings.
 10. **Not checked here**: a browser pass (no headless Chromium on this VM) - 390 px light/dark, JS on and off, every
     `<details>` opened - is owed before merging, with the real phones (iOS Safari 14, Chrome 80).
+
+**Fix round after the code QA** (`qa-31-s12-code.md`: 1 Medium, 4 Low, 8 Nits; all fixed but L1, which the
+coordinator repoints at the merge with step 4):
+
+| # | Fix |
+|---|---|
+| M1 | QA's second option: `StorytelError::message(zone, now)` words the cooldown with `Zone::until` (the fallback zone still says "UTC"); `render_picker` passes the Phone Setup zone, `storytel.rs`'s tests `Zone::utc_fallback()`. The shelf and Settings now give the same local time; the log line stays UTC. |
+| L1 | Not changed here (`device_detail.html` is step 4's). `/music/settings` has `id="app"` and `id="storytel"`; at the merge the Music card's links become `/music/settings#app` ("add it in Music › Settings") and `/music/settings#storytel` ("none saved yet - add it in Music › Settings"). |
+| L2 | "Storytel refused the login (12:02). Nothing is tried again before 13:02 - …", the bracket form of the accepted line, for both cooldown wordings. |
+| L3 | The tab's CSS moved to `style.css` (appended: the generic title action, `details.disclosure` - was `add-form` -, `.tile-orange`, the switch in a form and full-width selects in a form group; then the Music section), `partials/music_style.html` deleted with its six includes, `style.css?v=14` (step 4 takes 13; the coordinator resolves it at the merge). |
+| L4 | `check_forms` (in the redirect table, on all seven pages and the preview): every action's fragment names an element of its page, and every form with a `data-autosave` control has a `<noscript>` submit. The table pins each refusal's fragment per form kind. `music_sweep::the_rows_times_are_in_the_phone_setup_zone` (Tokyo): "Check again after 19:15", "Next try 19:14", no "UTC". `a_file_is_deleted_only_through_its_own_entry`: another entry's id in the path is a 404 and the file stays (the `AND entry_id = ?` check was already there). A refused Storytel save (503/429, a malformed e-mail) holds neither the e-mail nor the password. Re-run: the `<noscript>` mutation, the Storytel action without `#storytel`, "Check again after" in UTC, `delete_file` without `entry_id` and the e-mail echoed in a refusal all fail a test now. The import preview's body limit is not pinned: past it the handler answers the same 400 as its own 1 MB check, so no response tells them apart (defence in depth, as QA says). |
+| N1 | `day_text` ("keeps the list from 9 Oct", "newest: … · 9 Oct") and Storytel's "Saved 9 Oct 2026" use the local date. |
+| N2 | `login_opens(state, fingerprint)`: the tab's "Signed in" and Settings' stale login ask the same question. |
+| N3 | The tab's phones `ORDER BY name, id`, as on an entry's page. |
+| N4 | A Storytel entry's cover group has a "Storytel Shelf ›" row again. |
+| N5 | A single Storytel book's row says "Storytel book · 1 phone", without "· 1 book". |
+| N6 | Without a preview the file field is `id="import-preview"`, so a refused file lands on its field. |
+| N7 | The title bar (Edit / Done) is always there, so the title doesn't move with the second entry. |
+| N8 | A category's save, move and add come back to `/music/categories?open=<id>#category-<id>` and that editor renders open (`show_categories` reads `open`); the redirect table and the categories test pin it. |
+| Checks | `cargo test` 755 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |

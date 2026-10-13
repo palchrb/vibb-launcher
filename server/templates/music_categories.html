@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-{% include "partials/music_style.html" %}
 </head>
 <body>
 {% let tab = "music" %}
@@ -14,7 +13,7 @@
     {% if !categories.is_empty() %}
     <div class="group group-icons" id="categories">
         {% for category in categories %}
-        <details class="cell category-block" id="category-{{ category.id }}"{% if category.error.is_some() %} open{% endif %}>
+        <details class="cell category-block" id="category-{{ category.id }}"{% if category.open %} open{% endif %}>
             <summary class="row">
                 <span class="music-tile music-tile-small" style="background: {{ category.tile }}" aria-hidden="true"><img src="/static/music-icons/{{ category.icon }}.svg" alt=""></span>
                 <span class="row-label">{{ category.name }}</span>

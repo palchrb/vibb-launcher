@@ -2847,7 +2847,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
         .unwrap();
     assert_eq!(
         res.location(),
-        Some(format!("/music/categories#category-{godnatt}").as_str())
+        Some(format!("/music/categories?open={godnatt}#category-{godnatt}").as_str())
     );
 
     // Saving one in use nudges its phones and changes the library; a bad save keeps the values.
@@ -2864,7 +2864,14 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
             ],
         )
         .await;
-    assert_eq!(res.location(), Some("/music/categories#category-4"));
+    assert_eq!(res.location(), Some("/music/categories?open=4#category-4"));
+    // Back on its editor, still open (qa-31-s12-code N8); the others closed.
+    let page = app
+        .get_page("/music/categories?open=4", &cookie)
+        .await
+        .text();
+    assert!(page.contains("id=\"category-4\" open"));
+    assert!(!page.contains("id=\"category-1\" open"));
     assert_eq!(nudged(&mut rx), vec![device]);
     let library = device_get(&app, "/api/devices/music/library", &token, &[])
         .await
@@ -2895,7 +2902,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/music/categories#category-{godnatt}").as_str())
+        Some(format!("/music/categories?open={godnatt}#category-{godnatt}").as_str())
     );
     let order: Vec<String> =
         sqlx::query_scalar("SELECT name FROM music_categories ORDER BY sort, id")
@@ -4997,6 +5004,33 @@ fn post_forms(html: &str) -> Vec<(String, Fields)> {
         .collect()
 }
 
+/// What every form on a music page must have, with or without JS (design 31 §5.1, §5.2): an
+/// action's fragment names an element of the page, so a refusal rendered in the POST's answer
+/// lands on its form; and a form that saves itself (`data-autosave`) has a `<noscript>` submit.
+fn check_forms(page: &str, html: &str) {
+    for form in super::tags(html, "form") {
+        let body = &html[form.start..];
+        let body = &body[..body.find("</form>").unwrap_or(body.len())];
+        let action = form.attr("action").unwrap_or("");
+        if let Some((_, fragment)) = action.split_once('#') {
+            assert!(
+                html.contains(&format!("id=\"{fragment}\"")),
+                "{page}: {action} lands on no element"
+            );
+        }
+        if body.contains("data-autosave") {
+            let noscript = body
+                .split_once("<noscript>")
+                .and_then(|(_, rest)| rest.split_once("</noscript>"))
+                .map(|(inside, _)| inside);
+            assert!(
+                noscript.is_some_and(|inside| inside.contains("type=\"submit\"")),
+                "{page}: {action} saves itself but has no <noscript> Save"
+            );
+        }
+    }
+}
+
 /// A stray own file no entry names, old enough to be listed (`music::orphan_files`).
 fn stray_file(app: &TestApp) {
     let stray = app.state.music_files_dir.join("999").join("gone.mp3");
@@ -5058,11 +5092,13 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         format!("/music/entries/{own}"),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
+        check_forms(&page, &html);
         for (action, hidden) in post_forms(&html) {
             forms.push((page.clone(), action, hidden));
         }
     }
     // The import's preview is the answer to its POST.
+    check_forms("the import preview", &preview);
     for (action, hidden) in post_forms(&preview) {
         forms.push(("/music/import".to_string(), action, hidden));
     }
@@ -5090,6 +5126,23 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             _ => target.clone(),
         };
         seen.insert(kind.clone());
+        // A form whose refusal renders in the POST's answer posts to its own group, so the
+        // parent lands where they were (pinned per kind; `check_forms` checks the ids exist).
+        let refusal_lands_at = match kind.as_str() {
+            "/music" => Some("add-link".to_string()),
+            "/music/own" => Some("add-own".to_string()),
+            "/music/storytel" => Some("storytel".to_string()),
+            "/music/categories" => Some("new-category".to_string()),
+            "category" => category.as_ref().map(|(id, _)| format!("category-{id}")),
+            "/music/import" | "/music/import/confirm" => Some("import-preview".to_string()),
+            "entry" => Some("settings".to_string()),
+            "entry/cover" => Some("cover".to_string()),
+            "entry/files" => Some("files".to_string()),
+            _ => None,
+        };
+        if refusal_lands_at.is_some() {
+            assert_eq!(action_fragment, refusal_lands_at, "{action} on {page}");
+        }
         let entry_page = entry.as_ref().map(|(id, _)| format!("/music/entries/{id}"));
         let entry_anchor = entry.as_ref().map(|(id, _)| format!("entry-{id}"));
         let category_anchor = category.as_ref().map(|(id, _)| format!("category-{id}"));
@@ -5151,13 +5204,19 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "/music/orphans/delete" => ("/music/settings".into(), None),
             "/music/categories" => {
                 add(&[("name", "Sport"), ("icon", "star"), ("color", "teal")]);
-                ("/music/categories".into(), Some("category-*".into()))
+                ("/music/categories?open=*".into(), Some("category-*".into()))
             }
             "category" => {
                 add(&[("name", "Ny"), ("icon", "star"), ("color", "teal")]);
-                ("/music/categories".into(), category_anchor)
+                (
+                    format!("/music/categories?open={}", category.as_ref().unwrap().0),
+                    category_anchor,
+                )
             }
-            "category/move" => ("/music/categories".into(), category_anchor),
+            "category/move" => (
+                format!("/music/categories?open={}", category.as_ref().unwrap().0),
+                category_anchor,
+            ),
             "category/delete" => ("/music/categories".into(), None),
             "/music/import" => ("(the page)".into(), None),
             "/music/import/confirm" => ("/music/import".into(), Some("import".into())),
@@ -5285,6 +5344,38 @@ async fn the_music_deletes_are_behind_a_confirm() {
     }
     // Orphans, the Storytel login, three unused categories, the file, the entry.
     assert_eq!(deletes, 7);
+}
+
+/// A file is deleted only through its own entry's URL (qa-31-s12-code L4): another entry's id in
+/// the path is a 404 and the file stays, on disk and in the library.
+#[tokio::test]
+async fn a_file_is_deleted_only_through_its_own_entry() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let own = add_own(&app, &cookie, "Bilturen").await;
+    let other = add_own(&app, &cookie, "Annet").await;
+    let res = upload(&app, &cookie, own, &[("a.wav", wav(300))]).await;
+    assert!(res.status.is_redirection());
+    let (file, path): (i64, String) = sqlx::query_as("SELECT id, path FROM music_files")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{other}/files/{file}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_files WHERE id = ?")
+        .bind(file)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
+    assert!(app.state.music_files_dir.join(path).exists());
 }
 
 /// The library (design 31 §3.4): a row per entry with its count and phones, Check now and the

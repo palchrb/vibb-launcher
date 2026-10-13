@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-{% include "partials/music_style.html" %}
 </head>
 <body>
 {% let tab = "music" %}
@@ -12,7 +11,8 @@
     <h1 class="page-title">Import from Vibb</h1>
 
     <form method="post" action="/music/import#import-preview" enctype="multipart/form-data" class="group form-group" id="import">
-        <div class="field">
+        {#- Without a preview, a refused file lands here (the form posts to #import-preview). -#}
+        <div class="field"{% if import.preview.is_none() %} id="import-preview"{% endif %}>
             <label class="field-label" for="import_file">The library file</label>
             <input type="file" id="import_file" name="library" accept=".json,application/json" required{% if import.error.is_some() && import.preview.is_none() %} aria-invalid="true" aria-describedby="import-error" autofocus{% endif %}>
             {% if import.preview.is_none() %}{% if let Some(error) = import.error %}<p class="field-error" id="import-error">{{ error }}</p>{% endif %}{% endif %}
