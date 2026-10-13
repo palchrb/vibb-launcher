@@ -52,8 +52,10 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 
 ### 0.2 Assumptions (stated to the user; the design rests on them - correct any that is wrong)
 
-1. **The kid's Spotify account is a Premium Family member** account (the SDK plays only for Premium: an `account_error`
-   otherwise [verified 2026-10-13]).
+1. **Each child has their own Spotify Premium Family member account** - not a mobile-only Premium plan, which the SDK
+   excludes [verified 2026-10-13: "mobile only types of premium subscriptions are excluded"] - and the SDK plays only for
+   Premium (an `account_error` otherwise). The parent's own account is logged in only when it owns (or collaborates on)
+   the playlists the family adds; so two or three of the app's five users. (QA question 2; the user may overturn it.)
 2. **Development mode is accepted for private use**: the family's own developer app, at most 5 Spotify users per app,
    playlist contents only for playlists an authorized account owns or collaborates on, refresh tokens that end 6 months
    after a login [verified 2026-10-13]. Spotify may revoke the app; then Spotify tiles say so and nothing else breaks.
@@ -66,6 +68,15 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 6. **The Developer Policy's clauses are documented, not dodged** (§7.3): this is a player for a child, which the Policy
    forbids for products; the user accepted that risk for private use on 2026-10-06 (`vibb-spotify-options.md`,
    "Decision").
+7. **Links no family account may list play as a Spotify context** (QA question 1, answer (a), the default): an artist,
+   and a playlist neither logged-in account owns or collaborates on, play in Spotify's order with no track list (an
+   artist with no resume, §5.9). Option (c), **an artist listed as its albums' tracks** (§3.3), is written up and gated on
+   a dev-mode check in the QA checklist (item 18): if `GET /artists/{id}/albums` pages work for a dev-mode app, the user
+   may switch artists to it. Option (b), refusing such links at add, is a later switch, built only if the user asks.
+8. **Autoplay may be switched off on the children's accounts** (QA question 2): the phone never adopts a track outside
+   our list (§5.4, H4's guard in code, whatever the account says); if the device check (QA checklist item 17) shows the
+   web player autoplaying after a list, the PWA's setup text tells the parent to switch Autoplay off in each child's
+   Spotify settings, so the guard has nothing to pause.
 
 ### 0.3 The shape
 
@@ -114,13 +125,14 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 | OAuth flow | **Authorization code with PKCE, public client: no client secret** | PKCE returns refresh tokens and refreshes with `client_id` only [verified 2026-10-13: "client_id - Only required for the PKCE extension"]; no secret to store, leak or rotate; the spike's login was PKCE [spike] |
 | Who logs in where | the parent, in their own browser, on the PWA ("Log in with Spotify"); the server keeps the refresh token | the phone never holds a password or a long-lived secret, the kid never sees a login screen, no WebView login on a kiosk phone (Google/Facebook sign-in refuse WebViews, spike §7 item 10); fallback: the loopback paste flow for a server without https (§2.3) |
 | Which account reads, which plays | reads: any authorized account that can read the link (playlists: owner/collaborator); plays: the phone's bound account | dev mode lists playlist items only to owner/collaborators [verified 2026-10-13]; the SDK needs the listener's own Premium token; one account plays on one device at a time |
-| Link types | playlist, album, track, show, episode: **list mode**; artist: **context mode**; a playlist no account may list: context mode; `spotify.link` short links resolved once; audiobook, Liked Songs, user profiles: refused with a sentence | §3.1 table |
-| How the phone plays | `PUT /me/player/play` with **`uris`** (our list, a window of at most 50 from the current item) and `position_ms`; SDK `pause`/`resume`/`seek` | our order, our skips, our list; track URIs need no access to the playlist; `offset` is documented only for a `context_uri` [verified 2026-10-13] |
+| Link types | playlist, album, track, show, episode: **list mode**; artist: **context mode** (the default; "artists as their albums' tracks" an option behind a dev-mode check, §3.3); a playlist no account may list: context mode; `spotify.link` short links resolved once; audiobook, Liked Songs, user profiles: refused with a sentence | §3.1 table, assumption 7 |
+| How the phone plays | `PUT /me/player/play` with **`uris`** (our list, a window of at most 50 from the current item) and `position_ms`; past the window, the next item added with `POST /me/player/queue` one track ahead; SDK `pause`/`resume`/`seek`; a track Spotify plays that isn't ours is paused at once | our order, our skips, our list; track URIs need no access to the playlist; `offset` is documented only for a `context_uri` [verified 2026-10-13]; never uncurated audio (§5.4) |
+| Shuffle | off for Spotify (decided, not a question) | the phone's rule: `canShuffle` is own files without resume (`logic/Queue.kt:18`), and every Spotify entry is resume on; vibb's `shuffle_context` is a deviation (§12) |
 | Listing source | Web API with a reader token (primary); the SDK's `track_window` while playing (fallback, context mode) | §3.3 |
 | Wake lock | `SpotifyRenderer` holds a partial wake lock and a Wi-Fi lock while it plays or starts, timed and renewed, released on every pause/end/error/detach | ExoPlayer holds `WAKE_MODE_NETWORK` for every stream; the spike's forced-Doze pass was the emulator without OEM battery management; the Jelly Star run is still owed [spike §7b] |
-| DNS hosts | a fixed list (`spotify_hosts.json`, three byte-identical copies) exempted by the launcher's filter and dropped from the delivered blocklist **only for a phone with Spotify on** (policy `music.spotify`); the same list is the WebView's host allowlist | FCM's proven pattern (`push/FcmHosts.kt`, `play::is_fcm_protected`); one list, two gates |
+| DNS hosts | a fixed list (`spotify_hosts.json`, three byte-identical copies; provisional in step 3, the capture's list in step 6 at the latest) exempted by the launcher's filter and dropped from the delivered blocklist **only for a phone with Spotify on** (policy `music.spotify`, and the binding hashed into `dns_filter_version`); the same list is the WebView's host allowlist | FCM's proven pattern (`push/FcmHosts.kt`, `play::is_fcm_protected`); one list, two gates; per phone is the stricter choice (FCM is global because every phone needs it) |
 | SDK script | loaded at run time from `https://sdk.scdn.co/spotify-player.js`, not pinned (no SRI) | the Developer Terms forbid copying it (spike §1); Spotify changes it in place, a pin would break playback at its next release; the WebView admits only Spotify's hosts and our bridge is narrow (§7.2) |
-| Fake Spotify | `scripts/fake-spotify.py`: accounts (authorize, token, refresh rotation), the Web API the server and phone use, **and a stub SDK** (the documented `Spotify.Player` surface, playing a generated tone through an `<audio>` element) | the whole chain runs on the emulator without an account; the real SDK, Widevine and Spotify's refusals remain device checks (§9) |
+| Fake Spotify | `scripts/fake-spotify.py`: accounts (authorize, token, refresh rotation), the Web API the server and phone use, **and a stub SDK** (the documented `Spotify.Player` surface, playing a generated tone through an `<audio>` element), which the debug build's WebView reaches through its request interceptor (26b M2's one debug switch, §9.3) | the whole chain runs on the emulator without an account; the real SDK, Widevine and Spotify's refusals remain device checks (§9) |
 | Version | server **0.26.0**, music **`music-v0.4.0`** (RC first), a launcher tag | §Release |
 
 ## 1. What vibb does, and where it lands
@@ -130,13 +142,14 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 | `spotify.py` `URI_RE`, `LINK_RE`, `is_spotify`, `to_uri` (playlist/album/artist/track/show/episode links, `intl-xx/` prefixes, `spotify:user:<id>:collection`) | `S/spotify.rs` `parse_link`, `canonical`; `M/spotify/SpotifyRef.kt` `spotifyTarget` (the stored target only) | the target is the canonical `spotify:<kind>:<id>`; ids `[A-Za-z0-9]{1,64}`; `user:..:collection` refused (§3.1) |
 | `to_uri`'s `spotify.link/` (a redirect followed once, memoised) | `spotify::resolve_short_link` at add time, `follow = false`, the `Location` parsed as an `open.spotify.com` link | resolved once into the canonical target; never at play time |
 | `snapshot(uri)` (go-librespot's `/cache/snapshot`) + `library.py` `_precache_due` (playlists by `snapshot_id`, album/track/episode immutable with a daily re-ask, show always, artist always) | the sweep's Spotify check (§3.4): a playlist's `snapshot_id` gates the item read; album/track/episode/artist daily; show at the interval | the same politeness, now against the Web API's quota |
-| `context_tracks` (the listing from go-librespot, no Web API; "Title — Artists" rows, the album cover per row) | the server's listing (§3.4): one item per track, title `"<name> — <artists>"`, the album image as the item's `art_url` (design 27) | the phone never lists (21b): the server does, with a reader token |
+| `context_tracks` (the listing from go-librespot, no Web API; "Title — Artists" rows, the album cover per row; artists too, `spotify.py:331-366`) | the server's listing (§3.4): one item per track, title `"<name> — <artists>"`, the album image as the item's `art_url` (design 27); an artist in context mode by default, as its albums' tracks as an option (§3.3) | the phone never lists (21b): the server does, with a reader token |
+
 | `expand_target` Spotify branch: `order: "auto"` always (Spotify's context order) | `auto` = the listing's order (a playlist top first, an album in track order, a show newest first); `newest_first`/`oldest_first` reverse or keep it, as for every entry (`library.py` `ORDERS`) | we play our own list, so the parent's order setting can hold (§4.2); context mode keeps Spotify's order |
 | `bookmark_step`/`save_bookmark`/`read_bookmark` (one bookmark per context: track uri, position, duration, name, artists, art; only a box-initiated session writes) | phase 1's `Bookmarks` (per entry key = `state_key(target)` = vibb's `bm_path` hash, per track key); a session we didn't start never writes (§5.4, "Not ours") | vibb's `play_origin` rule becomes "only our own command's state is ours" |
 | `clear_bookmark` (stop / play `--fresh`), `clear_all_bookmarks` (account switch) | phase 1's `clear_state` at a queue's natural end; positions survive an account change (they are the kid's, not the account's) | §12 |
 | `PREV_RESTART_MS` 5000 (prev deep in a track restarts it) | phase 1's `skipTarget` (the phone's own previous rule) | unchanged |
 | `_spotify_bookmarker` (5 s ticks, write on track change or every 30 s, flush on pause) | the service's 15 s `saveTick`, `saveNow(force)` on pause/stop/detach, a write on every track change (`ItemChanged`) | the phone's existing cadence |
-| `shuffle` -> `shuffle_context` | not ported | phone rule `canShuffle` (own files only); open point (§14) |
+| `shuffle` -> `shuffle_context` | not ported (decided) | the phone's rule `canShuffle` (own files without resume; every Spotify entry is resume on) - §12 |
 | `daemon.py` Sonos `spotify_sharelink` start (listing from go-librespot, the context bookmark's index and position, `/queue_play`) + `sonosd.py` ShareLink + `tests/sonos_spotify_queue.py` | **later step 8** (§11), not in the first release | needs the household's Spotify in the Sonos app; the speaker plays, not the SDK |
 | `spotify_user` sections (`spotify_web.user_playlists`) | not ported | `GET /users/{id}/playlists` is removed in dev mode [verified 2026-10-13] |
 | README §5 "audiobook" links | refused at add ("Spotify audiobooks can't be played here") | the Pi played them through go-librespot; no Web API listing/SDK path is known to work in Norway [unverified] |
@@ -150,8 +163,10 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
   the playlist's `tracks` field renamed `items` and each entry's `track` renamed `item`; batch endpoints (`GET /tracks`,
   `/albums`, `/shows`, `/episodes`) removed; `GET /users/{id}`, `/users/{id}/playlists`, `/artists/{id}/top-tracks`,
   browse removed; `/me` has no `product`, `country` or `email` any more (so Premium can't be checked by the API: the SDK's
-  `account_error` is the check); quota per developer account, `429` with `"reason": "QUOTA_EXCEEDED"`, rate limits over
-  a rolling 30 s window with `Retry-After`.
+  `account_error` is the check); a track object has no `linked_from`, `popularity` or `available_markets` any more;
+  quota per developer account, shared by all its dev-mode apps and every caller (the server's sweep **and** each
+  phone's play calls), `429` with `"reason": "QUOTA_EXCEEDED"`, rate limits over a rolling 30 s window with
+  `Retry-After`. A user not in the app's User Management gets 403 on every API request (Quota modes).
 - Tokens [verified 2026-10-13]: access tokens live 1 hour; refresh tokens 6 months from the authorization, "refreshing
   an access token does not extend the refresh token's lifetime", no issue time is exposed ("store the authorization
   timestamp in your own database"); a refresh "might not" return a new refresh token - "when a refresh token is not
@@ -160,15 +175,24 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
   `http://[::1]:PORT`); `localhost` refused; an exact match, except the port of a loopback literal.
 - Start/Resume Playback [verified 2026-10-13]: `PUT /me/player/play?device_id=`, body `context_uri` (albums, artists,
   playlists) or `uris` (track URIs), `offset` ("only available when context_uri corresponds to an album or playlist"),
-  `position_ms`; Premium only; answers 204/401/403/429. No maximum for `uris` is documented [unverified: the window of
-  50 is our choice].
+  `position_ms`; Premium only; answers 204/401/403/429; "the order of execution is not guaranteed when you use this API
+  with other Player API endpoints" (so a transfer and a play are sequenced by waiting for the first's answer and the
+  SDK's state). No maximum for `uris` is documented [unverified: the window of 50 is our choice]. Transfer Playback
+  (`PUT /me/player`, one `device_ids` entry, `play`) and Add Item to Playback Queue (`POST /me/player/queue?uri=`) are
+  in the same Player API (not on the dev-mode removed list).
 - Web Playback SDK [verified 2026-10-13]: `getOAuthToken` is called at `connect()` **and whenever the token expired**
   (so a running player needs a fresh token every hour - the spike's "a running player doesn't need it" was a one-night
   observation); events `ready`, `not_ready`, `player_state_changed`, `autoplay_failed`; errors
   `initialization_error` (no EME), `authentication_error`, `account_error` (no Premium), `playback_error`; methods
   `pause`, `resume`, `togglePlay`, `seek`, `previousTrack`, `nextTrack`, `getCurrentState`, `setVolume`,
   `activateElement`, `disconnect`; `enableMediaSession` defaults to false; a state is null when this player isn't the
-  active device; a track's `type` can be `track`, `episode` or `ad`.
+  active device; a track's `type` can be `track`, `episode` or `ad`; the documented `WebPlaybackTrack` has no
+  `linked_from`. The SDK overview: "supported by most web browsers ... in both mobile (Android and iOS) and Desktop",
+  "requires a Spotify Premium subscription (mobile only types of premium subscriptions are excluded)" - an Android
+  WebView isn't named; the spike is the evidence it works. The scopes the SDK needs (`streaming user-read-email
+  user-read-private`) are from the web-app-player how-to
+  (developer.spotify.com/documentation/web-playback-sdk/howtos/web-app-player).
+
 - The spike [spike §7b]: a WebView made with the application context and owned by a `mediaPlayback` foreground service,
   an https origin (`https://appassets.androidplatform.net/`), `RESOURCE_PROTECTED_MEDIA_ID` granted, media without a
   user gesture, `RENDERER_PRIORITY_IMPORTANT`, third-party cookies on, the default user agent: `ready`, audio, pause and
@@ -190,11 +214,11 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
   are the refresh tokens (§2.2), sealed. No client secret is asked for or stored (§0.4).
 - **The redirect URI** the parent must paste into the dashboard is suggested from the request the page was loaded
   with: `https://<host>/music/spotify/callback`, where `<host>` is the `Host` header (or `X-Forwarded-Host` from a
-  trusted proxy, `NetConfig`) - the PWA normally sits behind a TLS proxy such as `tailscale serve` on a `*.ts.net`
-  name, and the server itself listens on plain http on loopback, so the suggestion is https when the host is a name
-  (not an IP literal) or a trusted proxy says `X-Forwarded-Proto: https` [unverified: which headers `tailscale serve`
-  sets]. When the page was loaded over plain http from an IP literal (Spotify refuses an http redirect that isn't
-  loopback), the suggestion is **the loopback fallback**: `http://127.0.0.1:43117/callback` (§2.3). The field is
+  trusted proxy, `NetConfig`), **only when the request itself was https** - a trusted proxy said `X-Forwarded-Proto:
+  https` (the PWA usually sits behind `tailscale serve` or another TLS proxy; the server listens on plain http on
+  loopback) [unverified: whether `tailscale serve` sends that header - if not, the parent edits the field]. Otherwise
+  (plain http, by name or by address - Docker on the LAN at `http://pi.lan:8080` included, where an https guess would
+  lead nowhere) the suggestion is **the loopback fallback**: `http://127.0.0.1:43117/callback` (§2.3). The field is
   editable and validated: either `https://<host>[:port]/music/spotify/callback` or exactly the loopback form. The page
   shows the saved value large and copyable ("Paste exactly this into your app's Redirect URIs"); the authorize request
   always uses the saved one, so the parent can later open the PWA from another address without breaking logins.
@@ -227,11 +251,13 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
 `http_<n>`, `key`), `refresh_error_at`, `needs_login` (0/1).
 
 - **Scopes** (one set for every account; an account can be both reader and player): `streaming user-read-email
-  user-read-private user-modify-playback-state user-read-playback-state playlist-read-private
-  playlist-read-collaborative`. The SDK needs the first three [verified 2026-10-13, the SDK's getting-started];
-  `user-modify-playback-state` is the play call; `user-read-playback-state` lets the phone's transfer check work;
-  the playlist scopes let an owner's private and collaborative playlists list. `user-read-private` also gives the token
-  its country, which `market=from_token` needs.
+  user-read-private user-modify-playback-state playlist-read-private playlist-read-collaborative`. The SDK needs the
+  first three (the web-app-player how-to, §1.1); `user-modify-playback-state` is the play, transfer and queue calls; the
+  playlist scopes let an owner's private and collaborative playlists list. No `user-read-playback-state`: the phone
+  reads its state from the SDK. `market=from_token` is documented on the token's account (no scope reason of its own).
+  **One scope set means the phone's hourly token carries every scope of its account**: a parent account bound as
+  "plays as" would give the phone a 1-hour token that can also read the parent's private playlists. Accepted for one
+  hour in memory (§7.1); the PWA's binding select says "use the child's own account".
 - **The 6-month line**: the accounts card shows "Logged in 12 Oct 2026 - log in again before 10 Apr 2027"
   (`authorized_at` + 180 days, a margin under Spotify's 6 months); from 14 days before, the line is a warning on the
   Spotify page and on the music card of every phone bound to the account ("Ella's Spotify login ends on 10 Apr: log in
@@ -264,12 +290,19 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
   `code_verifier`), then `GET /v1/me` with the new access token:
   - 200: upsert the row (new: `generation 1`; same `spotify_user`: token replaced, `generation + 1`, `needs_login 0`,
     `refresh_error` cleared, `authorized_at` now), seal, event `spotify_account_added` (attributed to the admin who
-    started the login), the page "Logged in as <display
-    name>. [Back to Spotify settings]" - a plain link (a same-site click carries the cookie) - and nothing else (no
-    token, no id).
-  - 403 from `/me` (the account isn't in the app's User Management [unverified: Spotify's exact answer]): nothing
-    stored; the page "Spotify refused this account for your app: add it under User Management in the dashboard
-    (name and e-mail), then log in again". Event `spotify_login_failed` (`not_registered`).
+    started the login).
+  - **The answer is a 303**, never a page on the code's URL (so the spent code stays out of the history and out of any
+    `Referer`): to `/music/spotify?login=<outcome>#accounts` (`ok`, `cancelled`, `not_registered`, `refused`,
+    `unreachable`, `expired` - an unknown or used `state`); the session-bearing page then shows the one-line outcome
+    (for `ok` "Logged in as <display name>", the name read back from the newest row).
+  - **The login cookie** (defence in depth): the start also sets `spotify_login` = hex SHA-256 of the `state`
+    (`HttpOnly`, `Secure` unless `INSECURE_COOKIES`, `SameSite=Lax`, `Path=/music/spotify/callback`, 10 minutes); the
+    callback requires it to match and clears it, so an authorize URL that leaked can't be completed from another
+    browser. (`Lax` is sent on the top-level GET navigation from Spotify; the admin cookie, `Strict`, is not.)
+  - 403 from `/me` (the account isn't in the app's User Management: "API requests with an access token associated to
+    that user and app will receive a 403", Quota modes, verified 2026-10-13): nothing stored; the page "Spotify refused
+    this account for your app: add it under User Management in the dashboard (name and e-mail), then log in again".
+    Event `spotify_login_failed` (`not_registered`).
   - Any other failure (the exchange refused - `invalid_grant` for a stale code, `invalid_client` for a wrong client ID
     -, network): nothing stored, a one-line reason, event `spotify_login_failed` (the code only).
   The callback's query never reaches a log: the audit and the gate log paths only (`audit::clip(path)`), and a test pins
@@ -293,7 +326,9 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
   left and the row's generation is the token's; else **refresh**: read the row (`needs_login = 1` -> `Reauthorize`
   without a request; a key that can't open it -> `Key`), POST `https://accounts.spotify.com/api/token` (form
   `grant_type=refresh_token&refresh_token=<rt>&client_id=<id>`, `Content-Type: application/x-www-form-urlencoded`,
-  `Kind::Token` 64 KB / 20 s, `Reach::Public`, through the gate):
+  `Kind::Token` 64 KB / 20 s, `Reach::Public` - **`Reach::Any` only while the loopback base override of §9.3 is set**
+  (the fake on 127.0.0.1; `music_net` refuses a private address for `Public`, `music_net.rs:71-76`, 311-325) - through
+  the gate):
   - 200 with `access_token` and `expires_in`: kept with `now + expires_in - 60 s`. **When the answer carries a new
     `refresh_token`, it is sealed and written before the access token is used** (PKCE refresh tokens rotate in
     practice [unverified]); a failed write keeps the new refresh token in `Access.unsaved` and the next refresh uses and
@@ -306,9 +341,13 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
     ID any more (the app was deleted, or Spotify switched it off)"; not `needs_login` (a new client ID re-logs anyway).
   - 429: `Busy(retry_after)` (no state change); 5xx, a transport error or a timeout: `Unreachable`
     (`refresh_error = network | http_<n>`), no state change beyond it.
-- **Reads** `api_get(state, account, url, kind)`: `Authorization: Bearer`, `Accept: application/json`; a 401 refreshes
+- **Reads** `api_get(state, account, url, kind)` (the same `Reach` rule as the token request): `Authorization: Bearer`,
+  `Accept: application/json`; a 401 refreshes
   once (`min_left` forced) and retries once, never twice; a 429 waits `Retry-After` when it is at most 5 s (once), else
-  returns `RateLimited(retry_after)` or, with `"reason": "QUOTA_EXCEEDED"` in the body, `Quota`; other statuses as
+  returns `RateLimited(retry_after)` or, with `"reason": "QUOTA_EXCEEDED"` in the body, `Quota` (then the sweep makes
+  no Spotify request for 60 minutes, `Accounts.quota_until`, so the phones' play calls - the same developer account's
+  bucket, §1.1 - have room; the token endpoint is the accounts service, not the Web API, and goes on); other statuses as
+
   `Status(code)`; truncated as `TooBig`. Every URL is built with `reqwest::Url` and `form_urlencoded` from the
   canonical id (never from pasted text).
 - **Errors** carry codes: `spotify_off` (no app), `no_account` (no account can be used), `reauthorize`, `app_refused`,
@@ -328,7 +367,9 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
   phones** gives a warning on both cards: "Spotify plays on one device at a time per account: Ella's and Ola's phones
   both play as Ella - give each child their own account".
 - The phone's library, listings and covers include Spotify entries only while it is bound (§3.6). The policy's
-  `music.spotify` (§6.2) is true exactly then.
+  `music.spotify` (§6.2) is true exactly then: `models::DevicePolicy` gains `music_spotify_account: Option<i64>` and
+  `music::policy_music` (`music.rs:1062-1087`, computed per request) reads it (bound = the column is set; the FK makes
+  the account exist). The binding also enters the phone's `dns_filter_version` (§6.2).
 
 ### 2.6 The phone's token (`POST /api/devices/music/spotify/token`)
 Device bearer (`require_device_token`), no body, `Cache-Control: no-store` (the edge's default for a device route), a
@@ -352,9 +393,13 @@ storage (§5.2).
 
 ### 3.1 Share links (`spotify::parse_link`, `spotify::resolve_short_link`)
 Accepted forms (vibb `to_uri`): `spotify:<kind>:<id>`; `https://open.spotify.com/[intl-<xx>/]<kind>/<id>[?si=...][#...]`
-(any query and fragment dropped); `https://spotify.link/<code>` and `https://spotify.app.link/<code>` (one GET through
-the gate, `Reach::Public`, **no redirect followed**, the `Location` header parsed as an `open.spotify.com` link, else
-"That Spotify link didn't lead anywhere"). `<id>` is `[A-Za-z0-9]{1,64}`; anything else in the path is refused. The
+(any query and fragment dropped); `https://spotify.link/<code>` and `https://spotify.app.link/<code>`: resolved like
+vibb's `urlopen(target).url` (`spotify.py:42-46`, the whole chain) but one hop at a time - a GET through the gate,
+`Reach::Public`, with **`follow: false`** (a new field on `music_net::SourceRequest`; the response's `Location` is
+returned in a new `SourceResponse.location`, both added in step 2a), at most 3 hops, each `Location` an https URL on
+`spotify.link`, `spotify.app.link` or `open.spotify.com` only (anything else stops: "That Spotify link didn't lead
+anywhere"), and the first `open.spotify.com` URL parsed. `<id>` is `[A-Za-z0-9]{1,64}`; anything else in the path is
+refused. The
 canonical target is `spotify:<kind>:<id>`; the entry's `key` is `state_key(target)` (`sha1[:12]` - vibb's `bm_path`
 hash of the same URI, so a Pi bookmark file and our entry key match).
 
@@ -363,14 +408,15 @@ hash of the same URI, so a Pi bookmark file and our entry key match).
 | playlist | list (an account can read its items); else context | `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)` then `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track` pages, each `items[].item` | the interval, items only when `snapshot_id` changed or a day passed (vibb `_precache_due`) | Spotify · spor N av M |
 | album | list | `GET /albums/{id}` (name, artists, images, the first 50 tracks) + `GET /albums/{id}/tracks?limit=50&offset=50..` | daily (immutable: vibb's daily re-ask) | Spotify · spor N av M |
 | track | list (one item) | `GET /tracks/{id}` | daily | Spotify |
-| artist | context | `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13] | daily (metadata) | Spotify · Spotify velger |
+| artist | context (default); **option**: list as its albums' tracks | context: `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13]. Option: `GET /artists/{id}/albums?include_groups=album,single&limit=50` (not on the removed list; dev-mode paging [unverified]) then each album as the album row, newest album first, at most 20 albums and 500 tracks | daily | context: Spotify · Spotify velger; option: Spotify · spor N av M |
+
 | show | list | `GET /shows/{id}` + `GET /shows/{id}/episodes?limit=50` newest first, the newest 100 kept | the interval | Spotify · episode N av M |
 | episode | list (one item) | `GET /episodes/{id}` | daily | Spotify |
 | audiobook, chapter | refused: "Spotify audiobooks can't be played here." | | | |
 | `spotify:user:<id>:collection` (Liked Songs), user profiles | refused: "Liked Songs and Spotify profiles can't be added - make a playlist instead." | | | |
 
 - **Episodes in the `uris` array** are not documented (the reference says "track URIs") [unverified]: shows and
-  episodes are built, and step 5's device check plays one; if the SDK refuses them, the parser refuses `show` and
+  episodes are built, and step 5b's device check plays one; if the SDK refuses them, the parser refuses `show` and
   `episode` with "Spotify podcasts can't be played here - add the podcast's RSS feed instead" (one constant,
   `SHOWS_PLAYABLE`), and nothing else changes.
 - The generic add-by-link form on `/music` answers a Spotify link with "Spotify links are added on the Spotify page"
@@ -391,8 +437,10 @@ Fields: `link`, `category`, `device` (repeated; read as `Form<Vec<(String, Strin
    phones can't show its tracks: they play it in Spotify's order. Log in as its owner to get the track list."
 3. Insert (within `MAX_ENTRIES`, the INSERT's own `WHERE`): source `spotify`, the canonical target, the key, name = the
    metadata's (a playlist's or show's name; an album "<album> — <first artist>"; a track "<name> — <artists>"; an
-   artist's name) cut to `MAX_NAME_CHARS`, the category (the first whose `default_kind` matches: Podkast for show and
-   episode, Musikk otherwise; else the first), `order` `auto`, **`cache` 0** (nothing is ever downloaded; the entry page
+   artist's name) cut to `MAX_NAME_CHARS`, the category from a new kind-aware `music::default_kind_for(source,
+   target)` - `podcast` for a Spotify show or episode, `music` for every other Spotify kind, `default_kind(source)` for
+   every other source (today's `default_kind` is per source only, `music.rs:319-325`) - through `default_category` (the
+   first category of that kind, else the first), `order` `auto`, **`cache` 0** (nothing is ever downloaded; the entry page
    and the card's offline select hide for Spotify, and a stored or posted value is saved as 0), `resume` on (vibb's
    per-context bookmark), sort next. The listing's cover candidate = the metadata's image (picked as in §3.4).
 4. **Ticks**: each `device` that is bound to an account is ticked in the same transaction (`music::tick_fits`); one that
@@ -422,13 +470,29 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
   picks the order" and hides the select); resume is the context bookmark, as on the Pi. A playlist in context mode is
   read again at every check and flips to list mode as soon as an account may list it (the card's notice tells the
   parent how).
+- **Option: an artist as its albums' tracks** (QA L12; assumption 7; the server setting `SPOTIFY_ARTIST_ALBUMS`, read
+  once at start, off by default - an environment variable, so QA checklist item 18 can switch it without a build): only
+  `/artists/{id}/top-tracks` left dev mode; `GET /artists/{id}/albums` is not on the removed list. With the option on,
+  an artist is **list mode**: its albums and singles newest first (one request per page of 50 albums, then one per
+  album, the batch endpoints being gone), at most 20 albums and 500 tracks (`keep_end = 'first'`, `capped`), each
+  album's tracks in order, titles and art as an album's (the album image per track, judged `own`), a daily check -
+  resume, the order setting, NY and the track list then work as for an album. vibb listed artist contexts too
+  (`context_tracks`). It stays off until QA checklist item 18 shows the albums endpoint paging for a dev-mode app; with
+  it on, a check that gets 403/404 there falls back to context mode for that artist (the card says "Spotify refused the
+  artist's albums - played as Spotify picks"). Switching it changes an artist entry's mode at its next check.
+
 - Why not list a foreign playlist from the SDK into the server: the server never plays, the phone never lists (21b);
   and the `track_window` shows only a few tracks around the current one.
 
 ### 3.4 The Spotify check (`music_sweep::spotify_check`, `S/spotify.rs` pure parsers)
 - `schedule`'s `WHERE e.source IN (...)` and `check_entry`'s source check take `'spotify'`; `music::entry_link` returns
-  `Link::Spotify { kind, id }` for a `spotify` entry. `interval()`: a `spotify` playlist or show gets the setting `I`
-  (as RSS); album, track, episode and artist 24 h. Check now as for the others (and it ignores the snapshot gate).
+  `Link::Spotify { kind, id }` for a `spotify` entry. **The cadence needs the kind**: `interval(source, ticked,
+  setting_hours)` (`music_sweep.rs:415`) has none, so it becomes `interval(link: &Link, ticked, setting_hours)` - NRK
+  as today, a Spotify album, track, episode or artist 24 h, everything else (RSS, Storytel, a Spotify playlist or show)
+  the setting `I`; `schedule` builds the link from each row's `(source, target)` with `music::entry_link` (a row whose
+  link doesn't parse is skipped and logged, as today). Check now as for the others (and it ignores the snapshot gate).
+  **`restamp_versions`** (`music_sweep.rs:960-966`, `IN ('nrk', 'rss', 'storytel')`) takes `'spotify'`, so a restore
+  restamps a Spotify listing like the others.
 - **Without an app** the check fails `spotify_off`, without a usable account `no_account`, with all readers
   `needs_login` `reauthorize` - no request; the last good list stays (21b `finish`).
 - **Playlist**: the metadata read (one request). The listing keeps `spotify_snapshot`; when it equals the answer's
@@ -452,9 +516,11 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
   `spotify_snapshot`, `spotify_items_at` (the last full item read, `Sweep::now()`), `spotify_reader`, `spotify_skipped`,
   `keep_end`, `capped`.
 - **Requests** count against the check's budget (250 / 10 min) like every source request; a 1000-track playlist is 21
-  requests. `rate_limited` and `quota` fail the check with their code and back off (21b's backoff); one `quota` in a
-  pass ends the pass's other Spotify checks for that pass (no request; they fail `quota` too, "Spotify's limit for this
-  app was reached - it tries again later").
+  requests. `rate_limited` and `quota` fail the check with their code and back off (21b's backoff); a `quota` stops
+  every Spotify check for 60 minutes (`Accounts.quota_until`, §2.4: no request; they fail `quota` too, "Spotify's limit
+  for this app was reached - it tries again later"), so the playing phones, which draw on the same developer account's
+  bucket, keep room.
+
 - **Errors** (`sweep_error_text("spotify", code)`): `spotify_off` "no Spotify app is set up on this server",
   `no_account` "no Spotify account is logged in", `reauthorize` "the Spotify logins need renewing", `app_refused`
   "Spotify doesn't accept this server's client ID any more", `not_found` "Spotify doesn't let this app open it (or it
@@ -487,7 +553,11 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
   absent and `items` null: the phone hides the entry until it is listed).
 - The library card (`partials/music_card.html`): `kind_label` "Spotify playlist" / "album" / "track" / "artist" /
   "podcast" / "episode"; "42 tracks · read as Pål" (the reader's display name), "· 3 left out", context mode's notice;
-  per-phone lines: "Ella: plays as Ella", "Ola: not sent - Spotify is off on this phone" (not counted in "on N phones");
+  per-phone lines: "Ella: plays as Ella", "Ola: not sent - Spotify is off on this phone" (not counted in "on N phones":
+  `SweepView::gated` and `phone_count`, `handlers/music.rs:2786-2806`, Storytel-only today, gain the Spotify rule - a
+  `spotify` entry is gated on a phone with no account bound, and on every phone while no app is set up, "no Spotify app
+  is set up");
+
   item errors from `music_state` (`unplayable` "Spotify couldn't play this track on the phone"). A link back to
   Spotify on the card ("Open in Spotify": `https://open.spotify.com/<kind>/<id>`, `rel="noopener noreferrer"`) - the
   Policy's link-back (§7.3). No offline select, no "on the phone" counts.
@@ -561,24 +631,27 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
 (`else -> return null`) with its id kept, so nothing is pruned (qa-21-step2-code H1).
 
 ### 4.2 Visibility, order, keep
-- `Snapshot.visible(entry)`: a Spotify item is visible **on the phone** while listed (it streams; `url == null` doesn't
-  hide it, unlike a Storytel book) and **never on a Sonos room** in this release (`PlayBodies.speakerDropReason` ->
-  `spotify`: "Kan ikke spilles på Sonos" - 26a's existing path for an entry with nothing speaker-playable; step 8 lifts
-  it). A context-mode entry has no items: it shows as a tile with one synthetic row (§5.9).
+- `Snapshot.visible(entry)`: a listed Spotify item is visible **in both views** - the phone's and a room's (it streams;
+  `url == null` doesn't hide it, unlike a Storytel book). The screens build their snapshot with `forRenderer(onRoom)`
+  (`MusicViewModel`), so hiding Spotify on a room would drop its tiles from the carousel whenever a room is the output.
+  **A room's queue drops them instead**: `PlayBodies.speakerDropReason` returns `spotify` for a Spotify item, so a pick
+  on a room is 26a's existing "nothing speaker-playable" path (`CANT_PLAY_ON_SONOS`, "Kan ikke spilles på Sonos"); step 8
+  lifts it. A context-mode entry has one synthetic item made by the snapshot (§5.9, H3), so it shows as a tile too.
 - `naturallyNewestFirst`: a Spotify **show** true (Spotify lists episodes newest first; a podcast), every other kind
   false (a playlist top first, an album in track order). The entry's `order` then applies as for every source
   (`auto`/`newest_first`/`oldest_first`, vibb's `ORDERS`): `newest_first` on a playlist plays it bottom first - the
   last-added song first when the parent appends. Context mode ignores the order.
 - **Never fetchable, never kept**: `KeepItem.fetchable` false for Spotify, so the download plan, the keep set, the prune
   and "N av M lastet ned" never see a Spotify item; the list shows no offline marks for Spotify (no "Ikke lastet ned").
-  `canShuffle` stays own files only.
+  **No shuffle** (decided): `canShuffle` is own files without resume (`logic/Queue.kt:18`) and every Spotify entry is
+  resume on; vibb's `shuffle_context` is a §12 deviation, not a question.
 - `publicOnly` is moot (the SDK's traffic isn't ours; the play call goes through the guarded client, §5.4).
 
 ### 4.3 NY, Nytt, words
 - `applyListing`'s news eligibility (26b: "fetchable") also takes a listed Spotify item: a song added to a playlist or a
   new episode of a show joins the tray, NY shows on the tile (vibb AM-97: "the carousel's 'new' dot for Spotify lists").
-  The first listing acknowledges everything (phase 1). Nytt rows: `new_track` "Ny sang" / "New song" for a track, the
-  existing episode row for an episode.
+  The first listing acknowledges everything (phase 1). Nytt rows: the existing `new_track` ("Nytt spor" / "New track",
+  `strings.xml:78/80`) for a track, `new_episode` for an episode - no new string.
 - `Kind.SPOTIFY` (`kindOf`): `kind_spotify` "Spotify" in both locales - **the attribution** (Developer Policy §II: content
   attributed to Spotify); the tile's hint uses phase 1's `hint_track` ("Spotify · spor 3 av 12") for tracks and
   `hint_episode` for a show, `hint_continues`/`hint_from_start` as for any resume entry; context mode
@@ -590,7 +663,15 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
 
 ### 4.4 The report (`M/logic/Report.kt`)
 - `spotify` (new key, after `storytel`): the phone's last Spotify outcome - `none` (not bound, or never played),
-  `ok`, `reauthorize`, `not_premium`, `no_widevine`, `unreachable`. Never a token, an account id or a device id.
+  `ok`, `reauthorize`, `refused` (the play call's 403: the account or the app, §5.4), `not_premium`, `no_widevine`,
+  `unreachable`, `quota` (Spotify's `QUOTA_EXCEEDED` on a play call: the developer account's bucket is empty). Never a
+  token, an account id or a device id.
+- **Its store** (QA L8): the renderer runs in the service, the report is written by the sync worker
+  (`Sync.writeReport`, `sync/Sync.kt:214-234`, which reads Storytel's state from a file). So the renderer persists its
+  last outcome in `noBackupFilesDir/spotify_state.json` (`{"outcome": "<word>", "at": <wall ms>}`, tmp + rename, written
+  only when the word changes) through `logic/Spotify.kt`'s pure `SpotifyOutcome` and `data/Store.kt`; the report and the
+  tiles (§5.8) read the same file. `Off` from the token writes `none`.
+
 - `item_errors` for a Spotify track or episode: `unplayable` (the SDK's `playback_error` on it, or Spotify skipping it:
   region, explicit filter, removed; §5.8). `downloads` never lists a Spotify entry.
 
@@ -610,19 +691,19 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
 | `spotify/SpotifyWebHost.kt` | the one WebView: create, settings, the interceptor, the page bridge, destroy, clear | Android, main |
 | `spotify/SpotifyRenderer.kt` | `Renderer` + `SpotifyPlayer` (`SimpleBasePlayer`), focus, noisy, locks, the sleep fade | Android, main |
 | `assets/spotify/player.html`, `player.js` | our page and its glue (GPL, ours; the SDK is never copied) | `PlayerJsTest` (the bridge names), the fake's stub |
-| `logic/Spotify.kt` | visibility, words, the play window, the start budget, the tile line | pure, `SpotifyRulesTest` |
+| `logic/Spotify.kt` | `spotifyPlayability` (H1), the context item (H3), words, the play window, the start budget, the tile line, `SpotifyOutcome` (L8) | pure, `SpotifyRulesTest` |
 
 `RendererKind` gains `SPOTIFY` and a property `onPhone` (`LOCAL`, `SPOTIFY` true; `SONOS` false). Every
-`RendererKind.LOCAL`/`SONOS` comparison in `PlaybackService`, `MusicViewModel`, `UiModel` is re-read in step 5 by that
+`RendererKind.LOCAL`/`SONOS` comparison in `PlaybackService`, `MusicViewModel`, `UiModel` is re-read in step 5b by that
 rule (§5.10's table names each site).
 
 ### 5.2 The WebView host (`SpotifyWebHost`, owned by `PlaybackService`)
 - **Owner**: the service, never an Activity (the spike's lesson: a WebView owned by its screen died with it, spike §7b). One
   per process (the SDK runs one player per page). Created with the application context **at the first Spotify play**
   (never at a restore: "nothing starts by itself" also means no Connect device appears by itself), destroyed when the
-  service is destroyed, at 5 minutes after the last Spotify renderer detached or paused (the device then leaves the
-  account's Connect list), on the renderer process's death, and when the token's `account` changes (another account or
-  a new login: the old account's state must not linger).
+  service is destroyed, at every suspension of the app (§5.7), at 5 minutes after the last Spotify renderer detached or
+  paused (the device then leaves the account's Connect list), on the renderer process's death, and when the token's
+  `account` changes (another account or a new login: the old account's state must not linger).
 - **Settings**: `javaScriptEnabled` (the SDK), `domStorageEnabled` (the SDK keeps its device state there),
   `mediaPlaybackRequiresUserGesture = false` (the spike played on a Web API command without a gesture), `allowFileAccess
   = false`, `allowContentAccess = false`, `setGeolocationEnabled(false)`, `setSupportMultipleWindows(false)`,
@@ -638,9 +719,11 @@ rule (§5.10's table names each site).
   `loadDataWithBaseURL("https://appassets.androidplatform.net/spotify/", html, ...)` (the spike's secure origin; no
   `androidx.webkit` dependency). The HTML has no inline script: it loads
   `player.js` from the same origin and the SDK from `SpotifyEndpoints.sdkUrl()` (`https://sdk.scdn.co/spotify-player.js`,
-  or the fake's with the debug switch), the only substitution in the template. A CSP meta tag: `default-src 'none';
+  or `https://fake-spotify.invalid/sdk/spotify-player.js` with the debug switch), the only substitution in the template.
+  A CSP meta tag: `default-src 'none';
+
   script-src https://appassets.androidplatform.net https://sdk.scdn.co; frame-src https://sdk.scdn.co; connect-src https:
-  wss:; media-src https: blob:; img-src https: data:` (the debug build adds the fake's `http://10.0.2.2:<port>`). It
+  wss:; media-src https: blob:; img-src https: data:` (the debug build adds `https://fake-spotify.invalid`, §9.3). It
   binds our frame only; Spotify's iframe brings its own.
 - **The interceptor** (`WebViewClient.shouldInterceptRequest`, every frame's requests): `WebPolicy.decide(url)` - our
   origin's `/spotify/player.js` and `/spotify/player.html` from assets (anything else there a 404); `https` to a host on
@@ -648,9 +731,17 @@ rule (§5.10's table names each site).
   403 and a counter (`blocked hosts` in the debug log, host only, never the URL; a release logs nothing). **A
   WebSocket isn't seen by `shouldInterceptRequest`** (the SDK's `wss://dealer...spotify.com` connection): it is bounded
   only by the DNS filter and, in our frame, the CSP's `wss:` - Spotify's iframe is Spotify's code (§7.2).
+  **Service workers** don't pass through `shouldInterceptRequest`: `ServiceWorkerController.getInstance()
+  .setServiceWorkerClient(...)` (platform API 24, no `androidx.webkit`) applies the same `WebPolicy` to their requests
+  (process-wide; the music app has no other WebView).
+  **The debug build only** (§9.3, 26b M2's one switch): with the switch set, the interceptor also answers the fake's
+  https name `https://fake-spotify.invalid/` by fetching the same path from the debug base over the LAN client
+  (`SpotifyEndpoints.webProxy()`), so the stub SDK, its tone and its long-poll come in under https - mixed content stays
+  blocked (`MIXED_CONTENT_NEVER_ALLOW`, the WebView's default) and the release WebView never sees the name.
   `shouldOverrideUrlLoading` returns true for everything (the page never navigates). `onPermissionRequest` grants only
+
   `RESOURCE_PROTECTED_MEDIA_ID`, only to `https://sdk.scdn.co` or our origin (which one asks is logged in the debug
-  build for step 5's device check), and denies the rest. `onRenderProcessGone` returns true and tells the renderer
+  build for step 5b's device check), and denies the rest. `onRenderProcessGone` returns true and tells the renderer
   (§5.8).
 - **Clearing**: on an `account` change, when the token answer says `off`, and when the service sees the library without
   Spotify entries: `CookieManager.removeAllCookies`, `WebStorage.deleteAllData()`, `clearCache(true)` on the host's view
@@ -682,47 +773,90 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
 ### 5.4 Playing (list mode)
 - `load(items, startIndex, startMs, playNow)`: keeps the queue (the service's `Active.items`, never filtered), the index
   and the position; plays only with `playNow`. No WebView, no network before a play.
-- **A start** (`play()` on a loaded queue, a tile, a pick, a step): at most `SPOTIFY_START_BUDGET_MS` = 25 s in all,
-  under the service's switch hold (`PlayerHub.State.waiting`, `Commands.MOVES`; `SWITCH_WAIT_MAX_MS` 35 s covers it):
-  1. the network gate (`streamAllowed(caps, mobileData)`; else no start: the line "Spotify - trenger Wi-Fi" or
-     "Spotify - trenger internett", paused - the entry is all streams, so there is nothing to move on to);
+- **A start** (`play()` on a loaded queue, a tile, a pick, a step): at most `SPOTIFY_START_BUDGET_MS` = 25 s in all:
+  1. the network gate - the service's (§5.10, `spotifyPlayability`): else no start, paused, the state
+     `SPOTIFY_NEEDS_WIFI` / `SPOTIFY_NEEDS_INTERNET` (§5.8) - the entry is all streams, so nothing moves on;
   2. in parallel: the host and its `ready` device id (create + page + SDK, at most 20 s), and a token with at least
      5 minutes left (`TokenCache`, the bridge's at most 10 s);
   3. `SpotifyApi.play(token, deviceId, Uris(window, positionMs))`: `PUT {base}/v1/me/player/play?device_id=<id>`, body
-     `{"uris": [...], "position_ms": <ms>}`, the guarded public-only OkHttp client, 10 s. **The window** is the queue
-     from the current index, at most `WINDOW_MAX` = 50 uris (`playWindow`); the tracker maps the SDK's current uri back
-     to the queue index. Outcomes: 204 -> wait for our first uri in a playing state (at most 10 s); 404 (the device not
-     known yet) -> `PUT /v1/me/player {"device_ids": [<id>], "play": false}` and the play once more; 401 ->
-     `TokenCache.invalidate()`, one new token, once more; 403 -> `not_premium` when the body's `reason` is
-     `PREMIUM_REQUIRED`, else `unplayable` for the item; 429 -> wait `Retry-After` if at most 5 s, once, else
-     `unreachable` ("busy"); 5xx/IO -> `unreachable`.
-  4. `seekGate`/resume: `position_ms` carries phase 1's resume position, so the track starts there - no audible second
-     from 0:00 [device check] (Sonos needed its hush; Spotify starts at the position).
+     `{"uris": [...], "position_ms": <ms>}`, the guarded public-only OkHttp client (the LAN client only with the debug
+     switch, §9.3), 10 s. **The window** is the queue from the current index, at most `WINDOW_MAX` = 50 uris
+     (`playWindow`). Outcomes:
+     - 204 -> wait for our first uri in a playing state (at most 10 s);
+     - 404 (the device not known yet) -> `PUT /v1/me/player {"device_ids": [<id>], "play": false}`, **wait for its 204
+       and then for a state or `ready` from the SDK (at most 3 s)** - the Player API doesn't order calls (§1.1) - and the
+       play once more;
+     - 401 -> `TokenCache.invalidate()`, one new token, once more;
+     - **403 -> an account or app outcome, never the track's** (QA M5): a user not in User Management, the app owner's
+       Premium lapsed, `PREMIUM_REQUIRED`, `DEVICE_NOT_CONTROLLABLE`, `REMOTE_CONTROL_DISALLOW` - a track the account
+       can't play starts and is skipped by the SDK, it isn't refused by the call. The body's `reason`
+       `PREMIUM_REQUIRED` -> outcome `not_premium`, any other 403 -> `refused`; the renderer pauses with
+       `SPOTIFY_ASK_ADULT`; no item error, no move to the next item;
+     - 429 -> with `QUOTA_EXCEEDED` the outcome `quota` (paused, `SPOTIFY_NEEDS_INTERNET`'s wording "Spotify er ikke
+       tilgjengelig nå"); else wait `Retry-After` if at most 5 s, once, else `unreachable`;
+     - 5xx/IO -> `unreachable`.
+  4. `position_ms` carries phase 1's resume position, so the track starts there - no audible second from 0:00 [device
+     check] (Sonos needed its hush; Spotify starts at the position).
+- **The Media3 state** (QA M1; like 26a §3.2's table, `SpotifyPlayer` = the `SimpleBasePlayer`):
+
+| Situation | `playWhenReady` | `playbackState` | `showsPlaying` |
+|---|---|---|---|
+| loaded, not started (`load(.., playNow = false)`, a restore) | false | READY | false |
+| a start of ours runs (host, token, `PUT`, waiting for our first state; up to 25 s) | true | BUFFERING | **true** (the intent: the button shows pause, design 28's `sessionPlay` and `setNowPlaying` say playing, Media3 keeps the foreground) |
+| a fresh state of ours, not paused | true | READY | true |
+| no state for up to 30 s while we play (a gap in the 5 s posts, a throttled timer, a track change) | true (held) | READY | true |
+| no state for more than 30 s, or the start budget ran out | false | READY | false (`unreachable`, §5.8) |
+| a paused state of ours, `vibb.pause()` confirmed | false | READY | false |
+| `null` state (confirmed, below) or a foreign state | false | READY | false |
+| `Ended` (the queue's last item played out) | false | ENDED | false |
+| an error that stops the renderer | false | IDLE | false |
+
+  `play()` while a start of ours runs is a no-op (a second tap on the tile during a cold start sends nothing); `pause()`
+  during a start cancels it (no `PUT` after it; one already sent is followed by `vibb.pause()`). Chromium throttles
+  timers of hidden pages, but an audible page is exempt [device check: the 5 s posts keep coming with the screen off];
+  the 30 s hold covers a throttled one.
 - **Pause / resume / seek** within the current item: the SDK (`vibb.pause()`, `vibb.resume()`, `vibb.seek(ms)`), no
-  Web API call. A resume after the device was dropped (null state, or the host destroyed after 5 idle minutes) is a
-  fresh start at the bookmark.
+  Web API call. A resume after the device was dropped (a confirmed `null` state, or the host destroyed after 5 idle
+  minutes) is a fresh start at the bookmark.
 - **Steps** (next, previous, a pick, the carousel's swipe) are the service's (`skipTarget`, `pickPlan`, design 27's
   `SKIP_TO`), which call `renderer.seekTo(index, ms)`: a new play with the window from that index. Steps within 300 ms
   coalesce into one call (a mashed "next" sends one `PUT`, vibb's skip debounce).
 - **Natural advance**: Spotify plays on through the window by itself (no call from a sleeping phone); the tracker sees the
-  next uri and emits `ItemChanged(index + 1, auto = true)`, the service saves the old item done (`finished`, the
-  listing's duration) and the bookmark moves. At the window's last item's end, the renderer plays the next window from
-  the following index; at the queue's last item's end, `Ended` (phase 1's `clear_state`).
+  expected next uri and emits `ItemChanged(index + 1, auto = true)`; the service marks the old item done and moves the
+  bookmark, and **sends nothing** - the next track starts where Spotify starts it, at 0 (QA M4: the service's
+  "resume an item heard before" seek on a natural advance stays ExoPlayer's, §5.10).
+- **Past the window** (a queue longer than 50): when the window's last item becomes current, the renderer adds the next
+  queue item with `POST /v1/me/player/queue?uri=<uri>&device_id=<id>` (Add Item to Playback Queue), and again each time
+  such an added item becomes current - always one item ahead, so the list never runs out under Spotify's control and
+  nothing is cut (re-sending a window in a track's last seconds, QA H4's proposal, would restart the playing track: not
+  taken). If the add call fails, the item's end is a gap: the renderer starts a new window from the next index (one
+  `PUT`). [device check: the queue call on the SDK's device]
+- **Ownership: only our uris are ours** (QA H4). A state's current uri is ours when it is the uri we sent for the
+  current index, or **the expected next item** - the next uri of our queue - matched by uri, or by the SDK's `linked`
+  when it gives one (undocumented; the Web API removed `linked_from` in February 2026), or **by title and duration**:
+  `"<name> — <artists>"` built from the state exactly as the server builds the listing's title (§3.4) equals the item's
+  title, and the durations are within 2 s (a relinked copy of the same recording). **Anything else is not ours**: a
+  recommended track after the window or the queue (the account's Autoplay), another Spotify app transferring playback
+  to "Vibb", a leftover session - it is paused at once (`vibb.pause()`), never saved, never mapped to an index, and the
+  player shows paused with nothing new. After `Ended` (the queue's last item played out) every later playing state is
+  paused at once. vibb's `play_origin` rule ("only a box-initiated session may write") is this rule.
 - **The end of a track** is read from the state: a state for the current uri with `paused`, position 0 and the last
   playing position within 3 s of the duration (or the duration known and passed) without a pause of ours pending =
-  ended; Spotify's own advance shows as a new current uri. **Relinking**: a current uri that isn't in the window is
-  matched through `linked` (the SDK's `linked_from` when it gives one), else taken as the next index when it came
-  without a command of ours right after an end (`SpotifyTrackerTest` pins all three).
+  ended; Spotify's own advance shows as the expected next uri. `SpotifyTrackerTest` pins: the advance, the end of the
+  window (the queue add), the end of the queue, autoplay after the window and after the queue (paused, nothing saved),
+  a relink matched by title and duration, a foreign transfer.
+- **Unplayable** (QA M5): only from the SDK - a `playback_error` while one of our uris is current, or Spotify skipping
+  past one of our uris (the next state names a later uri of ours without the first having played 3 s). Then
+  `Error("unplayable")`: the service records it (§5.10) and the queue moves on; **after 3 unplayable items in a row the
+  renderer stops** (paused, the row "Kan ikke spilles", no more calls) - a whole list the account can't play costs at
+  most three calls.
 - **Positions** (`saveNow`): the last **measured** position - the most recent state's `position` for the current item,
   as received (at most 5 s old while playing) - never extrapolated (26a: no guess reaches Room). `positionMs()` (display
   only) extrapolates while playing. `durationMs()`: the state's `duration`, else the listing's.
-- **`showsPlaying`**: the last state is ours (the current uri is in our window or context), not paused, and no older than
-  12 s while playing (two missed 5 s posts); else false. It is what `publish` and `setNowPlaying.playing` report.
-- **Not ours** (vibb's `play_origin` rule; "nothing starts by itself"): a state for a uri/context we didn't send (another
-  Spotify app transferred playback to "Vibb", or a leftover session) is paused at once (`vibb.pause()`), never saved,
-  and the player shows paused. A `null` state while we played (the account moved playback to another device) is
-  `Elsewhere`: the bookmark of the last measured position is written, the renderer shows paused with the line
-  "Spotify spiller et annet sted" / "Spotify is playing somewhere else", and a play takes it back (a fresh start).
+- **A `null` state** (the account moved playback elsewhere) is confirmed before it counts (QA L11: one `null` can be
+  transient around a transfer or a track change): `vibb.state()` 2 s later, or a `not_ready`; still `null` -> `Elsewhere`:
+  the bookmark of the last measured position is written, the renderer shows paused with `SPOTIFY_ELSEWHERE` ("Spotify
+  spiller et annet sted" / "Spotify is playing somewhere else"), and a play takes it back (a fresh start).
 
 ### 5.5 Tokens on the phone (`TokenCache`, `SpotifyBridgeToken`)
 - In memory only (never a file, Room, `renderer.json`, a log or a `toString`: `TokenResult.Ok.toString()` redacted,
@@ -735,6 +869,12 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   `Unreachable`.
 - **Cooldowns**: after `Reauthorize` no bridge call for 10 minutes (and the line says so); after `Unreachable` the next
   play asks again; `Busy` waits its `retry_after`.
+- **Ahead of expiry while playing** (QA M2): the SDK asks for a token when the old one expired (§1.1) - typically with
+  the screen off, and the bridge -> launcher -> tsnet -> server path is untested in Doze. So while the renderer's
+  `playWhenReady` is true, `TokenCache` refreshes when 10 minutes are left (under the renderer's wake lock, §5.7), and a
+  failed refresh retries every 2 minutes until the old token expires; the SDK's `needToken` is then answered from
+  memory. The debug log names each refresh (time and outcome, never the token). QA checklist item 6 runs 2.5 hours, so
+  at least two refreshes happen with the screen off.
 - The SDK's `needToken` is answered from the cache or the bridge; a failure answers `null` (the SDK then reports an
   `authentication_error`, which the renderer reads through the token result it already has).
 
@@ -745,10 +885,13 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   a show) before a start and abandons it on pause/detach; a loss is `Paused(FAULT)`, a transient loss `Interrupted`
   (paused, played again on the gain, vibb's resume overlap as `LocalRenderer` does), a "duck" is `vibb.volume(0.3)` and
   back. **[device check]** whether the WebView requests focus itself for its media: if it does (our own request would
-  then be taken away by our own WebView), the renderer drops its request and maps the WebView's pauses instead - step 5
+  then be taken away by our own WebView), the renderer drops its request and maps the WebView's pauses instead - step 5a
   logs the focus changes on the Jelly Star and picks the branch; the open point says so.
 - **Becoming noisy** (a headset unplugged, Bluetooth gone): a receiver for `ACTION_AUDIO_BECOMING_NOISY` while playing
   -> `Paused(FAULT)` (ExoPlayer's `setHandleAudioBecomingNoisy` on the local side).
+- **Our own ExoPlayer stands down** (QA L1): attaching the Spotify renderer from the phone calls `local.standDown()`
+  first, as `toRoom` does (`PlaybackService.kt:1552`, "a paused Exo keeps its audio focus"), so our own player doesn't
+  hold focus against the Spotify renderer's request.
 - **The output picker**: a `dev:<id>` choice can't be forced on the WebView's audio (no `setPreferredDevice` for it);
   under the Spotify renderer the sheet keeps the choice for the next local item and Android routes Spotify like any
   media (a connected headset or speaker wins). `setPreferredAudioDevice`, `setWakeMode`, `setAudioAttributes` are
@@ -771,76 +914,133 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   command" holds, a Spotify start is one).
 - **Bedtime and time rules** (21 step 4, 26a §6): the launcher pauses the session before it suspends the app
   (`pauseBeforeSuspend`) -> `renderer.pause()`; `MY_PACKAGE_SUSPENDED` (the service up) -> `saveNow(force)`, `pause()`,
-  and if no paused state arrives within 2 s the host is destroyed (the audio stops with the renderer process, whatever
-  the network does). While suspended `playAllowed` refuses every start (`KidPlayer`, the commands, resumption).
+  and **the host is destroyed whatever the state** (QA L11): the audio stops with the renderer process whatever the
+  network does, and no Connect device "Vibb" exists while the app is suspended (else another Spotify app could transfer
+  playback to it, and it would sound for a moment before the ownership rule pauses it - media needs no gesture). While
+  suspended `playAllowed` refuses every start (`KidPlayer`, the commands, resumption). Outside a suspension, that
+  moment of a foreign transfer to an idle-but-alive host (at most 5 minutes after the last play) is accepted.
+
 - **Restart**: the service attaches `LocalRenderer` as today; a stored Spotify queue is restored paused (`load`, no
   play, no WebView, no network); the next play starts at the bookmark.
 
 ### 5.8 Errors and what the kid sees
-| What happened | The renderer | The tile and the player's quiet line (nb / en) | `music_state` |
+**The carriers** (QA M6; the code has three, and each row below names its own):
+- **`RendererState`** (`PlayerModel.kt:46`, today the Sonos four) gains `SPOTIFY_NEEDS_WIFI`, `SPOTIFY_NEEDS_INTERNET`,
+  `SPOTIFY_ASK_ADULT`, `SPOTIFY_NOT_ON_PHONE`, `SPOTIFY_ELSEWHERE`, `SPOTIFY_STOPPED`, with strings in `values` and
+  `values-nb`; the Spotify renderer's `rendererState` carries the current one, `PlayerHub.State.rendererState` brings it
+  to the player (`PlayerScreen.rendererStateText`, the quiet line under the title) and - for the entry that is loaded -
+  to its tile's hint (`UiModel` reads `PlayerHub.State.entryId` + `rendererState`; the tile's line is otherwise
+  `LibraryView.hint` from the snapshot). A new property `RendererState.remote` (true for the four Sonos values) keeps
+  26a's meaning where it matters: **`callStep`'s "paused" test** (`PlaybackService.kt:1121`, `rendererState == null`)
+  becomes `rendererState?.remote != true`, so a paused Spotify renderer with a state counts as paused for the call rule.
+- **`PlayerHub.Message`** (transient, `PlayerHub.kt:124`): `CANT_PLAY` for an unplayable track's skip (the existing
+  message), `CANT_PLAY_ON_SONOS` on a room (26a). No new message; `NOT_DOWNLOADED` is never emitted for Spotify.
+- **The stored outcome** (`spotify_state.json`, §4.4): the persistent account states - `reauthorize`, `refused`,
+  `not_premium`, `no_widevine`, `quota` - show on **every** Spotify tile's hint ("Spotify - spør en voksen" /
+  "Spotify er ikke tilgjengelig nå"), not only the loaded one's, until a play succeeds (`ok`).
+
+| What happened | The renderer | Carrier: the line (nb / en) | `music_state.spotify` |
 |---|---|---|---|
-| no Wi-Fi (mobile data not allowed) | no start, paused | "Spotify - trenger Wi-Fi" / "Spotify - needs Wi-Fi" | unchanged |
-| offline, the SDK script or `ready` not reached in 20 s, the play call unreachable | paused | "Spotify - trenger internett" / "Spotify - needs the internet" | `unreachable` |
-| `Reauthorize` (refresh token ended, app refused) | paused | "Spotify - spør en voksen" / "Spotify - ask a grown-up" | `reauthorize` |
-| `account_error`, or the play call's 403 `PREMIUM_REQUIRED` | paused | "Spotify - spør en voksen" | `not_premium` |
-| `initialization_error` (no EME/Widevine) | paused, the host destroyed | "Spotify virker ikke på denne telefonen" / "Spotify doesn't work on this phone" | `no_widevine` |
-| `playback_error` on a track, or Spotify skipping it (region, the Family explicit filter, removed) | `Error("unplayable")`: the queue moves on (phase 1's failed item) | that row "Kan ikke spilles" | `item_errors` `unplayable` |
-| `null` state while playing | paused, bookmark kept | "Spotify spiller et annet sted" / "Spotify is playing somewhere else" | unchanged |
-| the renderer process died, or a crash | paused, the host destroyed | "Spotify stoppet - trykk spill" / "Spotify stopped - press play" | unchanged |
-| `Off` (the phone was unbound) | paused, the host cleared | the entries leave with the next library | `none` |
+| no Wi-Fi (mobile data not allowed) | no start, paused | `SPOTIFY_NEEDS_WIFI`: "Spotify - trenger Wi-Fi" / "Spotify - needs Wi-Fi" | unchanged |
+| offline, the SDK script or `ready` not reached in 20 s, the play call unreachable, no state for 30 s | paused | `SPOTIFY_NEEDS_INTERNET`: "Spotify - trenger internett" / "Spotify - needs the internet" | `unreachable` |
+| `Reauthorize` (refresh token ended, app refused) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome: "Spotify - spør en voksen" / "Spotify - ask a grown-up" | `reauthorize` |
+| the play call's 403 (not `PREMIUM_REQUIRED`) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `refused` |
+| `account_error`, or the play call's 403 `PREMIUM_REQUIRED` | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `not_premium` |
+| the play call's 429 `QUOTA_EXCEEDED` | paused | `SPOTIFY_NEEDS_INTERNET` with the text "Spotify er ikke tilgjengelig nå" / "Spotify isn't available right now" + the stored outcome | `quota` |
+| `initialization_error` (no EME/Widevine) | paused, the host destroyed | `SPOTIFY_NOT_ON_PHONE`: "Spotify virker ikke på denne telefonen" / "Spotify doesn't work on this phone" + the stored outcome | `no_widevine` |
+| `playback_error` on one of our tracks, or Spotify skipping it (region, the Family explicit filter, removed) | `Error("unplayable")`: the queue moves on; after 3 in a row, paused | `PlayerHub.Message.CANT_PLAY`; the list's row "Kan ikke spilles" | `item_errors` `unplayable` |
+| a confirmed `null` state while playing | paused, bookmark kept | `SPOTIFY_ELSEWHERE`: "Spotify spiller et annet sted" / "Spotify is playing somewhere else" | unchanged |
+| the renderer process died, or a crash | paused, the host destroyed | `SPOTIFY_STOPPED`: "Spotify stoppet - trykk spill" / "Spotify stopped - press play" | unchanged |
+| `Off` (the phone was unbound) | paused, the host cleared | none: the entries leave with the next library | `none` |
 
 The parent sees the same through `music_state` on the device card (§3.6). Nothing here touches another source.
 
 ### 5.9 Context mode
-- The queue is **one synthetic item** per context entry (key = the bookmarked track id, else `"context"`; uri the
-  entry's target; title the entry's name until a state names the track). A start is `PUT .../play` with
-  `{"context_uri": <target>, "offset": {"uri": <bookmarked track uri>}, "position_ms": <pos>}` for a playlist (Spotify
-  plays its own order from the bookmarked track), `{"context_uri": <target>}` for an artist (no offset is documented for
-  artists; the artist plays from Spotify's start - **an artist has no resume**, §12). A playlist context needs the
-  **player's** account to be able to open the playlist (public, shared by link, or followed) [device check]; if it can't,
-  the play call's error is the tile's "Kan ikke spilles" and the parent's card names the playlist.
+- **The synthetic item is the snapshot's** (QA H3): `Snapshot.listed` gives a `spotifyMode == "context"` entry one
+  `PlayItem` made by `logic/Spotify.kt`'s pure `contextItem(entry)` - key **`context`** (stable, never a track id),
+  title the entry's name, no url, no duration - so `Snapshot.entries` (which keeps only entries with visible items,
+  `data/Snapshot.kt:107`) shows the tile, `playEntry`'s order and `restore()`'s `storedPlan` find the key, and the
+  stored queue (`NowPlayingRow.keys`), `Active.items`, `lastIndex` and the position rows stay valid across tracks.
+  `LibraryView` gives it `hint_spotify_picks` and no "N av M"; the list screen shows one row.
+- **Position and bookmark**: the row `(entry key, "context")` holds the live track's position; the service saves a
+  context item with `durationMs = null`, so it is never marked done (a track's end is not the context's; vibb's
+  bookmark has no done mark). **The live track** - its id and title - is in `noBackupFilesDir/spotify_context.json`
+  (`{entryKey: {"track": "<id>", "title": "<Song — Artist>"}}`, tmp + rename, `data/Store.kt`), written on every track
+  change; the tile's hint and a restart read it.
+- **A start** is `PUT .../play` with `{"context_uri": <target>, "offset": {"uri": "spotify:track:<stored track>"},
+  "position_ms": <the context row's position>}` for a playlist (Spotify plays its own order from the stored track),
+  `{"context_uri": <target>}` for an artist (no offset is documented for artists; the artist plays from Spotify's start -
+  **an artist in context mode has no resume**, §12). A playlist context needs the **player's** account to be able to
+  open the playlist (public, shared by link, or followed) [device check]; if it can't, the call's 403/404 is
+  `SPOTIFY_ASK_ADULT` and the parent's card names the playlist.
+- **Ownership** in context mode: any track of the context is ours (Spotify picks them); a state whose `context` uri
+  isn't the entry's target is foreign and paused, as in list mode.
 - As tracks change, the renderer swaps the item's metadata in place (`replaceItem(0, ...)`: the title "Song — Artist", the
-  entry cover as art - no per-track picture fetch, the phone never loads remote images) and **saves under the live
-  track's id** (`saveNow` writes `(entry key, track id)`; the bookmark moves with it, vibb's `bookmark_step`). Next and
-  previous are the SDK's (`vibb.next()`/`vibb.previous()`; Spotify's rule); seek as in list mode.
-- The entry's list screen shows "Spotify velger rekkefølgen" and, while this entry plays, the SDK's window (previous,
-  current, next names - `SdkState.prev/next` carry uris only, so the window shows the current track's name and "neste:
-  N spor"; [device check] whether `next_tracks` names are worth more). Nothing of it is stored but the bookmark and the
-  live track's name in `noBackupFilesDir/spotify_context.json` (`{entryKey: {track, title}}`, tmp + rename) for the tile's
-  hint after a restart.
-- No NY for a context entry (nothing is listed).
+  entry cover as art - no per-track picture fetch, the phone never loads remote images). Next and previous are the
+  SDK's (`vibb.next()`/`vibb.previous()`; Spotify's rule); seek as in list mode. A playlist context that plays out is
+  `Ended` (`clear_state` drops the context row's position; `spotify_context.json`'s entry goes too).
+- While this entry plays, its list shows "Spotify velger rekkefølgen" and the current track's title ("neste: N spor"
+  from the state's `next` uris; [device check] whether `next_tracks` names are worth showing). No NY for a context entry
+  (nothing is listed).
 
 ### 5.10 The service (`PlaybackService`) and the renderer axis
 - **Which renderer**: at `start(a, plan)`, an entry with `source == SPOTIFY` on a phone output gets the
   `SpotifyRenderer` (made once per service, kept), every other entry the `LocalRenderer`; a room keeps its
   `SonosRenderer`. A change goes through `attach()` (the old one saved with force and paused before it detaches; 26a
-  §0) - the queue is always one entry, so sources never mix inside a renderer.
-- **Call sites** (step 5 names every `RendererKind` read; the rule: `onPhone` where the question is "the phone or a
-  room", `kind == LOCAL` only where ExoPlayer itself is meant):
+  §0; from the phone `local.standDown()` too, §5.6) - the queue is always one entry, so sources never mix inside a
+  renderer.
+- **The service decides playability itself** (QA H1), so every site below gets an explicit Spotify rule. The rule
+  `isSpotify(a) = a.entry.source == Source.SPOTIFY`; `spotifyPlayability(caps, mobileData)` (pure, `logic/Spotify.kt`) =
+  `streamAllowed` only - `STREAM`, or `NEEDS_NETWORK` with the reason (Wi-Fi or internet) - and **never `GONE`** (a
+  Spotify item has no copy and no url by design).
 
-| Site | Today | With Spotify |
+| Site (`PlaybackService.kt` at `437eb84`) | Today | With Spotify |
 |---|---|---|
+| `playable()` (`:706-712`) | true on a room, else `playability(hasCopy, url != null, ...)` | a Spotify item: `spotifyPlayability(...) == STREAM` |
+| `playableFrom()` (`:714-718`) | the first playable from an index | a Spotify entry: all items or none (the gate is the network, not the item), so `index` or null |
+| `start()` (`:670-702`) | `NOT_DOWNLOADED` when nothing or another item is playable | a Spotify entry with no network: no load of play, the renderer's state `SPOTIFY_NEEDS_WIFI`/`_NEEDS_INTERNET` (§5.8), never `NOT_DOWNLOADED`, never another index |
+| `goTo()` (`:883-891`, steps, swipes) | `NOT_DOWNLOADED` and a jump | the same Spotify rule as `start` |
+| `onItemChanged()` (`:1048-1080`) | an unplayable item moves on, else pauses with `NOT_DOWNLOADED` | a Spotify entry: the network check as `start` (pause with the Spotify state, never move on); **the natural-advance seek (`auto && kind == LOCAL`) stays `LOCAL` only** (QA M4: on Spotify, as on a room, the next track starts where Spotify starts it) |
+| `onError()` (`:1150-1182`) | records `item_errors` only for `url != null`; `NOT_DOWNLOADED` when offline | a Spotify item: `unplayable` is recorded (`ItemErrors.record`), the message `CANT_PLAY`, the queue moves on (the renderer stops after 3 in a row, §5.4); the offline test doesn't apply |
+| `mediaItem()` (`:726-768`) | uri = the url (empty for url-null), an `ItemTag` | a Spotify item: uri `uriOf(kind, key)` (`spotify:track:<key>` / `spotify:episode:<key>`; the context item the entry's target), **no `ItemTag`, no cache key** - `GuardsTest`: a Spotify MediaItem never reaches `ItemMediaSourceFactory` |
+| `wakeModeFor()` (`:721-724`) | `WAKE_MODE_LOCAL`/`NETWORK` | a no-op on the Spotify renderer (its own locks, §5.7) |
+| `onIsPlayingChanged()` (`:1137-1148`) | deletes the item's error when it plays | unchanged (a Spotify item has no `fileId`) |
+| `onPlaybackResumption()` (`:473-509`) | not a room: `restore()` and the items handed to the session (Media3 plays them on `KidPlayer(local.player)`) | **a stored Spotify queue takes the room's shape** (QA H2): attach the Spotify renderer, `resumeLast()` (through `start`, gated), and fail the future ("playing on Spotify") - no local items; `restore()` builds for the renderer its entry needs |
+| `onDestroy()` (`:321`, `renderer !== local`) | releases the local player when a room renders | the Spotify renderer is released (the host destroyed) besides `local.release()` |
+| `lookAtRoom()` (`:1372`, `:1388`), `lookAgainBeforePlaying()` (`:1451`) | look at a recorded room only while the phone's ExoPlayer renders | `renderer.kind.onPhone` instead of `=== local`: a recorded room is looked at before a Spotify start too (Home's RESUME never starts the phone under our stream still on a room) |
+| `comeHome()` (`:1602`, `renderer !== local`) | the phone's queue after a room | coming home to a Spotify entry attaches the Spotify renderer paused (the room had nothing of it: `toRoom` refuses a Spotify entry) |
+| `toRoom()` (`:1525-1560`) | a queue a speaker can play, else the phone stays | from a Spotify entry: nothing speaker-playable, so **the phone keeps playing** and `CANT_PLAY_ON_SONOS` shows (`:565`, `:1632`) - the code's behaviour, kept (QA L1) |
 | `loadForRenderer`/`load(remote)` | `remote = SONOS` | unchanged (`!onPhone`) |
 | `queueFor`'s speaker filter | `kind == LOCAL ||` speaker-playable | `onPhone ||` speaker-playable |
-| the auto-advance special case (`auto && kind == LOCAL`, `:1072`) | ExoPlayer's own advance | read for SPOTIFY: the tracker's `ItemChanged(auto)` is the same event, so the same branch with `onPhone` (step 5 confirms against the code) |
 | the audio-mode call backstop (`kind == SONOS`) | rooms | unchanged |
-| `toRoom` / `comeHome` | phone <-> room | from a Spotify entry: a room has nothing speaker-playable (26a's path: "Kan ikke spilles på Sonos", paused); coming home to a Spotify entry starts the `SpotifyRenderer` paused |
+| `callStep()`'s paused test (`:1121`) | `rendererState == null` | `rendererState?.remote != true` (§5.8) |
 | `RendererGate`, `renderer.json` | rooms only | unchanged (Spotify is never stored there) |
-| `MusicViewModel`/`UiModel` (`onRoom`, `playerNumber`, `swipeSwitch`) | room vs phone | `onPhone` for SPOTIFY |
-| `reportNowPlaying` (every change, the 15 s tick, `onDestroy`) | `renderer.showsPlaying` | unchanged: it reads the Spotify renderer's `showsPlaying` |
+| `MusicViewModel`/`UiModel` `onRoom` | read from the **output** (`OutputKind.SONOS`, `MusicViewModel.kt:41`, `MusicRoot.kt:75`), not `RendererKind` | unchanged (QA L1); `playerNumber`/`swipeSwitch` as for the phone |
+| `reportNowPlaying` (every change, the 15 s tick, `onDestroy`) | `renderer.showsPlaying` | unchanged: it reads the Spotify renderer's `showsPlaying` (§5.4's table) |
+
+  Step 5b re-reads every `renderer === local`/`!== local` and `RendererKind` site against this table (`GuardsTest`
+  pins the list).
+- **Tests** (step 5b): a Spotify cover tap reaches `SpotifyRenderer.load` and `play` (no `NOT_DOWNLOADED`); offline it
+  shows "trenger internett" and nothing moves; a natural advance into a partly heard track sends no `PUT`; a headset's
+  play after a restart with a stored Spotify queue starts the Spotify renderer and hands the session nothing; an
+  `unplayable` is in `item_errors`.
 
 - **Design 28 (the listening window)**: a Spotify session **counts as listening like any renderer**, and needs nothing
   new: the launcher's window stamps from the bridge's `setNowPlaying` (`playing = renderer.showsPlaying`, sent on every
   flip, every 15 s while playing, paused from `onDestroy`), and Home's card and the lock's tile read the platform
-  session, which wraps `KidPlayer(spotifyRenderer.player)`. What it needs from this design: `showsPlaying` honest within
-  12 s (§5.4), the 15 s tick running for this renderer (it does for every renderer), and a paused report when the host
-  dies or the state goes `null` - all in step 5's tests.
+  session, which wraps `KidPlayer(spotifyRenderer.player)`. What it needs from this design: `showsPlaying` as §5.4's
+  table says (the intent during a start, held through a 30 s gap, false on a paused, confirmed-`null` or foreign
+  state), the 15 s tick running for this renderer (it does for every renderer), and a paused report when the host dies
+  or the state goes `null` - all in step 5b's tests.
+
 
 ## 6. The launcher
 
 ### 6.1 The token courier (`MusicBridgeService.getSpotifyToken`, `SpotifyTokenCourier`)
-The appended AIDL method (§8 item 2) runs off the main thread: `POST /api/devices/music/spotify/token` through `MdmApi`
-(the device bearer, over tsnet like every server call), 10 s; the callback gets the body's `status`, the token (only
+The appended AIDL method (§8 item 2) runs off the main thread: `POST /api/devices/music/spotify/token` through
+`MusicServer` (`music/MusicServer.kt`, `createMusicServer` - the music routes' one Retrofit interface, beside its
+`storytel()`; the device bearer, over tsnet like every server call), 10 s; the pure
+`SpotifyTokenCourier.spotifyTokenAnswer(httpStatus, body)` maps the answer; the callback gets the body's `status`, the token (only
 for `ok`), `expires_in_s * 1000` and `account`; a transport failure or a timeout -> `launcher`. **No cache** (the
 music app caches; one source of expiry), **no log** of the body or the token (the existing `callerAllowed` check: only
 the music packages signed like the launcher). An unknown status from a newer server passes through as is (the music app
@@ -854,22 +1054,33 @@ maps unknowns to `Unreachable`).
   - the server drops every delivered domain that **equals or lies under** a listed suffix, or equals a listed exact
     host, from that phone's categories and custom blocks (`handlers::device_api`, beside `is_fcm_protected`) when it is
     true;
-  - the launcher's `DnsFilterEngine.blockedCategory` returns "not blocked" for such a domain **before its suffix walk**
-    while the cached policy's `music.spotify` is true (so a blocked parent like `akamaized.net` never blocks the listed
-    exact host under it).
+  - the launcher's `DnsFilterEngine.classify` (`DnsFilterEngine.kt:107-111`, where `isFcmHost` is) returns null (not
+    blocked) for such a domain **before its suffix walk** while the cached policy's `music.spotify` is true (so a
+    blocked parent like `akamaized.net` never blocks the listed exact host under it);
+  - **the version moves with the binding** (QA M7): the launcher refetches the delivered list only when
+    `dns_filter_version` changes, and `compute_dns_filter_version` (`handlers/device_api.rs:591-624`) hashes the global
+    list, the overrides and the custom domains - not the binding. It gains `spotify:<bool>` in its hash, so binding
+    *and* unbinding a phone refetch its list (else an unbound phone kept a list without the Spotify domains until some
+    other change). A test: bind and unbind each change the version.
+  - **What it overrides**, said on the device card's DNS section while bound: "Spotify's hosts are allowed on this phone
+    while Spotify is on" - a parent's deliberate block of `spotify.com` or `scdn.co` (a streaming category) is
+    overridden on that phone for every app, not only the music app.
 - **The list** (`spotify_hosts.json`, byte-identical in `server/testdata/`, `launcher/app/src/test/resources/` and
   `music/app/src/test/resources/`; each side's constant checked against it by a test):
   ```json
   {
-    "comment": "Spotify's hosts for the Web Playback SDK (design 26c §6.2): the DNS filter never blocks them on a phone with Spotify on, and the music app's WebView loads nothing else. Confirmed by the spike's item 10 step 7 capture before step 3 lands.",
+    "comment": "Spotify's hosts for the Web Playback SDK (design 26c §6.2): the DNS filter never blocks them on a phone with Spotify on, and the music app's WebView loads nothing else. PROVISIONAL (unverified) until the spike's item 10 step 7 capture replaces it (step 6 at the latest).",
     "suffixes": ["spotify.com", "scdn.co", "spotifycdn.com", "spotifycdn.net", "pscdn.co"],
     "exact": ["audio-ak-spotify-com.akamaized.net", "audio-akp-quic-spotify-com.akamaized.net"]
   }
   ```
   **[unverified]** as a whole: the suffixes are Spotify's known domains (the SDK `sdk.scdn.co`, accounts and the Web
   API under `spotify.com`, `spclient`/`dealer`/`apresolve` under `spotify.com`, images `i.scdn.co`, audio CDNs under
-  `scdn.co`/`spotifycdn.com`/`akamaized.net`, podcasts `pscdn.co`). **How to find the real set** (owed before step 3's
-  commit, the spike's §7 item 10 step 7): the emulator with `-tcpdump spike.pcap` playing playlists, a skip storm, a
+  `scdn.co`/`spotifycdn.com`/`akamaized.net`, podcasts `pscdn.co`). **Step 3 lands with this provisional list** (its
+  comment says so); the capture replaces it in a one-line commit of the three copies whenever the user has run it, **at
+  the latest in step 6**, and the stable tags wait for it (QA M9: the contract doesn't wait on the capture). **How to find
+  the real set** (the spike's §7 item 10 step 7): the emulator with `-tcpdump spike.pcap` playing playlists, a skip storm, a
+
   podcast and a 30-minute run; `tshark -r spike.pcap -Y "dns.flags.response == 0" -T fields -e dns.qry.name | sort | uniq
   -c`; plus the device page's DNS log on the Jelly Star with the family's categories on. Every Spotify-owned name goes in;
   a third-party CDN goes in as an exact host only. A host Spotify adds later shows as a blocked request in the music
@@ -896,6 +1107,9 @@ with the Spotify entries (the courier carries their listings like any other).
 - **Refresh tokens**: sealed at rest (AES-256-GCM, the music key, AAD bound to the account), opened only to refresh,
   never sent anywhere but `accounts.spotify.com/api/token`, never in a page, event, log, error, `Debug`. Deleted with the
   account (Remove, Clear). A token rotated by a refresh is written before the access token is used (§2.4).
+- **The phone's token carries its account's whole scope set** (§2.2, QA L2): one hour, memory only; a parent account
+  bound as "plays as" would hand the phone `playlist-read-private` for that hour. Accepted; the binding select advises
+  the child's own account.
 - **Access tokens**: memory only on the server (per account), in the launcher (in flight), in the music app
   (`TokenCache`) and in the page's JavaScript (the SDK's callback). On the phone's Kotlin side `Authorization`/`Bearer`
   appear only in `StorytelApi.kt` and `spotify/SpotifyApi.kt` (`SourceScanTest`); `MediaCache`'s clients never add one.
@@ -910,7 +1124,9 @@ with the Spotify entries (the courier carries their listings like any other).
   characters) - never a real token shape.
 
 ### 7.2 The WebView
-- Loads only our page and Spotify's hosts (§5.2's interceptor, the CSP, no navigation, no new windows), with no file or
+- Loads only our page and Spotify's hosts (§5.2's interceptor - service workers' requests too -, the CSP, no navigation,
+  no new windows; WebSockets only through the DNS filter and the CSP), with no file or
+
   content access, no geolocation, the protected-media permission only, never on screen, cleared on an account change
   and on "off".
 - **The SDK script is not pinned**: it comes from `https://sdk.scdn.co/spotify-player.js` over TLS at every page load.
@@ -937,7 +1153,7 @@ with the Spotify entries (the courier carries their listings like any other).
 | IV "Streaming ... only ... to subscribers to the Premium Spotify Service" | the SDK enforces it (`account_error`); a Free account is `not_premium` |
 | I "an easily accessible mechanism to disconnect" + delete the data | Remove (one account) and Clear (everything) on the Spotify page delete the tokens and the account names; the WebView's storage is cleared on the phone |
 | VI the app name must not begin with "Spot" | the PWA's setup text; the SDK device is named "Vibb" |
-| Terms IV.3.2 caching only temporary | nothing is cached by us: no audio, no offline; the WebView's HTTP cache is the SDK's own (~15 MB ring [spike 10b]) and is cleared on an account change |
+| Terms: "Do not store Spotify Content indefinitely"; local caching "limited to the temporary caching of metadata and cover art" | **an accepted-risk row** (QA L7): no audio is stored by us (no offline; the WebView's HTTP cache is the SDK's own, ~15 MB ring [spike 10b], cleared on an account change), but the listing's metadata (titles, durations) is stored on the server (`music_items`) and the phone (Room), and track art in the server's art store and the phone's covers for as long as the entry is in the library. What deletes them: removing the entry (its listing and items cascade; design 27's art prune drops pictures no listing names; the phone prunes on the next parsed library), a track leaving a playlist (its item goes at the next check), Clear (the accounts; the entries then reach no phone) |
 | Terms: no copying or distributing the platform | the SDK is loaded at run time, never in the repo or the APK (spike §1) |
 
 Spotify's own Norwegian terms ask for 13+ for an ordinary account (spike §8 Q6): the kid's account and its age are the
@@ -949,7 +1165,8 @@ family's matter, outside the code.
    spotify}` (`spotify`: bool, §6.2). `policy_json_keys_snapshot` (server) and `PolicyResponseCompatTest` (launcher).
    An older launcher ignores the key.
 2. **The bridge** (byte-identical in both apps, appended):
-   - `IMusicBridge.aidl`, at the end:
+   - `IMusicBridge.aidl`: the import `import me.vibb.bridge.ISpotifyTokenCallback;` beside the existing
+     `IStorytelCallback` import at its top (an import is not a reordering of methods), and at the end:
      ```aidl
      /** A Spotify access token for this phone's account (design 26c §2.6, §6.1), through [callback]; the launcher
       *  never caches or logs it. */
@@ -978,9 +1195,16 @@ family's matter, outside the code.
    they meant - and the launcher's `MusicPlanTest`).
 4. **`server/testdata/music_state.json`**: `"spotify": "ok"` after `"storytel"`; `item_errors` unchanged in shape (the
    sanitizer test gains `unplayable` and the six `spotify` words; anything else is dropped).
-5. **`spotify_hosts.json`** (§6.2), three copies, with `SpotifyHostsTest` (music), `SpotifyHostsTest` (launcher) and
-   `spotify::tests::hosts_match_the_contract` (server).
-6. `server/testdata/music_listing.json` is **unchanged** (a Spotify item is an ordinary item: `url: null`, `hls: false`,
+5. **`spotify_hosts.json`** (§6.2), three copies, provisional. Equality is pinned as for the other shared files (QA
+   L10): music's `ContractFilesTest` compares its copy with `server/testdata/spotify_hosts.json` byte for byte, the
+   launcher's `MusicPlanTest` compares its copy with the music app's (as it does for the AIDL); each side's constant is
+   checked against its copy (`SpotifyHostsTest` in music and launcher, `spotify::tests::hosts_match_the_contract` on the
+   server).
+6. **CI paths** (root `CLAUDE.md`'s list and the workflows): `launcher.yml` and `music.yml` watch
+   `server/testdata/spotify_hosts.json` and both app copies; `server-ci.yml` watches the app copies; `music.yml` also
+   watches `server/testdata/spotify/` and `scripts/fake-spotify.py` (step 4).
+
+7. `server/testdata/music_listing.json` is **unchanged** (a Spotify item is an ordinary item: `url: null`, `hls: false`,
    `duration_ms`, `art`).
 
 Only step 3 changes a shared file. The listing contract, the policy's other keys, the restrictions and
@@ -1023,8 +1247,13 @@ queue, pause, elsewhere, relinked, unplayable).
   `seek`, `previousTrack`, `nextTrack`, `setVolume`, `activateElement`; the events and errors of §1.1), playing what the
   fake's play endpoint received: a generated tone per track (`/fake/audio/<id>.wav`, the fixture's duration or
   `--track-seconds 20`) through an `<audio>` element - real audio through the WebView, no DRM. It long-polls
-  `/fake/device/<id>/commands`, calls `getOAuthToken` at `connect` and every `--token-ttl` seconds, emits
-  `player_state_changed` like the documented `WebPlaybackState`. Options: `--elsewhere 60` (a `null` state at 60 s),
+  `/fake/device/<id>/commands` - every URL relative to the script's own origin, so under the debug build's
+  `https://fake-spotify.invalid/` they all pass the interceptor's proxy (§9.3) - calls `getOAuthToken` at `connect` and
+  every `--token-ttl` seconds, emits
+  `player_state_changed` like the documented `WebPlaybackState`, and serves `POST /v1/me/player/queue`. Options:
+  `--elsewhere 60` (a `null` state at 60 s), `--autoplay` (after the last uri it plays a track that isn't in the list),
+  `--transfer-in 30` (at 30 s a foreign context starts on the device),
+
   `--unplayable <id>` (a `playback_error` and a skip), `--no-eme` (`initialization_error`), `--not-premium`
   (`account_error`), `--slow-ready 15`, `--relink <id>:<other>`.
 - `--print-library` / `--print-listing ENTRY` print the debug feed's documents for a run without a server (26b's way).
@@ -1033,25 +1262,44 @@ queue, pause, elsewhere, relinked, unplayable).
   `scripts/fake-spotify.py`, `server/testdata/spotify/` and `server/testdata/spotify_hosts.json` (root CLAUDE.md's
   paths list gains them).
 
-### 9.3 The debug switch (music, like Storytel's)
-`SpotifyEndpoints.debugBase: String?`, null unless the debug feed's `config.json` sets `"spotify_base":
-"http://10.0.2.2:8731"`; assigned only in `src/debug` (`DebugSpotify.kt`, from the receiver and `DebugStartup` at
-every process start); taken only for `10.0.2.2` or loopback. Exactly four readers, all in `SpotifyEndpoints.kt`:
-`apiBase()` (the play call), `sdkUrl()` (the page's script), `webHosts()` (the interceptor and the CSP admit the base),
-`debugTokens()` (with the switch, `TokenCache` asks the fake's `/fake/token?user=kid` directly instead of the bridge, for
-a run without a launcher). `SourceScanTest` pins the writer and the readers; a release has no feed
-(`checkReleaseHasNoDebugFeed`). The server side: `SPOTIFY_ACCOUNTS_BASE`/`SPOTIFY_API_BASE` are honoured **only** as
-`http://127.0.0.1:<port>` or `http://[::1]:<port>` (anything else is ignored with one warning), so §6j can run the full
-chain - PWA login, server token, launcher, music app - against the fake on the emulator host.
+### 9.3 The debug switch (music, 26b M2's solution applied again; QA M3)
+26b met the same problem - a fake on `10.0.2.2`, a private address every guard refuses - with **one debug-only switch
+and an exact list of readers**, each taking the base only for `10.0.2.2` or loopback (a `config.json` left on a real
+phone running a debug build must never send a token elsewhere). Spotify does the same:
+- `SpotifyEndpoints.debugBase: String?`, null unless the debug feed's `config.json` sets `"spotify_base":
+  "http://10.0.2.2:8731"`; assigned only in `src/debug` (`DebugSpotify.kt`, from the receiver and from `DebugStartup` at
+  every process start, as `DebugStorytel.kt`); a release has no feed (`checkReleaseHasNoDebugFeed`), so it is null there.
+- **Exactly six readers, all in `SpotifyEndpoints.kt`** (`SourceScanTest` pins the writer and the readers):
+  - `apiBase()` - the play, transfer and queue calls go to the fake's `/v1/...`;
+  - `apiOverLan()` - those calls and `debugTokens` use `MediaCache`'s LAN client instead of the guarded public-only one
+    (`MediaCache.guarded` refuses 10.0.2.2, `MediaCache.kt:64-67`; Storytel's `apiOverLan`, `StorytelEndpoints.kt:52-53`);
+  - `sdkUrl()` - the page's script becomes `https://fake-spotify.invalid/sdk/spotify-player.js`;
+  - `webHosts()` - the interceptor and the CSP admit `fake-spotify.invalid`;
+  - `webProxy()` - **the interceptor fetches every `https://fake-spotify.invalid/<path>` request from
+    `<debugBase>/<path>` over the LAN client and answers it** (the stub SDK, its tone, its long-poll), so the page sees
+    https only and the WebView's mixed-content block (`MIXED_CONTENT_NEVER_ALLOW`, the default) stays as it is;
+  - `debugTokens()` - `TokenCache` asks the fake's `/fake/token?user=kid` directly instead of the bridge, for a run
+    without a launcher.
+- **The server side**: `SPOTIFY_ACCOUNTS_BASE` and `SPOTIFY_API_BASE` are honoured **only** as `http://127.0.0.1:<port>`
+  or `http://[::1]:<port>` (anything else is ignored with one warning at start), and **only while one is set do the
+  Spotify requests use `Reach::Any`** (§2.4; `music_net` refuses a loopback address for `Public`). With the override,
+  §6j part A runs the whole chain - PWA login, server token, launcher, music app - against the fake on the emulator's
+  host; without it every Spotify request is `Reach::Public` to Spotify's hosts. `spotify::tests` pins both.
 
-### 9.4 `docs/testing/emulator.md` §6j (written in step 5)
+### 9.4 `docs/testing/emulator.md` §6j (written in step 5b)
 - **Part A, the fake** (no account): the server with the two base variables, the fake on the host, the debug launcher
   and the debug music app. The PWA's Spotify page: not configured -> the registration text; save the fake client id with
   the loopback redirect, "Log in with Spotify" (the fake consents), the paste flow, the account row. Add the fixture
   playlist (list mode; ticks), the artist (context mode), an album, a show. On the phone: the tiles, a cover tap (the
   fake's log: one token, one transfer or play, the window), the tone, pause/resume/seek (no Web API call), next and a
   mashed next (one `PUT`), the window's end (a second `PUT` from the next index), the queue's end (`clear_state`),
-  `--elsewhere` (paused, "spiller et annet sted", the bookmark), `--unplayable` (moves on, `item_errors`),
+  `--elsewhere` (paused, "spiller et annet sted", the bookmark), `--unplayable` (moves on, `item_errors`), `--autoplay`
+  (the track after the list is paused at once, nothing saved), `--transfer-in` (the foreign context paused), a 60-track
+  playlist (the queue add at the window's end, no gap), a cold start of 15 s with `--slow-ready 15` (the button shows
+  pause throughout, a second tap sends nothing), a headset's play after a restart with a stored Spotify queue (the
+  Spotify renderer starts; ExoPlayer gets nothing), a context entry (the tile, play, a restart restores it paused at
+  the live track),
+
   `--not-premium`, `--no-eme`, `--expire-refresh` (the tile "spør en voksen", the parent's card "log in again"), screen
   off with `dumpsys deviceidle force-idle` for 30 minutes (the tone and the states continue; `dumpsys power` shows our
   wake lock only while playing), the sleep timer's fade, a launcher bedtime edge (paused, then nothing starts), a VoIP
@@ -1071,8 +1319,27 @@ chain - PWA login, server token, launcher, music app - against the fake on the e
 | Server, sweep | list mode for playlist/album/track/show/episode, context mode for an artist and a 403 playlist (and back to list mode once an account may list it), the reader order and memory, the snapshot gate (one request when unchanged, items after a day or Check now), `rate_limited`, `quota` ending the pass's Spotify checks, `spotify_off`/`no_account`/`reauthorize` without a request, the last good list kept, art candidates (own for tracks, the per-pass URL memo), the gate on library/listing/covers/art, the library's `spotify` field, the cards' lines, the device card (binding, two phones one account, the state words), the import (URI and open link imported, short link and collection skipped), the policy's `music.spotify` and the delivered blocklist's drop for a bound phone only |
 | Launcher | `SpotifyTokenCourierTest` (new; the pure `spotifyTokenAnswer(httpStatus, body)` behind `getSpotifyToken`: every status mapped, `launcher` on a transport failure or timeout, an unknown status passed through, nothing cached), `DnsFilterEngineTest` (a Spotify host under a blocked parent passes only with `music.spotify`), `SpotifyHostsTest`, `EnforcementPlanTest` (the WebView provider never restricted), `PolicyResponseCompatTest`, `MusicPlanTest` (the AIDL files and `bridge_contract.json` equal to the music app's) |
 | Music, pure | `SpotifyRulesTest` (the grammar, `uriOf`, visibility on the phone and never on a room, natural order per kind and the order setting, never fetchable, NY eligibility, the words and hints, the play window, the start budget), `SdkStateTest` (caps, nulls, junk), `SpotifyTrackerTest` (every sequence of `sdk_states/`, the end rule, relinking three ways, not-ours paused, `null` -> Elsewhere, measured positions only), `SpotifyApiTest` + `SpotifyHttpTest` (the exact play/transfer requests, every outcome, 401 once, 404 -> transfer -> once, `Retry-After`), `TokenCacheTest` (5-minute margin, one call in flight, cooldowns, redacted `toString`), `SpotifyHostsTest`/`WebPolicyTest` (our asset paths, Spotify hosts, http refused, the debug base only with the switch), `ReportTest` (`spotify` words, `unplayable`), `LibraryViewTest` (`Kind.SPOTIFY`, the hints, context mode's hint), `ContractFilesTest` (the Spotify entries parse; `spotify` field), `BridgeTest` (the callback's statuses), `PlayerJsTest` (the bridge's method names in `player.js` match `SpotifyWebHost`'s) |
-| Music, service | `GuardsTest` (a Spotify item never reaches `LocalRenderer.load`/`ItemMediaSourceFactory`; every `RendererKind` read through §5.10's rule; `saveNow` writes only measured positions), `SourceScanTest` (§7.1, §7.2: the one WebView, its settings, `addJavascriptInterface` only there, no `addView` of it, `Authorization` only in the two API files, no `Log.` with a token, the debug switch's writer and readers, the nb strings), the renderer's behaviour through a fake host (`SpotifyRendererTest` with a scripted page: start, pause, steps coalesced, the window's end, `Ended`, focus loss and transient loss, noisy, the fade, a suspension destroying the host after 2 s without a paused state, `showsPlaying` false 12 s after the last state) |
+| Music, service | `GuardsTest` (a Spotify item never reaches `LocalRenderer.load`/`ItemMediaSourceFactory`, nor the session through `onPlaybackResumption`; every `RendererKind` read through §5.10's rule; `saveNow` writes only measured positions), `SourceScanTest` (§7.1, §7.2: the one WebView, its settings, `addJavascriptInterface` only there, no `addView` of it, `Authorization` only in the two API files, no `Log.` with a token, the debug switch's writer and readers, the nb strings), the renderer's behaviour through a fake host (`SpotifyRendererTest` with a scripted page: start, pause, steps coalesced, the window's end, `Ended`, focus loss and transient loss, noisy, the fade, a suspension destroying the host, `showsPlaying` per §5.4's table - held through a 30 s gap, false after it) |
 | The fake | `python3 -I scripts/fake-spotify.py --selftest` (CI, `music.yml`) |
+
+Added by the design QA fix round (each in its step's tests):
+- **Server**: `interval(link, ..)` per kind; `restamp_versions` restamps a Spotify listing; `SweepView::gated`/`phone_count`
+  for an unbound phone and for no app; `DevicePolicy.music_spotify_account` read by `policy_music`;
+  `compute_dns_filter_version` changes on bind and on unbind; `default_kind_for` (a show to Podkast); short links followed
+  hop by hop (`follow: false`, `SourceResponse.location`, at most 3, hosts checked); `Reach::Any` only with the loopback
+  override; the callback answers 303 to `/music/spotify?login=...` and needs the `spotify_login` cookie; the redirect
+  suggestion is https only for an https request; a `QUOTA_EXCEEDED` stops Spotify checks for 60 minutes; the artist
+  option's listing and its fallback; the scope string without `user-read-playback-state`.
+- **Music, pure**: `SpotifyTrackerTest` - autoplay after the window and after the queue paused and never saved, a
+  foreign transfer paused, a relink matched by title and duration (and not by name alone), a confirmed `null` only after
+  the 2 s look, three unplayable in a row stop, a skip past our uri is `unplayable`; `SpotifyApiTest` - a 403 is
+  `refused`/`not_premium` and never an item error, 429 `QUOTA_EXCEEDED` is `quota`, the transfer's 204 awaited before the
+  second play, the queue add's request; `TokenCacheTest` - the 10-minute prefetch while playing, the 2-minute retry;
+  `SpotifyRulesTest` - `spotifyPlayability` never `GONE`, `contextItem`'s stable key, `SpotifyOutcome`'s file round trip.
+- **Music, service and renderer**: §5.4's state table row by row (`SpotifyRendererTest`), §5.10's service tests,
+  `RendererState.remote` in `callStep`, the loaded tile's state and the stored outcome on every Spotify tile
+  (`LibraryViewTest`/`UiModelTest`), a context entry from the snapshot to a restored queue, the service worker client's
+  policy, the host destroyed at a suspension.
 
 ## 11. Steps (each one implementer, one sitting, its tests, the suites green; branch `music-3-spotify`)
 
@@ -1083,84 +1350,107 @@ testDebugUnitTest` when it or a file its tests read changes. **No new dependency
 `org.json` (no `androidx.webkit`). If one becomes necessary, its checksums go into `gradle/verification-metadata.xml`
 in the same commit (root CLAUDE.md). Migration number: 0073, re-checked at the final rebase.
 
-**Before step 3 lands** (the user, from the spike's checklist): item 10 step 7's DNS capture (§6.2's list), and ideally
-the Jelly Star run of item 10 (Doze with and without the wake lock, §5.7).
+**Order** (QA M9): 1 -> 2a -> 2b -> 3 -> 4 -> 5a -> 5b -> 6 -> 7, each after the one before (step 4 reads the music copy
+of `spotify_hosts.json`, which step 3 adds). Step 3 lands with the **provisional** host list (§6.2); the spike's DNS
+capture replaces the three copies in a one-line commit whenever the user has run it, **at the latest in step 6**. The
+Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed before step 5b's acceptance closes.
 
 1. **Server: the app, the accounts, the login, the token cache.** Files: `S/spotify.rs` (new: links - only the grammar,
-   no listing yet -, PKCE, the authorize URL, `Accounts` with the pending logins and the per-account access lock, the
-   exchange and refresh with rotation, `api_get`, the error codes, `hosts` read from nowhere yet), `S/music_secret.rs`
-   (`seal_with`/`open_with` with an AAD; Storytel's path unchanged), `S/music_net.rs` (`Kind::Token`), `S/main.rs`
-   (`AppState.spotify`; the routes `GET /music/spotify`, `POST /music/spotify/app`, `/app/clear`, `/login`,
-   `/paste`, `/accounts/{id}/remove`, and `GET /music/spotify/callback` among the `public_routes`; the env variables and
-   the loopback-only base overrides), `S/handlers/music_spotify.rs` (new), `templates/music_spotify.html` (new: the
-   setup text, the app card, the accounts card - no add form yet), `templates/music.html` (a link to the Spotify page),
-   `migrations/0073_music_spotify.sql`, `server/testdata/spotify/` (the accounts fixtures), `S/tests/music_spotify.rs` (+
-   `tests/mod.rs`). Tests: §10's server-pure and routes rows for the app, the login, the tokens. Acceptance: the server
-   suite green; the Spotify page at 360 px (no horizontal scroll; a 400 by its field; saves never jump to the top);
-   "not configured" changes nothing else (the library snapshot unchanged). **Not**: entries, the token endpoint, any
-   device-facing change. Owed [device check]: a real login on the parent's browser over https (or the paste), the
-   account row, a second account in a private window, Remove.
-2. **Server: links, entries, listings, the PWA's add and cards, the binding.** Files: `S/spotify.rs` (the listing
-   parsers and readers, short-link resolution), `S/music.rs` (`Link::Spotify`, `entry_link`, `parse_link`'s pointer,
-   `LIBRARY_ENTRIES`' `IN` and `spotify_gate!()`, `cover_in_library`, `art_in_library`, `kind_label`, `LibEntry.spotify`,
-   `item_error_code` `unplayable`, `sanitize_music_state`'s `spotify` words), `S/music_sweep.rs` (`schedule`,
-   `check_entry`, `interval`, `spotify_check` with the snapshot gate and the modes, `device_listing`, `flag_reports`
-   skipping Spotify, `art_candidate` and the per-pass URL memo), `S/music_import.rs` (§3.2's import), `S/handlers/music.rs`
-   + `music_spotify.rs` (`POST /music/spotify/add` with ticks, `SweepView::card`, `check_now`, `/music/cards`,
-   `save_offline` hiding Spotify, the entry page without offline/order for context mode, the device card's select at
-   `POST /devices/{id}/music/spotify` with its lines and the mobile-data text), `templates/music_spotify.html` (the add
-   form), `partials/music_card.html`, `music_entry.html`, `device_detail.html`, fixtures. **The library snapshot is not
-   regenerated here** (its fixture gains Spotify entries in step 3's contract commit). Tests: §10's sweep row and the
-   routes for add/binding/cards. Acceptance: the server suite green; Check now on a Spotify card lists the fixture
-   playlist (CannedFetch), a 403 playlist goes to context mode with the notice, the PWA pages at 360 px. Owed [device
-   check]: a real playlist the parent owns listed with art, an album, an artist in context mode, a Spotify-made playlist
-   refused at add.
+   no listing yet -, PKCE, the authorize URL, `Accounts` with the pending logins, the per-account access lock and
+   `quota_until`, the exchange and refresh with rotation, `api_get`, the error codes, the `Reach` rule with the loopback
+   override), `S/music_secret.rs` (`seal_with`/`open_with` with an AAD; Storytel's path unchanged), `S/music_net.rs`
+   (`Kind::Token`), `S/main.rs` (`AppState.spotify`; the routes `GET /music/spotify`, `POST /music/spotify/app`,
+   `/app/clear`, `/login`, `/paste`, `/accounts/{id}/remove`, and `GET /music/spotify/callback` among the
+   `public_routes`; the env variables and the loopback-only base overrides), `S/handlers/music_spotify.rs` (new: the
+   callback's 303 and the `spotify_login` cookie, §2.3), `templates/music_spotify.html` (new: the setup text with the
+   https-only redirect suggestion, the app card, the accounts card - no add form yet), `templates/music.html` (a link
+   to the Spotify page), `migrations/0073_music_spotify.sql`, `server/testdata/spotify/` (the accounts fixtures),
+   `S/tests/music_spotify.rs` (+ `tests/mod.rs`). Tests: §10's server-pure and routes rows for the app, the login, the
+   tokens. Acceptance: the server suite green; the Spotify page at 360 px (no horizontal scroll; a 400 by its field;
+   saves never jump to the top); "not configured" changes nothing else (the library snapshot unchanged). **Not**:
+   entries, the token endpoint, any device-facing change. Owed [device check]: QA checklist items 1-2.
+2. **a. Server: the Spotify listing.** Files: `S/spotify.rs` (the listing parsers over `items[].item`, the readers and
+   their order, the modes, the artist option behind `SPOTIFY_ARTIST_ALBUMS`, short-link resolution one hop at a
+   time), `S/music_net.rs` (**`SourceRequest.follow: bool`**, default true, and **`SourceResponse.location`**, M8),
+   `S/music.rs` (`Link::Spotify`, `entry_link`, `parse_link`'s pointer to the Spotify page, `default_kind_for`),
+   `S/music_sweep.rs` (`schedule` and `check_entry` take `'spotify'`, **`interval(link, ...)`** with the kind,
+   `spotify_check` with the snapshot gate, the modes, `quota_until`, `restamp_versions` with `'spotify'`,
+   `device_listing`'s `IN`, `flag_reports` skipping Spotify, `art_candidate` and the per-pass URL memo),
+   `server/testdata/spotify/` (the Web API fixtures), `S/tests/music_spotify.rs` (the sweep rows). Tests: §10's sweep
+   rows. Acceptance: the server suite green; a check over CannedFetch lists the fixture playlist, a 403 playlist goes to
+   context mode and back, a restore restamps a Spotify listing. **Not**: the PWA's add form, the library gate.
+   **b. Server: entries, the PWA, the binding.** Files: `S/handlers/music_spotify.rs` (`POST /music/spotify/add` with
+   the add check and ticks), `S/handlers/music.rs` (`SweepView::card`, **`SweepView::gated` and `phone_count`**,
+   `check_now`, `/music/cards`, `save_offline` hiding Spotify, the entry page without offline and - in context mode -
+   order, the device card's select at `POST /devices/{id}/music/spotify` with its lines, the DNS note and the
+   mobile-data text), `S/models.rs` (**`DevicePolicy.music_spotify_account`**), `S/music.rs` (`LIBRARY_ENTRIES`' `IN`
+   and `spotify_gate!()`, `cover_in_library`, `art_in_library`, `kind_label`, `LibEntry.spotify`, `item_error_code`
+   `unplayable`, `sanitize_music_state`'s `spotify` words), `S/music_import.rs` (§3.2's import), templates
+   (`music_spotify.html`'s add form, `partials/music_card.html`, `music_entry.html`, `device_detail.html`). **The library
+   snapshot is not regenerated here** (step 3's contract commit does it). Tests: the routes for add, ticks, binding,
+   cards, gate, import. Acceptance: the server suite green; Check now on a Spotify card lists the playlist; the PWA
+   pages at 360 px. Owed [device check]: QA checklist item 3.
 3. **The contract commit: the token endpoint, the launcher, the music app's parsing** (§8, one commit, all three
    suites). Files: server `S/handlers/music_api.rs` (`POST /api/devices/music/spotify/token`, its limit),
-   `S/device_routes.rs`, `S/handlers/device_api.rs` (`music.spotify` in the policy; the delivered blocklist's drop),
-   `S/spotify.rs` (`hosts` from `testdata/spotify_hosts.json`'s constant + its test), `server/testdata/{music_library,
-   music_state,spotify_hosts}.json`; launcher `aidl/me/vibb/bridge/{IMusicBridge,ISpotifyTokenCallback}.aidl`,
-   `L/music/MusicBridgeService.kt` (`getSpotifyToken`) + `L/music/SpotifyTokenCourier.kt` (new, pure),
-   `L/music/SpotifyHosts.kt` (new), `L/server/DnsFilterEngine.kt` (the gated exemption), `L/server/dto/PolicyResponse.kt`
-   (`music.spotify`), `L/server/EnforcementPlan.kt` + `AppEnforcer.kt` (the WebView provider in `neverRestrict`), the test resources (`bridge_contract.json`, `spotify_hosts.json`) and tests; music
-   `aidl/...` (the same two files), `M/model/Library.kt` (`Source.SPOTIFY`, `spotifyMode`, cache 0),
-   `M/spotify/SpotifyRef.kt` (new), `M/logic/{PlayOrder,LibraryView,Offline,NewItems}.kt` (§4.2-§4.3: visible on the
-   phone, never on a room, not fetchable), `M/bridge/SpotifyBridgeToken.kt` (new; unused by playback yet),
-   `M/logic/Report.kt` (`spotify` = `none`), strings, the test resources (`music_library.json`, `bridge_contract.json`,
-   `spotify_hosts.json`). Until step 5 `Snapshot.visible` keeps Spotify items hidden behind one constant
-   (`SPOTIFY_PLAYABLE = false`, flipped in step 5), so a library with Spotify entries parses and shows nothing (26b step
-   1's way). Tests: §10's
-   contract rows on every side. Acceptance: the three suites green; the shared files byte-identical (`ContractFilesTest`,
-   `MusicPlanTest`, `BridgeTest`, the server's snapshot tests). **Not**: the renderer, the WebView.
+   `S/device_routes.rs`, `S/handlers/device_api.rs` (`music.spotify` in the policy through `policy_music`; the delivered
+   blocklist's drop; **`compute_dns_filter_version` hashing the binding**), `S/spotify.rs` (`hosts` + its test),
+   `server/testdata/{music_library,music_state,spotify_hosts}.json`; launcher `aidl/me/vibb/bridge/{IMusicBridge,
+   ISpotifyTokenCallback}.aidl` (the import), `L/music/MusicServer.kt` (the token route), `L/music/MusicBridgeService.kt`
+   (`getSpotifyToken`) + `L/music/SpotifyTokenCourier.kt` (new, pure), `L/music/SpotifyHosts.kt` (new),
+   `L/server/DnsFilterEngine.kt` (`classify`'s gated exemption), `L/server/dto/PolicyResponse.kt` (`music.spotify`),
+   `L/server/EnforcementPlan.kt` + `AppEnforcer.kt` (the WebView provider in `neverRestrict`), the test resources
+   (`bridge_contract.json`, `spotify_hosts.json`) and tests; music `aidl/...` (the same two files), `M/model/Library.kt`
+   (`Source.SPOTIFY`, `spotifyMode`, cache 0), `M/spotify/SpotifyRef.kt` (new), `M/logic/{PlayOrder,LibraryView,
+   Offline,NewItems}.kt` (§4.2-§4.3: visible in both views, not fetchable), `M/bridge/SpotifyBridgeToken.kt` (new;
+   unused by playback yet), `M/logic/Report.kt` (`spotify` = `none`), strings, the test resources
+   (`music_library.json`, `bridge_contract.json`, `spotify_hosts.json`); CI paths (§8 item 6). Until step 5b
+   `Snapshot.visible` keeps Spotify items hidden behind one constant (`SPOTIFY_PLAYABLE = false`, flipped in step 5b),
+   so a library with Spotify entries parses and shows nothing (26b step 1's way). Tests: §10's contract rows on every
+   side. Acceptance: the three suites green; the shared files byte-identical. **Not**: the renderer, the WebView.
 4. **Music: the Android-free core and the fake.** Files: `M/spotify/{SpotifyApi,SpotifyHttp,SdkState,SpotifyTracker,
-   SpotifyHosts,WebPolicy,SpotifyEndpoints,TokenCache}.kt`, `M/logic/Spotify.kt`, `assets/spotify/{player.html,player.js}`,
-   `src/test/resources/spotify/` (the play request and answers, `sdk_states/`), `scripts/fake-spotify.py`,
-   `.github/workflows/music.yml` (the selftest and the watched paths), root `CLAUDE.md`'s paths line. Tests: §10's
-   music-pure rows, `PlayerJsTest`, the fake's selftest. Acceptance: the music suite green, `python3 -I
-   scripts/fake-spotify.py --selftest` OK; a browser on the host loading `player.html` with the fake's stub plays the tone
-   (a manual sanity check written into §6j). **Not**: anything Android-side.
-5. **Music: the renderer, the WebView host, the service (list mode).** Files: `M/spotify/{SpotifyWebHost,SpotifyRenderer,
-   SpotifyLocks}.kt`, `M/playback/{Renderer,PlaybackService,PlayerHub}.kt` (`RendererKind.SPOTIFY`/`onPhone`, §5.10's
-   sites, the renderer choice at `start`, suspension, calls, the save tick, `reportNowPlaying`), `M/ui/{MusicViewModel,
-   UiModel,LibraryScreen,PlayerScreen,ListScreens}.kt` (the words, the quiet line, the "Spotify" line, `onPhone`),
-   `M/logic/Spotify.kt` (`SPOTIFY_PLAYABLE = true`), `M/logic/Report.kt` (the `spotify` outcome, `unplayable`),
-   `M/sync/Sync.kt` (the report), `AndroidManifest.xml` (the two WebView meta-data), `src/debug/.../DebugSpotify.kt` (the
-   switch, `DebugStartup`), strings, `docs/testing/emulator.md` §6j. Tests: `SpotifyRendererTest`, `GuardsTest`,
-   `SourceScanTest`, `ReportTest`, `LibraryViewTest`. Acceptance: the music suite green, the fake's selftest; §6j part A
-   on the emulator, every line (the step's status lists each); part B with the user's account if they run it. Owed
-   [device check]: §"QA checklist" items 3-12.
-6. **Music: context mode.** Files: `M/spotify/{SpotifyRenderer,SpotifyTracker}.kt` (the context start, the SDK's next/
-   previous, `replaceItem` per track, saving under the live track's id), `M/playback/PlaybackService.kt` (the synthetic
-   item, the bookmark key), `M/data/Store.kt` (`spotify_context.json`), `M/ui/ListScreens.kt` (the "Spotify velger"
-   list with the live window), tests (`SpotifyTrackerTest`'s context sequences, `SpotifyRendererTest`). Acceptance: the
-   suites; §6j's artist and 403-playlist lines. Owed [device check]: a real artist, a playlist the parent doesn't own.
+   SpotifyHosts,WebPolicy,SpotifyEndpoints,TokenCache}.kt`, `M/logic/Spotify.kt` (`spotifyPlayability`, `contextItem`,
+   `SpotifyOutcome`, the window, the words), `assets/spotify/{player.html,player.js}`, `src/test/resources/spotify/`
+   (the play request and answers, `sdk_states/` incl. autoplay, transfer-in and relink sequences),
+   `scripts/fake-spotify.py`, `.github/workflows/music.yml` (the selftest and the watched paths), root `CLAUDE.md`'s
+   paths line. Tests: §10's music-pure rows (the tracker's ownership rule, 3 unplayable in a row, the token prefetch),
+   `PlayerJsTest`, the fake's selftest. Acceptance: the music suite green, `python3 -I scripts/fake-spotify.py
+   --selftest` OK. **Not**: anything Android-side.
+5. **a. Music: the WebView host and the renderer.** Files: `M/spotify/{SpotifyWebHost,SpotifyRenderer,SpotifyLocks}.kt`
+   (the host with its interceptor, service-worker client and debug proxy; the `SimpleBasePlayer` with §5.4's state
+   table; focus, noisy, locks, the fade, the queue add past the window, the token prefetch), `M/playback/{Renderer,
+   PlayerModel}.kt` (`RendererKind.SPOTIFY`/`onPhone`, the `RendererState` values and `remote`), `AndroidManifest.xml`
+   (the two WebView meta-data), `src/debug/.../DebugSpotify.kt` (the switch, `DebugStartup`), strings (the states).
+   Tests: `SpotifyRendererTest` against a scripted host (a start held 15 s shows playing intent with one `PUT`; a second
+   tap sends nothing; steps coalesced; the window's end adds to the queue; `Ended`; focus loss and transient loss;
+   noisy; the fade; a suspension destroys the host; a confirmed `null` -> `ELSEWHERE`; three unplayable -> stopped).
+   Acceptance: the music suite green. **Not**: the service's sites (5b).
+   **b. Music: the service, the UI, the report, §6j.** Files: `M/playback/{PlaybackService,PlayerHub}.kt` (§5.10's
+   table, every row: `playable`, `playableFrom`, `start`, `goTo`, `onItemChanged`, `onError`, `mediaItem`,
+   `wakeModeFor`, `onPlaybackResumption`, `onDestroy`, the room looks, `comeHome`, `callStep`, the renderer choice and
+   `standDown`), `M/data/{Snapshot,Store}.kt` (`spotify_state.json`; the context item from step 6 comes later),
+   `M/ui/{MusicViewModel,UiModel,LibraryScreen,PlayerScreen,ListScreens}.kt` (the words, the quiet line, the
+   "Spotify" line, the loaded tile's state, the stored outcome on every Spotify tile), `M/logic/Spotify.kt`
+   (`SPOTIFY_PLAYABLE = true`), `M/logic/Report.kt` + `M/sync/Sync.kt` (the `spotify` outcome from the file,
+   `unplayable`), `docs/testing/emulator.md` §6j. Tests: §5.10's service tests, `GuardsTest` (the site list; a Spotify
+   MediaItem never reaches `ItemMediaSourceFactory`), `SourceScanTest`, `ReportTest`, `LibraryViewTest`. Acceptance: the
+   music suite green, the fake's selftest; **§6j part A runs end to end** on the emulator (the step's status lists each
+   line); part B with the user's account if they run it. Owed [device check]: QA checklist items 4-17.
+6. **Music: context mode, and the host list.** Files: `M/data/Snapshot.kt` (the synthetic `context` item from
+   `contextItem`), `M/logic/LibraryView.kt` (the hint, no "N av M"), `M/ui/{UiModel,ListScreens}.kt` (the one row, the
+   live title), `M/spotify/{SpotifyRenderer,SpotifyTracker}.kt` (the context start with its offset, the SDK's
+   next/previous, `replaceItem` per track, context ownership), `M/playback/PlaybackService.kt` (the context item's save
+   with no duration, `Ended`), `M/data/Store.kt` (`spotify_context.json`); and, if the user has run the capture and it
+   hasn't landed yet, the three `spotify_hosts.json` copies with their constants. Tests: `SpotifyTrackerTest`'s context
+   sequences, `SpotifyRendererTest`, a snapshot test (a context entry shows as a tile; a restart restores it paused at
+   the live track). Acceptance: the suites; §6j's artist and 403-playlist lines. Owed [device check]: a real artist, a
+   playlist the parent doesn't own; QA checklist item 18 (the artist option's dev-mode check).
 7. **Docs and release.** `music/CLAUDE.md` (the `spotify/` package, the renderer, the WebView rules, the token, the
    secrets rule, the debug switch, the fake), `server/CLAUDE.md` (the Spotify section: app, accounts, PKCE, the
    callback's exemption, the token endpoint, the listing modes, the gate, 0073), `launcher/CLAUDE.md` (the token
-   courier, the gated DNS exemption, the WebView provider), root `CLAUDE.md` (`scripts/fake-spotify.py`, `music.yml`'s
-   paths, `spotify_hosts.json` among the shared files), `server/DEPLOY.md` is the main session's - a note for it (the
-   two env variables and that a Spotify login needs the PWA on https or the paste), `NOTICE.md` (vibb's `spotify.py`
-   link grammar and per-context bookmark rule, ported, MIT), design 26's status, `PLAN.md`. Then the Release below.
+   courier, the gated DNS exemption, the WebView provider), root `CLAUDE.md` (`scripts/fake-spotify.py`, the CI paths,
+   `spotify_hosts.json` among the shared files), `server/DEPLOY.md` is the main session's - a note for it (the two env
+   variables, and that a Spotify login needs the PWA on https or the paste), `NOTICE.md` (vibb's `spotify.py` link
+   grammar and per-context bookmark rule, ported, MIT), design 26's status, `PLAN.md`. Then the Release below.
 8. **Later, optional: Spotify on a Sonos room** (not in the first release). vibb's `spotify_sharelink`: the speaker
    plays the link through **the household's own Spotify account linked in the Sonos app** (no SDK, no Web API token, no
    dev-mode limit on the speaker); the queue is ours (vibb's v2: "vibb owns the spotify queue - the Sonos merely holds
@@ -1173,9 +1463,11 @@ the Jelly Star run of item 10 (Doze with and without the wake lock, §5.7).
    bookmark, steps, phone -> room and back at the same track and place). Its own architect pass first: the Sonos
    household's Spotify account and the `sn` service number are not known yet.
 
-Shared contracts: only step 3 changes shared files (§8). Each step is one sitting: 1 (one new module and its PWA page),
-2 (wiring Spotify through the existing listing paths), 3 (small changes across three trees in one commit), 4 (pure
-Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
+Shared contracts: only step 3 changes shared files (§8), plus the host list's later one-line update (the three
+copies, byte-identical, in one commit). Each step is one sitting: 1 (one new module and its PWA page), 2a (the
+listing machinery), 2b (wiring through the PWA and the gates), 3 (small changes across three trees in one commit), 4
+(pure Kotlin and the fake), 5a (the Android renderer against a scripted host), 5b (the service and the UI), 6 (context
+mode), 7 (docs).
 
 ## 12. Deviations from vibb (each with its reason)
 
@@ -1184,9 +1476,11 @@ Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
 | go-librespot plays on the box (zeroconf login, the box's own account) | the Web Playback SDK in a headless WebView, the kid's account through a server-minted token | go-librespot can't play for new accounts; the route the user chose after the spike |
 | the listing from go-librespot's own session (`context_tracks`, no Web API) | the server's Web API listing with a reader account | the phone can't run librespot; dev mode lists playlists only to owner/collaborators |
 | play = the context (`/player/play {uri, skip_to_uri}` + seek), Spotify's order | list mode plays our list by track URIs (a window), our order setting, our steps | the kid's list and the player match exactly; the order setting works as for every entry; no playlist access needed to play |
-| artists play with resume (the bookmark's `skip_to_uri`) | an artist context has no offset: it starts where Spotify starts | no `offset` for artist contexts [verified 2026-10-13] |
+| artists play with resume (the bookmark's `skip_to_uri`) | by default an artist context has no offset: it starts where Spotify starts; with the option (§3.3) an artist is listed as its albums' tracks and resumes like an album | no `offset` for artist contexts [verified 2026-10-13]; the option waits for a dev-mode check |
+| a recommended track after a context (Spotify's autoplay) plays on the box | a track that isn't ours is paused at once, never saved | the parent-picked library; "nothing starts by itself" (§5.4) |
 | one bookmark per context (track + position) | phase 1's positions per track plus the entry's bookmark | the phone's one resume model; a re-tapped track resumes at its own place (within 20 s of the end it counts as done) |
-| shuffle via `shuffle_context` | none | `canShuffle` (own files only) is the phone's rule; open point |
+| shuffle via `shuffle_context` | none (decided) | the phone's rule: `canShuffle` is own files without resume (`logic/Queue.kt:18`), and every Spotify entry is resume on; a music behaviour question decided by the existing phone rule, not asked |
+
 | the precache (`/cache/download`, encrypted audio on disk) | nothing kept | the SDK has no offline; the Terms allow only temporary caching |
 | `spotify_user` sections (follow a profile) | refused | `GET /users/{id}/playlists` is removed in dev mode |
 | audiobooks, Liked Songs | refused with a sentence | no documented SDK path in dev mode [unverified]; Liked Songs has no share link |
@@ -1212,37 +1506,36 @@ Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
 - **No Spotify logo asset** (text attribution; §14).
 - **No per-phone account limit enforcement** beyond the warning (Spotify's dev-mode list is the limit).
 
-## 14. Open points (for the user; the design has a default for each)
+## 14. Open points
 
-1. **The account model** (§2.2, §2.5): the default setup is the parent's account (reads the parent's playlists) plus
-   the kid's account (plays) - two of the app's five users; one account doing both works too (the kid's, owning or
-   collaborating on the playlists). Confirm, and that each kid gets their own Spotify account (one account plays on one
-   device at a time).
-2. **Artists play without resume and in Spotify's order** (context mode, §5.9); a playlist the family doesn't own plays
-   in Spotify's order without a track list. Fine, or refuse those links instead?
-3. **Shuffle**: vibb shuffles Spotify contexts; the phone shuffles own files only. Keep it off for Spotify?
-4. **Attribution as text ("Spotify")** instead of Spotify's logo (§7.3): the logo is a trademark asset under Spotify's
-   Branding Guidelines, not GPL; text keeps it out of the repo. Accept the risk, or add the logo as a separately
-   licensed asset?
-5. **The link back** (Policy §II) lives only in the PWA; the kid's screens open no links (design 20).
-6. **The wake lock while playing** (§5.7): kept by default. If the Jelly Star's run A (no wake lock, real Doze) shows the
-   stream and the page running for an hour, drop it (the Wi-Fi lock stays)?
-7. **The host list** (§6.2) is [unverified] until the spike's item 10 step 7 capture; it gates step 3. Also: the DNS
-   exemption is per phone with Spotify on (default) rather than for every phone like FCM's - confirm.
-8. **The WebView's own audio focus** (§5.6): a device check decides whether our renderer requests focus or follows the
-   WebView's. Nothing for the user unless both behave badly.
-9. **Shows and episodes** depend on the SDK playing episode URIs in a `uris` list [unverified]: if it doesn't, Spotify
-   podcasts are refused (add their RSS instead).
-10. **The SDK on a phone is unsupported by Spotify** (spike §7 item 10): Spotify can break it at any time; then the tiles
-    say "Spotify virker ikke på denne telefonen" and the rest of Vibb is untouched. Accepted with the route decision.
-11. **Spotify's age rule** (spike §8 Q6): Spotify's Norwegian terms ask 13+ for an ordinary account; the Family manager's
-    controls (explicit filter, video off) are what a Norwegian family has (`vibb-spotify-options.md`).
-12. **The remaining spike runs** (`spotify-spike.md` §7b "Still to run"): the Jelly Star under real Doze (runs A and B),
-    the desktop user agent (only needed if the default UA ever fails), the DNS capture. Steps 1, 2 and 4 don't wait for
-    them; step 3 waits for the capture, step 5's acceptance for the Jelly Star run.
-13. **Spotify on Sonos** (step 8) needs the household's Spotify account linked in the Sonos app; whether that is the
-    kid's, the parent's or a family account is the user's choice when step 8 is designed.
-14. For the main session: the migration number (0073 at `437eb84`) is re-checked at the final rebase; `pre_migration_backup`
+**The user's (the design runs on the assumption in brackets; overturn it to change the design):**
+1. **Links the family's accounts can't list** (QA question 1) [assumption 7: (a) context mode - Spotify's order, no track
+   list, an artist without resume; (c) "an artist as its albums' tracks" written up behind `SPOTIFY_ARTIST_ALBUMS` and QA
+   checklist item 18; (b) refusing such links at add only if asked, as a later switch].
+2. **Accounts** (QA question 2) [assumption 1: each child has their own Premium Family member account, not a mobile-only
+   plan; the parent's account is logged in only when it owns the playlists; assumption 8: the setup text may tell the
+   parent to switch Autoplay off on the children's accounts if QA checklist item 17 shows the web player autoplaying -
+   the guard in code pauses anything outside our list either way].
+3. **The remaining spike runs** (`spotify-spike.md` §7b "Still to run", the user's to run): the DNS capture (it replaces
+   the provisional host list, step 6 at the latest), and the Jelly Star under real Doze with and without a wake lock,
+   now for 2.5 hours so the token refreshes ahead of expiry at least twice (QA checklist item 6, M2).
+
+**Settled (from the docs, the code, the brief's rules; listed so nothing is lost):**
+4. Shuffle: off for Spotify - the phone's rule (`canShuffle`), a §12 deviation, not a question (QA L14).
+5. Attribution as the word "Spotify" (no logo asset in a GPL repo) and the link-back in the PWA only (the kid's screens
+   open no links): inside the accepted Policy risk (§7.3); the logo only if the user wants it.
+6. The wake lock while playing: kept; dropped only if the Jelly Star's run A shows an hour of stream and page without it
+   (the Wi-Fi lock stays).
+7. The DNS exemption per phone (the stricter choice; FCM is global because every phone needs it), with the binding in
+   `dns_filter_version` (M7).
+8. The WebView's own audio focus (§5.6) and episodes in a `uris` list (§3.1): device checks with a default each
+   (step 5a's focus branch; `SHOWS_PLAYABLE`).
+9. The SDK on a phone: Spotify now lists mobile browsers as supported (Android and iOS); a WebView isn't named - the
+   spike is the evidence; if Spotify breaks it, the tiles say "Spotify virker ikke på denne telefonen" and the rest of
+   Vibb is untouched.
+10. Spotify's 13+ age rule (spike §8 Q6): the family's matter, outside the code.
+11. Spotify on Sonos (step 8) and the household account it would use: a later architect pass.
+12. For the main session: the migration number (0073 at `437eb84`) is re-checked at the final rebase; `pre_migration_backup`
     comparing the set of applied versions would end the out-of-order hazard for good (26b open point 6).
 
 ## QA checklist for the user (Jelly Star, a real Premium Family member account; after the step that owes each)
@@ -1253,17 +1546,18 @@ Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
 2. **Logins** (step 1): log in with your own account (https PWA, or the paste flow on http); in a private window log in
    as the kid; both rows show "log in again before ..."; an account not in User Management is refused with the
    sentence; Remove deletes a row.
-3. **Links** (step 2): a playlist you own (list mode: tracks, art arriving over a day), an album, a single track, an
+3. **Links** (step 2b): a playlist you own (list mode: tracks, art arriving over a day), an album, a single track, an
    artist (context mode), a playlist made by Spotify (refused at add), a `spotify.link` short link, a show (listed
    newest first), with phone ticks on the add form.
-4. **The phone plays** (step 5): bind the phone ("Spotify plays as: <kid>"); the tiles appear; a cover tap plays within a
+4. **The phone plays** (step 5b): bind the phone ("Spotify plays as: <kid>"); the tiles appear; a cover tap plays within a
    few seconds; pause, resume, seek, next, previous, a pick from the list, the carousel swipe; "Spor N av M"; the title
    and picture in the player, the notification, Home's card and the lock's tile; the "Spotify" line.
 5. **Resume**: play to the middle of track 4, pause, kill the app (`adb shell am force-stop me.vibb.music`), reopen:
    paused at track 4; play: track 4 at the place, **no audible second from 0:00**.
-6. **Screen off for an hour** on battery (real Doze): the music plays on; `adb shell dumpsys power | grep -i vibb` shows
-   our wake lock only while playing; afterwards the bookmark is within 15 s of where it stopped. Battery % before and
-   after.
+6. **Screen off for 2.5 hours** on battery (real Doze), a long playlist playing: the music plays on throughout; the
+   debug log shows the token refreshed ahead of expiry at least twice (each line's time and outcome; QA M2), and the
+   page's state posts keep coming; `adb shell dumpsys power | grep -i vibb` shows our wake lock only while playing;
+   afterwards the bookmark is within 15 s of where it stopped. Battery % before and after.
 7. **Mobile data**: Wi-Fi off, the parent's mobile-data switch off -> "Spotify - trenger Wi-Fi", nothing streams; switch on
    -> it plays over mobile data; note `adb shell dumpsys netstats` (or Android's data usage) for an hour of music.
 8. **Offline** (airplane mode): "Spotify - trenger internett"; NRK/own files still play.
@@ -1283,7 +1577,23 @@ Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
 14. **No secrets**: `adb logcat -d | grep -E 'Bearer |BQ[A-Za-z0-9_-]{20}|AQ[A-Za-z0-9_-]{20}|code='` and the server's
     `journalctl` (also with `RUST_LOG=debug`) find nothing after a day; `music_state` holds none.
 15. **The DNS filter on** with the family's categories: playback works; the DNS log shows no blocked Spotify host.
-16. **Design 28**: Home's card and the lock's tile show while Spotify plays and for 10 minutes after a pause, then hide.
+16. **Design 28**: Home's card and the lock's tile show while Spotify plays and for 10 minutes after a pause, then hide;
+    during a cold start (the first play after a while) the play button shows "pause" at once, and a second tap starts
+    nothing twice.
+17. **Autoplay** (QA H4): with Autoplay **on** in the kid's Spotify settings, play a 3-track album to its end - nothing
+    plays after it (the phone pauses whatever Spotify starts; the debug log names a "not ours" pause if it tried). If a
+    "not ours" pause shows, switch Autoplay off in each child's Spotify settings (assumption 8) and note it in the setup
+    text. Also: from another device, transfer the kid's playback to "Vibb" while the phone is idle - nothing sounds
+    beyond a moment, the phone shows paused.
+18. **The artist option's dev-mode check** (assumption 7, QA L12): start the server with `SPOTIFY_ARTIST_ALBUMS=1`, add
+    an artist with more than 50 albums and singles, Check now: the card lists its tracks ("N tracks from M albums"), or
+    says "Spotify refused the artist's albums - played as Spotify picks" (context mode). Listed with both pages read =
+    the albums endpoint works for a dev-mode app, and the user may keep the setting on; refused = artists stay context
+    mode. (No token leaves the server for this check.)
+19. **A refused play** (QA M5): remove the kid's account from the app's User Management, play - the tile says "Spotify -
+    spør en voksen", the device card says Spotify refused the play, and no track shows "Kan ikke spilles"; put it back
+    and play again.
+
 
 ## Release
 
@@ -1298,5 +1608,72 @@ Kotlin and the fake), 5 (the Android renderer), 6 (context mode), 7 (docs).
 - **Deploy order**: the server first (an older music app drops Spotify entries with their ids kept; an older launcher
   ignores `music.spotify` and has no `getSpotifyToken`, so the music app reads "trenger internett" until it is updated),
   then the launcher, then the music app through the catalog.
-- **Before the stable tags**: §6j parts A and B on the emulator, the QA checklist above, and the spike's remaining runs
-  (§14 item 12).
+- **Before the stable tags**: §6j parts A and B on the emulator, the QA checklist above, the spike's remaining runs
+  (§14 item 3), and the capture's host list in the three `spotify_hosts.json` copies (no longer provisional).
+
+## Design QA fix round (2026-10-13)
+
+The design QA (`docs/design/qa-26c-design.md`, `8b6a3b4`: 4 High, 9 Medium, 14 Low, "buildable after a fix round") is
+taken in full; each finding was checked against the code it cites on `437eb84`. The QA's two questions are not
+answered yet: the design runs on the main session's assumptions, written into §0.2 (items 1, 7, 8) and §14 (items 1-2)
+so the user can overturn them.
+
+- **H1** (Spotify items unplayable in the service): §5.10's table now names every site - `playable`, `playableFrom`,
+  `start`, `goTo`, `onItemChanged`, `onError`, `mediaItem`, `wakeModeFor`, `onDestroy`, the room looks, `comeHome`,
+  `callStep` - with `spotifyPlayability` (never `GONE`), the Spotify states instead of `NOT_DOWNLOADED`, `unplayable`
+  recorded, the uri from `uriOf` and no `ItemTag`; tests in step 5b.
+- **H2** (playback resumption into ExoPlayer): `onPlaybackResumption` gives a stored Spotify queue the room's shape -
+  attach, `resumeLast()`, fail the future (§5.10); `GuardsTest` and a service test.
+- **H3** (context mode never reaches the screen): the synthetic item comes from the snapshot (`contextItem`, stable key
+  `context`), its row holds the live track's position with no duration, the live track lives in
+  `spotify_context.json` (§5.9); step 6 adds `Snapshot.kt`, `LibraryView.kt`, `UiModel.kt` and the tests.
+- **H4** (the tracker adopts autoplay): ownership is our uri or the expected next item by uri, `linked` or title +
+  duration within 2 s; anything else is paused and never saved; after `Ended` every playing state is paused (§5.4);
+  tracker sequences, fake options `--autoplay`/`--transfer-in`, QA checklist item 17. **Changed from the QA's fix:** the
+  next window is not re-sent in the last 15 s of a track (a `PUT` then restarts the playing track); past the window the
+  next item is added with Add Item to Playback Queue one track ahead, and a failed add costs one gap and one `PUT`.
+- **M1** (Media3 state during a start and a gap): §5.4's state table (BUFFERING with play-when-ready during a start,
+  held through a 30 s gap, `play()` mid-start a no-op); design 28's bullet points to it.
+- **M2** (the hourly token at expiry in Doze): `TokenCache` refreshes at 10 minutes left while playing, retries every
+  2 minutes (§5.5); QA checklist item 6 is 2.5 hours with the refresh log lines.
+- **M3** (the emulator chain): 26b M2's one debug switch with six readers (`apiBase`, `apiOverLan`, `sdkUrl`,
+  `webHosts`, `webProxy`, `debugTokens`); the page reaches the fake as `https://fake-spotify.invalid/` through the
+  interceptor (mixed content stays blocked); the server uses `Reach::Any` only with the loopback override (§9.3, §2.4);
+  step 5b's acceptance is §6j part A end to end.
+- **M4** (natural advance): the resume seek on a natural advance stays `kind == LOCAL`; on Spotify a natural advance
+  sends nothing (§5.4, §5.10); a renderer test.
+- **M5** (403s and the cascade): the play call's 403 is an account/app outcome (`refused` or `not_premium`), never an
+  item error; `unplayable` only from the SDK; the renderer stops after 3 in a row (§5.4, §5.8); QA checklist item 19.
+- **M6** (no carrier for the lines): new `RendererState` values with `remote`, the loaded tile through
+  `PlayerHub.State`, the stored outcome on every Spotify tile, `callStep` reads a Spotify state as paused (§5.8).
+- **M7** (stale delivered blocklist): `compute_dns_filter_version` hashes the binding; the device card says the
+  override; the launcher's site is `DnsFilterEngine.classify` (§6.2).
+- **M8** (server machinery): `restamp_versions`, `SweepView::gated`/`phone_count`, `DevicePolicy.music_spotify_account`
+  with `policy_music`, `interval(link, ..)`, `default_kind_for`, `SourceRequest.follow` and `SourceResponse.location`
+  (§3.1, §3.2, §3.4, §3.6, §2.5; steps 2a/2b).
+- **M9** (step sizes and order): steps 2a/2b and 5a/5b; the order 1 -> 2a -> 2b -> 3 -> 4 -> 5a -> 5b -> 6 -> 7; step 3
+  lands with the provisional host list, the capture replaces it at the latest in step 6 (§11, §6.2).
+- **L1**: `onRoom` reads the output (no change), `local.standDown()` when the Spotify renderer attaches, `toRoom` from a
+  Spotify entry keeps the phone playing with `CANT_PLAY_ON_SONOS` (§5.6, §5.10).
+- **L2**: scopes without `user-read-playback-state`, their source the web-app-player how-to, and the phone's token
+  carrying the account's whole scope set stated (§2.2, §7.1).
+- **L3**: `/me` 403 documented (§2.3); the transfer's 204 and an SDK state awaited before the second play (§5.4); the
+  SDK's mobile support and the mobile-only-plan exclusion (§1.1, §0.2, §14); `linked_from` gone (§1.1, §5.4).
+- **L4**: short links followed hop by hop, at most 3, each on Spotify's three hosts (§3.1).
+- **L5**: the redirect suggestion is https only for an https request, else the loopback form (§2.1).
+- **L6**: the callback answers 303 to `/music/spotify?login=<outcome>`, and the `SameSite=Lax` `spotify_login` cookie
+  (the state's hash) is required at the callback - the optional defence adopted (§2.3).
+- **L7**: §7.3's Terms row is an accepted-risk row naming what is stored and what deletes it.
+- **L8**: the outcome persists in `spotify_state.json`, read by the report and the tiles (§4.4).
+- **L9**: Spotify items are visible in both views; a room's queue drops them through `speakerDropReason` (§4.2).
+- **L10**: the AIDL import, the courier through `MusicServer`, `new_track` reused, the CI paths and the tests that pin
+  the three host-list copies (§6.1, §4.3, §8).
+- **L11**: the service-worker client, a `null` state confirmed after 2 s, the host destroyed at every suspension, the
+  accepted blip otherwise (§5.2, §5.4, §5.7).
+- **L12**: an artist as its albums' tracks written up as an option behind `SPOTIFY_ARTIST_ALBUMS` and QA checklist item
+  18; context mode stays the default per the assumed answer (a) (§3.3, §0.2 item 7). **Differs from the QA's
+  proposal** (the option as the default): the main session's assumption keeps context mode the default until the user
+  answers and the dev-mode check passes.
+- **L13**: the quota is shared with the phones: a `QUOTA_EXCEEDED` stops Spotify checks for 60 minutes, the phone
+  reports `quota` (§2.4, §3.4, §4.4, §5.4).
+- **L14**: shuffle decided off by the phone's rule, removed from the questions (§4.2, §12, §14).
