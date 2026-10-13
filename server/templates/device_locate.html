@@ -143,9 +143,11 @@
     <script>
     (function () {
         var map = L.map('map');
-        // OpenStreetMap's tiles through this server (design 33): the browser never asks OSM.
-        L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+        // OSM refuses tile requests without a Referer, and the page's own Referrer-Policy is
+        // same-origin: the tiles alone send our origin (no path) - design 33.
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
+            referrerPolicy: 'strict-origin-when-cross-origin',
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
         // Point Leaflet's default marker icon at our own vendored images -

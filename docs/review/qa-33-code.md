@@ -1,3 +1,7 @@
+> **Superseded (2026-10-13):** after M1 the user dropped the tile proxy. The browser now loads the tiles straight
+> from OSM, and the tile images alone send an origin-only `Referer` (`docs/design/33-osm-tiles-referrer.md`, which
+> replaced `33-osm-tile-proxy.md`). This review stays as history; its findings are about code that is gone.
+
 # QA 33 (code) - the Locate map's tiles through the server (OSM tile proxy)
 
 Reviewer: code QA, 2026-10-13. Branch `osm-tile-proxy`, one commit, `7a4806a8` ("Server: the Locate map's tiles
