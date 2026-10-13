@@ -63,8 +63,9 @@
             {% for d in blocked %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
-                <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
                     <input type="hidden" name="back" value="filter">
+                    <input type="hidden" name="device_id" value="{{ device.id }}">
                     <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
                 </form>
             </div>
@@ -74,10 +75,11 @@
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to block on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?" title="A domain name, like example.com">
+                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to block on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
                     <button type="submit" class="row-action">Block</button>
                 </div>
             </form>
+            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
         </div>
     </section>
 
@@ -87,8 +89,9 @@
             {% for d in allowed %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
-                <form method="post" action="/dns/domains/{{ d.id }}/delete">
+                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
                     <input type="hidden" name="back" value="filter">
+                    <input type="hidden" name="device_id" value="{{ device.id }}">
                     <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
                 </form>
             </div>
@@ -98,10 +101,11 @@
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to allow on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?" title="A domain name, like example.com">
+                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to allow on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
                     <button type="submit" class="row-action">Allow</button>
                 </div>
             </form>
+            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
         </div>
         <p class="group-footer">Let through even when a list blocks it.</p>
     </section>

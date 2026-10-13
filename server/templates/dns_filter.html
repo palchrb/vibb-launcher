@@ -63,7 +63,7 @@
         {% endif %}
         <form method="post" action="/dns/domains/new" style="margin-top:12px;">
             <input type="hidden" name="list_type" value="block">
-            <input type="text" name="domain" placeholder="e.g. example.com" required>
+            <input type="text" name="domain" placeholder="e.g. example.com" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
             <button type="submit" class="button-small">Block domain</button>
         </form>
     </div>
@@ -85,7 +85,7 @@
         {% endif %}
         <form method="post" action="/dns/domains/new" style="margin-top:12px;">
             <input type="hidden" name="list_type" value="allow">
-            <input type="text" name="domain" placeholder="e.g. example.com" required>
+            <input type="text" name="domain" placeholder="e.g. example.com" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
             <button type="submit" class="button-small">Allow domain</button>
         </form>
     </div>

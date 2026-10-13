@@ -293,8 +293,10 @@ pub async fn delete_blocklist(
 
 /// Adds a blocked or allowed domain, for every phone or (`device_id`) one. Absent or empty
 /// `device_id` = every phone (device_id NULL, migrations/0011); anything else that isn't a number
-/// is a 400, never a silent "every phone". A name that isn't a domain (`dns_engine`'s check) is a
-/// 400 and nothing is added; an unknown phone a 404. Back to `back` ([back_to]).
+/// is a 400, never a silent "every phone". A name that isn't a domain (`dns_engine`'s check) adds
+/// nothing: from a phone's page (`back=filter`) back to its group with `?notice=not_a_domain_*`,
+/// else a 400. A domain already in that list is kept once; an unknown phone is a 404. Back to
+/// `back` ([back_to]).
 pub async fn create_custom_domain(
     State(state): State<AppState>,
     Form(form): Form<HashMap<String, String>>,
@@ -313,14 +315,30 @@ pub async fn create_custom_domain(
         },
     };
     if !dns_engine::looks_like_a_domain(&domain) {
+        // From a phone's Web Filter page: back to its group, with the refusal there (qa-31-s5-code
+        // L1); the global page (step 14 restyles it) keeps the plain 400.
+        if let (Some("filter"), Some(id)) = (form.get("back").map(String::as_str), device_id) {
+            let group = if list_type == "allow" {
+                "allowed"
+            } else {
+                "blocked"
+            };
+            return Redirect::to(&format!(
+                "/devices/{id}/filter?notice=not_a_domain_{list_type}#{group}"
+            ))
+            .into_response();
+        }
         return (
             StatusCode::BAD_REQUEST,
             "That isn't a domain name like example.com - nothing was added.",
         )
             .into_response();
     }
+    // The same domain twice in one list is stored once (qa-31-s5-code N4).
     let result = sqlx::query(
-        "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES (?, ?, ?)",
+        "INSERT INTO dns_custom_domains (domain, list_type, device_id) SELECT ?1, ?2, ?3 \
+         WHERE NOT EXISTS (SELECT 1 FROM dns_custom_domains \
+           WHERE domain = ?1 AND list_type = ?2 AND device_id IS ?3)",
     )
     .bind(&domain)
     .bind(list_type)
@@ -354,6 +372,23 @@ pub async fn set_device_blocklist_override(
     };
     let result = match setting {
         None => {
+            // A DELETE that matches nothing is no foreign-key error: check both first, so an
+            // unknown phone or list is a 404 here too (qa-31-s5-code L4).
+            let known: Result<bool, sqlx::Error> = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM devices WHERE id = ?) \
+                 AND EXISTS(SELECT 1 FROM dns_blocklists WHERE id = ?)",
+            )
+            .bind(device_id)
+            .bind(blocklist_id)
+            .fetch_one(&state.db)
+            .await;
+            match known {
+                Ok(true) => {}
+                Ok(false) => {
+                    return (StatusCode::NOT_FOUND, "Phone or list not found").into_response();
+                }
+                Err(err) => return write_failed(err),
+            }
             sqlx::query(
                 "DELETE FROM device_blocklist_overrides WHERE device_id = ? AND blocklist_id = ?",
             )
@@ -505,8 +540,10 @@ pub async fn set_dns_log(
 }
 
 /// Removes a blocked or allowed domain (one tap: it can be added again, §5.6). The phone it
-/// belonged to comes from the deleted row, never from the form; back to `back` ([back_to]). A row
-/// that is already gone (a second tap) changes nothing and returns to `/dns`.
+/// belonged to comes from the deleted row (the path's id picks the row), never from the form;
+/// back to `back` ([back_to]). A row that is already gone (a double tap, a second tab) changes
+/// nothing and returns where `back` and the form's `device_id` say (qa-31-s5-code M1): with
+/// nothing written, that number only builds the redirect.
 pub async fn delete_custom_domain(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -519,7 +556,10 @@ pub async fn delete_custom_domain(
             .await;
     let device_id = match deleted {
         Ok(Some(device_id)) => device_id,
-        Ok(None) => return Redirect::to("/dns").into_response(),
+        Ok(None) => {
+            let page = form.get("device_id").and_then(|s| s.parse::<i64>().ok());
+            return Redirect::to(&back_to(&form, page)).into_response();
+        }
         Err(err) => return write_failed(err),
     };
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;

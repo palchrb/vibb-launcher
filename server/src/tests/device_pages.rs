@@ -1037,9 +1037,18 @@ async fn web_filter_holds_the_phones_parts() {
         .await
         .unwrap();
     let now = chrono::Utc::now();
+    // On a whole minute, so the clock and the exact time can be checked (Phone Setup's zone is
+    // Europe/Oslo; qa-31-s5-code L3).
+    let ads_at = chrono::DurationRound::duration_trunc(
+        now - chrono::Duration::minutes(5),
+        chrono::Duration::minutes(1),
+    )
+    .unwrap();
+    let local = ads_at.with_timezone(&chrono_tz::Europe::Oslo);
+    // In the order the phone queued them: a garbled time last, as it arrived.
     let events = json!([
         { "domain": "ads.example", "category": "Ads & tracking",
-          "blocked_at": (now - chrono::Duration::minutes(5)).to_rfc3339() },
+          "blocked_at": ads_at.to_rfc3339() },
         { "domain": "<b>bold</b>.example", "category": "<i>Custom</i>",
           "blocked_at": (now - chrono::Duration::minutes(10)).to_rfc3339() },
         { "domain": "odd.example", "category": "Custom", "blocked_at": "yesterday-ish" },
@@ -1060,7 +1069,9 @@ async fn web_filter_holds_the_phones_parts() {
     let log = &html[html.find("data-group=\"log-events\"").expect("the log")..];
     let log = &log[..log.find("</section>").unwrap()];
     let ads = log.find("ads.example").unwrap();
+    // Newest first by the phone's time, the unreadable one last (qa-31-s5-code N5).
     assert!(ads < log.find("bold").unwrap());
+    assert!(log.find("bold").unwrap() < log.find("odd.example").unwrap());
     assert!(log.contains("&#60;b&#62;bold&#60;/b&#62;.example") && !log.contains("<b>"));
     assert!(log.contains("&#60;i&#62;Custom&#60;/i&#62;") && !log.contains("<i>"));
     assert!(log.contains(">Time unknown</span>") && !log.contains("yesterday-ish"));
@@ -1070,7 +1081,15 @@ async fn web_filter_holds_the_phones_parts() {
         row.contains("<span class=\"row-sub\">Ads &#38; tracking</span>"),
         "{row}"
     );
-    assert!(row.contains("title=\""), "{row}");
+    // The local clock time, the exact local time in `title`.
+    assert!(
+        row.contains(&format!(" title=\"{}", local.format("%Y-%m-%d %H:%M:%S"))),
+        "{row}"
+    );
+    assert!(
+        row.contains(&format!("{}</span>", local.format("%H:%M"))),
+        "{row}"
+    );
     assert!(!log.contains("UTC") && !log.contains("+00:00"), "{log}");
 }
 
@@ -1309,6 +1328,14 @@ async fn old_per_phone_filter_urls_redirect_to_the_filter_page() {
     }
     let log = app.get_page("/dns/log", &cookie).await.text();
     assert!(log.contains("<span class=\"row-value\">Log off</span>"));
+    // The global page's domain fields check the shape before posting too (qa-31-s5-code L1).
+    let global = app.get_page("/dns", &cookie).await.text();
+    let fields: Vec<_> = tags(&global, "input")
+        .into_iter()
+        .filter(|t| t.attr("name") == Some("domain"))
+        .collect();
+    assert_eq!(fields.len(), 2);
+    assert!(fields.iter().all(|t| t.has("pattern") && t.has("title")));
 }
 
 /// The shared routes refuse what they can't save, and the phone comes from the path or the row,
@@ -1371,6 +1398,40 @@ async fn the_filter_routes_refuse_bad_input() {
         assert_eq!(res.status, status, "{fields:?}");
     }
     assert_eq!(count().await, 0);
+    // From the phone's page (qa-31-s5-code L1): back to the group with the refusal under its add
+    // row, nothing added.
+    for (list_type, group) in [("block", "blocked"), ("allow", "allowed")] {
+        let res = add(vec![
+            ("domain", "https://www.example.com/watch?v=1".to_string()),
+            ("list_type", list_type.to_string()),
+            ("device_id", phone.clone()),
+            ("back", "filter".to_string()),
+        ])
+        .await;
+        let page = format!(
+            "{}?notice=not_a_domain_{list_type}",
+            device_page(id, Section::Filter)
+        );
+        assert_redirect(&res, &page, Some(group));
+        let html = app.get_page(&page, &cookie).await.text();
+        let at = html.find(&format!("<section id=\"{group}\"")).unwrap();
+        let section = &html[at..at + html[at..].find("</section>").unwrap()];
+        let flash = section
+            .find(&format!("data-flash=\"{group}\""))
+            .expect("the refusal in its group");
+        assert!(section[..flash].contains("action=\"/dns/domains/new\""));
+        assert!(section[flash..].contains("isn't a domain name"));
+        assert_eq!(html.matches("data-flash=").count(), 1);
+    }
+    let html = app
+        .get_page(
+            &format!("{}?notice=bogus", device_page(id, Section::Filter)),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(!html.contains("data-flash="));
+    assert_eq!(count().await, 0);
     // Without `back` a phone's domain returns to /dns, with it to the phone's page; `back` names
     // no phone of its own.
     let res = add(vec![
@@ -1396,17 +1457,79 @@ async fn the_filter_routes_refuse_bad_input() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    for expected in [device_page(id, Section::Filter), "/dns".to_string()] {
+    // A double tap (qa-31-s5-code M1): the second post deletes nothing and still lands on the
+    // phone's page, from the form's `device_id`.
+    for _ in 0..2 {
         let res = app
             .request_form(
                 Method::POST,
                 &format!("/dns/domains/{x}/delete"),
                 Some(&cookie),
-                &[("back", "filter")],
+                &[("back", "filter"), ("device_id", &phone)],
             )
             .await;
-        assert_redirect(&res, &expected, None);
+        assert_redirect(&res, &device_page(id, Section::Filter), None);
     }
+    assert_eq!(count().await, 1);
+    // A form `device_id` naming another phone never chooses the row (the path does) nor, when a
+    // row is deleted, the page (the row's phone does).
+    let (emil, _) = app.enrolled_device("Emil").await;
+    sqlx::query(
+        "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES \
+         ('emil.example', 'block', ?), ('anna.example', 'block', ?)",
+    )
+    .bind(emil)
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let anna_row: i64 =
+        sqlx::query_scalar("SELECT id FROM dns_custom_domains WHERE domain = 'anna.example'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let emil_text = emil.to_string();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/domains/{anna_row}/delete"),
+            Some(&cookie),
+            &[("back", "filter"), ("device_id", &emil_text)],
+        )
+        .await;
+    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT domain FROM dns_custom_domains WHERE device_id IS NOT NULL ORDER BY domain",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, ["emil.example"]);
+    sqlx::query("DELETE FROM dns_custom_domains WHERE domain = 'emil.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The same domain twice in one list is kept once (qa-31-s5-code N4).
+    for _ in 0..2 {
+        let res = add(vec![
+            ("domain", "twice.example".to_string()),
+            ("device_id", phone.clone()),
+            ("back", "filter".to_string()),
+        ])
+        .await;
+        assert_redirect(&res, &device_page(id, Section::Filter), None);
+    }
+    let twice: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM dns_custom_domains WHERE domain = 'twice.example'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(twice, 1);
+    sqlx::query("DELETE FROM dns_custom_domains WHERE domain = 'twice.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     assert_eq!(count().await, 1);
 
     // The list setting: default / on / off, anything else a 400; an unknown list or phone a 404.
@@ -1446,18 +1569,26 @@ async fn the_filter_routes_refuse_bad_input() {
         set(list.clone(), "maybe").await.status,
         StatusCode::BAD_REQUEST
     );
-    assert_eq!(
-        set(format!("/dns/devices/{id}/blocklists/99/override"), "on")
+    // `default` too (qa-31-s5-code L4: a DELETE that matches nothing is no foreign key).
+    for setting in ["on", "default"] {
+        assert_eq!(
+            set(format!("/dns/devices/{id}/blocklists/99/override"), setting)
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "{setting}"
+        );
+        assert_eq!(
+            set(
+                "/dns/devices/999/blocklists/2/override".to_string(),
+                setting
+            )
             .await
             .status,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        set("/dns/devices/999/blocklists/2/override".to_string(), "on")
-            .await
-            .status,
-        StatusCode::NOT_FOUND
-    );
+            StatusCode::NOT_FOUND,
+            "{setting}"
+        );
+    }
     assert_eq!(own().await, None);
 }
 
@@ -1468,10 +1599,17 @@ async fn home_and_filter_fail_on_an_unreadable_part() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
+    // The log is read only while it is on (qa-31-s5-code L2: an empty log reads "all clear").
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     for (table, section) in [
         ("device_wallpapers", Section::Home),
         ("dns_blocklists", Section::Filter),
         ("dns_custom_domains", Section::Filter),
+        ("device_dns_events", Section::Filter),
     ] {
         sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
             .execute(&app.db)

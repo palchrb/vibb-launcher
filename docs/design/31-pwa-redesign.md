@@ -2420,6 +2420,24 @@ Deferred, with the reason:
 - **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. New CSS is the few small
   rules above; the pages otherwise use step 1-4 components.
 
+**Fix round after the code QA** (`qa-31-s5-code.md`: 0 High, 1 Medium, 4 Low, 5 nits; all fixed, with `main` merged
+first - step 12 at `474a6015`):
+
+| # | Fix |
+|---|---|
+| Merge | `style.css?v=15` (step 12 took `v=14`); step 12's CSS first, then step 5's section; both status sections kept. Step 5's `.row > form` rule is now `.row > form.row-end`, so it can't touch a form another page puts in a row. |
+| M1 | The two Remove forms carry a hidden `device_id`. When the row is already gone (a double tap, a second tab) nothing is written and the redirect is `back_to(form, that number)`, the phone's page; the path's id alone picks the row and a deleted row's own phone picks the page. Tests: the second tap lands on the phone's page; a `device_id` naming Emil deletes Anna's row (the path's) and returns to Anna's page. |
+| L1 | From a phone's page a refused domain redirects to `/devices/{id}/filter?notice=not_a_domain_block|allow#blocked|allowed`, the refusal under its group's add row (`refused`, an unknown notice shows nothing); the global page keeps its 400 until step 14, and its two fields now have the `pattern` and `title`. Tests in `the_filter_routes_refuse_bad_input` and `old_per_phone_filter_urls_redirect_to_the_filter_page`. |
+| L2 | `home_and_filter_fail_on_an_unreadable_part` turns the log on and renames `device_dns_events`: mutation 10 (an empty log) now fails it. |
+| L3 | `web_filter_holds_the_phones_parts` posts an entry on a whole minute and checks the Oslo clock time and the exact local time in `title`: mutation 15 (the UTC clock) now fails it. |
+| L4 | `setting=default` checks the phone and the list first: an unknown one is a 404, as documented. Both 404 cases run for `on` and `default`. |
+| N1 | Kept "Blocks the lists and domains below on this phone." over §4.5 #11's "Blocks ads and adult sites": the lists are off until a parent turns them on, so the spec's sentence isn't always true. |
+| N2 | The warning's sentence is one ("Unread counts and the music card are off, and the lock screen shows only missed calls."); "Android can't turn this on for Vibb." opens the ⓘ, before the adb command. |
+| N3 | Both pages' domain `pattern` allows leading and trailing spaces (the server trims them). |
+| N4 | A domain already in that list (same phone or every phone) is stored once (`INSERT … SELECT … WHERE NOT EXISTS`). Test: two adds, one row. |
+| N5 | `launcher/CLAUDE.md` names the phone's Web Filter page for the VPN switch. The log reads the 200 newest arrivals (`ORDER BY id DESC`) and sorts them by the phone's time, a garbled time last (it sorted first as text). Test: the garbled row after the others. |
+| Checks | `cargo test` 773 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. Mutations 10 and 15 re-run: both now fail a test. |
+
 ## Step 12 implementation status (2026-10-13)
 
 Built on branch `design-31-s12` (from `main` at `571f86fa`, steps 1, 2, 3 and 11 in), in parallel with step 4; server

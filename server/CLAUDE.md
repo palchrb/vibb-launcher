@@ -1106,10 +1106,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   list as everyone has it) / On / Off (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
   older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
   problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
-  on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain is a 400,
-  a `device_id` that isn't a number a 400 - never "every phone" -, an unknown phone 404); Blocked Activity: the "Keep a
-  log" switch (`/dns/log/{id}`) and, while on, the newest 200 entries in local time (a garbled phone time reads "Time
-  unknown"). Every read the page needs fails as a 500.
+  on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back
+  to its group with `?notice=not_a_domain_block|allow#blocked|allowed` from this page, a 400 from `/dns`; a domain
+  already in that list is kept once; a `device_id` that isn't a number is a 400 - never "every phone" -, an unknown
+  phone 404; a Remove whose row is already gone returns to the page its form's `device_id` names, which never picks
+  the row); Blocked Activity: the "Keep a log" switch (`/dns/log/{id}`) and, while on, the 200 newest arrivals sorted
+  by the phone's time in local time (a garbled phone time reads "Time unknown" and sorts last). Every read the page
+  needs fails as a 500 (the code QA fix round, `qa-31-s5-code.md`).
 - **`section` on `/devices/{id}/policy`** (§5.6, H1): `quick` writes only `quick_controls_mask` and returns to
   `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; no section (an older tab) writes both and returns
   to the device page; another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,

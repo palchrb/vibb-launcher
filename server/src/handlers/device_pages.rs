@@ -893,11 +893,13 @@ pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<
             value: None,
             detail: Some(
                 "Unread counts and the music card are off, and the lock screen shows only missed \
-                 calls. Android can't turn this on for Vibb."
+                 calls."
                     .to_string(),
             ),
+            // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
+            // qa-31-s5-code N2).
             fix: Some(
-                "With USB debugging allowed, run: adb shell cmd notification allow_listener \
+                "Android can't turn this on for Vibb. With USB debugging allowed, run: adb shell cmd notification allow_listener \
                  me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService (a debug build: \
                  me.vibb.launcher.debug; a launcher from before 2026-10-06: com.kidslauncher.mdm)."
                     .to_string(),
@@ -999,6 +1001,8 @@ struct FilterTemplate {
     log_on: bool,
     retention_days: i64,
     events: Vec<LogRow>,
+    /// The group whose add row was refused ("blocked", "allowed"), else "".
+    refused: &'static str,
 }
 
 /// GET `/devices/{id}/filter`: Web Filter (design 31 §3.2, step 5). The filter switch (`/policy`
@@ -1006,8 +1010,14 @@ struct FilterTemplate {
 /// devices/{id}/blocklists/{list}/override`), the domains blocked and allowed on this phone only
 /// (`/dns/domains/new`, `/dns/domains/{id}/delete`, with `back=filter`) and the blocked-domain log
 /// (`/dns/log/{id}` and its newest 200 entries, local times). Every form returns here without a
-/// fragment. `/dns?device=` and `/dns/log?device=` redirect here.
-pub async fn view_filter(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+/// fragment, except a refused domain: `?notice=not_a_domain_block|allow#blocked|allowed`, the
+/// refusal under its group's add row (qa-31-s5-code L1). `/dns?device=` and `/dns/log?device=`
+/// redirect here.
+pub async fn view_filter(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
@@ -1060,7 +1070,7 @@ pub async fn view_filter(State(state): State<AppState>, Path(id): Path<i64>) -> 
     let events = if policy.dns_log_enabled {
         match sqlx::query_as::<_, crate::models::DeviceDnsEvent>(
             "SELECT * FROM device_dns_events WHERE device_id = ? \
-             ORDER BY blocked_at DESC LIMIT 200",
+             ORDER BY id DESC LIMIT 200",
         )
         .bind(id)
         .fetch_all(&state.db)
@@ -1074,22 +1084,31 @@ pub async fn view_filter(State(state): State<AppState>, Path(id): Path<i64>) -> 
     };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
+    // The phone's own time (RFC 3339); newest first, one it sent unreadable last ("Time unknown",
+    // never the raw text) - not first, as the text's order put it (qa-31-s5-code N5).
+    let mut events: Vec<_> = events
+        .into_iter()
+        .map(|e| (crate::display_time::parse_db_utc(&e.blocked_at), e))
+        .collect();
+    events.sort_by_key(|e| std::cmp::Reverse(e.0));
     let events = events
         .into_iter()
-        .map(|e| {
-            // The phone's own time (RFC 3339); one it sent unreadable says so, never the raw text.
-            let at = crate::display_time::parse_db_utc(&e.blocked_at);
-            LogRow {
-                when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
-                exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-                domain: e.domain,
-                category: e.category,
-            }
+        .map(|(at, e)| LogRow {
+            when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+            exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+            domain: e.domain,
+            category: e.category,
         })
         .collect();
+    let refused = match query.get("notice").map(String::as_str) {
+        Some("not_a_domain_block") => "blocked",
+        Some("not_a_domain_allow") => "allowed",
+        _ => "",
+    };
     Html(
         FilterTemplate {
             title: format!("Web Filter · {}", device.name),
+            refused,
             filter_on: policy.vpn_filter_enabled,
             lists,
             blocked,
