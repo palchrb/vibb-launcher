@@ -23,6 +23,7 @@ mod hardening;
 mod intake_limits;
 mod launcher_ui;
 mod listeners;
+mod locate_page;
 mod locations;
 mod lock_glance;
 mod music;

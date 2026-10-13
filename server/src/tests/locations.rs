@@ -121,8 +121,10 @@ async fn the_locate_page_builds_no_html_from_stored_values() {
         .get_page(&format!("/devices/locate?device={id}&requested=1"), &cookie)
         .await
         .text();
-    assert!(!page.contains("bindPopup('Last seen ' +"), "string popup");
-    assert!(page.contains("popup.textContent = 'Last seen '"));
+    assert!(!page.contains("bindPopup('"), "string popup");
+    assert!(page.contains("popup.textContent = last.captured_at === shown ? shownText"));
+    // A stored time that doesn't read has no age, and is never shown as it is.
+    assert!(page.contains("Time unknown"));
     assert!(
         page.contains(
             r#"var shown = "\"\u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e";"#
@@ -130,6 +132,52 @@ async fn the_locate_page_builds_no_html_from_stored_values() {
         "{page}"
     );
     assert!(!page.contains("<script>alert(1)"));
+
+    // A phone's answer is text, never HTML (qa-31-s13-code L2): the locate answer row, Recent's
+    // line, a reworded row's `title`, and the JSON the wait reads.
+    let evil = "<img src=x onerror=alert(1)>";
+    for (command, result) in [
+        ("locate", evil.to_string()),
+        ("lock", evil.to_string()),
+        (
+            "wipe",
+            format!("wipe failed, the phone keeps its data: {evil}"),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO device_commands (device_id, command, delivered_at, acknowledged_at, \
+             result, succeeded) VALUES (?, ?, datetime('now'), datetime('now'), ?, 0)",
+        )
+        .bind(id)
+        .bind(command)
+        .bind(result)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let page = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(!page.contains("<img src=x"), "a phone's answer as HTML");
+    let escaped = "&#60;img src=x onerror=alert(1)&#62;";
+    let answer = page.split("data-row=\"locate-answer\"").nth(1).unwrap();
+    assert!(answer.contains(escaped), "{answer}");
+    let lock = super::locate_page::recent_row(&page, "lock");
+    assert!(lock.contains(escaped), "{lock}");
+    let wipe = super::locate_page::recent_row(&page, "wipe");
+    assert!(
+        wipe.contains(&format!(
+            "title=\"wipe failed, the phone keeps its data: {escaped}\""
+        )),
+        "{wipe}"
+    );
+    let json = app
+        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
+        .await
+        .json();
+    assert_eq!(json["result"], evil);
+    assert_eq!(json["text"], evil);
 }
 
 #[test]
@@ -221,28 +269,30 @@ async fn a_delivered_command_is_not_shown_as_done() {
         .get_page(&format!("/devices/locate?device={id}"), &cookie)
         .await
         .text();
-    let row = |command: &str| -> String {
-        page.split(&format!("<td>{command}</td>"))
-            .nth(1)
-            .and_then(|rest| rest.split("</tr>").next())
-            .unwrap_or_else(|| panic!("no row for {command}"))
-            .to_string()
-    };
-    assert!(row("ring").contains("Waiting for the phone to check in"));
-    assert!(row("lock").contains("not confirmed yet"), "{}", row("lock"));
+    let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(row("ring").contains(">Waiting<"), "{}", row("ring"));
     assert!(
-        row("stop_ring").contains("never confirmed"),
+        row("lock").contains("Not confirmed yet."),
+        "{}",
+        row("lock")
+    );
+    assert!(
+        row("stop_ring").contains(">Not confirmed<"),
         "{}",
         row("stop_ring")
     );
-    assert!(row("stop_ring").contains("send it again"));
-    assert!(row("wipe").contains("can"), "{}", row("wipe"));
-    assert!(!row("wipe").contains("send it again"));
+    assert!(row("stop_ring").contains("Send it again."));
     assert!(
-        row("locate").contains("Done 2026-10-11 10:00:00 UTC (ok)"),
+        row("wipe").contains("can&#39;t confirm an erase"),
         "{}",
-        row("locate")
+        row("wipe")
     );
+    assert!(!row("wipe").contains("Send it again"));
+    // A result is done; an answer this server doesn't know is shown as the phone sent it.
+    assert!(row("locate").contains(">Done<"), "{}", row("locate"));
+    // The server's own "ok" (no message from the phone) is no line: the word says it
+    // (qa-31-s13-code L3).
+    assert!(!row("locate").contains("row-sub"), "{}", row("locate"));
 }
 
 /// QA of the security wave, Low 3: a future fix stored before the intake refused them is pruned,

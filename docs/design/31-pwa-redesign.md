@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2460,3 +2460,97 @@ coordinator repoints at the merge with step 4):
 | N7 | The title bar (Edit / Done) is always there, so the title doesn't move with the second entry. |
 | N8 | A category's save, move and add come back to `/music/categories?open=<id>#category-<id>` and that editor renders open (`show_categories` reads `open`); the redirect table and the categories test pin it. |
 | Checks | `cargo test` 755 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+
+## Step 13 implementation status (2026-10-13)
+
+Built on branch `design-31-s13` (from `main` at `474a6015`, steps 1-4, 11 and 12 in), in parallel with step 5; server
+only, no migration, no new crate, no API change (the policy JSON, `pending_command` and the launcher are untouched;
+`/devices/{id}/locate-result.json` is the PWA's own JSON and gained a `text`), `style.css?v=16` (main is at 14, step 5
+may take 15; resolved at the merge).
+- **Route:** `/devices/locate` unchanged (`locate::show_locate`, `device_locate.html`); no POST route changed.
+- **The page**, in the Locate mockup's order: the large title; with several phones and none chosen (or an unknown
+  `?device=`) the phones as rows with their state ("Online · seen 3 min ago" ›, as on Devices); one phone is shown at
+  once; no phones: "No phones yet." + Add Phone. A chosen phone:
+  - **the phone switcher**: plain links to `?device={id}` (the `onchange` select is gone), the state as a dot and in
+    each `aria-label` ("Anna, online"), the chosen one `aria-current="true"`; every phone, set up or not;
+  - **Location** (`#location`): the map (Leaflet, design 33's OSM tile layer and Referer unchanged) with the trail;
+    the last fix as age and accuracy ("10 min ago" large, "Within 40 m" under it, the exact local time in `title`;
+    the marker's popup says the same, set with `textContent`); the phone's answer to the newest Update Location in
+    words, with when it came ("Location is off on the phone · 10:58"); "Waiting for a fresh fix…" and its poll (which
+    now shows the answer's words and reloads to `#location`); **Update Location**;
+  - **warnings** as orange rows above the actions: "Location is off for this phone", "Erasing works after the phone
+    restarts once";
+  - **actions** (`#actions`): Ring, Stop Ringing, Lock as three tiles (one tap each, §5.6); **Erase Phone…** as a
+    `<details>` confirm holding the type-the-name field and "Erase Anna's phone"; the footer "An offline phone gets
+    Ring and Locate within an hour, Lock and Erase whenever it's back." with Lock's note behind ⓘ;
+  - **Recent** (`#recent`): the 10 newest, "Lock" · "10:58 · Done" (the word coloured), the line under it (the
+    phone's answer in words, or what happened: "Expires 11:58 if the phone isn't back.", "Never sent: the server
+    restarted first."), **Cancel** at the row's end while it waits, the line after a Cancel as the group's flash;
+  - **Location Settings**: "When to locate" (Off / Only when asked / Regularly) and "Every" (only while Regularly) as
+    one form, "Keep history for" its own; both auto-save with a `<noscript>` Save; the footer with the modes behind ⓘ.
+- **Redirects** (§5.1): Update Location → `?device={id}&requested=1#location`; Ring, Stop Ringing, Lock and an erase
+  → `?device={id}#actions` (Recent is right under the actions, so the new row is in view, with and without JS);
+  Cancel → `&cancel=done|too_late#recent`; the two pickers → `?device={id}` with no fragment (scroll-restore keeps
+  the place, §5.1.4). Erase Phone…'s form posts to `.../command/wipe#erase`: a wrong name renders the page there with
+  the confirm open and the refusal under the field (`aria-invalid`), nothing queued. Pinned by the redirect table
+  built from the rendered forms (`tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`), which also
+  checks every action's fragment names an element and every auto-saving form has its `<noscript>` Save.
+- **Rust texts (M5):** `DeviceCommand::status_line` is gone; `DeviceCommand::status` returns the typed
+  `models::CommandStatus` (`Done`/`Failed`/`Expired`/`Cancelled { by: CancelledBy }`/`Erasing`/`Received`/`Waiting {
+  expires }`/`Sent { unconfirmed: Unconfirmed }`, same rules as before), `locate::status_words` words it in the Phone
+  Setup zone (`Zone::when` / `Zone::until`, no "UTC" unless the zone falls back); `models::command_label` names every
+  command ("Stop Ringing", "Update Location", "Erase Phone", and the device page's "Lock again", "Unlock for 2 h",
+  "Allow these apps"; never the id); `locate::reword` turns the launcher's answers into words ("locked (handy lock)"
+  → "Locked with the Child PIN", "fix ±12 m, 3 s old" → "Found within 12 m", "wipe failed, …: <exception>" → "Not
+  erased: the phone keeps its data", the phone's own words in the line's `title`); `describe_fix` is the typed
+  `locate::Fix` (`age`, `accuracy`).
+- **Robustness:** `queue_command` runs in one transaction and checks the phone exists (an unknown id is a 404 for
+  Ring, Stop Ringing, Lock, Update Location and Erase, nothing queued; a DB error a 500 "nothing was queued" - before,
+  a failed insert redirected as if sent); every read on the page and in `locations.json` / `locate-result.json` is a
+  500 on a DB error, never an empty Recent, "No location" or a made-up mode.
+- **Docs (L8):** `server/CLAUDE.md` (the Find My Device bullet, location policy, step 10's Lock note, retention, a
+  "Locate tab" section), `docs/testing/emulator.md` (remote lock, the wipe check, command receipts),
+  `launcher/CLAUDE.md` (Update Location). No change in `DEPLOY.md`, `google-account.md` or `PLAN.md` (nothing there
+  names the page's controls).
+- **Tests:** `tests/locate_page.rs` (new: the redirect table, the erase refusal, the switcher and the list with escaped
+  names, the fix and the answer in Tokyo time and the fallback zone, Recent's labels and Cancel, the warnings and
+  pickers, unknown phones and failed reads), `handlers::locate::tests` (the fix, every answer reworded, every status
+  worded without "UTC"/"sync"/"launcher", the labels); repointed through `locate_page::recent_row` (the row's
+  `data-command` hook): `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`. `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same
+  13 warnings, none in the step's files.
+
+Choices made while building:
+1. **Recent sits right under the actions, Location Settings last**: the mockup puts Recent under the actions, and the
+   actions' `#actions` landing then shows the new row; the settings are set once.
+2. **The actions land on `#actions`, not on the exact place**: an anchor is the only way a one-tap POST doesn't land at
+   the top without JS; with JS the parent lands on the group they pressed in.
+3. **Recent lists 10 commands** (was 20): the rows are taller than the old table's, and older ones are history.
+4. **"Every" only while Regularly**: a post without it keeps the stored interval (the handler's existing rule), so
+   choosing Regularly shows the row with the last interval.
+5. **The switcher's chosen phone is `aria-current="true"`**: the tab bar keeps the page's one `"page"` (the shell
+   test's rule).
+6. **Phones not set up are in the switcher** ("Not set up"): a command queued before setup is cancelled by the
+   enrollment, as before.
+7. **Labels of design 24b's commands** follow their buttons on the device page (§4.3: "Lock again", "Unlock for 2 h",
+   "Allow these apps"); the Locate actions are Title Case as drawn.
+8. **An answer this server doesn't know** is shown as the phone sent it (escaped): it is the phone's sentence, not a
+   code; every answer today's launcher sends is reworded.
+9. **The erase refusal renders in the POST's answer** (200, the page at `#erase`), as the old page did, so the typed
+   name never goes into a URL.
+10. **The security log keeps its raw lines** ("ring", "wipe (asked … UTC)"): step 14 relabels it.
+11. **Not checked here**: a browser pass (no browser on this VM) - 390 px light and dark, JS on and off, the confirm
+    and the ⓘ opened, the map's stacking under the tab bar - is owed before merging, with the real phones.
+
+**Fix round after the code QA** (`qa-31-s13-code.md`: 0 High, 1 Medium, 3 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Both Location Settings pickers redirect to `/devices/locate?device={id}#location-settings`, and their forms post to that fragment: the group is the last on a long page, so a `<noscript>` Save, or a save from a refused erase's page (another path, where scroll-restore can't help), no longer lands at the top. Every other form already redirects with its group's fragment (`#location`, `#actions`, `#recent`), so none lands at the top; the redirect table now asserts that every row has a fragment. |
+| L1 | `time_rules::update_location_now_queues_locate` pins the poll's reload, `location.replace('/devices/locate?device={id}#location')`. Re-run: the mutation without `#location` fails it. |
+| L2 | `locations::the_locate_page_builds_no_html_from_stored_values` stores `<img src=x onerror=alert(1)>` as a locate's, a lock's and a reworded wipe's answer: escaped in the answer row, Recent's line and the `title`, no `<img src=x` on the page, plain text in `locate-result.json`. Re-run: `|safe` on the answer row or Recent's line fails it. |
+| L3 | `answer` treats the server's own placeholders `"ok"`/`"failed"` (`device_api::command_result` without a message) as no answer: the row shows its word and the status line, no "ok". `a_delivered_command_is_not_shown_as_done` asserts the Done row has no sub-line. |
+| N1 | The wait's last line: "No answer yet. The phone may be offline; it gets the request if it is back within an hour." |
+| N2 | A `wipe` with a successful answer ("wiping (…)") is `CommandStatus::Erasing`, worded like a confirmed erase ("Erasing", "An erased phone stops reporting."); tested in `recent_names_each_command_and_cancels_what_waits`. |
+| N3 | `unknown_phones_and_failed_reads` also renames `device_commands` and checks `locate-result.json` is a 500. |
+| Checks | `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+

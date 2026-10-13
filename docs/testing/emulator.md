@@ -316,8 +316,8 @@ while the glance page covers it.
    Never test 112 on a real phone outside its emergency test mode.
 6. **Process death**: in an app with the screen on, `adb shell am crash $P` (or `am kill`) -> the
    lock comes back at once; with a bedtime rule active the lock and then the bedtime screen.
-7. **Remote lock**: Locate page -> Lock -> lock shown, screen off, command result "locked (handy
-   lock)".
+7. **Remote lock**: Locate tab -> Lock -> lock shown, screen off, the Recent row "Lock · Done" with "Locked with
+   the Child PIN" under it (the phone's answer "locked (handy lock)" in its `title`).
 8. **Migration**: set an Android PIN -> next sync: Lock Screen & PINs "Android's screen lock is still on",
    our lock off. `adb shell locksettings clear --old <PIN>` -> our lock active within seconds
    (onPasswordChanged), without a sync.
@@ -607,26 +607,27 @@ after a parent's test play counts as "1 ny" (design 29 §8.4, qa-29-code L5).
 Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - the wipe is real.
 
 1. **Remote wipe (M8)**, API 34 and API 36 images, launcher as device owner and enrolled, with `adb logcat -s
-   LocateCommands DevicePolicyManagerService` running: Locate page -> Wipe. Expect the emulator to reboot into the
+   LocateCommands DevicePolicyManagerService` running: Locate tab -> Erase Phone… (type the name). Expect the emulator to reboot into the
    factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
-   ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
-   data: <the exception>" - never "Done". Restore the snapshot after each run.
+   ever refused, the phone keeps running and the Recent row must say "Erase Phone · Failed" with "Not erased: the
+   phone keeps its data" (the exception in its `title`) - never "Done". Restore the snapshot after each run.
    On API 34 also the update path (QA of the launcher wave, Low 4): install the build before this wave, make it device
-   owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
-   the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
-   SecurityException"; after one restart the warning is gone and the wipe works.
+   owner and enroll, update it in place to this build *without a reboot*: the Locate tab says "Erasing works after
+   the phone restarts once" (the report's `remote_wipe_ready` is false) and an erase comes back "Failed" (the
+   SecurityException in the row's `title`); after one restart the warning is gone and the wipe works.
    **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
    this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
    "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
    page's Attention and Advanced › App screens say "Restart the phone once" (the report's `admin_policies_pending`). Restart:
    the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
    keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
-2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
-   "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
-   wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the
+2. **Command receipts (L12)**: Locate tab -> Lock. The Recent row goes "Sent" ("Not confirmed yet.") ->
+   "Done" (its answer under it) within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
+   wipe (snapshot!) reads "Erasing" ("The phone got it (10:58). An erased phone stops reporting.") before the emulator
+   reboots. A lost answer: on the
    server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
    datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
-   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
+   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received".
 3. **Catalog APK check (M10)**: a catalog app from a manual upload (Apps page), checked for the phone: it installs.
    The server refuses a release with another key itself, so to see the phone's check, change the pin under the cached
    release (no "Check now" - that would re-check the file): `UPDATE tracked_apps SET signer_sha256 = '<64 other hex>'`

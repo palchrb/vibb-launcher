@@ -607,22 +607,23 @@ impl DeviceCommand {
                 .is_some_and(|m| m < REDELIVER_WINDOW_MINUTES)
     }
 
-    /// The status shown on the device's Find My Device page. Delivery is "the phone fetched it",
-    /// not "it ran" (security review L12): a phone with `receipts` (it confirms every command
-    /// before running it) gets an unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that
-    /// is never confirmed may have been lost, and the page says so, so the parent sends it again.
-    /// An older launcher's wipe never confirms. `now` is UTC, like the stored times.
-    pub fn status_line(&self, now: chrono::NaiveDateTime, receipts: bool) -> String {
-        if let Some(result) = &self.result {
-            let at = self
-                .acknowledged_at
-                .as_deref()
-                .map(|at| format!(" {at} UTC"))
-                .unwrap_or_default();
+    /// Where the command stands, for the Locate page's Recent rows (design 31 step 13, M5; the
+    /// words are `handlers::locate`'s). Delivery is "the phone fetched it", not "it ran" (security
+    /// review L12): a phone with `receipts` (it confirms every command before running it) gets an
+    /// unconfirmed one again, up to [MAX_COMMAND_DELIVERIES]; one that is never confirmed may have
+    /// been lost, and the page says so, so the parent sends it again. An older launcher's wipe
+    /// never confirms. `now` is UTC, like the stored times.
+    pub fn status(&self, now: chrono::NaiveDateTime, receipts: bool) -> CommandStatus {
+        let at = |text: &str| crate::display_time::parse_db_utc(text);
+        if self.result.is_some() {
+            let at = self.acknowledged_at.as_deref().and_then(at);
             return if self.succeeded == Some(false) {
-                format!("Failed{at}: {result}")
+                CommandStatus::Failed { at }
+            } else if self.command == "wipe" {
+                // The system went down under the call ("wiping ..."): as a confirmed erase.
+                CommandStatus::Erasing { at }
             } else {
-                format!("Done{at} ({result})")
+                CommandStatus::Done { at }
             };
         }
         if let Some(cancelled) = &self.cancelled_at {
@@ -632,86 +633,141 @@ impl DeviceCommand {
                     .ok()
                     .and_then(|at| minutes_since(&self.requested_at, at))
                     .is_some_and(|m| m >= COMMAND_EXPIRY_MINUTES);
-            if expired_first
-                && matches!(self.cancel_reason.as_deref(), Some("enrolled" | "restart"))
-            {
-                return format!(
-                    "Expired - the phone didn't check in within {COMMAND_EXPIRY_MINUTES} minutes, so it was never sent"
-                );
+            let by = match self.cancel_reason.as_deref() {
+                Some("restart") => CancelledBy::Restart,
+                Some("enrolled") => CancelledBy::Enrolled,
+                Some("replaced") => CancelledBy::Replaced,
+                _ => CancelledBy::Parent,
+            };
+            if expired_first && matches!(by, CancelledBy::Enrolled | CancelledBy::Restart) {
+                return CommandStatus::Expired;
             }
-            return match self.cancel_reason.as_deref() {
-                Some("restart") => format!(
-                    "Cancelled {cancelled} UTC - the server restarted before the phone fetched it, so it was never sent"
-                ),
-                Some("enrolled") => format!(
-                    "Cancelled {cancelled} UTC - a new phone was enrolled on this page, so it was never sent"
-                ),
-                Some("replaced") => {
-                    format!("Replaced {cancelled} UTC by a newer command of its kind - never sent")
-                }
-                _ => format!("Cancelled {cancelled} UTC - never sent"),
+            return CommandStatus::Cancelled {
+                at: at(cancelled),
+                by,
             };
         }
         if let Some(received) = &self.received_at {
             if self.command == "wipe" {
-                return format!(
-                    "Received {received} UTC - the phone is wiping now; it stops checking in"
-                );
+                return CommandStatus::Erasing { at: at(received) };
             }
-            return if minutes_since(received, now).is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
-                format!("Received {received} UTC, but the phone never said it finished")
-            } else {
-                format!("Received {received} UTC, not finished yet")
+            return CommandStatus::Received {
+                at: at(received),
+                overdue: minutes_since(received, now)
+                    .is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES),
             };
         }
         let Some(delivered) = &self.delivered_at else {
             if self.past_expiry(now) {
-                return format!(
-                    "Expired - the phone didn't check in within {} minutes, so it was never sent",
-                    COMMAND_EXPIRY_MINUTES
-                );
+                return CommandStatus::Expired;
             }
-            if command_expires(&self.command)
-                && let Ok(asked) =
-                    chrono::NaiveDateTime::parse_from_str(&self.requested_at, "%Y-%m-%d %H:%M:%S")
-            {
-                let until = asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES);
-                return format!(
-                    "Waiting for the phone to check in - expires {} UTC if it doesn't",
-                    until.format("%Y-%m-%d %H:%M:%S")
-                );
-            }
-            return "Waiting for the phone to check in".to_string();
+            let expires = command_expires(&self.command)
+                .then(|| at(&self.requested_at))
+                .flatten()
+                .map(|asked| asked + chrono::Duration::minutes(COMMAND_EXPIRY_MINUTES));
+            return CommandStatus::Waiting { expires };
         };
         let waited = minutes_since(delivered, now);
-        if receipts {
+        let unconfirmed = if receipts {
             // It confirms within seconds: after REDELIVER_AFTER_MINUTES it is offered again, and
             // after the last delivery (or the window) it is lost.
             if waited.is_none_or(|m| m < REDELIVER_AFTER_MINUTES) {
-                return format!("Delivered {delivered} UTC, not confirmed yet");
-            }
-            return if self.redeliverable(now) {
-                format!(
-                    "Delivered {delivered} UTC, not confirmed - offered again when the phone next checks in"
-                )
+                Unconfirmed::NotYet
+            } else if self.redeliverable(now) {
+                Unconfirmed::OfferedAgain
             } else {
-                format!(
-                    "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
-                )
-            };
-        }
-        if self.command == "wipe" {
-            return format!(
-                "Delivered {delivered} UTC, not confirmed - this launcher can't confirm a wipe; a wiped phone stops checking in"
-            );
-        }
-        if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
-            format!(
-                "Delivered {delivered} UTC, never confirmed - it may not have reached the phone: send it again"
-            )
+                Unconfirmed::Lost
+            }
+        } else if self.command == "wipe" {
+            Unconfirmed::CantConfirm
+        } else if waited.is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES) {
+            Unconfirmed::Lost
         } else {
-            format!("Delivered {delivered} UTC, not confirmed yet")
+            Unconfirmed::NotYet
+        };
+        CommandStatus::Sent {
+            at: at(delivered),
+            unconfirmed,
         }
+    }
+}
+
+/// Where a command stands ([DeviceCommand::status]). The times are `None` only for a stored time
+/// that doesn't read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandStatus {
+    /// The phone answered, and didn't say it failed.
+    Done {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// The phone answered that it failed.
+    Failed {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Not fetched within [COMMAND_EXPIRY_MINUTES] ([EXPIRING_COMMANDS]): never sent.
+    Expired,
+    Cancelled {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+        by: CancelledBy,
+    },
+    /// The phone confirmed a wipe: it erases now and never answers.
+    Erasing {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// The phone confirmed it, no answer yet; `overdue` after 10 minutes without one.
+    Received {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+        overdue: bool,
+    },
+    /// Not fetched yet; an expiring command's end.
+    Waiting {
+        expires: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// Fetched, not confirmed.
+    Sent {
+        at: Option<chrono::DateTime<chrono::Utc>>,
+        unconfirmed: Unconfirmed,
+    },
+}
+
+/// Who cancelled a command before it reached the phone (`device_commands.cancel_reason`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CancelledBy {
+    /// The parent's Cancel on the Locate page.
+    Parent,
+    /// The server started (`device_api::end_expiring_at_start`).
+    Restart,
+    /// A phone was set up into the row.
+    Enrolled,
+    /// A newer command of its kind (`locate::queue_command`).
+    Replaced,
+}
+
+/// A fetched command the phone hasn't confirmed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unconfirmed {
+    /// Just fetched; a confirmation comes within seconds (or, from an older launcher, a result).
+    NotYet,
+    /// Offered again when the phone next syncs.
+    OfferedAgain,
+    /// Never confirmed: it may not have reached the phone.
+    Lost,
+    /// An older launcher's wipe: it can't confirm one.
+    CantConfirm,
+}
+
+/// A command's name as the parent knows it (§4.3), never its id: the Locate page's Recent rows.
+pub fn command_label(command: &str) -> &'static str {
+    match command {
+        "ring" => "Ring",
+        "stop_ring" => "Stop Ringing",
+        "lock" => "Lock",
+        "locate" => "Update Location",
+        "wipe" => "Erase Phone",
+        "end_windows" => "Lock again",
+        "start_pause" => "Unlock for 2 h",
+        "allow_blocked" => "Allow these apps",
+        _ => "Other request",
     }
 }
 

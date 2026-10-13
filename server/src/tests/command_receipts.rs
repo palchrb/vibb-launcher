@@ -281,39 +281,50 @@ async fn the_locate_page_reads_receipts_and_failures() {
         .get_page(&format!("/devices/locate?device={device}"), &cookie)
         .await
         .text();
-    let line = |command: &str| -> String {
-        page.split(&format!("<td>{command}</td>"))
-            .nth(1)
-            .and_then(|rest| rest.split("</tr>").next())
-            .unwrap_or_else(|| panic!("no row for {command}"))
-            .to_string()
-    };
+    let line = |command: &str| super::locate_page::recent_row(&page, command).to_string();
+    assert!(line("wipe").contains(">Erasing<"), "{}", line("wipe"));
     assert!(
-        line("wipe").contains("the phone is wiping now"),
+        line("wipe").contains("An erased phone stops reporting."),
         "{}",
         line("wipe")
     );
+    assert!(line("lock").contains(">No answer<"), "{}", line("lock"));
     assert!(
         line("lock").contains("never said it finished"),
         "{}",
         line("lock")
     );
-    assert!(line("ring").contains("offered again"), "{}", line("ring"));
     assert!(
-        line("stop_ring").contains("send it again"),
+        line("ring").contains("sent again when the phone is back"),
+        "{}",
+        line("ring")
+    );
+    assert!(
+        line("stop_ring").contains("Send it again."),
         "{}",
         line("stop_ring")
     );
+    assert!(line("stop_ring").contains(">Not confirmed<"));
     assert!(
-        line("locate").contains("not confirmed yet"),
+        line("locate").contains("Not confirmed yet."),
         "{}",
         line("locate")
     );
+    // A failure: its word, the phone's answer reworded, its own words in `title`.
+    assert!(line("end_windows").contains(">Lock again<"));
     assert!(
-        line("end_windows").contains("Failed 2026-10-11 10:00:00 UTC: wipe failed"),
+        line("end_windows").contains(">Failed<"),
         "{}",
         line("end_windows")
     );
+    assert!(
+        line("end_windows").contains(
+            "title=\"wipe failed, the phone keeps its data: SecurityException\">Not erased: the phone keeps its data<"
+        ),
+        "{}",
+        line("end_windows")
+    );
+    assert!(!page.contains("UTC"));
 }
 
 /// QA of the launcher wave, High 1: everything delivered before migration 0065 was delivered at
@@ -619,7 +630,7 @@ async fn the_locate_page_says_when_a_wipe_would_be_refused() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (device, token) = app.enrolled_device("phone").await;
-    let warning = "Remote wipe works after the phone restarts once";
+    let warning = "Erasing works after the phone restarts once";
     for (ready, shown) in [(Some(false), true), (Some(true), false), (None, false)] {
         let mut report = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
         if let Some(ready) = ready {

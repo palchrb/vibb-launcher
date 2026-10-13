@@ -8,136 +8,171 @@
 {% let tab = "locate" %}
 {% include "partials/app_header.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Find My Device</h1>
+    <h1 class="page-title">Locate</h1>
+
+    {%- if phones.is_empty() %}
+    <p class="empty-state">No phones yet.</p>
+    <div class="group">
+        <a class="row row-button" href="/devices/new">Add Phone</a>
     </div>
-    <p class="subtitle">Locate, ring, lock, or wipe a device. A phone that's online gets a command within seconds; one that's off or without a connection gets it the next time it checks in - a lock or a wipe whenever that is, a ring, "stop ringing", a pause or a location update only within an hour (after that it expires). A command waiting for the phone can be cancelled under Recent commands.</p>
+    {%- else if let Some(view) = selected %}
 
-    {% if devices.is_empty() %}
-    <p class="empty-state">No devices yet.</p>
-    {% else %}
-    <div class="card">
-        <label for="device_select">Device</label>
-        <select id="device_select" onchange="if (this.value) location.href='/devices/locate?device=' + this.value;" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
-            <option value="">Choose a device&hellip;</option>
-            {% for d in devices %}
-            <option value="{{ d.id }}" {% if d.id == selected_id %}selected{% endif %}>{{ d.name }}</option>
-            {% endfor %}
-        </select>
+    {#- The phone switcher (§3.6): plain links, the state as a dot and in the aria-label. -#}
+    <nav class="phone-switch" aria-label="Phones">
+        {% for p in phones %}
+        <a href="/devices/locate?device={{ p.id }}" aria-label="{{ p.aria }}"{% if p.current %} aria-current="true"{% endif %}><span class="dot dot-{{ p.connection.css() }}" aria-hidden="true"></span><span class="phone-switch-name">{{ p.name }}</span></a>
+        {% endfor %}
+    </nav>
+
+    {#- Where it is: the map, the last fix, the phone's answer, the wait, Update Location. Update
+        Location returns here (#location), so the map and the waiting line are in view. -#}
+    <section id="location" aria-label="Location">
+        <div class="map-box"><div id="map"></div></div>
+        <div class="group">
+            {% if let Some(fix) = view.fix %}
+            <div class="row" data-row="fix">
+                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span></span>
+            </div>
+            {% else %}
+            <p class="row row-note" data-row="fix">No location reported yet.</p>
+            {% endif %}
+            {% if let Some(a) = view.answer %}
+            <div class="row" data-row="locate-answer">
+                <span class="row-label"><span{% if let Some(raw) = a.answer.raw %} title="{{ raw }}"{% endif %}>{{ a.answer.text }}</span><span class="row-sub">Answer to Update Location</span></span>
+                {% if !a.when.is_empty() %}<span class="row-value" title="{{ a.exact }}">{{ a.when }}</span>{% endif %}
+            </div>
+            {% endif %}
+            {% if view.waiting_for_fix %}
+            <p id="fix_wait" class="row row-note" role="status">Waiting for a fresh fix&hellip;</p>
+            {% endif %}
+            <form method="post" action="/devices/{{ view.device.id }}/command/locate" class="cell">
+                <button type="submit" class="row row-button">Update Location</button>
+            </form>
+        </div>
+    </section>
+
+    {% if view.location_off %}
+    <div class="attention attention-action" data-warning="location-off">
+        <span class="attention-text">Location is off for this phone<span class="attention-sub">It takes no fix, even when asked. Choose &ldquo;Only when asked&rdquo; under Location Settings.</span></span>
     </div>
-
-    {% if let Some(device) = selected %}
-
-    {% if let Some(err) = wipe_error %}
-    <div class="card"><p class="error">{{ err }}</p></div>
+    {% endif %}
+    {% if view.wipe_not_ready %}
+    <div class="attention attention-action" data-warning="wipe-not-ready">
+        <span class="attention-text">Erasing works after the phone restarts once<span class="attention-sub">Until then Android refuses an erase. This can happen after a Vibb update.</span></span>
+    </div>
     {% endif %}
 
-    <div class="card">
-        <h2>Location</h2>
-        {% if let Some(fix) = last_fix %}
-        <p>Last fix: <strong>{{ fix }}</strong></p>
-        {% else %}
-        <p class="subtitle">No location reported yet.</p>
-        {% endif %}
-        {% if let Some(result) = locate_result %}
-        <p>Phone's answer to the last "Update location now": <strong>{{ result }}</strong></p>
-        {% endif %}
-        {% if waiting_for_fix %}
-        <p id="fix_wait" class="subtitle">Waiting for a fresh fix from the phone&hellip;</p>
-        {% endif %}
-        <form method="post" action="/devices/{{ device.id }}/command/locate">
-            <button type="submit" class="button-small">Update location now</button>
-        </form>
-        {% if location_mode == "off" %}
-        <div class="error" style="margin-top:8px;">Location is off for this phone: the launcher switches the phone's location off and won't take a fix even when asked. Choose "Only when asked" below first.</div>
-        {% endif %}
-        <form method="post" action="/devices/{{ device.id }}/location-policy" style="margin-top:12px;">
-            <label for="location_mode">When the phone takes a location fix</label>
-            <select id="location_mode" name="mode" data-autosave>
-                <option value="off" {% if location_mode == "off" %}selected{% endif %}>Off - location switched off on the phone</option>
-                <option value="on_request" {% if location_mode == "on_request" %}selected{% endif %}>Only when asked (Update location now, Ring)</option>
-                <option value="interval" {% if location_mode == "interval" %}selected{% endif %}>Regularly</option>
-            </select>
-            <label for="location_interval">Every (only for "Regularly")</label>
-            <select id="location_interval" name="interval_minutes" data-autosave>
-                {% for m in intervals %}
-                <option value="{{ m }}" {% if *m == location_interval %}selected{% endif %}>{% if *m < 60 %}{{ m }} minutes{% else if *m == 60 %}1 hour{% else %}{{ m / 60 }} hours{% endif %}</option>
-                {% endfor %}
-            </select>
-            <p class="subtitle">A fix uses GPS and some battery, and the phone shows its location indicator while it takes one.</p>
-            <noscript><button type="submit">Save</button></noscript>
-        </form>
-        <form method="post" action="/devices/{{ device.id }}/location-retention" style="margin-top:12px;">
-            <label for="location_retention">Keep the location history for</label>
-            <select id="location_retention" name="days" data-autosave>
-                {% for d in retention_choices %}
-                <option value="{{ d }}" {% if *d == location_retention %}selected{% endif %}>{% if *d == 1 %}1 day{% else %}{{ d }} days{% endif %}</option>
-                {% endfor %}
-            </select>
-            <p class="subtitle">Older positions are deleted. The newest one is always kept, so this page can show where the phone was last seen.</p>
-            <noscript><button type="submit">Save</button></noscript>
-        </form>
-    </div>
-
-    <div class="card" style="position:relative; z-index:0; overflow:hidden; padding:0;">
-        <div id="map" style="height:400px; border-radius:8px;"></div>
-    </div>
-
-    <div class="card" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start;">
-        <form method="post" action="/devices/{{ device.id }}/command/ring">
-            <button type="submit" class="button-small">Ring</button>
-        </form>
-        <form method="post" action="/devices/{{ device.id }}/command/stop-ring">
-            <button type="submit" class="button-small button-secondary">Stop ringing</button>
-        </form>
-        <form method="post" action="/devices/{{ device.id }}/command/lock">
-            <button type="submit" class="button-small">Lock</button>
-        </form>
-        <details>
-            <summary class="button-small button-danger" style="display:inline-block; cursor:pointer;">Wipe&hellip;</summary>
-            <form method="post" action="/devices/{{ device.id }}/command/wipe" style="margin-top:8px; min-width:280px;">
-                <div class="error" style="margin-bottom:8px;">This erases the device completely and can't be undone. An up-to-date launcher confirms that it got the command right before it wipes (or says why it couldn't); after that a wiped device can't check back in.</div>
-                <label for="confirm_wipe">Type the device name ({{ device.name }}) to confirm</label>
-                <input type="text" id="confirm_wipe" name="confirm_name" placeholder="{{ device.name }}">
-                <button type="submit" class="button-small button-danger">Wipe this device</button>
+    {#- One tap each (§5.6: they protect the phone); each returns here (#actions), with Recent
+        right under it. Erase Phone… is the type-the-name confirm. -#}
+    <section id="actions" aria-label="Actions">
+        <div class="act-grid">
+            <form method="post" action="/devices/{{ view.device.id }}/command/ring">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Ring</button>
             </form>
-        </details>
-        {% if wipe_not_ready %}
-        <div class="error" style="flex-basis:100%; margin:0;">Remote wipe works after the phone restarts once: its last report says Android hasn't given the launcher the wipe permission yet (Android 14, after a launcher update). Until then a wipe is refused, and the commands below say so.</div>
-        {% endif %}
-        <p class="subtitle" style="flex-basis:100%; margin:0;">Lock: with a kid's PIN set (the phone's Lock Screen &amp; PINs), locks with the kid's PIN and turns the screen off; calls from allowed contacts and 112 still work. Without one, it only turns the screen off ("locked (Android)" in the result).</p>
-    </div>
-
-    <div class="card">
-        <h2>Recent commands</h2>
-        {% if let Some(notice) = cancel_notice %}
-        <p class="subtitle"><strong>{{ notice }}</strong></p>
-        {% endif %}
-        {% if commands.is_empty() %}
-        <p class="subtitle">None yet.</p>
-        {% else %}
-        <div class="table-wrap">
-        <table>
-            <thead><tr><th>Command</th><th>Requested</th><th>Status</th></tr></thead>
-            <tbody>
-            {% for c in commands %}
-            <tr>
-                <td>{{ c.command }}</td>
-                <td>{{ c.requested_at }} UTC
-                    {% if let Some(cancel_id) = c.cancel_id %}
-                    <form method="post" action="/devices/{{ device.id }}/commands/{{ cancel_id }}/cancel" style="margin-top:6px;">
-                        <button type="submit" class="button-small button-secondary" aria-label="Cancel the {{ c.command }} asked for at {{ c.requested_at }} UTC">Cancel</button>
-                    </form>
-                    {% endif %}
-                </td>
-                <td>{{ c.status }}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
+            <form method="post" action="/devices/{{ view.device.id }}/command/stop-ring">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 9.2-5.1M18 11v6l1.5 2H8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Stop Ringing</button>
+            </form>
+            <form method="post" action="/devices/{{ view.device.id }}/command/lock">
+                <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Lock</button>
+            </form>
         </div>
-        {% endif %}
-    </div>
+        <div class="group">
+            <details class="confirm cell" id="erase"{% if view.erase_refused %} open{% endif %}>
+                <summary class="row">Erase Phone&hellip;</summary>
+                <form method="post" action="/devices/{{ view.device.id }}/command/wipe#erase" class="confirm-body">
+                    <p>Erase everything on {{ view.device.name }}'s phone? This can't be undone, and an erased phone stops reporting.</p>
+                    <label class="field-label" for="confirm_wipe">Type {{ view.device.name }} to confirm</label>
+                    <input type="text" id="confirm_wipe" name="confirm_name" autocomplete="off" required{% if view.erase_refused %} aria-invalid="true" aria-describedby="confirm_wipe-error"{% endif %}>
+                    {% if view.erase_refused %}<p class="field-error" id="confirm_wipe-error" data-flash="erase">That isn't the phone's name. Nothing was erased.</p>{% endif %}
+                    <button type="submit" class="button-destructive">Erase {{ view.device.name }}'s phone</button>
+                </form>
+            </details>
+        </div>
+        <div class="group-footer">An offline phone gets Ring and Locate within an hour, Lock and Erase whenever it's back.
+            <details class="info">
+                <summary aria-label="About Lock"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>With a Child PIN (Lock Screen &amp; PINs), Lock locks the phone with it and turns the screen off; calls from allowed contacts and emergency calls still work. Without one, it only turns the screen off.</p>
+                    <p>A request still waiting for the phone can be cancelled under Recent.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    {#- What was asked and how it went, newest first; Cancel while it waits (back to #recent,
+        where its line shows). -#}
+    <section id="recent" aria-labelledby="recent-title">
+        <h2 class="group-header" id="recent-title">Recent</h2>
+        <div class="group" data-group="recent">
+            {% for c in view.commands %}
+            <div class="row" data-command="{{ c.kind }}">
+                <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>
+                <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
+                {% if let Some(cancel_id) = c.cancel_id %}
+                <form method="post" action="/devices/{{ view.device.id }}/commands/{{ cancel_id }}/cancel" class="row-form">
+                    <button type="submit" class="row-action" aria-label="Cancel {{ c.label }} asked for at {{ c.asked }}">Cancel</button>
+                </form>
+                {% endif %}
+            </div>
+            {% else %}
+            <p class="row row-note">Nothing asked yet.</p>
+            {% endfor %}
+            {% if let Some((text, refused)) = view.cancel_flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="recent">{{ text }}</p>
+            {% endif %}
+        </div>
+    </section>
+
+    {#- The pickers save on change (autosave.js) and return to this group (#location-settings):
+        the last one on a long page, so a <noscript> Save (or a save after a refused erase, whose page
+        is at another path) doesn't land at the top. Mode and interval are one
+        form: location-policy needs the mode on every post (§5.6, H1). -#}
+    <section id="location-settings" aria-labelledby="location-settings-title">
+        <h2 class="group-header" id="location-settings-title">Location Settings</h2>
+        <div class="group">
+            <form method="post" action="/devices/{{ view.device.id }}/location-policy#location-settings" class="cell">
+                <label class="row">
+                    <span class="row-label">When to locate</span>
+                    <select class="pick" name="mode" data-autosave>
+                        {% for (value, label) in view.modes %}
+                        <option value="{{ value }}"{% if *value == view.location_mode %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {% if view.location_mode == "interval" %}
+                <label class="row">
+                    <span class="row-label">Every</span>
+                    <select class="pick" name="interval_minutes" data-autosave>
+                        {% for (minutes, label) in view.intervals %}
+                        <option value="{{ minutes }}"{% if *minutes == view.location_interval %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {% endif %}
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            <form method="post" action="/devices/{{ view.device.id }}/location-retention#location-settings" class="cell">
+                <label class="row">
+                    <span class="row-label">Keep history for</span>
+                    <select class="pick" name="days" data-autosave>
+                        {% for (days, label) in view.retention_choices %}
+                        <option value="{{ days }}"{% if *days == view.location_retention %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save History</button></noscript>
+            </form>
+        </div>
+        <div class="group-footer">Each fix uses some battery; the newest location is always kept.
+            <details class="info">
+                <summary aria-label="About the location settings"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Off switches location off on the phone. Only when asked takes a fix for Update Location and Ring. Regularly also takes one at the interval you pick.</p>
+                    <p>The phone shows its location icon while it takes a fix. Older locations are deleted; the map shows the rest as a trail.</p>
+                </div>
+            </details>
+        </div>
+    </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
     <script>
@@ -158,8 +193,10 @@
             iconRetinaUrl: '/static/leaflet/images/marker-icon-2x.png',
             shadowUrl: '/static/leaflet/images/marker-shadow.png'
         });
+        var shown = {{ view.last_fix_at_js|safe }};
+        var shownText = {{ view.fix_popup_js|safe }};
 
-        fetch('/devices/{{ device.id }}/locations.json')
+        fetch('/devices/{{ view.device.id }}/locations.json')
             .then(function (r) { return r.json(); })
             .then(function (points) {
                 if (points.length === 0) {
@@ -167,11 +204,12 @@
                     return;
                 }
                 var latlngs = points.map(function (p) { return [p.latitude, p.longitude]; });
-                L.polyline(latlngs, { color: '#3388ff' }).addTo(map);
+                L.polyline(latlngs, { color: '#0B66D6' }).addTo(map);
                 var last = points[points.length - 1];
-                // A DOM node with textContent: the phone's values are never HTML (review H2).
+                // A DOM node with textContent: the phone's values are never HTML (review H2). The
+                // server's words for the fix shown on the page, else (a newer one came since) none.
                 var popup = document.createElement('span');
-                popup.textContent = 'Last seen ' + String(last.captured_at);
+                popup.textContent = last.captured_at === shown ? shownText : 'Newest location';
                 L.marker([last.latitude, last.longitude])
                     .addTo(map)
                     .bindPopup(popup)
@@ -179,46 +217,56 @@
                 map.fitBounds(latlngs, { maxZoom: 16, padding: [30, 30] });
             })
             .catch(function () { map.setView([20, 0], 2); });
-    })();
-    {% if waiting_for_fix %}
-    // After "Update location now": look for a fix newer than the one shown, for up to a minute.
-    (function () {
-        var shown = {{ last_fix_at_js|safe }};
+    {% if view.waiting_for_fix %}
+        // After Update Location: look for a fix newer than the one shown, for up to a minute.
         var tries = 0;
         var timer = setInterval(function () {
             tries += 1;
-            fetch('/devices/{{ device.id }}/locations.json')
+            fetch('/devices/{{ view.device.id }}/locations.json')
                 .then(function (r) { return r.json(); })
                 .then(function (points) {
                     var newest = points.length ? points[points.length - 1].captured_at : "";
                     if (newest && newest !== shown) {
                         clearInterval(timer);
-                        location.replace('/devices/locate?device={{ device.id }}');
+                        location.replace('/devices/locate?device={{ view.device.id }}#location');
                     }
                 })
                 .catch(function () {});
-            // The phone's own answer ("location is off", "no location fix", "fix ±12 m, 3 s old").
-            fetch('/devices/{{ device.id }}/locate-result.json')
+            // The phone's own answer, in the server's words ("Location is off on the phone").
+            fetch('/devices/{{ view.device.id }}/locate-result.json')
                 .then(function (r) { return r.json(); })
                 .then(function (cmd) {
-                    if (cmd.result) {
+                    if (cmd.text) {
                         var el = document.getElementById('fix_wait');
-                        if (el) el.textContent = "The phone answered: " + cmd.result;
-                        if (cmd.result.indexOf('fix ') !== 0) clearInterval(timer);
+                        if (el) el.textContent = 'The phone answered: ' + cmd.text;
+                        if (String(cmd.result).indexOf('fix') !== 0) clearInterval(timer);
                     }
                 })
                 .catch(function () {});
             if (tries >= 12) {
                 clearInterval(timer);
                 var el = document.getElementById('fix_wait');
-                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet - the phone may be offline. The command waits for it; reload later.';
+                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet. The phone may be offline; it gets the request if it is back within an hour.';
             }
         }, 5000);
+    {% endif %}
     })();
-    {% endif %}
     </script>
-    {% endif %}
-    {% endif %}
+    {%- else %}
+    {#- Several phones, none chosen: each with its state, as on Devices. -#}
+    <div class="group group-avatars" data-group="phones">
+        {% for p in phones %}
+        <a class="row device-row" href="/devices/locate?device={{ p.id }}">
+            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}<span class="avatar-dot dot-{{ p.connection.css() }}"></span></span>
+            <span class="row-label">
+                <span class="device-row-name">{{ p.name }}</span>
+                <span class="row-sub device-line"><span class="state-{{ p.connection.css() }}">{{ p.connection.word() }}</span>{% if let Some(seen) = p.seen %} · {% if let Some(exact) = p.seen_exact %}<span title="{{ exact }}">{{ seen }}</span>{% else %}{{ seen }}{% endif %}{% endif %}</span>
+            </span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endfor %}
+    </div>
+    {%- endif %}
 </main>
 </body>
 </html>

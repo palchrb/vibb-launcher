@@ -455,7 +455,7 @@ async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}").as_str())
+        Some(format!("/devices/locate?device={id}#location-settings").as_str())
     );
     assert_eq!(
         count(&app.db, "SELECT COUNT(*) FROM device_locations").await,
