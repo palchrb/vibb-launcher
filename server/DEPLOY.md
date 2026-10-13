@@ -485,21 +485,21 @@ The Music tab holds the library for the Vibb music app; each phone's page has a 
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
   `vibb-music.apk` as the launcher update. Migration 0049 sets the launcher row to `launcher-v*` releases and
   `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
-  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Tag starts with" (Source & Signing).
+  catalog row; anything else: Music › Settings, "Add to the App Catalog", and the app's "Tag starts with" (Source & Signing).
 - **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
   or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
   0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
   `MUSIC_SECRET_KEY_FILE` points elsewhere, but only somewhere the service can write. No backup holds the key: the
   backup zip has the database and the image stores, the live mirror and the external drive copy the database and
   `data/backups/`, `update.sh` the database files - don't copy `data/keys/` anywhere yourself. A database restored
-  on another box, or a lost key file, means entering the login again on the Music page. Without a usable key the
+  on another box, or a lost key file, means entering the login again in Music › Settings. Without a usable key the
   Storytel form is off and the phones get 503.
 - **Smoke check after the update**: `journalctl -u kid-phone-server -b | grep -i storytel` shows "Storytel logins are
   sealed with ..." - never "Storytel logins are off: ..." (that line says which file and why).
 - **Own files** are stored in `data/music_files/` and are **not** in the backups (too big). After a restore without
   them they are listed as missing (the phones keep their copies); upload them again to restore them in place. Their
-  covers are in the backups. Files left by restoring an *older* backup show on the Music page ("Files no entry
-  uses") with a delete button - nothing is deleted by itself.
+  covers are in the backups. Files left by restoring an *older* backup show in Music › Settings ("Files no entry
+  uses") with Delete Files… - nothing is deleted by itself.
 - Rolling back to 0.20 means restoring the `update.sh` backup: 0.20 refuses to start on a database with migration 0049
   (and 0050, the library revision).
 
@@ -510,7 +510,7 @@ audio from the source.
 
 - **What it fetches**: psapi.nrk.no (one 5-episode page per NRK entry at each check, manifests only for new
   episodes), the RSS feeds (a conditional GET), gfx.nrk.no and feed images (covers, at most once a day). One request
-  at a time, 200 ms apart, 4 s between entries. The Music page's "New episodes" card sets how often (every 1/3/6/12/24 h, default 6 =
+  at a time, 200 ms apart, 4 s between entries. Music › Settings, "Check for new episodes", sets how often (every 1/3/6/12/24 h, default 6 =
   the Vibb Pi; NRK every 12 h at 6). Check now on an entry checks it at once (15 min per entry, 12 an hour, 48 a day).
 - **Addresses**: a feed on the home LAN or the tailnet works (its first check fixes it as LAN). A public feed is never
   followed to a private address (redirects, DNS answers and media URLs are checked).
@@ -523,7 +523,7 @@ audio from the source.
   `/api/devices/music/entries/{id}/items` with a phone's token); a restart, and a `kill -9` mid-fill (it doesn't loop:
   the entry waits 15 minutes, then its fill starts over - a fill is written in one go); a setting change and the Check now limits; a 21a import filled in the background; a 404 feed keeping
   its list; a public feed that redirects to a LAN address refused; yesterday's NRK series HLS URL still playing; the
-  cards on a phone in light and dark, iOS Safari included.
+  Music tab's rows on a phone in light and dark, iOS Safari included.
 - **Order**: this server before any stable `music-v*` release, as for 0.21.
 - Rolling back to 0.21 means restoring the `update.sh` backup: 0.21 refuses to start on a database with migration
   0051.

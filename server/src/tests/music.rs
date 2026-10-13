@@ -13,7 +13,9 @@ use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{TestApp, TestResponse, autosaves, input_checked, nav_current};
+use super::{
+    TestApp, TestResponse, assert_redirect, autosaves, form_action_of, input_checked, nav_current,
+};
 
 // ------------------------------------------------------------------------------------------------
 // Helpers
@@ -297,6 +299,21 @@ async fn entry_id_by_key(app: &TestApp, key: &str) -> i64 {
         .fetch_one(&app.db)
         .await
         .unwrap()
+}
+
+/// What an entry's page says about the phone named `name`: its On phones row's sub-line (the
+/// phone's last report on the entry), `None` without such a row (design 31 §3.4).
+pub(super) fn phone_line(page: &str, name: &str) -> Option<String> {
+    page.split("data-phone=\"").skip(1).find_map(|row| {
+        let row = &row[..row.find("</a>")?];
+        let label = row.split_once("class=\"row-label\">")?.1;
+        let (row_name, rest) = label.split_once('<')?;
+        if row_name != name {
+            return None;
+        }
+        let line = rest.split_once("data-phone-line>")?.1;
+        Some(line[..line.find("</span>")?].replace("&#39;", "'"))
+    })
 }
 
 pub(super) async fn add_own(app: &TestApp, cookie: &str, name: &str) -> i64 {
@@ -2011,7 +2028,7 @@ async fn the_library_is_etagged_gzipped_and_only_this_phones() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/music/entries/{a}#entry-{a}").as_str())
+        Some(format!("/music/entries/{a}#settings").as_str())
     );
     let res = device_get(
         &app,
@@ -2443,7 +2460,7 @@ async fn missing_files_stay_listed_and_are_not_served() {
         .text();
     assert!(page.contains("missing on this server"));
     let list = app.get_page("/music", &cookie).await.text();
-    assert!(list.contains("1 missing on this server"));
+    assert!(list.contains("class=\"music-missing\">1 missing</span>"));
 
     // Back on disk: no longer missing.
     std::fs::rename(full.with_extension("away"), &full).unwrap();
@@ -2704,7 +2721,7 @@ async fn entry_settings_are_checked_and_keep_the_place() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/music/entries/{entry}#entry-{entry}").as_str())
+        Some(format!("/music/entries/{entry}#settings").as_str())
     );
     assert_eq!(nudged(&mut rx), vec![device]);
     let row: (i64, String, i64, bool) = sqlx::query_as(
@@ -2770,7 +2787,10 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
             &[("direction", "up")],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/music#entry-{b}").as_str()));
+    assert_eq!(
+        res.location(),
+        Some(format!("/music?edit=1#entry-{b}").as_str())
+    );
     let library = device_get(&app, "/api/devices/music/library", &token, &[])
         .await
         .json();
@@ -2827,7 +2847,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
         .unwrap();
     assert_eq!(
         res.location(),
-        Some(format!("/music#category-{godnatt}").as_str())
+        Some(format!("/music/categories?open={godnatt}#category-{godnatt}").as_str())
     );
 
     // Saving one in use nudges its phones and changes the library; a bad save keeps the values.
@@ -2844,7 +2864,14 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
             ],
         )
         .await;
-    assert_eq!(res.location(), Some("/music#category-4"));
+    assert_eq!(res.location(), Some("/music/categories?open=4#category-4"));
+    // Back on its editor, still open (qa-31-s12-code N8); the others closed.
+    let page = app
+        .get_page("/music/categories?open=4", &cookie)
+        .await
+        .text();
+    assert!(page.contains("id=\"category-4\" open"));
+    assert!(!page.contains("id=\"category-1\" open"));
     assert_eq!(nudged(&mut rx), vec![device]);
     let library = device_get(&app, "/api/devices/music/library", &token, &[])
         .await
@@ -2875,7 +2902,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/music#category-{godnatt}").as_str())
+        Some(format!("/music/categories?open={godnatt}#category-{godnatt}").as_str())
     );
     let order: Vec<String> =
         sqlx::query_scalar("SELECT name FROM music_categories ORDER BY sort, id")
@@ -2906,7 +2933,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
             &[],
         )
         .await;
-    assert_eq!(res.location(), Some("/music#categories"));
+    assert_eq!(res.location(), Some("/music/categories"));
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_categories")
         .fetch_one(&app.db)
         .await
@@ -2941,7 +2968,7 @@ async fn the_device_card_ticks_entries_and_switches_the_app() {
     let res = app
         .request_form(Method::POST, "/music/catalog-row", Some(&cookie), &[])
         .await;
-    assert_eq!(res.location(), Some("/music#app"));
+    assert_eq!(res.location(), Some("/music/settings#app"));
     let (app_id, repo, prefix): (i64, String, String) = sqlx::query_as(
         "SELECT id, github_repo, release_tag_prefix FROM tracked_apps WHERE package_name = 'me.vibb.music'",
     )
@@ -3415,7 +3442,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
             &[("email", EMAIL), ("password", PASSWORD)],
         )
         .await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     let (ciphertext, generation): (Vec<u8>, i64) =
         sqlx::query_as("SELECT ciphertext, generation FROM music_storytel")
             .fetch_one(&app.db)
@@ -3446,12 +3473,21 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
             );
         }
     }
-    let page = app.get_page("/music", &cookie).await.text();
-    assert!(
-        !page.contains(PASSWORD) && !page.contains(EMAIL),
-        "never shown back"
-    );
+    for path in ["/music", "/music/settings"] {
+        let page = app.get_page(path, &cookie).await.text();
+        assert!(
+            !page.contains(PASSWORD) && !page.contains(EMAIL),
+            "never shown back on {path}"
+        );
+    }
+    let page = app.get_page("/music/settings", &cookie).await.text();
     assert!(page.contains("Saved "));
+    assert!(
+        app.get_page("/music", &cookie)
+            .await
+            .text()
+            .contains("Signed in")
+    );
     let log: Vec<String> = sqlx::query_scalar("SELECT COALESCE(detail, '') FROM security_events")
         .fetch_all(&app.db)
         .await
@@ -3541,7 +3577,7 @@ async fn the_storytel_login_is_write_only_sealed_and_generational() {
     let res = app
         .request_form(Method::POST, "/music/storytel/clear", Some(&cookie), &[])
         .await;
-    assert_eq!(res.location(), Some("/music#storytel"));
+    assert_eq!(res.location(), Some("/music/settings#storytel"));
     assert_eq!(
         music_policy(&app, &token).await["storytel_generation"],
         json!(0)
@@ -3596,10 +3632,10 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
         .await;
     assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(
-        app.get_page("/music", &cookie)
+        app.get_page("/music/settings", &cookie)
             .await
             .text()
-            .contains("Enter it again")
+            .contains("Enter the login again")
     );
 
     // No key at all: 503, the form is replaced by the explanation, saving is refused.
@@ -3613,7 +3649,7 @@ async fn storytel_without_a_usable_key_is_a_503_and_the_form_says_so() {
     )
     .await;
     assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let page = super::read_response(crate::handlers::music::render_plain(&state).await)
+    let page = super::read_response(crate::handlers::music::render_settings_plain(&state).await)
         .await
         .text();
     assert!(page.contains("Storytel is off"));
@@ -3636,12 +3672,44 @@ async fn the_music_pages_render_and_link_both_ways() {
     for needle in [
         "/static/scroll-restore.js",
         "href=\"/apps\"",
-        "id=\"categories\"",
-        "id=\"storytel\"",
+        "id=\"entries\"",
         &format!("id=\"entry-{entry}\""),
+        &format!("href=\"/music/entries/{entry}\""),
         "/static/music-icons/music_note.svg",
+        "id=\"add-link\"",
+        "id=\"add-own\"",
+        "href=\"/music/storytel\"",
+        "href=\"/music/import\"",
+        "href=\"/music/categories\"",
+        "href=\"/music/settings\"",
     ] {
         assert!(text.contains(needle), "{needle}");
+    }
+    // The tab's sub-pages (design 31 §3.4): each in the Music tab, with a back link to it and no
+    // brand bar.
+    for (path, needles) in [
+        (
+            "/music/settings",
+            &["id=\"sweep\"", "id=\"storytel\"", "id=\"app\""][..],
+        ),
+        (
+            "/music/categories",
+            &["id=\"categories\"", "id=\"new-category\""][..],
+        ),
+        ("/music/import", &["id=\"import\"", "name=\"library\""][..]),
+    ] {
+        let page = app.get_page(path, &cookie).await;
+        assert_eq!(page.status, StatusCode::OK, "{path}");
+        let text = page.text();
+        assert_eq!(nav_current(&text), "music", "{path}");
+        assert!(
+            text.contains("class=\"nav-back\" href=\"/music\""),
+            "{path}"
+        );
+        assert!(!text.contains("class=\"app-header\""), "{path}");
+        for needle in needles {
+            assert!(text.contains(needle), "{path}: {needle}");
+        }
     }
     let apps = app.get_page("/apps", &cookie).await.text();
     assert_eq!(nav_current(&apps), "apps");
@@ -3960,8 +4028,8 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     let res = import_preview(&app, &cookie, vibb_library().to_string().as_bytes()).await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     let page = res.text();
-    assert!(page.contains("id=\"import\" open"), "the card is open");
-    assert!(page.contains("action=\"/music/import/confirm#import\""));
+    assert_eq!(nav_current(&page), "music");
+    assert!(page.contains("action=\"/music/import/confirm#import-preview\""));
     for (text, why) in [
         ("Abels tårn", "nrk"),
         (
@@ -4023,7 +4091,12 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
         ],
     )
     .await;
-    assert_eq!(res.location(), Some("/music#import"), "{}", res.text());
+    assert_eq!(
+        res.location(),
+        Some("/music/import#import"),
+        "{}",
+        res.text()
+    );
     let mut nudges = nudged(&mut rx);
     nudges.sort_unstable();
     assert_eq!(nudges, vec![anna, emil], "one nudge per phone that changed");
@@ -4119,18 +4192,18 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
         vec!["4 entries, 1 categories, 6 skipped".to_string()]
     );
 
-    // The result, once, at #import.
-    let page = app.get_page("/music", &cookie).await.text();
-    assert!(page.contains("id=\"import\" open"));
+    // The result, once, in the import group.
+    let page = app.get_page("/music/import", &cookie).await.text();
+    assert!(page.contains("data-flash=\"import\""));
     assert!(
         page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 6 skipped:"),
         "{page}"
     );
     assert!(page.contains("podkast / Spilleliste: Spotify comes in a later version"));
     assert!(page.contains("Eventyr og sånt / Abels tårn (igjen): it is in the file twice"));
-    let again = app.get_page("/music", &cookie).await.text();
+    let again = app.get_page("/music/import", &cookie).await.text();
     assert!(!again.contains("Imported 4 entries"), "shown once");
-    assert!(!again.contains("id=\"import\" open"));
+    assert!(!again.contains("data-flash=\"import\""));
 
     // A Pi value outside the page's choices stays, and survives a save of the entry.
     let radioteatret: i64 =
@@ -4195,7 +4268,7 @@ async fn the_pis_get_library_answer_imports_too_and_a_reimport_adds_nothing() {
         ],
     )
     .await;
-    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(res.location(), Some("/music/import#import"));
     let rows: Vec<(String, String, i64, bool, i64)> = sqlx::query_as(
         "SELECT name, play_order, cache, resume, category_id FROM music_entries ORDER BY sort",
     )
@@ -4210,7 +4283,7 @@ async fn the_pis_get_library_answer_imports_too_and_a_reimport_adds_nothing() {
         ],
         "bad settings fall back to the defaults"
     );
-    let page = app.get_page("/music", &cookie).await.text();
+    let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("on no phone yet"), "no phone ticked");
 
     // The same file again: nothing to add, and it says so - in the preview and the result.
@@ -4222,8 +4295,8 @@ async fn the_pis_get_library_answer_imports_too_and_a_reimport_adds_nothing() {
     assert!(page.contains("Nothing here can be added"));
     let doc = preview_doc(&page);
     let res = import_confirm(&app, &cookie, &[("doc", &doc)]).await;
-    assert_eq!(res.location(), Some("/music#import"));
-    let page = app.get_page("/music", &cookie).await.text();
+    assert_eq!(res.location(), Some("/music/import#import"));
+    let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("Nothing new to import. 2 skipped:"), "{page}");
     assert!(page.contains("MUSIKK / Godnatt: already in the library"));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
@@ -4274,7 +4347,7 @@ async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
         &[("doc", &doc), ("row", "0.1"), ("row", "0.2")],
     )
     .await;
-    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(res.location(), Some("/music/import#import"));
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
         .fetch_one(&app.db)
         .await
@@ -4286,7 +4359,7 @@ async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
             .await
             .unwrap();
     assert_eq!(names, vec!["One"], "rows are taken in file order");
-    let page = app.get_page("/music", &cookie).await.text();
+    let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("Podkast / Two: the library holds at most 200 entries"));
 }
 
@@ -4338,7 +4411,7 @@ async fn an_import_ticks_a_phone_only_as_far_as_its_library_allows() {
         ],
     )
     .await;
-    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(res.location(), Some("/music/import#import"));
     let ticked: Vec<i64> = sqlx::query_scalar(
         "SELECT d.device_id FROM device_music_entries d JOIN music_entries e ON e.id = d.entry_id \
          WHERE e.name = 'Ukas nyheter'",
@@ -4351,7 +4424,7 @@ async fn an_import_ticks_a_phone_only_as_far_as_its_library_allows() {
         vec![roomy],
         "in the library, unticked on the full phone"
     );
-    let page = app.get_page("/music", &cookie).await.text();
+    let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("ticked on Roomy."));
     assert!(page.contains("Not ticked on Full: &#34;Ukas nyheter&#34; - that phone"));
 }
@@ -4425,7 +4498,7 @@ async fn the_confirm_trusts_nothing_in_the_form() {
     let phone_id = phone.to_string();
     fields.push(("phone", &phone_id));
     let res = import_confirm(&app, &cookie, &fields).await;
-    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(res.location(), Some("/music/import#import"));
     let names: Vec<String> = sqlx::query_scalar("SELECT name FROM music_entries ORDER BY sort")
         .fetch_all(&app.db)
         .await
@@ -4437,7 +4510,7 @@ async fn the_confirm_trusts_nothing_in_the_form() {
             .iter()
             .any(|n| n == "Spill" || n == "Mappe" || n == "F200")
     );
-    let page = app.get_page("/music", &cookie).await.text();
+    let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("Podkast / Spill: Spotify comes in a later version"));
     assert!(page.contains("Podkast / F200: the library holds at most 200 entries"));
     assert!(app.fetch.calls.lock().unwrap().is_empty());
@@ -4460,7 +4533,7 @@ async fn files_that_arent_a_vibb_library_are_refused_at_import() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{message}");
         let text = res.text();
         assert!(text.contains(message), "{message}: {text}");
-        assert!(text.contains("id=\"import\" open"));
+        assert!(text.contains("aria-describedby=\"import-error\""));
         let input = text
             .split("id=\"import_file\"")
             .nth(1)
@@ -4705,7 +4778,7 @@ async fn an_import_builds_each_phones_library_once() {
     fields.extend(rows.iter().map(|r| ("row", r.as_str())));
     let start = builds();
     let res = import_confirm(&app, &cookie, &fields).await;
-    assert_eq!(res.location(), Some("/music#import"));
+    assert_eq!(res.location(), Some("/music/import#import"));
     assert_eq!(
         builds() - start,
         4,
@@ -4854,14 +4927,19 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
         b"just renamed",
     )
     .unwrap();
-    let page = app.get_page("/music", &cookie).await.text();
+    let page = app.get_page("/music/settings", &cookie).await.text();
     assert!(page.contains("id=\"orphans\""));
-    assert!(page.contains("2 own files (2.0 MB)"), "{page}");
+    assert!(page.contains("2 files</span>"), "{page}");
+    assert!(page.contains("2.0 MB"), "{page}");
+    // Behind a confirm (design 31 §5.6): the delete form sits inside its <details>.
+    let confirm = &page[page.find("id=\"orphans-delete\"").unwrap()..];
+    let confirm = &confirm[..confirm.find("</details>").unwrap()];
+    assert!(confirm.contains("action=\"/music/orphans/delete\""));
 
     let res = app
         .request_form(Method::POST, "/music/orphans/delete", Some(&cookie), &[])
         .await;
-    assert_eq!(res.location(), Some("/music#entries"));
+    assert_eq!(res.location(), Some("/music/settings"));
     assert!(!dir.join(entry.to_string()).join("stray.mp3").exists());
     assert!(!dir.join("999").exists(), "the gone entry's directory too");
     assert!(dir.join(entry.to_string()).join("young.mp3").exists());
@@ -4875,9 +4953,499 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
         vec!["2 file(s), 2.0 MB".to_string()]
     );
     assert!(
-        !app.get_page("/music", &cookie)
+        !app.get_page("/music/settings", &cookie)
             .await
             .text()
             .contains("id=\"orphans\"")
+    );
+}
+
+// ------------------------------------------------------------------------------------------------
+// The Music tab (design 31 step 12): where every form returns, the confirms, Edit, On phones
+// ------------------------------------------------------------------------------------------------
+
+/// An attribute's value as the browser sends it.
+fn unescape(value: &str) -> String {
+    value
+        .replace("&#34;", "\"")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#60;", "<")
+        .replace("&lt;", "<")
+        .replace("&#62;", ">")
+        .replace("&gt;", ">")
+        .replace("&#38;", "&")
+        .replace("&amp;", "&")
+}
+
+/// A form's fields as the browser sends them.
+type Fields = Vec<(String, String)>;
+
+/// Every POST form on `html` with its hidden fields, in page order.
+fn post_forms(html: &str) -> Vec<(String, Fields)> {
+    super::tags(html, "form")
+        .into_iter()
+        .filter(|form| form.attr("method") == Some("post"))
+        .map(|form| {
+            let body = &html[form.start..];
+            let body = &body[..body.find("</form>").unwrap_or(body.len())];
+            let hidden = super::tags(body, "input")
+                .into_iter()
+                .filter(|input| input.attr("type") == Some("hidden"))
+                .map(|input| {
+                    (
+                        input.attr("name").unwrap_or("").to_string(),
+                        unescape(input.attr("value").unwrap_or("")),
+                    )
+                })
+                .collect();
+            (form.attr("action").unwrap().replace("&amp;", "&"), hidden)
+        })
+        .collect()
+}
+
+/// What every form on a music page must have, with or without JS (design 31 §5.1, §5.2): an
+/// action's fragment names an element of the page, so a refusal rendered in the POST's answer
+/// lands on its form; and a form that saves itself (`data-autosave`) has a `<noscript>` submit.
+fn check_forms(page: &str, html: &str) {
+    for form in super::tags(html, "form") {
+        let body = &html[form.start..];
+        let body = &body[..body.find("</form>").unwrap_or(body.len())];
+        let action = form.attr("action").unwrap_or("");
+        if let Some((_, fragment)) = action.split_once('#') {
+            assert!(
+                html.contains(&format!("id=\"{fragment}\"")),
+                "{page}: {action} lands on no element"
+            );
+        }
+        if body.contains("data-autosave") {
+            let noscript = body
+                .split_once("<noscript>")
+                .and_then(|(_, rest)| rest.split_once("</noscript>"))
+                .map(|(inside, _)| inside);
+            assert!(
+                noscript.is_some_and(|inside| inside.contains("type=\"submit\"")),
+                "{page}: {action} saves itself but has no <noscript> Save"
+            );
+        }
+    }
+}
+
+/// A stray own file no entry names, old enough to be listed (`music::orphan_files`).
+fn stray_file(app: &TestApp) {
+    let stray = app.state.music_files_dir.join("999").join("gone.mp3");
+    std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
+    std::fs::write(&stray, vec![0u8; 1000]).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&stray)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200))
+        .unwrap();
+}
+
+/// §5.1's redirect table for the Music tab: every form the tab and its pages render is posted
+/// with valid values, and each lands back on the page it is on - at its row or group where the
+/// list is long or the result shows there, else without a fragment (scroll-restore keeps the
+/// place). A form the table has no row for fails the test.
+#[tokio::test]
+async fn every_form_on_the_music_pages_returns_to_its_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (phone, _) = app.enrolled_device("Anna").await;
+    let first = add_nrk(&app, &cookie, "forste", "Første").await;
+    add_nrk(&app, &cookie, "andre", "Andre").await;
+    tick(&app, &cookie, phone, first, true).await;
+    let own = add_own(&app, &cookie, "Bilturen").await;
+    let res = upload(
+        &app,
+        &cookie,
+        own,
+        &[("a.wav", wav(300)), ("b.wav", wav(400))],
+    )
+    .await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    let res = upload_cover(&app, &cookie, own, &png(64, 64)).await;
+    assert!(res.status.is_redirection(), "{}", res.text());
+    stray_file(&app);
+    // A saved Storytel login (Storytel can't be reached here: saved, unchecked).
+    let login = [
+        ("email", "parent@example.invalid"),
+        ("password", "not-a-real-password"),
+    ];
+    let res = app
+        .request_form(Method::POST, "/music/storytel", Some(&cookie), &login)
+        .await;
+    assert_redirect(&res, "/music/settings", Some("storytel"));
+    let preview = import_preview(&app, &cookie, vibb_library().to_string().as_bytes())
+        .await
+        .text();
+
+    let mut forms: Vec<(String, String, Fields)> = Vec::new();
+    for page in [
+        "/music".to_string(),
+        "/music?edit=1".to_string(),
+        "/music/settings".to_string(),
+        "/music/categories".to_string(),
+        "/music/import".to_string(),
+        format!("/music/entries/{first}"),
+        format!("/music/entries/{own}"),
+    ] {
+        let html = app.get_page(&page, &cookie).await.text();
+        check_forms(&page, &html);
+        for (action, hidden) in post_forms(&html) {
+            forms.push((page.clone(), action, hidden));
+        }
+    }
+    // The import's preview is the answer to its POST.
+    check_forms("the import preview", &preview);
+    for (action, hidden) in post_forms(&preview) {
+        forms.push(("/music/import".to_string(), action, hidden));
+    }
+    // Deletes last: they take what the other forms need.
+    forms.sort_by_key(|(_, action, _)| action.contains("delete") || action.ends_with("/clear"));
+    let mut seen = std::collections::HashSet::new();
+    let mut added = 0;
+    for (page, action, hidden) in forms {
+        let (target, action_fragment) = match action.split_once('#') {
+            Some((target, fragment)) => (target.to_string(), Some(fragment.to_string())),
+            None => (action.clone(), None),
+        };
+        // "/music/entries/7/files/3/delete" -> (Some(7), "/files/3/delete").
+        let id_and_rest = |prefix: &str| -> Option<(i64, String)> {
+            let rest = target.strip_prefix(prefix)?;
+            let (id, rest) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+            Some((id.parse().ok()?, rest.to_string()))
+        };
+        let entry = id_and_rest("/music/entries/");
+        let category = id_and_rest("/music/categories/");
+        let kind = match (&entry, &category) {
+            (Some((_, rest)), _) if rest.starts_with("/files/") => "entry/file-delete".to_string(),
+            (Some((_, rest)), _) => format!("entry{rest}"),
+            (_, Some((_, rest))) => format!("category{rest}"),
+            _ => target.clone(),
+        };
+        seen.insert(kind.clone());
+        // A form whose refusal renders in the POST's answer posts to its own group, so the
+        // parent lands where they were (pinned per kind; `check_forms` checks the ids exist).
+        let refusal_lands_at = match kind.as_str() {
+            "/music" => Some("add-link".to_string()),
+            "/music/own" => Some("add-own".to_string()),
+            "/music/storytel" => Some("storytel".to_string()),
+            "/music/categories" => Some("new-category".to_string()),
+            "category" => category.as_ref().map(|(id, _)| format!("category-{id}")),
+            "/music/import" | "/music/import/confirm" => Some("import-preview".to_string()),
+            "entry" => Some("settings".to_string()),
+            "entry/cover" => Some("cover".to_string()),
+            "entry/files" => Some("files".to_string()),
+            _ => None,
+        };
+        if refusal_lands_at.is_some() {
+            assert_eq!(action_fragment, refusal_lands_at, "{action} on {page}");
+        }
+        let entry_page = entry.as_ref().map(|(id, _)| format!("/music/entries/{id}"));
+        let entry_anchor = entry.as_ref().map(|(id, _)| format!("entry-{id}"));
+        let category_anchor = category.as_ref().map(|(id, _)| format!("category-{id}"));
+        let mut fields: Fields = hidden;
+        let mut add = |pairs: &[(&str, &str)]| {
+            fields.extend(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        };
+        // Where it must land: the path (and query) and the fragment; "*" ends a prefix.
+        let (path, fragment): (String, Option<String>) = match kind.as_str() {
+            "/music" => {
+                // A new podcast each time (the tab renders the form twice, once in Edit).
+                added += 1;
+                let slug = format!("ny{added}");
+                app.fetch.answer(
+                    &psapi("podcast", &slug),
+                    200,
+                    json!({"series": {"titles": {"title": slug}}}).to_string(),
+                );
+                let link = format!("https://radio.nrk.no/podkast/{slug}");
+                fields.push(("link".into(), link));
+                ("/music".into(), Some("entry-*".into()))
+            }
+            "/music/own" => {
+                add(&[("name", "Nye filer")]);
+                ("/music/entries/*".into(), Some("files".into()))
+            }
+            "entry/check" if page.starts_with("/music/entries/") => {
+                (entry_page.unwrap(), Some("status".into()))
+            }
+            "entry/check" | "entry/offline" => {
+                add(&[("cache", "5")]);
+                ("/music".into(), entry_anchor)
+            }
+            "entry/move" => ("/music?edit=1".into(), entry_anchor),
+            "entry" => {
+                add(&[
+                    ("name", "Nytt navn"),
+                    ("category", "1"),
+                    ("order", "auto"),
+                    ("cache", "5"),
+                    ("resume", "on"),
+                ]);
+                (entry_page.unwrap(), Some("settings".into()))
+            }
+            "entry/cover" | "entry/cover/remove" => (entry_page.unwrap(), Some("cover".into())),
+            "entry/files" => (entry_page.unwrap(), Some("files".into())),
+            "entry/file-delete" => (entry_page.unwrap(), Some("file*".into())),
+            "entry/delete" => ("/music".into(), Some("entries".into())),
+            "/music/sweep" => {
+                add(&[("hours", "6")]);
+                ("/music/settings".into(), None)
+            }
+            "/music/storytel" => {
+                add(&login);
+                ("/music/settings".into(), Some("storytel".into()))
+            }
+            "/music/storytel/clear" => ("/music/settings".into(), Some("storytel".into())),
+            "/music/catalog-row" => ("/music/settings".into(), Some("app".into())),
+            "/music/orphans/delete" => ("/music/settings".into(), None),
+            "/music/categories" => {
+                add(&[("name", "Sport"), ("icon", "star"), ("color", "teal")]);
+                ("/music/categories?open=*".into(), Some("category-*".into()))
+            }
+            "category" => {
+                add(&[("name", "Ny"), ("icon", "star"), ("color", "teal")]);
+                (
+                    format!("/music/categories?open={}", category.as_ref().unwrap().0),
+                    category_anchor,
+                )
+            }
+            "category/move" => (
+                format!("/music/categories?open={}", category.as_ref().unwrap().0),
+                category_anchor,
+            ),
+            "category/delete" => ("/music/categories".into(), None),
+            "/music/import" => ("(the page)".into(), None),
+            "/music/import/confirm" => ("/music/import".into(), Some("import".into())),
+            other => panic!("a form without a row in the redirect table: {other} on {page}"),
+        };
+        let id = entry.as_ref().map_or(0, |(id, _)| *id);
+        let res = match kind.as_str() {
+            "entry/cover" => upload_cover(&app, &cookie, id, &png(64, 64)).await,
+            "entry/files" => upload(&app, &cookie, id, &[("c.wav", wav(500))]).await,
+            "/music/import" => {
+                import_preview(&app, &cookie, vibb_library().to_string().as_bytes()).await
+            }
+            _ => {
+                let pairs: Vec<(&str, &str)> = fields
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                app.request_form(Method::POST, &target, Some(&cookie), &pairs)
+                    .await
+            }
+        };
+        if kind == "/music/import" {
+            // The preview is the import page itself (design 31 §3.4), in the Music tab.
+            assert_eq!(res.status, StatusCode::OK, "{action}");
+            assert_eq!(nav_current(&res.text()), "music");
+            assert!(res.text().contains("id=\"import-preview\""));
+            continue;
+        }
+        assert!(
+            res.status.is_redirection(),
+            "{action} on {page}: {} {}",
+            res.status,
+            res.text()
+        );
+        let location = res.location().unwrap();
+        let (got_path, got_fragment) = match location.split_once('#') {
+            Some((p, f)) => (p, Some(f)),
+            None => (location, None),
+        };
+        let matches = |want: &str, got: &str| match want.strip_suffix('*') {
+            Some(prefix) => got.starts_with(prefix),
+            None => want == got,
+        };
+        assert!(matches(&path, got_path), "{action} on {page}: {location}");
+        match (&fragment, got_fragment) {
+            (Some(want), Some(got)) => assert!(matches(want, got), "{action}: {location}"),
+            // A browser keeps the action's fragment over a redirect without one: such a form
+            // must have none, so scroll-restore keeps the place.
+            (None, None) => assert_eq!(action_fragment, None, "{action}"),
+            _ => panic!("{action} on {page}: {location}"),
+        }
+    }
+    for kind in [
+        "/music",
+        "/music/own",
+        "entry/check",
+        "entry/offline",
+        "entry/move",
+        "entry",
+        "entry/cover",
+        "entry/cover/remove",
+        "entry/files",
+        "entry/file-delete",
+        "entry/delete",
+        "/music/sweep",
+        "/music/storytel",
+        "/music/storytel/clear",
+        "/music/orphans/delete",
+        "/music/categories",
+        "category",
+        "category/move",
+        "category/delete",
+        "/music/import",
+        "/music/import/confirm",
+    ] {
+        assert!(seen.contains(kind), "no form posted to {kind}");
+    }
+}
+
+/// Every delete on the Music pages is a `<details>` confirm (design 31 §5.6, Q7): its form sits
+/// inside the `<details>`, after the summary, so nothing is deleted without opening it - with or
+/// without JS - and no page calls `confirm()` any more.
+#[tokio::test]
+async fn the_music_deletes_are_behind_a_confirm() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let own = add_own(&app, &cookie, "Bilturen").await;
+    let res = upload(&app, &cookie, own, &[("a.wav", wav(300))]).await;
+    assert!(res.status.is_redirection());
+    stray_file(&app);
+    let login = [
+        ("email", "parent@example.invalid"),
+        ("password", "not-a-real-password"),
+    ];
+    app.request_form(Method::POST, "/music/storytel", Some(&cookie), &login)
+        .await;
+    let mut deletes = 0;
+    for page in [
+        "/music".to_string(),
+        "/music/settings".to_string(),
+        "/music/categories".to_string(),
+        format!("/music/entries/{own}"),
+    ] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(
+            !html.contains("confirm("),
+            "{page} still asks with confirm()"
+        );
+        for (action, _) in post_forms(&html) {
+            if !(action.contains("delete") || action.ends_with("/clear")) {
+                continue;
+            }
+            deletes += 1;
+            let at = html.find(&format!("action=\"{action}\"")).unwrap();
+            let open = html[..at]
+                .rfind("<details")
+                .expect("no <details> before it");
+            let summary_end = html[open..at].find("</summary>");
+            assert!(summary_end.is_some(), "{action}: after the summary");
+            assert!(
+                !html[open..at].contains("</details>"),
+                "{action}: inside its <details>"
+            );
+        }
+    }
+    // Orphans, the Storytel login, three unused categories, the file, the entry.
+    assert_eq!(deletes, 7);
+}
+
+/// A file is deleted only through its own entry's URL (qa-31-s12-code L4): another entry's id in
+/// the path is a 404 and the file stays, on disk and in the library.
+#[tokio::test]
+async fn a_file_is_deleted_only_through_its_own_entry() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let own = add_own(&app, &cookie, "Bilturen").await;
+    let other = add_own(&app, &cookie, "Annet").await;
+    let res = upload(&app, &cookie, own, &[("a.wav", wav(300))]).await;
+    assert!(res.status.is_redirection());
+    let (file, path): (i64, String) = sqlx::query_as("SELECT id, path FROM music_files")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{other}/files/{file}/delete"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_files WHERE id = ?")
+        .bind(file)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
+    assert!(app.state.music_files_dir.join(path).exists());
+}
+
+/// The library (design 31 §3.4): a row per entry with its count and phones, Check now and the
+/// Offline select on the row; ↑ ↓ only in Edit mode; On phones counts each phone's ticks.
+#[tokio::test]
+async fn the_library_rows_and_edit_mode() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    app.create_device("Emil <b>").await;
+    let a = add_nrk(&app, &cookie, "abels", "Abels tårn").await;
+    let b = add_nrk(&app, &cookie, "ukas", "Ukas <i>nyheter</i>").await;
+    tick(&app, &cookie, anna, a, true).await;
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("NRK podcast · 1 phone</span>"), "{page}");
+    assert!(page.contains("NRK podcast · no phones</span>"), "{page}");
+    assert!(
+        page.contains("Ukas &#60;i&#62;nyheter"),
+        "names are escaped"
+    );
+    assert!(page.contains("Emil &#60;b&#62;"));
+    assert!(!page.contains("<i>nyheter") && !page.contains("Emil <b>"));
+    assert!(page.contains(&format!("action=\"/music/entries/{a}/check\"")));
+    assert!(autosaves(&page, "cache"));
+    assert_eq!(
+        form_action_of(&page, "cache"),
+        Some(format!("/music/entries/{a}/offline").as_str())
+    );
+    assert!(!page.contains("/move\""), "no ↑ ↓ outside Edit");
+    assert!(page.contains("href=\"/music?edit=1#entries\""));
+    // On phones: the ticks of the whole library, to the phone's music.
+    assert!(page.contains(&format!("data-phone=\"{anna}\"")));
+    assert!(page.contains("<span class=\"row-value\">1 of 2</span>"));
+    assert!(page.contains("<span class=\"row-value\">0 of 2</span>"));
+    assert!(page.contains(&format!("href=\"/devices/{anna}#music\"")));
+
+    // A refused add: the tab again, that form open, the link kept and the reason by the field.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/music",
+            Some(&cookie),
+            &[("link", "https://example.invalid/not a link")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let text = res.text();
+    assert!(text.contains("id=\"add-link\" open"));
+    assert!(!text.contains("id=\"add-own\" open"));
+    assert!(text.contains("aria-describedby=\"add_link-error\""));
+    assert_eq!(form_action_of(&text, "link"), Some("/music#add-link"));
+    let res = app
+        .request_form(Method::POST, "/music/own", Some(&cookie), &[("name", " ")])
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("id=\"add-own\" open"));
+
+    let edit = app.get_page("/music?edit=1", &cookie).await.text();
+    assert!(edit.contains("href=\"/music#entries\""), "Done");
+    assert!(!edit.contains("/check\""), "Edit shows only ↑ ↓");
+    let moves: Vec<String> = post_forms(&edit)
+        .into_iter()
+        .filter(|(action, _)| action.ends_with("/move"))
+        .map(|(action, hidden)| format!("{action} {}", hidden[0].1))
+        .collect();
+    assert_eq!(
+        moves,
+        vec![
+            format!("/music/entries/{a}/move down"),
+            format!("/music/entries/{b}/move up"),
+        ]
     );
 }

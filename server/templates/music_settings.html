@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "music" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/music"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Music</a>
+    <h1 class="page-title">Settings</h1>
+
+    <h2 class="group-header">New episodes</h2>
+    <form method="post" action="/music/sweep" class="group" id="sweep">
+        <label class="row" for="sweep_hours">
+            <span class="row-label">Check for new episodes</span>
+            <select id="sweep_hours" name="hours" class="pick" data-autosave>
+                {% for hours in sweep_choices %}
+                <option value="{{ hours }}"{% if *hours == sweep_hours %} selected{% endif %}>Every {{ hours }} hour{% if *hours != 1 %}s{% endif %}</option>
+                {% endfor %}
+            </select>
+            <svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </label>
+        <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+    </form>
+    <div class="group-footer">"Check now" on an entry checks it at once. <details class="info"><summary aria-label="About checking for new episodes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Every 6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours). More often means more requests to NRK and the podcast sites: about 2&times; the Pi at 3 hours, 6&times; at 1 hour.</p><p>Shows no phone has are checked once a day. Episode pictures are fetched a few at a time, at most 400 a day.</p></div></details></div>
+
+    <h2 class="group-header">Storytel</h2>
+    <div class="group" id="storytel">
+        {% if !storytel.key_available %}
+        <details class="info cell" data-row="storytel-off">
+            <summary class="row"><span class="row-label text-alarm">Storytel is off</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why Storytel is off" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>This server has no key to keep the login safe. It makes one itself (data/keys/music-secret.key) unless MUSIC_SECRET_KEY is set in .env - the server's log says why that failed ("Storytel logins are off: ..."). See DEPLOY.md.</p></div>
+        </details>
+        {% else %}
+        {% if storytel.stale %}
+        <p class="row text-alarm" data-row="stale">Enter the login again<span class="row-sub">It was locked with another key (a restored backup or a new key file), so the phones can't get it.</span></p>
+        {% endif %}
+        <div class="row" data-row="login">
+            <span class="row-label">Login</span>
+            <span class="row-value">{% if let Some(saved) = storytel.saved_on %}Saved {{ saved }}{% else %}None{% endif %}</span>
+        </div>
+        {% if storytel.saved_on.is_some() %}
+        <div class="row" data-row="phones">
+            <span class="row-label">On phones</span>
+            <span class="row-value">{{ storytel.phones }}</span>
+        </div>
+        {% if let Some(status) = storytel.status %}
+        <p class="row row-note{% if storytel.status_error %} text-alarm{% endif %}" data-row="status">{{ status }}</p>
+        {% endif %}
+        {% if !storytel.stale %}
+        <a class="row" href="/music/storytel" data-row="shelf">
+            <span class="row-label">Pick Books from the Shelf</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endif %}
+        {% endif %}
+        <form method="post" action="/music/storytel#storytel" class="cell form-group" id="storytel-login">
+            <div class="field">
+                <label class="field-label" for="storytel_email">E-mail</label>
+                <input type="text" inputmode="email" id="storytel_email" name="email" autocomplete="off" autocapitalize="off" spellcheck="false" required{% if storytel.error.is_some() %} aria-invalid="true" aria-describedby="storytel-error" autofocus{% endif %}>
+            </div>
+            <div class="field">
+                <label class="field-label" for="storytel_password">Password</label>
+                <input type="password" id="storytel_password" name="password" autocomplete="new-password" required>
+                {% if let Some(error) = storytel.error %}<p class="field-error" id="storytel-error">{{ error }}</p>{% endif %}
+            </div>
+            <button type="submit" class="button-wide">{% if storytel.saved_on.is_some() %}Replace Login{% else %}Save Login{% endif %}</button>
+        </form>
+        {% if let Some(notice) = storytel.notice %}
+        <p class="flash" data-flash="storytel" role="status">{{ notice }}</p>
+        {% endif %}
+        {% if storytel.saved_on.is_some() %}
+        <details class="confirm cell" id="storytel-remove">
+            <summary class="row">Remove Login…</summary>
+            <form method="post" action="/music/storytel/clear" class="confirm-body">
+                <p>Remove the Storytel login from this server and every phone? Their Storytel books go too.</p>
+                <button type="submit" class="button-destructive">Remove Login</button>
+            </form>
+        </details>
+        {% endif %}
+        {% endif %}
+    </div>
+    {% if storytel.key_available %}
+    <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Used by the shelf here and by the phones where Storytel is on (each phone's Music card). Kept encrypted on this server, never in a log. Saving checks it with Storytel first.</p><p>Use a password you use only for Storytel: each phone keeps it to log in. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p></div></details></div>
+    {% endif %}
+
+    <h2 class="group-header">The music app</h2>
+    <div class="group" id="app">
+        {% if let Some(app) = catalog %}
+        <a class="row" href="/apps/tracked/{{ app.id }}" data-row="music-app">
+            <span class="row-label">{{ app.name }}<span class="row-sub">On {{ app.phones }} phone{% if app.phones != 1 %}s{% endif %}</span></span>
+            <span class="row-value">{% if let Some(release) = app.release %}{{ release }}{% else %}No release yet{% endif %}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% else %}
+        <form method="post" action="/music/catalog-row" class="cell">
+            <button type="submit" class="row row-button">Add to the App Catalog</button>
+        </form>
+        {% endif %}
+    </div>
+    <p class="group-footer">{% if catalog.is_some() %}Switch it on for a phone on the phone's page.{% else %}Watches this project's music-v releases; nothing is installed until you switch it on for a phone.{% endif %}</p>
+
+    {% if let Some((count, size)) = orphans %}
+    <h2 class="group-header">Files no entry uses</h2>
+    <div class="group" id="orphans">
+        <div class="row" data-row="orphans">
+            <span class="row-label">{{ count }} file{% if *count != 1 %}s{% endif %}</span>
+            <span class="row-value">{{ size }}</span>
+        </div>
+        <details class="confirm cell" id="orphans-delete">
+            <summary class="row">Delete Files…</summary>
+            <form method="post" action="/music/orphans/delete" class="confirm-body">
+                <p>Delete these files from the server for good? Keep them while you might put a newer database back.</p>
+                <button type="submit" class="button-destructive">Delete Files</button>
+            </form>
+        </details>
+    </div>
+    <p class="group-footer">Most likely left over after an older backup was restored.</p>
+    {% endif %}
+</main>
+</body>
+</html>

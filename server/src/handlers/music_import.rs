@@ -1,10 +1,11 @@
-//! "Import from Vibb" on `/music` (design `docs/design/21a-vibb-library-import.md`): a Vibb Pi's
-//! curated library brought over in one go. `POST /music/import` reads the uploaded file (at most
-//! 1 MB, never stored) and shows a preview at `#import`: a category choice per section, a tick per
-//! entry, the phones to tick them on. The preview carries the file as it was read
-//! (`music_import::document`) in a hidden field; `POST /music/import/confirm` reads that like a fresh
-//! upload and re-checks everything in one transaction, then redirects to `/music#import` with what
-//! happened (a session flash). No outgoing request: targets only go through `music::parse_link`.
+//! "Import from Vibb" on `/music/import` (design `docs/design/21a-vibb-library-import.md`): a Vibb
+//! Pi's curated library brought over in one go. `POST /music/import` reads the uploaded file (at
+//! most 1 MB, never stored) and shows the page with a preview: a category choice per section, a
+//! tick per entry, the phones to tick them on. The preview carries the file as it was read
+//! (`music_import::document`) in a hidden field; `POST /music/import/confirm` reads that like a
+//! fresh upload and re-checks everything in one transaction, then redirects to
+//! `/music/import#import` with what happened (a session flash). No outgoing request: targets only
+//! go through `music::parse_link`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,7 +21,7 @@ use crate::music::{self, MusicCategory};
 use crate::music_import::{self, MAX_IMPORT_BYTES, Section};
 use crate::security::CurrentAdmin;
 
-/// The session key of the last import's result, shown once on `/music`.
+/// The session key of the last import's result, shown once on `/music/import`.
 pub const RESULT_FLASH: &str = "music_import_result";
 /// The result lists at most this many skipped rows and misses (then "... and N more").
 const MAX_RESULT_LINES: usize = 100;
@@ -28,7 +29,6 @@ const MAX_RESULT_LINES: usize = 100;
 /// The card's state.
 #[derive(Default)]
 pub struct ImportCard {
-    pub open: bool,
     pub error: Option<String>,
     pub result: Option<ImportResult>,
     pub preview: Option<ImportPreview>,
@@ -208,7 +208,6 @@ async fn preview_card(
         })
         .collect();
     Ok(ImportCard {
-        open: true,
         error,
         result: None,
         preview: Some(ImportPreview {
@@ -223,7 +222,6 @@ async fn preview_card(
 
 fn refused(error: impl Into<String>) -> ImportCard {
     ImportCard {
-        open: true,
         error: Some(error.into()),
         ..Default::default()
     }
@@ -281,7 +279,7 @@ struct Done {
 /// `POST /music/import/confirm`: `doc` (the preview's document), `row` = "s.r" per ticked entry,
 /// `category_<s>` = a category id or "new", `phone` = ids. Everything is checked again as for a
 /// fresh upload, in one transaction: new categories, the entries in file order, the ticks - never
-/// past a phone's limit (`music::tick_fits`). Back to `/music#import` with what happened.
+/// past a phone's limit (`music::tick_fits`). Back to `/music/import#import` with what happened.
 pub async fn confirm(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -596,7 +594,7 @@ pub async fn confirm(
     if let Err(err) = session.insert(RESULT_FLASH, &result).await {
         tracing::warn!(%err, "couldn't keep the import's result for the page");
     }
-    Redirect::to("/music#import").into_response()
+    Redirect::to("/music/import#import").into_response()
 }
 
 /// Every row that wasn't imported for a reason, as "Section / name: reason": a ticked row as the
