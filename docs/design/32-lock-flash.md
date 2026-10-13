@@ -32,14 +32,21 @@ Launcher paths are under `launcher/app/src/main/java/com/kidslauncher/mdm/`.
   - No activity can stay drawn across the sleep without waking the phone. The only exemption is turn-screen-on.
   - The screen-on gate never waits for the lock: its surface is destroyed at the sleep stop.
   - A cover window would work, but `SYSTEM_ALERT_WINDOW` and accessibility can't be obtained by a device owner.
-- **Recommended fix (8.1): the system keyguard as a bridge across the sleep.**
-  1. A bare Swipe keyguard: no credential, `KEYGUARD_DISABLE_FEATURES_ALL`.
-  2. Our `showWhenLocked` lock occludes it while dark. By AOSP's rules nothing that isn't `showWhenLocked` can then
-     be visible, and the keyguard's draw gates the screen-on.
-  3. The lock dismisses the keyguard after its first frame, so the rest is today's behaviour.
-  4. The lock's stand-in becomes pure black.
-  5. The needless re-start at screen-off goes.
-- **Defence in depth (8.2, optional):** Home under the lock, with a plain black snapshot.
+- **The fix, in two stages (decisions in §10, steps in §8).**
+  - **Step 1, now, in release:** the defence in depth.
+    - Home goes under the lock at each lock-up while dark, but not during a call.
+    - Home's snapshot is plain and black.
+    - The lock's stand-in frame is pure black.
+    - A lock already on top isn't re-started at screen-off.
+    - Unlocking lands on Home.
+  - **Step 2, a device experiment behind a debug-only switch:** the system keyguard as a bridge across the sleep.
+    - A bare Swipe keyguard: no credential, `KEYGUARD_DISABLE_FEATURES_ALL`.
+    - Our `showWhenLocked` lock occludes it while dark. By AOSP's rules nothing that isn't `showWhenLocked` can
+      then be visible, and the keyguard's draw gates the screen-on.
+    - The lock dismisses it after its first frame, with a failure counter and the `setKeyguardDisabled(true)`
+      fallback.
+    - Home dismisses it at boot.
+  - **Step 3:** step 2 becomes the release behaviour once its device checks pass on the emulator and the Jelly Star.
 
 ## 1. Evidence from the user's run (2026-10-13, 11:17-11:19)
 
@@ -152,7 +159,7 @@ resumed (the log confirms: `06.577` resumes the lock straight from the sleep tok
      drawn (`ActivityRecord.getStartingWindowType` `:2392-2430`, `ActivityStarter` `:2415-2417`,
      `ActivityTaskSupervisor.findTaskToMoveToFront` `:1626`, `TaskFragment.resumeTopActivity` `:1741-1746`).
    - Exactly which code path puts the *lower* task's snapshot up in the WAKE window is the one point not settled by
-     reading. Section 5 names the trace that settles it. The fix in §8.1 doesn't depend on it.
+     reading. Section 5 names the trace that settles it. The keyguard cover (step 2) does not depend on it.
 6. **The system keyguard is the only thing that gets a real guarantee.**
    - The keyguard's window is not an activity, so it stays drawn across the sleep. The screen-on waits for it.
    - Activities that aren't `showWhenLocked` stay invisible behind it (`KeyguardController.checkKeyguardVisibility`).
@@ -189,7 +196,7 @@ resumed (the log confirms: `06.577` resumes the lock straight from the sleep tok
 | # | Hypothesis | Rank | Confirms it | Refutes it |
 | --- | --- | --- | --- | --- |
 | H1 | At the WAKE, until #30 has drawn, Shell/WM shows the task under #30 by its snapshot (starting-window snapshot or transition content) | most likely | the SurfaceFlinger layer trace at the flash frame has a visible layer named after the Play task's snapshot / `Snapshot Starting com.android.vending/...`, or a Shell transition leash with the snapshot; the WM ProtoLog shows the snapshot starting window being added to the Play task, or the Play task in the WAKE `TransitionInfo` | no Play layer in the layer trace at the flash time |
-| H2 | Our needless re-start while dark (`START ... result=3`) causes it: `wm_task_moved` and the sleep-time resume/stop leave a pending transition or starting window that makes the WAKE a task switch from the task below | possible, contributes | the flash goes away when that start is skipped (a debug toggle, or §8.1 step 5 alone), with the Play Store still directly under the lock | the flash stays with the start skipped |
+| H2 | Our needless re-start while dark (`START ... result=3`) causes it: `wm_task_moved` and the sleep-time resume/stop leave a pending transition or starting window that makes the WAKE a task switch from the task below | possible, contributes | the flash goes away when that start is skipped (step 1 item 2 alone), with the Play Store still directly under the lock | the flash stays with the start skipped |
 | H3 | A stale starting window on the Play task, left from earlier (Play's process died after 9:55), shown when anything re-evaluates visibility | less likely | `dumpsys activity activities` before the screen-off lists `mStartingWindow` / a `Snapshot Starting` window on the Play task; the layer trace has it as a hidden layer that becomes visible | no starting window on the Play task before the flash |
 | H4 | Process death or an exception finishes the lock at the screen-off | ruled out by this log | - | `06.577` resumes the same #30 straight from the sleep token; no START at the wake |
 
@@ -217,7 +224,7 @@ adb shell dumpsys activity activities > tasks.txt   # task order, starting windo
 - In the layer trace, step to the first lit frame after the wake. The visible layer stack names who is on screen:
   a `Snapshot`/`Splash Screen`/`Starting` layer, the Play `ActivityRecord`, or the `PinLockActivity` layer. The
   ProtoLog lines with the same timestamp name the code path (H1 or H3).
-- For H2: build with the screen-off start skipped when the lock is top (8.1 step 5 alone) and repeat.
+- For H2: build with the screen-off start skipped when the lock is top (step 1 item 2 alone) and repeat.
 - Logcat lines worth grepping: `wm_task_moved`, `wm_set_resumed_activity`, `wm_add_to_stopping`,
   `ActivityTaskManager: START`, `addStartingWindow` / `Adding starting window`, `TaskSnapshot`,
   `StartingSurface`, `onTransitionReady`, `Finished screen turning on`, `Remove SleepToken`, `PinLock`.
@@ -361,13 +368,13 @@ gap is black. So the first visible frame is black or the lock - the requirement.
     lockscreen**, not an app. That is still not "lock or black".
   - So `KEYGUARD_DISABLE_FEATURES_ALL`, no AOD, and checking whether its notifications show on an insecure
     keyguard (`KEYGUARD_DISABLE_SECURE_NOTIFICATIONS` is documented for secure keyguards;
-    `lock_screen_show_notifications` isn't DO-writable) all matter. This window is the reason for 8.1 step 4 (no
+    `lock_screen_show_notifications` isn't DO-writable) all matter. This window is the reason the lock is started first at `SCREEN_OFF` (no
     work before the start).
 - **Boot.** A swipe keyguard shows at boot before our process.
   - The boot mark (16e) on Home is hidden behind it (Home isn't `showWhenLocked`).
   - Either Home dismisses it at its locked resume (`requestDismissKeyguard` is allowed for an activity that is
     `visibleIgnoringKeyguard`, `KeyguardController.dismissKeyguard`), or the boot shows the lock without the mark.
-    A design call (§10).
+    Decided: Home dismisses it (§10, decision 4).
 - **Unlock.**
   - Nothing to do: the keyguard has been dismissed since the first frame.
   - The `isKeyguardLocked()` readers in our code (none today besides `ScreenTimeTracker`'s, which design 10 says
@@ -390,7 +397,7 @@ gap is black. So the first visible frame is black or the lock - the requirement.
 | --- | --- | --- | --- |
 | 1 | **Keyguard bridge** (7.4) + a black lock background + no redundant start | **yes** by AOSP's keyguard visibility and screen-on rules, except for a screen-on within the occlude window, which then shows SystemUI's bare lockscreen | medium: reverses design 10's "no Android lock screen" for the sleep span. Boot, dismissal and yield checks |
 | 2 | Cover overlay (7.3) | yes while present | high / not available: `SYSTEM_ALERT_WINDOW` isn't DO-grantable; conflicts with `DISALLOW_CREATE_WINDOWS` and hide-overlay; accessibility is worse |
-| 3 | Home under the lock + black snapshots (the first version of this doc, now 8.2) | no - only if the reveal path shows the task directly under the lock (not proven, §5). Home's frame is a visible frame unless it is pure black | low. Kept as defence in depth |
+| 3 | Home under the lock + black snapshots (step 1) | no - only if the reveal path shows the task directly under the lock (not proven, §5). Home's frame is a visible frame unless it is pure black | low. Kept as defence in depth |
 | 4 | Earlier start, display callbacks, wake locks, `showWhenLocked` alone | no (§7.1, §7.2) | - |
 | 5 | Turn-screen-on on the lock | the lock would be visible while dark, but every lock-up wakes the phone | rejected |
 | - | `FLAG_SECURE` on other apps | impossible | - |
@@ -403,133 +410,251 @@ gap is black. So the first visible frame is black or the lock - the requirement.
 
 None of them touched the keyguard, the sleep visibility, or what lies under the lock.
 
-## 8. Recommendation
+## 8. Steps
 
-### 8.1 The keyguard bridge (do this)
+There are two stages (decision 1, §10). Step 1 is the defence in depth and is built now. Step 2 builds the keyguard
+cover as a device experiment behind a debug-only switch. Step 3 promotes the cover once the device checks have
+passed. Each step is one sitting, green on its own, with its tests.
 
-1. **The keyguard is a bare Swipe cover while the lock is active.**
-   - `PinLockRuntime.configure` asks for `setKeyguardDisabled(false)` instead of `true` when the lock would be
-     active and the phone has no credential. That is pure: `wantKeyguardDisabled` becomes `keyguardMode(...)`, one
-     of `COVER | DISABLED`.
-   - `lockActivation` no longer needs the disable to succeed; `KEYGUARD_NOT_DISABLED` becomes "the keyguard
-     couldn't be enabled as a cover", reported.
-   - `AppEnforcer`'s keyguard-features pass writes `KEYGUARD_DISABLE_FEATURES_ALL` while the cover is on.
-   - Unmanaged, or no kid PIN: as today.
-2. **Dismissal after the lock's first frame.**
-   - `PinLockActivity` dismisses the keyguard with `requestDismissKeyguard` once per resume with the screen on,
-     after the first draw.
-   - Pure `dismissDue(resumed, interactive, keyguardLocked, drawnSinceResume, failures)`.
-   - Failures are counted and reported. The fallback is `setKeyguardDisabled(true)` (it dismisses) until the next
-     screen-off, when the cover is enabled again.
-   - Home dismisses it at its locked resume at boot, if the user wants the boot mark (§10).
-3. **The gap is black.**
-   - `PinLockTheme`'s `windowBackground` and the lock's `TaskDescription` background become `#000000`. The lock
-     still paints its wallpaper and scrim itself (25f); only the stand-in changes from `kid_ground`.
-   - A design decision against 25f's "the starting window stays `kid_ground`": `kid_ground` is #0C0C14, close to
-     black but not black. Veto in §10.
-4. **Nothing in front of the lock's start at `SCREEN_OFF`.**
-   - The receiver already starts the lock first (`:657`). The LOCKED edge's chrome follows on the same thread (16c).
-     It may move after the start's binder call but must not move before it.
-   - The occlude transition (7.4) needs the lock on top as early as possible.
-5. **No redundant start.** `lockUpStarts`: a lock that is the top task and hasn't left the front since the last
-   screen-off starts nothing - no more `result=3` (§4.4). Pure, with a runtime flag cleared by any interactive pause
-   or stop.
-6. **Comments corrected.** `PinLockRuntime.kt:650` and `PinLockState.kt:163` stop claiming the lock is drawn before
-   the screen-on. Design 10 §3 gets a pointer here.
+### Step 1 - Home under the lock, the black stand-in, no needless start (release behaviour)
 
-### 8.2 Defence in depth: Home under the lock (cheap, optional)
+1. **Home under the lock at a lock-up.**
+   - When the lock comes up at `SCREEN_OFF` (`showLock` from `ScreenOff`), `PinLockRuntime` starts Home
+     (`HomeFront.bring`, typed HOME) and then the lock (`show`, `REORDER_TO_FRONT`). Both run on the main thread,
+     in the receiver, in that order. Home's task then lies between the lock and every app.
+   - **Skipped during a live call**: ours (`OngoingCalls.hasLiveCall`), Telecom's, or a VoIP phase other than
+     NONE. Then only the lock is started, as today. It is also skipped during shutdown, where `HomeFront` already
+     refuses.
+   - The re-fronts with the screen on stay lock-only. A Home start in front of the kid would itself be a visible
+     frame.
+   - Pure: `lockUpStarts(showLock, lockOnTop, callLive): LockUpStart { NONE, LOCK, HOME_THEN_LOCK }` in
+     `lock/LockUpPlan.kt`.
+2. **No start for a lock already on top.**
+   - The runtime flag `lockOnTop` (main thread) is set by a `HOME_THEN_LOCK` start.
+   - Anything that may have put something over the lock clears it:
+     - any other start of the lock (re-front, `ScreenOn`, `TimeRuleShown`, `CallsEnded`, VoIP, process start);
+     - any lock pause or stop with the screen on;
+     - the lock's destroy;
+     - the UNLOCKED edge.
+   - A pause or stop while not interactive is the sleep's own and keeps the flag. `isInteractive` flips at the
+     early sleep change, before WM pauses for the sleep token.
+   - With the flag set, a screen-off starts nothing. That removes the `result=3` re-start and its sleep-time
+     resume/draw/stop (§4.4, H2).
+   - Unknown state = `HOME_THEN_LOCK`, which is harmless while dark.
+3. **Home's snapshot is plain and black.**
+   - `HomeActivity.onCreate`: `setRecentsScreenshotEnabled(false)` (as `SettingsActivity`), so WM uses Home's
+     app-theme snapshot (`ActivityRecord.shouldUseAppThemeSnapshot`). Otherwise Home's stored snapshot could be
+     its *unlocked* grid.
+   - `setTaskDescription(TaskDescription.Builder().setBackgroundColor(BLACK))`, so that app-theme snapshot is
+     black.
+   - Home's cold-start splash (16e's breathing mark on `vibb_night`) is unchanged. It is a launch splash, not the
+     task snapshot.
+4. **The lock's stand-in is pure black** (decision 3).
+   - `PinLockTheme` `windowBackground` becomes `@android:color/black`, and the lock's task description background
+     becomes black.
+   - The lock still paints its wallpaper and scrim itself (25f). Only the frame before its first draw changes
+     (was `kid_ground` #0C0C14).
+5. **Unlocking lands on Home in every mode** (decision 2).
+   - Kiosk on: nothing to build; the lock already leaves through Home.
+   - Kiosk off: the lock stops its own lock task and finishes, and Home - right under it - is in front.
+   - As a backstop for a lock-up where Home was skipped (a call), `lockLeave(kioskOn = false, ...)` gets
+     `homeFirst = true`, so Home is started before the finish, as with the kiosk on.
+   - A glance row's target still opens after Home (`go()`).
+6. **Comments corrected.**
+   - `PinLockRuntime.kt:650` and `PinLockState.kt:163` no longer claim the lock is drawn before the screen-on.
+   - Design 10 §3 gets a pointer to this doc.
+   - `launcher/CLAUDE.md` gets a "Lock flash (design 32)" bullet.
+7. **Log:** `Lock-up at screen-off: NONE|LOCK|HOME_THEN_LOCK (call=<bool>)`, once per screen-off.
 
-- At a lock-up while dark, start Home (typed, `HomeFront.bring`) before the lock, never during a call. Home's task
-  then lies between the lock and the apps.
-- Give Home `setRecentsScreenshotEnabled(false)` (its snapshot then follows the app theme), with a black
-  task-description background.
-- It changes nothing when 8.1 works (Home is hidden by the keyguard too). It limits the damage if the keyguard is
-  ever off (dismissal failed, the crash guard, an Android credential set): then what can be revealed is a black
-  Home stand-in, not an app.
-- The price: with the kiosk off the unlock may land on Home. Only with the user's yes (§10).
+### Step 2 - The keyguard cover as a device experiment (debug builds only)
+
+The release behaviour stays exactly as after step 1. Everything new is reachable only through the debug hook,
+in the same pattern as 16d's `LockTaskOverrideReceiver` and design 28's `HeadsetDebugReceiver`.
+
+1. **The switch.**
+   - `src/debug`'s `lock/KeyguardCoverDebugReceiver`: exported, guarded by `android.permission.DUMP`.
+   - Usage:
+     ```
+     adb shell am broadcast -n $P/com.kidslauncher.mdm.lock.KeyguardCoverDebugReceiver --ez on true|false
+     ```
+   - It stores the switch in CE prefs `keyguard_cover_debug`, re-runs `PinLockRuntime.configure` (through an
+     apply), and logs `KeyguardCover: on|off -> setKeyguardDisabled(<bool>) = <result>, features <hex>, keyguard
+     locked <bool>`. It reports the same in the result data.
+   - `src/main` reads the switch only through `KeyguardCoverDebug.enabled(context)`. `src/release`'s version
+     returns `false`.
+   - The receiver and its names go into `CheckDebugHook`'s list and `DebugHookAbsentTest`'s ban. Never name it in
+     `src/main`, comments included.
+2. **The cover** (only while the switch is on, the lock is active, managed, a kid PIN, no credential):
+   - Pure `keyguardMode(managed, hasKidPin, deviceSecure, coverWanted): COVER | DISABLED | UNTOUCHED`.
+   - COVER means `setKeyguardDisabled(false)` (Swipe) and `setKeyguardDisabledFeatures(KEYGUARD_DISABLE_FEATURES_ALL)`.
+   - `lockActivation` accepts the cover as "the keyguard is handled". `KEYGUARD_NOT_DISABLED` becomes "the cover
+     couldn't be set".
+   - Switch off means as today: `setKeyguardDisabled(true)`, and the features as `AppEnforcer` computes them.
+3. **The dismissal after the lock's first frame.**
+   - `PinLockActivity`: once per resume with the screen on, after the first frame since the resume
+     (`OnDrawListener` -> post), `KeyguardManager.requestDismissKeyguard(this, callback)`. Only while the cover is
+     on and `isKeyguardLocked`.
+   - Pure: `dismissDue(coverOn, resumed, interactive, keyguardLocked, drawnSinceResume, triedThisResume)`.
+4. **The failure counter and report.**
+   - `onDismissError` / `onDismissCancelled`, or the keyguard still locked 1 s after `onDismissSucceeded`, counts
+     one failure.
+   - The counter is kept in memory and reported in `lock_state` as `keyguard_dismiss_failures`, with
+     `keyguard_cover` (on/off). This is a server and PWA change (status only, both sides in one commit) - or, for
+     the experiment, logcat only. The implementer decides; logcat is the minimum.
+   - Every failure logs `KeyguardCover: dismissal failed (<why>), n=<count>`.
+5. **The fallback.**
+   - At the 2nd consecutive failure: `setKeyguardDisabled(true)`, which dismisses the showing keyguard.
+   - The cover is set again at the next screen-off's deferred work (`screenOffWork`, dark, 400 ms) and the counter
+     resets on a success.
+   - Pure: `dismissFallback(failures) = failures >= 2`.
+6. **The boot dismissal** (decision 4).
+   - At its locked resume in the boot's first process start (`bootMarkDue`), `HomeActivity` dismisses the keyguard
+     with `requestDismissKeyguard`, so the breathing mark (16e) shows. Home isn't `showWhenLocked`, and dismissal
+     is allowed for a `visibleIgnoringKeyguard` activity.
+   - The lock then comes up as today. Failures count the same.
+7. **Tests:** the pure functions, plus the pins in §9. The debug receiver is tested only by the hook guards.
+8. **Usage doc:** `docs/testing/emulator.md` gets §6k "Keyguard cover (design 32 step 2)": the broadcast, the
+   `dumpsys` checks, the screenrecord procedure.
+
+### Step 3 - After the device checks: the cover becomes the release behaviour
+
+- Only after §11's step 2 checks pass on the emulator **and** the Jelly Star.
+- `KeyguardCoverDebug` is removed. The cover becomes the default wherever `keyguardMode` says COVER.
+- Decide whether it gets a server switch: a `keyguard_cover` policy field, default on, as an off switch for an
+  OEM that misbehaves. If yes, policy JSON on both sides in one commit, `policy_json_keys_snapshot` and
+  `PolicyResponseCompatTest`.
+- Design 10's "no Android lock screen" rule is updated in `docs/design/10-lock-and-call-ui.md` and
+  `launcher/CLAUDE.md`. The screen lock is Swipe, a bare cover across the sleep, dismissed by handy's lock after
+  its first frame; `setKeyguardDisabled(true)` is only the fallback.
+- The keyguard state becomes part of the status report (if step 2 kept it to logcat).
 
 ## 9. Tests
 
-**Pure:**
-- `keyguardMode(managed, hasKidPin, deviceSecure)`: COVER only managed + PIN + no credential; DISABLED otherwise.
-  This replaces `wantKeyguardDisabled`'s tests.
-- `lockActivation` with the cover: active without `setKeyguardDisabled(true)`; `KEYGUARD_NOT_DISABLED` when the
-  cover couldn't be set.
-- `dismissDue`:
-  - only resumed, interactive, keyguard locked, drawn since the resume;
-  - not twice per resume;
-  - after 2 failures it switches to `FALLBACK_DISABLE`.
-- `lockUpStarts` / `lockOverTop`: no start while the lock has kept the top since the last screen-off; a start after
-  any interactive pause or stop, and at process start.
-- (8.2, if taken) `HOME_THEN_LOCK` never during a call.
+**Step 1, pure** (`LockUpPlanTest`):
+- `lockUpStarts`:
+  - `showLock=false` -> NONE;
+  - a live call (ours, Telecom, VoIP) -> LOCK;
+  - `lockOnTop` -> NONE;
+  - otherwise HOME_THEN_LOCK;
+  - unknown -> HOME_THEN_LOCK.
+- `lockOnTopAfter(event, interactive)`:
+  - set only by HOME_THEN_LOCK;
+  - cleared by every other lock start, an interactive pause or stop, destroy, UNLOCKED;
+  - kept by a non-interactive pause or stop.
+- `lockLeave(kioskOn = false, ...)` now has `homeFirst = true` (`LockTaskRootTest`).
+- `PinLockStateTest`'s `ScreenOff` cases are unchanged.
 
-**Source pins:**
-- `PinLockActivity`, `InCallActivity` and `VoipWakeActivity` stay `showWhenLocked` (`PinLockManifestTest`).
-- The lock has no `turnScreenOn` and no `setTurnScreenOn`.
-- `FLAG_SECURE` is set before `setContentView`.
-- `PinLockTheme`'s `windowBackground` is `@android:color/black`.
-- `requestDismissKeyguard` is called only from `PinLockActivity` (and Home's boot path, if chosen).
-- `setKeyguardDisabled` is called only from `PinLockRuntime.configure` and the dismissal fallback.
-- `KEYGUARD_DISABLE_FEATURES_ALL` is written while the cover is on.
-- No `TYPE_APPLICATION_OVERLAY` / `SYSTEM_ALERT_WINDOW` / `AccessibilityService` in the launcher.
+**Step 1, source pins:**
+- The `SCREEN_OFF` branch goes through `lockUpStarts`, and `HomeFront.bring` comes before `show`.
+- No other screen-off path starts Home.
+- `HomeFrontTest` still bans explicit Home intents.
+- `HomeActivity.onCreate` calls `setRecentsScreenshotEnabled(false)` and sets a black task-description background.
+- `PinLockTheme` `windowBackground` is `@android:color/black`.
+- `PinLockActivity` keeps `FLAG_SECURE` before `setContentView`, keeps `showWhenLocked`, and has no
+  `turnScreenOn` / `setTurnScreenOn` (`PinLockManifestTest`).
+- No `TYPE_APPLICATION_OVERLAY`, `SYSTEM_ALERT_WINDOW` or `AccessibilityService` in the launcher.
 - No "drawn before the next screen-on" in `lock/`.
 
-## 10. Questions for the user (veto if wrong)
+**Step 2, pure:**
+- `keyguardMode`: COVER only with the switch on, managed, a PIN and no credential; switch off = today's.
+- `lockActivation` with the cover.
+- `dismissDue`: not before the first frame, not twice per resume, not with the screen off, not without the cover.
+- `dismissFallback`.
 
-1. The keyguard comes back as a bare Swipe cover across the sleep, dismissed by the lock after its first frame.
-   The phone's Settings then say "Swipe" instead of "None". A stock lockscreen may be seen in two cases:
-   - when the screen is turned on within the occlude window;
-   - when handy's lock is off (the crash guard).
-   Is that acceptable?
-2. The lock's stand-in frame (the frame before the lock draws) goes from `kid_ground` (#0C0C14) to pure black.
-3. Boot: should Home dismiss the keyguard to keep the 3 s breathing mark (16e)? Or does the boot show the lock at
-   once?
-4. 8.2 (Home under the lock): wanted as defence in depth, given that with the kiosk off the unlock may then land on
-   Home?
+**Step 2, source pins:**
+- `KeyguardCoverDebugReceiver` is only in `src/debug`, in `CheckDebugHook` and `DebugHookAbsentTest`.
+- `src/main` reaches the switch only through `KeyguardCoverDebug`.
+- `requestDismissKeyguard` is called only from `PinLockActivity` and `HomeActivity`'s boot path.
+- `setKeyguardDisabled` is called only from `PinLockRuntime.configure` and the fallback.
+- `InCallActivity` and `VoipWakeActivity` stay `showWhenLocked`.
+
+## 10. Decisions (user, 2026-10-13, final)
+
+1. **Both stages.** Step 1 (Home under the lock, the black stand-in, no needless start) is built now. The Swipe
+   keyguard cover follows as a device experiment behind a debug switch (step 2) and is made permanent (step 3)
+   only if it holds on the emulator and the Jelly Star.
+2. **Unlocking lands on Home in every mode**, kiosk off included. So Home under the lock is wanted as defence in
+   depth.
+3. **The stand-in frame is pure black** - the orchestrator's call, since it matches "lock or black". `kid_ground`
+   stays the lock's painted ground, not its stand-in.
+4. **At boot, Home dismisses the keyguard**, so the breathing mark (16e) still shows - the orchestrator's call.
+
+Open for step 3: whether the cover gets a server switch.
 
 ## 11. Device checks
 
-**Emulator** (Android 16, Google Play image, gesture navigation, debug build as DO). The modes:
-- kiosk on, from an allowed app;
-- install mode, with Play in front;
-- the pause, with Play in front (from the drawer);
-- the override;
-- a time rule;
-- our call;
-- a VoIP call;
-- an alarm;
-- SOS.
+**The frame-stepping rule** (every check below that records):
+```
+adb shell screenrecord --bugreport --bit-rate 8000000 /sdcard/flash.mp4   # stamps time + frame number
+adb pull /sdcard/flash.mp4 && ffmpeg -i flash.mp4 -vsync 0 frames/%05d.png
+```
+- Step through every frame from the first lit one after each power-on to the lock's first frame.
+- **A run fails if any frame shows:**
+  - app content;
+  - an older status-bar time than the live one (a snapshot);
+  - Home's grid;
+  - SystemUI's lockscreen.
+- Black frames, with or without the live status bar, pass. In step 1, a plain frame of our own (Home's black
+  stand-in) passes too.
+- The emulator's own recorder captures the secure lock; `screenrecord` on a phone shows it black. When in doubt,
+  use the §5 Perfetto layer trace: at the first lit frame, no layer of another package, Home's content or
+  SystemUI's keyguard view may be visible.
+- The modes, each 10 power-off/3 s/power-on cycles plus the screen timeout on the lock (the user's case) and
+  mashing (5 presses = SOS still reachable):
+  - kiosk on, from an allowed app;
+  - install mode, with Play in front;
+  - the pause, with Play in front (from the drawer);
+  - the override;
+  - a time rule;
+  - our call;
+  - a VoIP call;
+  - an alarm.
 
-- [ ] `adb shell dumpsys window | grep -i -E "keyguard|occlud"` after a lock-up: `showing=true occluded=true` while
-  dark; after the first frame `showing=false`. `dumpsys activity activities`: the Play task is
-  `visibleRequested=false` while the keyguard shows.
-- [ ] Power off, wait 3 s, power on, 10 times per mode. Also the screen timeout on the lock (the user's case), and
-  mashing (5 presses = SOS still reachable).
-- [ ] **The quick press:** power off and on within ~100 ms - is SystemUI's lockscreen ever seen?
-- [ ] Recording:
-  ```
-  adb shell screenrecord --bugreport --bit-rate 8000000 /sdcard/flash.mp4   # frame numbers + time stamped
-  adb pull /sdcard/flash.mp4 && ffmpeg -i flash.mp4 -vsync 0 frames/%05d.png
-  ```
-  Step from the first lit frame after each power-on to the lock.
-  - Pass: only black frames (the live status bar may show), then the lock.
-  - Fail: any app, Home, SystemUI's lockscreen, a stale status-bar time (a snapshot), or `kid_ground` instead of
-    black.
-  - The emulator's own recording captures the secure lock; `screenrecord` on a phone shows it black. Judge black
-    stand-in frames by the frame before the lock's content, with the §5 layer trace when in doubt.
-- [ ] The §5 Perfetto layer trace, before and after: at the first lit frame no layer of another package, Home or
-  SystemUI's keyguard view is visible.
-- [ ] After the first frame the keyguard is gone: `dumpsys window` `mKeyguardShowing=false`. Then: Recents (16d), a
-  VoIP call screen over the lock, the time-rule screen after an unlock, the emergency dialer, the alarm, SOS. All
-  as today.
-- [ ] Dismissal failure path: force it (debug hook) - the lock still works, `lock_state` reports it, and the
-  fallback disables the keyguard.
-- [ ] Boot: what shows between the boot animation and the lock (with and without Home's dismissal), and
-  `smoke-test.sh REBOOT=1`.
-- [ ] Settings shows Swipe; no "None" toggling at each screen-off (`dumpsys lock_settings`).
+**Step 1** (emulator, then the Jelly Star release build):
+- [ ] The rule above in every mode. Step 1 does not promise the strict requirement (§7.5 rank 3). Record whether
+  any non-black frame is left, which one, and attach the §5 trace if so - that decides how urgent step 2 is.
+- [ ] Logcat:
+  - `Lock-up at screen-off: HOME_THEN_LOCK` after an unlock or a yield;
+  - `NONE` at a screen-off with the lock already on top;
+  - no `ActivityTaskManager: START ... PinLockActivity ... result code=3`.
+- [ ] `dumpsys activity activities` after a lock-up: lock task, then Home's task, then the app.
+- [ ] During a call (ours, VoIP), the power key: no Home over the call screen. After the hang-up, the lock.
+- [ ] Unlock lands on Home with the kiosk on, the kiosk off (pause, override) and install mode. A glance row's
+  target still opens.
+- [ ] Recents after the unlock: no `BlockedAppActivity` (16d); `smoke-test.sh` green.
+- [ ] Home in Recents/Overview shows a plain black card, not its grid.
+- [ ] VoIP ring from dark, alarm from dark, SOS: unchanged.
 
-**Jelly Star** (release build):
-- [ ] The same matrix. Also a phone camera at 240 fps on the panel, because `screenrecord` shows the secure lock
-  black.
-- [ ] Note the Android version. On Android 13 (no shell transitions) the keyguard rules in 7.4 are the same, but
-  check the occlude-while-dark timing again.
+**Step 2** (debug build, emulator and the Jelly Star, the switch on):
+- [ ] The broadcast logs `on -> setKeyguardDisabled(false) = true`. Settings > Security shows Swipe.
+  `dumpsys lock_settings` shows no credential.
+- [ ] After a lock-up while dark: `adb shell dumpsys window | grep -i -E "keyguard|occlud"` shows
+  `showing=true occluded=true`. `dumpsys activity activities` shows the Play/Home tasks `visibleRequested=false`.
+- [ ] **The rule above in every mode: no failing frame at all.** That is the strict requirement - only black, then
+  the lock.
+- [ ] **The quick press:** power off and on within ~100 ms, 20 times - SystemUI's lockscreen is never seen. If it
+  is, the cover fails this check.
+- [ ] After the lock's first frame the keyguard is gone (`mKeyguardShowing=false`, log `dismissed`). Then, as
+  today:
+  - Recents (16d);
+  - a VoIP call screen over the lock;
+  - the time-rule screen after an unlock;
+  - the emergency dialer;
+  - the alarm;
+  - SOS;
+  - the camera double-press (nothing opens).
+- [ ] Dismissal failure: make it fail (e.g. a debug extra that skips the call, or `adb shell wm dismiss-keyguard`
+  races). The counter logs, the 2nd failure runs the fallback (`setKeyguardDisabled(true)`), and the next
+  screen-off sets the cover again.
+- [ ] Boot (`svc power reboot`): the boot animation, then Home's breathing mark for 3 s (Home dismissed the
+  keyguard), then the lock. No SystemUI lockscreen frame. `smoke-test.sh REBOOT=1` green.
+- [ ] The switch off: `setKeyguardDisabled(true)`, Settings shows None, and everything is as step 1.
+- [ ] The Jelly Star: note the Android version. On Android 13 (legacy transitions) repeat the quick-press check
+  carefully.
+
+**Step 3** (release build, after the step 2 checks pass on both devices):
+- [ ] The full step 2 list again on the release build, without the switch.
+- [ ] An update from a step 1 build: the cover comes on at the first apply, without a reboot.
+- [ ] If a server switch is added: off restores step 1's behaviour at the next sync, on brings the cover back.
+- [ ] A phone with an Android PIN set (`lock_state.inactive = android_credential`): untouched, no cover, no double
+  lock.
