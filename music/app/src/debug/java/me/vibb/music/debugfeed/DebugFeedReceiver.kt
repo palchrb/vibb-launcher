@@ -79,7 +79,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
             }
             config?.get("stream_mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.streamMobileData = it }
             config?.get("download_mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.downloadMobileData = it }
-            config?.get("storage_limit_gb")?.jsonPrimitive?.intOrNull?.let { store.storageLimitGb = it.takeIf { gb -> gb != 0 } }
+            config?.get("storage_limit_gb")?.jsonPrimitive?.intOrNull?.let { store.storageLimitGb = it }
         }
         DebugStorytel.applyBase(context)
         File(dir, "storytel.json").takeIf { it.isFile }?.let { f -> DebugStorytel.seedLogin(context, f) }

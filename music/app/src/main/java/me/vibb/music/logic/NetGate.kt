@@ -33,6 +33,14 @@ fun streamAllowed(caps: NetCaps?, streamMobileData: Boolean): Boolean = networkA
 /** May the download job fetch now ([downloadMobileData]: the downloads switch)? Storage aside. */
 fun downloadAllowed(caps: NetCaps?, downloadMobileData: Boolean): Boolean = networkAllows(caps, downloadMobileData)
 
+/**
+ * Must the sync stop a running download job (qa-30-s3a-code L1)? When the network doesn't allow
+ * downloads now: the parent turned the downloads switch off while the phone is on mobile data. A job
+ * is checked only between items and its running constraint is the old one, so a several-hundred-MB
+ * book would finish over mobile data. On Wi-Fi a running job is never interrupted.
+ */
+fun stopRunningDownload(caps: NetCaps?, downloadMobileData: Boolean): Boolean = !downloadAllowed(caps, downloadMobileData)
+
 /** Null when downloads may run now, else what they wait for. */
 fun downloadWaiting(caps: NetCaps?, downloadMobileData: Boolean, storageLow: Boolean): Waiting? = when {
     storageLow -> Waiting.STORAGE

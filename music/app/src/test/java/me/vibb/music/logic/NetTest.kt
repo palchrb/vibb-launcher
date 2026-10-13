@@ -38,6 +38,18 @@ class NetTest {
         assertEquals(Waiting.WIFI, downloadWaiting(mobile, downloadMobileData = false, storageLow = false))
     }
 
+    /** qa-30-s3a-code L1: the switch turned off while a job fetches over mobile data stops it; Wi-Fi never does. */
+    @Test
+    fun `a running download stops where the downloads switch now forbids it`() {
+        assertTrue("mobile data, the switch off", stopRunningDownload(mobile, downloadMobileData = false))
+        assertFalse("mobile data, the switch on", stopRunningDownload(mobile, downloadMobileData = true))
+        for (on in listOf(true, false)) {
+            assertFalse("Wi-Fi: never interrupted", stopRunningDownload(wifi, on))
+            assertTrue("roaming", stopRunningDownload(roaming, on))
+            assertTrue("no network", stopRunningDownload(null, on))
+        }
+    }
+
     @Test
     fun `neither while roaming, both on Wi-Fi`() {
         for (on in listOf(true, false)) {

@@ -1423,7 +1423,13 @@ async fn the_card_says_an_older_phone_uses_mobile_data_only_with_both() {
                "audio_bytes": 900_000, "extra_bytes": 0}),
     )
     .await;
-    assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
+    let shown = music_card(&app, &cookie, device).await;
+    assert!(!shown.contains(NOTE), "{shown}");
+    // The report landed (a refused one is stored as nothing, which would hide the note too): its line shows.
+    assert!(
+        shown.contains("Stored on the phone: 1.0 MB. Music downloads: 0.9 MB of the 2 GB limit."),
+        "{shown}"
+    );
 }
 
 #[tokio::test]

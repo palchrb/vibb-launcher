@@ -191,3 +191,19 @@ Counts: 0 High, 0 Medium, 2 Low, 2 Nits, plus notes.
     always sends numbers.
   - In 3a the warning reads the whole audio cache as kept: true while `extra_bytes` is 0. The limit never touches the
     keep set, so the warning ("lower an entry's offline depth or raise the limit") is the right advice.
+
+## Fixes (implementer, 2026-10-13, branch `design-30-s3a`)
+
+| Finding | Fix | Test (red without the fix) |
+|---|---|---|
+| L1 a running download goes on over mobile data after the downloads switch turns off | `logic/NetGate.kt` `stopRunningDownload(caps, downloadMobileData)` = `!downloadAllowed(...)`. The sync passes it as `Downloads.enqueue(..., stopRunning)`, and `enqueue` then `REPLACE`s a running job instead of appending: WorkManager stops it, the new job waits for `UNMETERED`, and the partial resumes with Range. The worker's own re-enqueues never pass it. A refinement of the QA's `!store.downloadMobileData`: the job is stopped only where the network now forbids downloads, so a sync never interrupts a Wi-Fi download. §1.1 says so. | `NetTest` `a running download stops where the downloads switch now forbids it` (mutation: always `false` -> red); `GuardsTest` `the stream switch is read live from the managed config` pins both sync calls, `enqueue`'s `!stopRunning &&` and the worker without it (mutation: `enqueue` ignores `stopRunning` -> red) |
+| L2 the unmanaged (debug feed) reading is unpinned | `Store.unmanagedSwitch(key)` = `mobileSwitch(prefs.all, key)` and the unmanaged limit = `storageLimit(prefs.all)`: the managed config's rules, which `BridgeTest` covers | `GuardsTest` (the same test) pins both calls and the feed's order: a bare `mobile_data` setting both, before the keys of their own. Your M4 (`prefs.getBoolean(key, false)`) -> red; the feed's blocks swapped -> red |
+| N1 `Downloads.kt`'s header names the one old switch | names "downloads may use mobile data" (design 30 §1.1) | - |
+| N2 the 0 -> null -> 0 round trip; the older-phone test can't tell a refused report | the feed stores `storage_limit_gb` as given (`store.storageLimitGb = it`, pinned); `the_card_says_an_older_phone_uses_mobile_data_only_with_both` asserts the 3a report's line ("Stored on the phone: 1.0 MB. Music downloads: 0.9 MB of the 2 GB limit.") next to the missing note | the server test itself |
+
+Runs (under the build lock, `--no-daemon --max-workers=2`; cargo with its own target dir, `server-target-d30-3a`):
+- music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 622 tests, 0 failures;
+- launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`: 1079 tests, 0 failures;
+- server `cargo fmt --check` clean, `cargo clippy --all-targets` 13 warnings (none in this step's code, unchanged),
+  `cargo test` 671 passed;
+- the three mutations above, each in its own run of `GuardsTest` + `NetTest`, all red, then restored.

@@ -398,9 +398,29 @@ class GuardsTest {
         assertTrue(downloads.contains(".setRequiredNetworkType(if (downloadMobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)"))
         assertTrue(downloads.contains("downloadWaiting(netCaps(applicationContext), store.downloadMobileData, false)"))
         assertTrue(sync.contains("downloadWaiting(netCaps(context), store.downloadMobileData, storageLow)"))
-        assertEquals(2, Regex("Downloads\\.enqueue\\(context, store\\.downloadMobileData").findAll(sync).count())
+        assertTrue(sync.contains("val downloadMobileData = store.downloadMobileData"))
         assertEquals(2, Regex("Downloads\\.enqueue\\(applicationContext, store\\.downloadMobileData").findAll(downloads).count())
         for (text in listOf(downloads, sync)) assertFalse(text.contains("streamMobileData"))
+        // qa-30-s3a-code L1: the sync replaces a running job where the downloads switch now forbids it; the
+        // worker's own re-enqueues never do (it would cancel itself mid-report)
+        assertTrue(sync.contains("val stop = stopRunningDownload(netCaps(context), downloadMobileData)"))
+        val enqueues = Regex("Downloads\\.enqueue\\(context, [^\\n]*").findAll(sync).map { it.value }.toList()
+        assertEquals(2, enqueues.size)
+        assertTrue(enqueues.toString(), enqueues.all { it.startsWith("Downloads.enqueue(context, downloadMobileData") && it.contains("stopRunning = stop)") })
+        assertFalse(downloads.substringAfter("class DownloadWorker").contains("stopRunning"))
+        val enqueue = downloads.substringAfter("fun enqueue(").substringBefore("\n    }\n")
+        assertTrue(enqueue.contains("val running = !stopRunning && runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }"))
+        assertTrue(enqueue.contains("if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE"))
+        // qa-30-s3a-code L2: unmanaged (the debug feed's prefs, same key names) the managed config's own rules ...
+        assertTrue(store.contains("private fun unmanagedSwitch(key: String): Boolean = mobileSwitch(prefs.all, key)"))
+        assertTrue(store.contains("return if (config.managed) config.storageLimitGb else storageLimit(prefs.all)"))
+        // ... and the feed: a bare mobile_data sets both switches, then a key of its own wins
+        val feed = code("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")
+        val bare = feed.indexOf("config?.get(\"mobile_data\")?.jsonPrimitive?.booleanOrNull?.let {\n                store.streamMobileData = it\n                store.downloadMobileData = it\n            }")
+        assertTrue(bare >= 0)
+        assertTrue(bare < feed.indexOf("config?.get(\"stream_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.streamMobileData = it }"))
+        assertTrue(bare < feed.indexOf("config?.get(\"download_mobile_data\")?.jsonPrimitive?.booleanOrNull?.let { store.downloadMobileData = it }"))
+        assertTrue(feed.contains("config?.get(\"storage_limit_gb\")?.jsonPrimitive?.intOrNull?.let { store.storageLimitGb = it }"))
     }
 
     @Test

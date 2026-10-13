@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.RestrictionKeys
+import me.vibb.music.bridge.mobileSwitch
 import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.coversToDelete
@@ -77,15 +78,13 @@ class Store private constructor(context: Context) {
     var storageLimitGb: Int?
         get() {
             val config = Bridge.config(app)
-            if (config.managed) return config.storageLimitGb
-            val key = RestrictionKeys.STORAGE_LIMIT_GB
-            return storageLimit(if (prefs.contains(key)) mapOf(key to prefs.getInt(key, 0)) else emptyMap())
+            return if (config.managed) config.storageLimitGb else storageLimit(prefs.all)
         }
         set(value) = prefs.edit().putInt(RestrictionKeys.STORAGE_LIMIT_GB, value ?: 0).apply()
 
-    /** An unmanaged phone's switch: the debug feed's, else its old one `mobile_data` (a feed from before design 30). */
-    private fun unmanagedSwitch(key: String): Boolean =
-        if (prefs.contains(key)) prefs.getBoolean(key, false) else prefs.getBoolean(RestrictionKeys.MOBILE_DATA, false)
+    /** An unmanaged phone's switch: the debug feed's, else its old one `mobile_data` (a feed from before design
+     * 30) - the managed config's rule, on the feed's prefs, which use the same key names (qa-30-s3a-code L2). */
+    private fun unmanagedSwitch(key: String): Boolean = mobileSwitch(prefs.all, key)
 
     private fun loadLibrary(): Library? = runCatching { libraryFile.readText() }.getOrNull()?.let(LibraryParser::parse)
 

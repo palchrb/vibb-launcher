@@ -29,6 +29,7 @@ import me.vibb.music.logic.Listed
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.addItemError
 import me.vibb.music.logic.downloadWaiting
+import me.vibb.music.logic.stopRunningDownload
 import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
 import me.vibb.music.logic.repickWanted
@@ -181,10 +182,13 @@ object Sync {
             MediaCache.remove(context, row.cacheKey, row.hls)
             dao.deleteDownload(row.entryId, row.itemKey)
         }
+        // A running job may not go on where the downloads switch now forbids it (qa-30-s3a-code L1).
+        val downloadMobileData = store.downloadMobileData
+        val stop = stopRunningDownload(netCaps(context), downloadMobileData)
         if (plan.wanted.isNotEmpty()) {
-            Downloads.enqueue(context, store.downloadMobileData)
+            Downloads.enqueue(context, downloadMobileData, stopRunning = stop)
         } else {
-            plan.nextRetryAt?.let { Downloads.enqueue(context, store.downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
+            plan.nextRetryAt?.let { Downloads.enqueue(context, downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0), stopRunning = stop) }
         }
         NewNotifier.update(context, store.snapshot())
         writeReport(context)

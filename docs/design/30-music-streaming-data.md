@@ -83,6 +83,10 @@ This design adds the parent's limit (§1.8) and one floor, `EXTRAS_FREE_FLOOR` (
 A stream on mobile data under the streaming switch writes its bytes too: they arrived anyway. It never starts a
 download on mobile data without the downloads switch. The rest of a keep-set item waits for the download gate.
 
+The downloads switch turned off while the phone is on mobile data stops a running download at the next sync
+(the launcher's nudge; `stopRunningDownload`, qa-30-s3a-code L1): the job is replaced and waits for Wi-Fi, where the
+partial item resumes with Range. On Wi-Fi a running job is never interrupted.
+
 ### 1.2 The migration: both switches take the old value
 
 Migration `0073_music_data_and_storage.sql` (**renumbered at the merge** if another branch takes 0073 first; main is
@@ -915,3 +919,17 @@ gate and the download job follow them, and the `audio_bytes`/`extra_bytes` contr
 - Docs: `music/CLAUDE.md` (the gate rule, the bridge's keys and report fields, Storytel's switch), `server/CLAUDE.md`
   (the storage line), `launcher/CLAUDE.md` (`music_state`), `docs/testing/emulator.md` §6f (`config.json`'s keys).
 - Not device-tested: §8 checks 2, 3, 4 and 11 are 3a's (with 3b's write-through for check 2's `du`).
+
+**Code QA fix round** (`qa-30-s3a-code.md`, 0 High, 0 Medium, 2 Low, 2 Nits; all fixed, its "Fixes" table):
+- L1: `logic/NetGate.kt` `stopRunningDownload(caps, downloadMobileData)` (= the network doesn't allow downloads now);
+  the sync passes it as `Downloads.enqueue(..., stopRunning)`, which then `REPLACE`s a running job instead of
+  appending (WorkManager stops it; the new job waits for its constraint; the partial resumes with Range). The
+  worker's own re-enqueues never stop. Only where the switch forbids the network, so a Wi-Fi download is never
+  interrupted by a sync. §1.1 says so.
+- L2: `Store`'s unmanaged path is the managed config's own rules on the feed's prefs (`mobileSwitch(prefs.all, key)`,
+  `storageLimit(prefs.all)`), pinned in `GuardsTest` with the debug feed's order (a bare `mobile_data` first, a key of
+  its own after it).
+- N1: `Downloads.kt`'s header names the downloads switch. N2: the debug feed stores `storage_limit_gb` as given; the
+  older-phone card test asserts the 3a report's storage line, so it proves the report was stored.
+- Music 622 tests, launcher 1079, server 671 (fmt clean, clippy unchanged at 13, none in this step's code); QA's M4
+  and two more mutations (the feed's order, `enqueue` ignoring `stopRunning`) go red.

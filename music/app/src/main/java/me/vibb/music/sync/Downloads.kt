@@ -46,7 +46,7 @@ import java.util.concurrent.TimeUnit
  * Downloads (design 21 §4.5, QA #1): WorkManager jobs, never a dataSync foreground service from a
  * nudge or a job. One item at a time with Media3's downloaders into the shared cache; an
  * interrupted item continues with Range requests from what is cached. NOT_METERED unless the
- * parent's mobile-data switch is on, storage not low, never while roaming.
+ * parent's "downloads may use mobile data" switch is on (design 30 §1.1), storage not low, never while roaming.
  */
 
 /** The default network's capabilities, or null without one. */
@@ -69,9 +69,12 @@ object Downloads {
      * Run the downloads when the network allows, after [delayMs]. A running job gets this one
      * appended (it re-plans until nothing new is wanted, but a sync landing at its very end must not
      * be lost); a waiting one is replaced, so a sync never sits behind a retry delay
-     * (qa-21-step2-code M4). Call off the main thread.
+     * (qa-21-step2-code M4). With [stopRunning] a running job is replaced too: WorkManager stops it and
+     * the new one waits for its constraint (the sync passes `stopRunningDownload`: the downloads switch
+     * went off while the phone is on mobile data, qa-30-s3a-code L1); the partial item resumes with Range
+     * once the network allows. Call off the main thread.
      */
-    fun enqueue(context: Context, downloadMobileData: Boolean, delayMs: Long = 0) {
+    fun enqueue(context: Context, downloadMobileData: Boolean, delayMs: Long = 0, stopRunning: Boolean = false) {
         // The downloads switch (design 30 §1.1): off Wi-Fi only with it, never while roaming.
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(if (downloadMobileData) NetworkType.NOT_ROAMING else NetworkType.UNMETERED)
@@ -82,7 +85,7 @@ object Downloads {
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .build()
         val wm = WorkManager.getInstance(context)
-        val running = runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList())
+        val running = !stopRunning && runCatching { wm.getWorkInfosForUniqueWork(WORK).get() }.getOrDefault(emptyList())
             .any { it.state == WorkInfo.State.RUNNING }
         wm.enqueueUniqueWork(WORK, if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
     }
