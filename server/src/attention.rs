@@ -274,7 +274,8 @@ fn title(kind: Kind) -> String {
 /// The page that fixes it. Until each card has its sub-page (design 31 §8 steps 4-10) some are
 /// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
 /// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
-/// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs.
+/// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs; step 5
+/// notification access to Home Screen.
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
         Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
@@ -289,7 +290,7 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff => ("/lock", "child-pin"),
-        Kind::NoNotificationAccess => ("", "launcher"),
+        Kind::NoNotificationAccess => ("/home", "layout"),
         Kind::LedgerUnreadable | Kind::LauncherWithoutRules => ("", "time"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
@@ -461,8 +462,9 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         boot_cover_not_shown: escapes
             .iter()
             .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
-        no_notification_access: latest.and_then(|st| st.notification_listener_enabled)
-            == Some(false),
+        // Home Screen's own warning, so the row and the page agree.
+        no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
+            .is_some(),
         calls: s.call_problems.to_vec(),
         ledger_unreadable: time
             .as_ref()
@@ -662,7 +664,8 @@ mod tests {
             "/devices/7/advanced#updates"
         );
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
-        assert_eq!(target("notification-access"), "/devices/7#launcher");
+        // Step 5: Home Screen.
+        assert_eq!(target("notification-access"), "/devices/7/home#layout");
         assert_eq!(target("screen-time-record"), "/devices/7#time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");

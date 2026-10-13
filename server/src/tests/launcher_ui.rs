@@ -10,7 +10,7 @@ use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::{TestApp, TestResponse};
+use super::{Section, TestApp, TestResponse, assert_redirect, device_page, form_action_of};
 
 async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
     let res = app
@@ -171,7 +171,8 @@ async fn launcher_ui_defaults_and_form() {
             &[("language", "nb"), ("home_columns", "4")],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to Home Screen (design 31 step 5), no fragment: scroll-restore keeps the place.
+    assert_redirect(&res, &device_page(id, Section::Home), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         launcher_settings(&app, &token).await,
@@ -207,11 +208,14 @@ async fn launcher_ui_defaults_and_form() {
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("action=\"/devices/{id}/launcher\"")));
+    let action = format!("/devices/{id}/launcher");
+    assert_eq!(form_action_of(&page, "language"), Some(action.as_str()));
+    assert_eq!(form_action_of(&page, "home_columns"), Some(action.as_str()));
     assert!(page.contains("<option value=\"nb\" selected>"));
+    assert!(page.contains("<option value=\"4\" selected>"));
 }
 
 #[tokio::test]
@@ -394,6 +398,8 @@ async fn replaced_and_removed_photos_are_deleted() {
     assert!(stored_files(&app).is_empty());
 }
 
+/// Vibb can't read notifications: Home Screen warns (the sentence visible, the adb command only
+/// behind its ⓘ, design 31 §4.2) and the device page's Attention row links there.
 #[tokio::test]
 async fn missing_notification_access_is_a_warning() {
     let app = TestApp::new().await;
@@ -405,10 +411,11 @@ async fn missing_notification_access_is_a_warning() {
             "notification_listener_enabled": enabled,
         })
     };
-    let warning = "can't read notifications";
+    let warning = "Notification access off";
+    let row = format!("href=\"/devices/{id}/home#layout\" data-attention=\"notification-access\"");
 
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
     assert!(!page.contains(warning));
@@ -427,10 +434,24 @@ async fn missing_notification_access_is_a_warning() {
             .await;
         assert!(res.status.is_success());
         let page = app
-            .get_page(&format!("/devices/{id}"), &cookie)
+            .get_page(&device_page(id, Section::Home), &cookie)
             .await
             .text();
         assert_eq!(page.contains(warning), shown);
+        let summary = app
+            .get_page(&device_page(id, Section::Summary), &cookie)
+            .await
+            .text();
+        assert_eq!(summary.contains(&row), shown);
+        if shown {
+            // In the target's section, above its group; the command only in the ⓘ panel.
+            let at = page.find(warning).unwrap();
+            assert!(page[..at].contains("<section id=\"layout\""));
+            assert!(!page[..at].contains("<form"));
+            let command = page.find("allow_listener").expect("the fix");
+            let panel = page[..command].rfind("<details class=\"info\">").unwrap();
+            assert!(at < panel && !page[panel..command].contains("</details>"));
+        }
     }
 }
 

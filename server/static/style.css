@@ -1863,3 +1863,87 @@ details.edit[open] > summary .chev {
     word-break: break-word;
     overflow-wrap: anywhere;
 }
+
+/* ---- Design 31 step 5: Home Screen and Web Filter ---- */
+
+/* A text button at a row's end (a domain's Remove, an add row's Block); a form around it is the
+   flex item. The base button's fill is reset; the 44px target fills the row's height. */
+.row > form {
+    flex: none;
+    margin: -11px -16px -11px 12px;
+}
+
+.row-action {
+    flex: none;
+    min-height: 44px;
+    margin: -11px -16px -11px 12px;
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--tint);
+    font-size: 1rem;
+    font-weight: 400;
+}
+
+.row > form > .row-action {
+    margin: 0;
+}
+
+.row-action:hover {
+    background: var(--row-active);
+    color: var(--tint);
+}
+
+.row-action.row-danger,
+.row-action.row-danger:hover {
+    color: var(--red);
+}
+
+/* A text field that is the row (add a domain): no box of its own. */
+input.row-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font-size: 1.0625rem;
+}
+
+/* The wallpapers a phone may use: a thumbnail and a checkbox each (no flex gap: Safari 14.0). */
+.wallpaper-grid {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 12px 8px 0;
+}
+
+.wallpaper-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 76px;
+    margin: 0 4px 12px;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    text-align: center;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.wallpaper-thumb {
+    display: block;
+    width: 45px;
+    height: 80px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.wallpaper-choice input {
+    width: 22px;
+    height: 22px;
+    margin: 0 0 4px;
+}

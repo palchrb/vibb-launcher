@@ -572,7 +572,8 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
   without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
   (a mistyped URL) is left out until it does, the rest still reaches the phones. The Web Filter page (Settings) shows each
-  feed's state. Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
+  feed's state, a phone's Web Filter page (the phone's own lists, domains and log) a short "Not loaded yet" or
+  "Last download failed". Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone

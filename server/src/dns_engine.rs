@@ -286,7 +286,7 @@ pub(crate) fn parse_feed(text: &str) -> HashSet<String> {
     domains
 }
 
-fn looks_like_a_domain(name: &str) -> bool {
+pub(crate) fn looks_like_a_domain(name: &str) -> bool {
     name.len() <= 253
         && name.contains('.')
         && name.split('.').all(|label| {

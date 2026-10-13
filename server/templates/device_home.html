@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Home Screen</h1>
+
+    {#- Every form saves on change (autosave.js) and returns here without a fragment, so
+        scroll-restore.js keeps the place; <noscript> Save without JS. -#}
+    <section id="layout" aria-label="Language and apps per row">
+        {% if let Some(note) = notification_warning %}
+        {% include "partials/note_warning.html" %}
+        {% endif %}
+        {#- One form (design 31 §5.6): the handler writes both values. -#}
+        <form method="post" action="/devices/{{ device.id }}/launcher" class="group">
+            <label class="row">
+                <span class="row-label">Language</span>
+                <select class="pick" name="language" data-autosave>
+                    <option value="system"{% if launcher_language == "system" %} selected{% endif %}>Same as the phone</option>
+                    <option value="nb"{% if launcher_language == "nb" %} selected{% endif %}>Norsk bokmål</option>
+                    <option value="en"{% if launcher_language == "en" %} selected{% endif %}>English</option>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <label class="row">
+                <span class="row-label">Apps per row</span>
+                <select class="pick" name="home_columns" data-autosave>
+                    <option value="3"{% if home_columns == 3 %} selected{% endif %}>3 (bigger)</option>
+                    <option value="4"{% if home_columns == 4 %} selected{% endif %}>4</option>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <p class="group-footer">The language of Vibb's own screens on the phone.</p>
+    </section>
+
+    <section id="wallpapers" aria-labelledby="wallpapers-title">
+        <h2 class="group-header" id="wallpapers-title">Wallpapers</h2>
+        <form method="post" action="/devices/{{ device.id }}/wallpapers" class="group">
+            <div class="wallpaper-grid">
+                {% for w in wallpapers %}
+                <label class="wallpaper-choice">
+                    {% if let Some(image) = w.image %}
+                    <img class="wallpaper-thumb" src="/wallpaper-images/{{ image }}" alt="" width="45" height="80">
+                    {% else %}
+                    <span class="wallpaper-thumb" style="background: {{ w.background }}"></span>
+                    {% endif %}
+                    <input type="checkbox" name="wallpaper" value="{{ w.id }}"{% if w.checked %} checked{% endif %} data-autosave>
+                    <span>{{ w.label }}</span>
+                </label>
+                {% endfor %}
+            </div>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Your child picks from these on the phone.
+            <details class="info">
+                <summary aria-label="About the wallpapers"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Unticking the one in use replaces it on the phone at once. Add your own photos in <a href="/wallpapers">Settings › Wallpapers</a>; the lock screen's background is on Lock Screen &amp; PINs.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="quick-controls" aria-labelledby="quick-controls-title">
+        <h2 class="group-header" id="quick-controls-title">Quick controls</h2>
+        {#- One form for the four: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
+        <form method="post" action="/devices/{{ device.id }}/policy" class="group">
+            <input type="hidden" name="section" value="quick">
+            <label class="row">
+                <span class="row-label">Wi-Fi</span>
+                <input type="checkbox" role="switch" class="sw" name="quick_control_wifi" value="on"{% if quick_wifi %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Bluetooth</span>
+                <input type="checkbox" role="switch" class="sw" name="quick_control_bluetooth" value="on"{% if quick_bluetooth %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Screen brightness</span>
+                <input type="checkbox" role="switch" class="sw" name="quick_control_brightness" value="on"{% if quick_brightness %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Sound or silent</span>
+                <input type="checkbox" role="switch" class="sw" name="quick_control_sound" value="on"{% if quick_sound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Shown when your child swipes left on the home screen.
+            <details class="info">
+                <summary aria-label="About the quick controls"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Your child gets these instead of Android's quick settings, which can't be locked down: an app can add its own tile there.</p>
+                    <p>Sound or silent: the volume buttons work either way. Do Not Disturb isn't offered, and while it is on your child can't change the sound there.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+</main>
+</body>
+</html>

@@ -254,7 +254,8 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
     // Ticked on this phone (with navy): in its policy, fetchable, upright, no metadata.
     let mut nudges = app.state.command_notify.subscribe();
     let res = tick(&app, &cookie, id, &[1, portrait]).await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to Home Screen (design 31 step 5) with no fragment: scroll-restore keeps the place.
+    super::assert_redirect(&res, &super::device_page(id, super::Section::Home), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let list = wallpapers(&app, &token).await;
     assert_eq!(list.len(), 2);
@@ -345,11 +346,26 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
     assert!(page.contains(&format!("src=\"/wallpaper-images/{hash}\"")));
     assert!(page.contains("Hytta"));
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("action=\"/devices/{id}/wallpapers\"")));
-    assert!(page.contains(&format!("value=\"{portrait}\" checked")));
+    assert_eq!(
+        super::form_action_of(&page, "wallpaper"),
+        Some(format!("/devices/{id}/wallpapers").as_str())
+    );
+    assert!(page.contains(&format!("src=\"/wallpaper-images/{hash}\"")));
+    assert_eq!(
+        super::input_checked(&page, "wallpaper", &portrait.to_string()),
+        Some(true)
+    );
+    assert!(super::autosaves(&page, "wallpaper"));
+    // The device page keeps a row, not the grid.
+    let summary = app
+        .get_page(&super::device_page(id, super::Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("name=\"wallpaper\""));
+    assert!(summary.contains(&format!("href=\"/devices/{id}/home\"")));
     assert_eq!(
         app.get_page(&format!("/wallpaper-images/{hash}"), &cookie)
             .await

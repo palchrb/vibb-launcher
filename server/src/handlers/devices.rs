@@ -615,12 +615,12 @@ const DEFAULT_LOCK_TASK_FEATURES: i64 = LOCK_FEATURE_SYSTEM_INFO
 /// Bits for `quick_controls_mask` - which switches show up on the launcher's kid Settings page
 /// (swipe left from Home; the launcher's `ui/kidsettings/KidSettingsActivity`, its
 /// `QuickControlFeature`), the kid-facing replacement for Android's native Quick Settings shade.
-const QUICK_CONTROL_WIFI: i64 = 1;
-const QUICK_CONTROL_BLUETOOTH: i64 = 2;
-const QUICK_CONTROL_BRIGHTNESS: i64 = 4;
+pub(crate) const QUICK_CONTROL_WIFI: i64 = 1;
+pub(crate) const QUICK_CONTROL_BLUETOOTH: i64 = 2;
+pub(crate) const QUICK_CONTROL_BRIGHTNESS: i64 = 4;
 /// The sound row (design 18): Sound / Silent (vibrate). It only shows the row - the volume keys
 /// still change the sound. A launcher before design 18 ignores the bit.
-const QUICK_CONTROL_SOUND: i64 = 8;
+pub(crate) const QUICK_CONTROL_SOUND: i64 = 8;
 /// A new device's `quick_controls_mask`: every switch on (`insert_device_with_policy`).
 pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
     QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS | QUICK_CONTROL_SOUND;
@@ -639,11 +639,6 @@ struct DeviceDetailTemplate {
     /// written directly there.
     any_app_installing: bool,
     restrictions_paused: bool,
-    vpn_filter_enabled: bool,
-    quick_control_wifi: bool,
-    quick_control_bluetooth: bool,
-    quick_control_brightness: bool,
-    quick_control_sound: bool,
     latest_status: Option<DeviceStatus>,
     /// The About This Phone row's value: "Vibb 0.23.6" (design 31 step 3).
     about_value: Option<String>,
@@ -662,18 +657,14 @@ struct DeviceDetailTemplate {
     /// can't be opened on the phone, there is no offline override, and with USB debugging
     /// blocked a lost server means a reset (QA step 4 #4).
     managed_without_pin: bool,
-    /// Launcher card (migrations/0024): language and home-grid columns.
-    launcher_language: String,
-    home_columns: i64,
-    /// The wallpaper card: every wallpaper, ticked when this phone may use it.
-    wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
-    /// The last status report says the launcher's notification listener has no access, so the
-    /// home screen shows no unread badges on apps.
-    badges_without_access: bool,
     /// "Time rules" card (handy step 6).
     time: TimeCard,
     /// The Lock Screen & PINs row's value (design 31 step 4): "PIN on" with a Child PIN set.
     lock_value: &'static str,
+    /// The Home Screen row's value (design 31 step 5): "3 per row".
+    home_value: String,
+    /// The Web Filter row's value: "On" / "Off".
+    filter_value: &'static str,
     /// The Status card's Parent PIN notices and easy-PIN line (design 24); the PINs themselves
     /// are on Lock Screen & PINs.
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
@@ -1574,13 +1565,6 @@ async fn render_device(
         (policy.allowlist_json.is_some() && !allowlist_corrupt).then_some(&allowed),
     )
     .await;
-    let wallpapers = crate::handlers::wallpapers::device_choices(&state, id)
-        .await
-        .unwrap_or_else(|err| {
-            tracing::error!(device_id = id, %err, "couldn't load the wallpaper card");
-            Vec::new()
-        });
-
     let music = crate::handlers::music::device_card(
         &state,
         &policy,
@@ -1643,19 +1627,14 @@ async fn render_device(
             allowlist_corrupt,
             managed_without_pin: managed_without_pin(&policy),
             hardening: policy.hardening.clone(),
-            launcher_language: policy.launcher_language.clone(),
-            home_columns: policy.home_columns,
-            wallpapers,
-            badges_without_access: latest_status
-                .as_ref()
-                .is_some_and(|s| s.notification_listener_enabled == Some(false)),
+            home_value: format!("{} per row", policy.home_columns),
+            filter_value: if policy.vpn_filter_enabled {
+                "On"
+            } else {
+                "Off"
+            },
             any_app_installing,
             restrictions_paused,
-            vpn_filter_enabled: policy.vpn_filter_enabled,
-            quick_control_wifi: policy.quick_controls_mask & QUICK_CONTROL_WIFI != 0,
-            quick_control_bluetooth: policy.quick_controls_mask & QUICK_CONTROL_BLUETOOTH != 0,
-            quick_control_brightness: policy.quick_controls_mask & QUICK_CONTROL_BRIGHTNESS != 0,
-            quick_control_sound: policy.quick_controls_mask & QUICK_CONTROL_SOUND != 0,
             device,
             apps,
             latest_status,
@@ -1999,16 +1978,27 @@ pub(crate) async fn remove_from_allowlist(
     .await
 }
 
-/// Handles everything on a device's page *except* the Apps list, which is now its own set of
-/// per-row [toggle_app] saves - this form used to also carry "Allowed apps" checkboxes, which
-/// needed the allowlist-reconciliation dance now gone from here entirely (see git history if that
-/// logic is ever needed for reference). `Form<HashMap<...>>` is safe to use directly again now
-/// that nothing here is a repeated-name checkbox group.
+/// The quick controls (Home Screen) and the web filter switch (Web Filter). Since design 31 step 5
+/// the two live on two pages, so the form says which part it carries (§5.6, H1): `section=quick`
+/// writes only the quick controls and returns to `/devices/{id}/home`, `section=filter` only the
+/// filter and returns to `/devices/{id}/filter` (no fragment: scroll-restore keeps the place). A
+/// form without `section` (an older tab) writes both, as before, and returns to the device page;
+/// an unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
+/// on a DB error (nothing written either way); nudges the phone. `Form<HashMap<...>>` is safe:
+/// nothing here is a repeated-name checkbox group.
 pub async fn update_policy(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Form(fields): Form<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let (quick, filter, back) = match fields.get("section").map(String::as_str) {
+        None => (true, true, format!("/devices/{id}")),
+        Some("quick") => (true, false, format!("/devices/{id}/home")),
+        Some("filter") => (false, true, format!("/devices/{id}/filter")),
+        Some(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Unknown section").into_response();
+        }
+    };
     // Home, status bar info, recents, notifications, and the power button menu don't let a kid
     // reach anything outside the pinned/allowed app set - Home just re-navigates within it,
     // recents only lists apps already in it, status bar info is read-only, notifications can only
@@ -2049,29 +2039,39 @@ pub async fn update_policy(
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");
 
     // The parent PIN has its own card and save since design 24 (`handlers::parent_pin`): this
-    // form's SQL never touches it.
+    // form's SQL never touches it. A part the form didn't carry binds NULL and keeps its value.
     let result = sqlx::query(
         "UPDATE device_policy SET kiosk_desired = 1, lock_task_features = ?, \
-         quick_controls_mask = ?, vpn_filter_enabled = ?, updated_at = datetime('now') \
+         quick_controls_mask = COALESCE(?, quick_controls_mask), \
+         vpn_filter_enabled = COALESCE(?, vpn_filter_enabled), updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(lock_task_features)
-    .bind(quick_controls_mask)
-    .bind(vpn_filter_enabled)
+    .bind(quick.then_some(quick_controls_mask))
+    .bind(filter.then_some(vpn_filter_enabled))
     .bind(id)
     .execute(&state.db)
     .await;
-    if let Err(err) = result {
-        tracing::error!(device_id = id, %err, "failed to save the policy form");
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (axum::http::StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            // Nudges the device to re-sync at once over its SSE connection rather than waiting
+            // out the background poll - the nudge carries no data, the device just re-fetches
+            // /api/devices/policy, the same dispatch path as a scheduled sync.
+            let _ = state.command_notify.send(id);
+            Redirect::to(&back).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "failed to save the policy form");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
     }
-
-    // Nudges the device to re-sync immediately over the same SSE connection Find My Device uses
-    // for ring/lock, rather than waiting out the rest of the background poll interval - the nudge
-    // itself carries no data, the device just re-fetches /api/devices/policy on it, so this reuses
-    // the exact same dispatch path as a normal scheduled sync.
-    let _ = state.command_notify.send(id);
-
-    Redirect::to(&format!("/devices/{id}"))
 }
 
 /// Lock Screen & PINs' Child PIN (handy step 10; design 31 step 4): set or remove the kid's PIN
@@ -2255,8 +2255,9 @@ pub async fn update_hardening(
     }
 }
 
-/// The "Launcher" card: language ("system", "nb", "en") and home-grid columns (3 or 4). One
-/// auto-submitting form; an unknown value is a 400 and nothing is written.
+/// Home Screen's language ("system", "nb", "en") and apps per row (3 or 4): one auto-saving form
+/// (design 31 §5.6); an unknown value is a 400 and nothing is written. Back to
+/// `/devices/{id}/home` without a fragment (scroll-restore keeps the place).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2289,7 +2290,7 @@ pub async fn update_launcher_ui(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}/home")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save launcher settings");
