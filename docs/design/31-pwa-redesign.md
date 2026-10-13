@@ -1,7 +1,11 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **for review** - mockups come next, then the build, one page at a time.
-No code changes in this step.
+Information architect, 2026-10-13. Status: **buildable**.
+- The user approved the mockups (`docs/design/mockups/parent-pwa/`).
+- This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
+  listed in §9.
+- The build follows the 15 steps in §8.
+- No code changes in this doc.
 
 Sources: every template in `server/templates/` (and `partials/`), `server/static/style.css`, `scroll-restore.js`,
 `app-display.js`, `music-cards.js`, `manifest.webmanifest`, `templates/sw.js`, the admin routes in `server/src/main.rs`,
@@ -21,7 +25,9 @@ Word counts are counted on `main` at `5c1f40f6`.
   - Per-phone time controls stay on the device page.
 - **The language stays English** (no i18n). Every text is rewritten: a short label, at most one short line of help
   where it is really needed, and the details behind an "i" or on a sub-page.
-- Mockups come first, for the user's review. The build follows page by page.
+- Mockups come first, for the user's review. The build follows page by page. The mockups are approved; they decide
+  the look, and this doc decides the content (§6.0).
+- **The name is "Vibb Phone"** (§5.3).
 
 **How to read this doc:**
 - §1 lists everything a parent can see today.
@@ -29,8 +35,10 @@ Word counts are counted on `main` at `5c1f40f6`.
 - §3 is the new structure, and §3.9 says where every current control ends up.
 - §4 is the copy rules, with before → after examples.
 - §5 lists what the rebuild must keep.
-- §6 lists the screens the mockups must show.
-- §7 holds the questions for the user. Nothing is dropped without one.
+- §6 says how the approved mockups and this spec combine.
+- §7 records the answers to the questions for the user.
+- §8 is the build, in 15 steps.
+- §9 lists the design QA findings and what changed for each.
 
 ---
 
@@ -67,14 +75,19 @@ Word counts are counted on `main` at `5c1f40f6`.
 - **The proposal:**
   - Each tab opens on a short, grouped list in the iOS style: rows with a value and a chevron, switches, one-line
     footers and badges.
-  - The device page becomes a **summary**. Its header says **Online / Away / Offline · seen 3 min ago** (signal and
-    thresholds in §3.10).
-  - The time lock shows only while it is locking ("Bedtime until 07:00").
-  - The summary also has a few quick actions and an "Attention" group, plus **9 sub-pages**. **About This Phone**
-    holds sound, version and exact times. **Advanced** holds what a parent sets once or never. The summary's
-    Location row opens the **Locate** tab on that phone.
+  - The device page becomes a **summary**. Its header says **Online / Away / Offline · seen 3 min ago**. The signals
+    and thresholds are in §3.10: Online is an open stream with contact within 60 min; Away is no stream with
+    contact within 45 min.
+  - The time lock shows only while it is locking ("Leggetid until 07:00 tomorrow").
+  - The summary also has a few quick actions (risky ones behind a confirm), an "Attention" group, and **9
+    sub-pages**:
+    - **About This Phone** holds sound, version and exact times;
+    - **Advanced** holds what a parent sets once or never.
+  - Its Locate quick action opens the **Locate** tab on that phone.
   - The tabs are **Devices · Apps · Locate · Music · Settings**. Time Rules and Web Filter are rows in Settings.
-  - Every existing control keeps a place (§3.9). Seven questions for the user are in §7.
+  - Every existing control keeps a place (§3.9). A save never jumps (§5.1), and no form loses fields when it is
+    split (§5.6).
+  - The questions for the user are answered (§7).
 
 ---
 
@@ -570,7 +583,8 @@ The ones marked † are 40 words or more.
     - Tables (security log, commands, lifts) scroll sideways on a phone.
     - Inline styles override focus and size in places (`style="font-size:12px"`, `:494`).
 12. **The brand is inconsistent.** "Kids Device MDM" (header, `<title>`, manifest `name`), "Kids MDM" (short name),
-    "handy" (lock text "Handy's lock"), "Vibb" (boot cover, music app, phone). See Q6.
+    "handy" (lock text "Handy's lock"), "Vibb" (boot cover, music app, phone). The new name is "Vibb Phone"
+    (§5.3).
 
 ---
 
@@ -583,145 +597,215 @@ The ones marked † are 40 words or more.
   - A small grey **section header** in capitals is optional.
   - A one-line grey **footer** under the group at most.
 - **Row types:**
-  - *navigation*: label · value · chevron, leading to a sub-page;
-  - *switch*: label + switch, which saves itself;
-  - *value*: label · read-only value;
-  - *action*: a blue text button row; destructive actions in red, at the bottom of their page;
-  - *picker*: label · current value. A native `<select>` sits under the row; without JS it shows with a Save button.
-- **Badges.** A small coloured dot or pill on a row or a device: green "Online", grey "Not seen for 3 h", orange
-  "Paused", red "2 issues". State lines become badges or row values instead of sentences.
+  - *navigation*: label · value · chevron. It only ever **goes to another page**; it never opens a page whose only
+    job is to save one value (H3).
+  - *switch*: label + switch. It saves its form on change. A switch is its own form only when its handler writes
+    only that field, or the form has a section marker (§5.6, H1). Otherwise the switches of one form share one
+    group and each change saves the whole form.
+  - *value*: label · read-only value.
+  - *picker*: label · an **inline native `<select>`** at the end of the row. It saves its form on change (§5.2 says
+    how the keyboard is handled), with a `<noscript>` Save. A phone's OS picker is already the iOS-style list, so
+    there are no picker pages (H3).
+  - *action*: a blue text button row. Destructive or risky ones are red and sit behind a confirm (below).
+- **Badges.** A small coloured dot or pill on a row or a device: green "Online", grey "Offline", orange "Away",
+  red "2". State lines become badges or row values instead of sentences.
 - **"i" disclosure.**
   - A small ⓘ button at the end of a row or a footer. It is a native `<details>`/`<summary>`, so it works without JS.
   - It opens an inline panel of at most 80 words under the row.
   - Longer reference text (lockout ladder, recovery paths, Tailscale key how-to) goes to a **Help** sub-page that the
     panel links to.
-- **Attention group.** On the summary pages, alarms and needs-action messages from §1.12 come first, as red or orange
-  rows: one line, a chevron to the fix.
-- **Flash.** After a save that has a visible result (PIN saved, code made, import done), the target page shows one
-  line at the top, as today's notices do.
+- **Attention group.**
+  - On the device summary, alarms and needs-action messages (§1.12) come first, as red or orange rows: one line, a
+    chevron to the fix.
+  - The rows come from one function, `attention::collect` (§3.8). Each row's title comes from a typed value, never
+    from the first sentence of today's text (M5).
+- **Flash.**
+  - After a save that has a visible result (PIN saved, code made, import done), one line shows **inside the group of
+    the form that saved, under its rows**, not at the page top (H3).
+  - Its group's id is the anchor, for the no-JS path. With JS, scroll restore keeps the parent where they were, and
+    the flash is right there.
+- **Confirm.**
+  - A risky or destructive action is a `<details>`: the summary is the button ("Erase Phone…"). Open, it holds one
+    sentence and a POST button naming the action.
+  - This works without JS. No GET ever changes state.
+  - The list of actions that need it is in §5.6.
 - **Sub-page header.**
   - A back link ("‹ Anna") at the top left.
   - The page title, large, under it.
   - No other header chrome; the brand header goes away on inner pages.
-- **Switches** are `<input type="checkbox" role="switch">` styled as iOS switches, inside a `<label>`.
+- **Switches** are a real `<input type="checkbox" role="switch">` with a sibling `<span class="knob">`, inside a
+  `<label>` (§5.7). The mockups draw the knob as `::before` on the input; the build uses the sibling span.
 - **The bottom bar** has 5 items, with labels at least 12px and active state from `aria-current="page"`. The server
   sets `aria-current` when it renders, so no JS is needed.
 
 ### 3.1 Tab bar and URLs
 
-| Tab | Landing route | Highlights for (server-side) | Icon |
+| Tab | Landing route | Its templates | Icon |
 |---|---|---|---|
-| **Devices** | `/devices` | `/devices…` except `/devices/locate…` | phone |
-| **Apps** | `/apps` | `/apps…` | grid |
-| **Locate** | `/devices/locate` | `/devices/locate…` (with or without `?device=`) | map pin |
-| **Music** | `/music` | `/music…` | note |
-| **Settings** | `/settings` (the hub, rebuilt) | `/settings…`, `/schedules…`, `/dns…`, `/wallpapers`, `/account`, `/security`, `/backups`, `/updates` | gear |
+| **Devices** | `/devices` | `devices_list`, `device_add`, `device_detail` (the summary), every `device_*` sub-page, `device_calls`, `provision_qr`, `enroll_code` | phone |
+| **Apps** | `/apps` | `apps_list`, `tracked_app_add`, `tracked_app_detail` | grid |
+| **Locate** | `/devices/locate` | `device_locate` | map pin |
+| **Music** | `/music` | `music`, `music_entry`, `music_storytel`, and the new `music_settings`, `music_categories`, `music_import` | note |
+| **Settings** | `/settings` (the hub, rebuilt) | `settings_hub`, `schedules`, the new `schedule_rule` and `schedule_budget`, `dns_filter`, `dns_log`, `wallpapers`, `account`, `security`, `backups`, `updates`, `provisioning_settings` | gear |
+
+The tab is set **per template**, not by matching the path (L1):
+- Askama inlines includes at compile time. So each page sets `{% let tab = "settings" %}` before
+  `{% include "partials/app_header.html" %}`, and the header marks that tab `aria-current="page"`.
+- Every template belongs to exactly one tab (the table above). No request plumbing is needed, and the inline
+  active-tab script (`app_header.html:32-42`) is deleted.
+- The device sub-pages stay in the **Devices** tab, including `/devices/{id}/time` and `/devices/{id}/filter`, even
+  though their global counterparts live under Settings.
+- A test GETs one route per tab and checks `nav_current` (§5.5).
 
 Rules for routes:
 - Existing POST routes stay as they are. Only the redirect targets change (§5.1).
-- New GET routes are added for the device sub-pages (§3.2).
-- `/` still redirects to `/devices`.
-- The tab is chosen on the server, from the request path, with the same prefixes as the table.
-- The device sub-pages under `/devices/{id}/…` stay in the **Devices** tab, including `/devices/{id}/time` and
-  `/devices/{id}/filter`, even though their global counterparts live under Settings.
-- `/devices/locate` must be matched **before** `/devices/{id}`. Today the router has the literal route at
-  `main.rs:840`, and the JS regex excludes it (`^/devices(?!/locate)`). The server-side matcher needs the same rule.
-- `/schedules` keeps its URL. Only its tab changes, from its own tab to Settings. No `/time` alias and no `/more`
-  route are needed.
+- New GET routes are added for the device sub-pages (§3.2) and for the music and time sub-pages.
+- A new GET on a path that already has a POST is chained on one `.route(path, get(..).post(..))`, as
+  `main.rs:677-682` does. This applies to `/devices/{id}/music`, `/music/categories`, `/music/import` and
+  `/schedules/rules/{id}` (L5).
+- `/` still redirects to `/devices`. `/schedules` and `/settings` keep their URLs. No `/time` and no `/more` routes.
+- Old per-device URLs redirect (L5), with tests:
+  - `/schedules?device=X` → `/devices/X/time`;
+  - `/dns?device=X` and `/dns/log?device=X` → `/devices/X/filter`.
 
 ### 3.2 Devices
 
 **Devices list (`/devices`).** One row per phone:
 - an initial avatar with the connection dot (§3.10);
 - the **name**;
-- a **status line** built from what the server already knows: "Online · Skole until 14:30" or "Offline · seen 3 h
-  ago" (the lock part only while locking);
-- a thin screen-time bar;
-- a red badge with the number of Attention items.
+- a **status line**: the connection state and "seen …", plus the lock part only while a rule is locking
+  ("Online · Skole until 14:30", "Offline · seen 3 h ago");
+- a thin screen-time bar, only when the report is from the server's local today (M4);
+- a red badge with the number of Attention items, from `attention::collect` (§3.8).
 
 Below the rows:
-- An **"Add phone"** row.
+- An **"Add Phone"** row.
 - The intro paragraph moves into the Add flow.
-- The live password and sign-in warnings stay at the top, as now.
+- The live password and sign-in warnings stay at the top, as an orange row ("Change the generated password ›").
 
 **Device summary (`/devices/{id}`).** What a parent opens daily. Top to bottom:
 
 1. **Header**, answering "is it connected, and since when" first (the user's feedback):
-   - **Line 1:** the name, with the connection state as a coloured dot and word: **Online** (green), **Away**
-     (orange) or **Offline** (grey). The rules are in §3.10.
-   - **Line 2:** the relative time, "Seen just now" / "Seen 3 min ago" / "Seen 2 h ago" / "Seen yesterday 21:40".
-     While Away, it adds "· changes may take up to 15 min". While Offline: "· changes wait until it's back".
-   - **Line 3, only while something is locking:** a badge with the rule and its end, "Bedtime until 07:00",
-     "Skole until 14:30", or "Screen time used up". Calls blocked adds "· calls off". "No rule active" shows
-     **nothing**.
-     - When the phone is Offline, the badge says "at last report" so a stale lock doesn't read as now.
-     - The end time comes from the rule's own day window on the server (the report has the rule name, not its end).
-       That is a small handler addition; until it lands, the badge shows the rule name alone.
-   - **Line 4:** today's screen time as a thin bar, "42 of 90 min". It is hidden when there is no limit and nothing
-     is reported.
+   - **Line 1:** the name, with the connection state as a coloured dot and a word: **Online** (green), **Away**
+     (orange), **Offline** (grey), **Disconnected** (grey) or **Not seen yet** (grey). The rules are in §3.10.
+   - **Line 2:** the relative time, "seen just now", "seen 3 min ago", "seen 2 h ago" or "seen yesterday 21:40".
+     - While Away it adds "· changes may be delayed", with no number (H2).
+     - While Offline it adds "· changes wait until it's back".
+     - While Disconnected, it shows "Access removed" and a link "Connect again ›" to Advanced › Connection (L2).
+   - **Line 3, only while something is locking:** a badge with the rule, "Skole until 14:30", "Leggetid until 07:00
+     tomorrow", or "Screen time used up". Calls blocked adds "· calls off". "No rule active" shows **nothing**.
+     The wording rules for the end time are in §3.10 (M4).
+   - **Line 4:** today's screen time as a thin bar, "42 of 90 min today". It shows only when the report's `day` is
+     the server's local today (M4), and is hidden when there is no limit and nothing is reported.
    - **Not in the header:** sound, app version, exact timestamps, policy state, "Instant changes". They move to
      **About This Phone** (below). Do Not Disturb is the exception: it becomes an Attention row, because calls won't
      ring.
    - **Battery:** the phone doesn't report a battery level today, only whether it is exempt from battery
-     optimisation. A battery percentage needs a launcher and API change, which is out of scope here. The header
-     leaves room for a battery value if one is added later.
-2. **Attention.** Only the rows that apply. Each row takes the first sentence of today's text and links to the
-   sub-page that fixes it.
-   - Alarms: restrictions paused, possible PIN leak, Do Not Disturb on, Backup to Google on, no parent PIN, easy
-     parent PIN, access revoked, phone can't apply its settings, unseen restarts.
-   - Needs action: blocked apps waiting, restart once, no notification access, calls problems from `call_report`.
-3. **Quick actions.** A row of large buttons that post to today's routes:
-   - **+15 min**, **+30 min**, **+1 h** (`lifts`, target budget);
-   - **Pause a rule…** (`lifts`, target rule; opens a small sheet with the rule and duration selects);
-   - **Unlock for 2 h** (`start-pause`), or **Lock again now** (`end-windows`) while a pause runs;
-   - **Allow these apps** while blocked apps wait.
-4. **Today.** Running and recent lifts with **End now**, the answers from the phone (`relock.answers`), and
-   "Rules: Everyone's ›" or "Own rules ›".
-5. **Sections.** Navigation rows, each with a value that sums it up:
+     optimisation. A battery percentage needs a launcher and API change, which is out of scope here.
+2. **Attention.** Only the rows that apply, from `attention::collect`. Each row has a short title of at most 8
+   words, built from a typed value (M5), and links to the page that fixes it.
+   - **Alarms (red):**
+     - restrictions paused;
+     - possible PIN leak (foreign app);
+     - Do Not Disturb on;
+     - Backup to Google on;
+     - no parent PIN;
+     - easy parent PIN;
+     - access revoked;
+     - the phone can't apply its settings (policy problem);
+     - unseen restarts;
+     - incoming calls aren't blocked (L2);
+     - a Child PIN is set but the lock is off on the phone (`lock.warnings`, L2).
+   - **Needs action (orange):**
+     - blocked apps waiting;
+     - restart once;
+     - no notification access;
+     - calls problems from `call_report`;
+     - the screen-time record unreadable (`ledger_unreadable`, L2);
+     - a launcher without time rules (`launcher_without_rules`, L2).
+3. **Quick actions.** A 3-column grid of buttons. Labels are the short ones from §4.3:
+   - **+15 min**, **+30 min**, **+1 h** (`lifts`, target budget). One tap each.
+   - **Pause a rule…**: a `<details>` sheet with the rule and duration selects and a "Pause" button (`lifts`,
+     target rule).
+   - **Unlock for 2 h…**: a confirm (M6), "Unlock Anna's phone for 2 hours? Apps, Settings and the Play Store
+     open." plus **Unlock** (`start-pause`).
+   - **Lock again**, one tap, instead of Unlock while a pause or Play install mode runs (`end-windows`).
+   - **Locate**: a link to `/devices/locate?device={id}` (Q4: kept).
+   - **Allow these apps** is **not** a quick action. It sits under the blocked-apps list it lets out, on the
+     Attention row's target, behind a confirm that names the apps (M6).
+4. **Today.** Running and recent lifts with **End now**, the answers from the phone (`relock.answers`), and the
+   flash after a quick action (`relock.notice`, L6).
+5. **Sections.** Navigation rows, each with a value that sums it up. The summary has **no Location row**: the Locate
+   quick action is its entrance, and both lead to the same tab (M2).
 
 | Row | Value example | Sub-page | Holds (from today's page) |
 |---|---|---|---|
-| Calls & Contacts | "8 contacts · SMS on" | `/devices/{id}/calls` (exists) | The Calls & SMS page, minus the country code (→ Settings › Phone Setup) |
-| Apps | "14 allowed · 1 installing" | `/devices/{id}/apps` (new) | Allowed apps list (switches + status), App updates on Wi-Fi only, Names and icons (each app row → its own name/icon sheet), keyboard and accessibility note behind ⓘ |
-| Music | "6 in library · Storytel on" | `/devices/{id}/music` (new) | The Music card: music app, library ticks, mobile data, volume cap, Storytel, Sonos (its own sub-page when there are rooms) |
-| Time | "Everyone's rules · 90 min" | `/devices/{id}/time` (new) | Rule state, lifts table, extra time, own-rules switch, this phone's own rules and screen time (from `/schedules?device=`) |
-| Lock Screen & PINs | "Child PIN on · 1 min" | `/devices/{id}/lock` (new) | Child PIN, parent PIN (+ reported events), screen timeout, lock-screen notifications (text switch + apps), lock-screen background |
-| Home Screen | "4 per row · Norsk" | `/devices/{id}/home` (new) | Language, apps per row, wallpapers, Quick controls (swipe-left screen) |
-| Location | "Seen 10 min ago" | **Not a sub-page.** It links to the Locate tab: `/devices/locate?device={id}` (§3.6) | Nothing moves here; the row is a shortcut |
-| Web Filter | "On · log off" | `/devices/{id}/filter` (new) | Filter on/off, this phone's blocklist overrides and domains (from `/dns?device=`), blocked log switch + log (from `/dns/log?device=`) |
+| Calls & Contacts | "8 contacts" | `/devices/{id}/calls` (exists) | The Calls & SMS page, minus the country code (→ Settings › Phone Setup) |
+| Apps | "14 allowed" | `/devices/{id}/apps` (new) | The allowlist split into **Allowed** and **Not allowed** (switches + status; `#app-{pkg}` kept), Download on Wi-Fi only, the downloads line, Names and icons (each app's `app_display_form` in a `<details>` under its row), the keyboard and accessibility note behind ⓘ. No search field (M2). |
+| Music | "6 in library" | `/devices/{id}/music` (new) | The Music card **as design 30 step 1 leaves it** (M7): the music app switch, library ticks, the 5-field settings form with `v=2` as one group, Sonos |
+| Time | "Everyone's rules" | `/devices/{id}/time` (new) | Rule state, lifts table, extra time, the own-rules switch, this phone's own screen time and rules |
+| Lock Screen & PINs | "PIN on" | `/devices/{id}/lock` (new) | Child PIN, Parent PIN (+ reported events, `offline_override_used`), screen timeout, lock-screen background, lock-screen notifications |
+| Home Screen | "4 per row" | `/devices/{id}/home` (new) | Language and apps per row (one form), wallpapers, Quick controls |
+| Web Filter | "On" | `/devices/{id}/filter` (new) | Filter on/off, this phone's blocklist overrides and domains, the blocked log switch + log |
 | About This Phone | "Vibb 0.23.6" | `/devices/{id}/about` (new) | See below |
 | Advanced | - | `/devices/{id}/advanced` (new) | See below |
 
+**The forms on the sub-pages** (H1, H3; the full table is §5.6):
+- **Time:** the own-rules switch and this phone's 7 daily limits post to `/schedules/device/{id}`. With the new
+  `section` marker, the switch saves alone (`section=switch`) and the limits save alone (`section=budget`).
+- **Lock Screen & PINs:**
+  - The Child PIN row ("Child PIN · On · 4 digits") opens a `<details>` under it with the change field and **Save**.
+    **Remove Child PIN…** is a confirm (M6).
+  - The Parent PIN row works the same way. Its "Remove instead" stays a checkbox in the form.
+  - Screen timeout and Background are inline selects.
+  - The lock-screen notifications are the text switch (one form) and one switch per app (one form each, as today).
+- **Home Screen:** language and apps per row stay **one form** (`/devices/{id}/launcher`), shown as two inline
+  selects in one group.
+- **Web Filter:** the filter switch posts to `/devices/{id}/policy` with `section=filter`. On Home Screen, the Quick
+  controls post with `section=quick`.
+
 **About This Phone (`/devices/{id}/about`)** is read-only, like iOS Settings › General › About. It holds the facts
-the old Status card led with. Value rows:
+the old Status card led with. The rows follow the approved mockup (M2):
 
 | Group | Row | Value (example) | From |
 |---|---|---|---|
-| Connection | Status | "Online since 08:12" | `streams.rs` `StreamState` |
-| | Last request | "10:59 today, over the tailnet" (ⓘ: addresses outside the tailnet) | `limits::last_access` |
-| | Last report | "10:59 today (3 min ago)" | `device_status.reported_at` |
-| | Instant changes | "Connected" / "Not connected since 09:40" | `instant_changes_line`, rewritten |
-| | Battery optimisation | "Off" (good) / "On" + ⓘ with the fix | `battery_optimization_exempt` |
-| Sound | Ringer | "On" / "Vibrate" / "Silent" | `sound_lines` |
-| | Do Not Disturb | "Off" / "Priority only" | `sound_lines` |
-| Software | Vibb | "0.23.6-debug" | `app_version` |
-| | Music app | "Installed · 0.3.0" (ⓘ: package, version code) | music lines |
-| | Settings from the server | "Applied" / the policy problem's first sentence | `policy_state` |
-| Diagnostics | Crash reports | "None in 30 days" ›, or "2 kinds" › (`<details>` per crash, unchanged) | `device_crashes` |
-| | Time lock (raw) | "None" / "Bedtime" | `lock_reason`, for checking what the header says |
+| Connection | Status | "Online since 08:12" | `connection_state` (§3.10) |
+| | Last contact | "10:59 · 3 min ago" | the newest of the §3.10 signals |
+| | Last full report | "10:59" | `device_status.reported_at` |
+| | Network | "Over the tailnet" (ⓘ: addresses outside the tailnet) | `limits::last_access` |
+| | Footer | "Online means the phone has a live link to this server. Changes reach it within seconds." | - |
+| Sound | Ringer | "On" / "Vibrate" / "Silent" | `sound_mode::state` (typed, M5) |
+| | Do Not Disturb | "Off" / "Priority only" / "Alarms only" / "Total silence" | same |
+| Software | Vibb | "0.23.6" (ⓘ: the full version, e.g. "0.23.6-debug") | `app_version` |
+| | Music app | "0.3.0" (ⓘ: package, version code) | music state |
+| | Settings from server | "Applied" / the policy problem's short title | `policy_state` |
+| | Battery optimisation | "Off" / "On" + ⓘ with the fix | `battery_optimization_exempt` |
+| Diagnostics | Crash reports | "None in 30 days", or "2 kinds" + a `<details>` per crash (unchanged) | `device_crashes` |
+| | Starts without Vibb | "None" / "2 in 30 days" + ⓘ | `boot_witness` |
+| | Time lock | "None" / "Bedtime" | `lock_reason`, to check what the header says |
 
-All times are local (Q5), with the exact date and time in a `title` tooltip and behind ⓘ, never as the visible
+All times are local (Q5, M4), with the exact date and time in a `title` attribute and behind ⓘ, never as the visible
 value.
 
 **Advanced (`/devices/{id}/advanced`).** Expert and set-once controls, in groups:
-- **Restrictions**: the 9 hardening switches, Block safe mode, "Backup to Google: Off" as a value row.
-- **App screens**: Kiosk app block (today "Play and kiosk"), the Play state lines.
-- **Updates & notifications**: Update fence, Notification filter, Boot cover.
-- **Connection**: New code, Set up with QR code, **Disconnect phone…** (today "Revoke access").
+- **Restrictions**: the 9 hardening switches and Block safe mode as **one form** (H1), and "Backup to Google: Off" as
+  a value row.
+- **App screens**: Block other apps' screens (`kiosk-block`), the Play state lines.
+- **Updates & notifications**: Update fence, Notification filter and Boot cover as **one form** (`kiosk-escapes`,
+  H1).
+- **Connection**:
+  - **New setup code** (a POST, which shows the code once on the code page);
+  - **Set up with QR code ›**;
+  - **Disconnect phone…** (today "Revoke access", with its `required` box).
 - **Remove phone…** at the bottom, in red.
 
-**A phone that hasn't enrolled** shows only the header, a "Connect this phone" group (New code / Set up with QR code,
-with today's notices) and Remove. The sub-page rows show greyed out with "After setup".
+**A phone that hasn't enrolled** shows:
+- the header ("Not set up");
+- a "Connect this phone" group with **New setup code** (a POST button; the code can't be shown again, M2), **Set up
+  with QR code ›**, and today's notices, `access.typed_paused` included (L6);
+- Remove.
+
+The sub-page rows show greyed out with "After setup".
 
 ### 3.3 Apps
 
@@ -731,138 +815,208 @@ The Apps tab is the **catalog**, plus quick access to each phone's allowed list:
   "allow an app" path, one tap shorter than today.
 - **Catalog.** One row per catalog app:
   - the icon tile (`app_display`) and name;
-  - the value: version + "on 2 phones";
+  - the value: version + "2 phones";
   - a badge: "Update failed" (red), "No release yet" (grey), "Off" (grey).
-- **Add app** row.
+- A footer: "Apps here are kept up to date on every phone that has them."
+- **Add App** row.
 
 **The app page (`/apps/tracked/{id}`):**
-- **Top:** name, version, "Last checked 2 h ago", **Check now** (with the running/failed state in one line).
-- **Show on phones as:** a navigation row to the name/icon sheet (the `app_display_form` partial, unchanged logic).
+- **Top:** name, version, "Last checked 2 h ago", **Check now** (with the running or failed state in one line; the
+  raw error behind ⓘ).
+- **Show on phones as:** the `app_display_form` partial in a `<details>` under the row (unchanged logic).
 - **On phones:** a read-only list of the phones that have it ticked, each linking to that phone's Apps page. The data
   is there (`device_tracked_apps`); this list is new.
-- **Source & signing** (a navigation row → sub-section or `<details>`): repo, file filter, tag prefix, include
-  pre-releases, enabled, package (+ candidates), signing key, Forget, "This is the launcher app", Upload (manual apps).
-- **Remove app…** in red.
+- **Source & signing**, a `<details>` group:
+  - the Details form (name, repo, file filter, tag prefix) as one form;
+  - include pre-releases;
+  - enabled;
+  - the package (+ candidates) and the signing key;
+  - **Forget package and key…** behind a confirm (M6);
+  - "This is the launcher app" (Q3: kept visible);
+  - Upload (manual apps).
+- **Remove App…** in red, behind its existing confirm.
 
-**Add app:** a short form (name, source GitHub/upload, repo). The filter, prefix, pre-releases and package go under
+**Add App:** a short form (name, source GitHub/upload, repo). The filter, prefix, pre-releases and package go under
 "More options" (`<details>`).
 
 ### 3.4 Music
 
 `/music` loses the Apps|Music switch. Top to bottom:
 
-1. **Library** (the main list). The cards are simplified to a list row:
-   - cover · name · "Podcast · Podkast · 3 phones";
+1. **Library**, the whole list (no "Show all N" cut-off: the mockup's is dropped, M2). Each card becomes a list row:
+   - cover · name · "NRK series · 98 episodes · 2 phones";
    - the live status as one line, coloured, still swapped by `music-cards.js`;
-   - row actions in a compact trailing area: Check now and the Offline picker. Reordering moves into an **Edit order**
-     mode (a "Edit" link in the header that shows ↑ ↓ on every row; plain forms, no drag).
-2. **"+ Add" group**, in four rows:
-   - **Podcast or NRK link** (form inline or sheet);
-   - **Own files**;
-   - **Storytel shelf ›** (`/music/storytel`);
-   - **Import from Vibb ›** (moved to `/music/import`, a sub-page: one-off use).
-3. **On phones.** One row per phone: "Anna · 6 of 9 · Storytel on ›", leading to `/devices/{id}/music`.
-4. **Settings** (a navigation row → `/music/settings`, new): check for new episodes every N hours (the hints behind ⓘ),
-   Storytel login, the music app catalog row, "Files no entry uses" (only when there are some).
-5. **Categories ›** (`/music/categories`, new): the category list and editor, today's `<details>` blocks unchanged
-   inside.
+   - row actions in a compact trailing area: **Check now** and the **Offline** select, both kept (M2).
+   - Reordering moves into an **Edit** mode: an "Edit" link in the header shows ↑ ↓ on every row. They are plain
+     forms, with no drag.
+2. **Add**, four rows:
+   - **Podcast or NRK link** (an inline form in a `<details>`);
+   - **Upload your own files** (an inline form in a `<details>`);
+   - **From Storytel ›** (`/music/storytel`), with the value "Signed in" or "No login";
+   - **Import from Vibb ›** (`/music/import`, a sub-page: one-off use). The mockup leaves this row out; it is kept
+     (M2).
+3. **On phones.** One row per phone: "Anna · 6 of 9 ›", leading to `/devices/{id}/music`.
+4. **Categories ›** (`/music/categories`), with the count. The category list and editor, today's `<details>` blocks
+   unchanged inside.
+5. **Settings ›** (`/music/settings`): check for new episodes every N hours (the hints behind ⓘ), the Storytel
+   login, the music app catalog row, and "Files no entry uses" (only when there are some).
+
+Links and redirects that point at today's anchors move with their sections (L5):
+- `/music#storytel` → `/music/settings#storytel`;
+- `#app` and `#sweep` → `/music/settings`;
+- `#import` → `/music/import`;
+- `#categories` and `#category-{id}` → `/music/categories`.
+
+`POST /music/import` (the preview) renders the new import page, not the whole Music page.
 
 The **entry page** keeps its cards, retitled and reordered: Cover + Name → Episodes (status, Check now) → Settings
-(category, order, offline, resume) → Files → On phones → Delete. "Times are UTC." goes away with relative times (Q5).
+(category, order, offline, resume; **one form**) → Files → On phones → Delete (confirm). "Times are UTC." goes away
+with local times (M4). Its hint about mobile data says "(the phone's Music page)" (M7).
 
 The **Storytel shelf** keeps its shape. Its intro shrinks to one line, with the rest behind ⓘ.
 
+**Music wording waits for design 30 step 3a** (M7). Until that is in main, the device page's music lines
+(`storage_line`, library, the older-phone note) are moved and restyled but not reworded.
+
 ### 3.5 Settings › Time Rules
 
-Time Rules is not a tab. It is the **first content row in Settings** ("Time Rules · 2 rules ›"). It opens `/schedules`,
-which keeps its URL and becomes a Screen-Time-like sub-page, with the back link "‹ Settings":
+Time Rules is not a tab. It is the **first row in Settings** ("Time Rules · 2 rules ›"). It opens `/schedules`, which
+keeps its URL and becomes a Screen-Time-like sub-page, with the back link "‹ Settings":
 
-1. **Everyone** (the global scope):
-   - **Rules**: one navigation row per rule, "Skole · Mon-Fri 08:15-14:30 · calls off ›", plus **Add rule**. The rule
-     editor moves to its own page (`/schedules/rules/{id}`, GET; the POST routes stay). Its 7 day rows stay; a "Same
-     times every weekday" helper is out of scope.
-   - **Screen time**: one navigation row, "Mon-Fri 90 min · Sat-Sun 120 min ›", leading to the 7 fields + Save.
-2. **Phones.** One row per phone:
-   - "Anna · Everyone's rules ›" / "Emil · Own rules ›";
-   - each leads to `/devices/{id}/time`, the same sub-page as from the device summary;
-   - the sub-page holds the lifts, extra time, the own-rules switch, its own screen time and its own rules.
-3. A one-line footer: "Emergency calls always work."
+1. **Everyone · rules:**
+   - one navigation row per rule, "Skole · Mon-Fri 08:15-14:30 · calls off ›";
+   - **Add Rule**.
+2. **Everyone · screen time:** one navigation row, "Daily limit · Mon-Fri 90 min · Sat-Sun 2 h ›". It opens
+   `/schedules/screen-time` (new GET). That page holds the 7 fields as **one form** with **Save**. The POST
+   (`/schedules/global`) redirects back to that page, with the flash in its group (H3).
+3. **Phones.** One row per phone, "Anna · Everyone's rules ›" / "Emil · Own rules ›". Each links to
+   `/devices/{id}/time`, not the summary (M2); it opens in the Devices tab.
+4. A one-line footer: "Emergency calls always work."
 
 The device picker select goes away; each phone is a link.
 
+**The rule editor (`/schedules/rules/{id}`, new GET; `/schedules/rules/new` for a new rule)** is one form with an
+explicit **Save** in the header:
+- name;
+- **Type** as an inline select (School / Bedtime / Other). The mockup's "Type ›" chevron becomes a select (H3); its
+  JS link to the calls switch stays;
+- the "Calls with contacts" switch;
+- the 7 day rows (from / until). An empty day shows two empty time fields; the mockup's "Off" and "Add" are look
+  only, so no link is needed;
+- **Exceptions · Apps that still work** as a `<details>` **inside the form**, not a linked page (H1);
+- **Delete Rule…** as a confirm (Q7).
+
+Its redirects:
+- **Save** redirects to the rule's own page, with the flash in its group.
+- **Add** redirects to the new rule's page.
+- **Delete** redirects to `/schedules`, with the flash in the Rules group.
+
+The `scope` field still says whether the rule is a phone's own or everyone's. A phone's own rule goes back to
+`/devices/{id}/time`.
+
 **Per-phone time stays on the device page.** The daily actions (add time, pause a rule, end a lift) are on the
 device summary. The full per-phone view is the device's **Time** sub-page (`/devices/{id}/time`). It holds:
-- the lifts;
+- the lifts with End now (`back=time`, §5.1);
 - extra time;
-- the own-rules switch;
-- this phone's own screen time and rules.
+- the own-rules switch (`section=switch`);
+- this phone's own daily limits (`section=budget`);
+- this phone's own rules, with links to the same editor.
 
-The Phones rows above are links into that sub-page; they open in the Devices tab. Settings › Time Rules owns only the
-rules and screen time that apply to everyone.
+Settings › Time Rules owns only the rules and screen time that apply to everyone.
+
+The rules' error lines (`corrupt_rules`, `budget_corrupt`) stay on whichever of these pages shows the broken item (L6).
 
 ### 3.6 Settings and the Locate tab
 
-**Settings (`/settings`)** replaces the old hub. It holds everything the first draft's More tab held, minus Locate (now a tab), plus Time
-Rules near the top. It is a
-grouped list with outline icons on tinted squares, not emoji:
+**Settings (`/settings`)** replaces the old hub. It holds everything the first draft's More tab held, minus Locate
+(now a tab), plus Time Rules at the top. It is a grouped list with outline icons on tinted squares, not emoji.
+
+Every value comes from the database or memory, never from the network (M3):
 
 | Group | Row | Value (example) | Goes to |
 |---|---|---|---|
-| **Rules** | Time Rules | "2 rules · 90 min" | `/schedules` (§3.5) |
-| | Web Filter | "On · 3 lists" | `/dns`: shared blocklists, blocked and allowed domains, the DNS server. The per-phone parts are on each phone's Web Filter page |
-| | Blocked Activity | "Log on for 1 phone" | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
-| **Content** | Wallpapers | "8 · 2 photos" | `/wallpapers` |
-| **Server** | Account | "admin" | `/account` (password, two-factor, sign out everywhere) |
-| | Security Log | - | `/security` |
-| | Backups | "Last: today 03:00" | `/backups` |
-| | Software Updates | "Update available" (badge) | `/updates` |
-| | Phone Setup | - | `/settings/provisioning` (server URL, Tailscale key, language, time zone), plus the **default country code** (moved from the calls page) |
-| | About | "0.24.0" | Server version (from `/updates`), links to the project |
+| **Rules** | Time Rules | "2 rules" (count of everyone's rules) | `/schedules` (§3.5) |
+| | Web Filter | "3 lists" (count of enabled `dns_blocklists`) | `/dns`: shared blocklists, blocked and allowed domains, and the DNS server at the bottom (Q2: kept). The per-phone parts are on each phone's Web Filter page |
+| | Blocked Activity | "12 today" (a count of today's `device_dns_events`) | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
+| **Content** | Wallpapers | "5" (count) | `/wallpapers`; delete becomes a confirm (Q7); the per-photo "Also on the lock screen" stays (Q1) |
+| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` posts with `back=provisioning` and returns there (H3) |
+| | Backups | "Today 03:00" (the newest backup file's mtime) | `/backups` |
+| | Software Updates | **No value** | `/updates`. The hub never calls GitHub. No cached result of a check exists today (`data/app_update_last_check` holds only a date), so the row shows nothing (M3) |
+| | Account & Password | - | `/account` (password, two-factor, sign out everywhere) |
+| | Security Log | - | `/security`, with event labels instead of raw ids (§2.2b) |
+| | About | "Server 0.24.0" (`APP_VERSION`, compiled in) | `/updates`. There is no separate About page (M3) |
 | | **Sign Out** | - | `POST /logout` |
 
 `/settings` keeps its URL, so bookmarks still work.
 
 **Locate (`/devices/locate`)** is a tab of its own. It is the one place for a phone's location and its remote
-commands. There is no separate device sub-page for location.
+commands, and the only page that shows them. Its content is today's Locate page (M2); the mockup decides only the
+look:
 
-- **Phone switcher.** A segmented control or a row of links at the top, one per phone: "Anna · Emil".
+- **Phone switcher** at the top, one item per phone: "Anna · Emil · Ella".
   - These are plain links to `?device={id}`. Today's `onchange` select needs JS and goes away.
+  - The state shows as a dot, so each item's `aria-label` also says it ("Anna, online", L3).
   - With one phone, that phone is shown at once.
-  - With several and no `?device=`, the page lists the phones with "Seen 10 min ago" ›.
-  - The device summary's Location row opens `/devices/locate?device={id}`, which switches to the Locate tab. That
-    tab switch is deliberate: location is one tap from both places.
-- **Map** (Leaflet, unchanged), with the last fix "10 min ago · ±12 m" under it, and **Update Location**.
-- **Actions**: Ring · Stop Ringing · Lock · Erase Phone… (the type-the-name confirm stays). One footer: "An offline
-  phone gets Ring and Locate within an hour, Lock and Erase whenever it's back."
-- **Location settings**, as a navigation row "Location · Only when asked · 7 days ›". It opens a section on the same
-  page or a `<details>` with the mode, interval and history. These are set once, so they go below the actions.
-- **Recent commands** as stacked rows: "Lock · today 10:58 · Done", Cancel on a waiting one. Raw command ids are
-  replaced by labels (§2.2b).
-- The wipe-not-ready and location-off warnings stay, as orange rows above the actions.
+  - With several and no `?device=`, the page lists the phones with "seen 10 min ago" ›.
+  - The device summary's **Locate** quick action opens `/devices/locate?device={id}`, which switches to the Locate
+    tab.
+- **Map** (Leaflet, OSM tiles, unchanged) with the trail.
+- **Under the map**, what today's page shows, with no place name (no reverse geocoding: a child's location never
+  goes to a third party, M2):
+  - the last fix as age and accuracy: "10 min ago · within 40 m";
+  - the phone's answer to the last "Update Location" (`locate_result`);
+  - the "Waiting for a fresh fix…" line and its JS poll;
+  - **Update Location**.
+- **Warnings** as orange rows above the actions: "Location is off for this phone", "Erasing works after the phone
+  restarts once" (wipe not ready).
+- **Actions**:
+  - **Ring**, **Stop Ringing** and **Lock**, one tap each;
+  - **Erase Phone…**, the type-the-name confirm, unchanged.
+  - The footer: "An offline phone gets Ring and Locate within an hour, Lock and Erase whenever it's back." The Lock
+    note goes behind ⓘ.
+- **Location settings**, a group below the actions:
+  - "When to locate" (Off / Only when asked / Regularly) and "Every" (interval) as two inline selects in **one form**.
+    `location-policy` needs `mode` on every post (400 without it), so they can't be two forms (H1).
+  - "Keep history for" as an inline select (its own form, `location-retention`).
+- **Recent**: stacked rows, "Lock · today 10:58 · Done", with **Cancel** on a command that is waiting. Raw command
+  ids become labels; times are local (§2.2b, M4).
 
 ### 3.7 Login, setup and enrolment
 
-- Sign-in, two-factor and the forced password change keep their single-card layout, with the new brand and type.
-- **Add phone** becomes a 3-step flow on the pages that exist today:
+- Sign-in, two-factor and the forced password change keep their single-card layout, with the new name "Vibb Phone"
+  (L4).
+- **Add Phone** becomes a 3-step flow on the pages that exist today:
   1. **Name** (`/devices/new`).
   2. **How to set it up**: two large choices, "QR code (new or reset phone)" and "Code (phone already set up)".
      Today's "Two ways to scan it" text becomes these two choices, with the GrapheneOS and adb detail behind ⓘ.
-  3. **The QR or the code** (`/devices/{id}/provision`, `/devices/{id}/regenerate-code` → the code page).
-- Missing server setup (no checksum, no server URL) shows as one red row, "Server setup needed ›", with the env
-  var detail behind ⓘ.
+  3. **The QR or the code**:
+     - `/devices/{id}/provision`;
+     - **New setup code** is a POST to `/devices/{id}/regenerate-code`, which shows the code page.
+- Missing server setup (no checksum, no server URL) shows as one red row, "Server setup needed", with the env var
+  detail behind ⓘ.
+- `enroll_code.html`'s "Back to …" goes to `/devices/{id}` (enrolled) or the "Connect this phone" group, not
+  `#access` (L5).
 
-### 3.8 Badges and status: what the server already has
+### 3.8 Shared builders: card builders, `attention::collect`, typed states
 
-Every badge and status value above comes from data that `view_device` and `list_devices` already load:
-- `latest_status`;
-- `time.now_line` / `screen_line`;
-- `restrictions_paused`, `relock`, `parent_pin`;
-- `play`, `escapes`;
-- `call_warnings`, `music.warnings`;
-- `streams.rs` for online.
-
-The list page needs a lighter version of the same reads per phone. That is a handler change (one query per phone),
-listed in §5.4.
+- **Card builders.** `render_device` builds all 21 cards in one function (`devices.rs:1139-1540`). It is split into
+  card builders, one per sub-page. Some already exist: `time_card`, `play_card`, `parent_pin::card` and
+  `music::device_card`. Each sub-page handler calls only its own builders (M1).
+- **`attention::collect(state, device) -> Vec<AttentionItem>`.**
+  - Each item has a kind, a level (alarm / action), a short title and a target URL.
+  - It reads about 10 sources per phone: relock, parent PIN, play, escapes, `call_report`, music, sound, boots,
+    policy problem, notification access, Google backup, kid lock, time state.
+  - The summary renders it. The Devices list shows its length as the badge.
+  - A test checks that the list's count equals the summary's rows.
+  - On the list this is about 10 small reads per phone. That is fine at 1-5 phones. Do not attempt a single query.
+- **Typed states (M5).** Each builder that today returns a finished sentence gets a typed sibling. The sentence
+  function stays until its last caller is gone; the step that moves the card switches the caller, then deletes the
+  old function and its unit tests. The siblings:
+  - `sound_mode::state() -> SoundState`;
+  - `connection_state() -> ConnectionState` (§3.10);
+  - `limits::LastAccess` (already typed);
+  - typed results for `play`, `escapes`, `kid_lock`, `boot_witness`, `calls::call_report` and the music lines.
+- **`display_time` (M4).** One module turns stored times into local text (§3.10).
 
 ### 3.9 Where every current control goes
 
@@ -870,57 +1024,62 @@ Nothing is dropped. "→" names the new home; ⓘ means the text moves behind th
 
 | Today | New home |
 |---|---|
-| Status: time lock state | Summary header badge, only while locking; About This Phone › Time lock (raw) |
-| Status: sound lines, last reported, app version | About This Phone (Sound, Last report, Software); Do Not Disturb also → Attention |
-| Access: last access line · Play: "Instant changes" and battery line · Crashes | About This Phone › Connection, Diagnostics |
+| Status: time lock state | Summary header badge, only while locking; About This Phone › Time lock |
+| Status: sound lines, last reported, app version | About This Phone (Sound, Last full report, Software); Do Not Disturb also → Attention |
+| Access: last access line · Play: "Instant changes" and battery line · Crashes · unseen boots | About This Phone › Connection, Software, Diagnostics |
 | Status: paused / foreign app / unseen boots / relock notes / blocks | Summary Attention + Quick actions |
-| Lock the phone again now · Pause restrictions for 2 hours · Allow these apps | Summary Quick actions |
+| Lock the phone again now · Pause restrictions for 2 hours | Summary Quick actions ("Lock again", "Unlock for 2 h…" behind a confirm) |
+| Allow these apps | Under the blocked-apps list on the Attention row's target, behind a confirm |
+| `relock.notice` | The summary's flash, in Today (L6) |
 | Parent-PIN notices, easy PIN, no-PIN card | Summary Attention → Lock Screen & PINs |
-| Access card / Not enrolled card | Advanced › Connection (enrolled) / Summary "Connect this phone" (not enrolled) |
+| Access card / Not enrolled card (incl. `access.typed_paused`) | Advanced › Connection (enrolled) / Summary "Connect this phone" (not enrolled) |
 | Play and kiosk (lines, warnings, kiosk app block) | Advanced › App screens; "Restart once" warning → Attention |
-| Launcher updates and notifications (3 switches) | Advanced › Updates & notifications |
+| Launcher updates and notifications (3 switches, one form) | Advanced › Updates & notifications |
 | Launcher crashes | About This Phone › Diagnostics |
-| Time rules card (state, lift, +min, lifts table, edit link) | Summary (state, quick actions, today) + Device › Time sub-page (full); the edit link → Settings › Time Rules for everyone's rules |
+| Time rules card (state, lift, +min, lifts table, edit link) | Summary (state, quick actions, today) + Device › Time (full); the edit link → Settings › Time Rules for everyone's rules |
+| Time card warnings (incoming calls, ledger, launcher without rules, rules error) | Attention (L2) + Device › Time |
 | Calls & SMS card | Summary row → Calls & Contacts |
-| Calls page: default country code | Settings › Phone Setup |
-| Apps card: list, Wi-Fi only, downloads line, corrupt warning | Apps sub-page |
-| Apps card: On the lock screen | Lock Screen & PINs › Notifications |
-| Apps card: Names and icons | Apps sub-page, per app row |
-| Music card (everything, incl. Sonos) | Music sub-page (Sonos as its own group or sub-page) |
-| Launcher card: language, apps per row, no-notification-access warning | Home Screen; warning → Attention |
+| Calls page: default country code | Settings › Phone Setup (its own form) |
+| Calls page: contact Remove | Calls & Contacts, behind a confirm (M6) |
+| Apps card: list, Wi-Fi only, downloads line, corrupt warning | Device › Apps |
+| Apps card: On the lock screen (incl. `lock_screen.unreadable`, `empty_text`, notes) | Lock Screen & PINs › Notifications (L6) |
+| Apps card: Names and icons | Device › Apps, a `<details>` per app |
+| Music card (everything, incl. Sonos) | Device › Music, as design 30 step 1 leaves it (M7) |
+| Launcher card: language, apps per row (one form), no-notification-access warning | Home Screen; warning → Attention |
 | Wallpapers card + Lock screen background | Home Screen (wallpapers) + Lock Screen & PINs (background) |
-| Screen lock card (kid PIN, remove) | Lock Screen & PINs |
-| Parent PIN card (+ events) | Lock Screen & PINs |
+| Screen lock card (kid PIN; remove) | Lock Screen & PINs (remove behind a confirm) |
+| Parent PIN card (+ events, `offline_override_used`) | Lock Screen & PINs (L6) |
 | Screen timeout | Lock Screen & PINs |
-| Phone hardening (9 switches, safe mode, backup to Google) | Advanced › Restrictions |
-| Quick Controls (4 boxes) | Home Screen › Quick controls |
-| Ad/content filtering (VPN) switch | Web Filter sub-page |
+| Phone hardening (9 switches, safe mode, backup to Google; one form) | Advanced › Restrictions |
+| Quick Controls (4 boxes) | Home Screen › Quick controls (`section=quick`) |
+| Ad/content filtering (VPN) switch | Device › Web Filter (`section=filter`) |
 | Remove this device | Advanced, bottom |
-| Locate page (all of it) | **Locate tab** (`/devices/locate`, same URL); the summary's Location row links to it with `?device=` |
-| DNS: upstream, blocklists, custom lists | Settings › Web Filter |
-| DNS: per-device overrides | Device › Web Filter |
+| Locate page (all of it, incl. Stop ringing, Wipe, location mode / interval / history, Cancel, both warnings) | **Locate tab** (`/devices/locate`, same URL); the summary's Locate quick action links to it with `?device=` |
+| DNS: upstream, blocklists, custom lists | Settings › Web Filter (the DNS server at the bottom) |
+| DNS: per-device overrides | Device › Web Filter (`back=filter`) |
 | DNS log (switch + table) | Device › Web Filter; Settings › Blocked Activity as the entrance |
-| Schedules: global rules, global screen time | Settings › Time Rules (`/schedules`, same URL) |
-| Schedules: per-device switch, screen time, rules | Device › Time (also linked from Settings › Time Rules › Phones) |
+| Schedules: global rules, global screen time | Settings › Time Rules (`/schedules`, same URL; the limits on `/schedules/screen-time`) |
+| Schedules: per-device switch, screen time, rules (incl. `corrupt_rules`, `budget_corrupt`) | Device › Time (also linked from Settings › Time Rules › Phones) (L6) |
 | Apps\|Music switch | Gone - Music is a tab |
-| Music page: add link, own files, Storytel shelf link | Music › Add |
+| Music page: add link, own files, Storytel shelf link, Import from Vibb | Music › Add |
+| Music page: per-entry Check now, Offline, ↑ ↓, Edit | Music › Library rows; ↑ ↓ in Edit mode |
 | Music page: sweep interval, Storytel login, music app row, orphans | Music › Settings |
 | Music page: categories | Music › Categories |
-| Music page: Import from Vibb | Music › Add › Import from Vibb |
 | Tracked app page (all cards) | App page top + Source & signing |
 | Settings hub (6 rows + Sign out) | Settings (rebuilt, §3.6) |
-| Wallpapers page | Settings › Wallpapers |
-| Provisioning page | Settings › Phone Setup (and linked from Add phone) |
+| Wallpapers page (incl. the per-photo lock-screen switch) | Settings › Wallpapers (Q1: kept) |
+| Provisioning page | Settings › Phone Setup (and linked from Add Phone) |
 | Backups, Updates, Security, Account | Settings › Server, unchanged inside apart from copy |
 
 ### 3.10 "Online": which signal, which thresholds
 
 No single signal is enough (§1.2b):
-- The stream count can stay up for many minutes after a phone has gone.
-- The last report can be 30 minutes old on a perfectly connected phone.
+- A stream whose phone has vanished stays "open" until the server's TCP gives up. With a keepalive every 240 s,
+  that is about 20-30 min (Linux `tcp_retries2`).
+- The last report can be 50 minutes old on a perfectly connected phone (below).
 - Both in-memory signals are empty after a server restart.
 
-So the state combines them:
+So the state combines them.
 
 **Last contact** = the newest of three times:
 - `limits::last_access(device)`: any authenticated request;
@@ -929,30 +1088,79 @@ So the state combines them:
 
 The first is the freshest. The second survives a restart.
 
+**The launcher's cadence, checked in the code** (H2):
+- `push/SyncSchedule.kt`:
+  - `BACKSTOP_INTERVAL_MS` = 30 min with the stream up;
+  - `BACKSTOP_SSE_DOWN_INTERVAL_MS` = 15 min with it down;
+  - `MIN_BACKSTOP_MS` = 9 min;
+  - a reopened stream syncs at most every 10 min.
+- `push/BackstopAlarm.kt:56` arms the backstop with `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP, …)`. That is an
+  **inexact** alarm: the launcher targets SDK 36, and Android may deliver an inexact alarm up to 0.75 × its delay late.
+- So a 30-min backstop can fire **52.5 min** after the last sync. A 15-min one can fire **26.25 min** after it, plus
+  up to 9 min of while-idle quota in Doze.
+- With the stream up, nothing else reaches the server on a quiet night. The keepalive goes from the server to the
+  phone and updates nothing on the server.
+
 | State | Rule | Header text | Why these numbers |
 |---|---|---|---|
-| **Online** (green) | A stream is open **and** last contact ≤ **45 min** ago | "Online · seen 3 min ago" | With the stream up the phone syncs (and reports) at least every 30 min, plus 9-15 min of Doze slack. A stream that has been silent longer than that is a dead TCP connection the server hasn't noticed. |
-| **Away** (orange) | No open stream (or the stream rule failed) **and** last contact ≤ **45 min** ago | "Away · seen 12 min ago · changes may take up to 15 min" | Without the stream the phone syncs every 15 min, so it is reachable, only slowly. |
-| **Offline** (grey) | Last contact > **45 min** ago, or never | "Offline · seen 2 h ago · changes wait until it's back" | Three missed 15-minute backstops: the phone is off, out of coverage, or broken. |
-| **Not set up** (grey) | Not enrolled | "Not connected yet" | - |
+| **Online** (green) | A stream is open **and** last contact ≤ **60 min** ago | "Online · seen 3 min ago" | 30 × 1.75 = 52.5 min, plus margin. A healthy idle phone stays Online all night |
+| **Away** (orange) | No open stream **and** last contact ≤ **45 min** ago | "Away · seen 12 min ago · changes may be delayed" | 15 × 1.75 = 26.25, plus the 9-min quota and margin. No number in the text: the real delay varies too much to promise one |
+| **Offline** (grey) | Anything older, or a stream open but last contact > 60 min | "Offline · seen 2 h ago · changes wait until it's back" | The phone is off, out of coverage, or broken |
+| **Disconnected** (grey) | Enrolled, but its access is revoked (no token) | "Disconnected · access removed" + "Connect again ›" | It can't come back by itself (L2) |
+| **Not seen yet** (grey) | Enrolled, no contact ever | "Not seen yet" | (L2) |
+| **Not set up** (grey) | Not enrolled | "Not set up" | - |
 
 Notes for the build:
+- **Two constants**, `ONLINE_WINDOW_MINUTES = 60` and `AWAY_WINDOW_MINUTES = 45`, next to the state function in
+  `streams.rs`.
+  - Each has its derivation in a comment that names `BACKSTOP_INTERVAL_MS`, `BACKSTOP_SSE_DOWN_INTERVAL_MS` and the
+    0.75 inexact window. Nothing links the two files at compile time.
+  - A launcher change to the backstop must revisit them.
 - **Right after a server restart**, the memory is empty. A phone with a fresh `last_seen_at` shows **Away** for the
-  5-15 s until its stream reconnects. That is honest and harmless; no special case.
-- **The 45 min** is one constant (`ONLINE_WINDOW_MINUTES`) next to `instant_changes_line` in `streams.rs`. It is
-  derived from the launcher's `BACKSTOP_INTERVAL_MS` (30 min). A comment ties the two, since there is no compile-time
-  link between them.
-- **Relative time** comes from the server's clock only. The phone's clock is never used, so a phone with a wrong
-  clock can't fake "just now".
-  - Under 1 min: "just now".
-  - Under 60 min: "N min ago".
-  - Under 24 h: "N h ago".
-  - Yesterday: "yesterday HH:MM".
-  - Older: "12 Oct".
-- **The list page** uses the same function per phone. It is one in-memory lookup plus the `last_seen_at` it already
-  reads.
-- **Tests**: the state function is pure (inputs: stream state, last access, last seen, now) and gets table tests for
-  each row above, including the restart and dead-stream cases.
+  5-15 s until its stream reconnects. That is honest and harmless, so there is no special case.
+- **The lock badge's end time and "stale" wording** (M4):
+  - The report has the rule's name and the phone's local `day`, not the window's end. The end comes from the rule's
+    days on the server.
+  - The end shows only when the phone's `day` and the day before give the same end for that rule. Otherwise the
+    badge shows the rule name alone.
+  - An end on the next local day says so: "Leggetid until 07:00 tomorrow". On the same day it is "Skole until 14:30".
+  - When the report's `day` isn't the server's local today, neither the badge's end nor the screen-time bar shows.
+    The badge then says "Leggetid · at last report (yesterday 21:40)".
+  - Offline always adds "at last report". Away adds it once the report is older than 15 min (L2).
+  - A launcher `active_until` field would remove the guess. That is an API change in both directories, left out of
+    design 31.
+- **Local and relative time** come from `display_time` (M4):
+  - It uses `chrono-tz` (MIT/Apache-2.0; the IANA data is compiled in, so the distroless image needs no
+    `zoneinfo`), with the zone from Phone Setup (`provisioning_settings.time_zone`).
+  - **An empty or invalid zone falls back to UTC**, and the times are then labelled "UTC". `valid_time_zone` checks
+    only the characters, so "Europe/Olso" passes it and reaches this fallback.
+  - The functions: `parse_db_utc`, `local(&tz)`, `relative(now)`, and an exact time for `title=`.
+  - Relative time comes from the server's clock only. The phone's clock is never used, so a phone with a wrong clock
+    can't fake "just now". The steps:
+    - under 1 min: "just now";
+    - under 60 min: "N min ago";
+    - today: "N h ago";
+    - yesterday: "yesterday HH:MM";
+    - older: "12 Oct".
+  - `parent_pin::when_text` is folded in.
+- **The list page** uses the same function per phone: one in-memory lookup plus the `last_seen_at` it already reads.
+- **Tests:** the state function is pure. Its inputs are the stream state, last access, last seen, the token and now.
+  It gets table tests for each row above, and:
+  - stream open with last contact 50 min ago = Online;
+  - 61 min = Offline;
+  - no stream at 30 min = Away;
+  - no stream at 46 min = Offline;
+  - revoked = Disconnected;
+  - the restart case.
+
+  `display_time` gets tests for:
+  - Oslo DST in both directions;
+  - an empty zone;
+  - an unknown zone (UTC, labelled);
+  - yesterday;
+  - a stored time 2 min in the future.
+- **On the emulator:** `adb shell dumpsys alarm | grep -A3 BACKSTOP` shows the alarm's window. Leave a phone idle for
+  an hour, and expect Online throughout.
 
 ---
 
@@ -977,7 +1185,7 @@ Notes for the build:
 | Attention row | One line, at most 8 words, starting with the fact ("Restrictions paused", "Parent PIN easy to guess") |
 | Warning on a sub-page | A bold title of up to 6 words + 1 sentence + a button |
 | Confirm dialog (`<details>`) | 1 sentence saying what is lost + the button naming the action ("Erase Anna's phone") |
-| Button | A verb + an object, at most 3 words ("Add 15 min", "Check now", "Lock again") |
+| Button | A verb + an object, at most 3 words ("Check now", "Lock again"); the quick actions may be shorter ("+15 min") |
 | Empty state | 1 sentence + an action ("No contacts yet." + "Add contact") |
 
 Things never shown outside an ⓘ panel or Advanced:
@@ -990,14 +1198,14 @@ Things never shown outside an ⓘ panel or Advanced:
 | Today | New |
 |---|---|
 | device | phone (the tab stays "Devices", the user's decision) |
-| launcher / Handy's lock | the phone, or "Vibb" where the software must be named (Q6) |
+| launcher / Handy's lock | the phone, or "Vibb" where the software must be named; the parent app is **Vibb Phone** |
 | kid / the kid's PIN | child / **Child PIN** |
 | parent PIN / parent code / offline override / unlock code | **Parent PIN** everywhere in the PWA (the phone's own words are quoted only in ⓘ) |
 | Time rules | **Time Rules** (a Settings row), **rules** (things in it); a phone's own view is **Time** |
 | Lift a rule | **Pause a rule** |
-| +15 min screen time | **Add 15 min** |
-| Pause restrictions for 2 hours | **Unlock for 2 hours** |
-| Lock the phone again now | **Lock again now** |
+| +15 min screen time | **+15 min** (the quick-action grid; M2) |
+| Pause restrictions for 2 hours | **Unlock for 2 h…** (behind a confirm, M6) |
+| Lock the phone again now | **Lock again** (M2) |
 | Phone hardening | **Restrictions** (in Advanced) |
 | Kiosk app block | **Block other apps' screens** |
 | Quick Controls (swipe-left screen) | **Quick controls** |
@@ -1010,14 +1218,17 @@ Things never shown outside an ⓘ panel or Advanced:
 | Release tag prefix / asset filename filter | **Tag starts with** / **File name contains** (Advanced only) |
 | Sweep / check for new episodes | **Check for new episodes** |
 | Provisioning | **Phone Setup** |
+| Needs attention / problems | **Attention** (M2) |
+| Screen Time (as a device row) | **Time**; "Screen time" only for the daily limit (M2) |
+| Show setup code | **New setup code** (a POST; the code shows once) |
 
 ### 4.4 The "i" disclosure pattern
 
 ```html
-<div class="row">
-  <label class="row-label" for="sms">SMS</label>
-  <input type="checkbox" role="switch" id="sms" name="sms_enabled" …>
-</div>
+<label class="row">
+  <span class="row-label">SMS</span>
+  <input type="checkbox" role="switch" class="sw" name="sms_enabled" data-autosave …><span class="knob" aria-hidden="true"></span>
+</label>
 <details class="info">
   <summary aria-label="About SMS">ⓘ</summary>
   <p>Turning SMS off also hides the Messages app, since it can chat over RCS.</p>
@@ -1041,7 +1252,7 @@ How it behaves:
 | 4 | `:311` (94) | "Every app currently on this device, plus anything from the Apps catalog it doesn't have yet. Checking a preinstalled or already-installed app allows it; … Each checkbox saves itself immediately …" | Footer: "Turning an app off hides it and uninstalls it where possible." |
 | 5 | `:602` (87) | "The parent PIN works on the phone even when it can't reach this server. It opens the launcher's Settings …" | Row **Parent PIN** · "Set". Footer: "Opens the phone's settings and lifts limits, even offline." ⓘ: what it can and can't open (calls and restrictions stay). |
 | 6 | `:603` (85) | "After 5 wrong tries the phone stops accepting the parent PIN for 15 minutes. Each further lockout doubles …" | ⓘ on Parent PIN: "After 5 wrong tries it waits 15 minutes, then longer each time, up to a day. Saving a new PIN here ends the wait." |
-| 7 | `:183` (85) | "Changes reach the phone at once over its own connection to this server, which it keeps open. While that connection is down …" | Header status: **Online** / **Offline · changes wait**. ⓘ: "An offline phone gets changes when it reconnects, at the latest within 30 minutes of being online." |
+| 7 | `:183` (85) | "Changes reach the phone at once over its own connection to this server, which it keeps open. While that connection is down …" | Header status: **Online** / **Away · changes may be delayed** / **Offline · changes wait until it's back** (§3.10). ⓘ: "An offline phone gets changes as soon as it reconnects." |
 | 8 | `:179` (60) | "Kiosk app block: in kiosk mode, screens of apps that aren't allowed never open - also when an allowed app opens them (Play Store, Google sign-in and payment sheets). …" | Switch **Block other apps' screens**. Footer: "Turn off only if something breaks." ⓘ: what still works (emergency calls, share sheet, file pickers). |
 | 9 | `:697` (109) | "Off by default, and switched on when you set the kid's PIN (safe mode would skip handy's lock). Safe mode starts the phone without the launcher …" | Switch **Block safe mode**. Footer: "On when a Child PIN is set: safe mode skips the lock." ⓘ: recovery paths. |
 | 10 | `:316` (66) | "App updates only on Wi-Fi: apps from the catalog download only on Wi-Fi (a network that isn't metered) and wait otherwise …" | Switch **Download apps on Wi-Fi only**. ⓘ: "Phone updates wait up to 3 days for Wi-Fi. Nothing downloads while roaming." |
@@ -1065,22 +1276,51 @@ How it behaves:
 How it works today:
 - `scroll-restore.js` (loaded un-deferred from `partials/head.html`) remembers the scroll position on any submit or
   `form.submit()`.
-- It restores the position when the response lands on the **same path** within 20 s **and without a #fragment**.
-- Redirects with a fragment (`#music`, `#parent-pin`, `#access`, `#screen-lock`, `#play-kiosk`, `#kiosk-escapes`,
-  `#music-entry-{id}`, `#music-settings`, `#music-sonos`, `#app-{package}`) land at that anchor instead.
+- It restores the position when the response lands on the **same path** within 20 s **and without a #fragment**
+  (`restoreTarget`, `scroll-restore.js:14-19`). It compares the path only, so `?notice=` redirects still restore.
+- A redirect with a fragment lands at that anchor instead.
 
-What the split must do:
-- **Every handler that redirects back to `/devices/{id}` must redirect to the sub-page the form now lives on.**
-  Otherwise a switch on `/devices/{id}/lock` lands on the summary, which is both a jump and the wrong page.
-- Today's targets are listed in `handlers/devices.rs`, `music.rs:1798,3717,3766,3851,3860`, `parent_pin.rs:86`,
-  `kid_lock`, `window_relock`, `play`, `kiosk_escapes`, `calls` and `lifts`.
-- The cleanest way is a hidden `back` field that every form sends, validated against an allow-list of the device's
-  sub-paths. That is the pattern `music_entry.html:51` already uses (`back=entry`).
-- Anchors that other text links to (`#parent-pin` in `window_relock.rs`, `#app-{package}` in the blocks list,
-  `/devices/{id}#music` from the music entry page) must point at the new sub-page and anchor.
-- Quick actions on the summary post and come back to the summary at the same scroll position.
-- `jstest/scroll-restore.test.js` and `device_api::pages_restore_scroll_after_auto_save` must stay green. The latter
-  requires every template to include the head partial.
+The rules for the redesign (H3):
+1. **No picker pages for saving.** A single value is an inline `<select>` in its row (§3.0). A navigation row never
+   leads to a page that exists only to save one value.
+2. **A form's POST redirects to the one page its form lives on**, with no extra field. This covers:
+   - a sub-page form → that sub-page;
+   - the screen-time form → `/schedules/screen-time`;
+   - the rule editor → the rule's page.
+3. **Shared routes get a `back` field.** These are the routes that two pages post to. The handler checks `back`
+   against an allow-list built from the device id (or a fixed list), and anything else falls back to the route's
+   default. That is the pattern `music_entry.html:51` already uses (`back=entry`).
+
+   | Route | Posted from | `back` values | Default |
+   |---|---|---|---|
+   | `/devices/{id}/lifts`, `/lifts/{lift}/end` (`lifts.rs:123,154`) | summary, Device › Time | `summary`, `time` | summary |
+   | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (`window_relock.rs:244`) | summary, the blocked-apps target page | `summary`, `apps` | summary |
+   | `/devices/{id}/apps/toggle` (today `anchor=music`, `devices.rs:1797`) | Device › Apps, Device › Music | `apps`, `music` | apps |
+   | `/dns/domains/new`, `/dns/domains/{id}/delete`, the blocklist override (`dns_filter.rs:292-311,505`) | Settings › Web Filter, Device › Web Filter | `dns`, `filter` (with the device id) | `/dns` |
+   | `/settings/calls` (today → `/devices` without `device_id`, `calls.rs:946-950`) | Settings › Phone Setup | `provisioning` | `/settings/provisioning` |
+   | `/schedules/rules[/{id}]`, `/delete` | the rule editor (everyone's or a phone's own) | the existing `scope` field decides | as §3.5 |
+
+4. **Anchors only where they help.**
+   - Keep a fragment where the redirect lands on a **different** page (a delete that returns to its list).
+   - Keep one where the no-JS path needs it to find the row in a long list: `#app-{pkg}`, `#music-entry-{id}`,
+     `#entry-{id}`.
+   - Same-page auto-saves on short pages redirect without a fragment, so the script restores the exact position.
+   - The flash's group id is the anchor when there is a flash (§3.0).
+5. **Links that point at today's anchors** move with their targets (L5):
+   - `#parent-pin` in `window_relock.rs` → `/devices/{id}/lock#parent-pin`;
+   - `#app-{package}` in the blocks list → `/devices/{id}/apps#app-{package}`;
+   - `music_entry.html:164` (`/devices/{id}#music`) → `/devices/{id}/music`;
+   - `enroll_code.html:22` (`#access`) → §3.7;
+   - `handlers/music.rs:3688` (`?music_notice=too_big…#music-entry-…`) → `/devices/{id}/music…`;
+   - the `/music#…` anchors → §3.4.
+6. **A redirect-table test** (H3, M8):
+   - It renders every page and collects each form's `action` and hidden fields.
+   - It posts each with valid values, and compares the `Location` against a table of
+     `(form route, page) → expected Location`.
+   - It is built from the rendered `action`s, so a moved form can't keep a stale target.
+   - Each step adds its pages' rows.
+7. `jstest/scroll-restore.test.js` and `device_api::pages_restore_scroll_after_auto_save` stay green. The latter
+   walks **subfolders** of `templates/` too (M8), so a template in `templates/device/` can't skip the head partial.
 
 ### 5.2 Without JS
 
@@ -1090,44 +1330,83 @@ Today, without JS:
 
 The redesign keeps both and **fixes the gaps** (§2.3 item 10):
 - Device pickers become links, so they need no JS.
-- The active tab is rendered on the server.
-- `onsubmit confirm()` deletes get a `<details>` confirm or stay as they are (Q7).
-- The ⓘ panels are `<details>`.
+- The active tab is set by the template (§3.1).
+- The `onsubmit confirm()` deletes become `<details>` confirms (Q7, §5.6).
+- The ⓘ panels and the "Pause a rule…" and "Unlock for 2 h…" sheets are `<details>`.
 - Switches are real checkboxes.
+- **`autosave.js` (L7):**
+  - The 54 inline `onchange="this.form.submit()"` become `data-autosave`, handled by one deferred
+    `static/autosave.js`. It calls `form.submit()`, which `scroll-restore.js` already hooks; that script loads
+    un-deferred first.
+  - A `<select>` saves on `change` from a pointer. From the keyboard it saves on Enter or blur, not on every arrow
+    key. This settles §5.4's open decision.
+  - CSP still allows inline script "until S7" (`admin_auth.rs:442-447`). This removes most of what needs it.
 - No new behaviour may depend on JS. JS stays limited to these extras:
+  - `autosave.js`;
   - `app-display.js` (preview);
   - `music-cards.js` (live status);
   - the Leaflet map;
   - the locate poll;
-  - the installing auto-reload.
+  - the installing auto-reload;
+  - the rule editor's kind → calls link.
 
-### 5.3 PWA manifest and offline
+### 5.3 PWA manifest, name and offline
 
-What stays:
-- `manifest.webmanifest` keeps `start_url "/"`, `scope "/"` and `display standalone`.
-- A **name change** (Q6) changes what an installed home-screen icon says only after the browser refreshes the
-  manifest. That is harmless but slow.
-- `theme_color` and `background_color` should follow the new palette, in light and dark.
-- `templates/sw.js` stays **deliberately without a cache and without a fetch handler**. The admin handles session
-  cookies, so there is no offline mode and the redesign adds none.
+**The name is "Vibb Phone"** (the user's final decision, replacing Q6). L4 says what changes:
+- `<title>{{ title }} · Vibb Phone`, the header brand, `login.html`'s heading;
+- `apple-mobile-web-app-title`;
+- the manifest:
+  - `name` **and** `short_name` both become "Vibb Phone". It is 10 characters, under the about 12 that Android and
+    iOS show beneath an icon.
+  - `description` becomes "Parent controls for the family's Vibb phones".
+- README, `DEPLOY.md`, and the backup error message's brand (`backups.rs:1016`);
+- the log line in `main.rs:179`, which may change freely.
 
-The apple-touch-icon and the status-bar style (`apple-mobile-web-app-status-bar-style`) are worth revisiting for the
-iOS look, for example `black-translucent` with safe-area padding.
+What does **not** change:
+- **Add `"id": "/"`** to the manifest. It equals today's implicit id (taken from `start_url`), so nothing
+  reinstalls, and later changes can't orphan the app.
+- **The manifest URL stays** `/static/manifest.webmanifest`, with no `?v=`. Older Chrome keys a WebAPK to it.
+- `start_url "/"`, `scope "/"` and `display standalone` stay.
+- **The 2FA issuer** (`security.rs:155`, "Kids Device MDM") stays (the user's decision). It only labels *new*
+  authenticator entries, and changing it never breaks codes.
+
+**What installed apps see**, and the **release note** to ship with the rename step:
+> The parent app is now called **Vibb Phone**. On Android, the home-screen name updates by itself within a few days
+> (Chrome may ask you to accept it). **On iPhone and iPad the icon keeps its old name**: remove it and add it again
+> from Safari (Share › Add to Home Screen), or rename it by hand. Nothing else changes: you stay signed in, and your
+> bookmarks keep working.
+
+**Theme colour:** `theme_color` becomes the bar colour. Add two `<meta name="theme-color" media="(prefers-color-scheme:
+…)">`, light `#F9F9FA` and dark `#161618`.
+
+**Offline:** `templates/sw.js` stays **deliberately without a cache and without a fetch handler**. The admin handles
+session cookies, so there is no offline mode and the redesign adds none. The rename and the CSS can't serve stale
+pages.
+
+The status-bar style (`apple-mobile-web-app-status-bar-style`) stays `default`. If it ever becomes
+`black-translucent`, add `viewport-fit=cover` and top and bottom safe-area padding, and test on a real iPhone (M9).
 
 ### 5.4 Accessibility
 
 - Every control has a visible or programmatic label. Switches use `role="switch"` inside a `<label>`.
-- Touch targets are at least 44×44 px, including the ⓘ summary and the tab bar items.
-- Contrast is at least 4.5:1 for text, in both themes. The grey footer text and the red-on-pink `.error` must be
-  rechecked.
+- **Touch targets** are at least 44×44 px, including the ⓘ summary (the mockup's 28 px ⓘ gets a padded hit area, L3)
+  and the tab bar items.
+- **Contrast:**
+  - Text is at least 4.5:1 in both themes. QA checked the mockups' text colours and they pass.
+  - These fixes from L3 apply:
+    - **The strong button in dark mode:** white on `#4A9BFF` is 2.83:1 ("Lock again"). Use `#0B66D6` in both themes
+      (5.4:1).
+    - **Switch tracks** need 3:1 for the state (WCAG 1.4.11). On = `#248A3D` (4.4:1). Off keeps its fill and gets a
+      1px `#8E8E93` border.
+    - **The lock badge's** colours become tokens with dark values; the mockup hard-codes `#EEF0FF`/`#3A36B8` in the
+      dark frame too.
+- **Locate's phone switcher** says the state in each item's `aria-label` ("Anna, online"), not only as a dot (L3).
 - Font sizes are in `rem`, never below 0.75rem (12px). The tab labels go up from 0.68rem.
 - The current tab has `aria-current="page"`. Nav icons get `aria-hidden="true"`.
 - Status changes that `music-cards.js` swaps in keep `role="status"`.
-- Auto-submitting `<select>`s: keyboard users must not save on every arrow key. Use a picker sub-page (iOS style: a
-  list of options, each a submit button), or keep `onchange` only for pointer input. This is a deliberate decision
-  in the build.
-- `prefers-color-scheme` theming stays, with no manual toggle, as now. `prefers-reduced-motion` turns off any
-  transitions.
+- Auto-saving selects follow `autosave.js` (§5.2): no save on every arrow key.
+- Theming follows `prefers-color-scheme`, with no manual toggle. `prefers-reduced-motion` turns off the switch
+  transition and any other transitions.
 - Tables (security log, commands, lifts, backups) become stacked rows on a narrow screen.
 
 ### 5.5 Tests that read page text
@@ -1147,270 +1426,450 @@ Many `src/tests/*.rs` render pages (`get_page`, `view_device`, `show_*`) and ass
 - music_sweep 7;
 - and a few each in about 20 more files.
 
-Some assert on the exact wording of runtime lines, for example:
-- "Skole is active - calls blocked";
-- "Screen time 2026-10-05: 42 of 90 min (incl. 30 extra)";
-- "Sound at the last sync: silent (vibrate)";
-- "The phone last reported: 2 minutes.";
-- "Last access: none since this server started.";
-- "6 hours is what the Vibb Pi uses";
-- "This box only shows the choice";
-- "The phone hasn't seen any speakers yet.".
+The tests fetch `/devices/{id}` about 110 times across 24 files (M1). Many builders in `src/*.rs` are also pinned by
+`#[cfg(test)]` unit tests, which these counts don't include (M5).
 
-Others assert on markup:
-- `<a href="#parent-pin">Change the parent PIN</a>` (`window_relock.rs:687`);
-- redirect `Location`s with anchors (`enrollment.rs:355,372`, `parent_pin.rs:68`, `music.rs:906,924,1460,2370,2529,2597,2606`);
-- `app_display.rs:308` and `device_api.rs:802` read template files directly.
+**Step 1 adds helpers to `tests/mod.rs`** (M8), and converts the fragile assertions to them:
+- `input_checked(html, name, value) -> Option<bool>`. This replaces assertions on attribute order and whitespace,
+  such as `checked onchange="this.form.submit()"` (`hardening.rs:173-180`, `music.rs:2395-2557`,
+  `lock_glance.rs:497`) and `value="on"  onchange` (with two spaces).
+- `autosaves(html, name) -> bool`, true for `onchange` or `data-autosave` (L7).
+- `form_action_of(html, input_name)`.
+- `nav_current(html) -> &str` (§3.1).
+- `device_page(id, Section) -> String`, which returns the URL, so a moved test changes one argument (M1).
+- `assert_redirect(response, path, fragment)`, which drives §5.1's redirect table and replaces the pinned `Location`s
+  (`enrollment.rs:355,372`, `parent_pin.rs:68`, `music.rs:906-2606`).
 
-How to handle them:
-- Each page's rewrite updates its tests in the same commit.
-- A test that checks a **fact** ("the page says the phone is paused") should assert on a stable hook, such as a
-  `data-` attribute or an id, plus a short phrase. It should not assert on a whole sentence, so the next copy edit
-  doesn't break it.
-- Tests that pin **security** behaviour (no free text from the phone, escaping, H2) must keep their exact assertions:
-  `crash_reports_reach_the_device_page_without_free_text` and the `js_string` tests.
+How to handle the rest:
+- Each step rewrites its pages' tests in the same commit, through these helpers.
+- A test that checks a **fact** ("the page says the phone is paused") asserts on a stable `data-` hook plus a short
+  phrase, never a whole sentence.
+- The unit tests of a sentence builder go when the builder goes, in the step that switches its last caller to the
+  typed sibling (M5).
+- Tests that pin **security** behaviour stay exact: `crash_reports_reach_the_device_page_without_free_text`, the
+  `js_string` tests, and H2's escaping tests.
+- `app_display.rs:308` and `device_api.rs:802` read template files directly; they follow the partials.
 
 ### 5.6 Risky to change
 
+**Forms whose handler writes every field (H1).** An unticked checkbox sends nothing, so these handlers read a
+missing field as off, empty or default. **A form is split only if its handler writes only the sections it was
+sent.**
+- A split form gets a hidden section marker, `<input type="hidden" name="section" value="…">`, as design 30 did
+  with `v=2`. The handler then updates only that section's columns.
+- Without a marker, today's "write all" stays, for old tabs and the existing tests.
+- Every other form moves **as one block**: one group, one form, and each switch in it still auto-saves the whole
+  form.
+- Each split gets a test that saving one section leaves the other section's stored values unchanged.
+
+| Route | Fields written | Absent means | In the redesign |
+|---|---|---|---|
+| `/devices/{id}/policy` (`devices.rs:2009-2023`) | 4 quick controls + web filter | off | **Split**: `section=quick` (Home Screen) and `section=filter` (Web Filter). `kiosk_desired = 1` is kept in both |
+| `/schedules/device/{id}` (`schedules.rs:665-680`, `parse_budget_form` `:623`) | own-rules switch **and** 7 daily limits | a limit `""` = **no limit** | **Split**: `section=switch` and `section=budget`. Test: a switch-only post keeps the limits |
+| `/devices/{id}/launcher` (`devices.rs:2235-2239`) | language, apps per row | `system`, `3` | One form (two inline selects in one group). Gets `section` only if a later page separates them |
+| `/devices/{id}/hardening` | 10 restrictions | off | One form (Advanced › Restrictions) |
+| `/devices/{id}/kiosk-escapes` (`device_detail.html:194-208`) | update fence, notification filter, boot cover | off | One form (Advanced › Updates & notifications) |
+| `/devices/{id}/music` (design 30 step 1: `v=2`, `mobile_switches`) | stream data, download data, storage limit, volume cap, Storytel | off / none | One form with `v=2` (M7) |
+| `/devices/{id}/music/sonos-rooms` | all + rooms | off | One form |
+| `/devices/{id}/calls/settings` (`calls.rs:535-550`) | managed, calls, SMS, message button | off | One form |
+| `/devices/{id}/contacts/{cid}` (`calls.rs:732-734`) | in, out, home, message app, Matrix ID | off | One form per contact row; no sheet for the Matrix ID |
+| `/schedules/rules[/{id}]` (`schedules.html:9-48`) | name, kind, calls, 7 days, exempt apps | off / not exempt | One form; the exempt apps in a `<details>` inside it |
+| `/schedules/global` | 7 daily limits | no limit | One form (`/schedules/screen-time`) |
+| `/devices/{id}/location-policy` (`locate.rs:530-560`) | mode (required: 400 without it), interval | interval kept | One form with two inline selects |
+| `/devices/{id}/wallpapers` | the ticked wallpapers (repeated `wallpaper`) | unticked | One form (the grid) |
+| `/settings/provisioning` (`settings.rs:91-117`) | server URL, Tailscale key, language, time zone | empty (the key: kept) | One form; the country code is a second form beside it (L6) |
+| `/music/entries/{id}` | name, category, order, offline, resume | resume off | One form |
+| `/apps/tracked/{id}` | name, repo, file filter, tag prefix | empty | One form |
+| `/update/schedule`, `/system/schedule`, `/backups/schedule` | frequency, day, time, checkboxes | off | One form each |
+
+**Actions behind a confirm (M6, Q7).** These get a `<details>` confirm: one sentence plus a POST button naming the
+action.
+- **One tap today, risky:**
+  - **Unlock for 2 h…** (`start-pause`): opens apps, Settings and the Play Store.
+  - **Remove Child PIN…**: turns the lock off.
+  - **Remove Contact…**: their calls are then blocked.
+  - **Allow these apps…**: lets out apps that may be signed with a foreign key. The confirm names them.
+  - **Forget Package and Key…** on a catalog app: the next release's key is then trusted on first use.
+  - **Sign Out Everywhere…**: signs this browser out too.
+- **Today a JS `confirm()`, so they act at once without JS:**
+  - delete rule;
+  - delete category;
+  - delete wallpaper;
+  - delete music file;
+  - delete music entry;
+  - delete orphans;
+  - remove the Storytel login.
+- **Already `<details>`, unchanged:** wipe, revoke, restore, format, remove phone, remove app, reset 2FA, update,
+  restart, reboot.
+- **One tap on purpose**, because they protect the phone or can be undone: Lock again, Lock, Ring, Stop Ringing,
+  +15/+30/+1 h, End now, Remove photo (re-upload), domain Remove (re-add), Unban.
+
+**Other risks:**
+
 | Risk | Why | How to handle |
 |---|---|---|
-| `POST /devices/{id}/policy` (Quick controls + filter) | `update_policy` treats a **missing** checkbox as off for all five fields (`devices.rs:2009-2023`). Splitting the form across Home Screen and Web Filter, or making it auto-save per switch, would turn the other fields off. | Split the handler into two routes (quick controls, filter), or send the other fields as hidden inputs. Test both. |
-| Allowlist forms (`apps/toggle`) | Per-app mini-forms carry `tracked_app_id`/`package_name`; `id="app-{package}"` is a link target from the blocks list | Keep the form fields and ids; move as a block |
-| Hardening form | One form, every switch posts all 10 fields; a missing one means off | Keep as one form on one page (Advanced › Restrictions) |
-| Sonos form | "All rooms" on posts hidden `room` inputs to keep the ticks | Move as a block |
-| Music settings form (`/devices/{id}/music`) | One form: mobile data, volume cap, Storytel; missing = off | Keep the three together |
+| Design 30 step 1 (M7) | It changes the Music card's form (`v=2`, two mobile-data switches, a storage limit, `data_note`), and step 3a changes `MusicState` and `storage_line` | Merge `design-30-s1` into main **before** the device Music step. Build that step on it. Don't reword music lines until step 3a is in main. Repoint QA-30's tests (`tests/music.rs`) in the same step |
+| Allowlist forms (`apps/toggle`) | Per-app mini-forms carry `tracked_app_id`/`package_name`; `id="app-{package}"` is a link target | Keep the fields and ids; add `back` (§5.1) |
+| The app-display 400 path | Re-renders the whole device page with the entered values (`devices.rs:685`); tests assert `id="display" open` | Re-render Device › Apps instead, in the Apps step |
 | Parent PIN / Child PIN | The parent-PIN form can also clear (`clear_pin`); the kid-PIN form posts to the same route for set and clear | Keep the route semantics; only move |
-| The 3 s auto-reload while installing | Lives on the device page; must follow the Apps sub-page and must not run on the summary | Move with the list |
-| `music-cards.js` | Finds `.music-status[data-entry]` and anchors on `.music-card, .card` | Keep the classes or update the script in the same commit |
+| The 3 s auto-reload while installing | Lives on the device page | Moves to Device › Apps; never runs on the summary |
+| `music-cards.js` | Finds `.music-status[data-entry]` and anchors on `.music-card, .card` | Keep the classes, or update the script in the same commit |
 | `app-display.js` | Finds `form.app-display-form` and `data-preview-*` | Keep the partial's markup |
-| Locate JS | `locations.json`, `locate-result.json`, `location.replace('/devices/locate?device=…')` | The URL stays, so the script keeps working; recheck it after the layout change |
+| Locate JS | `locations.json`, `locate-result.json`, `location.replace('/devices/locate?device=…')` | The URL stays; recheck after the layout change |
+| Local time (M4) | No tz database today (`Cargo.toml:21` has `chrono` only); DB stamps have no zone | `chrono-tz` + `display_time` (§3.10); new dependency checksums are not an issue on the server (Cargo.lock) |
 | Askama | Templates compile into the binary; a missing variable is a build error | Build after every page |
 | `style.css?v=7` | Browsers cache `/static` hard | Bump `v` with every CSS change |
-| The list page's status | New per-phone reads on `/devices` | One query per phone is fine at 1-3 phones; no N+1 beyond that |
-| Security events | Some routes log security events from the same handlers | Moving forms doesn't change them; renaming routes would - don't rename POST routes |
+| The list page's status | About 10 reads per phone (§3.8) | Fine at 1-5 phones |
+| Security events | Some routes log security events from the same handlers | Moving forms doesn't change them; don't rename POST routes |
+| CSRF | `csrf_guard` covers every non-GET (`main.rs:1171`) | Fine as long as **no GET changes state** (no saving picker pages, "New setup code" is a POST) |
+
+### 5.7 The browser floor (M9)
+
+- **The floor:** Chrome/WebView 80+ and iOS Safari 14+ render the design. Anything older gets plain, working
+  controls. Today's CSS already assumes custom properties, flexbox `gap`, grid and `env()` (`style.css:1-28,228,287,370`).
+- **Not used:** `:has()`, `color-mix()`, CSS nesting, `@layer`, container queries, or `dvh` without a `vh`
+  fallback.
+- **The switch:**
+  - a real checkbox (`-webkit-appearance:none; appearance:none`) followed by a sibling `<span class="knob">` drawn by
+    CSS. Never a pseudo-element on the input: the mockups' `::before` knob becomes this sibling span.
+  - `@media (forced-colors: active) { .sw { appearance: auto } .knob { display: none } }`, so high-contrast modes
+    show a real checkbox.
+  - Focus is `:focus` with an outline, reset by `:focus:not(:focus-visible)`, so Safari before 15.4 still shows
+    focus.
+- **Hairlines** are 1px in a lighter colour. 0.5px is used only under `(min-resolution: 2dppx)`.
+- **Dark mode:** `:root { color-scheme: light dark }` and `<meta name="color-scheme" content="light dark">`, so native
+  selects, time inputs and scrollbars follow it.
+- `prefers-reduced-motion` turns off the switch transition.
+- **The translucent tab bar** has an opaque fallback colour.
+- `register-sw.js` is rewritten in ES5 (it has an arrow function today).
 
 ---
 
-## 6. Mockup list (9 screens)
+## 6. Mockups
 
-Every screen is a phone-width frame (390 pt), light mode first, with one dark-mode frame of the device summary. The
-data is realistic and taken from the code and tests: phones **Anna** and **Emil**; rules **Skole** and **Leggetid**;
-library entries **Abels tårn**, **Ukas nyheter**, **Godnatt**; categories **Musikk**, **Podkast**,
-**Eventyr og sånt**; the app **Element X shown as "Chat"**.
+The user approved 14 artboards in `docs/design/mockups/parent-pwa/` (`canvas.json` lists them):
+- Main (Devices);
+- DeviceSummary;
+- HeaderStates;
+- About;
+- LockScreen;
+- Apps;
+- AnnaApps;
+- Locate;
+- Music;
+- Settings;
+- Time;
+- RuleEditor;
+- Patterns;
+- TabBar.
 
-### M1 - Devices (list)
+The data is realistic and taken from the code and tests: phones **Anna**, **Emil** and **Ella**; rules **Skole** and
+**Leggetid**; library entries **Abels tårn**, **Ukas nyheter**, **Godnatt**; the app **Element X shown as "Chat"**.
 
-- Large title "Devices".
-- **Anna**:
-  - avatar "A" with a green dot;
-  - "Online · Skole until 14:30";
-  - a thin screen-time bar "42 of 90 min";
-  - a red badge "1".
-- **Emil**:
-  - avatar "E" with a grey dot;
-  - "Offline · seen 3 h ago" (no lock part: nothing is locking);
-  - "15 of 120 min".
-- A third row, to show the orange state: **Ella** "Away · seen 12 min ago".
-- **Add Phone** row.
-- Above the list, the password banner as it will look (an orange inset row "Change the generated password ›"), so the
-  banner style is reviewed too.
-- Tab bar: **Devices** active · Apps · Locate · Music · Settings.
+### 6.0 The rule: the mockups decide the look, §3 decides the content (M2)
 
-### M2 - Device summary (Anna)
+- **Layout, type, colour, spacing and grouping** come from the mockups.
+- **Which controls exist, what they do and what the facts say** come from §3 and §3.9.
+- **Copy facts** come from today's text or the code, never from a mockup's placeholder text.
+- **Every control the mockups leave out is restored.** Every control they invent is dropped, unless the code already
+  has it under another name.
+- **Where a mockup's label and the spec's differ**, §4.3 picks one.
 
-1. **Header** (§3.2, §3.10):
-   - "Anna" with a green dot and **Online**;
-   - "Seen 3 min ago";
-   - the badge **Skole until 14:30 · calls off**;
-   - a bar "42 of 90 min today".
-   - No app version, no sound, no exact timestamp.
-2. **Attention** (1):
-   - a red row "Restrictions paused · ends 15:10 ›".
-3. **Quick actions**, as a 2×3 grid of rounded buttons:
-   - Add 15 min · Add 30 min · Add 1 h;
-   - Pause a rule… · **Lock again now** (shown because a pause runs) · Locate.
-4. **Today**:
-   - "Skole paused for 30 min · by you at 13:05 · ends 13:35 · End now";
-   - "+30 min · 12:10".
-5. **Sections**, each with a value:
-   - Calls & Contacts "8 contacts · SMS on";
-   - Apps "14 allowed";
-   - Music "6 in library · Storytel on";
-   - Time "Everyone's rules";
-   - Lock Screen & PINs "Child PIN on";
-   - Home Screen "4 per row";
-   - Location "Seen 10 min ago" (opens the Locate tab on Anna);
-   - Web Filter "On";
-   - About This Phone "Vibb 0.23.6";
-   - Advanced.
-6. A second frame of the same screen in **dark mode**.
-7. Two **header variants** as small strips:
-   - **Emil**, Offline: a grey dot, "Offline · seen 3 h ago · changes wait until it's back", no lock badge;
-   - **Anna** at night: "Online · seen just now", the badge "Leggetid until 07:00".
-8. A small frame of **About This Phone** for Anna (§3.2 table):
-   - Connection: Status "Online since 08:12", Last request "10:59 today, over the tailnet", Last report "10:59 today
-     (3 min ago)", Battery optimisation "Off";
-   - Sound: Ringer "On", Do Not Disturb "Off";
-   - Software: Vibb "0.23.6-debug", Music app "Installed · 0.3.0", Settings from the server "Applied";
-   - Diagnostics: Crash reports "None in 30 days".
+What this means, artboard by artboard:
 
-### M3 - Device sub-page: Lock Screen & PINs (Anna)
+| Artboard | In the mockup | In the build | Why |
+|---|---|---|---|
+| DeviceSummary | "Needs attention" | **Attention** | §4.3 |
+| | "Screen Time · Everyone's rules" | **Time** | "Screen Time" reads as the limit alone (§4.3) |
+| | "+15 min", "Lock again", "Locate" | Kept as drawn | §4.3 adopts the short labels |
+| | "Unlock for 2 h" not drawn (a pause is running) | **Unlock for 2 h…** behind a confirm when no pause runs | M6 |
+| | No Location row | Kept out; the Locate quick action is the entrance | M2, Q4 |
+| | "PIN on" | Kept | Fits the value column |
+| HeaderStates | "Away · seen 12 min ago" | Kept; "· changes may be delayed" only on the summary | H2 |
+| | "Waiting for setup" + **"Show setup code"** | **New setup code** (a POST that makes a new code and shows it once) | The code can't be shown again (M2) |
+| | - | Two more states: **Disconnected** and **Not seen yet** | L2 |
+| About | Last contact / Last full report / Network, Starts without Vibb | Kept, plus **Time lock** | M2 |
+| LockScreen | "After 5 wrong tries the phone waits 1 minute … unlock it from here with **Unlock Now**" | "After 5 wrong PINs the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries. It never erases itself. Your Parent PIN ("Parent code" on the lock) always opens it." | Facts from `device_detail.html:571`. No "Unlock Now" control exists in the PWA; today's text names the Parent PIN as the way in |
+| | Parent PIN footer "Opens settings and the Play Store on the phone for 15 minutes." | "Opens the phone's settings and lifts limits, even offline." ⓘ: install mode, the time-lock lift "for up to two hours", and the 15-minute lockout after 5 wrong tries | Facts from `device_detail.html:602-603` |
+| | **"Show what's playing"** switch | **Dropped.** The lock always shows what's playing; the footer says so | No such setting (M2) |
+| | "Turn off after · 1 minute ›", "Background · Same as Home ›" | Inline selects | H3 |
+| | "Child PIN · On · 4 digits ›" | The row opens a `<details>` with the change form; Remove Child PIN… behind a confirm | H3, M6 |
+| | "Missed calls always show." | Kept | True (`device_detail.html:352`) |
+| AnnaApps | **Search** field | **Dropped** | Not in the code, and it needs JS (M2) |
+| | Allowed / Not allowed groups | Kept | - |
+| Apps | Catalog rows, footer | Kept; badges as §3.3 | - |
+| Locate | **"Rosenhoff skole"** | **"10 min ago · within 40 m"**, no place name | No reverse geocoding: the location never goes to a third party (M2) |
+| | Ring, Lock, Update, Recent | Plus **Stop Ringing**, **Erase Phone…**, the **Location settings** group, **Cancel** on a waiting command, the two warnings, and the phone's last answer | Restored (M2) |
+| Music | "Show all 9" | **Dropped**; the whole library is listed | Invented |
+| | Add: link, own files, Storytel | Plus **Import from Vibb ›** | Restored (M2) |
+| | Library rows without row actions | Plus **Check now** and the **Offline** select on each row | Restored (M2) |
+| | "Categories · 3", "Settings" | Kept | - |
+| Settings | "Software Update · 0.25.0" pill | **No value** | M3 |
+| | "About · Server 0.24.0" | Kept; links to `/updates` | M3 |
+| | "Blocked Activity · 12 today", "Wallpapers · 5", "Backups · Today 03:00" | Kept, from the database | M3 |
+| Time | Phone rows link to the summary | They link to `/devices/{id}/time` | M2 |
+| | "Daily limit ›" | Kept: a page with the 7 fields and Save, redirecting to itself | H3 |
+| RuleEditor | "Type · School ›" | An inline select | H3 |
+| | "Exceptions · Apps that still work ›" | A `<details>` inside the form | H1 |
+| | "Off" / "Add" on empty days | Look only: empty time fields | No GET may change state |
+| Patterns | "Phone not locked: **Vibb lost device owner**" | **Dropped**, replaced by a real alarm, "Lock is off on the phone" (`lock.warnings`) | No device-owner signal exists (M2) |
+| | "**2 new apps wait for your OK**" | **"2 blocked apps wait"**, from `relock.blocks` | Exists under another name: apps that stay hidden until "Allow these apps" |
+| | "New child PIN · Use 4 to 8 digits." | "Use 4 to 6 digits." | `pattern="[0-9]{4,6}"` |
+| | Switch knob as `::before` on the input | A sibling `<span class="knob">` | M9 |
+| | Picker "Music storage limit" (inline select) | Kept: this is the picker pattern | H3, M7 |
+| All | Strong button `#4A9BFF` in dark, switch on `#34C759`, ⓘ 28 px, hard-coded lock-pill colours | As §5.4 | L3 |
 
-This page best shows the ⓘ pattern and the PIN forms.
+### 6.1 What each artboard shows (for reference)
 
-- "‹ Anna", large title "Lock Screen & PINs".
-- **Child PIN** group:
-  - "Child PIN · On (4 digits) ›" (opens the change form);
-  - the footer "Locks the phone when the screen turns off.";
-  - an ⓘ, **shown open** in the mockup with the text from §4.5 #1.
-- **Parent PIN** group:
-  - "Parent PIN · Set ›";
-  - "Recent use" with 2 events ("Today 07:58 · opened Settings", "Yesterday · 5 wrong tries, waited 15 min").
-- **Screen**:
-  - "Turn off after · 1 minute ›".
-- **Lock screen** group:
-  - "Background · Same as Home ›";
-  - switch "Show message text" (off) + footer "Anyone holding the phone can read it.";
-  - a list of switches: Meldinger (on), Chat (on), Signal (off, note "not installed").
-
-### M4 - Apps (tab)
-
-- Large title "Apps".
-- **On phones**:
-  - "Anna · 14 allowed ›";
-  - "Emil · 11 allowed ›".
-- **Catalog**:
-  - Vibb (launcher) "1.4.0 · all phones";
-  - Musikk "0.3.0 · 2 phones";
-  - Chat (Element X) "25.10.1 · 1 phone";
-  - Tailscale "1.76.0 · 2 phones";
-  - one row with a red badge "Update failed".
-- **Add App** row.
-- A second, small frame: **Anna › Apps**:
-  - switch rows with icon tiles: Klokke, Kalkulator, Kamera, Telefon, Meldinger, Musikk, Chat;
-  - one row "Installing 40 %";
-  - one off row "Firefox · not allowed";
-  - the footer "Turning an app off hides it and uninstalls it where possible.".
-
-### M5 - Music (tab)
-
-- Large title "Music"; a header action "Edit".
-- **Library (9 of 200)**:
-  - Abels tårn (NRK serie, cover) "NRK series · Eventyr og sånt · 2 phones", status "98 episodes · newest 9 Oct";
-  - Ukas nyheter "Podcast · Podkast · 1 phone", status in orange "Checking…";
-  - Godnatt (own files) "Own files · Musikk · 12 files";
-  - one Storytel series row "Storytel · 4 books · Anna".
-- **Add**:
-  - "Podcast or NRK link";
-  - "Own files";
-  - "Storytel shelf ›";
-  - "Import from Vibb ›".
-- **On phones**:
-  - "Anna · 6 of 9 · Storytel on ›";
-  - "Emil · 4 of 9 ›".
-- **Settings ›** and **Categories ›**.
-
-### M6 - Settings › Time Rules
-
-- "‹ Settings", large title "Time Rules".
-- **Everyone › Rules**:
-  - "Skole · Mon-Fri 08:15-14:30 · calls off ›";
-  - "Leggetid · Every day 20:30-07:00 · calls on ›";
-  - Add Rule.
-- **Everyone › Screen time**:
-  - "Mon-Fri 90 min · Sat-Sun 120 min ›".
-- **Phones** (links into the Devices tab):
-  - "Anna · Everyone's rules ›";
-  - "Emil · Own rules ›".
-- The footer "Emergency calls always work."
-- Tab bar: **Settings** active.
-- A second, small frame: **the rule editor for Skole**: name, kind, the "Calls with contacts" switch, the 7 day rows
-  (Sat/Sun empty), "Apps that stay usable ›", Save, Delete Rule in red.
-
-### M7 - Settings
-
-- Large title "Settings". The grouped list from §3.6, with SF-Symbol-like outline icons on tinted squares (not emoji):
-  - **Rules**: Time Rules "2 rules · 90 min" · Web Filter "On · 3 lists" · Blocked Activity "Log on for 1 phone";
-  - **Content**: Wallpapers "8 · 2 photos";
-  - **Server**: Account "admin" · Security Log · Backups "Last: today 03:00" · Software Updates "Update available"
-    (blue badge) · Phone Setup · About "0.24.0";
-  - **Sign Out** in red.
-- Tab bar: Devices · Apps · Locate · Music · **Settings** active.
-
-### M8 - Locate (tab)
-
-- Large title "Locate".
-- Phone switcher at the top: **Anna** (selected) · Emil.
-- The map, about 45 % of the screen height: Anna's trail for today and a pin at the last fix. Under it: "10 min ago ·
-  ±12 m" and **Update Location**.
-- **Actions**: Ring · Stop Ringing · Lock · **Erase Phone…** in red. Footer: "An offline phone gets Ring and Locate
-  within an hour, Lock and Erase whenever it's back."
-- **Location** · "Only when asked · 7 days ›".
-- **Recent**:
-  - "Locate · today 10:58 · Done (±12 m)";
-  - "Ring · today 10:41 · Done";
-  - "Lock · waiting for the phone" with **Cancel**.
-- A second, small frame: Emil selected while he is Offline. The orange row "Erasing works after the phone restarts
-  once" above the actions; the map shows the last fix "3 h ago".
-- Tab bar: Devices · Apps · **Locate** active · Music · Settings.
-
-### M9 - Patterns sheet
-
-One frame of the pieces, so the reviewer can judge each of them alone:
-- a switch row with a one-line footer;
-- an ⓘ open and closed;
-- the four Attention levels (red alarm, orange action, grey state, green flash);
-- a destructive confirm (`<details>`) open: "Erase Anna's phone? Everything on it is deleted." + "Erase Phone";
-- a field with a form error under it;
-- a picker row and its option list;
-- the tab bar with 5 items, in light and dark.
+- **M1 Devices (Main):** the password row, Anna (Online · Skole until 14:30, bar, badge 1), Emil (Offline · seen 3 h
+  ago), Ella (Away · seen 12 min ago), Add Phone. Tab bar: Devices · Apps · Locate · Music · Settings.
+- **M2 Device summary (DeviceSummary):** header, Attention, Quick actions, Today, Sections, as §3.2.
+- **M2b Header states (HeaderStates):** Online with a lock badge, Away, Offline, Not set up. Disconnected and Not seen
+  yet are added in the build (L2).
+- **M2c About This Phone (About):** as §3.2's table.
+- **M3 Lock Screen & PINs (LockScreen):** as §3.2, with the fact fixes above.
+- **M4 Apps (Apps) and Anna › Apps (AnnaApps):** as §3.3, without search.
+- **M5 Music (Music):** as §3.4, with Import from Vibb and the row actions.
+- **M6 Settings › Time Rules (Time) and the rule editor (RuleEditor):** as §3.5.
+- **M7 Settings (Settings):** as §3.6.
+- **M8 Locate (Locate):** as §3.6, with every restored control.
+- **M9 Patterns and the tab bar (Patterns, TabBar):** as §3.0 and §5.7.
 
 ---
 
-## 7. Questions for the user
+## 7. Questions for the user: answered
 
-1. **The two lock-screen picture settings.**
-   - Per photo: "Also on the lock screen" (`/wallpapers`).
-   - Per phone: "Lock screen background" (design 25).
-
-   Should the per-photo switch go, now that each phone picks its own lock background? This is the only control the
-   proposal would like to drop. It stays until you answer.
-2. **The DNS server choice (Cloudflare / Quad9).** It moves to Settings › Web Filter, at the bottom, unchanged. Is it still
-   worth showing at all? It is sent to the phones as `dns_upstream_provider`.
-3. **"This is the launcher app" switch** on a catalog app. It moves into Source & signing. It should only ever be set
-   once. Keep it visible, or hide it once a row is marked?
-4. **A Locate quick action on the summary.** Locate is now a tab of its own (your decision), and the summary's
-   Location row already opens it on that phone. So a "Locate" quick action is **optional**: it saves nothing over
-   the tab, but it puts the lost-phone path next to Lock and Ring. The proposal keeps it in the quick-action grid
-   (M2). Keep it, or drop it to make room?
-5. **Times.** Can the PWA show local time instead of UTC? Today the server labels times "UTC" because the Pi may
-   have no time zone set. The proposal is to use the time zone from Phone Setup (`settings.time_zone`, e.g.
-   `Europe/Oslo`) for display, and show relative times ("12 min ago") where they fit.
-6. **The name.**
-   - Header, `<title>` and manifest say "Kids Device MDM" / "Kids MDM".
-   - The phone says "Vibb", and the lock says "Handy's lock".
-
-   Which name should the PWA use? The proposal is "Vibb". Changing the manifest name renames an installed home-screen
-   icon after the browser refreshes the manifest.
-7. **Deletes without JS.** Deletes that ask with `confirm()` (rules, categories, wallpapers, music files and entries,
-   orphans) delete at once when JS is off. Should they get the same `<details>` confirm as wipe and restore? The
-   proposal says yes, for consistency.
+1. **The two lock-screen picture settings.** **Keep both.** The per-photo "Also on the lock screen" switch stays on
+   Settings › Wallpapers, and the per-phone "Background" stays on Lock Screen & PINs.
+2. **The DNS server choice.** **Kept**, at the bottom of Settings › Web Filter. `dns_upstream_provider` stays in the
+   policy.
+3. **"This is the launcher app".** **Kept visible** in Source & signing (`is-launcher` unchanged).
+4. **A Locate quick action on the summary.** **Kept**, as a plain link to `/devices/locate?device={id}`. Locate is
+   also a tab, so the summary has no separate Location row (M2).
+5. **Times.** **Local time**, from the Phone Setup time zone, through `chrono-tz` (M4). An empty or invalid zone falls
+   back to UTC, labelled "UTC".
+6. **The name.** **"Vibb Phone"** (the user's decision), with the manifest identity kept (§5.3, L4).
+7. **Deletes without JS.** **Yes.** They get the `<details>` confirm, along with the risky one-tap actions in §5.6
+   (M6).
 
 ---
 
-## 8. Build order (suggested, page by page)
+## 8. Build steps
 
-1. **The shell.** The CSS tokens and components: grouped list, rows, switch, ⓘ, badges, Attention, flash. The
-   5-tab bar (Devices · Apps · Locate · Music · Settings) rendered on the server, and the rebuilt `/settings`
-   hub. The pages keep their content.
-2. **Devices list and device summary**, with the 9 sub-pages split out of `device_detail.html` and the redirect
-   targets updated (§5.1). This is the largest step. QA it alone.
-3. **Settings › Time Rules** (`/schedules`) and the device Time sub-page.
-4. **Apps** (catalog + the app page).
-5. **Music** (library, settings, categories, import sub-page, entry page).
-6. **Locate** (the tab, with the phone switcher as links), then the rest of **Settings**: Web Filter, Blocked
-   Activity, Wallpapers, Account, Security, Backups, Updates, Phone Setup.
-7. **Add phone flow** and the sign-in pages.
+There are 15 steps, adopted from the design QA with small adjustments. Each step ships together:
+- its routes and templates, with their copy rewritten to §4;
+- the Rust texts its pages show, switched to typed values (M5);
+- its forms' rows in the redirect-table test (§5.1);
+- its tests, repointed through the helpers (§5.5);
+- these checks:
+  - **390 px wide, light and dark, and once with JS off**: every save stays in place, and every confirm works;
+  - `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`, and `node --test` for the jstests;
+  - the docs its pages rename (L8: `server/DEPLOY.md`, `docs/testing/emulator.md`, `docs/setup/google-account.md`,
+    `server/CLAUDE.md`, `launcher/CLAUDE.md`, `PLAN.md`).
 
-Each step rewrites its copy to §4, updates its tests (§5.5), keeps the no-JS path, and is checked at 390 px in light
-and dark mode.
+Between steps the PWA mixes old-style and new-style pages; each page is whole. The device page shrinks one card group
+at a time. Each moved card leaves a navigation row behind until step 10 turns what remains into the summary (M1).
+
+1. **Shell.**
+   - **Routes:** `/settings` rebuilt as the hub.
+   - **Templates:**
+     - `partials/head.html`: the name, the theme-colour metas, `color-scheme`, and `style.css?v=8`;
+     - `partials/app_header.html`: 5 tabs, set per template (L1), with the active-tab script deleted;
+     - every template sets `tab`;
+     - `settings_hub.html`;
+     - `apps_list.html` and `music.html` lose the Apps|Music switch;
+     - `login.html`.
+   - **Static files:**
+     - `style.css`: the new tokens (light and dark) and components (grouped list, rows, switch, ⓘ, badge, Attention
+       levels, flash, confirm). Today's `.card`, `.error` and `.button-*` are restyled with the tokens, so old pages
+       look like the same app. Plus the browser floor (§5.7) and the L3 colours.
+     - `manifest.webmanifest`: "Vibb Phone" and `"id": "/"`.
+     - `register-sw.js` in ES5.
+     - `autosave.js`, with every `onchange` turned into `data-autosave` (L7).
+   - **Rust:**
+     - the hub's cheap values (M3);
+     - `APP_VERSION` for About;
+     - the backup error message's brand;
+     - the `main.rs:179` log line.
+   - **Tests:**
+     - the helpers (M8);
+     - `nav_current` per tab;
+     - the head check walks subfolders;
+     - a test that the hub makes no network call (no GitHub).
+   - **Release note:** the iOS rename note (§5.3).
+2. **Display helpers + Devices list.**
+   - **Rust:**
+     - `display_time` with `chrono-tz` (M4);
+     - `connection_state` with the H2 windows and the L2 states (§3.10);
+     - `attention::collect` (§3.8).
+   - **Templates:** `devices_list.html`: the dot, state, "seen …", lock part, bar and badge.
+   - **Tests:**
+     - the pure table tests of §3.10;
+     - the `display_time` tests;
+     - attention count = summary rows (a stub summary until step 10).
+3. **About This Phone + Advanced.**
+   - **Routes:** GET `/devices/{id}/about` and `/devices/{id}/advanced`.
+   - **Forms moved:** `hardening` (one form), `kiosk-block`, `kiosk-escapes` (one form), `regenerate-code`,
+     `revoke`, `delete`.
+   - **Templates:** `device_about.html`, `device_advanced.html`; their cards on `device_detail.html` become two rows.
+   - **Rust texts** (typed siblings, M5):
+     - `instant_changes_line` → `ConnectionState`;
+     - `last_access_line` → `LastAccess` rows;
+     - `sound_mode::state`;
+     - the play and escapes lines;
+     - `boot_witness`;
+     - the policy problem titles.
+   - **Tests:** `hardening.rs`, `step11.rs`, `play.rs`, `sound_mode.rs`, `cleanup.rs` (crashes; its security pin
+     stays exact), `enrollment.rs` (the `#access` redirects).
+4. **Lock Screen & PINs.**
+   - **Routes:** GET `/devices/{id}/lock`.
+   - **Forms moved:** `kid-lock` (set; clear behind a confirm, M6), `parent-pin`, `screen-timeout` (inline select),
+     `lock-wallpaper` (inline select), `lock-screen`, `lock-screen/apps`.
+   - **Templates:** `device_lock.html`.
+   - **Rust texts:**
+     - `kid_lock` lines and warnings, typed;
+     - the `parent_pin` notices and events in local time;
+     - `lock_glance` notes;
+     - flashes inside their groups.
+   - **Tests:** `parent_pin.rs` (`#parent-pin` → this page), `lock_glance.rs`, `step10.rs`, `window_relock.rs:687`'s
+     link.
+5. **Home Screen + Web Filter.**
+   - **Routes:** GET `/devices/{id}/home` and `/devices/{id}/filter`.
+   - **Forms:**
+     - `policy` gets `section` (H1);
+     - `launcher` stays one form;
+     - `wallpapers`;
+     - the `dns` overrides and domains get `back` (§5.1);
+     - `/dns/log/{id}`.
+   - **Redirects:** `/dns?device=` and `/dns/log?device=` redirect to the filter page (L5).
+   - **Templates:** `device_home.html`, `device_filter.html`.
+   - **Tests:**
+     - `launcher_ui.rs`, `wallpapers.rs`, `dns_blocklist.rs`;
+     - a section test for `policy`;
+     - the redirect tests.
+6. **Device › Apps.**
+   - **Routes:** GET `/devices/{id}/apps`.
+   - **Forms:** `apps/toggle` (with `back`), `app-updates`, `apps/display` (its 400 re-render targets this page).
+   - **Templates:** `device_apps.html`. It holds the installing reload. Allowed / Not allowed; `#app-{pkg}` kept; no
+     search.
+   - **Rust texts:** `app_downloads` labels (grammar fixed), and the relock blocks' links point here.
+   - **Tests:** `app_display.rs`, `tracked_apps.rs` (device rows), `catalog_pins.rs`, `window_relock.rs`
+     (`#app-…`).
+7. **Device › Music**, built on main **after `design-30-s1` is merged** (M7).
+   - **Routes:** GET `/devices/{id}/music`, chained with its POST.
+   - **Forms:** the 5-field form with `v=2` as one group, the ticks, Sonos, and `apps/toggle` with `back=music`.
+   - **Redirects:** `music.rs` device redirects (`#music-entry-…`, `?music_notice=…`); the `music_entry.html` link and
+     its hint "(the phone's Music page)".
+   - **Templates:** `device_music.html`.
+   - **Rust texts:** moved and restyled, **not reworded**, until design 30 step 3a is in main.
+   - **Tests:** `music.rs` (including QA-30's additions), `music_storytel.rs` (device parts).
+8. **Calls & Contacts.**
+   - **Routes:** unchanged.
+   - **Forms:**
+     - `calls/settings` and each contact row stay one form each (H1);
+     - Remove Contact… gets a confirm (M6);
+     - the country code moves to Phone Setup as a second form, with `/settings/calls` taking `back=provisioning` (L6).
+   - **Templates:** `device_calls.html` in the new components; `provisioning_settings.html` gains the country code.
+   - **Rust texts:** `calls::call_report` typed, with no package names (§2.2b).
+   - **Tests:** `calls.rs`.
+9. **Settings › Time Rules + Device › Time.**
+   - **Routes:**
+     - GET `/schedules/screen-time`;
+     - GET `/schedules/rules/{id}` and `/schedules/rules/new`;
+     - GET `/devices/{id}/time`;
+     - `/schedules?device=` redirects (L5).
+   - **Forms:**
+     - `schedules/device` gets `section` (H1);
+     - the rule editor is one form (kind as an inline select, exempt apps in a `<details>`, Delete Rule… confirm);
+     - `lifts` with `back`.
+   - **Templates:** `schedules.html` (the Everyone page), `schedule_budget.html`, `schedule_rule.html`,
+     `device_time.html`.
+   - **Rust texts:** `time_state_lines` → typed state; the badge rules of §3.10; lift statuses in local time (M4).
+   - **Tests:**
+     - `time_rules.rs`;
+     - a section test (a switch-only post keeps the limits);
+     - redirect tests.
+10. **The summary.**
+    - **Routes:** `/devices/{id}`.
+    - **Templates:** `device_detail.html` becomes the summary:
+      - header;
+      - Attention from `attention::collect`;
+      - Quick actions ("Unlock for 2 h…" and "Allow these apps…" behind confirms, "Pause a rule…" as a sheet, the
+        Locate link);
+      - Today (with `relock.notice`);
+      - Sections;
+      - the not-enrolled variant.
+    - **Rust:**
+      - the card builders nothing uses are deleted;
+      - the foreign-app and blocks texts shortened and typed;
+      - the old sentence functions and their unit tests deleted (M5).
+    - **Tests:** `window_relock.rs`, `device_api.rs`, `command_receipts.rs` (restart once), `step9.rs`, and the
+      attention count.
+11. **Apps tab.**
+    - **Templates:** `apps_list.html` (On phones, catalog rows, badges, footer, Add App), `tracked_app_detail.html`
+      (top, Show as, On phones, Source & signing, the Forget… confirm, Remove), `tracked_app_add.html` (More
+      options).
+    - **Rust texts:** sync failures as a short title, with the raw error behind ⓘ.
+    - **Tests:** `tracked_apps.rs`, `catalog_pins.rs`.
+12. **Music tab.** May be split into 12a (the tab) and 12b (the entry page and the shelf).
+    - **Routes:** GET `/music/settings`, `/music/categories` and `/music/import`, each chained with its POST.
+      `POST /music/import` renders the import page. The `/music#…` redirects move (L5).
+    - **Templates:** `music.html` (library rows with Check now and Offline, Edit mode, Add, On phones, links),
+      `music_settings.html`, `music_categories.html`, `music_import.html`, `music_entry.html`, `music_storytel.html`.
+      `music-cards.js` selectors are kept, or updated together.
+    - **Confirms:** every `confirm()` delete becomes a `<details>` confirm.
+    - **Tests:** `music.rs`, `music_storytel.rs`, `music_sweep.rs`, `music_art.rs`.
+13. **Locate tab.**
+    - **Routes:** `/devices/locate` (unchanged).
+    - **Templates:** `device_locate.html`:
+      - phone links with `aria-label`s;
+      - the map, the last fix as age and accuracy, the phone's answer, the waiting line, Update Location;
+      - warnings as orange rows;
+      - Ring, Stop Ringing, Lock, Erase Phone…;
+      - Location settings (mode + interval as one form, history);
+      - Recent with Cancel.
+    - **Rust texts:** `DeviceCommand::status_line` and the command names → labels in local time; `describe_fix`.
+    - **Tests:** `locations.rs`, `command_receipts.rs`, `command_expiry.rs`.
+14. **The rest of Settings.**
+    - **Templates:** `dns_filter.html` (global; the DNS server at the bottom), `dns_log.html` (a list of phones),
+      `wallpapers.html` (`<details>` delete; per-photo switch kept), `provisioning_settings.html` (Phone Setup),
+      `account.html` (the Sign Out Everywhere… confirm), `security.html` (event labels), `backups.html`,
+      `updates.html`.
+    - **Rust texts:** security event labels; the update and backup messages.
+    - **Tests:** `admin_auth.rs`, `intake_limits.rs`, `backup_secrets.rs`, `docker.rs`, `provisioning.rs`.
+15. **Add phone, sign-in, clean-up.**
+    - **Templates:** the 3-step add flow (`device_add.html`, `provision_qr.html`, `enroll_code.html`, with "Server
+      setup needed" + ⓘ), and the sign-in pages.
+    - **Static files:** the old CSS classes nothing uses are deleted.
+    - **Docs:** the remaining cross-references (L8).
+    - **Tests:** `provisioning.rs`, `enrollment.rs`, `edge.rs`.
+
+---
+
+## 9. Design QA
+
+The design QA (`docs/design/qa-31-design.md`, 2026-10-13) found 3 High, 9 Medium and 8 Low issues. All were accepted.
+This revision makes the following changes:
+
+| # | Finding | Change |
+|---|---|---|
+| H1 | Forms whose handler reads a missing field as "off" can't be split into self-saving rows | §5.6: the rule "a form is split only if its handler writes only the sections it was sent", the full table of such forms (17 rows, 19 forms: QA's 10 + `location-policy`, `wallpapers`, `provisioning`, `schedules/global`, `music/entries`, `apps/tracked`, and the three schedule forms), and a section marker for the two splits (`policy`: quick/filter; `schedules/device`: switch/budget). Every other form moves as one block. §3.0 switch row, §3.2 sub-page forms, §3.5 rule editor (exempt apps in a `<details>`), §3.6 Locate (mode + interval one form). |
+| H2 | The 45-minute Online window flags healthy phones as Offline | §3.10: Online = an open stream and last contact ≤ 60 min. Away = no stream and ≤ 45 min, with no number in the text ("changes may be delayed"). Anything older is Offline. Checked against the code: `SyncSchedule.kt` (30/15/9 min) and `BackstopAlarm.kt:56` (`setAndAllowWhileIdle`, inexact, up to 0.75 × the delay late; targetSdk 36). Two constants with their derivation, the new table tests, and an emulator check. |
+| H3 | Picker pages, a top-of-page flash and shared handlers break "never jump" | §3.0: picker = an inline native select; navigation rows never save; the flash sits inside the saved group. §5.1 rewritten: redirect to the form's own page; a `back` table for the six shared routes; anchors only where they help; a redirect-table test. LockScreen, RuleEditor, Locate pickers → inline selects. |
+| M1 | Build step 2 is too large | §8: 15 steps, one sub-page per step, with the old page shrinking. §3.8: card builders and a shared `attention::collect`, with a count test. `device_page(id, Section)` helper (§5.5). |
+| M2 | The mockups drop controls and invent others | §6.0: "the mockups decide the look, §3 decides the content", plus the artboard-by-artboard table. Restored: Erase, Stop Ringing, location settings, Cancel, warnings, Import from Vibb, the per-entry Check now and Offline. Dropped: "Show what's playing", the Search field, "Show all", "Unlock Now", "Vibb lost device owner", reverse geocoding ("Rosenhoff skole" → "10 min ago · within 40 m"). Renamed to what exists: "Show setup code" → New setup code (a POST), "2 new apps wait for your OK" → "2 blocked apps wait". Wrong facts fixed: the PIN back-off, the Parent PIN footer, "4 to 8 digits". Label drift settled in §4.3. |
+| M3 | A Settings value calls GitHub | §3.6: every hub value comes from the database or memory. Software Updates shows no value: there is no cached check result today (`app_update_last_check` holds only a date). About shows `APP_VERSION` and links to `/updates`. A test checks that the hub makes no network call. |
+| M4 | Local time needs a tz database; the badge's end needs the phone's day | §3.10: `chrono-tz` and `display_time`. An empty or invalid zone falls back to UTC, labelled "UTC". The badge's end shows only when it is unambiguous, and says "until 07:00 tomorrow" across midnight. A stale report says "at last report (yesterday 21:40)" and shows no bar. Tests listed. |
+| M5 | Rust builds sentences where rows need values; unit tests too | §3.8: typed siblings for each builder, the old one deleted with its unit tests when its last caller moves. Attention titles come from typed values. §5.5 counts the unit tests. §8 assigns each builder to a step. |
+| M6 | Risky actions in one tap | §3.0 confirm pattern, §5.6 list: Unlock for 2 h…, Remove Child PIN…, Remove Contact…, Allow these apps…, Forget Package and Key…, Sign Out Everywhere…, and the seven `confirm()` deletes. The protective actions stay one tap. |
+| M7 | Design 30 changes the Music card | §5.6 and §8 step 7: `design-30-s1` merges into main before the device Music step. The 5-field `v=2` form is one group. Music wording waits for design 30 step 3a. QA-30's tests are repointed. |
+| M8 | The test plan needs helpers | §5.5: `input_checked`, `autosaves`, `form_action_of`, `nav_current`, `device_page`, `assert_redirect`, all in step 1. The head check walks subfolders. |
+| M9 | The CSS must work on old phones | §5.7, the browser floor: Chrome/WebView 80+ and iOS Safari 14+. Not used: `:has()` and the rest. The switch's knob is a sibling span, not the mockups' `::before`. Forced colours, the focus fallback, hairlines, `color-scheme`, reduced motion, ES5 `register-sw.js`. |
+| L1 | The tab can be set per template | §3.1: `{% let tab = … %}` per template; the path matcher and the active-tab script go. |
+| L2 | Attention and the header miss some states | §3.2 Attention: incoming calls not blocked, the lock off with a PIN set, the unreadable ledger, a launcher without rules. §3.10: Disconnected and Not seen yet; when "at last report" shows. |
+| L3 | Contrast and target sizes in the mockups | §5.4: the dark strong button `#0B66D6`, switch on `#248A3D` with a bordered off track, lock-pill tokens, a 44 px ⓘ hit area, `aria-label`s on Locate's switcher. |
+| L4 | The rename and installed PWAs | §5.3: "Vibb Phone" for `name` and `short_name`, `"id": "/"`, the same manifest URL, the 2FA issuer unchanged (the user's decision), theme-colour metas, and the iOS release note. |
+| L5 | Old bookmarks and in-page links | §3.1 (redirects of `?device=` URLs, chained GET+POST routes), §3.4 (the music anchors and the import preview), §5.1 item 5 (every link that moves). |
+| L6 | Gaps in §3.9's map | §3.9 adds `offline_override_used`, `relock.notice`, `lock_screen.unreadable`/`empty_text`, `corrupt_rules`/`budget_corrupt` and `access.typed_paused`. The country code becomes a second form on Phone Setup. The per-photo wallpaper switch is kept (Q1). |
+| L7 | Move the inline `onchange` to one script | §5.2: `autosave.js` with `data-autosave`, in step 1. It also settles the keyboard behaviour of selects. |
+| L8 | Docs and cross-references | §8: each step updates the docs its pages rename (the six files listed). §5.1 now cites `devices.rs:1797` for `anchor=music`, not `music.rs:1798`. |
