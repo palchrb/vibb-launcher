@@ -139,6 +139,43 @@ class MusicWindowTest {
     }
 
     @Test
+    fun `the lock's tile - a paused session outside the window is no tile, never a fallback to the live session`() {
+        // step 3 code QA L1: the lock's half of the rule, as Home's is the pure musicCard
+        val paused = session(SessionPlay.PAUSED)
+        val end = start + MUSIC_LINGER_MS
+        assertEquals(WindowedSession(paused, end), lockTileSession(true, true, paused, played(start), at(end - 1)))
+        assertEquals("exactly 10 min", WindowedSession(null, null), lockTileSession(true, true, paused, played(start), at(end)))
+        assertEquals("no stamp", WindowedSession(null, null), lockTileSession(true, true, paused, none, at(start)))
+        assertEquals("another boot's stamp", WindowedSession(null, null), lockTileSession(true, true, paused, played(start, boot - 1), at(start + 1)))
+        val headset = Listening(at(start), at(start + 60_000))
+        assertEquals("the later window's end", WindowedSession(paused, end + 60_000), lockTileSession(true, true, paused, headset, at(end)))
+    }
+
+    @Test
+    fun `the lock's tile - hideAt is the end while paused, null while playing or hidden`() {
+        val playing = session(SessionPlay.PLAYING)
+        assertEquals(WindowedSession(playing, null), lockTileSession(true, true, playing, none, at(start)))
+        assertEquals("playing inside a window: still no end", WindowedSession(playing, null), lockTileSession(true, true, playing, played(start), at(start + 1)))
+        val paused = lockTileSession(true, true, session(SessionPlay.PAUSED), played(start), at(start + 60_000))
+        assertEquals(start + MUSIC_LINGER_MS, paused.hideAtElapsedMs)
+        assertEquals("the recheck is the time left", MUSIC_LINGER_MS - 60_000, musicRecheckInMs(paused.hideAtElapsedMs, start + 60_000))
+        assertNull(lockTileSession(true, true, session(SessionPlay.PAUSED), none, at(start)).hideAtElapsedMs)
+    }
+
+    @Test
+    fun `the lock's tile - no access, not usable, STOPPED or no session is no tile inside the window too`() {
+        val inside = played(start)
+        val now = at(start + 1)
+        val paused = session(SessionPlay.PAUSED)
+        val noTile = WindowedSession(null, null)
+        assertEquals("no listener access", noTile, lockTileSession(false, true, paused, inside, now))
+        assertEquals("suspended or gone", noTile, lockTileSession(true, false, paused, inside, now))
+        assertEquals("not live: never the snapshot on the lock", noTile, lockTileSession(true, true, session(SessionPlay.STOPPED), inside, now))
+        assertEquals(noTile, lockTileSession(true, true, null, inside, now))
+        assertEquals("playing, but no access", noTile, lockTileSession(false, true, session(SessionPlay.PLAYING), inside, now))
+    }
+
+    @Test
     fun `headset types - wired, USB headset, A2DP, LE headset and speaker, not SCO, ASHA hearing aid, broadcast, USB device, HDMI, built-ins or sources`() {
         for (type in listOf(
             AudioDeviceInfo.TYPE_WIRED_HEADSET,

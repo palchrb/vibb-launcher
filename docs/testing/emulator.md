@@ -776,8 +776,12 @@ The broadcast's `headsetAt=null` (or an older stamp) means it wasn't fresh: in a
 - [ ] **Playing**: play an episode - the Home card ticks; screen off and on - the glance tile shows, playing.
 - [ ] **Paused, then 10 minutes**: pause in the player and go Home; note the time. The card shows paused. Don't touch
   the phone: at +10 min it goes by itself. Lock the screen and wake it: no tile.
-- [ ] **A launcher restart inside the window**: play, pause, and at about +5 min `adb shell am crash $P`. Home comes
-  back with the card, and it goes at the original +10 min.
+  Then on the lock: play again, pause, and at about +8 min lock and wake the screen (power key twice): the tile shows
+  paused. Leave the lock on screen (stay-on is set): at +10 min the tile goes by itself and the page refits (the rows
+  or the big clock move into its place, nothing scrolls, no gap).
+- [ ] **A launcher restart inside the window**: play, pause, and at about +5 min `adb shell am crash $P`. The PIN lock
+  comes up (a new process locks). With the music app's session still live, its tile shows paused. Unlock: Home has
+  the card. Both go at the original +10 min.
 - [ ] **Reboots**: reboot after a pause, then again with `adb reboot` **while it plays**. No card and no tile after
   either boot, and none after opening and closing the player (a dead battery mid-play opens no window).
 - [ ] **A fresh headset**: with uptime > 2 min and the launcher's process older than 2 min, send the broadcast on a
@@ -788,7 +792,9 @@ The broadcast's `headsetAt=null` (or an older stamp) means it wasn't fresh: in a
   Force-stop the music app (`adb shell am force-stop me.vibb.music.debug`) and send it again: the lock shows no tile
   (never the snapshot - nothing on the lock opens the player), and Home shows the snapshot.
 - [ ] **The graces**: reboot and send the broadcast while uptime < 2 min: no card. Then `adb shell am crash $P` and
-  send it within 2 min of Home coming back: no card either.
+  send the broadcast within 2 min **of the crash** (the grace counts from the new process's start, not from Home -
+  don't unlock first and run past it), before or after unlocking: the result's `headsetAt` stays as it was, and there
+  is no card and no tile.
 - [ ] **Sonos** (§6h, the fake speaker): play on the fake room, so the card is playing. Pause from the player: the card
   stays paused and goes about 10 min after the player shows paused.
 - Real phone only (Jelly Star; not on the emulator): BT buds connected with nothing played for an hour show the card

@@ -188,3 +188,16 @@ lifecycle edge. The boundary can't loop. The lows:
   from the snapshot" would read cleaner. Its lock bullet has two parentheticals in a row. Both are style only, so
   change them only if the file is touched for L2 anyway.
 - §6j sits between §6i and §6b, like every section since §6c. That is the file's existing order, not this step's.
+
+## Fixes (implementer, 2026-10-13, on `design-28-s3`)
+
+| # | Fix | Test |
+|---|---|---|
+| L1 | Pure `WindowedSession(session, hideAtElapsedMs)` and `lockTileSession(access, usable, session, listening, now)` in `MusicWindow.kt` (`shownSession`, then `windowedSession`, then the end; null end while playing or hidden). `MusicLockPanel.shown(nowElapsedMs)` returns it; the `hideAt` field is gone. `lookUp` posts `musicRecheckInMs(tileNow.hideAtElapsedMs, now)` with the same `now`, behind `if (started)` (commented). The panel names no `windowedSession(`, `shownSession(` or `musicShownUntil(` itself. | `MusicWindowTest`: `the lock's tile - a paused session outside the window is no tile, never a fallback to the live session`, `... hideAt is the end while paused, null while playing or hidden`, `... no access, not usable, STOPPED or no session is no tile inside the window too`. `MusicSuspensionGuardTest`'s `Home's card and the lock tile read the same window`: `lockTileSession(` exactly once (in `shown()`), none of the three direct reads, `shown(now)`/`shown().session` in `lookUp`/`render`, one expiry post, behind `if (started)`. `LockMediaGuardTest` pins the `lockTileSession(...)` call. Mutations, each reverted: `?: shownSession(access, usable, session)` in `lockTileSession` - red (`... never a fallback to the live session`); `WindowedSession(shown, null)` - red (that test and `... hideAt is the end ...`); the post without `if (started)` - red (`Home's card and the lock tile read the same window`). |
+| L2 | `emulator.md` §6j "A launcher restart inside the window" and "The graces", spec §8 checks 3 and 7: the PIN lock comes up first (a new process locks), the paused tile shows on it with the session live, then Home's card, both going at the original +10 min; the broadcast within 2 min **of the crash**, before or after unlocking, `headsetAt` unchanged, no card and no tile. | - |
+| L3 | §6j "Paused, then 10 minutes" and spec §8 check 2: play, pause, at about +8 min lock and wake - the tile shows paused; with the lock left on screen it goes by itself at +10 min and the page refits. | - |
+
+Also the two style notes on the launcher `CLAUDE.md` (Home's "else, inside the window, from the snapshot"; the lock
+bullet without the stacked parentheticals), since L1 touched the lock bullet anyway. Full build after the fixes:
+`assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` green with the stub `tsnet.aar` (removed
+afterwards), 1066 tests in 118 classes, 0 failures; "hook present" / "no debug hook"; no new compiler warning.

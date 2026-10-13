@@ -32,8 +32,6 @@ class MusicLockPanel(
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
     private var session: MusicSession? = null
-    /** The listening window's end at the last [shown] (null: hidden or playing). */
-    private var hideAt: Long? = null
     private var usable = false
     private var tile = GlanceTileSize.NONE
     private var pageShown = false
@@ -78,24 +76,24 @@ class MusicLockPanel(
         handler.removeCallbacks(expiry)
         val reading = MusicSessions.reading
         usable = MusicSessions.usable(activity, reading.session?.packageName)
-        session = shown()
-        if (started) musicRecheckInMs(hideAt, SystemClock.elapsedRealtime())?.let { handler.postDelayed(expiry, it) }
+        val now = SystemClock.elapsedRealtime()
+        val tileNow = shown(now)
+        session = tileNow.session
+        // Only while started: stop() removes the expiry, and a post after it would outlive the lock.
+        if (started) musicRecheckInMs(tileNow.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }
         return session
     }
 
     /**
-     * The one read of what the lock shows, for [lookUp] and [render] alike: `shownSession` (none
-     * without listener access, with the music app suspended or gone), kept only while it plays or
-     * inside the listening window (design 28, QA L7) - a live session only, never the snapshot.
-     * Keeps the window's end for [lookUp]'s recheck ([hideAt], null while playing).
+     * The one read of what the lock shows, for [lookUp] and [render] alike: the pure
+     * [lockTileSession] (none without listener access, with the music app suspended or gone; kept only
+     * while it plays or inside the listening window - design 28, QA L7 - a live session only, never
+     * the snapshot), with the window's end for [lookUp]'s recheck (null while playing).
      */
-    private fun shown(): MusicSession? {
+    private fun shown(nowElapsedMs: Long = SystemClock.elapsedRealtime()): WindowedSession {
         val reading = MusicSessions.reading
-        val listening = MusicListening.listening()
-        val now = BootStamp(SystemClock.elapsedRealtime(), MusicListening.bootCount())
-        val s = windowedSession(shownSession(reading.access, usable, reading.session), listening, now)
-        hideAt = s?.let { musicShownUntil(it.playing, listening, now) }?.takeIf { it != Long.MAX_VALUE }
-        return s
+        val now = BootStamp(nowElapsedMs, MusicListening.bootCount())
+        return lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)
     }
 
     /** The glance panel's choice: the full tile, the compact one or none; [page]: the glance page
@@ -110,7 +108,7 @@ class MusicLockPanel(
 
     private fun render() {
         handler.removeCallbacks(ticker)
-        session = shown()
+        session = shown().session
         val s = session
         val size = if (s == null) GlanceTileSize.NONE else tile
         glance.lockMediaTile.visibility = if (size == GlanceTileSize.FULL) View.VISIBLE else View.GONE

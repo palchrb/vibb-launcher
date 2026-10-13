@@ -55,6 +55,19 @@ fun musicShownUntil(playing: Boolean, listening: Listening, now: BootStamp): Lon
 fun windowedSession(session: MusicSession?, listening: Listening, now: BootStamp): MusicSession? =
     session?.takeIf { musicShownUntil(it.playing, listening, now) != null }
 
+/** What the lock's tile shows ([lockTileSession]): the session, and its window's end (null while playing or hidden). */
+data class WindowedSession(val session: MusicSession?, val hideAtElapsedMs: Long?)
+
+/**
+ * The lock's tile (design 28 §1, step 3 code QA L1): `shownSession` (listener [access], the music
+ * app [usable], a live [session]), kept only while it plays or inside the window - never the
+ * unwindowed session, never the snapshot - with the end the lock rechecks at.
+ */
+fun lockTileSession(access: Boolean, usable: Boolean, session: MusicSession?, listening: Listening, now: BootStamp): WindowedSession {
+    val shown = windowedSession(shownSession(access, usable, session), listening, now) ?: return WindowedSession(null, null)
+    return WindowedSession(shown, musicShownUntil(shown.playing, listening, now)?.takeIf { it != Long.MAX_VALUE })
+}
+
 /**
  * The stamp after a bridge observation (§2.1): playing moves it to [now]; the end of play (playing
  * before, not now) too, but only after a stamp valid in [now]'s boot (QA L1: a battery that died

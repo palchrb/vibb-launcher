@@ -443,9 +443,12 @@ broadcast".
 **Part A**
 1. Play an episode. The Home card ticks. Screen off and on: the glance tile shows, playing.
 2. Pause in the player and go Home. Note the time. The card shows paused. Don't touch the phone: at +10 min it goes
-   by itself. Lock the screen and wake it: no tile.
-3. Play, pause, and at about +5 min crash the launcher (`adb shell am crash me.vibb.launcher.debug`). Home comes back
-   with the card, and it goes at the original +10 min.
+   by itself. Lock the screen and wake it: no tile. Then on the lock (step 3 code QA L3): play again, pause, and at
+   about +8 min lock and wake the screen: the tile shows paused. Leave the lock on screen (stay-on is set): at +10 min
+   the tile goes by itself and the page refits (the rows or the big clock move into its place, nothing scrolls).
+3. Play, pause, and at about +5 min crash the launcher (`adb shell am crash me.vibb.launcher.debug`). The PIN lock
+   comes up (a new process locks; step 3 code QA L2). With the music app's session still live, its tile shows
+   paused. Unlock: Home has the card. Both go at the original +10 min.
 4. Reboot after a pause, then again with `adb reboot` **while it plays**. No card and no tile after either boot, and
    none after opening and closing the player (QA L1).
 5. With uptime > 2 min and the launcher's process older than 2 min (§2.3, the registration's grace), send the broadcast on a visible Home. The snapshot card appears at once. Its play button opens
@@ -454,7 +457,8 @@ broadcast".
    still live and paused, the broadcast brings the glance tile back on the lock (play works from it). Force-stop the
    music app and send it again: the lock shows no tile, and Home shows the snapshot.
 7. Reboot and send the broadcast while uptime < 2 min: no card. Then crash the launcher (as in check 3) and send it
-   within 2 min of Home coming back: no card either.
+   within 2 min of the crash (the grace counts from the new process's start, not from Home - don't unlock first and
+   run past it), before or after unlocking: the result's `headsetAt` stays as it was, and there is no card and no tile.
 8. Sonos (§6h, fake speaker): play on the fake room, so the card is playing. Pause from the player: the card stays
    paused and goes about 10 min after the player shows paused.
 9. The real phone (Jelly Star; not on the emulator):
@@ -590,12 +594,15 @@ while playing or inside the listening window, and nothing outside it.
   now)` - only while the card shows. Both runnables are removed at every render and on `setActive(false)`;
   `setActive` adds and removes the `MusicListening` listener (the same `changed` as the sessions' and the bridge's).
 - **`ui/HomeActivity.kt`**: `resumeContent` calls `renderMusicCard()` after `render()` (QA L5).
-- **`music/MusicLockPanel.kt`**: one private `shown()` = `windowedSession(shownSession(...), listening, now)`, used by
-  `lookUp()` and `render()`. Reading: `shown()` also keeps the window's end (`hideAt`, from the same `listening` and
-  `now`) so that every window read is in that one function; `lookUp()` posts the `expiry` (-> `changed`: `lookUp` +
-  `onChange`, the panel refits without the tile) at `musicRecheckInMs(hideAt, now)`, only while started. `start`/`stop`
-  add and remove the `MusicListening` listener; `stop` also removes the expiry. `render`'s local `shown` became `size`
-  (it shadowed the function). It still calls nothing new on `MusicSessions`.
+- **`music/MusicLockPanel.kt`**: one private `shown()`, used by `lookUp()` and `render()`. Since the code QA (L1) it
+  returns the pure `lockTileSession(access, usable, session, listening, now)` (`MusicWindow.kt`: `shownSession`, then
+  `windowedSession`, with the window's end - `WindowedSession(session, hideAtElapsedMs)`, the end null while playing
+  or hidden), so the lock's half of the rule is tested like Home's `musicCard`; the panel names no `windowedSession(`,
+  `shownSession(` or `musicShownUntil(` itself (§6's "`windowedSession(` exactly once" became "`lockTileSession(`
+  exactly once, in `shown()`"). `lookUp()` posts the `expiry` (-> `changed`: `lookUp` + `onChange`, the panel refits
+  without the tile) at `musicRecheckInMs(hideAtElapsedMs, now)` with the same `now`, only while started.
+  `start`/`stop` add and remove the `MusicListening` listener; `stop` also removes the expiry. `render`'s local
+  `shown` became `size` (it shadowed the function). It still calls nothing new on `MusicSessions`.
 - **`lock/LockGlance.kt`**: `glanceTile` unchanged; its comment says the session is the windowed one.
 - **Tests**:
   - `MusicCardTest` (the helper gets an open window by default, the music stopped at elapsed 0 in boot 7): `the card
@@ -604,16 +611,22 @@ while playing or inside the listening window, and nothing outside it.
     snapshot instead`, `hideAt is the window's end while paused and null while playing` (with the recheck's delay).
   - `MusicSuspensionGuardTest` (`MusicMediaPlanTest.kt`): `Home's card and the lock tile read the same window` (the
     card's `musicCard(` with the window, its expiry beside the ticker and in `setActive`; in `MusicLockPanel.kt`
-    `windowedSession(` exactly once, in `shown()`, `session = shown()` in both `lookUp` and `render`, no other
-    `session = shownSession(`, the expiry and the listener in `start`/`stop`) and `Home renders the card at every
-    resume`.
+    `lockTileSession(` exactly once, in `shown()`, no `windowedSession(`/`shownSession(`/`musicShownUntil(` of its
+    own, `shown()` in both `lookUp` and `render`, the one expiry post behind `if (started)`, the expiry and the
+    listener in `start`/`stop`) and `Home renders the card at every resume`.
+  - `MusicWindowTest` (code QA L1): `the lock's tile - a paused session outside the window is no tile, never a fallback
+    to the live session`, `... hideAt is the end while paused, null while playing or hidden`, `... no access, not
+    usable, STOPPED or no session is no tile inside the window too`.
   - `LockMediaGuardTest` (extended): the panel's `MusicListening` calls are exactly `addListener`, `removeListener`,
     `listening`, `bootCount` (the stamps are read, never written), and a new `the lock's tile is a live session only -
     never the snapshot` (no `MusicNowPlaying`, snapshot, `openPlayer`, `EXTRA_RESUME` or `musicCard` in its code). The
     `MusicSessions` call set is unchanged.
   - Full build: `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` green (stub `tsnet.aar`):
-    1063 tests in 118 classes, 0 failures; `checkDebugHasDebugHook` "hook present", `checkReleaseHasNoDebugHook` "no
-    debug hook". No new compiler warning.
+    1063 tests in 118 classes, 0 failures (1066 after the code QA fix round); `checkDebugHasDebugHook` "hook present",
+    `checkReleaseHasNoDebugHook` "no debug hook". No new compiler warning.
+- **Code QA fix round** (`qa-28-s3-code.md`, 0 High, 0 Medium, 3 Low, all fixed; its "Fixes" table): L1 the pure
+  `lockTileSession` above; L2 and L3 §8 checks 2, 3 and 7 (and §6j): the PIN lock first after a crash, the grace from
+  the crash, the lock tile after a restart, and the tile going by itself on a lock left on screen.
 - **Docs**: launcher `CLAUDE.md` (the listening window, Home's card and the lock's tile in "media surfaces and time",
   the glance section's tile rule, the debug headset next to the 16d hook's bullet); pointers in design 21's step 4
   status and design 25 §1.1; `docs/testing/emulator.md` §6j (§8's checks with the debug broadcast; its Play checks

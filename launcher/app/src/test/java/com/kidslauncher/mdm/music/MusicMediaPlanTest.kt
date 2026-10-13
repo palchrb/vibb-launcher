@@ -280,12 +280,17 @@ class MusicSuspensionGuardTest {
         for (call in listOf("MusicListening.addListener(changed)", "MusicListening.removeListener(changed)", "handler.removeCallbacks(expiry)")) {
             assertTrue(call, setActive.contains(call))
         }
+        // the lock: the pure lockTileSession (MusicWindowTest holds its rule), read once in shown() (step 3 code QA L1)
         val lock = file("music/MusicLockPanel.kt")
-        assertEquals(1, Regex("windowedSession\\(").findAll(lock).count())
-        assertTrue(body(lock, "private fun shown(").contains("windowedSession("))
-        for (reader in listOf("fun lookUp(", "private fun render(")) assertTrue(reader, body(lock, reader).contains("session = shown()"))
-        assertFalse("nothing else reads the session for the tile", lock.contains("session = shownSession("))
-        assertTrue(body(lock, "fun lookUp(").contains("musicRecheckInMs(hideAt, SystemClock.elapsedRealtime())?.let { handler.postDelayed(expiry, it) }"))
+        assertEquals(1, Regex("lockTileSession\\(").findAll(lock).count())
+        assertTrue(body(lock, "private fun shown(").contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
+        for (direct in listOf("windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
+        val lookUp = body(lock, "fun lookUp(")
+        assertTrue(lookUp.contains("val tileNow = shown(now)\n        session = tileNow.session"))
+        assertTrue(body(lock, "private fun render(").contains("session = shown().session"))
+        // the post only while started: stop() removes it, a post after stop would outlive the lock
+        assertTrue(lookUp.contains("if (started) musicRecheckInMs(tileNow.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }"))
+        assertEquals(1, Regex("handler\\.postDelayed\\(expiry").findAll(lock).count())
         assertTrue(lock.contains("private val expiry = Runnable { changed() }"))
         assertTrue(body(lock, "fun start(").contains("MusicListening.addListener(changed)"))
         val stop = body(lock, "fun stop(")

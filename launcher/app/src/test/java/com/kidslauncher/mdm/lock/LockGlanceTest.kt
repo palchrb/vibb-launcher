@@ -282,7 +282,7 @@ class LockMediaGuardTest {
         for (forbidden in listOf("MusicNowPlaying", "snapshot", "Snapshot", "openPlayer", "EXTRA_RESUME", "musicCard")) {
             assertFalse("MusicLockPanel must not use $forbidden", code.contains(forbidden))
         }
-        assertTrue(code.contains("windowedSession(shownSession(reading.access, usable, reading.session), listening, now)"))
+        assertTrue(code.contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
     }
 
     @Test
