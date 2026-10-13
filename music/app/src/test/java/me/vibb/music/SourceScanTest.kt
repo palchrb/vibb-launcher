@@ -245,7 +245,7 @@ class SourceScanTest {
         assertEquals("Spotify - trenger internett", nb["renderer_spotify_needs_internet"])
         assertEquals("Spotify er ikke tilgjengelig nå", nb["renderer_spotify_unavailable"])
         assertEquals("Spotify - spør en voksen", nb["renderer_spotify_ask_adult"])
-        assertEquals("Spotify virker ikke på denne telefonen", nb["renderer_spotify_not_on_phone"])
+        assertEquals("Spotify virker ikke på telefonen", nb["renderer_spotify_not_on_phone"])
         assertEquals("Spotify spiller et annet sted", nb["renderer_spotify_elsewhere"])
         assertEquals("Spotify stoppet - trykk spill", nb["renderer_spotify_stopped"])
         val screen = code(moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt"))
@@ -454,6 +454,23 @@ class SourceScanTest {
         for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
             assertEquals(path, "Spotify", strings(path)["kind_spotify"])
         }
+    }
+
+    /** qa-26c-step5b-code M2: the WebView's console never reaches logcat; L2: the debug switch never meets a real token. */
+    @Test
+    fun `5b fix round - the page's console is handled and never logged, and the debug switch sends fake tokens only`() {
+        val host = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyWebHost.kt"))
+        val console = host.substringAfter("override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {").substringBefore("\n        }\n")
+        assertTrue("handled, always", console.trimEnd().endsWith("return true"))
+        assertEquals("one return, true", 1, Regex("""\breturn\b""").findAll(console).count())
+        assertFalse("never the message", console.contains(".message()"))
+        assertTrue("a debug build only", console.contains("if (BuildConfig.DEBUG) log(\"spotify: console "))
+        assertTrue("the level and the source's host only", console.contains("consoleMessage.messageLevel()") && console.contains("consoleMessage.sourceId()?.toHttpUrlOrNull()?.host"))
+        assertEquals("the one console override", 1, Regex("""onConsoleMessage\(""").findAll(host).count())
+        val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))
+        val create = renderer.substringAfter("fun create(").substringBefore("\n        }\n")
+        assertTrue(create.contains("debugSwitchToken(t).also { if (it !== t) log(\"spotify: a real token with the debug switch - not sent\") }"))
+        assertTrue("the bridge's token as it is only without the switch", create.contains("if (fakeTokens == null) {\n                        t\n"))
     }
 
     @Test

@@ -129,7 +129,7 @@ class FitTest {
         val longest = mapOf(
             "Får ikke kontakt med høyttaleren" to 184.8f, "Noen andre bruker høyttaleren" to 172.2f,
             "Someone else is using the speaker" to 191.8f, "Can't reach the speaker" to 131.4f, "Spilles i en annen gruppe" to 141.4f,
-        )
+        ) + spotifyLines
         for (screen in widths) {
             val room = available(screen) - 44 - 44
             for ((line, width) in longest) assertTrue("$screen: $line ($width in $room)", width <= room)
@@ -137,6 +137,32 @@ class FitTest {
         val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
         assertTrue(player.contains("Column(Modifier.weight(1f).padding(end = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {"))
         assertTrue(player.contains("rendererState?.let { Line(stringResource(rendererStateText(it)), 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true) }"))
+    }
+
+    /**
+     * Spotify's seven lines in both languages (design 26c §5.8; qa-26c-step5b-code L1), Nunito Bold 12 sp from the font's
+     * advances (as the Sonos lines above): the player's state line, and on the tiles (13 sp in 288 dp) they fit too.
+     */
+    private val spotifyLines = mapOf(
+        "Spotify - trenger Wi-Fi" to 127.7f, "Spotify - trenger internett" to 144.9f, "Spotify er ikke tilgjengelig nå" to 163.5f,
+        "Spotify - spør en voksen" to 135.5f, "Spotify virker ikke på telefonen" to 174.2f, "Spotify spiller et annet sted" to 155.0f,
+        "Spotify stoppet - trykk spill" to 153.4f,
+        "Spotify - needs Wi-Fi" to 119.5f, "Spotify - needs the internet" to 153.5f, "Spotify isn't available right now" to 177.7f,
+        "Spotify - ask a grown-up" to 139.1f, "Spotify doesn't work on this phone" to 194.7f, "Spotify is playing somewhere else" to 190.6f,
+        "Spotify stopped - press play" to 157.8f,
+    )
+
+    @Test
+    fun `every Spotify line is measured - the strings are the map's, and each fits the tile too`() {
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            val text = moduleFile(path).readText()
+            val lines = Regex("""<string name="renderer_spotify_[a-z_]+"[^>]*>([^<]*)</string>""").findAll(text).map { it.groupValues[1].replace("\\'", "'") }.toList()
+            assertEquals(path, 7, lines.size)
+            for (line in lines) assertTrue("$path: $line is measured", line in spotifyLines)
+        }
+        for (screen in widths) {
+            for ((line, width) in spotifyLines) assertTrue("$screen: $line on a tile", width * 13 / 12 <= available(screen))
+        }
     }
 
     // The player's art (design 27 §3.3).

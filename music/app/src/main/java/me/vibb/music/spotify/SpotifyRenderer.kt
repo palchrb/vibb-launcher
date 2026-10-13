@@ -53,6 +53,7 @@ import me.vibb.music.logic.SpotifyProblem
 import me.vibb.music.logic.SpotifyWords
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playWindow
+import me.vibb.music.logic.debugSwitchToken
 import me.vibb.music.logic.sdkErrorProblem
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.spotifyNetworkLine
@@ -215,6 +216,12 @@ internal class SpotifyRenderer(
     private val tracker = SpotifyTracker()
     private var released = false
 
+    /**
+     * Another renderer plays (the service's `attach`, qa-26c-step5b-code M1): the web player owns nothing until its next
+     * [load] - every playing state is paused at once, never focus, locks or a play.
+     */
+    private var detached = false
+
     // --- the queue and what the player shows ---
 
     private var mediaItems: List<MediaItem> = emptyList()
@@ -338,6 +345,7 @@ internal class SpotifyRenderer(
 
     /** List mode's queue (§5.4); no web player and no network before a play. A context entry is step 6's. */
     override fun load(items: List<MediaItem>, startIndex: Int, startMs: Long, playNow: Boolean) {
+        detached = false // attached again: a re-attach always loads
         val a = queue()
         val ref = a?.entry?.target?.let { spotifyTarget(it) }
         mediaItems = items
@@ -561,6 +569,23 @@ internal class SpotifyRenderer(
     // --- for the service (step 5b) ---
 
     /**
+     * Another renderer took over (§5.10's `attach`: the phone's own player, a room; qa-26c-step5b-code M1). The page
+     * lives on up to 5 idle minutes, and the account's other Spotify app can still resume "Vibb" or transfer to it: from
+     * now until the next [load] every playing state is not ours - paused at once (`vibb.pause()`), never the audio focus,
+     * the locks or a play the session can't show or stop.
+     */
+    fun detached() {
+        if (released) return
+        pause(PauseCause.OTHER)
+        supersede()
+        cancelStep()
+        detached = true
+        tracker.lost()
+        ports.log("spotify: detached - a play from outside is paused")
+        changed()
+    }
+
+    /**
      * `MY_PACKAGE_SUSPENDED` with the service up (§5.7, QA L11): the bookmark, a pause, and the page
      * destroyed whatever the state - no Connect device "Vibb" exists while the app is suspended.
      */
@@ -581,11 +606,16 @@ internal class SpotifyRenderer(
         refuse(line)
     }
 
-    /** Spotify off on this phone, or no Spotify entry left (§5.2's clearing): the page and its storage go, and the token. */
+    /**
+     * Spotify off on this phone, or no Spotify entry left (§5.2's clearing): the page and its storage go, and the token;
+     * the stored word is `none` (§4.4: no Spotify to play; qa-26c-step5b-code L4 - a later binding never inherits the
+     * last account's word), as the token's `off` writes it.
+     */
     fun forget() {
         pause(PauseCause.OTHER)
         forgetAccount()
         tokens.clear()
+        ports.outcome(SpotifyWords.NONE)
         changed()
     }
 
@@ -637,7 +667,7 @@ internal class SpotifyRenderer(
 
     /** Our paused track plays again through the SDK (§5.4: no Web API call). */
     private fun resume() {
-        if (!ports.mayPlay()) return
+        if (detached || !ports.mayPlay()) return
         ports.networkLine()?.let { return refuse(it) }
         if (!acquireFocus()) return
         host.call("resume")
@@ -668,6 +698,10 @@ internal class SpotifyRenderer(
     }
 
     private fun begin(r: Request) {
+        if (detached) {
+            ports.log("spotify: a start refused (detached)")
+            return
+        }
         if (!ports.mayPlay()) {
             ports.log("spotify: a start refused (the app is suspended)")
             if (pwr) pause(PauseCause.OTHER)
@@ -1079,7 +1113,8 @@ internal class SpotifyRenderer(
                     pauseCause = if (e.ours) PauseCause.USER else PauseCause.OTHER
                 }
                 Event.Resumed -> if (!pwr) {
-                    if (ports.mayPlay() && acquireFocus()) {
+                    // detached (M1): the session shows another renderer, so nothing of ours may sound
+                    if (!detached && ports.mayPlay() && acquireFocus()) {
                         // our track plays again by the account's other controls: shown as it is
                         pwr = true
                         lastOursAt = ports.now()
@@ -1610,7 +1645,13 @@ internal class SpotifyRenderer(
                 if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {
                     runInterruptible(Dispatchers.IO) { fakeApi.debugToken(fakeTokens) }
                 } else {
-                    withContext(Dispatchers.IO) { SpotifyBridgeToken.get(app) }
+                    val t = withContext(Dispatchers.IO) { SpotifyBridgeToken.get(app) }
+                    // with the switch set only a fake token meets the debug base (§9.3, qa-26c-step5b-code L2)
+                    if (fakeTokens == null) {
+                        t
+                    } else {
+                        debugSwitchToken(t).also { if (it !== t) log("spotify: a real token with the debug switch - not sent") }
+                    }
                 }
             }
             val ports = AndroidSpotifyPorts(app, store, scope, writer, SpotifyLocks(app, log), outcome, log)

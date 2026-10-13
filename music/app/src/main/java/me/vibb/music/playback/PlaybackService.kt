@@ -388,6 +388,9 @@ class PlaybackService : MediaSessionService() {
             selfPausing = false
             old.cancelFade()
             old.onEvent = null
+            // design 26c §5.10, qa-26c-step5b-code M1: a detached web player owns nothing - a play from the account's
+            // other app is paused at once, never focus or locks (the session no longer shows it)
+            if (old === spotify) spotify?.detached()
         }
         next.onEvent = { onRendererEvent(it) }
         renderer = next

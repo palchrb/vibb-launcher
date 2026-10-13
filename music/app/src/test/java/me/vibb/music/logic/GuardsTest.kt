@@ -1,6 +1,7 @@
 package me.vibb.music.logic
 
 import android.content.Intent
+import me.vibb.music.Fixtures
 import me.vibb.music.Fixtures.moduleFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -79,6 +80,8 @@ class GuardsTest {
         assertTrue(attach.indexOf("old.pause()") < attach.indexOf("old.onEvent = null"))
         assertTrue(attach.indexOf("next.onEvent = { onRendererEvent(it) }") < attach.indexOf("renderer = next"))
         assertTrue(attach.contains("session?.setPlayer(KidPlayer(next.player))"))
+        // design 26c §5.10, qa-26c-step5b-code M1: a detached web player is told, after its events are cut
+        assertTrue(attach.indexOf("old.onEvent = null") in 0 until attach.indexOf("if (old === spotify) spotify?.detached()"))
         assertEquals("onEvent is set only in attach (and cleared for the destroy tail, qa-26a-step3b-code L1)", 3, Regex("""\.onEvent = """).findAll(service).count())
         assertTrue(service.substringAfter("override fun onDestroy() {").contains("sonos.onEvent = null\n            sonos.saveNow(force = true)"))
         assertEquals(2, Regex("""\.onEvent = """).findAll(attach).count())
@@ -703,7 +706,10 @@ class GuardsTest {
         assertTrue("only Spotify's own advance is refused; never moved on", changed.contains("if (auto && !playable(a, index)) refuseSpotify()\n        } else if (!playable(a, index)) {"))
         assertTrue("the natural-advance seek stays the Exo's (QA M4)", changed.contains("if (resumesOnAdvance(auto, renderer.kind)) {"))
         // the room's queue drops Spotify items (§4.2): toRoom from a Spotify entry keeps the phone playing (QA L1)
-        assertTrue(code("src/main/java/me/vibb/music/sonos/PlayBody.kt").contains("spotify"))
+        val spotify = Fixtures.entry(6, me.vibb.music.model.Source.SPOTIFY, target = "spotify:playlist:FAKEid6", cache = 0).copy(spotifyMode = "list")
+        val track = me.vibb.music.model.PlayItem(6, "t1", "Song — Artist", null, false, 180_000)
+        assertEquals("spotify", me.vibb.music.sonos.PlayBodies.speakerDropReason(spotify, track))
+        assertFalse(me.vibb.music.sonos.PlayBodies.speakerPlayable(spotify, track))
     }
 
     @Test

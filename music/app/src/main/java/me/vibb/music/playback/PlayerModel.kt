@@ -67,7 +67,7 @@ enum class RendererState(val remote: Boolean) {
     /** "Spotify - spør en voksen": the login ended, the play refused, no Premium. */
     SPOTIFY_ASK_ADULT(false),
 
-    /** "Spotify virker ikke på denne telefonen": no EME/Widevine in the web player. */
+    /** "Spotify virker ikke på telefonen": no EME/Widevine in the web player. */
     SPOTIFY_NOT_ON_PHONE(false),
 
     /** "Spotify spiller et annet sted": a confirmed `null` state - the account plays on another device. */

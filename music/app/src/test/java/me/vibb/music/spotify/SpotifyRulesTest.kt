@@ -61,6 +61,18 @@ class SpotifyRulesTest {
         keys.mapIndexed { i, k -> ItemRow(entryId, k, i, "Song $k — Artist", null, false, 180_000, null) }
 
     @Test
+    fun `with the debug switch only a fake token goes on - a real one is unreachable (qa-26c-step5b-code L2)`() {
+        val fake = me.vibb.music.bridge.TokenResult.Ok("FAKE-ACCESS-3", 1_000, "2:1")
+        assertEquals(fake, me.vibb.music.logic.debugSwitchToken(fake))
+        val real = me.vibb.music.bridge.TokenResult.Ok("BQ" + "x".repeat(40), 1_000, "2:1")
+        assertEquals(me.vibb.music.bridge.TokenResult.Unreachable, me.vibb.music.logic.debugSwitchToken(real))
+        assertEquals("not a prefix elsewhere", me.vibb.music.bridge.TokenResult.Unreachable, me.vibb.music.logic.debugSwitchToken(fake.copy(token = "xFAKE-ACCESS-3")))
+        for (t in listOf(me.vibb.music.bridge.TokenResult.Off, me.vibb.music.bridge.TokenResult.Reauthorize, me.vibb.music.bridge.TokenResult.Unreachable, me.vibb.music.bridge.TokenResult.Busy(5_000))) {
+            assertEquals(t, me.vibb.music.logic.debugSwitchToken(t))
+        }
+    }
+
+    @Test
     fun `the target grammar - canonical targets only`() {
         assertEquals(SpotifyRef(SpotifyKind.PLAYLIST, "FAKEplaylist0000000001"), spotifyTarget("spotify:playlist:FAKEplaylist0000000001"))
         for (kind in SpotifyKind.entries) {

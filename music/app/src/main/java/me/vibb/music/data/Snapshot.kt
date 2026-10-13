@@ -44,7 +44,8 @@ fun buildSnapshot(
             onPhone[e.id] = files.filter { it.id in ownCopies }.map { it.key }.toSet()
         } else {
             listed[e.id] = byEntry[e.id].orEmpty().sortedBy { it.seq }.map { PlayItem(e.id, it.key, it.title, it.url, it.hls, it.durationMs, artHash = it.artHash) }
-            onPhone[e.id] = done[e.id].orEmpty()
+            // a Spotify item is never on the phone (design 26c §4.2): a stray download row (the plan prunes it) marks nothing
+            onPhone[e.id] = if (e.source == Source.SPOTIFY) emptySet() else done[e.id].orEmpty()
         }
     }
     return Snapshot(

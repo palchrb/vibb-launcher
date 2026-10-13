@@ -1193,6 +1193,81 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    /** The service's `attach()` of another renderer over the web player (qa-26c-step5b-code M1), as PlaybackService does it. */
+    private fun detach(r: SpotifyRenderer) {
+        r.saveNow(force = true)
+        r.pause()
+        r.cancelFade()
+        r.onEvent = null
+        r.detached()
+        active = null // `active.takeIf { renderer === spotify }`
+    }
+
+    @Test
+    fun `M1 - a detached web player resumed by the account's other app is paused at once - no focus, no locks, no play`() = runBlocking {
+        // the QA's counter-example (qa-26c-step5b-code M1), with the service's detach
+        val r = playing()
+        post(state(0, 20_000))
+        detach(r)
+        post(state(0, 20_000, paused = true))
+        advance(60_000)
+        ports.focusHeld = false
+        post(state(0, 20_500)) // the other app's play on "Vibb"
+        assertEquals(listOf(false, false, false, "vibb.pause()"), listOf(ports.focusHeld, ports.locks, r.showsPlaying, page.calls.last()))
+        r.release()
+    }
+
+    @Test
+    fun `M1 - the detach sequence - a transfer-in and our own track paused, nothing written, then a load plays again`() = runBlocking {
+        val r = playing()
+        advance(4_000)
+        post(state(0, 4_000))
+        val saves = ports.saves.size
+        val plays = api.plays().size
+        detach(r)
+        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        // a foreign transfer, then our own track resumed from outside: each paused at once
+        val pausesBefore = page.calls.count { it == "vibb.pause()" }
+        post(SdkState(false, 1_000, 30_000, "spotify:track:FAKEforeign0000000001", null, emptyList(), emptyList(), "track", "Another", listOf("Someone"), null))
+        post(state(0, 5_000))
+        assertEquals(2, page.calls.count { it == "vibb.pause()" } - pausesBefore)
+        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        r.play() // nothing the service would do - a belt: no start while detached
+        settle()
+        assertEquals("no play call while detached", plays, api.plays().size)
+        r.saveNow(force = true)
+        assertEquals("no place written", saves + 1, ports.saves.size) // detach's own forced save only
+        // re-attached for a new Spotify queue: load clears the detach, the play goes out
+        renderer2(r)
+        r.load(mediaItems(5), 2, 0, playNow = true)
+        advance(0)
+        post(state(2, 0))
+        assertTrue(r.showsPlaying && ports.locks && ports.focusHeld)
+        assertEquals(plays + 1, api.plays().size)
+        r.release()
+    }
+
+    /** The service's `active = a` for a re-attach. */
+    private fun renderer2(r: SpotifyRenderer) {
+        val entry = Entry(6, "e6", "Kveldsliste", null, Source.SPOTIFY, "spotify:playlist:FAKEplaylist0000000001", "auto", 0, true, null, "11ee", 6, spotifyMode = "list")
+        val items = (0 until 5).map { PlayItem(6, key(it), "Fake track $it — Fake Artist", null, false, DURATION) }
+        active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
+        r.onEvent = { events += it }
+    }
+
+    @Test
+    fun `L4 - forget clears the page, the marker and the token, and stores none`() = runBlocking {
+        val r = playing()
+        r.forget()
+        settle()
+        assertEquals("none", ports.outcomes.last())
+        assertNull(ports.marker)
+        assertFalse(page.alive)
+        assertTrue(page.clears >= 1)
+        assertFalse(r.showsPlaying)
+        r.release()
+    }
+
     private companion object {
         const val DEVICE = "FAKEdevice1"
         const val DURATION = 200_000L

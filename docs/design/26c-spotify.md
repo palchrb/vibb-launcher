@@ -690,7 +690,10 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
   (`Sync.writeReport`, `sync/Sync.kt:214-234`, which reads Storytel's state from a file). So the renderer persists its
   last outcome in `noBackupFilesDir/spotify_state.json` (`{"outcome": "<word>", "at": <wall ms>}`, tmp + rename, written
   only when the word changes) through `logic/Spotify.kt`'s pure `SpotifyOutcome` and `data/Store.kt`; the report and the
-  tiles (§5.8) read the same file. `Off` from the token writes `none`.
+  tiles (§5.8) read the same file. `Off` from the token writes `none`, and so does the service's `forget()` when the
+  library has no Spotify entry left (step 5b's fix round, qa-26c-step5b-code L4: a later binding never shows the last
+  account's word); a rebind without an unbind shows the old word until the first play (the app learns the account only
+  from a token).
 
 - `item_errors` for a Spotify track or episode: `unplayable` (the SDK's `playback_error` on it, or Spotify skipping it:
   region, explicit filter, removed; §5.8). `downloads` never lists a Spotify entry.
@@ -1039,7 +1042,7 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
 | the play call's 403 (not `PREMIUM_REQUIRED`), or a 401 the one renewal can't cure (the same token back, or a second 401; qa-26c-step4-code L4) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `refused` |
 | `account_error`, or the play call's 403 `PREMIUM_REQUIRED` twice (one retry after about 1 s, L7) | paused | `SPOTIFY_ASK_ADULT` + the stored outcome | `not_premium` |
 | the play call's 429 `QUOTA_EXCEEDED` | paused | `SPOTIFY_NEEDS_INTERNET` with the text "Spotify er ikke tilgjengelig nå" / "Spotify isn't available right now" + the stored outcome | `quota` |
-| `initialization_error` (no EME/Widevine) | paused, the host destroyed | `SPOTIFY_NOT_ON_PHONE`: "Spotify virker ikke på denne telefonen" / "Spotify doesn't work on this phone" + the stored outcome | `no_widevine` |
+| `initialization_error` (no EME/Widevine) | paused, the host destroyed | `SPOTIFY_NOT_ON_PHONE`: "Spotify virker ikke på telefonen" / "Spotify doesn't work on this phone" + the stored outcome | `no_widevine` |
 | `playback_error` on one of our tracks, or Spotify skipping it (region, the Family explicit filter, removed) | `Error("unplayable")`: the queue moves on; after 3 in a row, paused | `PlayerHub.Message.CANT_PLAY`; the list's row "Kan ikke spilles" | `item_errors` `unplayable` |
 | a confirmed `null` state while playing | paused, bookmark kept | `SPOTIFY_ELSEWHERE`: "Spotify spiller et annet sted" / "Spotify is playing somewhere else" | unchanged |
 | the renderer process died, or a crash | paused, the host destroyed | `SPOTIFY_STOPPED`: "Spotify stoppet - trykk spill" / "Spotify stopped - press play" | unchanged |
@@ -1080,7 +1083,10 @@ The parent sees the same through `music_state` on the device card (§3.6). Nothi
   `SpotifyRenderer` (made once per service, kept), every other entry the `LocalRenderer`; a room keeps its
   `SonosRenderer`. A change goes through `attach()` (the old one saved with force and paused before it detaches; 26a
   §0; from the phone `local.standDown()` too, §5.6) - the queue is always one entry, so sources never mix inside a
-  renderer.
+  renderer. **A detached web player owns nothing** (step 5b; deviation 5, qa-26c-step5b-code M1): its queue is null
+  while another renderer plays (`queue = { active.takeIf { renderer === spotify } }`: no place written), and `attach`
+  tells it (`SpotifyRenderer.detached()`): until its next `load` every playing state - the account's other app resuming
+  "Vibb", a transfer - is paused at once, never the focus, the locks or a play the session can't show or stop.
 - **The service decides playability itself** (QA H1), so every site below gets an explicit Spotify rule. The rule
   `isSpotify(a) = a.entry.source == Source.SPOTIFY`; `spotifyPlayability(caps, mobileData)` (pure, `logic/Spotify.kt`) =
   `streamAllowed` only - `STREAM`, or `NEEDS_NETWORK` with the reason (Wi-Fi or internet) - and **never `GONE`** (a
@@ -1090,9 +1096,9 @@ The parent sees the same through `music_state` on the device card (§3.6). Nothi
 |---|---|---|
 | `playable()` (`:706-712`) | true on a room, else `playability(hasCopy, url != null, ...)` | a Spotify item: `spotifyPlayability(...) == STREAM` |
 | `playableFrom()` (`:714-718`) | the first playable from an index | a Spotify entry: all items or none (the gate is the network, not the item), so `index` or null |
-| `start()` (`:670-702`) | `NOT_DOWNLOADED` when nothing or another item is playable | a Spotify entry with no network: no load of play, the renderer's state `SPOTIFY_NEEDS_WIFI`/`_NEEDS_INTERNET` (§5.8), never `NOT_DOWNLOADED`, never another index |
+| `start()` (`:670-702`) | `NOT_DOWNLOADED` when nothing or another item is playable | a Spotify entry with no network: no play - as built (step 5b, deviation 2) the queue is loaded paused at its place (no page, no network) so the loaded entry carries the renderer's state `SPOTIFY_NEEDS_WIFI`/`_NEEDS_INTERNET` (§5.8, `SpotifyRenderer.refused`), never `NOT_DOWNLOADED`, never another index |
 | `goTo()` (`:883-891`, steps, swipes) | `NOT_DOWNLOADED` and a jump | the same Spotify rule as `start` |
-| `onItemChanged()` (`:1048-1080`) | an unplayable item moves on, else pauses with `NOT_DOWNLOADED` | a Spotify entry: the network check as `start` (pause with the Spotify state, never move on); **the natural-advance seek (`auto && kind == LOCAL`) stays `LOCAL` only** (QA M4: on Spotify, as on a room, the next track starts where Spotify starts it) |
+| `onItemChanged()` (`:1048-1080`) | an unplayable item moves on, else pauses with `NOT_DOWNLOADED` | a Spotify entry: the network check as `start` (pause with the Spotify state, never move on) - as built (deviation 4) for Spotify's own advance (`auto`) only: a load, a step and the renderer's own moves were gated where they were made; **the natural-advance seek (`auto && kind == LOCAL`) stays `LOCAL` only** (QA M4: on Spotify, as on a room, the next track starts where Spotify starts it) |
 | `onError()` (`:1150-1182`) | records `item_errors` only for `url != null`; `NOT_DOWNLOADED` when offline | a Spotify item: `unplayable` is recorded (`ItemErrors.record`), the message `CANT_PLAY`, the queue moves on (the renderer stops after 3 in a row, §5.4); the offline test doesn't apply. As built in step 5a: the existing move-on (`seekTo(next)`, `prepare()`, `play()`) **inside** the renderer's `Error("unplayable")` is the renderer's own move-on - no call when Spotify already plays that item or past it, nothing after the third - so **`onError` must stay synchronous on main for a Spotify item** (a `post`/`launch` around the move-on would make it an unguarded play; 5b pins it) |
 | `mediaItem()` (`:726-768`) | uri = the url (empty for url-null), an `ItemTag` | a Spotify item: uri `uriOf(kind, key)` (`spotify:track:<key>` / `spotify:episode:<key>`; the context item the entry's target), **no `ItemTag`, no cache key** - `GuardsTest`: a Spotify MediaItem never reaches `ItemMediaSourceFactory` |
 | `wakeModeFor()` (`:721-724`) | `WAKE_MODE_LOCAL`/`NETWORK` | a no-op on the Spotify renderer (its own locks, §5.7) |
@@ -1218,7 +1224,11 @@ with the Spotify entries (the courier carries their listings like any other).
 - **Device ids**: the SDK's device id stays in memory (it names this phone in the account's Connect list; not a secret,
   but not reported either).
 - **Logs**: no `Log.` in `spotify/` at all (`SourceScanTest`, as built in step 5a): the host, the locks and the renderer
-  take a `log` function the service gives them (debug-only, 5b), fixed-code lines only (host names, statuses, state
+  take a `log` function the service gives them (debug-only: `spotifyLog`, `Log.d` under `BuildConfig.DEBUG`, 5b).
+  **The page's console is a log channel too**: `WebChromeClient.onConsoleMessage` is handled and returns true always
+  (else the WebView writes every console message, Spotify's iframe's included, with its source URL to logcat - a failed
+  WebSocket names its URL, and the SDK's may carry the token); a debug build notes the level and the source's host only
+  (qa-26c-step5b-code M2). The rest: fixed-code lines only (host names, statuses, state
   kinds - never a token, a uri list or a state JSON), and the SDK's error message only in a debug build
   (`BuildConfig.DEBUG`, qa-26c-step5a-code L8); the server's Spotify lines carry ids,
   statuses and codes. Fakes: `FAKE-ACCESS-<n>`, `FAKE-REFRESH-<n>`, `FAKE-CODE-<n>`, client id
@@ -1317,7 +1327,7 @@ family's matter, outside the code.
 Only step 3 changes a shared file. The listing contract, the policy's other keys, the restrictions and
 `report_state`/`now_playing` names don't change.
 
-## 9. The fake Spotify, the debug switch, the emulator (§6j)
+## 9. The fake Spotify, the debug switch, the emulator (§6k)
 
 ### 9.1 What can be faked, and what can't
 The SDK, Widevine and Spotify's servers can't run in CI or the sandbox, and no account may be used there. A fake still
@@ -1326,7 +1336,7 @@ listings and their gates, the token's way through the launcher, the WebView host
 callbacks), the renderer and the tracker (starts, windows, natural advance, ends, steps, pauses, `null` states,
 errors), positions and resume, focus, locks, Doze, bedtime and calls - with **real audio** from the WebView (a tone), so
 the volume cap and focus are exercised. It can't cover: the real SDK's event shapes and timing, Widevine/EME, track
-relinking, Spotify's dev-mode refusals and quotas, the real host list, and the real network's Doze. Those are §6j part
+relinking, Spotify's dev-mode refusals and quotas, the real host list, and the real network's Doze. Those are §6k part
 B (the real SDK on the emulator with the user's account, the spike's recipe) and the Jelly Star checks.
 
 ### 9.2 `scripts/fake-spotify.py` (GPL, Python 3 stdlib, `-I`, `--selftest`)
@@ -1393,14 +1403,20 @@ phone running a debug build must never send a token elsewhere). Spotify does the
     `<debugBase>/<path>` over the LAN client and answers it** (the stub SDK, its tone, its long-poll), so the page sees
     https only and the WebView's mixed-content block (`MIXED_CONTENT_NEVER_ALLOW`, the default) stays as it is;
   - `debugTokens()` - `TokenCache` asks the fake's `/fake/token?user=kid` directly instead of the bridge, for a run
-    without a launcher.
+    without a launcher: as built (step 5b, deviation 7) only while the app is unmanaged; a managed phone takes its
+    token through the bridge (§6k part A1's chain), and with the switch set **only a fake token** (`FAKE-ACCESS-`) goes
+    on - a real one is `Unreachable` and never meets the debug base (`debugSwitchToken`; qa-26c-step5b-code L2).
 - **The server side**: `SPOTIFY_ACCOUNTS_BASE` and `SPOTIFY_API_BASE` are honoured **only** as `http://127.0.0.1:<port>`
   or `http://[::1]:<port>` (anything else is ignored with one warning at start), and **only while one is set do the
   Spotify requests use `Reach::Any`** (§2.4; `music_net` refuses a loopback address for `Public`). With the override,
-  §6j part A runs the whole chain - PWA login, server token, launcher, music app - against the fake on the emulator's
+  §6k part A runs the whole chain - PWA login, server token, launcher, music app - against the fake on the emulator's
   host; without it every Spotify request is `Reach::Public` to Spotify's hosts. `spotify::tests` pins both.
 
-### 9.4 `docs/testing/emulator.md` §6j (written in step 5b)
+### 9.4 `docs/testing/emulator.md` §6k (written in step 5b)
+(§6j, the number this design first gave it, is design 28's in `emulator.md`; step 5b's deviation 1.) As built, part A
+is two runs: A1 the whole chain with one fake process (the PWA, the server, the debug launcher, the music app managed:
+its token through the bridge), A2 the phone alone on the debug feed (unmanaged: the fake's token route) for the
+fake's options, each a fake restart.
 - **Part A, the fake** (no account): the server with the two base variables, the fake on the host, the debug launcher
   and the debug music app. The PWA's Spotify page: not configured -> the registration text; save the fake client id with
   the loopback redirect, "Log in with Spotify" (the fake consents), the paste flow, the account row. Add the fixture
@@ -1424,8 +1440,14 @@ phone running a debug build must never send a token elsewhere). Spotify does the
   paste), a real playlist the parent owns, play, pause, skip, resume after a restart; the debug log's permission line
   (which origin asked for protected media), the blocked-hosts counter (should stay 0; a redirect's target never shows
   there, so the parent's DNS log is read for hosts outside the list, L2), no `csp` error line in the debug
-  log (the page's CSP admits what the real SDK's loader needs; qa-26c-step4-code L6), each compact state post logged
-  (fixed keys, no token) so a few real sequences can go into `sdk_states/`, and the DNS capture of §6.2.
+  log (the page's CSP admits what the real SDK's loader needs; qa-26c-step4-code L6), no token in logcat after a Wi-Fi
+  drop while playing (the page's console is never logged, §7.1; qa-26c-step5b-code M2), and the DNS capture of §6.2.
+  **Real state sequences** for `sdk_states/` are recorded by step 6's debug-only recorder (qa-26c-step5b-code, "the
+  state-recording gap"), never through the log (§7.1): a port `SpotifyPorts.recordState(json)` called by the page
+  bridge's `state()`, a no-op in the main source set and a writer in `src/debug` (`DebugSpotify.kt`), on only while
+  the debug feed's `config.json` says `"record_spotify_states": true`, one JSON line per state (`{"t", "state"}`) plus
+  the page's events and our own calls by name, appended to `debug-feed/sdk_states/<start time>.jsonl`; part B records
+  the real context sequences with it.
 
 ## 10. Tests
 
@@ -1555,16 +1577,16 @@ Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed b
    tap sends nothing; steps coalesced; the window's end adds to the queue; `Ended`; focus loss and transient loss;
    noisy; the fade; a suspension destroys the host; a confirmed `null` -> `ELSEWHERE`; three unplayable -> stopped).
    Acceptance: the music suite green. **Not**: the service's sites (5b).
-   **b. Music: the service, the UI, the report, §6j.** Files: `M/playback/{PlaybackService,PlayerHub}.kt` (§5.10's
+   **b. Music: the service, the UI, the report, §6k.** Files: `M/playback/{PlaybackService,PlayerHub}.kt` (§5.10's
    table, every row: `playable`, `playableFrom`, `start`, `goTo`, `onItemChanged`, `onError`, `mediaItem`,
    `wakeModeFor`, `onPlaybackResumption`, `onDestroy`, the room looks, `comeHome`, `callStep`, the renderer choice and
    `standDown`), `M/data/{Snapshot,Store}.kt` (`spotify_state.json`; the context item from step 6 comes later),
    `M/ui/{MusicViewModel,UiModel,LibraryScreen,PlayerScreen,ListScreens}.kt` (the words, the quiet line, the
    "Spotify" line, the loaded tile's state, the stored outcome on every Spotify tile), `M/logic/Spotify.kt`
    (`SPOTIFY_PLAYABLE = true`), `M/logic/Report.kt` + `M/sync/Sync.kt` (the `spotify` outcome from the file,
-   `unplayable`), `docs/testing/emulator.md` §6j. Tests: §5.10's service tests, `GuardsTest` (the site list; a Spotify
+   `unplayable`), `docs/testing/emulator.md` §6k. Tests: §5.10's service tests, `GuardsTest` (the site list; a Spotify
    MediaItem never reaches `ItemMediaSourceFactory`), `SourceScanTest`, `ReportTest`, `LibraryViewTest`. Acceptance: the
-   music suite green, the fake's selftest; **§6j part A runs end to end** on the emulator (the step's status lists each
+   music suite green, the fake's selftest; **§6k part A runs end to end** on the emulator (the step's status lists each
    line); part B with the user's account if they run it. Owed [device check]: QA checklist items 4-17.
 6. **Music: context mode, and the host list.** Files: `M/data/Snapshot.kt` (the synthetic `context` item from
    `contextItem`), `M/logic/LibraryView.kt` (the hint, no "N av M"), `M/ui/{UiModel,ListScreens}.kt` (the one row, the
@@ -1573,7 +1595,7 @@ Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed b
    with no duration, `Ended`), `M/data/Store.kt` (`spotify_context.json`); and, if the user has run the capture and it
    hasn't landed yet, the three `spotify_hosts.json` copies with their constants. Tests: `SpotifyTrackerTest`'s context
    sequences, `SpotifyRendererTest`, a snapshot test (a context entry shows as a tile; a restart restores it paused at
-   the live track). Acceptance: the suites; §6j's artist and 403-playlist lines. Owed [device check]: a real artist, a
+   the live track). Acceptance: the suites; §6k's artist and 403-playlist lines. Owed [device check]: a real artist, a
    playlist the parent doesn't own; QA checklist item 18 (the artist option's dev-mode check).
 7. **Docs and release.** `music/CLAUDE.md` (the `spotify/` package, the renderer, the WebView rules, the token, the
    secrets rule, the debug switch, the fake), `server/CLAUDE.md` (the Spotify section: app, accounts, PKCE, the
@@ -1664,7 +1686,7 @@ mode), 7 (docs).
 8. The WebView's own audio focus (§5.6) and episodes in a `uris` list (§3.1): device checks with a default each
    (step 5a's focus branch; `SHOWS_PLAYABLE`).
 9. The SDK on a phone: Spotify now lists mobile browsers as supported (Android and iOS); a WebView isn't named - the
-   spike is the evidence; if Spotify breaks it, the tiles say "Spotify virker ikke på denne telefonen" and the rest of
+   spike is the evidence; if Spotify breaks it, the tiles say "Spotify virker ikke på telefonen" and the rest of
    Vibb is untouched.
 10. Spotify's 13+ age rule (spike §8 Q6): the family's matter, outside the code.
 11. Spotify on Sonos (step 8) and the household account it would use: a later architect pass.
@@ -1750,7 +1772,7 @@ mode), 7 (docs).
 - **Deploy order**: the server first (an older music app drops Spotify entries with their ids kept; an older launcher
   ignores `music.spotify` and has no `getSpotifyToken`, so the music app reads "trenger internett" until it is updated),
   then the launcher, then the music app through the catalog.
-- **Before the stable tags**: §6j parts A and B on the emulator, the QA checklist above, the spike's remaining runs
+- **Before the stable tags**: §6k parts A and B on the emulator, the QA checklist above, the spike's remaining runs
   (§14 item 3), and the capture's host list in the three `spotify_hosts.json` copies (no longer provisional).
 
 ## Design QA fix round (2026-10-13)
@@ -3176,9 +3198,8 @@ Deviations from the spec (each with its reason):
 7. **The fake's token route only for an unmanaged app** (5a used `debugTokens()` whenever the switch was set): §9.3
    says "for a run without a launcher", and §9.4 part A's chain needs the token through the launcher; with the
    switch on a managed phone the token now comes from the bridge (`Bridge.config(app).managed`, read off main).
-8. **"No Spotify entry left" doesn't write `none`**: only the token's `off` does (§4.4); a parent who removed every
-   link from a still-bound phone leaves its last word, which stays true. Clearing also runs when only a page marker
-   from an earlier run exists.
+8. ~~**"No Spotify entry left" doesn't write `none`**~~ - **withdrawn in the fix round** (qa-26c-step5b-code L4:
+   `forget()` writes `none`). Clearing also runs when only a page marker from an earlier run exists.
 9. **"Liste" says "Spotify"** where the offline summary was (§4.2 asks only for no "lastet ned"): the attribution
    (§7.3) costs no new string (`kind_spotify`).
 10. **§5.10's "service tests" are pure rules, renderer seams and source pins**: the service is Android-only and the
@@ -3209,3 +3230,49 @@ context ownership); step 7 - the docs (`music/CLAUDE.md`'s renderer axis, the se
 [device check]: QA checklist items 4-17 and 19-21 (Jelly Star, a real Premium Family member account), the item-10
 Doze run with and without the wake lock (before 5b's acceptance closes, §11), the WebView's own audio focus (§5.6),
 a VoIP call's `CALL_HOLD`.
+
+### Fix round after QA's code review (qa-26c-step5b-code, 2026-10-13)
+
+All eight findings fixed; none disputed. No contract file changed, no new dependency, `launcher/` and `server/`
+untouched. From `music/`: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true
+--rerun-tasks` BUILD SUCCESSFUL, 765 JVM tests (759 before), 0 failures; lint 0 errors, the same 39 warnings. The three
+fakes' `--selftest`s OK under `-I`. Checked by mutation: `detached()` doing nothing turns both M1 cases red.
+- **M1** (a detached web player started from outside): `attach` tells the old web player (`if (old === spotify)
+  spotify?.detached()`, after its events are cut); `SpotifyRenderer.detached()` pauses, drops any start, sets
+  `detached` and `tracker.lost()` - until the next `load` every playing state is `NotOurs` (paused at once), `Resumed`
+  never takes focus, and `begin`/`resume` refuse. The QA's counter-example and a real detach sequence (a transfer-in
+  and our own track resumed from outside, both paused; no play call, no place written; a re-attach's load plays again)
+  in `SpotifyRendererTest`; a `GuardsTest` pin in `attach`; §6k A2's "a detached web player" line.
+- **M2** (the console in logcat): `SpotifyWebHost.Chrome.onConsoleMessage` returns true always; a debug build logs the
+  level and the source's host only. `SourceScanTest` pins it (one override, one `return true`, no `.message()`); §6k
+  part B greps logcat for `access_token|BQ…|Bearer` after a Wi-Fi drop while playing; §7.1 names the channel.
+- **L1** (a line too long at 320 dp): nb "Spotify virker ikke på telefonen" (174.2 dp); `FitTest` measures all
+  fourteen Spotify lines (Nunito Bold 12 sp from the font's advances, the QA's method) against the player's state line
+  and the tiles, and checks the map holds every `renderer_spotify_*` string in both languages.
+- **L2** (a real token to the debug base): with the switch set a bridge token goes on only when it is a fake one
+  (`debugSwitchToken`: `FAKE-ACCESS-` prefix, else `Unreachable` and one debug line); `SpotifyRulesTest` and a
+  `SourceScanTest` pin; §9.3.
+- **L3** (§6k lines): the consent key (`consented as parent`/`kid`, `the next login consents as kid`), no
+  `getOAuthToken ok` in a cover tap (only the stub's renewal timer logs it), the playlist path without its query, the
+  headset check by `dumpsys media_session` (ExoPlayer's `Init` line is expected; the stopped package after a
+  force-stop), a force-stop before playing after a re-login (the 10-minute `reauthorize` cooldown), A2's report after a
+  broadcast, "No Spotify entry left" with the app open, part B's `the real hosts` (logged only on a change).
+- **L4** (the last word outlives the binding): `forget()` writes `none` (deviation 8 withdrawn); a renderer test; §4.4
+  and §6k say so.
+- **L5** (tests): `GuardsTest` asks `PlayBodies.speakerDropReason` itself (not a comment's text); `LibraryViewTest`
+  asserts `listRows(...).none { it.offline }` over the real `onPhone` with a stray download row - which showed a
+  Spotify entry *could* be marked, so `buildSnapshot` now never puts a Spotify key on the phone; M1's cases sit beside
+  deviation 5's.
+- **L6** (the spec body): §4.4 (`forget` writes `none`), §5.10 (the `start` and `onItemChanged` rows as built, "Which
+  renderer" with the detached queue and `detached()`), §7.1 (`spotifyLog`, the console), §9's headings, §9.3 (the
+  token route only unmanaged, fake tokens only), §9.4 (§6k's A1/A2 and part B's recorder), §11 step 5b (§6k).
+- **The state recorder** (the QA's decision, built by **step 6**): a port `SpotifyPorts.recordState(json)` called by
+  the page bridge's `state()` with the compact JSON as received; a no-op in the main source set (a `SourceScanTest`
+  pin), the writer in `src/debug` (`DebugSpotify.kt`); on only while the debug feed's `config.json` says
+  `"record_spotify_states": true` (read at the receiver and at `DebugStartup`, as `spotify_base`); one JSON line per
+  state `{"t": <elapsed ms>, "state": <the compact JSON>}` plus the page's `ready`/`notReady`/`error(kind)` and our own
+  Web API calls by name (`play from 3`, `queue 51`), appended to `getExternalFilesDir("debug-feed")/sdk_states/<start
+  time>.jsonl`; never a token or the SDK's error text. §6k part B records the real context sequences with it.
+- Still owed (unchanged): §6k parts A1 and A2 on the user's emulator (§11's acceptance; none of it was run here), part B
+  with the user's account, the Jelly Star's item-10 Doze run before 5b's acceptance closes, QA checklist items 4-17 and
+  19-21.

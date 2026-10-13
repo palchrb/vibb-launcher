@@ -62,8 +62,12 @@ class LibraryViewTest {
         assertEquals(me.vibb.music.playback.RendererState.SPOTIFY_NEEDS_WIFI, entryUi(snap, playlist, 6, me.vibb.music.playback.RendererState.SPOTIFY_NEEDS_WIFI).state)
         assertEquals(me.vibb.music.playback.RendererState.SPOTIFY_ASK_ADULT, entryUi(snap, show, 6, null, "reauthorize").state)
         assertNull(entryUi(snap, show, 6, null, "ok").state)
-        // no offline marks: nothing of it is ever on the phone
-        assertTrue(snap.onPhone[6].orEmpty().isEmpty())
+        // no offline marks in its list: no row is "on the phone", whatever the download rows say
+        val withRows = snapshot(library(listOf(playlist, show)), rows, downloads = listOf(done(6, "t1")))
+        val shown = withRows.order(playlist)
+        assertEquals(3, shown.size)
+        assertEquals("never a copy, even with a stray download row (the plan prunes it)", emptySet<String>(), withRows.onPhone[6].orEmpty())
+        assertTrue(listRows(shown, "t2", emptySet(), withRows.onPhone[6].orEmpty()).none { it.offline })
     }
 
     @Test

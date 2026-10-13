@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import me.vibb.music.bridge.TokenResult
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -52,6 +53,19 @@ fun spotifyNetworkLine(caps: NetCaps?, mobileData: Boolean): SpotifyLine? = when
     caps != null && caps.internet && caps.physical -> SpotifyLine.NEEDS_WIFI
     else -> SpotifyLine.NEEDS_INTERNET
 }
+
+// --- the debug switch's tokens (§9.3) ------------------------------------------------------------------
+
+/** Every fake access token's shape (§7.1: `FAKE-ACCESS-<n>`, never a real token's). */
+const val FAKE_TOKEN_PREFIX = "FAKE-ACCESS-"
+
+/**
+ * A bridge token while the debug switch is set (§9.3, qa-26c-step5b-code L2): the Web API calls and the page then go
+ * to the debug base, so only a fake token may go with them - a real one (the server's, on a managed phone with a
+ * `config.json` left behind) is [TokenResult.Unreachable] and never sent. Every other answer passes.
+ */
+fun debugSwitchToken(t: TokenResult): TokenResult =
+    if (t is TokenResult.Ok && !t.token.startsWith(FAKE_TOKEN_PREFIX)) TokenResult.Unreachable else t
 
 // --- context mode (§5.9, QA H3) ---------------------------------------------------------------------
 

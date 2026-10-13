@@ -68,7 +68,7 @@
     <string name="renderer_spotify_needs_internet" tools:ignore="Typos">Spotify - trenger internett</string>
     <string name="renderer_spotify_unavailable">Spotify er ikke tilgjengelig nå</string>
     <string name="renderer_spotify_ask_adult">Spotify - spør en voksen</string>
-    <string name="renderer_spotify_not_on_phone">Spotify virker ikke på denne telefonen</string>
+    <string name="renderer_spotify_not_on_phone">Spotify virker ikke på telefonen</string>
     <string name="renderer_spotify_elsewhere">Spotify spiller et annet sted</string>
     <string name="renderer_spotify_stopped">Spotify stoppet - trykk spill</string>
 

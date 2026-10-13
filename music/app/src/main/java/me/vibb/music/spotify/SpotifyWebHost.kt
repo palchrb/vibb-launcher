@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -16,7 +17,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import me.vibb.music.BuildConfig
 import me.vibb.music.media.MediaCache
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -266,6 +269,17 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
             // which origin asks is step 5b's device check (§5.2)
             log("spotify: permission asked by ${host ?: "?"}: ${if (allowed && grant.isNotEmpty()) "protected media granted" else "denied"}")
             if (allowed && grant.isNotEmpty()) request.grant(grant.toTypedArray()) else request.deny()
+        }
+
+        /**
+         * The page's console (ours and Spotify's iframe) never reaches logcat (§7.1, qa-26c-step5b-code M2): handled
+         * here, always - the default writes every message with its source URL, and a failed WebSocket's message names
+         * its URL (the SDK's dealer connection may carry the token in its query). A debug build notes the level and
+         * the source's host only - never the message or the URL.
+         */
+        override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+            if (BuildConfig.DEBUG) log("spotify: console ${consoleMessage.messageLevel()} from ${consoleMessage.sourceId()?.toHttpUrlOrNull()?.host ?: "?"}")
+            return true
         }
     }
 
