@@ -49,7 +49,10 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     player.addListener(name, function (e) { log(name + ': ' + (e && e.message)); });
   });
   player.addListener('autoplay_failed', function () { log('autoplay_failed'); });
-  player.addListener('player_state_changed', function (s) { log('player_state_changed: ' + describe(s)); });
+  player.addListener('player_state_changed', function (s) {
+    try { SpikeBridge.playing(!!(s && !s.paused)); } catch (e) {}
+    log('player_state_changed: ' + describe(s));
+  });
   player.connect().then(function (ok) { log('player.connect() -> ' + ok); });
   // A line a minute, so the screen-off run reads from the log.
   poll = setInterval(function () {

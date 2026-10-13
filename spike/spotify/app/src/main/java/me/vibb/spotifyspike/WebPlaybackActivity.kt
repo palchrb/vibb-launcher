@@ -147,7 +147,7 @@ class WebPlaybackActivity : Activity() {
     }
 
     private fun render() {
-        status.text = getString(R.string.web_status_fmt, WebPlayer.status(), WebPlayer.deviceId ?: "-", WebPlayer.userAgent, WebPlayer.lastEvent)
+        status.text = getString(R.string.web_status_fmt, "${WebPlayer.status()}\n${NetProbe.line}", WebPlayer.deviceId ?: "-", WebPlayer.userAgent, WebPlayer.lastEvent)
         logStatus.text = SpikeLog.fileStatus()
     }
 

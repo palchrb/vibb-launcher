@@ -92,6 +92,7 @@ object WebPlayer {
         val html = app.assets.open("web-playback.html").bufferedReader().use { it.readText() }
         view.loadDataWithBaseURL("https://appassets.androidplatform.net/", html, "text/html", "utf-8", null)
         loadedAt = LocalTime.now()
+        NetProbe.start(app)
         changed()
     }
 
@@ -184,6 +185,8 @@ object WebPlayer {
         view.destroy()
         deviceId = null
         loadedAt = null
+        NetProbe.playing = false
+        NetProbe.stop()
         attached = false
         SpikeLog.log("web: player DESTROYED [$reason]")
         changed()
@@ -201,6 +204,11 @@ object WebPlayer {
                 lastEvent = SpikeLog.redact(message).take(200)
                 changed()
             }
+        }
+
+        @JavascriptInterface
+        fun playing(on: Boolean) {
+            NetProbe.playing = on
         }
 
         @JavascriptInterface

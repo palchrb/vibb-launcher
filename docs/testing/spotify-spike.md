@@ -89,7 +89,11 @@ One screen (`MainActivity`) and the Web Playback screen. Everything goes into on
   **Unload** (or the service stopping) destroys it. The option **Also hold a partial wake lock** (default off) makes
   the service hold one (log `wake lock: held` / `released`). Both screens show
   `web player: ALIVE since <time>, on screen | headless (no screen attached), keep-alive running` or `web player: none`,
-  and the log notes every attach, detach and destroy. Details in §7, item 10.
+  and the log notes every attach, detach and destroy. While a player is loaded, a line a minute gives the app's
+  network bytes (`net: rx=<MB> tx=<MB> (delta +<MB>/+<MB> in <n> min, playing: ~<n> MB/hour)`, TrafficStats for the
+  spike's uid - the WebView's network stack runs in the app's process) and `webview cache: ...` (the WebView's disk
+  cache, `cache/WebView` and `app_webview`, measured off the main thread); the probe screen shows the latest totals.
+  Details in §7, items 10 and 10b.
 
 The app can't see another app's activities, so whether Spotify showed anything is read from the system
 (§5, "Watching for Spotify").
@@ -398,6 +402,25 @@ downloads); Premium only; every command (play, skip, seek) is a Web API call ove
 limits (5 users, rate limits, 6-month refresh tokens for the server's token); the token must be refreshed (a
 server-side job or PKCE refresh on the phone); and Spotify can break it at any time since mobile isn't supported.
 
+### Item 10b - does the web player cache audio? (mobile data)
+The spike's minute lines: `net: rx=... (delta +rx/+tx in 1.0 min, playing: ~N MB/hour)` and `webview cache: ...`.
+Wi-Fi or mobile data, it doesn't matter (the counter is per app, not per network).
+1. **Load player**, **Play on this device** with a playlist. Note `~N MB/hour` from three or four minutes of playing:
+   the streaming rate on this device (Spotify's web quality; compare with the App Remote path's Spotify data use in
+   Android's Settings -> Network -> Data usage, if items 1-9 ran).
+2. **Play on this device** again so the playlist starts from its first track, and let that track play to its end;
+   note the `rx` total at the start and at the end of that track, and the `webview cache` size.
+3. Play the **same** track again from its start: **Play on this device** with the same context once more (it restarts
+   at the first track), and let it play through. Note the rx delta again.
+4. Compare: a second-run delta near zero (only the licence and API calls, tens of KB) = the WebView served the audio
+   from its cache; about the same as the first run = no audio caching. Also note whether `webview cache` grew by
+   about the track's size during step 2.
+
+What a cache can and can't do: it saves data when the same tracks repeat (a kid's favourites), but it is **not
+offline**. Each playback session still needs Spotify's Widevine licence and the Connect session from the network, so
+in airplane mode the web player fails even for cached tracks (check it: airplane mode on, **Play on this device** ->
+record the error). Offline play stays the App Remote path's (Spotify's downloads, item 3) or own files'.
+
 ## 7b. Results so far (the user's runs, recorded by the main session)
 
 **2026-10-12/13, emulator `jellystar` (Play image, Android System WebView 153.0.8010.57), the debug launcher with the
@@ -446,7 +469,8 @@ kiosk on, the spike ticked Allowed.**
 2. PASS/FAIL per item 0-10 with the config used (K-/K0/K1/K2) and the device (emulator / Jelly Star), and for the
    kill criteria (1, 2, 3a) the log lines that prove no Spotify activity started.
 3. The DNS hosts from items 7 and 10 (blocked ones from the DNS log; all queried ones from the emulator capture).
-4. Item 4: which resume variant is silent and accurate. Items 6/8/9: the screenshots of the media card, the active
+4. Item 10b: the web player's MB/hour, the two rx deltas of the repeated track and the cache sizes. Item 4: which
+   resume variant is silent and accurate. Items 6/8/9: the screenshots of the media card, the active
    apps list and where each tap landed. Item 10: the EME probe line, the SDK's events and the WebView version.
 5. The open questions from `vibb-spotify-options.md` (the decision of 2026-10-06 answered 1 and 2 - confirm or
    revise):
