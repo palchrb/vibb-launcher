@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>About This Phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;align-items:center;height:44px;padding:0 16px}
+.back{display:flex;align-items:center;gap:4px;font-size:17px;color:#0B66D6}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;text-align:right;font-size:16px}
+.s2{display:block;font-size:13px;color:#6B6B70;margin-top:2px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 1040px">
+  <div class="top">
+    <a class="back" href="DeviceSummary.dc.html">
+      <svg width="12" height="20" viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Anna
+    </a>
+  </div>
+  <h1 class="lt">About This Phone</h1>
+
+  <div class="sh">Connection</div>
+  <div class="grp">
+    <div class="row"><span class="lbl">Status</span><span class="val"><span style="color: #1E7A35; font-weight: 600">Online</span> since 08:12</span></div>
+    <div class="row"><span class="lbl">Last contact</span><span class="val">10:59 · 3 min ago</span></div>
+    <div class="row"><span class="lbl">Last full report</span><span class="val">10:59</span></div>
+    <div class="row"><span class="lbl">Network</span><span class="val">Over the tailnet</span></div>
+  </div>
+  <div class="ft">Online means the phone has a live link to this server. Changes reach it within seconds.</div>
+
+  <div class="sh">Sound</div>
+  <div class="grp">
+    <div class="row"><span class="lbl">Ringer</span><span class="val">On</span></div>
+    <div class="row"><span class="lbl">Do Not Disturb</span><span class="val">Off</span></div>
+  </div>
+
+  <div class="sh">Software</div>
+  <div class="grp">
+    <div class="row"><span class="lbl">Vibb</span><span class="val">0.23.6</span></div>
+    <div class="row"><span class="lbl">Music app</span><span class="val">0.3.0</span></div>
+    <div class="row"><span class="lbl">Settings from server</span><span class="val">Applied</span></div>
+    <div class="row"><span class="lbl">Battery optimisation</span><span class="val">Off</span></div>
+  </div>
+
+  <div class="sh">Diagnostics</div>
+  <div class="grp">
+    <a class="row" href="#crashes"><span class="lbl">Crash reports</span><span class="val">None in 30 days</span></a>
+    <a class="row" href="#boots"><span class="lbl">Starts without Vibb</span><span class="val">None</span></a>
+  </div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="devices" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

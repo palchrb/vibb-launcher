@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Music</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;justify-content:flex-end;align-items:center;height:44px;padding:0 16px;font-size:17px}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:10px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.grp.ic .row+.row:before{left:72px}
+.grp.sm .row+.row:before{left:57px}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;text-align:right;font-size:16px}
+.s2{display:block;font-size:13px;color:#6B6B70;margin-top:2px}
+.chev{flex:none;color:#C4C4C7}
+.cover{flex:none;width:44px;height:44px;border-radius:8px;display:flex;align-items:flex-end;padding:5px;box-sizing:border-box;color:#fff;font-size:11px;font-weight:700;line-height:1.05}
+.tile{flex:none;width:29px;height:29px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff}
+.av{flex:none;width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:600}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 1080px">
+  <div class="top"><a href="#edit">Edit</a></div>
+  <h1 class="lt">Music</h1>
+
+  <div class="sh">Library</div>
+  <div class="grp ic">
+    <a class="row" href="#abels">
+      <span class="cover" style="background: #3F2D6E">Abels tårn</span>
+      <span class="lbl">Abels tårn<span class="s2">NRK series · 98 episodes · 2 phones</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#ukas">
+      <span class="cover" style="background: #B23A2E">Ukas nyheter</span>
+      <span class="lbl">Ukas nyheter<span class="s2" style="color: #A85200">Checking for episodes…</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#godnatt">
+      <span class="cover" style="background: #1F4E79">Godnatt</span>
+      <span class="lbl">Godnatt<span class="s2">Own files · 12 songs · 2 phones</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#monstre">
+      <span class="cover" style="background: #0F6B5C">Monstre i dypet</span>
+      <span class="lbl">Monstre i dypet<span class="s2">Storytel · 4 books · Anna</span></span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#all">
+      <span class="lbl" style="color: #0B66D6; padding-left: 56px">Show all 9</span>
+    </a>
+  </div>
+
+  <div class="sh">Add</div>
+  <div class="grp sm">
+    <a class="row" href="#link">
+      <span class="tile" style="background: #0A84FF"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5l3-3M5.5 7.3L4 8.8a2.4 2.4 0 0 0 3.4 3.4l1.5-1.5M10.5 8.7L12 7.2a2.4 2.4 0 0 0-3.4-3.4L7.1 5.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+      <span class="lbl">Podcast or NRK link</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#files">
+      <span class="tile" style="background: #FF9F0A"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 11V3M5 6l3-3 3 3M3 11v2h10v-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="lbl">Upload your own files</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#storytel">
+      <span class="tile" style="background: #FF5C35"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h4a2 2 0 0 1 2 2v8a1.6 1.6 0 0 0-1.6-1.6H3zM13 3H9.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M13 3v8.4h-3.6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+      <span class="lbl">From Storytel</span><span class="val">Signed in</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="sh">On phones</div>
+  <div class="grp sm">
+    <a class="row" href="#anna">
+      <span class="av" style="background: #5E5CE6">A</span>
+      <span class="lbl">Anna</span><span class="val">6 of 9</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#emil">
+      <span class="av" style="background: #FF7A45">E</span>
+      <span class="lbl">Emil</span><span class="val">4 of 9</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="grp" style="margin-top: 20px">
+    <a class="row" href="#categories">
+      <span class="lbl">Categories</span><span class="val">3</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#music-settings">
+      <span class="lbl">Settings</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="music" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

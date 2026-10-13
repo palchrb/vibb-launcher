@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Header states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:20px 16px;display:flex;flex-direction:column;gap:16px}
+.cap{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:0 16px -8px}
+.card{background:#FFFFFF;border-radius:14px;display:flex;align-items:center;gap:14px;padding:16px}
+.av{flex:none;width:56px;height:56px;border-radius:50%;color:#fff;font-size:25px;font-weight:600;display:flex;align-items:center;justify-content:center;position:relative}
+.av .dot{position:absolute;right:0;bottom:0;width:15px;height:15px;border-radius:50%;border:3px solid #fff}
+.name{font-size:20px;font-weight:700}
+.state{font-size:14px;color:#6B6B70;margin-top:2px;line-height:1.35}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:4px 10px;border-radius:999px;margin-top:7px}
+</style>
+</helmet>
+<div class="scr" style="height: 560px">
+  <div class="cap">Online, a rule is locking</div>
+  <div class="card">
+    <div class="av" style="background: #5E5CE6">A<span class="dot" style="background: #34C759"></span></div>
+    <div style="flex: 1">
+      <div class="name">Anna</div>
+      <div class="state"><span style="color: #1E7A35; font-weight: 600">Online</span> · seen just now</div>
+      <div class="pill" style="background: #EEF0FF; color: #3A36B8">Leggetid until 07:00</div>
+    </div>
+  </div>
+
+  <div class="cap">Away</div>
+  <div class="card">
+    <div class="av" style="background: #30B0C7">E<span class="dot" style="background: #FF9500"></span></div>
+    <div style="flex: 1">
+      <div class="name">Ella</div>
+      <div class="state"><span style="color: #A85200; font-weight: 600">Away</span> · seen 12 min ago</div>
+    </div>
+  </div>
+
+  <div class="cap">Offline</div>
+  <div class="card">
+    <div class="av" style="background: #FF7A45">E<span class="dot" style="background: #AEAEB2"></span></div>
+    <div style="flex: 1">
+      <div class="name">Emil</div>
+      <div class="state">Offline · seen 3 h ago</div>
+      <div class="state" style="font-size: 13px">Changes wait until it's back.</div>
+    </div>
+  </div>
+
+  <div class="cap">Never connected</div>
+  <div class="card">
+    <div class="av" style="background: #8E8E93">M<span class="dot" style="background: #AEAEB2"></span></div>
+    <div style="flex: 1">
+      <div class="name">Mia</div>
+      <div class="state">Waiting for setup</div>
+      <a href="#setup" style="font-size: 14px; color: #0B66D6; display: inline-block; margin-top: 4px">Show setup code</a>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

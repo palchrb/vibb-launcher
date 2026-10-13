@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Apps</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.scr{width:390px;box-sizing:border-box;background:#F2F2F7;color:#000;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",system-ui,sans-serif;-webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+a{color:#0B66D6;text-decoration:none}a:hover{color:#084C9E}
+.top{display:flex;justify-content:flex-end;align-items:center;height:44px;padding:0 16px}
+.lt{font-size:34px;font-weight:700;margin:4px 16px 4px;line-height:1.15}
+.sh{font-size:13px;color:#6B6B70;text-transform:uppercase;letter-spacing:.4px;margin:24px 32px 7px}
+.grp{background:#FFFFFF;border-radius:12px;margin:0 16px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:44px;padding:11px 16px;box-sizing:border-box;position:relative;color:#000;font-size:17px;line-height:1.25}
+.row+.row:before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid #D1D1D6}
+.grp.ic .row+.row:before{left:64px}
+.lbl{flex:1;min-width:0}
+.val{color:#6B6B70;text-align:right;font-size:16px}
+.s2{display:block;font-size:13px;color:#6B6B70;margin-top:2px}
+.ft{font-size:13px;color:#6B6B70;margin:7px 32px 0;line-height:1.38}
+.chev{flex:none;color:#C4C4C7}
+.icon{flex:none;width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:700}
+.av{flex:none;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:600}
+.pill{display:inline-flex;align-items:center;font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px}
+.tabwrap{position:absolute;left:0;right:0;bottom:0}
+</style>
+</helmet>
+<div class="scr" style="height: 960px">
+  <div class="top">
+    <a href="#add" aria-label="Add app" style="display: flex; padding: 8px">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </a>
+  </div>
+  <h1 class="lt">Apps</h1>
+
+  <div class="sh">On phones</div>
+  <div class="grp ic">
+    <a class="row" href="AnnaApps.dc.html">
+      <span class="av" style="background: #5E5CE6">A</span>
+      <span class="lbl">Anna</span><span class="val">14 allowed</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="AnnaApps.dc.html">
+      <span class="av" style="background: #FF7A45">E</span>
+      <span class="lbl">Emil</span><span class="val">11 allowed</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+  <div class="sh">Catalog</div>
+  <div class="grp ic">
+    <a class="row" href="#vibb">
+      <span class="icon" style="background: #2E7D3E">V</span>
+      <span class="lbl">Vibb<span class="s2">Launcher · all phones</span></span><span class="val">1.4.0</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#musikk">
+      <span class="icon" style="background: #FF375F">M</span>
+      <span class="lbl">Musikk<span class="s2">2 phones</span></span><span class="val">0.3.0</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#chat">
+      <span class="icon" style="background: #0A84FF">C</span>
+      <span class="lbl">Chat<span class="s2">Element X · 1 phone</span></span><span class="val">25.10.1</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#tailscale">
+      <span class="icon" style="background: #1F1F24">T</span>
+      <span class="lbl">Tailscale<span class="s2">2 phones</span></span><span class="val">1.76.0</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a class="row" href="#maps">
+      <span class="icon" style="background: #7E57C2">O</span>
+      <span class="lbl">Organic Maps<span class="s2">1 phone</span></span>
+      <span class="pill" style="background: #FDECEE; color: #B0001A">Update failed</span>
+      <svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria-hidden="true"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+  <div class="ft">Apps here are kept up to date on every phone that has them.</div>
+
+  <div class="grp" style="margin-top: 20px" id="add">
+    <a class="row" href="#add" style="color: #0B66D6">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 7v8M7 11h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="lbl">Add App</span>
+    </a>
+  </div>
+
+  <div class="tabwrap">
+    <dc-import name="TabBar" active="apps" hint-size="390px,84px"></dc-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
