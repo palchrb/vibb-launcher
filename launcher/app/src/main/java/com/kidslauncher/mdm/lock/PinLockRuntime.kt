@@ -195,6 +195,19 @@ object PinLockRuntime {
     /** A screen-off heal ran since the lock last resumed (main thread, bug 25b-C). */
     private var screenOffHealed = false
 
+    /** Design 32 step 1 item 4: the lock is the top task since its last lock-up ([lockOnTopAfter],
+     * best effort) - the next screen-off doesn't start it again. Main thread. */
+    private var lockOnTop = false
+
+    /**
+     * Design 32 step 1 item 3 (QA M1): a HOME_THEN_LOCK lock-up since the last interactive resume of
+     * the lock or Home - Home's resume while dark then only shows its night ground and roots lock
+     * task ([homeDarkResume]). Main thread.
+     */
+    @Volatile
+    var darkLockUp = false
+        private set
+
     fun addModeListener(listener: () -> Unit) { modeListeners += listener }
     fun removeModeListener(listener: () -> Unit) { modeListeners -= listener }
     fun addChromeListener(listener: () -> Unit) { chromeListeners += listener }
@@ -233,9 +246,15 @@ object PinLockRuntime {
         true
     }
 
-    /** HomeActivity resumed (16c, [homeShown]). */
-    fun onHomeResumed() {
+    /** Any Home start but the lock-up's own ([HomeFront.bring]): Home's resume is the usual one. */
+    fun endDarkLockUp() {
+        darkLockUp = false
+    }
+
+    /** HomeActivity resumed (16c, [homeShown]); [interactive]: a lock-up's dark mark ends (design 32). */
+    fun onHomeResumed(interactive: Boolean) {
         homeShown = true
+        if (interactive) darkLockUp = false
     }
 
     /** HomeActivity resumed showing the mark (16e, the locked resume): the boot's lock may wait for
@@ -529,7 +548,14 @@ object PinLockRuntime {
         // reads (binder calls) must not delay it, and a held show starts nothing (qa-16e-code #3).
         val chromeFirst = lockedEdge && bootMark != BootMarkState.Over
         if (chromeFirst) refreshChromeNow(context)
-        if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))
+        // Design 32 step 1: a screen-off's starts are the lock-up's ([lockUp]) - Home under the lock
+        // while dark, or nothing when the lock is on top already. The ScreenOn backstop belongs to
+        // the same lock-up ([lockOnTopAfter]).
+        if (event is LockEvent.ScreenOff) {
+            lockUpAtScreenOff(context, event, result)
+        } else if (result.showLock) {
+            show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)
+        }
         if (lockedEdge && !chromeFirst) refreshChromeNow(context)
         // Home was started first (design 16): the re-front check shows the lock if Home didn't.
         if (result.showLockLater) {
@@ -543,6 +569,8 @@ object PinLockRuntime {
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
+                // Design 32: unlocked (or switched off) - the next lock-up starts the lock again.
+                if (result.mode != LockMode.LOCKED) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.UNLOCKED)
                 if (!lockedEdge) refreshChrome(context)
                 // The camera gesture must not open a camera over the lock (background thread).
                 CameraLock.onLockChanged(context)
@@ -569,6 +597,35 @@ object PinLockRuntime {
             handler.postDelayed(refrontCheck, refrontDelayMs(0))
         }
         if (result.recheckTimeRules) afterUnlock(context)
+    }
+
+    /**
+     * Design 32 step 1: the screen-off's lock-up, planned by [lockUpStarts] (the debug build's H2
+     * experiment may re-start a lock on top, [LockUpDebug]) and carried out by [lockUp]. A call is
+     * ours, Telecom's (the event's reads, no new binder calls before the start) or VoIP.
+     */
+    private fun lockUpAtScreenOff(context: Context, event: LockEvent.ScreenOff, result: LockStep) {
+        val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE
+        val interactive = interactive(context)
+        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive), result.showLock)
+        lockUp(context, start, lockAsk(event))
+        if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive)")
+    }
+
+    /**
+     * Every lock-up at a screen-off, in one place (design 32 step 1 item 1, QA L6). HOME_THEN_LOCK:
+     * Home first, without an open animation (QA M2), so what lies under the lock is Home - its
+     * snapshot plain black - and not the app the kid was in; then the lock. LOCK: the lock alone. Both
+     * on this thread, before anything else of the screen-off (bug 25b-B). The lock is then the top
+     * task ([lockOnTop]).
+     */
+    private fun lockUp(context: Context, start: LockUpStart, ask: LockAsk) {
+        if (start == LockUpStart.NONE) return
+        if (start == LockUpStart.HOME_THEN_LOCK) {
+            darkLockUp = true
+            HomeFront.bring(context, "under the lock (a lock-up while dark)", animate = false)
+        }
+        if (show(context, ask = ask, fromLockUp = true)) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.LOCK_UP)
     }
 
     /**
@@ -647,7 +704,8 @@ object PinLockRuntime {
             val app = context.applicationContext
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 screenOffs++
-                // The lock first: started now, it is drawn before the next screen-on.
+                // The lock-up first ([lockUp]). This broadcast comes after the display is off, and the
+                // lock can't draw while dark: it is drawn only after the next screen-on (design 32).
                 rememberAlarm(app)
                 // The power button silences a VoIP ring on a ringing lock; a ring that began
                 // unlocked starts ringing at this screen-off instead (qa-16-17-code #5).
@@ -994,8 +1052,18 @@ object PinLockRuntime {
      * [ask] (design 16e): [LockAsk.BOOT] may be held while the boot's mark shows - then nothing is
      * started and `false` is returned (the backstop shows it); every other ask, and a wake, ends the
      * wait and shows the lock at once.
+     *
+     * Design 32 (QA L6): every start but [lockUp]'s own ([fromLockUp]) clears [lockOnTop] here, so no
+     * call site can forget it - except the ScreenOn backstop of the same lock-up ([sameLockUp]).
      */
-    fun show(context: Context, wake: Boolean = false, ask: LockAsk = LockAsk.AT_ONCE): Boolean {
+    fun show(
+        context: Context,
+        wake: Boolean = false,
+        ask: LockAsk = LockAsk.AT_ONCE,
+        sameLockUp: Boolean = false,
+        fromLockUp: Boolean = false,
+    ): Boolean {
+        if (!fromLockUp) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
         if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
         try {
             context.startActivity(
@@ -1020,6 +1088,8 @@ object PinLockRuntime {
 
     fun onLockResumed(context: Context) {
         lockResumed = true
+        // Design 32: an interactive resume ends a dark lock-up's mark for Home.
+        if (interactive(context)) darkLockUp = false
         skipBootMark("the lock is up")
         refrontAttempt = 0
         // Back in front after the alarm: its exemption ends now (qa-10-code #4).
@@ -1047,6 +1117,8 @@ object PinLockRuntime {
      * pauses it - the re-front check runs after [PAUSE_REFRONT_MS] (bug 25b-A). */
     fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
+        // Design 32: the sleep's own pause keeps the lock on top; an interactive one doesn't.
+        lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.PAUSE, interactive = interactiveOrUnknown())
         if (!pauseStartsRefront(chromeLocked, finishing)) return
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
@@ -1058,6 +1130,7 @@ object PinLockRuntime {
      * the lock lost the front - bring it back ([refrontAction]). */
     fun onLockStopped(changingConfigurations: Boolean, finishing: Boolean) {
         lockResumed = false
+        lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.STOP, interactive = interactiveOrUnknown())
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
         noteProbableSos()
         refrontAttempt = 0
@@ -1065,6 +1138,11 @@ object PinLockRuntime {
         // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
         // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+    }
+
+    /** PinLockActivity.onDestroy: the next screen-off starts the lock again (design 32). */
+    fun onLockDestroyed() {
+        lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.DESTROY)
     }
 
     /** The Emergency SOS app ([emergencySosPackage]), resolved off the main thread - at init and by
@@ -1311,6 +1389,14 @@ object PinLockRuntime {
 
     private fun interactive(context: Context): Boolean =
         context.getSystemService(PowerManager::class.java)?.isInteractive == true
+
+    /** [interactive], with no context yet counting as interactive - [lockOnTop] is then cleared. */
+    private fun interactiveOrUnknown(): Boolean = appContext?.let { interactive(it) } ?: true
+
+    /** A call is live - ours, Telecom's or a VoIP phase other than NONE: unlocking doesn't land on
+     * Home over it ([lockLeave], design 32 QA L2). Main thread. */
+    fun callLiveNow(context: Context): Boolean =
+        ourCall() || telecomInCall(context.applicationContext) || VoipCalls.phase != VoipPhase.NONE
 
     /** A call the system dialer may show: Telecom's managed calls only - a self-managed app's
      * call (WhatsApp, Signal, a game) never holds the lock open (design 17 QA #7, [managedCallActive]).

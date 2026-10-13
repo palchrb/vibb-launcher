@@ -184,8 +184,11 @@ class HomeGateTest {
         val dispatch = body(runtime, "dispatch")
         // (16e, qa-16e-code #3: while the boot's mark may hold the lock the chrome goes first -
         // BootMarkPlanTest; otherwise the lock's start first, then the chrome.)
-        val show = dispatch.indexOf("if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))")
+        // (Design 32: a screen-off's starts are its lock-up's - LockUpPlanTest.)
+        val lockUp = dispatch.indexOf("lockUpAtScreenOff(context, event, result)")
+        val show = dispatch.indexOf("show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)")
         val now = dispatch.indexOf("if (lockedEdge && !chromeFirst) refreshChromeNow(context)")
+        assertTrue(lockUp in 0 until now)
         assertTrue(show in 0 until now)
         assertTrue(now < dispatch.indexOf("modeListeners"))
         assertTrue(dispatch.contains("if (!lockedEdge) refreshChrome(context)"))

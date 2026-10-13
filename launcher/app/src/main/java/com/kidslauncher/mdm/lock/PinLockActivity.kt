@@ -4,6 +4,7 @@ import android.animation.ObjectAnimator
 import android.app.ActivityManager
 import android.app.Dialog
 import android.app.admin.DevicePolicyManager
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -44,7 +45,8 @@ private const val STATE_ENTERED = "entered"
  * while locked (QA 10 #1): with the kiosk on it joins the kiosk's lock task - rooted by Home, never
  * by the lock if it can help it, and it leaves through Home (design 16, [lockTaskEntry],
  * [lockLeave]) - with the kiosk off it starts lock task itself (our package plus the emergency
- * helpers are pinned for it) and stops it on unlock. Back does nothing; leaving the front any other way brings it back (re-front, never
+ * helpers are pinned for it) and stops it on unlock, and leaves through Home too unless a call is
+ * live (design 32). Back does nothing; leaving the front any other way brings it back (re-front, never
  * giving up, except for our call screen, the system dialer/Telecom and the alarm).
  *
  * It always comes up on its glance page (design 25, [GlancePanel]): the clock, the music tile, the
@@ -156,6 +158,15 @@ class PinLockActivity : AppCompatActivity() {
         }
         // Design 25 §1.2: no screenshot, recording or cast of either stage - before any content.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Design 32 (QA M3): the stand-in WM shows before the lock's first frame at a screen-on - its
+        // app-theme snapshot - is pure black, bars included, like the theme's window and splash.
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setBackgroundColor(Color.BLACK)
+                .setStatusBarColor(Color.BLACK)
+                .setNavigationBarColor(Color.BLACK)
+                .build(),
+        )
         // Bug 25b-B: no open transition - at a screen-on the lock is simply there.
         overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
         binding = ActivityPinLockBinding.inflate(layoutInflater)
@@ -358,6 +369,7 @@ class PinLockActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         glance?.stop()
+        PinLockRuntime.onLockDestroyed()
         PinLockRuntime.removeModeListener(modeListener)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
@@ -636,10 +648,10 @@ class PinLockActivity : AppCompatActivity() {
 
     /**
      * Unlocked or the lock was switched off ([lockLeave]): kiosk off - stop the lock task we
-     * started, then go; kiosk on - always through Home (design 16, QA #5(a)): Home is started
-     * *before* the lock finishes, so it sits above any latent task (the stock launcher's preloaded
-     * Recents, a BlockedAppActivity in kiosk) and is never finished by it. A refused finish means
-     * the lock is the lock-task root after all ([rootLeave]).
+     * started, then go through Home unless a call is live (design 32); kiosk on - always through Home
+     * (design 16, QA #5(a)): Home is started *before* the lock finishes, so it sits above any latent
+     * task (the stock launcher's preloaded Recents, a BlockedAppActivity in kiosk) and is never
+     * finished by it. A refused finish means the lock is the lock-task root after all ([rootLeave]).
      */
     private fun leave() {
         finishingAfterUnlock = true
@@ -647,7 +659,7 @@ class PinLockActivity : AppCompatActivity() {
         // Twice in a row (the unlock, then its mode change): once is enough.
         if (isFinishing) return
         val kioskOn = LockTaskChrome.kioskOn
-        go(lockLeave(kioskOn, startedLockTask, lockTaskRunning()))
+        go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this)))
         if (!isFinishing && kioskOn) {
             Log.w(LOG_TAG, "Finishing the lock was refused - it is the lock-task root; stopping it first")
             go(rootLeave)
@@ -655,24 +667,26 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     /**
-     * The glance row's target opens here (design 25 §1.4): after Home is in front (kiosk on - the
-     * lock leaves through Home, design 16) and before the lock finishes, while its window is still
-     * visible - a PendingIntent's sender may start an activity only then. Only when the runtime
+     * The glance row's target opens here (design 25 §1.4): after Home is in front (the lock leaves
+     * through Home - design 16, and design 32 with the kiosk off) and before the lock finishes,
+     * while its window is still visible - a PendingIntent's sender may start an activity only then.
+     * Only when the runtime
      * really unlocked (a refused unlock, the switch-off, the crash guard and onResume's leave have
      * no target, or the mode isn't UNLOCKED). [GlanceOpener] never throws.
      */
     private fun go(plan: LockLeave) {
         if (plan.stopLockTaskFirst) stopLockTaskQuietly()
         if (plan.homeFirst) HomeFront.bring(this, "the lock left")
-        pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it) }
+        pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }
         pendingOpen = null
         if (!isFinishing) finishAndRemoveTask()
     }
 
     /** Before the unlock's chrome change: kiosk off, that change unpins our package, which would
-     * tear this task down under us; kiosk on, only a lock that is the root stops it. */
+     * tear this task down under us; kiosk on, only a lock that is the root stops it. A live call
+     * changes only Home's start, not the stop. */
     private fun stopOwnLockTask() {
-        if (lockLeave(LockTaskChrome.kioskOn, startedLockTask, lockTaskRunning()).stopLockTaskFirst) stopLockTaskQuietly()
+        if (lockLeave(LockTaskChrome.kioskOn, startedLockTask, lockTaskRunning(), callLive = false).stopLockTaskFirst) stopLockTaskQuietly()
     }
 
     private fun stopLockTaskQuietly() {

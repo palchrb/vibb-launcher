@@ -362,14 +362,17 @@ class BootMarkPlanTest {
         assertEquals(LockMode.LOCKED, step(LockMode.DISABLED, LockEvent.ProcessStart(active = true, interactive = true, homeFirst = true)).mode)
         val dispatch = body(runtime, "dispatch")
         // qa-16e-code #3: while the mark may hold, the chrome goes before show (and its reads).
-        assertTrue(
-            dispatch.contains(
-                "val chromeFirst = lockedEdge && bootMark != BootMarkState.Over\n" +
-                    "        if (chromeFirst) refreshChromeNow(context)\n" +
-                    "        if (result.showLock) show(context, wake = result.wake, ask = lockAsk(event))\n" +
-                    "        if (lockedEdge && !chromeFirst) refreshChromeNow(context)",
-            ),
-        )
+        // Design 32: the starts between the two are a screen-off's lock-up or the plain show.
+        val order = listOf(
+            "val chromeFirst = lockedEdge && bootMark != BootMarkState.Over",
+            "if (chromeFirst) refreshChromeNow(context)",
+            "if (event is LockEvent.ScreenOff) {",
+            "lockUpAtScreenOff(context, event, result)",
+            "} else if (result.showLock) {",
+            "show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)",
+            "if (lockedEdge && !chromeFirst) refreshChromeNow(context)",
+        ).map { dispatch.indexOf(it) }
+        assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
         assertTrue(dispatch.contains("if (!lockedEdge) refreshChrome(context)"))
         // Only show holds; the wait touches no chrome.
         assertEquals(2, Regex("bootMarkHolds\\(").findAll(runtime).count())

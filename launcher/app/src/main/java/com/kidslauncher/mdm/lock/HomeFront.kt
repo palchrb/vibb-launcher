@@ -17,22 +17,32 @@ private const val LOG_TAG = "HomeFront"
  * HOME - our other HOME, the boot cover (16b), is disabled whenever our process runs unlocked,
  * except after `ACTION_SHUTDOWN`, when no Home is started at all ([BootCover.shuttingDown]).
  * `HomeFrontTest` keeps every start on this path.
+ *
+ * Design 32 (QA M2): the lock-up's start, while dark, has no open animation (`animate = false`) - a
+ * transition queued while the display sleeps plays at the next screen-on (bug 25b-B). The intent
+ * stays typed HOME: the flag adds no category or component.
  */
 object HomeFront {
 
-    fun intent(context: Context): Intent =
+    fun intent(context: Context, animate: Boolean = true): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setPackage(context.packageName)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
 
-    /** Starts our Home; `false` if the platform refused. Any thread (device owner + HOME may start
-     * activities from the background). */
-    fun bring(context: Context, why: String): Boolean = if (BootCover.shuttingDown) {
+    /**
+     * Starts our Home; `false` if the platform refused. Any thread (device owner + HOME may start
+     * activities from the background). [animate] false: no open transition - only design 32's
+     * lock-up passes it. Every other start ends the lock-up's dark mark first
+     * ([PinLockRuntime.darkLockUp]): that Home is wanted in front - the lock asking it to root lock
+     * task, an update, a relock - and its locked resume shows the lock again, as before design 32.
+     */
+    fun bring(context: Context, why: String, animate: Boolean = true): Boolean = if (BootCover.shuttingDown) {
         Log.i(LOG_TAG, "Not bringing Home to the front during shutdown: $why")
         false
     } else try {
-        context.startActivity(intent(context))
+        if (animate) PinLockRuntime.endDarkLockUp()
+        context.startActivity(intent(context, animate))
         Log.i(LOG_TAG, "Home brought to the front: $why")
         true
     } catch (e: Exception) {

@@ -4,7 +4,9 @@ Security bug, reported by the user on 2026-10-13. Android 16 Google Play emulato
 as device owner. At screen-on, a Play Store page shows for about 80 ms before handy's PIN lock covers it.
 The user's words: "this MUST be fixed properly".
 
-Code reading only; no product code was changed. AOSP references are to `android16-release` on
+**Status:** step 1 is built (§14), not device-tested; steps 2 and 3 are not built.
+
+The investigation was code reading only; it changed no product code. AOSP references are to `android16-release` on
 android.googlesource.com, read 2026-10-13: `frameworks/base/services/core/java/com/android/server/...`, written below
 as `wm/`, `policy/`, `power/`, plus `core/java/android/view/ViewRootImpl.java` (VRI) and the Shell's
 `libs/WindowManager/Shell/.../transition/Transitions.java`. Line numbers are from that branch on that date.
@@ -933,3 +935,70 @@ It fails only where one of those two conditions doesn't hold yet at the wake.
 | L7 | Home is never a Recents card | §11 step 1: replaced by `dumpsys activity activities` (Home's task top) and the layer trace |
 | L8 | Crash guard with the cover on | Step 2 item 8: `guardTripped` sets DISABLED at once. §11 check |
 | L9 | The SOS heuristic and the dismissal | §11 step 2 check: no SOS mark and no lock pause or stop after a dismissal |
+
+## 14. Step 1 implementation status (2026-10-13, branch `design-32-s1`)
+
+Branch `design-32-s1` on `8b8d418d`, with `main` merged in (no conflicts). Not pushed. Nothing was run on a device or
+the emulator. Step 2 and step 3 are not built: the keyguard stays disabled exactly as before.
+
+- **Pure plan** `lock/LockUpPlan.kt`: `LockUpStart`, `lockUpStarts(showLock, lockOnTop, callLive, interactive)` (rows
+  in the order of §8 1.1: no lock -> NONE, `interactive` -> LOCK, a live call -> LOCK, `lockOnTop` -> NONE, else
+  HOME_THEN_LOCK), `LockTopEvent` and `lockOnTopAfter(current, event, interactive, sameLockUp)`, and
+  `homeDarkResume(darkLockUp, interactive, locked)`.
+- **Runtime** (`PinLockRuntime`):
+  - `dispatch` routes a `ScreenOff` event's starts through `lockUpAtScreenOff` -> `lockUp(start)`; every other event's
+    `showLock` goes to `show`, the `ScreenOn` backstop with `sameLockUp = true`. `callLive` is the `ScreenOff`
+    event's own reads (`ourCall || systemCall || voip != NONE` = ours, Telecom's or VoIP), so no binder call is
+    added before the start except `isInteractive`.
+  - `lockUp(HOME_THEN_LOCK)` sets `darkLockUp`, then `HomeFront.bring(..., animate = false)`, then `show(...,
+    fromLockUp = true)`; a started lock sets `lockOnTop`. The log line is §8 item 8's, after the starts, only while
+    LOCKED.
+  - `show` clears `lockOnTop` itself unless `fromLockUp`; with `sameLockUp` it keeps it (an interactive pause before
+    has cleared it already). The lock's pause and stop apply `lockOnTopAfter` with `isInteractive` (no context yet
+    counts as interactive); `onLockDestroyed` (from `PinLockActivity.onDestroy`) and the UNLOCKED/DISABLED edge
+    clear it.
+  - `darkLockUp` is cleared by an interactive resume of the lock (`onLockResumed`) or Home
+    (`onHomeResumed(interactive)`), and - an addition - by **every other Home start** (`HomeFront.bring` with
+    `animate = true` calls `endDarkLockUp()`): the lock's own `ensureLockTask` START_HOME, an update or a relock
+    while dark then still gets Home's usual locked resume, which shows the lock again. Without it, such a start
+    within the same dark spell would have left Home over the lock until the wake's backstop. Only the lock-up
+    passes `animate = false` (pinned).
+  - `callLiveNow(context)` for the leave.
+- **Home** (`HomeActivity`): `onResume`'s first branch (after `resumedNow`) is `darkUnderLock()` -> `showNight()`,
+  `reconcileKioskMode()`, return. `onStart` returns on the same condition; its work moved to `startWork()`
+  (idempotent per start through `started`), which `onResume` also calls, so a dark start's renders and listeners come
+  at the next interactive start or resume. `onCreate`: `setRecentsScreenshotEnabled(false)` and the black
+  `TaskDescription`. The live bars and the 16e launch splash are unchanged.
+- **The black stand-in**: `PinLockTheme`'s `windowBackground`, `windowSplashScreenBackground`, `statusBarColor` and
+  `navigationBarColor` are `@android:color/black`; `PinLockActivity.onCreate` sets the black `TaskDescription` after
+  `FLAG_SECURE`, before `setContentView`. The lock's layout roots keep `kid_ground` and its painted ground (25f).
+- **The leave**: `lockLeave(kioskOn, startedLockTask, lockTaskRunning, callLive)`, kiosk off `homeFirst = !callLive`
+  (`PinLockActivity.leave` passes `PinLockRuntime.callLiveNow`; `stopOwnLockTask` passes `false`, the stop doesn't
+  depend on it). `LockTaskRoot.kt`'s header and KDoc, the lock's KDoc and `LockTaskRootTest`'s kiosk-off case
+  (renamed) follow. An addition the spec didn't name: the glance opener's send check (design 25, code QA Low 2)
+  treated "kiosk on" as "Home is below the lock"; it now gets the leave's `homeFirst`
+  (`GlanceOpener.open(activity, pending, homeBelow)`), so with the kiosk off a refused send is still caught and an
+  opened row marked. `glanceSendCheck` itself is unchanged.
+- **Debug toggle (H2)**: `src/debug`'s `lock/LockUpDebugReceiver` (exported, DUMP) and `LockUpDebug`
+  (`skipRestart`, memory only, default `true` = the release plan). `adb shell am broadcast -n
+  $P/com.kidslauncher.mdm.lock.LockUpDebugReceiver --ez skipRestart false` makes a lock-up re-start a lock on top as
+  before design 32 (LOCK instead of NONE), `true` skips it again, no extra only reports. `src/release`'s
+  `LockUpDebug.adjust(start, showLock) = start`. Interpretation of §9's "`LockUpDebug` ... banned by name": the
+  release twin carries the object's name (as `LockTaskDebug`, and L5 for step 2), so the banned string is
+  `LockUpDebugReceiver` - in `CheckDebugHook`'s names and `DebugHookAbsentTest`.
+- **Comments**: `PinLockRuntime`'s screen-off comment, `PinLockState`'s `ScreenOff` comment and
+  `SCREEN_OFF_WORK_DELAY_MS`'s KDoc (`RefrontPolicy.kt`, "drawn before a quick screen-on") no longer claim the lock
+  draws before the screen-on. Design 10 §3 points here; launcher `CLAUDE.md` has the "Lock flash (design 32)"
+  bullet, and its 25f ("the starting window stays `kid_ground`") and design 16 ("Kiosk off is unchanged") lines
+  are updated.
+- **Tests**: new `LockUpPlanTest` (§9's pure rows and the source pins: the routing, `lockUp`'s order and
+  `animate = false`, the only Home start in the runtime, `show`'s clear, the pause/stop/destroy/unlock wiring, Home's
+  dark branch and `onStart`, the four theme items and both task descriptions, no overlay/accessibility, no "drawn
+  before" comment). `HomeFrontTest` (NO_ANIMATION, still typed HOME, `endDarkLockUp` before the start, the lock-up is
+  the only unanimated caller), `PinLockManifestTest` (`showWhenLocked`, no turn-screen-on, `FLAG_SECURE` before
+  `setContentView`), `DebugHookAbsentTest` (the receiver, the release pass-through), `LockTaskRootTest`,
+  `LockGlanceGuardTest`, and the dispatch-order pins in `BootMarkPlanTest` and `HomeGateTest`. `PinLockStateTest`'s
+  `ScreenOff` cases are unchanged. `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` (the
+  release build with the throwaway tsnet stub): green, 1090 unit tests (15 in `LockUpPlanTest`), 0 failures;
+  `checkReleaseHasNoDebugHook` and the debug positive control pass.
+- **Not device-tested**: §11's step 1 list.
