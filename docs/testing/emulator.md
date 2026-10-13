@@ -523,11 +523,14 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
 
 **A new entry is news (design 29 §7)**, with the launcher's bridge (§6i for Storytel). Grant `POST_NOTIFICATIONS`
 and watch `adb shell dumpsys notification --noredact | grep -A3 me.vibb.music` and the launcher's Home badge. Except
-in the first check, play any item for 20 s first: the stored position closes the baseline.
+in the first check, play any item for 20 s first: the stored position closes the baseline. **Setting up a real phone:
+tick everything first, then test-play** - the first stored play closes the baseline for good, so every entry ticked
+after a parent's test play counts as "1 ny" (design 29 §8.4, qa-29-code L5).
 - **Fresh install, no flood:** uninstall the debug music app, install it with nothing ticked, then tick at least 6
   entries **one at a time** (podcasts, an NRK serie, an own entry, the Storytel entry), letting a sync run between
-  ticks. Expect no notification, an empty Nytt and no NY. Repeat after `adb shell pm clear me.vibb.music.debug`.
-  Then play something for 20 s and tick one more new show: "1 ny".
+  ticks. Expect no notification, an empty Nytt and no NY. Wait for a podcast's next episode (or push a longer listing
+  through the debug feed) before playing: still nothing (an open baseline only acknowledges). Repeat after
+  `adb shell pm clear me.vibb.music.debug`. Then play something for 20 s and tick one more new show: "1 ny".
 - **A new NRK serie** (a short one, natural order): tick it, wait until the server has listed it, sync the
   launcher. After the music app's sync: exactly one notification, "1 ny i Musikk", Home's badge at 1, Nytt holds one
   row (episode 1) and its tile shows NY. Tap the row: episode 1 plays, the notification and NY go.
@@ -535,16 +538,22 @@ in the first check, play any item for 20 s first: the stored position closes the
 - **A new Storytel series** (§6i, `--books 111:300,222:300,333:300`): take the baseline with a library without entry
   5, then play something. Push the library with entry 5 and its listing: while 111 downloads, no notification and no
   tile; "1 ny i Musikk" with book 111 in Nytt **while 222 is still downloading**. Push a library without entry 5,
-  then with it again: no notification (the same key). With `--locked 111`: once 111 is `no_audio`, the next sync
-  makes 222 the item, and "1 ny" comes once 222 is downloaded.
+  then with it again: no notification (the same key). With `--locked 111`: once 111 is `no_audio`, the download job
+  asks for a sync (15 s settle, `repickWanted`), that sync makes 222 the item, and "1 ny" comes once 222 is
+  downloaded - not at the 6 h backstop.
 - **A new own-files entry:** create it and upload 3 files: "1 ny" (the first file) once copied. Upload 2 more within
   the hour: still "1 ny".
 - **Nothing ticked:** untick everything (the app empties), then tick two of the old entries and one brand-new show:
   "1 ny" only.
-- **Re-enrolment / restore:** note the entry ids in the PWA, back up the server, delete two entries and create other
-  shows (they take new ids), then restore the backup - or point the phone at a fresh server with the same shows
-  (design 22, "Re-enrolling"). Either way no notification, and no old show's back catalogue in Nytt
-  (`adb logcat -s Sync` names the reset ids).
+- **Restore that reuses an id** (`music_entries.id` is `AUTOINCREMENT`, so only a restore hands an id out twice):
+  1. Back up the server.
+  2. Create show C (it takes id N) and let the phone sync: "1 ny"; play it or clear it.
+  3. Stop the server, restore the backup, start it, and create show E at once, before the phone syncs: E takes id N
+     again.
+  4. Sync: "1 ny" for E's newest only (none of C's or E's back catalogue), and `adb logcat -s Sync` shows "Entry ids
+     that now carry another key, reset: [N]".
+- **A fresh server with the same shows** (design 22, "Re-enrolling"): no notification for the shows the phone knew
+  (the same keys under new ids); re-uploaded own-files entries get new keys and give "1 ny" each (§1.4).
 - **An own file's copy under a reused id** (design 29 step 4): replace an own file's copy with another file's bytes,
   keeping its name, and delete its record (`adb shell run-as me.vibb.music.debug sh -c 'cp no_backup/own/<other id>
   no_backup/own/<id> && rm no_backup/own/<id>.sha256'`): a copy without a record is hashed once, as one from before

@@ -606,12 +606,28 @@ class GuardsTest {
         val order = listOf(
             "val reset = dao.newsBeforeTx(lib.keyById)",
             "for (file in store.inboxDir.listFiles().orEmpty())",
+            // after the loop: the snapshot holds this run's listings (qa-29-code M1 A)
+            "val current = newsListed(lib, store)",
+            "val applied = newsApplied(appliedIds, lib.entries, current)",
             "dao.newsAfterTx(applied, current, System.currentTimeMillis())",
             "for ((file, text) in read) if (runCatching { file.readText() }.getOrNull() == text) file.delete()",
             "dao.pruneNews(ids)",
         ).map { sync.indexOf(it) }
         assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
+        assertEquals("built once", 1, Regex("""newsListed\(lib, store\)""").findAll(sync).count())
         assertFalse("no tray write outside the DAO's transactions", sync.contains("replaceNews"))
+        // The DAO's half: a reset drops every per-id row (qa-29-code M1 C, QA H2's flood), and phase B reads the baseline.
+        val db = code("src/main/java/me/vibb/music/data/MusicDb.kt")
+        assertTrue(db.contains("for (id in r.reset) resetEntry(id)"))
+        assertTrue(
+            db.contains(
+                "suspend fun resetEntry(entryId: Long) {\n        deleteItems(entryId)\n        deleteListing(entryId)\n" +
+                    "        deleteSeen(entryId)\n        deleteNewsOf(entryId)\n        deleteItemErrors(entryId)\n    }",
+            ),
+        )
+        assertTrue(db.contains("val open = newsBaselineClosed() != true\n        val r = newsAfter(known, tray, seen, applied, current, now, open)"))
+        // A permanent failure of a tray item asks for the re-pick's sync (qa-29-code L4).
+        assertTrue(sync.contains("if (repickWanted(dao.news().map { NewsItem(it.entryId, it.key, it.seq) }, entryId, itemKey, code)) Sync.nudge(context)"))
         assertTrue(service.contains("if (store.db.deleteNews(entryId, key) > 0) NewNotifier.update(this@PlaybackService, store.snapshot())"))
         assertFalse(service.contains("replaceNews"))
         val fetched = code("src/main/java/me/vibb/music/sync/Downloads.kt").substringAfter("run.fetchOne(w)").trimStart()
@@ -619,5 +635,22 @@ class GuardsTest {
             "each Nytt item's copy updates the notification",
             fetched.startsWith("if (dao.news().any { it.entryId == w.entry.id && it.key == w.item.key }) {\n                    NewNotifier.update(applicationContext, store.snapshot())"),
         )
+    }
+
+    /** Design 29 step 4's glue (qa-29-code L2): the pure rules in OwnFilesTest, wired here. */
+    @Test
+    fun `own-file copies - the record written on arrival, judged at every pull, the report from the rule`() {
+        val inbox = code("src/main/java/me/vibb/music/sync/Inbox.kt")
+        assertTrue("G", inbox.contains("{ size, sha -> size == file.size && sha == file.sha256 }\n            .also { if (it) store.recordOwnSha(file.id, file.sha256) }"))
+        val bridge = code("src/main/java/me/vibb/music/bridge/BridgeSync.kt")
+        val pull = bridge.substringAfter("private fun pullFiles(").substringBefore("private suspend fun pullStorytel(")
+        assertTrue("F", pull.contains("val plan = ownFetchPlan(lib.files, store.ownCopies()) { keptCopy(store, it) }"))
+        assertTrue(pull.contains("for (id in plan.refetch) {"))
+        assertTrue(pull.contains("store.deleteOwnCopy(id)"))
+        assertTrue(pull.contains("for (file in plan.fetch) {"))
+        assertTrue(bridge.contains("keepOwnCopy(file.sha256, store.ownSha(file.id), { Inbox.sha256(store.ownFile(file.id)) }, { store.recordOwnSha(file.id, it) })"))
+        assertTrue("E", bridge.contains("val held = heldOwnFiles(lib?.files.orEmpty(), store.ownCopies()) { store.ownSha(it) }"))
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue("a pruned copy takes its record", sync.contains("store.ownCopies().filter { it !in lib.fileIds }.forEach { store.deleteOwnCopy(it) }"))
     }
 }

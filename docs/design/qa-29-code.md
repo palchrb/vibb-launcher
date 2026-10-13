@@ -262,3 +262,30 @@ to check that the bridge works, then ticks the rest gets "1 ny" for each later t
     no_backup/own/...'` command works from `run-as`'s data directory.
   - The step-4 check's note is right: swapping only the bytes isn't caught, so the record has to be deleted.
   - The exceptions are L6.
+
+## Fixes (implementer, 2026-10-13, on `design-29-impl` after `ac29cf23`)
+
+Every finding fixed in one commit. After it: `assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` green, **614 tests, 0 failures**, lint 0 errors and the same 40 older warnings.
+
+| Finding | Fix | Test that goes red without it |
+|---|---|---|
+| H1 open baseline still adds keys | `newsAfter(..., open)`: `settling = open \|\| <the window>`. `newsAfterTx` reads `newsBaselineClosed()` after phase A, inside its transaction. Spec §1.3 and §2 updated. The optional per-entry window was not taken | `d29 29` (probe T1, plus "after the first play a new key counts again") |
+| M1 A `current` before the loop | `GuardsTest`'s order list now holds `val current = newsListed(lib, store)` and the `applied` line, between the loop and phase B, and `newsListed` is called once | design 29's wiring (mutation A: red) |
+| M1 B own entries dropped | pure `newsApplied(appliedIds, entries, current)`, and Sync's call to it pinned | `d29 31` (B in the rule), the wiring pin (B2 at the call) |
+| M1 C reset without seen/tray | the reset is one DAO `@Transaction resetEntry(id)`, and its five deletes are pinned verbatim | design 29's wiring (mutation C: red) |
+| L1 re-pick guard untested | probe T2 as a test | `d29 30` (mutation D: red) |
+| L2 step 4's glue | pure `heldOwnFiles` and `ownFetchPlan` (`OwnFilesTest`). `GuardsTest` pins the glue: `putOwnFile`'s record, `pullFiles` through the plan, `push` through `heldOwnFiles`, and the prune's `deleteOwnCopy` | E: OwnFilesTest "the report holds..."; E2, F2, G: the new `GuardsTest` "own-file copies"; F: OwnFilesTest "pullFiles fetches..." |
+| L3 unjudged copy not held | `heldOwnFiles` leaves out only `Refetch`; an unjudged copy (`Hash`) is held | OwnFilesTest "the report holds a kept or unjudged copy" |
+| L4 re-pick waits for the backstop | `ItemErrors.record` calls `Sync.nudge` when `repickWanted` (a permanent failure of a tray item) | `d29 32`, plus the `GuardsTest` pin of the call |
+| L5 test play closes the baseline | kept (the user's decision). Spec §8.4 and emulator §6f say to tick everything first, then test-play | - (documented) |
+| L6 docs | §6f's restore check is now QA's sequence that reuses an id, plus a separate fresh-server line. `music/CLAUDE.md` says "one statement or one transaction" and mentions the open baseline and `repickWanted` | - |
+
+Mutation re-run, each on its own, against `NewItemsTest`, `OwnFilesTest` and `GuardsTest`, and reverted afterwards:
+- A: red.
+- B, B2 (B at Sync's call): red.
+- C: red.
+- D: red.
+- E, E2 (E in `push`'s glue): red.
+- F, F2 (`pullFiles` judging every copy as kept): red.
+- G: red.

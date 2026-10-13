@@ -102,7 +102,9 @@ wait for the next sync.
 been stored: every renderer's save goes through `writePlace`, and both rows survive an upgrade. While the baseline is
 open, every key the library names becomes known, and none is pending. Once a play is stored, the baseline closes for
 good. That is a sticky flag in Room, because `clearState` and the bookmark delete could later empty both tables.
-After it closes, each parsed library marks its unknown keys **pending**.
+After it closes, each parsed library marks its unknown keys **pending**. **While it is open, no listing is news at
+all:** a known entry's later keys are acknowledged too, not only a new entry's (qa-29-code H1; `newsAfter(open)`), so
+a phone set up over days or left on the shelf doesn't reach "30 nye" before the first play.
 
 Why it is safe and leaves no hole:
 - **Setup is never news.** The PWA saves one tick at a time and nudges the phone each time, so a phone set up over
@@ -200,6 +202,7 @@ contract snapshots are untouched.
 | New own-files entry, 7 files, then 5 more an hour later | nothing, then 5 | "1 ny" (the first file) once copied, nothing more |
 | New episode in a known podcast | 1 new | 1 new (unchanged) |
 | Fresh install, 20 entries ticked one by one over a day, never played | nothing | nothing (baseline open) |
+| Then a week on the shelf: new episodes, a second upload batch, never played | up to "30 nye" | nothing (baseline open) |
 | Then the kid plays, and the parent ticks a new show | nothing | "1 ny" |
 | Upgrade to this version | nothing | nothing (baseline from the first library) |
 | Nothing ticked, then 3 old entries re-ticked + 1 brand-new show | nothing | "1 ny" (the new show only) |
@@ -448,6 +451,8 @@ first check, play any item for 20 s first: the stored position closes the baseli
    their copy. The brief expected the NRK case to wait for a download.
 3. **Re-ticking an entry the phone has known (the same key) is not news,** unless it was still pending.
 4. **The baseline stays open until a play has been stored.** Everything ticked before the kid first listens is setup.
+   Kept after code QA (qa-29-code L5, the user's decision): a parent's test play during setup closes it too, so the
+   setup notes (`docs/testing/emulator.md` §6f) say to tick everything first and test-play after.
 5. **The 24 h settle hides a genuinely new episode of a new entry in its first day.**
 
 ## Design QA (2026-10-13, `docs/design/qa-29-design.md`; every finding accepted, revised as follows)
@@ -537,6 +542,20 @@ lint 0 errors, its 40 warnings all older). The port (`markNewSeen`, `NewItemsTes
   the record is trusted, and swapping only the bytes leaves it matching the library. The check in
   `docs/testing/emulator.md` §6f also deletes the record, so the copy is hashed (as a pre-design-29 copy is). A real
   restore changes the library's SHA-256, which is what the rule compares.
+
+**Code QA fix round** (`docs/design/qa-29-code.md`, its "Fixes" table): every finding fixed.
+- H1: `newsAfter(..., open)`; `newsAfterTx` reads the flag after phase A, and while it is open every listing is only
+  acknowledged (`d29 29`, QA's probe T1).
+- M1: `newsApplied` is pure (`d29 31`); `GuardsTest` pins `newsListed` after the inbox loop and the `applied` line, and
+  the reset is one DAO `resetEntry` whose five deletes are pinned.
+- L1: `d29 30` (QA's probe T2, the re-pick guard). L4: `ItemErrors.record` nudges a sync when a tray item fails for good
+  (`repickWanted`, `d29 32`).
+- L2/L3: `heldOwnFiles` (every copy but a `Refetch`) and `ownFetchPlan` are pure (`OwnFilesTest`); the glue and
+  `putOwnFile`'s record are pinned in `GuardsTest`.
+- L5: the rule stays; the setup advice is in §8.4 and emulator §6f. L6: §6f's restore check reuses an id for real;
+  `music/CLAUDE.md`'s `pruneNews` wording.
+- QA's mutations A-G each turn a test red now (re-run with variants B2, E2 and F2 in the glue). Full suite green:
+  614 unit tests, lint 0 errors (40 older warnings).
 
 **Owed:** §7's device checks and step 4's (the emulator loop, `docs/testing/emulator.md` §6f; none could run here,
 there is no emulator in this environment), then a `music-v*` release.

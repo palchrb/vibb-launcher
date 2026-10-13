@@ -26,9 +26,12 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.EntryError
 import me.vibb.music.logic.ItemError
 import me.vibb.music.logic.Listed
+import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.addItemError
 import me.vibb.music.logic.downloadWaiting
 import me.vibb.music.logic.listedOf
+import me.vibb.music.logic.newsApplied
+import me.vibb.music.logic.repickWanted
 import me.vibb.music.logic.reportWaiting
 import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
@@ -150,7 +153,7 @@ object Sync {
             // Design 29 phase B: NY and Nytt for this run's listings and every own entry ("Nytt spor"),
             // a new entry's one item and the re-pick, in one transaction.
             val current = newsListed(lib, store)
-            val applied = appliedIds.mapNotNull { current[it] } + lib.entries.filter { it.source == Source.OWN }.mapNotNull { current[it.id] }
+            val applied = newsApplied(appliedIds, lib.entries, current)
             dao.newsAfterTx(applied, current, System.currentTimeMillis())
             for ((file, text) in read) if (runCatching { file.readText() }.getOrNull() == text) file.delete()
             // Entries the library no longer names at all take their listing, NY state and errors
@@ -290,5 +293,7 @@ object ItemErrors {
         val keep = next.map { it.entry to it.item }.toSet()
         log.filter { (it.entry to it.item) !in keep }.forEach { dao.deleteItemError(it.entry, it.item) }
         dao.upsertItemError(ItemErrorRow(entryId, itemKey, version, code, System.currentTimeMillis()))
+        // A new entry's item that can't play: its re-pick runs at a sync, so one is asked for now (design 29 §1.1).
+        if (repickWanted(dao.news().map { NewsItem(it.entryId, it.key, it.seq) }, entryId, itemKey, code)) Sync.nudge(context)
     }
 }

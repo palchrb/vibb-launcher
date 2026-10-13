@@ -241,11 +241,13 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
   room only the session player's item, no SOAP).
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item
-  (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; known keys only grow;
+  (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; until that first
+  play every listing is only acknowledged (the baseline is open: no news at all); known keys only grow;
   an id that changes key is reset like a removed entry; the sync runs under `Sync.runLock`. The rules are the pure
   `newsBefore`/`newsAfter` in `logic/NewItems.kt` (`NewItemsTest`'s `d29` tests); `Sync` only runs them in
   `MusicDao.newsBeforeTx` (before the inbox loop) and `newsAfterTx` (after it, the tray read inside the
-  transaction), and every other tray write is one statement (`deleteNews`, `clearNews`, `pruneNews`).
+  transaction), and every other tray write is one statement or one transaction (`deleteNews`, `clearNews`,
+  `pruneNews`). A `no_audio` on a tray item asks for a sync (`repickWanted`), which re-picks a new entry's item.
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
   widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.

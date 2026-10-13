@@ -231,14 +231,18 @@ interface MusicDao {
         val changed = r.known - known.toSet()
         if (changed.isNotEmpty()) upsertKnownEntries(changed.map { it.row() })
         if (r.closed != closed) upsertNewsBaseline(NewsBaselineRow(closed = r.closed))
-        for (id in r.reset) {
-            deleteItems(id)
-            deleteListing(id)
-            deleteSeen(id)
-            deleteNewsOf(id)
-            deleteItemErrors(id)
-        }
+        for (id in r.reset) resetEntry(id)
         return r.reset
+    }
+
+    /** An id that now carries another key loses its per-id state as if its entry were removed (§1.4). */
+    @Transaction
+    suspend fun resetEntry(entryId: Long) {
+        deleteItems(entryId)
+        deleteListing(entryId)
+        deleteSeen(entryId)
+        deleteNewsOf(entryId)
+        deleteItemErrors(entryId)
     }
 
     /**
@@ -251,7 +255,9 @@ interface MusicDao {
         val known = knownEntries().map { it.known() }
         val tray = news().map { NewsItem(it.entryId, it.key, it.seq) }
         val seen = seenOf(applied.map { it.entry.id }.distinct()).groupBy({ it.entryId }, { it.key }).mapValues { it.value.toSet() }
-        val r = newsAfter(known, tray, seen, applied, current, now)
+        // Still open after phase A (nothing played yet): every listing is only acknowledged (qa-29-code H1).
+        val open = newsBaselineClosed() != true
+        val r = newsAfter(known, tray, seen, applied, current, now, open)
         val changed = r.known - known.toSet()
         if (changed.isNotEmpty()) upsertKnownEntries(changed.map { it.row() })
         if (r.tray != tray) replaceNews(r.tray.map { NewsRow(it.entryId, it.key, it.seq) })

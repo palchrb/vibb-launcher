@@ -134,7 +134,7 @@ class NewItemsTest {
         val applied = listings.filter { it.entry in library }
         val current = (state.listings - before.reset + applied.associateBy { it.entry.id }).filterKeys { it in named }
         val ids = applied.map { it.entry.id }.toSet()
-        val after = newsAfter(before.known, tray, seen.filterKeys { it in ids }, applied, current, now)
+        val after = newsAfter(before.known, tray, seen.filterKeys { it in ids }, applied, current, now, open = !before.closed)
         val seenAfter = seen + after.seenAdded.mapValues { (id, add) -> seen[id].orEmpty() + add }
         return Phone(after.known, before.closed, seenAfter.filterKeys { it in named }, pruneTray(after.tray, named.keys), current)
     }
@@ -294,13 +294,13 @@ class NewItemsTest {
         val d = entry(4, key = "d")
         assertEquals(EntryNews(emptyList(), null, null), entryNews(listed(d, emptyList()), null, pending = true, settling = false))
         val known = listOf(KnownEntry("d", 4, true))
-        val empty = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, emptyList())), emptyMap(), 0)
+        val empty = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, emptyList())), emptyMap(), 0, open = false)
         assertEquals(After(known, emptyList(), emptyMap()), empty)
-        val withdrawn = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, listOf("ep1", "ep2"), eligible = emptySet())), emptyMap(), 0)
+        val withdrawn = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, listOf("ep1", "ep2"), eligible = emptySet())), emptyMap(), 0, open = false)
         assertTrue(withdrawn.tray.isEmpty())
         assertEquals("the mark is kept", known, withdrawn.known)
         assertEquals("the listing is acknowledged", mapOf(4L to setOf("ep1", "ep2")), withdrawn.seenAdded)
-        val next = newsAfter(withdrawn.known, emptyList(), withdrawn.seenAdded, listOf(listed(d, listOf("ep1", "ep2", "ep3"), eligible = setOf("ep3"))), emptyMap(), 7)
+        val next = newsAfter(withdrawn.known, emptyList(), withdrawn.seenAdded, listOf(listed(d, listOf("ep1", "ep2", "ep3"), eligible = setOf("ep3"))), emptyMap(), 7, open = false)
         assertEquals(listOf(NewsItem(4, "ep3", 1)), next.tray)
         assertEquals(listOf(KnownEntry("d", 4, false, "ep3", 7)), next.known)
     }
@@ -315,7 +315,7 @@ class NewItemsTest {
     @Test
     fun `d29 16 the 24 h window - fresh keys at NEW_ENTRY_SETTLE_MS - 1 are acknowledged, at NEW_ENTRY_SETTLE_MS they join, and a clock before newAt counts as today`() {
         val known = listOf(KnownEntry("a", 1, false, "a1", newAt = 1000))
-        fun run(now: Long) = newsAfter(known, emptyList(), mapOf(1L to setOf("a1")), listOf(listed(a, listOf("a1", "a2"))), emptyMap(), now)
+        fun run(now: Long) = newsAfter(known, emptyList(), mapOf(1L to setOf("a1")), listOf(listed(a, listOf("a1", "a2"))), emptyMap(), now, open = false)
         assertTrue(run(1000 + day - 1).tray.isEmpty())
         assertEquals("acknowledged", mapOf(1L to setOf("a2")), run(1000 + day - 1).seenAdded)
         assertEquals(listOf("a2"), run(1000 + day).tray.map { it.key })
@@ -326,14 +326,14 @@ class NewItemsTest {
     fun `d29 17 an item that turns no_audio is replaced in its slot by the next candidate, or leaves when none is left`() {
         val series = entry(5, Source.STORYTEL, key = "s", target = "storytel:series:26175")
         val books = listOf("111", "222", "333")
-        val first = newsAfter(listOf(KnownEntry("s", 5, true)), listOf(NewsItem(1, "ep9", 4)), emptyMap(), listOf(listed(series, books)), emptyMap(), 0)
+        val first = newsAfter(listOf(KnownEntry("s", 5, true)), listOf(NewsItem(1, "ep9", 4)), emptyMap(), listOf(listed(series, books)), emptyMap(), 0, open = false)
         assertEquals(listOf(NewsItem(5, "111", 5), NewsItem(1, "ep9", 4)), first.tray)
-        val locked = newsAfter(first.known, first.tray, emptyMap(), emptyList(), mapOf(5L to listed(series, books, unplayable = setOf("111"))), 10)
+        val locked = newsAfter(first.known, first.tray, emptyMap(), emptyList(), mapOf(5L to listed(series, books, unplayable = setOf("111"))), 10, open = false)
         assertEquals("the same slot", listOf(NewsItem(5, "222", 5), NewsItem(1, "ep9", 4)), locked.tray)
         assertEquals(KnownEntry("s", 5, false, "222", 0), locked.known.single())
-        val none = newsAfter(locked.known, locked.tray, emptyMap(), emptyList(), mapOf(5L to listed(series, books, unplayable = books.toSet())), 20)
+        val none = newsAfter(locked.known, locked.tray, emptyMap(), emptyList(), mapOf(5L to listed(series, books, unplayable = books.toSet())), 20, open = false)
         assertEquals(listOf(NewsItem(1, "ep9", 4)), none.tray)
-        assertEquals("nothing without a parsed listing", locked.tray, newsAfter(locked.known, locked.tray, emptyMap(), emptyList(), emptyMap(), 30).tray)
+        assertEquals("nothing without a parsed listing", locked.tray, newsAfter(locked.known, locked.tray, emptyMap(), emptyList(), emptyMap(), 30, open = false).tray)
     }
 
     @Test
@@ -439,12 +439,12 @@ class NewItemsTest {
     fun `d29 26 two entries applied in one run never take one mark twice`() {
         val d = entry(4, key = "d")
         val known = listOf(KnownEntry("d", 4, true))
-        val twice = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, listOf("x1")), listed(d, listOf("x1", "x2"))), emptyMap(), 0)
+        val twice = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d, listOf("x1")), listed(d, listOf("x1", "x2"))), emptyMap(), 0, open = false)
         assertEquals("the second is an ordinary listing, inside the window", listOf("x1"), twice.tray.map { it.key })
         assertEquals(mapOf(4L to setOf("x1", "x2")), twice.seenAdded)
         assertEquals("x1", twice.known.single().item)
         // A row that holds another id is not this entry's mark (keys are unique on the server: a defence).
-        val other = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d.copy(id = 9), listOf("y1")), listed(d, listOf("x1"))), emptyMap(), 0)
+        val other = newsAfter(known, emptyList(), emptyMap(), listOf(listed(d.copy(id = 9), listOf("y1")), listed(d, listOf("x1"))), emptyMap(), 0, open = false)
         assertEquals(listOf(NewsItem(4, "x1", 1)), other.tray)
     }
 
@@ -469,5 +469,52 @@ class NewItemsTest {
         val db = moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
         assertTrue(db.contains("AutoMigration(from = 2, to = 3),"))
         assertTrue(db.contains("version = 3,"))
+    }
+
+    /** qa-29-code H1 (its probe T1): a phone set up over days, or on the shelf, never fills the tray before a play. */
+    @Test
+    fun `d29 29 while the baseline is open a known entry's later keys are acknowledged, not added`() {
+        val own = entry(3, Source.OWN, key = "own-1")
+        var p = sync(Phone(), listOf(a, own), played = false, listOf(listed(a, keys("a", 40)), listed(own, keys("f", 7))))
+        p = sync(p, listOf(a, own), played = false, listOf(listed(a, keys("a", 100)), listed(own, keys("f", 12))), now = day)
+        assertFalse(p.closed)
+        assertTrue("no flood before the first play", p.tray.isEmpty())
+        assertEquals(keys("a", 100).toSet(), p.seen[1])
+        // After the first play a new key counts again (the closing sync's own listings already count).
+        p = sync(p, listOf(a, own), played = true, listOf(listed(a, keys("a", 101)), listed(own, keys("f", 12))), now = 2 * day)
+        assertEquals(listOf(NewsItem(1, "a101", 1)), p.tray)
+    }
+
+    /** qa-29-code L1 (its probe T2): only an item that can no longer play is re-picked. */
+    @Test
+    fun `d29 30 a new podcast's item stays put when a newer episode arrives`() {
+        val d = entry(4, key = "d")
+        var p = sync(used(), listOf(a, b, d), played = true, listOf(listed(d, keys("d", 3))), now = 0)
+        assertEquals(listOf(NewsItem(4, "d3", 1)), p.tray)
+        p = sync(p, listOf(a, b, d), played = true, listOf(listed(d, keys("d", 4))), now = hour)
+        assertEquals("d4 is inside the window, d3 keeps its slot", listOf(NewsItem(4, "d3", 1)), p.tray)
+        p = sync(p, listOf(a, b, d), played = true, now = 2 * hour)
+        assertEquals(listOf(NewsItem(4, "d3", 1)), p.tray)
+        assertEquals("d3", p.known.single { it.key == "d" }.item)
+    }
+
+    /** qa-29-code M1 (B): phase B sees every own entry at every sync, after this run's listings. */
+    @Test
+    fun `d29 31 phase B's entries are this run's listings, then every own entry`() {
+        val own = entry(3, Source.OWN, key = "own-1")
+        val current = mapOf(1L to listed(a, keys("a", 2)), 2L to listed(b, keys("b", 2)), 3L to listed(own, keys("f", 2)))
+        assertEquals(listOf(2L, 3L), newsApplied(listOf(2L), listOf(a, b, own), current).map { it.entry.id })
+        assertEquals("an id without a parsed listing is skipped", listOf(3L), newsApplied(listOf(9L), listOf(a, b, own), current).map { it.entry.id })
+        assertTrue(newsApplied(emptyList(), listOf(a, own), emptyMap()).isEmpty())
+    }
+
+    /** qa-29-code L4: a tray item that fails for good asks for the sync that re-picks it. */
+    @Test
+    fun `d29 32 a permanent failure of a tray item asks for a sync, any other failure or item doesn't`() {
+        val tray = listOf(NewsItem(5, "111", 1))
+        assertTrue(repickWanted(tray, 5, "111", NO_AUDIO))
+        assertFalse(repickWanted(tray, 5, "111", "http_503"))
+        assertFalse(repickWanted(tray, 5, "222", NO_AUDIO))
+        assertFalse(repickWanted(tray, 6, "111", NO_AUDIO))
     }
 }

@@ -96,6 +96,20 @@ fun listedOf(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, missing:
 }
 
 /**
+ * Phase B's [Listed]s ([newsAfter]'s `applied`): this run's applied listings in their order, then every
+ * own entry, whose files are listed at every sync ("Nytt spor", a new own entry's item).
+ */
+fun newsApplied(appliedIds: List<Long>, entries: List<Entry>, current: Map<Long, Listed>): List<Listed> =
+    appliedIds.mapNotNull { current[it] } + entries.filter { it.source == Source.OWN }.mapNotNull { current[it.id] }
+
+/**
+ * An item in the tray just failed for good (`no_audio`): a new entry's item may need its re-pick, so a
+ * sync should run now rather than at the next nudge or the 6 h backstop (qa-29-code L4).
+ */
+fun repickWanted(tray: List<NewsItem>, entryId: Long, key: String, code: String): Boolean =
+    storytelPermanentFailure(code) && tray.any { it.entryId == entryId && it.key == key }
+
+/**
  * A new entry's item (§1.1): the first candidate (eligible, not unplayable) in reading order for
  * Storytel - the book the keep set holds and the plan fetches first, whatever `order` says - and in
  * play order otherwise (the library's effective order); null = none.
@@ -156,12 +170,14 @@ data class After(val known: List<KnownEntry>, val tray: List<NewsItem>, val seen
  * listing was applied this run, plus every own entry. [current]: every library entry with a parsed
  * listing (for the re-pick). [seen]: the seen sets of [applied]. An entry's mark and window are its
  * key's row, when that row holds the entry's id; a used mark leaves the run's pending set at once.
+ * [open]: the baseline is still open after phase A (nothing played yet): every listing is only
+ * acknowledged, so a known entry's later keys are setup too (qa-29-code H1).
  * The re-pick (§1.1): a given item still in the tray that can no longer play is replaced in its slot
  * (its `seq`) by the next candidate, or leaves the tray when there is none.
  */
 fun newsAfter(
     known: List<KnownEntry>, tray: List<NewsItem>, seen: Map<Long, Set<String>>,
-    applied: List<Listed>, current: Map<Long, Listed>, now: Long,
+    applied: List<Listed>, current: Map<Long, Listed>, now: Long, open: Boolean,
 ): After {
     val rows = known.associateBy { it.key }.toMutableMap()
     var nextTray = tray
@@ -172,7 +188,7 @@ fun newsAfter(
         val id = l.entry.id
         val row = rows[l.entry.key]?.takeIf { it.entryId == id }
         val pending = row != null && row.pending && l.entry.key !in used
-        val settling = row?.newAt?.let { now - it in 0L until NEW_ENTRY_SETTLE_MS } == true
+        val settling = open || row?.newAt?.let { now - it in 0L until NEW_ENTRY_SETTLE_MS } == true
         val before = seenNow[id]
         val r = entryNews(l, before, pending, settling)
         r.seen?.let { after ->
