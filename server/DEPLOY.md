@@ -600,6 +600,12 @@ Release note for the parent app's rename and new tab bar:
 - The manifest keeps its URL and gets `"id": "/"` (the id it already had implicitly), so an installed app is not
   reinstalled. The two-factor issuer in authenticator apps stays "Kids Device MDM" (it only labels new entries).
 
+## The Locate map (design 33)
+
+The parent's browser loads the map's tiles directly from OpenStreetMap with an origin-only `Referer` (OSM sees
+the PWA's address, e.g. its tailnet host name, never a path), so the parent's browser needs to reach
+`tile.openstreetmap.org`; the server itself never contacts OSM.
+
 ## Useful commands on the Pi
 
 - Check it's running: `systemctl status kid-phone-server`

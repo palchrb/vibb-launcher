@@ -10,7 +10,8 @@ package com.kidslauncher.mdm.lock
  * `lockTaskMode="always"`) at the unlock. So the lock asks Home to root lock task (Home's resume
  * starts it and shows the lock again) and only starts it itself as a fallback; and it always
  * leaves through Home. With the kiosk off the lock-task is the lock's own (step 10): it starts and
- * stops it itself, and the kid returns to whatever was open.
+ * stops it itself; since design 32 the kid lands on Home there too (decision 2: Home lies under the
+ * lock as defence in depth), unless a call is live - Home must never cover a call (QA L2).
  */
 
 /** How often the lock may ask Home to root lock task; in between it waits for the fallback. */
@@ -66,13 +67,15 @@ data class LockLeave(
  *   task, and Home, started right after, roots it again). A root the lock doesn't know about (an
  *   earlier instance before a process restart) shows as a blocked finish; the caller retries with
  *   [rootLeave].
- * - Kiosk off: as in step 10 - any running lock task is the lock's own; no Home.
+ * - Kiosk off: as in step 10, any running lock task is the lock's own and is stopped first. Then
+ *   through Home (design 32 decision 2) unless [callLive] - our call, Telecom's or a VoIP call: the
+ *   call's screen stays in front, and Element hangs up when its PiP goes (QA L2).
  */
-fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boolean): LockLeave =
+fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boolean, callLive: Boolean): LockLeave =
     if (kioskOn) {
         LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = true)
     } else {
-        LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = false)
+        LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = !callLive)
     }
 
 /** The finish was refused (`isFinishing` still false) with the kiosk on: the lock is the root. */

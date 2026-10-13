@@ -118,7 +118,13 @@ merge (26b "Release"): the server (a version bump past 0.24.0 if that is tagged 
 together. **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
 stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
 (2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a
-`music-v*` release. Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
+`music-v*` release. **Design 30** (two mobile-data switches, streaming and downloads; a stream saved to the cache as
+it plays; played extras kept within a per-phone "Music storage limit" and a free floor) is built in four steps,
+each on its own branch (`design-30-s1` server, `design-30-s2` launcher, `design-30-s3a` the music app's switches and
+the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 2026-10-13); owed: its code QA of
+3b, the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
+release order of its step 1 status (no `server-v*` with step 1 before the `launcher-v*` and `music-v*` that read
+the two switches). Phase 3 (Spotify) follows design 26; its first step, the engine spike, is on branch `spotify-spike`
 (`docs/testing/spotify-spike.md` there).
 
 ## Repos

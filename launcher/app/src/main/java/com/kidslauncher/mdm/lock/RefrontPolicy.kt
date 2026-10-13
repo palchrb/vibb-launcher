@@ -205,8 +205,8 @@ fun sosGestureLikely(lastScreenOnAtMs: Long?, leftFrontAtMs: Long, sosAppPresent
 /**
  * Bug 25b-B: at a screen-off the lock is started first; the rest of the screen-off's work (the
  * update fence and self-update wait, the cached policy's re-check, the status-bar heal) runs this
- * much later, so the lock's creation and first frame - which wait for the main thread - come first
- * and the lock is drawn before a quick screen-on.
+ * much later, so the lock's creation - which waits for the main thread - comes first and nothing of
+ * ours delays the lock at a quick screen-on (it draws only after the screen-on, design 32).
  */
 const val SCREEN_OFF_WORK_DELAY_MS = 400L
 

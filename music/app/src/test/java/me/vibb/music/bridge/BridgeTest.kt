@@ -35,14 +35,24 @@ class BridgeTest {
 
     @Test
     fun `the managed config the launcher writes`() {
+        // Design 30 §1.3: mobile_data = both for an older app, then the two switches and the limit.
         val config = bridgeConfig(
             mapOf(
                 "v" to 1, "managed" to true, "launcher_package" to "me.vibb.launcher", "language" to "nb",
-                "mobile_data" to true, "library_version" to "0123456789abcdef", "storytel_generation" to 3,
-                "volume_cap_pct" to 70,
+                "mobile_data" to false, "library_version" to "0123456789abcdef", "storytel_generation" to 3,
+                "volume_cap_pct" to 70, "stream_mobile_data" to true, "download_mobile_data" to false, "storage_limit_gb" to 5,
             ),
         )
-        assertEquals(BridgeConfig(true, "me.vibb.launcher", "nb", true, "0123456789abcdef", 3, volumeCapPct = 70), config)
+        assertEquals(
+            BridgeConfig(
+                true, "me.vibb.launcher", "nb", streamMobileData = true, downloadMobileData = false, libraryVersion = "0123456789abcdef",
+                storytelGeneration = 3, volumeCapPct = 70, storageLimitGb = 5,
+            ),
+            config,
+        )
+        val both = bridgeConfig(mapOf("v" to 1, "managed" to true, "mobile_data" to true, "stream_mobile_data" to false, "download_mobile_data" to true))
+        assertFalse("a switch of its own wins over mobile_data", both.streamMobileData)
+        assertTrue(both.downloadMobileData)
         assertEquals("no config: unmanaged", BridgeConfig.UNMANAGED, bridgeConfig(emptyMap()))
         assertEquals(BridgeConfig.UNMANAGED, bridgeConfig(mapOf("v" to 2, "managed" to true)))
         assertNull("not a launcher", bridgeConfig(mapOf("v" to 1, "managed" to true, "launcher_package" to "com.evil")).launcherPackage)
@@ -62,6 +72,40 @@ class BridgeTest {
     }
 
     @Test
+    fun `an older launcher's mobile_data sets both switches and the limit is 2 GB`() {
+        for (on in listOf(true, false)) {
+            val old = bridgeConfig(mapOf("v" to 1, "managed" to true, "mobile_data" to on))
+            assertEquals(on, old.streamMobileData)
+            assertEquals(on, old.downloadMobileData)
+            assertEquals(DEFAULT_STORAGE_LIMIT_GB, old.storageLimitGb)
+        }
+        assertEquals(2, DEFAULT_STORAGE_LIMIT_GB)
+        // Only one switch written: the other falls back on its own.
+        val half = bridgeConfig(mapOf("v" to 1, "managed" to true, "mobile_data" to true, "download_mobile_data" to false))
+        assertTrue(half.streamMobileData)
+        assertFalse(half.downloadMobileData)
+        // Present but not a Boolean: off, as every restriction (never the fallback).
+        val junk = bridgeConfig(mapOf("v" to 1, "managed" to true, "mobile_data" to true, "stream_mobile_data" to "true", "download_mobile_data" to 1))
+        assertFalse(junk.streamMobileData || junk.downloadMobileData)
+        // Neither key: off.
+        val none = bridgeConfig(mapOf("v" to 1, "managed" to true))
+        assertFalse(none.streamMobileData || none.downloadMobileData)
+        assertFalse("unmanaged", BridgeConfig.UNMANAGED.streamMobileData || BridgeConfig.UNMANAGED.downloadMobileData)
+    }
+
+    @Test
+    fun `the storage limit - 0 is none, junk is 2 GB`() {
+        fun limit(value: Any?) = bridgeConfig(mapOf("v" to 1, "managed" to true, "storage_limit_gb" to value)).storageLimitGb
+        assertEquals(1, limit(1))
+        assertEquals(10, limit(10))
+        assertEquals(MAX_STORAGE_LIMIT_GB, limit(MAX_STORAGE_LIMIT_GB))
+        assertNull("0 = no limit", limit(0))
+        for (junk in listOf(-1, MAX_STORAGE_LIMIT_GB + 1, "5", 5L, 2.5, true, null)) assertEquals("$junk", 2, limit(junk))
+        assertEquals("absent (an older launcher)", 2, bridgeConfig(mapOf("v" to 1, "managed" to true)).storageLimitGb)
+        assertEquals(2, storageLimit(emptyMap()))
+    }
+
+    @Test
     fun `only a launcher signed like this app is bound - another signer is refused`() {
         assertTrue(launcherAllowed("me.vibb.launcher") { true })
         assertTrue(launcherAllowed("me.vibb.launcher.debug") { true })
@@ -72,8 +116,8 @@ class BridgeTest {
 
     @Test
     fun `nothing ticked empties the library, an unmanaged phone never does`() {
-        assertTrue(nothingTicked(BridgeConfig(true, "me.vibb.launcher", "", false, "", 0)))
-        assertFalse(nothingTicked(BridgeConfig(true, "me.vibb.launcher", "", false, "0123456789abcdef", 0)))
+        assertTrue(nothingTicked(BridgeConfig(true, "me.vibb.launcher", "", false, false, "", 0)))
+        assertFalse(nothingTicked(BridgeConfig(true, "me.vibb.launcher", "", false, false, "0123456789abcdef", 0)))
         assertFalse(nothingTicked(BridgeConfig.UNMANAGED.copy(libraryVersion = "")))
         assertTrue(LibraryParser.parse(EMPTY_LIBRARY)!!.entries.isEmpty())
     }
@@ -99,12 +143,13 @@ class BridgeTest {
         val manifest = moduleFile("src/main/AndroidManifest.xml").readText()
         for (pkg in LAUNCHER_PACKAGES) assertTrue(manifest.contains(pkg + (contract["permission_suffix"] as JsonPrimitive).content))
         assertTrue(manifest.contains("android:name=\"" + (contract["action_bridge_changed"] as JsonPrimitive).content))
-        // The managed config: these keys with these types are what bridgeConfig reads.
+        // The managed config: these keys with these types are what bridgeConfig reads (design 30's three included).
         val types = (contract["restrictions"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
         val keys = listOf(
             RestrictionKeys.V, RestrictionKeys.MANAGED, RestrictionKeys.LAUNCHER_PACKAGE, RestrictionKeys.LANGUAGE,
             RestrictionKeys.MOBILE_DATA, RestrictionKeys.LIBRARY_VERSION, RestrictionKeys.STORYTEL_GENERATION,
-            RestrictionKeys.VOLUME_CAP_PCT,
+            RestrictionKeys.VOLUME_CAP_PCT, RestrictionKeys.STREAM_MOBILE_DATA, RestrictionKeys.DOWNLOAD_MOBILE_DATA,
+            RestrictionKeys.STORAGE_LIMIT_GB,
         )
         assertEquals(types.keys, keys.toSet())
         val sample: Map<String, Any> = types.mapValues { (key, type) ->
@@ -115,8 +160,9 @@ class BridgeTest {
             }
         }
         val read = bridgeConfig(sample)
-        assertTrue(read.managed && read.mobileData && read.launcherPackage == "me.vibb.launcher" && read.storytelGeneration == 7L && read.language == "nb")
+        assertTrue(read.managed && read.streamMobileData && read.downloadMobileData && read.launcherPackage == "me.vibb.launcher" && read.storytelGeneration == 7L && read.language == "nb")
         assertEquals(7, read.volumeCapPct)
+        assertEquals(7, read.storageLimitGb)
         assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
         assertEquals(
             strings("now_playing"),
@@ -141,7 +187,7 @@ class BridgeTest {
     @Test
     fun `the report's keys are the shared music_state fixture's, less the launcher's own`() {
         val fixture = me.vibb.music.model.JSON.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
-        val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, emptyList(), emptyList(), emptyList(), "ok")
+        val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, 0, 0, emptyList(), emptyList(), emptyList(), "ok")
         assertEquals(fixture.keys - setOf("package", "bridge"), report.keys)
     }
 

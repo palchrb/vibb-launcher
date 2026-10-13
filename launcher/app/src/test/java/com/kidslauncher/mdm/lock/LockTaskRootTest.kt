@@ -3,7 +3,8 @@ package com.kidslauncher.mdm.lock
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Design 16 (QA #2/#5(a)): with the kiosk on Home roots lock task, and the lock leaves through Home. */
+/** Design 16 (QA #2/#5(a)): with the kiosk on Home roots lock task, and the lock leaves through Home -
+ * since design 32 with the kiosk off too, unless a call is live (QA L2). */
 class LockTaskRootTest {
 
     @Test
@@ -44,16 +45,22 @@ class LockTaskRootTest {
 
     @Test
     fun `kiosk on - the lock always leaves through Home, stopping lock task only as the root`() {
-        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true))
-        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true))
-        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = false))
+        for (call in listOf(false, true)) {
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = true, callLive = call))
+            assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = true, lockTaskRunning = true, callLive = call))
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = true, startedLockTask = false, lockTaskRunning = false, callLive = call))
+        }
         assertEquals("a refused finish: the root after a process restart", LockLeave(stopLockTaskFirst = true, homeFirst = true), rootLeave)
     }
 
     @Test
-    fun `kiosk off - any running lock task is the lock's own, and the kid returns to his app`() {
-        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = true))
-        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = true, lockTaskRunning = true))
-        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = false))
+    fun `kiosk off - any running lock task is the lock's own, and the kid lands on Home unless a call is live`() {
+        // Design 32 decision 2: Home under the lock is the defence in depth, so unlocking lands there.
+        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = true, callLive = false))
+        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(kioskOn = false, startedLockTask = true, lockTaskRunning = true, callLive = false))
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = true), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = false, callLive = false))
+        // QA L2: never Home over a live call (ours, Telecom's, VoIP - Element hangs up when its PiP goes).
+        assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = true, lockTaskRunning = true, callLive = true))
+        assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = false, callLive = true))
     }
 }

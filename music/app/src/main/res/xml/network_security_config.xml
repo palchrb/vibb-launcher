@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The music app's network security config (qa-30-s3b-code H2). Cleartext http is allowed for every host:
+  - Sonos control is UPnP SOAP over http to a speaker's LAN address (http://<ip>:1400, design 26a), an IP
+    literal on whatever subnet the home has - a network security config can only name hosts, not ranges;
+  - podcast enclosures are still often http://, and a `lan` RSS feed on the LAN or tailnet usually is;
+  - the emulator's fakes (fake-sonos.py, fake-storytel.py, fake-audio.py) are on http://10.0.2.2.
+  Where audio may come from is the app's own rule, not this file's: a public entry's client refuses every
+  private address in its DNS and on the connected address (MediaCache, 21b §2.7), Sonos URLs are built from IP
+  literals only, and the launcher's bridge is the only way to the server. Trust: the system's CAs only, never
+  a user-installed one. SourceScanTest pins this file and the manifest's reference to it.
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- On purpose, for the reasons above: lint's InsecureBaseConfiguration warning is that choice. -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

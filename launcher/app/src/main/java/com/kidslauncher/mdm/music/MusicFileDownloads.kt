@@ -8,7 +8,6 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.AppDownloads
 import com.kidslauncher.mdm.server.DownloadGate
 import com.kidslauncher.mdm.server.ResumeAction
-import com.kidslauncher.mdm.server.downloadGate
 import com.kidslauncher.mdm.server.parseContentRange
 import com.kidslauncher.mdm.server.resumeAction
 import kotlinx.coroutines.CancellationException
@@ -192,7 +191,7 @@ object MusicFileDownloads {
     private fun gate(app: Context, file: LibraryFile): DownloadGate {
         val partial = MusicStore.partialFile(app, file.id)
         val have = if (partial.isFile) partial.length() else 0L
-        return downloadGate(AppDownloads.currentCaps(app), !MusicSync.mobileData(), null, System.currentTimeMillis(), have, file.size, allocatable(app))
+        return ownFileGate(AppDownloads.currentCaps(app), MusicSync.cachedMusicPolicy(), System.currentTimeMillis(), have, file.size, allocatable(app))
     }
 
     private fun runLoop(app: Context) {

@@ -1,6 +1,7 @@
 package me.vibb.music.sync
 
 import android.content.Context
+import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
@@ -21,9 +22,10 @@ import me.vibb.music.playback.PlayerHub
  * window, then per NRK/RSS entry the art of its keep set (the bookmarked item and the next first,
  * then newest first, as the downloads go; a Storytel series' kept books in its download order, the
  * bookmarked book first, then reading order - `downloadPlan`'s rule, design 26b §3.3), then the Nytt
- * tray. Own entries' art is in the library's covers. Pure; EpisodeArtTest.
+ * tray. Own entries' art is in the library's covers. The played extras' pictures are kept with the keep
+ * sets' (design 30 §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
  */
-fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<String>, recent: List<String>): WantedArt {
+fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<String>, recent: List<String>, extras: List<DownloadRow> = emptyList()): WantedArt {
     val lib = snap.library
     val kept = mutableListOf<String?>()
     for (entry in lib?.entries.orEmpty()) {
@@ -42,6 +44,7 @@ fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<S
         // Every kept item, a withdrawn one with its copy too: no url filter here.
         kept += wantedDownloads(keep, keys.map { KeepItem(it, true) }, emptySet(), bookmark).map { byKey[it]?.artHash }
     }
+    kept += extras.map { snap.item(it.entryId, it.itemKey)?.artHash }
     val news = snap.news.map { snap.item(it.entryId, it.key)?.artHash }
     return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty())
 }
@@ -64,6 +67,7 @@ object ArtWants {
         val store = Store.get(context)
         val snap = store.snapshot()
         val (queue, index) = nowQueue(snap, PlayerHub.state.value, store.db.nowPlaying())
-        return artWant(snap, queue, index, store.coverHashes(), store.recentArt())
+        val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras
+        return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras)
     }
 }

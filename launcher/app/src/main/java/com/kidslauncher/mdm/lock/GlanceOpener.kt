@@ -69,8 +69,9 @@ object GlanceOpener {
     /** The last send, watched until its check (code QA Low 2). */
     private var watch: SendWatch? = null
 
-    /** From [PinLockActivity]'s leave step only (the mode is UNLOCKED there). */
-    fun open(activity: Activity, pending: PendingOpen) = guarded { run(activity, pending, GlanceOpenFrom.LOCK) }
+    /** From [PinLockActivity]'s leave step only (the mode is UNLOCKED there); [homeBelow]: the lock
+     * left through Home (kiosk on, or design 32 with no call live). */
+    fun open(activity: Activity, pending: PendingOpen, homeBelow: Boolean) = guarded { run(activity, pending, GlanceOpenFrom.LOCK, homeBelow) }
 
     /** The time-rule screen resumed: a target the lock handed over within [GLANCE_HAND_OVER_MS] and
      * with the phone still unlocked is opened over it - if the rule leaves it usable. */
@@ -82,7 +83,7 @@ object GlanceOpener {
             Log.i(LOG_TAG, "Glance: nothing opened (the hand-over expired)")
             return@guarded
         }
-        run(activity, pending, GlanceOpenFrom.TIME_RULE_SCREEN)
+        run(activity, pending, GlanceOpenFrom.TIME_RULE_SCREEN, homeBelow = false)
     }
 
     /**
@@ -94,7 +95,7 @@ object GlanceOpener {
     fun usableUnderTimeRule(context: Context, target: GlanceTarget): Boolean =
         glanceUsableUnderLock(TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock, target, CallPolicyStore.state.managed)
 
-    private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom) {
+    private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         val target = pending.target
         val conversation = target as? GlanceTarget.Conversation
         val what = conversation?.packageName ?: "the missed calls"
@@ -104,7 +105,7 @@ object GlanceOpener {
         val facts = facts(activity, pending, from, intent)
         var step = glanceOpenStep(facts)
         if (step.open == GlanceOpen.SEND && intent != null) {
-            if (send(activity, intent)) watchSend(activity, pending, from) else step = glanceOpenStep(facts.copy(sendFailed = true))
+            if (send(activity, intent)) watchSend(activity, pending, from, homeBelow) else step = glanceOpenStep(facts.copy(sendFailed = true))
         }
         when (step.open) {
             GlanceOpen.HAND_TO_TIME_RULE_SCREEN -> {
@@ -135,13 +136,14 @@ object GlanceOpener {
     }
 
     /**
-     * Watches our activities for [GLANCE_SEND_CHECK_MS] after a send: one of them resumed (Home, with
-     * the kiosk on; the time-rule screen that sent it, staying in front) means the start was refused.
+     * Watches our activities for [GLANCE_SEND_CHECK_MS] after a send: one of them resumed (Home, which
+     * the lock left through; the time-rule screen that sent it, staying in front) means the start was
+     * refused.
      * The lock itself is finishing and never counts.
      */
-    private fun watchSend(sender: Activity, pending: PendingOpen, from: GlanceOpenFrom) {
+    private fun watchSend(sender: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         watch?.let { end(it) }
-        val confirmable = from == GlanceOpenFrom.TIME_RULE_SCREEN || LockTaskChrome.kioskOn
+        val confirmable = from == GlanceOpenFrom.TIME_RULE_SCREEN || homeBelow
         val next = SendWatch(sender.application, pending, from, confirmable)
         if (below(sender) && !sender.isFinishing) next.resumed += sender
         sender.application.registerActivityLifecycleCallbacks(next)
@@ -171,7 +173,7 @@ object GlanceOpener {
         sent.app.unregisterActivityLifecycleCallbacks(sent)
     }
 
-    /** The windows the lock leaves to: Home (kiosk on, or below the lock) and the time-rule screen.
+    /** The windows the lock leaves to: Home (started by the leave, or below the lock) and the time-rule screen.
      * Never the lock, a call screen or a page the kid opens later. */
     private fun below(activity: Activity): Boolean = activity.javaClass.name in BELOW_THE_LOCK
 

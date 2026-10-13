@@ -52,12 +52,16 @@
         <item name="android:windowAnimationStyle">@null</item>
     </style>
 
-    <!-- Handy's PIN lock (step 10): navy everywhere, and the window preview on, so the first frame
-         after a screen-on is navy rather than whatever was under the lock. -->
+    <!-- Handy's PIN lock (step 10), with the window preview on. Design 32 (decision 3, QA M3): the
+         lock draws only after a screen-on, so until its first frame WM shows its stand-in - the
+         starting window (splash), the window background and the app-theme snapshot with its bars.
+         Every one of them is pure black ("the lock or black"); the lock paints its own ground (25f),
+         and its task description is black too (PinLockActivity.onCreate). -->
     <style name="PinLockTheme" parent="launcherBaseTheme">
-        <item name="android:windowBackground">@color/kid_ground</item>
-        <item name="android:statusBarColor">@color/kid_ground</item>
-        <item name="android:navigationBarColor">@color/kid_ground</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowSplashScreenBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
         <item name="android:windowDisablePreview">false</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>

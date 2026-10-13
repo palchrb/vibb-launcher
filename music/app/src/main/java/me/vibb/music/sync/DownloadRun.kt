@@ -5,6 +5,7 @@ import me.vibb.music.data.DownloadRow
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.mintItemError
 import me.vibb.music.logic.mintStopsRun
+import me.vibb.music.logic.sameSource
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.storytelRoom
 import me.vibb.music.model.Source
@@ -28,8 +29,8 @@ interface DownloadIo {
 
     suspend fun saveRow(row: DownloadRow)
 
-    /** Drop an item's (partial) audio from the cache. */
-    fun removeCopy(cacheKey: String, hls: Boolean)
+    /** Drop an item's (partial) audio from the cache - unless the player holds it now (design 30 §1.6). */
+    suspend fun removeCopy(cacheKey: String, hls: Boolean)
 
     /** Fetch [w] from [url] into the cache: (bytes cached, the HLS variant fetched). Throws on failure. */
     suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?>
@@ -55,8 +56,9 @@ interface DownloadIo {
 
 /**
  * The decisions of one run of the download worker, item by item ([fetchOne]). An NRK/RSS item is
- * fetched from its url; a partial copy fetched from another url is dropped first (qa-21-step2-code L7),
- * an `http_416` drops the partial and fetches once more from 0. A Storytel book (design 26b §4.3):
+ * fetched from its url; a partial copy fetched from another source (`sameSource`) is dropped first
+ * (qa-21-step2-code L7), an `http_416` - the server's, or the length guard's for a source that changed
+ * under the partial (design 30 §1.6) - drops the partial and fetches once more from 0. A Storytel book (design 26b §4.3):
  * 1. below the 1.5 GB floor no Storytel book starts this run ([StorytelStop.STORAGE]);
  * 2. a URL minted for this attempt (vibb: single-use, short-lived; the path is stable). A login
  *    failure (`NotConfigured`, `Refused`, `LoginFailed`, or a 401 a fresh JWT got too) stops every
@@ -107,10 +109,11 @@ class DownloadRun(private val io: DownloadIo) {
         val cacheKey = itemCacheKey(w.entry.key, w.item.key)
         val old = io.row(w.entry.id, w.item.key)
         // A partial copy from another source may be another file: start over (qa-21-step2-code L7). A
-        // Storytel book's source never changes with a new mint, so its partial stays (design 26b §4.3).
-        if (old != null && !old.done && old.url != source) io.removeCopy(old.cacheKey, old.hls)
+        // Storytel book's source never changes with a new mint, so its partial stays (design 26b §4.3);
+        // nor does a url with only a new query (design 30 §1.6, L5: a re-resolved token, a stream's partial).
+        if (old != null && !old.done && !sameSource(old.url, source)) io.removeCopy(old.cacheKey, old.hls)
         // The partial's size at the last failure rides along (fail() compares it); a dropped one is 0.
-        val lastBytes = old?.takeIf { !it.done && it.url == source }?.bytes ?: 0
+        val lastBytes = old?.takeIf { !it.done && sameSource(it.url, source) }?.bytes ?: 0
         io.saveRow(DownloadRow(w.entry.id, w.item.key, cacheKey, source, w.item.hls, false, lastBytes, null, old?.failedUrl, old?.failedCode, old?.failedAt, old?.attempts ?: 0))
         var code = fetchFrom(w, from.url, source)
         if (code == "http_416") {
