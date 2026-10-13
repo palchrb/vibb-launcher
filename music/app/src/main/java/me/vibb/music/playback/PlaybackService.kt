@@ -76,6 +76,7 @@ import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
 import me.vibb.music.logic.nowWindow
@@ -999,6 +1000,8 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipNext() {
         val a = active ?: return
+        // a Spotify context (design 26c §5.9): the web player's next - Spotify's order - never the one item's rules
+        if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = true)
         when (val action = nextAction(renderer.currentIndex(), renderer.itemCount())) {
             is TransportAction.GoTo -> goTo(a, action.index, forward = true)
             else -> Unit
@@ -1007,12 +1010,21 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipPrevious() {
         val a = active ?: return
+        if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = false)
         val duration = renderer.durationMs() ?: a.items.getOrNull(renderer.currentIndex())?.durationMs
         when (val action = previousAction(renderer.currentIndex(), renderer.itemCount(), renderer.positionMs(), duration)) {
             TransportAction.Restart -> renderer.seekTo(0L)
             is TransportAction.GoTo -> goTo(a, action.index, forward = false)
             TransportAction.Stay -> Unit
         }
+    }
+
+    /** Next or previous in a Spotify context (design 26c §5.9): the SDK's, gated as every step (the network line). */
+    private fun stepOnWebPlayer(forward: Boolean) {
+        val web = renderer as? SpotifyRenderer ?: return
+        if (!web.stepsInContext) return
+        if (refuseSpotify()) return
+        web.step(forward)
     }
 
     private fun goTo(a: Active, index: Int, forward: Boolean) {
@@ -1153,7 +1165,8 @@ class PlaybackService : MediaSessionService() {
             RendererEvent.Ready -> active?.let { a ->
                 val item = a.items.getOrNull(renderer.currentIndex())
                 val duration = renderer.durationMs()
-                if (item != null && duration != null) a.durations[item.key] = duration
+                // never a Spotify context's (design 26c §5.9): the web player's is the live track's, the item is never done
+                if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration
             }
             RendererEvent.Ended -> queueEnded()
             is RendererEvent.Paused -> {
@@ -1399,15 +1412,18 @@ class PlaybackService : MediaSessionService() {
      * partial positions go, the done marks stay. */
     private fun queueEnded() {
         val a = active ?: return
-        a.items.getOrNull(renderer.currentIndex())?.let { markDone(a, it) }
+        // a Spotify context's item is never done (design 26c §5.9): its end drops its place and its live track only
+        a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }
         active = null
         lastIndex = -1
         Resumable.set(this, false)
         val entryKey = a.entry.key
+        val context = isSpotifyContext(a.entry)
         scope.launch(writer) {
             store.db.deleteBookmark(entryKey)
             store.db.clearPartialPositions(entryKey)
             store.db.clearNowPlaying()
+            if (context) store.recordSpotifyContext(entryKey, null)
         }
         renderer.clear()
         publish()
@@ -1466,7 +1482,10 @@ class PlaybackService : MediaSessionService() {
         val item = a?.items?.getOrNull(renderer.currentIndex())
         // the same predicate as the play button (§3.3): on Sonos grouped away, taken over or stale is not playing
         val playing = !forcePaused && renderer.showsPlaying
-        val key = Triple(a?.entry?.id, item?.key, playing)
+        // a Spotify context's item carries its live track's title (design 26c §5.9: the web player swaps it in place)
+        val live = if (a != null && isSpotifyContext(a.entry)) renderer.itemAt(renderer.currentIndex())?.mediaMetadata?.title?.toString() else null
+        val title = live ?: item?.title
+        val key = Triple(a?.entry?.id, item?.key?.let { "$it\n$title" }, playing)
         if (key == sentNowPlaying && !refresh) return
         sentNowPlaying = key
         if (a == null || item == null) {
@@ -1480,7 +1499,7 @@ class PlaybackService : MediaSessionService() {
         LiveBridge.setNowPlaying(
             Bundle().apply {
                 putString(NowPlayingKeys.ENTRY, a.entry.name)
-                putString(NowPlayingKeys.ITEM, item.title)
+                putString(NowPlayingKeys.ITEM, title)
                 putLong(NowPlayingKeys.POSITION_MS, renderer.positionMs())
                 putLong(NowPlayingKeys.DURATION_MS, renderer.durationMs() ?: a.durations[item.key] ?: item.durationMs ?: 0)
                 putBoolean(NowPlayingKeys.PLAYING, playing)

@@ -10,6 +10,8 @@ import me.vibb.music.bridge.TokenResult
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.spotify.SPOTIFY_MODE_CONTEXT
+import me.vibb.music.spotify.cutTitle
 
 /*
  * Spotify's rules on the phone (design 26c §4, §5). Step 3 (the contract) brought the library's side:
@@ -24,8 +26,8 @@ import me.vibb.music.model.Source
  * Whether Spotify items show and play (design 26c §11 step 3, 26b step 1's way): false until step 5b
  * built the service's sites and flipped it (a library with Spotify entries parsed and showed nothing,
  * and a Spotify item never joined Nytt while it couldn't be played). [me.vibb.music.data.Snapshot] and
- * the news rules take it as their default; a context-mode entry still shows nothing until step 6's
- * synthetic item (`Snapshot.visible`).
+ * the news rules take it as their default; a context-mode entry shows its one synthetic item (step 6,
+ * [contextItem], `Snapshot.visible`).
  */
 val SPOTIFY_PLAYABLE: Boolean = true
 
@@ -74,12 +76,74 @@ fun debugSwitchToken(t: TokenResult): TokenResult =
 /** The synthetic item's key: stable across tracks, never a track id (Spotify's are 22 base62 characters). */
 const val SPOTIFY_CONTEXT_KEY = "context"
 
+/** A Spotify entry in context mode (§3.3, §5.9): an artist, or a playlist no account may list - Spotify picks the order. */
+fun isSpotifyContext(entry: Entry): Boolean = entry.source == Source.SPOTIFY && entry.spotifyMode == SPOTIFY_MODE_CONTEXT
+
+/** [key] is a context-mode entry's synthetic item (§5.9): its row is the live track's place, never done, never a duration. */
+fun isContextItem(entry: Entry, key: String): Boolean = isSpotifyContext(entry) && key == SPOTIFY_CONTEXT_KEY
+
 /**
  * A context-mode entry's one item (§5.9, H3): made by the snapshot, so the tile shows, the play order
  * and the stored queue find it, and its position row holds the live track's place. No url, no
- * duration (it is never marked done).
+ * duration (it is never marked done). Its title is the entry's name until a track has played; then
+ * [live]'s (`spotify_context.json`, step 6): the player, the list's one row, the bar and the session
+ * after a restart show the track it stopped at.
  */
-fun contextItem(entry: Entry): PlayItem = PlayItem(entry.id, SPOTIFY_CONTEXT_KEY, entry.name, null, false, null)
+fun contextItem(entry: Entry, live: SpotifyContextTrack? = null): PlayItem =
+    PlayItem(entry.id, SPOTIFY_CONTEXT_KEY, live?.title ?: entry.name, null, false, null)
+
+/**
+ * A context's live track (§5.9, step 6): the uri the web player plays (`spotify:track:<id>`, or an episode a
+ * playlist context holds) and its title as the server would list it (`"<name> — <artists>"`). The renderer
+ * writes it at every track change of a context it plays; a start of a playlist context goes on from it.
+ */
+data class SpotifyContextTrack(val uri: String, val title: String)
+
+/**
+ * `noBackupFilesDir/spotify_context.json` (§5.9): `{"<entry key>": {"uri": "spotify:track:<id>", "title": "<Song —
+ * Artist>"}}`, one row per context-mode entry, written by the renderer through the store at every track change (tmp +
+ * rename) and dropped at the context's end (`clear_state`). Never a token, an account or a device id. Pure; the
+ * store reads and writes it.
+ */
+object SpotifyContexts {
+    private val JSON = Json { ignoreUnknownKeys = true }
+    private val KEY = Regex("[A-Za-z0-9_-]{1,64}")
+    private val URI = Regex("spotify:(track|episode):[A-Za-z0-9]{1,64}")
+
+    /** A file's text: every well-formed row ([KEY], a track's or an episode's uri, a title cut to 200), junk dropped. */
+    fun decode(text: String?): Map<String, SpotifyContextTrack> {
+        val root = runCatching { JSON.parseToJsonElement(text ?: return emptyMap()) }.getOrNull() as? JsonObject ?: return emptyMap()
+        val out = LinkedHashMap<String, SpotifyContextTrack>()
+        for ((key, value) in root) {
+            val o = value as? JsonObject ?: continue
+            val uri = (o["uri"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: continue
+            val title = (o["title"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { cutTitle(it) }?.takeIf { it.isNotEmpty() } ?: continue
+            if (KEY.matches(key) && URI.matches(uri)) out[key] = SpotifyContextTrack(uri, title)
+        }
+        return out
+    }
+
+    fun encode(rows: Map<String, SpotifyContextTrack>): String = buildJsonObject {
+        for ((key, t) in rows) {
+            put(key, buildJsonObject {
+                put("uri", t.uri)
+                put("title", t.title)
+            })
+        }
+    }.toString()
+
+    /**
+     * [rows] with [entryKey]'s row set to [track] (null removes it), or null when nothing changes (nothing to
+     * write) or the row isn't well formed.
+     */
+    fun next(rows: Map<String, SpotifyContextTrack>, entryKey: String, track: SpotifyContextTrack?): Map<String, SpotifyContextTrack>? {
+        if (!KEY.matches(entryKey)) return null
+        val clean = track?.let { SpotifyContextTrack(it.uri, cutTitle(it.title)) }
+        if (clean != null && (!URI.matches(clean.uri) || clean.title.isEmpty())) return null
+        if (rows[entryKey] == clean) return null
+        return if (clean == null) rows - entryKey else rows + (entryKey to clean)
+    }
+}
 
 // --- the play window and the queue add (§5.4) ------------------------------------------------------
 

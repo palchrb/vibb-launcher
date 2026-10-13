@@ -4,7 +4,9 @@ import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.SPOTIFY_CONTEXT_KEY
 import me.vibb.music.logic.firstPlayable
+import me.vibb.music.logic.isContextItem
 import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.playability
 import me.vibb.music.logic.spotifyPlayability
 import me.vibb.music.model.Entry
@@ -90,6 +92,19 @@ fun pausedForCall(showsPlaying: Boolean, itemCount: Int, state: RendererState?):
  * at 0 - nothing is sent.
  */
 fun resumesOnAdvance(auto: Boolean, kind: RendererKind): Boolean = auto && kind == RendererKind.LOCAL
+
+/**
+ * Whether the player's duration of item [key] of [entry] is kept (`Active.durations`, the done mark at a queue's end,
+ * the stored queue's duration): never for a Spotify context's synthetic item (design 26c §5.9, step 6) - the web
+ * player's duration is the live track's, and a track's end is not the context's, so the item is never done.
+ */
+fun keepsDuration(entry: Entry, key: String): Boolean = !isContextItem(entry, key)
+
+/**
+ * Whether next and previous on [entry] are the web player's own (design 26c §5.9, step 6): a Spotify context's -
+ * Spotify's order, `vibb.next()`/`vibb.previous()` - never the service's skip rules over its one synthetic item.
+ */
+fun stepsOnWebPlayer(entry: Entry): Boolean = isSpotifyContext(entry)
 
 /**
  * Whether a failed item that is neither an own file nor a copy (those have their own rules in `onError`: nothing,

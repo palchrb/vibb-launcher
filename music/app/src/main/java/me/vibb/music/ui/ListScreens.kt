@@ -38,6 +38,7 @@ import me.vibb.music.logic.ListRow
 import me.vibb.music.logic.OfflineSummary
 import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.formatDuration
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -69,8 +70,13 @@ fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBa
                 )
             }
         } else {
-            // the attribution (design 26c §4.3, Developer Policy §II): the list's source
-            Line(stringResource(R.string.kind_spotify), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
+            // the attribution (design 26c §4.3, Developer Policy §II): the list's source - and for a context (§5.9) that
+            // Spotify picks the order: its one row is the track playing now
+            val spotify = stringResource(R.string.kind_spotify)
+            Line(
+                if (isSpotifyContext(entry)) stringResource(R.string.hint_spotify_picks, spotify) else spotify,
+                12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true,
+            )
         }
         val state = rememberLazyListState(initialFirstVisibleItemIndex = (rows.indexOfFirst { it.playing }).coerceAtLeast(0))
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -82,6 +88,8 @@ fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBa
 @Composable
 private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
     val duration = formatDuration(row.item.durationMs)
+    // a Spotify context's one row has no duration (design 26c §5.9): "Spilles nå" alone, no trailing dot
+    val playing = stringResource(R.string.row_playing, duration).removeSuffix(" · ")
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(16.dp))
             .background(if (row.playing) Palette.selected else Palette.card)
@@ -96,7 +104,7 @@ private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
             Line(row.item.title, 15, 800, Palette.white)
             Line(
                 when {
-                    row.playing -> stringResource(R.string.row_playing, duration)
+                    row.playing -> playing
                     row.heard -> stringResource(R.string.row_heard, duration)
                     else -> duration
                 },

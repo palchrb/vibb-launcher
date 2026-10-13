@@ -16,6 +16,8 @@ import me.vibb.music.bridge.RestrictionKeys
 import me.vibb.music.bridge.mobileSwitch
 import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.SpotifyContextTrack
+import me.vibb.music.logic.SpotifyContexts
 import me.vibb.music.logic.SpotifyOutcome
 import me.vibb.music.logic.coversToDelete
 import me.vibb.music.logic.isArtHash
@@ -27,7 +29,7 @@ import java.io.File
 /**
  * Where the app keeps what it received and what it plays: the library file, received listings
  * (applied into Room by the sync), covers, own files' copies (noBackupFilesDir, never backed up),
- * the report, Spotify's last outcome (design 26c §4.4), and the parent's settings from the launcher's
+ * the report, Spotify's last outcome (design 26c §4.4) and its contexts' live tracks (§5.9), and the parent's settings from the launcher's
  * restrictions (design 30's two mobile-data switches and the storage limit; unmanaged, the debug feed
  * sets them).
  */
@@ -61,6 +63,17 @@ class Store private constructor(context: Context) {
     private val spotifyOutcomeState = MutableStateFlow<SpotifyOutcome?>(null)
 
     @Volatile private var spotifyOutcomeLoaded = false
+
+    /**
+     * A context-mode Spotify entry's live track (design 26c §5.9, step 6): `{"<entry key>": {"uri", "title"}}`, written
+     * by the Spotify renderer through the service at every track change of a context it plays ([recordSpotifyContext],
+     * tmp + rename), its row dropped at the context's end; read by the snapshot (the synthetic item's title) and the
+     * renderer (where a playlist context goes on). Never a token, an account or a device id.
+     */
+    val spotifyContextFile = File(app.noBackupFilesDir, "spotify_context.json")
+    private val spotifyContextState = MutableStateFlow<Map<String, SpotifyContextTrack>>(emptyMap())
+
+    @Volatile private var spotifyContextLoaded = false
 
     /** The parsed library, read from its file on first use (never in the constructor, which may run
      * on the main thread); null = none (the app is unmanaged or never fed: "Ingen bibliotek"). */
@@ -130,6 +143,33 @@ class Store private constructor(context: Context) {
         val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return
         runCatching { writeAtomic(spotifyStateFile, next.encode().toByteArray()) }.onFailure { return }
         spotifyOutcomeState.value = next
+    }
+
+    /** Every context's live track as stored (read from its file on first use; a tiny file). */
+    @Synchronized
+    fun spotifyContexts(): Map<String, SpotifyContextTrack> {
+        if (!spotifyContextLoaded) {
+            spotifyContextState.value = SpotifyContexts.decode(runCatching { spotifyContextFile.readText() }.getOrNull())
+            spotifyContextLoaded = true
+        }
+        return spotifyContextState.value
+    }
+
+    /**
+     * [entryKey]'s live track is [track] now (null: the context played out, `clear_state`): written only when it
+     * changes (`SpotifyContexts.next`), atomically. Off the main thread (the service's writer).
+     */
+    @Synchronized
+    fun recordSpotifyContext(entryKey: String, track: SpotifyContextTrack?) {
+        val next = SpotifyContexts.next(spotifyContexts(), entryKey, track) ?: return
+        runCatching { writeAtomic(spotifyContextFile, SpotifyContexts.encode(next).toByteArray()) }.onFailure { return }
+        spotifyContextState.value = next
+    }
+
+    /** The contexts' live tracks, live (read from the file on first collection - collect off the main thread). */
+    fun spotifyContextFlow(): Flow<Map<String, SpotifyContextTrack>> = flow {
+        spotifyContexts()
+        emitAll(spotifyContextState)
     }
 
     /** The stored Spotify outcome, live (read from its file on first collection - collect off the main thread). */
@@ -214,18 +254,28 @@ class Store private constructor(context: Context) {
         libraries(),
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
         combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
-    ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }.flowOn(Dispatchers.Default)
+        spotifyContextFlow(),
+    ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }.flowOn(Dispatchers.Default)
 
     /** The same, once. */
-    suspend fun snapshot(): Snapshot =
-        snapshot(library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()))
+    suspend fun snapshot(): Snapshot = snapshot(
+        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()),
+        spotifyContexts(),
+    )
 
     private data class Rows(val positions: List<PositionRow>, val bookmarks: List<BookmarkRow>, val news: List<NewsRow>, val shuffle: List<ShuffleRow>)
 
-    private fun snapshot(lib: Library?, items: List<ItemRow>, downloads: List<DownloadRow>, listings: List<ListingRow>, rows: Rows): Snapshot {
+    private fun snapshot(
+        lib: Library?,
+        items: List<ItemRow>,
+        downloads: List<DownloadRow>,
+        listings: List<ListingRow>,
+        rows: Rows,
+        contexts: Map<String, SpotifyContextTrack>,
+    ): Snapshot {
         val positions = rows.positions.groupBy { it.entryKey }.mapValues { (_, ps) -> ps.associate { it.itemKey to ItemPosition(it.posMs, it.done) } }
         val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
-        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle)
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)
     }
 
     companion object {

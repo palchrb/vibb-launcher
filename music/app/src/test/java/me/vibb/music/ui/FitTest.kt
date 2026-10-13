@@ -165,6 +165,28 @@ class FitTest {
         }
     }
 
+    /**
+     * A Spotify context's hint (design 26c §5.9, step 6), "Spotify · Spotify velger rekkefølgen" / "... picks the order", from
+     * the font's advances as above: Nunito Bold at 12 sp scaled to the tile's 13 sp, and Nunito ExtraBold 12 sp in the list's
+     * header line - one line each at 320 dp.
+     */
+    @Test
+    fun `a Spotify context's hint fits the tile and the list's header`() {
+        val bold12 = mapOf("Spotify · Spotify velger rekkefølgen" to 197.6f, "Spotify · Spotify picks the order" to 175.7f)
+        val extraBold12 = mapOf("Spotify · Spotify velger rekkefølgen" to 202.9f, "Spotify · Spotify picks the order" to 180.4f)
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            val text = moduleFile(path).readText()
+            val line = Regex("""<string name="hint_spotify_picks">([^<]*)</string>""").find(text)!!.groupValues[1].replace("%1\$s", "Spotify")
+            assertTrue("$path: $line is measured", line in bold12 && line in extraBold12)
+        }
+        for (screen in widths) {
+            for ((line, width) in bold12) assertTrue("$screen: $line on a tile", width * 13 / 12 <= available(screen))
+            for ((line, width) in extraBold12) assertTrue("$screen: $line in the list", width <= available(screen))
+        }
+        val library = moduleFile("src/main/java/me/vibb/music/ui/LibraryScreen.kt").readText()
+        assertTrue(library.contains("is Hint.Picks -> stringResource(R.string.hint_spotify_picks, kind)"))
+    }
+
     // The player's art (design 27 §3.3).
 
     @Test

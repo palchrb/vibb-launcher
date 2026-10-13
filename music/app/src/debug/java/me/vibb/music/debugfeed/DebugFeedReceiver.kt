@@ -32,12 +32,14 @@ import java.io.File
  *   debug-feed/covers/<hash>          cover JPEGs and episode pictures (checked against their hash)
  *   debug-feed/config.json            optional: {"stream_mobile_data": true, "download_mobile_data": false,
  *                                     "storage_limit_gb": 2, "storytel_base": "http://10.0.2.2:8730",
- *                                     "spotify_base": "http://10.0.2.2:8731"}
+ *                                     "spotify_base": "http://10.0.2.2:8731", "record_spotify_states": true}
  *                                     (design 30: the two switches - a bare "mobile_data" sets both - and
  *                                     the storage limit in GB, 0 = none; storytel_base: the fake Storytel,
  *                                     design 26b §4.6; spotify_base: the fake Spotify, design 26c §9.3 - each
  *                                     the one debug switch of its source; also read at every process start,
- *                                     DebugStartup)
+ *                                     DebugStartup; record_spotify_states: the web player's
+ *                                     states and events into debug-feed/sdk_states/<start>.jsonl, design 26c
+ *                                     §9.4, DebugSpotify)
  *   debug-feed/storytel.json          optional: {"email": "k@example.invalid", "password": "hemmelig"} - FAKE
  *                                     values only: seeds a Storytel login for a run without a launcher (the
  *                                     next generation, so a re-seed ends a cooldown like a new save), and is
@@ -85,6 +87,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
         }
         DebugStorytel.applyBase(context)
         DebugSpotify.applyBase(context)
+        DebugSpotify.applyRecorder(context)
         File(dir, "storytel.json").takeIf { it.isFile }?.let { f -> DebugStorytel.seedLogin(context, f) }
         File(dir, "sonos.json").takeIf { it.isFile }?.let { f -> seedSonos(context, f) }
         val libraryFile = File(dir, "library.json")

@@ -114,7 +114,8 @@ fun PlayerScreen(
                     Kind.PODCAST -> R.string.episode_of
                     Kind.SPOTIFY -> if (spotifyEpisodes(now.entry)) R.string.episode_of else R.string.track_of
                 }
-                Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
+                if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
                 // every Spotify playback shows its source (design 26c §4.3, §7.3: Developer Policy §II's attribution)
                 if (kindOf(now.entry) == Kind.SPOTIFY) Line(stringResource(R.string.kind_spotify), 11, 800, Palette.dim)
             }

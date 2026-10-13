@@ -1,0 +1,13 @@
+{
+  "about": "The end of a context with the account's Autoplay on (design 26c §5.9, QA H4): our last track runs out and a track of another context (Spotify's station) plays - not ours, paused at once, and the context's end (Ended: clear_state); nothing of it is measured.",
+  "context": "spotify:playlist:FAKEplaylist0000000001",
+  "live": null,
+  "steps": [
+    {"at": 0, "played_context": {"offset": null}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": [], "prev": [], "context": "spotify:playlist:FAKEplaylist0000000001", "shuffle": false, "repeat": 0}, "expect": ["Started 0", "TrackChanged spotify:track:FAKEtrack0000000000001"]},
+    {"at": 17000, "state": {"paused": false, "position": 15500, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": [], "prev": [], "context": "spotify:playlist:FAKEplaylist0000000001", "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 20500, "state": {"paused": false, "position": 0, "duration": 30000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": "spotify:station:FAKEautoplay000000001", "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing", "Ended"]},
+    {"at": 20600, "state": {"paused": false, "position": 100, "duration": 30000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": "spotify:station:FAKEautoplay000000001", "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 0, "mode": "ENDED", "measured": {"index": 0, "position": 15500, "at": 17000, "playing": true}}
+}

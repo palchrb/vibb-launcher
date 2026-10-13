@@ -12,6 +12,9 @@ import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.SPOTIFY_PLAYABLE
+import me.vibb.music.logic.SpotifyContextTrack
+import me.vibb.music.logic.contextItem
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.playOrder
 import me.vibb.music.logic.visibleKeys
 import me.vibb.music.model.Entry
@@ -19,7 +22,7 @@ import me.vibb.music.model.Library
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.model.toPlayItem
-import me.vibb.music.spotify.SPOTIFY_MODE_LIST
+import me.vibb.music.spotify.SPOTIFY_MODES
 
 /** Builds a [Snapshot] from rows (pure, so the rules are testable). */
 fun buildSnapshot(
@@ -32,13 +35,20 @@ fun buildSnapshot(
     bookmarks: List<BookmarkRow>,
     news: List<NewsRow>,
     shuffle: Set<String>,
+    /** `spotify_context.json` (design 26c §5.9): a context-mode entry's live track, by entry key. */
+    spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
 ): Snapshot {
     val byEntry = items.groupBy { it.entryId }
     val done = downloads.filter { it.done }.groupBy { it.entryId }.mapValues { (_, ds) -> ds.map { it.itemKey }.toSet() }
     val listed = mutableMapOf<Long, List<PlayItem>>()
     val onPhone = mutableMapOf<Long, Set<String>>()
     for (e in lib?.entries.orEmpty()) {
-        if (e.source == Source.OWN) {
+        if (isSpotifyContext(e)) {
+            // design 26c §5.9 (QA H3): Spotify picks the tracks, so the entry has one synthetic item - stable key
+            // `context`, titled by the live track once one has played - whatever rows its last good list left
+            listed[e.id] = listOf(contextItem(e, spotifyContexts[e.key]))
+            onPhone[e.id] = emptySet()
+        } else if (e.source == Source.OWN) {
             val files = lib!!.filesOf(e.id)
             listed[e.id] = files.map { it.toPlayItem() }
             onPhone[e.id] = files.filter { it.id in ownCopies }.map { it.key }.toSet()
@@ -95,12 +105,12 @@ data class Snapshot(
      * [entry]'s items that show and play, oldest first (21b §6: a withdrawn item without a copy is
      * hidden; design 26b §3.2: a Storytel book, listed without a url, only with its copy - or on a room;
      * design 26c §4.2: a listed Spotify item in both views - it streams, a room's queue drops it - once
-     * [spotifyPlayable], and nowhere before; a context-mode entry shows nothing yet: its one synthetic
-     * item is step 6's, §5.9, and the web player loads nothing for it until then).
+     * [spotifyPlayable], and nowhere before; a context-mode entry's one synthetic item, §5.9, in both
+     * views too - a room's queue drops it as it drops every Spotify item).
      */
     fun visible(entry: Entry): List<PlayItem> {
         val all = listed[entry.id].orEmpty()
-        if (entry.source == Source.SPOTIFY) return if (spotifyPlayable && entry.spotifyMode == SPOTIFY_MODE_LIST) all else emptyList()
+        if (entry.source == Source.SPOTIFY) return if (spotifyPlayable && entry.spotifyMode in SPOTIFY_MODES) all else emptyList()
         if (remote && entry.source == Source.STORYTEL) return all
         val copies = onPhone[entry.id].orEmpty()
         // An own file has no url: it plays only from its copy (the phone never reaches the server).

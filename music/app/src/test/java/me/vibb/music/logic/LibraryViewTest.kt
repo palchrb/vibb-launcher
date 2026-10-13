@@ -71,6 +71,22 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `a Spotify context's tile - Spotify picks the order, no N av M, its one row (26c §4_3, §5_9, step 6)`() {
+        val artist = entry(7, Source.SPOTIFY, target = "spotify:artist:FAKEid7", cache = 0).copy(spotifyMode = "context")
+        val unstarted = snapshot(library(listOf(artist)))
+        assertEquals(Hint.Picks(Kind.SPOTIFY), entryUi(unstarted, artist).hint)
+        val started = snapshot(library(listOf(artist)), bookmarks = mapOf(artist.key to (SPOTIFY_CONTEXT_KEY to 70_000L)))
+        assertEquals("started or not: no number", Hint.Picks(Kind.SPOTIFY), entryUi(started, artist).hint)
+        assertEquals("resume off too", Hint.Picks(Kind.SPOTIFY), hint(artist.copy(resume = false), listOf(SPOTIFY_CONTEXT_KEY), null))
+        assertNull("no progress line", entryUi(started, artist).progress)
+        val rows = listRows(started.order(artist), SPOTIFY_CONTEXT_KEY, emptySet(), started.onPhone[7].orEmpty())
+        assertEquals("one row, the one playing", 1, rows.size)
+        assertTrue(rows.single().playing)
+        assertFalse(rows.single().offline)
+        assertEquals("no duration to show", "", formatDuration(rows.single().item.durationMs))
+    }
+
+    @Test
     fun `search - entries and items, at most 12, nothing found`() {
         val a = entry(1).copy(name = "Abels tårn")
         val b = entry(2).copy(name = "Bilturen")

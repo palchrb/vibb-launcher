@@ -50,6 +50,12 @@ sealed interface Hint {
 
     /** Resume off: "<kind> · starter fra begynnelsen". */
     data class FromStart(override val kind: Kind) : Hint
+
+    /**
+     * A Spotify entry in context mode (design 26c §4.3, §5.9): "Spotify · Spotify velger rekkefølgen" - no "N av M"
+     * (nothing is listed: Spotify picks the tracks), whether started or not.
+     */
+    data class Picks(override val kind: Kind) : Hint
 }
 
 /** Has the kid started [entry] (its bookmark is in [order] past the first item's start)? */
@@ -59,6 +65,7 @@ fun started(order: List<String>, bookmark: Bookmark?): Boolean {
 }
 
 fun hint(entry: Entry, order: List<String>, bookmark: Bookmark?): Hint = when {
+    isSpotifyContext(entry) -> Hint.Picks(kindOf(entry))
     !entry.resume -> Hint.FromStart(kindOf(entry))
     started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size, spotifyEpisodes(entry))
     else -> Hint.NotStarted(kindOf(entry))

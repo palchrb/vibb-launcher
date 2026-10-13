@@ -872,6 +872,47 @@ class GuardsTest {
         assertTrue(renderer.contains("if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {"))
     }
 
+    /**
+     * Design 26c §5.9, step 6: a Spotify context's synthetic item is saved with no duration and never done, its end drops its
+     * place and its live track, next and previous are the web player's, the setNowPlaying title is the live track's, and
+     * spotify_context.json is the store's alone (the snapshot and the renderer read it through the store).
+     */
+    @Test
+    fun `26c step 6 - a context's item has no duration and is never done, its end drops the live track, its steps are the SDK's`() {
+        val ready = service.substringAfter("RendererEvent.Ready -> active?.let { a ->").substringBefore("RendererEvent.Ended ->")
+        assertTrue(ready.contains("if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration"))
+        val ended = serviceBody("private fun queueEnded() {")
+        assertTrue(ended.contains("a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }"))
+        assertTrue("the context's end drops its live track", ended.contains("if (context) store.recordSpotifyContext(entryKey, null)"))
+        assertTrue(ended.contains("store.db.clearPartialPositions(entryKey)"))
+        assertTrue(serviceBody("private fun skipNext() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = true)"))
+        assertTrue(serviceBody("private fun skipPrevious() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = false)"))
+        val step = serviceBody("private fun stepOnWebPlayer(forward: Boolean) {")
+        assertTrue("gated as every step", step.contains("if (refuseSpotify()) return") && step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"))
+        val now = serviceBody("private fun reportNowPlaying(")
+        assertTrue(now.contains("putString(NowPlayingKeys.ITEM, title)"))
+        assertTrue("a track change is a new report", now.contains("val key = Triple(a?.entry?.id, item?.key?.let { \"\$it\\n\$title\" }, playing)"))
+        // the renderer: a context's save carries no duration; the move-on after an unplayable plays only with the intent
+        val renderer = code("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt")
+        assertTrue(renderer.contains("val duration = if (contextUri != null) null else stateDuration ?: a.durations[item.key] ?: item.durationMs"))
+        val moveOn = renderer.substringAfter("private fun moveOnTo(").substringBefore("\n    }\n")
+        assertTrue(moveOn.contains("if (pwr && ports.mayPlay()) request("))
+        // the file: written by the store alone; the snapshot gets it in every build of one
+        val files = moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" }
+            .filter { f -> f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "").contains("spotify_context.json") }
+            .map { it.name }.toList()
+        assertEquals(listOf("Store.kt"), files)
+        val store = code("src/main/java/me/vibb/music/data/Store.kt")
+        assertTrue(store.contains("val next = SpotifyContexts.next(spotifyContexts(), entryKey, track) ?: return"))
+        assertTrue("tmp + rename", store.contains("writeAtomic(spotifyContextFile, SpotifyContexts.encode(next).toByteArray())"))
+        assertTrue(store.contains("spotifyContextFlow(),\n    ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }"))
+        assertTrue(store.contains("return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)"))
+        assertTrue(code("src/main/java/me/vibb/music/data/Snapshot.kt").contains("listed[e.id] = listOf(contextItem(e, spotifyContexts[e.key]))"))
+        // the UI: no number and no instant step for a context; the list says Spotify picks the order
+        assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/ListScreens.kt").contains("if (isSpotifyContext(entry)) stringResource(R.string.hint_spotify_picks, spotify) else spotify"))
+    }
+
     /** Design 29 step 4's glue (qa-29-code L2): the pure rules in OwnFilesTest, wired here. */
     @Test
     fun `own-file copies - the record written on arrival, judged at every pull, the report from the rule`() {

@@ -27,6 +27,7 @@
     <string name="hint_part">%1$s · part %2$d of %3$d</string>
     <string name="hint_continues">%1$s · continues where you left off</string>
     <string name="hint_from_start">%1$s · starts from the beginning</string>
+    <string name="hint_spotify_picks">%1$s · Spotify picks the order</string>
     <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
     <string name="cant_play_on_sonos">Can\'t play on Sonos</string>

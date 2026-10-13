@@ -60,8 +60,13 @@ sealed interface HostEvent {
     /** The SDK's `getOAuthToken`: answer with `vibb.token(requestId, token or null)`. */
     data class NeedToken(val requestId: Int) : HostEvent
 
-    /** A posted state, parsed ([SdkState.parse]; junk never arrives here). */
-    data class State(val snapshot: SdkSnapshot) : HostEvent
+    /**
+     * A posted state, parsed ([SdkState.parse]; junk never arrives here); [json] the compact JSON as the page posted it,
+     * for the debug build's state recorder only (§9.4: `SpotifyPorts.recordState`, never a log) - left out of [toString].
+     */
+    class State(val snapshot: SdkSnapshot, val json: String? = null) : HostEvent {
+        override fun toString(): String = "State($snapshot)"
+    }
 
     /** `error(kind, message)`: [kind] one of [SpotifyPage.ERROR_KINDS]; [message] for the debug log only. */
     data class Error(val kind: String, val message: String) : HostEvent
@@ -221,7 +226,7 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
             // the cap counts UTF-16 characters, as SdkState.MAX_BYTES does (qa-26c-step4-code's note)
             if (json == null || json.length > SdkState.MAX_BYTES) return
             val snapshot = SdkState.parse(json) ?: return
-            post(gen, HostEvent.State(snapshot))
+            post(gen, HostEvent.State(snapshot, json))
         }
 
         @JavascriptInterface

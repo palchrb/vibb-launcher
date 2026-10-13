@@ -25,6 +25,7 @@
     <string name="hint_part">%1$s · del %2$d av %3$d</string>
     <string name="hint_continues">%1$s · fortsetter der du slapp</string>
     <string name="hint_from_start">%1$s · starter fra begynnelsen</string>
+    <string name="hint_spotify_picks">%1$s · Spotify velger rekkefølgen</string>
     <string name="cant_play">Kan ikke spilles nå</string>
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
     <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>

@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
+import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -93,6 +94,9 @@ class SpotifyRendererTest {
         var mayPlay = true
         var network: SpotifyLine? = null
         val saves = mutableListOf<Triple<Int, Long, Boolean>>()
+
+        /** Each save's duration ("heard to the end"): a context's item is always saved with none (§5.9). */
+        val savedDurations = mutableListOf<Long?>()
         val outcomes = mutableListOf<String>()
 
         /** The page's account marker on disk (M1); the default account's, as after an earlier run. */
@@ -126,6 +130,7 @@ class SpotifyRendererTest {
         override fun networkLine(): SpotifyLine? = network
         override fun save(a: Active, index: Int, posMs: Long, durationMs: Long?, force: Boolean) {
             saves += Triple(index, posMs, force)
+            savedDurations += durationMs
         }
 
         override fun outcome(word: String) {
@@ -140,6 +145,26 @@ class SpotifyRendererTest {
 
         override fun log(message: String) {
             log += message
+        }
+
+        /** `spotify_context.json` (§5.9): the live track per entry key, as the store keeps it. */
+        val contexts = mutableMapOf<String, SpotifyContextTrack>()
+
+        /** The debug recorder's lines (§9.4): `state <json>` and the events by name. */
+        val recorded = mutableListOf<String>()
+
+        override fun contextTrack(entryKey: String): SpotifyContextTrack? = contexts[entryKey]
+
+        override fun storeContextTrack(entryKey: String, track: SpotifyContextTrack?) {
+            if (track == null) contexts -= entryKey else contexts[entryKey] = track
+        }
+
+        override fun recordState(json: String) {
+            recorded += "state $json"
+        }
+
+        override fun record(event: String) {
+            recorded += event
         }
     }
 
@@ -1265,6 +1290,194 @@ class SpotifyRendererTest {
         assertFalse(page.alive)
         assertTrue(page.clears >= 1)
         assertFalse(r.showsPlaying)
+        r.release()
+    }
+
+    // --- context mode (design 26c §5.9, step 6) ---------------------------------------------------------------
+
+    private val playlistContext = "spotify:playlist:FAKEplaylist0000000001"
+    private val artistContext = "spotify:artist:FAKEartist000000000001"
+
+    /** A context-mode entry (7) on the renderer: its one synthetic item, as the snapshot makes it. */
+    private fun CoroutineScope.contextRenderer(target: String = playlistContext): SpotifyRenderer {
+        val r = renderer()
+        val entry = Entry(7, "e7", "Fake Artist", null, Source.SPOTIFY, target, "auto", 0, true, null, "22dd", 7, spotifyMode = "context")
+        val items = listOf(me.vibb.music.logic.contextItem(entry, ports.contexts["e7"]))
+        active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
+        return r
+    }
+
+    private fun contextItems() = listOf(
+        MediaItem.Builder().setMediaId("7/context")
+            .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(active!!.items[0].title).build()).build(),
+    )
+
+    private fun cstate(n: Int, pos: Long, context: String? = playlistContext, paused: Boolean = false, duration: Long = 20_000): SdkSnapshot = SdkState(
+        paused, pos, duration, uri(n), null, listOf(uri(n + 1)), emptyList(), "track", "Fake track $n", listOf("Fake Artist"), context,
+    )
+
+    private fun title(r: SpotifyRenderer) = r.itemAt(0)!!.mediaMetadata.title.toString()
+
+    @Test
+    fun `context - a playlist starts with one PUT of the context from its live track at its place, and every track of it is ours`() = runBlocking {
+        ports.contexts["e7"] = SpotifyContextTrack(uri(3), "Fake track 3 — Fake Artist")
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 42_000, playNow = true)
+        assertEquals("a restart's item shows the live track at once", "Fake track 3 — Fake Artist", title(r))
+        assertEquals(1, r.itemCount())
+        advance(0)
+        val play = api.plays().single()
+        assertEquals(
+            """{"context_uri":"$playlistContext","offset":{"uri":"${uri(3)}"},"position_ms":42000}""",
+            play.body,
+        )
+        post(cstate(3, 42_000))
+        assertTrue(r.showsPlaying)
+        assertEquals(Player.STATE_READY, r.spec().playbackState)
+        assertEquals("ok", ports.outcomes.last())
+        // Spotify's own advance in the context: ours - the title swapped in place, the live track stored, the place moved
+        advance(5_000)
+        post(cstate(4, 0))
+        assertEquals("Fake track 4 — Fake Artist", title(r))
+        assertEquals(SpotifyContextTrack(uri(4), "Fake track 4 — Fake Artist"), ports.contexts["e7"])
+        assertEquals(Triple(0, 0L, false), ports.saves.last())
+        assertTrue("a context's place is saved with no duration: never done", ports.savedDurations.all { it == null })
+        assertEquals("one item: the index never moves", 0, r.currentIndex())
+        assertEquals("nothing sent for Spotify's advance", 1, api.plays().size)
+        assertEquals(20_000L, r.durationMs())
+        // the service's art swap keeps the live title
+        r.replaceItem(0, contextItems()[0])
+        assertEquals("Fake track 4 — Fake Artist", title(r))
+        // next and previous are the SDK's - no Web API call
+        r.step(forward = true)
+        assertEquals("vibb.next()", page.calls.last())
+        r.step(forward = false)
+        assertEquals("vibb.previous()", page.calls.last())
+        assertEquals(1, api.plays().size)
+        // a resume after a pause is the SDK's too, and a fresh play goes on from the live track
+        r.pause()
+        post(cstate(4, 3_000, paused = true))
+        r.play()
+        assertEquals("vibb.resume()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `context - another context or a uri list on the player is not ours, paused at once, nothing stored`() = runBlocking {
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 0, playNow = true)
+        advance(0)
+        assertEquals("no stored track: Spotify's start", """{"context_uri":"$playlistContext"}""", api.plays().single().body)
+        post(cstate(1, 0))
+        assertTrue(r.showsPlaying)
+        val stored = ports.contexts["e7"]
+        post(cstate(9, 0, context = "spotify:playlist:FAKEforeignList000001"))
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        assertEquals("nothing of it stored", stored, ports.contexts["e7"])
+        assertEquals("Fake track 1 — Fake Artist", title(r))
+        post(cstate(9, 500, context = null)) // still playing (a uri list from another app)
+        assertEquals("vibb.pause()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `context - Spotify moving on on a network the gate now refuses is paused with the line`() = runBlocking {
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 0, playNow = true)
+        advance(0)
+        post(cstate(1, 0))
+        assertTrue(r.showsPlaying)
+        ports.network = SpotifyLine.NEEDS_WIFI // the streaming switch went off on mobile data
+        post(cstate(2, 0))
+        assertEquals("the live track is still stored", uri(2), ports.contexts["e7"]!!.uri)
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        assertEquals(RendererState.SPOTIFY_NEEDS_WIFI, r.rendererState)
+        assertEquals(1, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `context - an artist plays from Spotify's start, its end is Ended, and nothing plays after it`() = runBlocking {
+        val r = contextRenderer(artistContext)
+        r.load(contextItems(), 0, 50_000, playNow = false)
+        assertEquals("an artist has no resume (§12): its place shows 0", 0L, r.positionMs())
+        r.play()
+        advance(0)
+        assertEquals("""{"context_uri":"$artistContext"}""", api.plays().single().body)
+        post(cstate(1, 0, artistContext))
+        advance(18_000)
+        post(cstate(1, 18_000, artistContext))
+        advance(2_500)
+        post(cstate(1, 0, artistContext, paused = true))
+        assertTrue(events.contains(RendererEvent.Ended))
+        assertEquals(Player.STATE_ENDED, r.spec().playbackState)
+        assertFalse(r.showsPlaying)
+        post(cstate(2, 0, artistContext)) // anything after the end
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `context - nothing starts by itself - a restore opens nothing, a step without our context sends nothing, a detached player pauses`() = runBlocking {
+        ports.contexts["e7"] = SpotifyContextTrack(uri(2), "Fake track 2 — Fake Artist")
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 42_000, playNow = false)
+        settle()
+        assertEquals("no page", 0, page.opens)
+        assertEquals("no request", 0, api.all().size)
+        assertEquals("Fake track 2 — Fake Artist", title(r))
+        r.step(forward = true)
+        settle()
+        assertTrue("no context of ours on the player: nothing sent", page.calls.isEmpty())
+        assertFalse(r.showsPlaying)
+        // played, then paused: a step through the SDK that Spotify plays is shown only while the kid may play
+        r.play()
+        advance(0)
+        post(cstate(2, 42_000))
+        r.pause()
+        post(cstate(2, 43_000, paused = true))
+        ports.mayPlay = false // a time rule
+        r.step(forward = true)
+        assertEquals("vibb.next()", page.calls.last())
+        post(cstate(3, 0))
+        assertEquals("Spotify played it: paused at once while the app may not play", "vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying || ports.focusHeld)
+        ports.mayPlay = true
+        // the service attaches another renderer: from outside, our context is paused at once
+        detach(r)
+        post(cstate(3, 1_000))
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        r.step(forward = true)
+        assertEquals("a detached player takes no step", "vibb.pause()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `the debug recorder gets every posted state as received and our calls by name - never a log line`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        val json = """{"paused":false,"position":0,"duration":200000,"uri":"${uri(0)}","linked":null,"type":"track","name":"Fake track 0",""" +
+            """"artists":["Fake Artist"],"next":[],"prev":[],"context":null,"shuffle":false,"repeat":0}"""
+        page.emit(HostEvent.State(SdkState.parse(json)!!, json))
+        settle()
+        r.pause()
+        page.emit(HostEvent.Error("playback", "the SDK's own text"))
+        settle()
+        assertEquals(
+            "a playback error on a paused track only moves the index: nothing starts by itself",
+            listOf("ready", "play from 0 to 4 at 0 ms", "state $json", "pause", "error playback"),
+            ports.recorded,
+        )
+        assertEquals(1, api.plays().size)
+        assertFalse(r.showsPlaying)
+        assertTrue("no state, no uri in the log", ports.log.none { it.contains("{") || it.contains("spotify:track") })
+        assertFalse("never the SDK's text in the recorder", ports.recorded.any { it.contains("own text") })
+        assertEquals("the event's text leaves out the JSON", "State(${SdkState.parse(json)})", HostEvent.State(SdkState.parse(json)!!, json).toString())
         r.release()
     }
 

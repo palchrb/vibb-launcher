@@ -23,6 +23,8 @@ import me.vibb.music.logic.Playability
 import me.vibb.music.logic.SPOTIFY_CONTEXT_KEY
 import me.vibb.music.logic.SPOTIFY_START_BUDGET_MS
 import me.vibb.music.logic.SPOTIFY_WINDOW_MAX
+import me.vibb.music.logic.SpotifyContextTrack
+import me.vibb.music.logic.SpotifyContexts
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.logic.SpotifyOutcome
 import me.vibb.music.logic.SpotifyProblem
@@ -119,15 +121,87 @@ class SpotifyRulesTest {
     }
 
     @Test
-    fun `a context-mode entry shows nothing in step 5b - its one synthetic item is step 6's (26c §5_9)`() {
+    fun `a context-mode entry shows as one tile - its synthetic item, whatever its last good list left (26c §5_9, step 6)`() {
         val artist = spotify(7, "artist", mode = SPOTIFY_MODE_CONTEXT)
         val playlist = spotify(6, "playlist", mode = SPOTIFY_MODE_CONTEXT)
-        // a playlist that went to context mode may still carry its last good list: neither shows a tile until step 6
+        // a playlist that went to context mode may still carry its last good list in Room: only the one item shows
         val snap = snapshot(library(listOf(artist, playlist)), items = rows(6, listOf("t1", "t2")))
-        assertTrue(snap.visible(playlist).isEmpty())
-        assertTrue(snap.forRenderer(true).visible(playlist).isEmpty())
-        assertTrue(snap.visible(artist).isEmpty())
-        assertEquals(emptyList<Long>(), snap.entries.map { it.id })
+        assertEquals(listOf(contextItem(playlist)), snap.visible(playlist))
+        assertEquals("both views (a room's queue drops it)", listOf(contextItem(playlist)), snap.forRenderer(true).visible(playlist))
+        assertEquals(listOf(contextItem(artist)), snap.visible(artist))
+        assertEquals("two tiles", listOf(6L, 7L), snap.entries.map { it.id })
+        assertEquals(listOf(SPOTIFY_CONTEXT_KEY), snap.order(artist).map { it.key })
+        assertEquals("the item by its stable key", contextItem(artist), snap.item(7, SPOTIFY_CONTEXT_KEY))
+        assertTrue("never on the phone", snap.onPhone[7].orEmpty().isEmpty())
+        assertEquals("spotify", PlayBodies.speakerDropReason(artist, snap.visible(artist)[0]))
+        assertEquals("Spotify picks: no N av M", Hint.Picks(Kind.SPOTIFY), hint(artist, listOf(SPOTIFY_CONTEXT_KEY), me.vibb.music.logic.Bookmark(SPOTIFY_CONTEXT_KEY, 60_000)))
+        assertEquals("the context's uri plays it", "spotify:artist:FAKEid7", me.vibb.music.playback.spotifyItemUri(artist, SPOTIFY_CONTEXT_KEY))
+        assertTrue("hidden while Spotify can't play (the tests' switch)", snap.copy(spotifyPlayable = false).visible(artist).isEmpty())
+        // a list-mode entry is unchanged: its listed tracks
+        val list = spotify(6, "playlist")
+        assertEquals(listOf("t1", "t2"), snapshot(library(listOf(list)), items = rows(6, listOf("t1", "t2"))).visible(list).map { it.key })
+    }
+
+    @Test
+    fun `a restart restores a context paused at its live track - its title, its place, never done (26c §5_9, step 6)`() {
+        val playlist = spotify(6, "playlist", mode = SPOTIFY_MODE_CONTEXT)
+        val live = SpotifyContextTrack("spotify:track:FAKEtrack0000000000003", "Månesang — Ola Fjell")
+        val snap = snapshot(
+            library(listOf(playlist)),
+            positions = mapOf(playlist.key to mapOf(SPOTIFY_CONTEXT_KEY to me.vibb.music.logic.ItemPosition(95_000, false))),
+            bookmarks = mapOf(playlist.key to (SPOTIFY_CONTEXT_KEY to 95_000L)),
+            spotifyContexts = mapOf(playlist.key to live, "otherkey" to SpotifyContextTrack("spotify:track:FAKEtrack0000000000009", "Not this")),
+        )
+        assertEquals("the item carries the live track's title", "Månesang — Ola Fjell", snap.visible(playlist).single().title)
+        assertNull("no duration: never done", snap.visible(playlist).single().durationMs)
+        // the stored queue (NowPlayingRow) after a restart: shown paused at the live track and its place
+        val row = me.vibb.music.data.NowPlayingRow(0, 6, SPOTIFY_CONTEXT_KEY, 0, 95_000, null, false, 0)
+        val now = me.vibb.music.ui.nowView(snap, me.vibb.music.playback.PlayerHub.State(), row)!!
+        assertEquals(false, now.live)
+        assertEquals(false, now.playing)
+        assertEquals("Månesang — Ola Fjell", now.itemTitle)
+        assertEquals(95_000L, now.storedPosMs)
+        // the service's restore finds the key: the plan starts the item at the row's place
+        val plan = me.vibb.music.logic.storedPlan(listOf(SPOTIFY_CONTEXT_KEY), 0, 95_000, snap.order(playlist).map { it.key }.toSet()) { 0 }!!
+        assertEquals(listOf(SPOTIFY_CONTEXT_KEY), plan.keys)
+        assertEquals(95_000L, plan.startPosMs)
+        // a cover tap goes on there too
+        val sw = me.vibb.music.ui.playSwitch(snap, 6, null, null, 1_000)!!
+        assertEquals(SPOTIFY_CONTEXT_KEY, sw.view.item.key)
+        assertEquals(95_000L, sw.view.storedPosMs)
+        // without a live track yet: the entry's name
+        assertEquals(playlist.name, snapshot(library(listOf(playlist))).visible(playlist).single().title)
+    }
+
+    @Test
+    fun `spotify_context json - the live track per entry, well formed only, written only on a change (26c §5_9)`() {
+        val a = SpotifyContextTrack("spotify:track:FAKEtrack0000000000001", "Stille natt — Ola Fjell, Kari Li")
+        val rows = SpotifyContexts.next(emptyMap(), "a1b2c3d4e5f6", a)!!
+        val text = SpotifyContexts.encode(rows)
+        assertEquals("""{"a1b2c3d4e5f6":{"uri":"spotify:track:FAKEtrack0000000000001","title":"Stille natt — Ola Fjell, Kari Li"}}""", text)
+        assertEquals(rows, SpotifyContexts.decode(text))
+        assertNull("the same track: nothing to write", SpotifyContexts.next(rows, "a1b2c3d4e5f6", a))
+        assertEquals("an episode of a playlist context too", "spotify:episode:FAKEep1", SpotifyContexts.next(rows, "k2", SpotifyContextTrack("spotify:episode:FAKEep1", "Ep"))!!["k2"]!!.uri)
+        assertEquals("null drops the row (the context's end)", emptyMap<String, SpotifyContextTrack>(), SpotifyContexts.next(rows, "a1b2c3d4e5f6", null))
+        assertNull("nothing to drop", SpotifyContexts.next(emptyMap(), "a1b2c3d4e5f6", null))
+        for (bad in listOf(SpotifyContextTrack("spotify:artist:x", "T"), SpotifyContextTrack("https://x/y", "T"), SpotifyContextTrack("spotify:track:abc", " "))) {
+            assertNull("$bad", SpotifyContexts.next(emptyMap(), "k", bad))
+        }
+        assertNull("a bad key", SpotifyContexts.next(emptyMap(), "a key", a))
+        assertEquals("a title cut as the server's (200, whitespace)", "A B", SpotifyContexts.next(emptyMap(), "k", a.copy(title = "  A \n B "))!!["k"]!!.title)
+        // junk in the file is dropped, the rest kept
+        assertEquals(
+            mapOf("k1" to SpotifyContextTrack("spotify:track:abc", "T")),
+            SpotifyContexts.decode("""{"k1":{"uri":"spotify:track:abc","title":"T"},"k 2":{"uri":"spotify:track:abc","title":"T"},"k3":{"uri":"x","title":"T"},"k4":1}"""),
+        )
+        for (junk in listOf(null, "", "[]", "{", "null")) assertEquals("$junk", emptyMap<String, SpotifyContextTrack>(), SpotifyContexts.decode(junk))
+        // a context's item: never a duration kept, next and previous the web player's (the service's rules)
+        val artist = spotify(7, "artist", mode = SPOTIFY_MODE_CONTEXT)
+        assertFalse(me.vibb.music.playback.keepsDuration(artist, SPOTIFY_CONTEXT_KEY))
+        assertTrue(me.vibb.music.playback.keepsDuration(spotify(6, "playlist"), "t1"))
+        assertTrue(me.vibb.music.playback.stepsOnWebPlayer(artist))
+        assertFalse(me.vibb.music.playback.stepsOnWebPlayer(spotify(6, "playlist")))
+        assertFalse(me.vibb.music.playback.stepsOnWebPlayer(entry(2)))
     }
 
     @Test
@@ -253,6 +327,11 @@ class SpotifyRulesTest {
         val artist = spotify(7, "artist", mode = SPOTIFY_MODE_CONTEXT)
         val item = contextItem(artist)
         assertEquals(PlayItem(7, "context", "Entry 7", null, false, null), item)
+        assertEquals("step 6: the live track's title once one played", PlayItem(7, "context", "Song — A", null, false, null), contextItem(artist, SpotifyContextTrack("spotify:track:x1", "Song — A")))
+        assertTrue(me.vibb.music.logic.isSpotifyContext(artist))
+        assertFalse(me.vibb.music.logic.isSpotifyContext(spotify(6, "playlist")))
+        assertTrue(me.vibb.music.logic.isContextItem(artist, SPOTIFY_CONTEXT_KEY))
+        assertFalse(me.vibb.music.logic.isContextItem(spotify(6, "playlist"), SPOTIFY_CONTEXT_KEY))
         assertEquals(SPOTIFY_CONTEXT_KEY, contextItem(artist.copy(name = "Another name")).key)
         assertFalse("never a Spotify id's shape", Regex("[A-Za-z0-9]{22}").matches(SPOTIFY_CONTEXT_KEY))
     }

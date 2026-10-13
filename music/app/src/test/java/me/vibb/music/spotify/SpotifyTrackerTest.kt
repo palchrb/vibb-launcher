@@ -44,6 +44,7 @@ class SpotifyTrackerTest {
         is Event.QueueAdd -> "QueueAdd ${e.index}"
         Event.Look -> "Look"
         Event.Elsewhere -> "Elsewhere"
+        is Event.TrackChanged -> "TrackChanged ${e.uri}"
     }
 
     private fun queueOf(doc: JsonObject) = doc["queue"]!!.jsonArray.map {
@@ -55,7 +56,13 @@ class SpotifyTrackerTest {
     private fun replay(name: String): SpotifyTracker {
         val doc = Json.parseToJsonElement(Fixtures.resource("spotify/sdk_states/$name.json")).jsonObject
         val tracker = SpotifyTracker()
-        tracker.load(queueOf(doc), 0)
+        // a context-mode sequence (§5.9, step 6) names the context and the stored live track instead of a queue
+        val context = (doc["context"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        if (context != null) {
+            tracker.loadContext(context, (doc["live"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content)
+        } else {
+            tracker.load(queueOf(doc), 0)
+        }
         for ((i, stepElement) in doc["steps"]!!.jsonArray.withIndex()) {
             val step = stepElement.jsonObject
             val at = step["at"]!!.jsonPrimitive.long
@@ -64,6 +71,12 @@ class SpotifyTrackerTest {
                 "played" in step -> step["played"]!!.jsonObject.let { p ->
                     tracker.played(
                         p["index"]!!.jsonPrimitive.int, p["known"]!!.jsonPrimitive.int,
+                        positionMs = p["position"]?.jsonPrimitive?.long ?: 0, fresh = p["fresh"]?.jsonPrimitive?.boolean ?: true,
+                    )
+                }
+                "played_context" in step -> step["played_context"]!!.jsonObject.let { p ->
+                    tracker.playedContext(
+                        (p["offset"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content,
                         positionMs = p["position"]?.jsonPrimitive?.long ?: 0, fresh = p["fresh"]?.jsonPrimitive?.boolean ?: true,
                     )
                 }
@@ -106,7 +119,7 @@ class SpotifyTrackerTest {
             "start", "advance", "end_of_window", "end_of_window_gap", "end_of_queue", "pause", "elsewhere", "elsewhere_not_ready",
             "relinked", "relinked_not_by_name", "relinked_other_artist", "unplayable", "unplayable_reset", "autoplay",
             "autoplay_window", "transfer_in", "queue_leftover", "step_back_stale", "restart_stale", "trackless", "shuffled",
-            "start_old_advance",
+            "start_old_advance", "context_artist", "context_playlist", "context_foreign", "context_autoplay",
         )
         assertTrue("the sequences §9.2 and the QA fix round name: ${wanted - sequences.toSet()}", sequences.containsAll(wanted))
         for (name in sequences) replay(name)
@@ -324,5 +337,76 @@ class SpotifyTrackerTest {
         }
         assertEquals("our add may be in the old device's queue: no evidence", listOf("NotOurs playing", "NewWindow 0 resume"), session(newDevice = false))
         assertEquals("a new device's queue is empty: a proven skip", listOf("Unplayable 0", "Unplayable 1", "ItemChanged 2 auto"), session(newDevice = true))
+    }
+
+    // --- context mode (design 26c §5.9, step 6) ---------------------------------------------------------------
+
+    private val artist = "spotify:artist:FAKEartist000000000001"
+
+    private fun inContext(n: Int, position: Long, context: String? = artist, paused: Boolean = false, name: String? = "Fake track $n") =
+        SdkState(paused, position, 20_000, uri(n), null, emptyList(), emptyList(), "track", name, listOf("Fake Artist"), context)
+
+    @Test
+    fun `context mode - every track of our context is ours, its title the listing's, nothing of a queue`() {
+        val t = SpotifyTracker().apply { loadContext(artist, null) }
+        assertEquals(artist, t.context)
+        assertEquals("a list-mode play means nothing here", emptyList<String>(), t.played(0, 0).map(::word))
+        assertEquals(Mode.IDLE, t.mode)
+        t.playedContext(null)
+        val started = t.onState(inContext(5, 0), 100)
+        assertEquals(listOf("Started 0", "TrackChanged ${uri(5)}"), started.map(::word))
+        assertEquals("the server's listing title", "Fake track 5 — Fake Artist", (started[1] as Event.TrackChanged).title)
+        assertEquals(uri(5), t.liveUri)
+        assertEquals(0, t.index)
+        assertEquals("Spotify picks: any track of the context", listOf("TrackChanged ${uri(9)}"), t.onState(inContext(9, 0), 5_000).map(::word))
+        assertNull("a state with no name: no title (the renderer keeps the entry's)", (t.onState(inContext(10, 0, name = null), 6_000).single() as Event.TrackChanged).title)
+        assertEquals("no unplayable item in a context: Spotify skips it", emptyList<String>(), t.onPlaybackError().map(::word))
+        assertEquals(SpotifyTracker.Measured(0, 0, 6_000, true), t.measured)
+    }
+
+    @Test
+    fun `context mode - a step while paused that Spotify plays is a resume, one it keeps paused is only the track`() {
+        val t = SpotifyTracker().apply { loadContext(artist, uri(1)) }
+        t.playedContext(null)
+        assertEquals("the stored live track again: no change", listOf("Started 0"), t.onState(inContext(1, 0), 0).map(::word))
+        t.pauseSent()
+        assertEquals(listOf("Paused ours"), t.onState(inContext(1, 2_000, paused = true), 2_100).map(::word))
+        assertEquals("next while paused, Spotify keeps it paused", listOf("TrackChanged ${uri(2)}"), t.onState(inContext(2, 0, paused = true), 3_000).map(::word))
+        assertEquals("next again, and Spotify plays it", listOf("TrackChanged ${uri(3)}", "Resumed"), t.onState(inContext(3, 0), 4_000).map(::word))
+        assertEquals("playing, then the next one paused by Spotify", listOf("TrackChanged ${uri(4)}", "Paused spotify"), t.onState(inContext(4, 0, paused = true), 5_000).map(::word))
+    }
+
+    @Test
+    fun `context mode - a state of no context, of another, or our list's leftover add is not ours`() {
+        val t = SpotifyTracker().apply { load((0..2).map { track(it) }, 0) }
+        t.played(0, 0)
+        assertEquals(listOf("Started 0", "QueueAdd 1"), t.onState(state(0, 0), 0).map(::word)) // an add of ours in Spotify's queue
+        t.loadContext(artist, null)
+        t.playedContext(null)
+        assertEquals("the add plays first: no start of ours", emptyList<String>(), t.onState(inContext(1, 0), 100).map(::word))
+        assertEquals(listOf("Started 0", "TrackChanged ${uri(7)}"), t.onState(inContext(7, 0), 20_200).map(::word))
+        assertEquals("a uri list (no context)", listOf("NotOurs playing"), t.onState(inContext(8, 0, context = null), 21_000).map(::word))
+        assertEquals(Mode.LOST, t.mode)
+        t.playedContext(null)
+        t.onState(inContext(7, 1_000), 21_500)
+        assertEquals(listOf("NotOurs playing"), t.onState(inContext(8, 0, context = "spotify:playlist:FAKEforeignList000001"), 22_000).map(::word))
+    }
+
+    @Test
+    fun `context mode - a stale state of the stored track far from the place is passed over at a start`() {
+        val t = SpotifyTracker().apply { loadContext("spotify:playlist:FAKEplaylist0000000001", uri(2)) }
+        val pl = "spotify:playlist:FAKEplaylist0000000001"
+        t.onState(inContext(2, 90_000, context = pl, paused = true), 0) // the page's last state of an earlier session
+        t.playedContext(uri(2), positionMs = 30_000)
+        assertEquals(emptyList<String>(), t.onState(inContext(2, 90_100, context = pl), 100).map(::word))
+        assertNull(t.measured)
+        assertEquals(listOf("Started 0"), t.onState(inContext(2, 30_500, context = pl), 300).map(::word))
+        assertEquals(30_500L, t.measured!!.positionMs)
+        // an artist has no offset: Spotify's start, near 0
+        val a = SpotifyTracker().apply { loadContext(artist, null) }
+        a.onState(inContext(4, 50_000, paused = true), 0)
+        a.playedContext(null, positionMs = 50_000)
+        assertEquals("no position is sent without an offset", emptyList<String>(), a.onState(inContext(4, 50_100), 100).map(::word))
+        assertEquals(listOf("Started 0", "TrackChanged ${uri(4)}"), a.onState(inContext(4, 200), 300).map(::word))
     }
 }

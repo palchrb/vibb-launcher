@@ -473,6 +473,52 @@ class SourceScanTest {
         assertTrue("the bridge's token as it is only without the switch", create.contains("if (fakeTokens == null) {\n                        t\n"))
     }
 
+    /**
+     * Design 26c §9.4, step 6 (qa-26c-step5b-code, "the state-recording gap"): the state recorder is a port that is a no-op in
+     * the main source set - its one hook null, assigned in src/debug's DebugSpotify.kt alone, switched by config.json's
+     * `record_spotify_states` - and no state's JSON ever reaches a log line (§7.1), the recorder's file being src/debug's.
+     */
+    @Test
+    fun `step 6 - the state recorder is a no-op in main, written only by src-debug, and no state JSON reaches a log`() {
+        val hook = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRecording.kt"))
+        assertTrue(hook.contains("var recorder: SpotifyRecorder? = null"))
+        assertFalse("the hook writes nothing itself", hook.contains("File") || hook.contains("write") || hook.contains("Log."))
+        // main never assigns the hook; src/debug's DebugSpotify.kt does, and nothing else
+        for (f in sources("src/main/java")) {
+            assertFalse("${f.name} assigns the recorder", Regex("""recorder\s*=[^=]""").containsMatchIn(code(f).replace("var recorder: SpotifyRecorder? = null", "")))
+            assertFalse("${f.name}: the recorder's file is src/debug's", code(f).contains("sdk_states") || code(f).contains("record_spotify_states"))
+        }
+        val assigning = sources("src/debug").filter { Regex("""SpotifyRecording\.recorder\s*=[^=]""").containsMatchIn(code(it)) }.map { it.name }
+        assertEquals(listOf("DebugSpotify.kt"), assigning)
+        val debug = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugSpotify.kt"))
+        assertTrue(debug.contains("config?.get(\"record_spotify_states\")?.jsonPrimitive?.booleanOrNull"))
+        assertTrue("debug-feed/sdk_states/<start>.jsonl", debug.contains("File(File(dir, \"sdk_states\"), \"\${stamp()}.jsonl\")"))
+        assertTrue(debug.contains("append(\"{\\\"t\\\":\$atMs,\\\"state\\\":\$compact}\")"))
+        val logLines = debug.lines().filter { it.contains("Log.") }
+        assertTrue("the recorder never logs a state: $logLines", logLines.none { it.contains("json") || it.contains("compact") || it.contains("line") })
+        // read at every process start and at the receiver, as the debug base
+        assertTrue(code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt")).substringAfter("class DebugStartup").contains("DebugSpotify.applyRecorder(it)"))
+        assertTrue(code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")).contains("DebugSpotify.applyRecorder(context)"))
+        // the port in main: the hook or nothing
+        val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))
+        assertTrue(renderer.contains("override fun recordState(json: String) {\n        SpotifyRecording.recorder?.state(now(), json)\n    }"))
+        assertTrue(renderer.contains("override fun record(event: String) {\n        SpotifyRecording.recorder?.event(now(), event)\n    }"))
+        assertTrue("the posted state's JSON goes to the recorder only", renderer.contains("is HostEvent.State -> e.json?.let { ports.recordState(it) }"))
+        assertEquals("one recordState call", 1, Regex("""ports\.recordState\(""").findAll(renderer).count())
+        assertTrue("the SDK's error by its kind only", renderer.contains("is HostEvent.Error -> ports.record(\"error \${e.kind}\")"))
+        // no state JSON in any log line of the web player: the host passes it on untouched, the renderer logs fixed words
+        val host = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyWebHost.kt"))
+        val bridge = host.substringAfter("fun state(json: String?) {").substringBefore("\n        }\n")
+        assertFalse(bridge.contains("log("))
+        assertTrue(bridge.contains("post(gen, HostEvent.State(snapshot, json))"))
+        assertTrue("the event's text leaves the JSON out", host.contains("override fun toString(): String = \"State(\$snapshot)\""))
+        for (f in sources("src/main/java/me/vibb/music/spotify") + moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt")) {
+            for (line in code(f).lines().filter { Regex("""\blog\(|Log\.""").containsMatchIn(it) }) {
+                assertFalse("${f.name}: $line", Regex("""\bjson\b|\.json\b""").containsMatchIn(line))
+            }
+        }
+    }
+
     @Test
     fun `a Storytel download never follows a redirect, so no token reaches the cache index`() {
         val downloads = code(moduleFile("src/main/java/me/vibb/music/sync/Downloads.kt"))

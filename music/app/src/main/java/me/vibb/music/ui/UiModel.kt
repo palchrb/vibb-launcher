@@ -13,6 +13,7 @@ import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
 import me.vibb.music.logic.pickPlan
@@ -52,7 +53,8 @@ fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: R
     val visible = snap.order(entry).map { it.key }
     val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
     val bookmark = snap.bookmarks[entry.key]
-    val showProgress = entry.resume && started(order, bookmark)
+    // a Spotify context (design 26c §5.9) has no list to show progress through: Spotify picks the tracks
+    val showProgress = entry.resume && started(order, bookmark) && !isSpotifyContext(entry)
     val duration = bookmark?.let { b -> snap.item(entry.id, b.itemKey)?.durationMs }
     return EntryUi(
         entry,
@@ -166,6 +168,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
  * phone would.
  */
 fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long, onRoom: Boolean = false): Switch? {
+    // a Spotify context (design 26c §5.9): next and previous are the web player's, and only Spotify knows where they go
+    if (isSpotifyContext(now.entry)) return null
     val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
     return toIndex(snap, now, target, PlayRequest(now.entry.id, now.queue[target].key, now.ref, atMs), onRoom)
 }
@@ -242,6 +246,12 @@ private fun countedKeys(snap: Snapshot, now: NowView): List<String> = countedOrd
     listOrder(snap, now).map { it.key },
     snap.listed[now.entry.id].orEmpty().map { it.key },
 )
+
+/**
+ * Whether the player shows "Spor N av M" (design 26c §4.3, §5.9): never for a Spotify context - nothing is listed,
+ * Spotify picks the tracks; its one synthetic item would always read "1 av 1".
+ */
+fun showsNumber(now: NowView): Boolean = !isSpotifyContext(now.entry)
 
 /** Equal dots: at most [max] shown, a window that keeps the current one in view. */
 fun dotWindow(n: Int, current: Int, max: Int = 20): IntRange {

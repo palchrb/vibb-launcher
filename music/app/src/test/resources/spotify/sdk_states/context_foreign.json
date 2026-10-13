@@ -1,0 +1,18 @@
+{
+  "about": "Context ownership (design 26c §5.9, step 6): only states whose context is the entry's target are ours. Another app's context on \"Vibb\" mid-track is not ours - paused at once, nothing measured - and from then on every playing state is paused, our own context's too, until our next play; a uri list (no context) is not ours either.",
+  "context": "spotify:artist:FAKEartist000000000001",
+  "live": null,
+  "steps": [
+    {"at": 0, "played_context": {"offset": null}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": "spotify:artist:FAKEartist000000000001", "shuffle": false, "repeat": 0}, "expect": ["Started 0", "TrackChanged spotify:track:FAKEtrack0000000000001"]},
+    {"at": 5500, "state": {"paused": false, "position": 5000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": "spotify:artist:FAKEartist000000000001", "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 8000, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Fake track 4", "artists": ["Fake Artist"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]},
+    {"at": 8100, "state": {"paused": true, "position": 100, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Fake track 4", "artists": ["Fake Artist"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 9000, "played_context": {"offset": null, "fresh": false}},
+    {"at": 9500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": "spotify:artist:FAKEartist000000000001", "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 15000, "state": {"paused": false, "position": 0, "duration": 30000, "uri": "spotify:track:FAKEforeign0000000001", "linked": null, "type": "track", "name": "Another app's song", "artists": ["Someone Else"], "next": [], "prev": [], "context": "spotify:playlist:FAKEforeignList000001", "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]},
+    {"at": 15100, "state": {"paused": false, "position": 100, "duration": 30000, "uri": "spotify:track:FAKEforeign0000000001", "linked": null, "type": "track", "name": "Another app's song", "artists": ["Someone Else"], "next": [], "prev": [], "context": "spotify:playlist:FAKEforeignList000001", "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]},
+    {"at": 16000, "state": {"paused": false, "position": 6000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": "spotify:artist:FAKEartist000000000001", "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 0, "mode": "LOST", "measured": {"index": 0, "position": 0, "at": 9500, "playing": true}}
+}

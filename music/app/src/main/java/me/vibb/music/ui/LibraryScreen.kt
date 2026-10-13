@@ -92,6 +92,7 @@ fun hintText(hint: Hint): String {
         )
         is Hint.NotStarted -> stringResource(R.string.hint_continues, kind)
         is Hint.FromStart -> stringResource(R.string.hint_from_start, kind)
+        is Hint.Picks -> stringResource(R.string.hint_spotify_picks, kind)
     }
 }
 

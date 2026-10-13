@@ -48,6 +48,7 @@ import me.vibb.music.logic.SPOTIFY_READY_MS
 import me.vibb.music.logic.SPOTIFY_START_BUDGET_MS
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
 import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
+import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.logic.SpotifyProblem
 import me.vibb.music.logic.SpotifyWords
@@ -104,6 +105,14 @@ import kotlin.coroutines.resume
  * - The page lives from the first play (never at a restore: no Connect device appears by itself) until a
  *   suspension ([suspended]), 5 minutes after the last pause, its renderer's death, an account change, an
  *   `off` token, or [release].
+ * - **Context mode** (§5.9, step 6): an entry Spotify plays in its own order (an artist, a playlist no account may
+ *   list) is one synthetic item. A start is `PUT .../play` with the context (a playlist from its live track at its
+ *   place - `spotify_context.json` - an artist from Spotify's start), next and previous are the SDK's ([step]), every
+ *   track Spotify picks in the context is ours (another context paused), each track change swaps the item's title in
+ *   place and stores the live track, and the context's end is `Ended`. Its position row is the live track's place,
+ *   saved with no duration (never done).
+ * - The debug build's state recorder (§9.4): every posted state, the page's events and our calls by name go to
+ *   [SpotifyPorts.recordState] / [SpotifyPorts.record] - a no-op unless `src/debug` switched it on, never a log.
  *
  * Android stays at the edges ([SpotifyPorts], [SpotifyHost], the SimpleBasePlayer): SpotifyRendererTest
  * drives the rest with a scripted page, a scripted Web API and a virtual clock. Design 26c step 5a; the
@@ -157,6 +166,22 @@ internal interface SpotifyPorts {
 
     /** The debug log: fixed words, never a token, a uri list, a state or the SDK's message in a release. */
     fun log(message: String)
+
+    /** Context mode (§5.9): the live track stored for the entry [entryKey] (`spotify_context.json`), or null. */
+    fun contextTrack(entryKey: String): SpotifyContextTrack?
+
+    /** Context mode: [entryKey]'s live track is [track] now (null drops it) - written by the store, off the main thread. */
+    fun storeContextTrack(entryKey: String, track: SpotifyContextTrack?)
+
+    /**
+     * The debug build's state recorder (§9.4; qa-26c-step5b-code, "the state-recording gap"): one posted state, the
+     * compact JSON as the page posted it. A no-op unless `src/debug` switched the recorder on (`SpotifyRecording`):
+     * never in a release, and never a log line (§7.1).
+     */
+    fun recordState(json: String)
+
+    /** The recorder's other lines: a page event or one of our calls, by name only (`ready`, `play from 3 to 52 at 0 ms`). */
+    fun record(event: String)
 }
 
 /** What the session's player shows (§5.4's table): Media3's state and play-when-ready, the position anchor. */
@@ -225,7 +250,22 @@ internal class SpotifyRenderer(
     // --- the queue and what the player shows ---
 
     private var mediaItems: List<MediaItem> = emptyList()
+
+    /** List mode: the queue's tracks. Context mode: the one synthetic item (its uri the context's), for the bookkeeping. */
     private var tracks: List<SpotifyTrack> = emptyList()
+
+    /** Context mode (§5.9): the entry's target - Spotify's order of it - else null (list mode). */
+    private var contextUri: String? = null
+
+    /** Context mode: a playlist goes on from its live track (an offset); an artist has none (Spotify's start, §12). */
+    private var contextOffsets = false
+
+    /** Context mode: the entry's key (its `spotify_context.json` row) and name (the title before a track is known). */
+    private var contextKey: String? = null
+    private var contextName: String? = null
+
+    /** Context mode: the live track's title, shown as the item's (the player, the session, the notification). */
+    private var liveTitle: String? = null
     private var speech = false
     private var index = 0
 
@@ -281,6 +321,9 @@ internal class SpotifyRenderer(
 
         /** Shuffle and repeat went off first: asked for, or the device is new since the play was asked for. */
         var settings = false
+
+        /** Context mode: the offset the play call carried (a playlist's live track), or null. */
+        var offset: String? = null
         var job: Job? = null
     }
 
@@ -343,26 +386,40 @@ internal class SpotifyRenderer(
     override val kind: RendererKind get() = RendererKind.SPOTIFY
     override var onEvent: ((RendererEvent) -> Unit)? = null
 
-    /** List mode's queue (§5.4); no web player and no network before a play. A context entry is step 6's. */
+    /**
+     * The queue (§5.4: list mode's tracks; §5.9: a context's one synthetic item); no web player and no network before
+     * a play. A context's live track - where a playlist context goes on - is the stored one (`spotify_context.json`).
+     */
     override fun load(items: List<MediaItem>, startIndex: Int, startMs: Long, playNow: Boolean) {
         detached = false // attached again: a re-attach always loads
         val a = queue()
         val ref = a?.entry?.target?.let { spotifyTarget(it) }
         mediaItems = items
-        tracks = if (a == null || ref == null || a.entry.spotifyMode != SPOTIFY_MODE_LIST) {
-            emptyList()
-        } else {
-            a.items.map { SpotifyTrack(uriOf(ref.kind, it.key), it.title, it.durationMs) }
+        contextUri = ref?.takeIf { a?.entry?.spotifyMode == SPOTIFY_MODE_CONTEXT }?.target
+        contextOffsets = ref?.kind == SpotifyKind.PLAYLIST
+        contextKey = a?.entry?.key?.takeIf { contextUri != null }
+        contextName = a?.entry?.name?.takeIf { contextUri != null }
+        val stored = contextKey?.let { ports.contextTrack(it) }
+        liveTitle = stored?.title
+        val ctx = contextUri
+        // a context's item shows its live track's title from the start (a restart: paused at the live track)
+        liveTitle?.let { t -> mediaItems = items.mapIndexed { i, mi -> if (i == 0) titled(mi, t) else mi } }
+        tracks = when {
+            a == null || ref == null -> emptyList()
+            ctx != null -> a.items.take(1).map { SpotifyTrack(ctx, it.title, null) }
+            a.entry.spotifyMode != SPOTIFY_MODE_LIST -> emptyList()
+            else -> a.items.map { SpotifyTrack(uriOf(ref.kind, it.key), it.title, it.durationMs) }
         }
-        if (a != null && tracks.isEmpty()) ports.log("spotify: nothing to play in list mode (${a.entry.spotifyMode ?: "no mode"})")
-        speech = ref?.kind?.episodes == true
+        if (a != null && tracks.isEmpty()) ports.log("spotify: nothing to play (${a.entry.spotifyMode ?: "no mode"})")
+        speech = ref?.kind?.episodes == true && ctx == null
         supersede()
         cancelStep()
         cancelFirstState()
         index = startIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
         lastIndex = -1 // a new queue: the service hears its current item (as ExoPlayer's playlist change)
-        tracker.load(tracks, index)
-        place = Place(index, startMs.coerceAtLeast(0), ports.now(), moving = false)
+        if (ctx != null) tracker.loadContext(ctx, stored?.uri) else tracker.load(tracks, index)
+        // an artist context has no resume (§12: no offset for an artist): it starts where Spotify starts it
+        place = Place(index, if (ctx != null && !contextOffsets) 0 else startMs.coerceAtLeast(0), ports.now(), moving = false)
         stateDuration = null
         ended = false
         stopped = false
@@ -394,7 +451,9 @@ internal class SpotifyRenderer(
 
     override fun replaceItem(index: Int, item: MediaItem) {
         if (index !in mediaItems.indices || mediaItems[index].mediaId != item.mediaId) return
-        mediaItems = mediaItems.toMutableList().also { it[index] = item }
+        // a context's item keeps its live title (the service swaps the art from its own copy of the item)
+        val live = liveTitle?.takeIf { contextUri != null }
+        mediaItems = mediaItems.toMutableList().also { it[index] = if (live != null) titled(item, live) else item }
         changed()
     }
 
@@ -463,7 +522,7 @@ internal class SpotifyRenderer(
     override fun seekTo(ms: Long) {
         val target = ms.coerceAtLeast(0)
         val live = host.alive && tracker.mode == Mode.OURS && tracker.index == index && stepTimer == null && start == null
-        if (live) host.call("seek", target)
+        if (live) sdk("seek", target)
         start?.takeIf { !it.calling && it.request.index == index }?.posMs = target
         place = Place(index, target, ports.now(), moving = live && pwr)
         changed()
@@ -475,6 +534,10 @@ internal class SpotifyRenderer(
         cancelStep()
         mediaItems = emptyList()
         tracks = emptyList()
+        contextUri = null
+        contextKey = null
+        contextName = null
+        liveTitle = null
         index = 0
         tracker.load(emptyList(), 0)
         place = Place(0, 0, ports.now(), moving = false)
@@ -492,7 +555,8 @@ internal class SpotifyRenderer(
         val m = tracker.measured ?: return
         if (m.index != index || m.index !in a.items.indices || m.index !in tracks.indices) return
         val item = a.items[m.index]
-        val duration = stateDuration ?: a.durations[item.key] ?: item.durationMs
+        // a context's item is saved with no duration (§5.9): a track's end is not the context's, so it is never done
+        val duration = if (contextUri != null) null else stateDuration ?: a.durations[item.key] ?: item.durationMs
         ports.save(a, m.index, m.positionMs, duration, force)
     }
 
@@ -551,7 +615,7 @@ internal class SpotifyRenderer(
         prefetchTimer = null
         lookTimer = null
         fadeTimer = null
-        if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) host.call("pause")
+        if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) sdk("pause")
         destroyHost()
         pwr = false
         released = true
@@ -567,6 +631,25 @@ internal class SpotifyRenderer(
     }
 
     // --- for the service (step 5b) ---
+
+    /**
+     * Next ([forward]) or previous in a context (§5.9, step 6): the SDK's (`vibb.next()` / `vibb.previous()`) -
+     * Spotify's order and its own previous rule - while a track of our context is on the player; the tracker reads
+     * where Spotify went ([Event.TrackChanged]). Nothing else: with no context of ours on the player (a restored
+     * queue, a page gone idle, a start on its way) only Spotify knows the next track, and a play goes on from the
+     * live one. Not for list mode, whose steps are the service's (`seekTo(index, ms)`).
+     */
+    fun step(forward: Boolean) {
+        if (contextUri == null || released || detached) return
+        if (!host.alive || tracker.mode != Mode.OURS || start != null) {
+            ports.log("spotify: a step with no context of ours on the player - nothing sent")
+            return
+        }
+        sdk(if (forward) "next" else "previous")
+    }
+
+    /** Context mode: whether [step] is the way next and previous go (the service asks before its own skip rules). */
+    val stepsInContext: Boolean get() = contextUri != null
 
     /**
      * Another renderer took over (§5.10's `attach`: the phone's own player, a room; qa-26c-step5b-code M1). The page
@@ -670,7 +753,7 @@ internal class SpotifyRenderer(
         if (detached || !ports.mayPlay()) return
         ports.networkLine()?.let { return refuse(it) }
         if (!acquireFocus()) return
-        host.call("resume")
+        sdk("resume")
         tracker.resumeSent()
         pwr = true
         line = null
@@ -795,14 +878,18 @@ internal class SpotifyRenderer(
             return@coroutineScope StartEnd.Failed(SpotifyProblem.UNREACHABLE)
         }
         if (s.cancelled || s.superseded || start !== s) return@coroutineScope StartEnd.Dropped
-        val window = playWindow(tracks.map { it.uri }, r.index)
+        val ctx = contextUri
+        val window = if (ctx != null) listOf(ctx) else playWindow(tracks.map { it.uri }, r.index)
         if (window.isEmpty()) return@coroutineScope StartEnd.Dropped
+        // context mode (§5.9): a playlist from its live track at its place, an artist from Spotify's start
+        s.offset = if (ctx != null && contextOffsets) tracker.liveUri else null
+        val body = if (ctx != null) PlayBody.Context(ctx, s.offset, s.posMs) else PlayBody.Uris(window, s.posMs)
         // decided now, not when the play was asked for: a `ready` with a new device may have come since
         s.settings = r.settings || needSettings
         s.calling = true
         val result = api.start(
             device,
-            PlayBody.Uris(window, s.posMs),
+            body,
             s.deadline,
             tokens = { renew ->
                 if (renew) tokens.invalidate()
@@ -837,18 +924,24 @@ internal class SpotifyRenderer(
                 // its successor was dropped (a pause, a new queue): the play that went out is stopped,
                 // never left sounding or read against the old play (qa-26c-step5a-code H1)
                 ports.log("spotify: a replaced play went out - paused")
-                if (host.alive) host.call("pause")
+                if (host.alive) sdk("pause")
                 tracker.lost()
             }
             s.superseded -> ports.log("spotify: a start replaced by a newer play")
             end is StartEnd.Called && end.result == StartResult.Sent -> {
                 if (s.settings) needSettings = false
-                apply(tracker.played(r.index, r.index + end.window - 1, s.posMs, r.fresh))
+                if (contextUri != null) {
+                    ports.record(if (s.offset != null) "play context from the live track at ${s.posMs} ms" else "play context")
+                    apply(tracker.playedContext(s.offset, s.posMs, r.fresh))
+                } else {
+                    ports.record("play from ${r.index} to ${r.index + end.window - 1} at ${s.posMs} ms")
+                    apply(tracker.played(r.index, r.index + end.window - 1, s.posMs, r.fresh))
+                }
                 when {
                     problem != null -> fail(problem)
                     s.cancelled || suppressed -> {
                         // the kid paused, or a transient focus loss holds it (M2): it never sounds over that
-                        host.call("pause")
+                        sdk("pause")
                         tracker.pauseSent()
                     }
                     else -> armFirstState(s.deadline)
@@ -925,7 +1018,7 @@ internal class SpotifyRenderer(
     private fun fail(p: SpotifyProblem) {
         ports.log("spotify: stopped - ${p.name}")
         val ours = tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING
-        if (ours && host.alive) host.call("pause") // our own device only: never a pause of the account's other player
+        if (ours && host.alive) sdk("pause") // our own device only: never a pause of the account's other player
         if (ours) tracker.lost()
         cancelFirstState()
         cancelGap()
@@ -954,7 +1047,7 @@ internal class SpotifyRenderer(
         queued = null
         cancelFirstState()
         if (host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
-            host.call("pause")
+            sdk("pause")
             tracker.pauseSent()
         }
         suppressed = false
@@ -968,6 +1061,14 @@ internal class SpotifyRenderer(
     // --- the page's events ---
 
     private fun onHost(e: HostEvent) {
+        when (e) {
+            is HostEvent.State -> e.json?.let { ports.recordState(it) }
+            is HostEvent.Ready -> ports.record("ready")
+            is HostEvent.NotReady -> ports.record("not_ready")
+            is HostEvent.Error -> ports.record("error ${e.kind}") // the kind only, never the SDK's text
+            HostEvent.Gone -> ports.record("gone")
+            is HostEvent.NeedToken -> Unit
+        }
         when (e) {
             is HostEvent.Ready -> {
                 if (e.deviceId != deviceId) {
@@ -1119,12 +1220,12 @@ internal class SpotifyRenderer(
                         pwr = true
                         lastOursAt = ports.now()
                     } else {
-                        host.call("pause")
+                        sdk("pause")
                         tracker.pauseSent()
                     }
                 }
                 is Event.NotOurs -> {
-                    if (e.playing && host.alive) host.call("pause")
+                    if (e.playing && host.alive) sdk("pause")
                     ports.log("spotify: a track that isn't ours was paused")
                     if (pwr) {
                         pwr = false
@@ -1163,8 +1264,44 @@ internal class SpotifyRenderer(
                     saveNow()
                     fail(SpotifyProblem.ELSEWHERE)
                 }
+                is Event.TrackChanged -> contextTrackChanged(e.uri, e.title)
             }
         }
+    }
+
+    /**
+     * Context mode (§5.9): Spotify moved on to [uri] in our context. The item's title is swapped in place (the player,
+     * the session, the notification; the entry's cover stays its art - the phone loads no remote picture), the live
+     * track is stored (`spotify_context.json`: the tile's item, a restart, where a playlist goes on) and the place
+     * moves to it (the position row holds the live track's place).
+     */
+    private fun contextTrackChanged(uri: String, title: String?) {
+        val key = contextKey ?: return
+        val t = title ?: contextName ?: return
+        liveTitle = t
+        showTitle(t)
+        ports.storeContextTrack(key, SpotifyContextTrack(uri, t))
+        saveNow()
+        // Spotify moving on on a network the gate refuses now (streaming on mobile data not allowed, roaming): paused
+        // with the line - list mode's advance is gated by the service's onItemChanged (§5.10), a context's here
+        if (pwr) ports.networkLine()?.let { refuse(it) }
+    }
+
+    /** The current item's title, in place (context mode). */
+    private fun showTitle(title: String) {
+        val mi = mediaItems.getOrNull(0) ?: return
+        if (mi.mediaMetadata.title?.toString() == title) return
+        mediaItems = mediaItems.toMutableList().also { it[0] = titled(mi, title) }
+        changed()
+    }
+
+    private fun titled(item: MediaItem, title: String): MediaItem =
+        item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setTitle(title).build()).build()
+
+    /** One of the SDK's transport calls (pause, resume, seek, next, previous): to the page, and its name to the recorder. */
+    private fun sdk(name: String, vararg args: Any?) {
+        host.call(name, *args)
+        ports.record(name)
     }
 
     private fun measuredAt(i: Int): Long = tracker.measured?.takeIf { it.index == i }?.positionMs ?: place.takeIf { it.index == i }?.posMs ?: 0
@@ -1188,7 +1325,7 @@ internal class SpotifyRenderer(
         explicit += Pending(RendererEvent.Error(UNPLAYABLE), MoveOn(stop))
         if (stop) {
             ports.log("spotify: three unplayable in a row - stopped")
-            if (host.alive) host.call("pause")
+            if (host.alive) sdk("pause")
             if (pwr) {
                 pwr = false
                 pauseCause = PauseCause.OTHER
@@ -1199,7 +1336,9 @@ internal class SpotifyRenderer(
 
     /**
      * The service's `onError` moves on to [target] (§5.10): after the third nothing plays (the index
-     * only moves); when Spotify already plays it or past it, nothing is sent; else one play from it.
+     * only moves); when Spotify already plays it or past it, nothing is sent; else one play from it -
+     * only while the kid wants it playing (step 6: a `playback_error` on a paused track only moves the
+     * index, as a step while paused does - nothing starts by itself, qa-26c-step5a-code H1's rule).
      */
     private fun moveOnTo(target: Int, ms: Long, mo: MoveOn) {
         if (mo.stop) {
@@ -1210,7 +1349,7 @@ internal class SpotifyRenderer(
         } else {
             moveIndex(target, auto = false)
             place = Place(target, ms, ports.now(), moving = false)
-            if (ports.mayPlay()) request(Request(target, ms, fresh = false, settings = needSettings))
+            if (pwr && ports.mayPlay()) request(Request(target, ms, fresh = false, settings = needSettings))
         }
         changed()
     }
@@ -1226,6 +1365,7 @@ internal class SpotifyRenderer(
                 ports.log("spotify: the queue add failed")
                 return@launch
             }
+            ports.record("queue $i")
             if (released || deviceId != device || tracks.getOrNull(i)?.uri != uri) return@launch
             apply(tracker.queued(i))
             changed()
@@ -1260,7 +1400,7 @@ internal class SpotifyRenderer(
                 suppressed = true
                 cancelGap()
                 if (host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
-                    host.call("pause")
+                    sdk("pause")
                     tracker.pauseSent()
                 }
                 explicit += Pending(RendererEvent.Interrupted, null)
@@ -1282,7 +1422,7 @@ internal class SpotifyRenderer(
                         !pwr || start != null -> Unit // a start still on its way goes on as it is
                         live -> {
                             // our track, or the play sent under the loss and paused (M2): it plays again
-                            host.call("resume")
+                            sdk("resume")
                             tracker.resumeSent()
                             lastOursAt = ports.now()
                             if (tracker.mode == Mode.STARTING) armFirstState(ports.now() + SPOTIFY_FIRST_STATE_MS) else armGap()
@@ -1766,6 +1906,21 @@ private class AndroidSpotifyPorts(
     }
 
     override fun log(message: String) = logSink(message)
+
+    override fun contextTrack(entryKey: String): SpotifyContextTrack? = store.spotifyContexts()[entryKey]
+
+    override fun storeContextTrack(entryKey: String, track: SpotifyContextTrack?) {
+        scope.launch(writer) { store.recordSpotifyContext(entryKey, track) }
+    }
+
+    // the debug build's recorder (§9.4): nothing unless src/debug set the hook - no file, no log here
+    override fun recordState(json: String) {
+        SpotifyRecording.recorder?.state(now(), json)
+    }
+
+    override fun record(event: String) {
+        SpotifyRecording.recorder?.event(now(), event)
+    }
 
     private companion object {
         val ACCOUNT = Regex("[0-9]{1,18}:[0-9]{1,18}")

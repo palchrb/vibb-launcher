@@ -88,4 +88,37 @@ class UiModelTest {
         assertEquals("no shuffle for Spotify (resume on)", false, sw.view.canShuffle)
         assertNull("a speaker can't play it: the service says Kan ikke spilles på Sonos", playSwitch(snap, 6, null, null, 1_000, onRoom = true))
     }
+
+    @Test
+    fun `a context entry - one item, no number, no progress, Spotify's steps (26c §5_9, step 6)`() {
+        val artist = entry(7, Source.SPOTIFY, target = "spotify:artist:FAKEartist000000000001", cache = 0).copy(spotifyMode = "context")
+        val live = me.vibb.music.logic.SpotifyContextTrack("spotify:track:FAKEtrack0000000000004", "Fake track 4 — Fake Artist")
+        val s = snapshot(
+            library(listOf(list, artist)),
+            rows(6, listOf("t1", "t2", "t3")) + rows(7, listOf("stale1")), // a last good list in Room is never shown
+            bookmarks = mapOf(artist.key to (me.vibb.music.logic.SPOTIFY_CONTEXT_KEY to 40_000L)),
+            spotifyContexts = mapOf(artist.key to live),
+        )
+        val now = nowView(s, PlayerHub.State(live = true, entryId = 7, keys = listOf("context"), index = 0, playing = true), null)!!
+        assertEquals("the live track's title", "Fake track 4 — Fake Artist", now.itemTitle)
+        // countedKeys is the one synthetic item: playerNumber says 1 of 1, and the player shows no number at all
+        assertEquals(1 to 1, playerNumber(s, now))
+        assertEquals(1, playerNumberOf(s, now, now.item))
+        assertEquals(listOf("context"), listOrder(s, now).map { it.key })
+        assertEquals(false, showsNumber(now))
+        assertEquals("a list entry's number shows", true, showsNumber(nowView(s, PlayerHub.State(live = true, entryId = 6, keys = listOf("t1", "t2", "t3"), index = 0), null)!!))
+        // next and previous are the web player's: no instant switch (only Spotify knows where they go)
+        assertNull(skipSwitch(s, now, forward = true, posMs = 10_000, atMs = 1_000))
+        assertNull(skipSwitch(s, now, forward = false, posMs = 1_000, atMs = 1_000))
+        // the tile: "Spotify · Spotify velger rekkefølgen", no progress line, the stored account line still wins
+        val tile = entryUi(s, artist)
+        assertEquals(Hint.Picks(Kind.SPOTIFY), tile.hint)
+        assertNull(tile.progress)
+        assertEquals(RendererState.SPOTIFY_ASK_ADULT, entryUi(s, artist, null, null, SpotifyWords.REAUTHORIZE).state)
+        // a cover tap shows the context at once, at its place
+        val sw = playSwitch(s, 7, null, null, 1_000)!!
+        assertEquals("Fake track 4 — Fake Artist", sw.view.itemTitle)
+        assertEquals(40_000L, sw.view.storedPosMs)
+        assertNull("a room can't play it", playSwitch(s, 7, null, null, 1_000, onRoom = true))
+    }
 }

@@ -39,7 +39,13 @@ The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switc
          /v1/artists/<id>[/albums], /v1/shows/<id>[/episodes], /v1/episodes/<id>
     PUT  /v1/me/player/play?device_id=<id>           the body checked against play_request.json's shapes;
                                                      404 for an unknown device; --not-premium 403
-                                                     PREMIUM_REQUIRED; handed to the stub device
+                                                     PREMIUM_REQUIRED; handed to the stub device. A context
+                                                     (design 26c §5.9: an artist, or a playlist no account may
+                                                     list) plays its tracks - the fixture playlist's listed
+                                                     tracks, the fixture artist's album, else FAKEtrack 1..5 -
+                                                     from the offset's track (none, or one not in it: the
+                                                     top) at position_ms; the stub's next and previous step
+                                                     through it (previous after 3 s restarts the track)
     PUT  /v1/me/player                               transfer; POST /v1/me/player/queue?uri=&device_id=;
     PUT  /v1/me/player/shuffle?state=&device_id=,    shuffle and repeat (the phone turns both off;
          /v1/me/player/repeat?state=&device_id=      qa-26c-step4-code M1)
@@ -96,6 +102,9 @@ AUTOPLAY = {"uri": "spotify:track:FAKEautoplay0000000001", "name": "Something Sp
 FOREIGN = {"uri": "spotify:track:FAKEforeign0000000001", "name": "Another app's song",
            "artists": ["Someone Else"], "duration_ms": 30000, "type": "track"}
 FOREIGN_CONTEXT = "spotify:playlist:FAKEforeignList000001"
+AUTOPLAY_CONTEXT = "spotify:station:FAKEautoplay000000001"   # Autoplay after a context plays in a context of its own
+CONTEXT = re.compile(r"^spotify:(playlist|artist):([A-Za-z0-9]{1,64})$")
+CONTEXT_TRACKS = 5                                          # a context the fixtures don't name: FAKEtrack 1..5
 REPEAT = {"off": 0, "context": 1, "track": 2}
 
 
@@ -267,6 +276,22 @@ class Spotify:
     def audio_size(self, uri):
         ms = self.meta(uri)["duration_ms"]
         return HEADER + (ms * RATE // 1000) * 2
+
+    def context_tracks(self, context_uri):
+        """A context's tracks in Spotify's order (design 26c §5.9): the fixture playlist's listed tracks, the fixture
+        artist's album (its first page and the next), else FAKEtrack 1..5 - for the library snapshot's entries 6 and 7,
+        whose ids no fixture has. None for anything that isn't a playlist or an artist."""
+        m = CONTEXT.match(context_uri or "")
+        if not m:
+            return None
+        kind, cid = m.group(1), m.group(2)
+        if kind == "playlist" and cid == self.playlist_id:
+            uris = [t["uri"] for t in self.listed_tracks()]
+        elif kind == "artist" and cid == self.artist["id"]:
+            uris = [t["uri"] for t in self.album["tracks"]["items"] + server_fixture("album_tracks.json")["items"]]
+        else:
+            uris = [fake_track(n)["uri"] for n in range(1, CONTEXT_TRACKS + 1)]
+        return [self.meta(u) for u in uris]
 
     def listing(self, entry, version, tracks):
         """A listing document as the server serves it (design 26c §3.4: url null, the title, the duration)."""
@@ -523,16 +548,25 @@ def handler_for(sp):
             if not play_body_ok(body, sp.shapes):
                 log("play: 400 (not play_request.json's shape)")
                 return self.send(400, {"error": {"status": 400, "message": "Malformed json"}})
-            command = {"type": "play", "position_ms": body.get("position_ms", 0), "context_uri": body.get("context_uri")}
+            command = {"type": "play", "position_ms": body.get("position_ms", 0), "context_uri": body.get("context_uri"),
+                       "index": 0, "autoplay_context": None}
             if "uris" in body:
                 command["tracks"] = [sp.meta(u) for u in body["uris"]]
                 command["autoplay"] = sp.meta(AUTOPLAY["uri"]) if sp.args.autoplay else None
                 log(f"play: {len(body['uris'])} uris from {body['uris'][0]} at {body['position_ms']} ms on {d.id}")
             else:
+                tracks = sp.context_tracks(body["context_uri"])
+                if tracks is None:
+                    log(f"play: 400 (a context that is neither a playlist nor an artist: {body['context_uri']})")
+                    return self.send(400, {"error": {"status": 400, "message": "Non supported context uri"}})
                 start = (body.get("offset") or {}).get("uri")
-                command["tracks"] = [sp.meta(start or "spotify:track:FAKEtrack0000000000001")]
-                command["autoplay"] = None
-                log(f"play: context {body['context_uri']} from {start} on {d.id}")
+                uris = [t.get("linked_from") or t["uri"] for t in tracks]
+                index = uris.index(start) if start in uris else 0
+                command.update(tracks=tracks, index=index, autoplay_context=AUTOPLAY_CONTEXT if sp.args.autoplay else None,
+                               autoplay=sp.meta(AUTOPLAY["uri"]) if sp.args.autoplay else None)
+                where = f"from {start} (track {index + 1} of {len(tracks)})" if start in uris else \
+                    (f"from the top ({start} isn't in it)" if start else "from Spotify's start")
+                log(f"play: context {body['context_uri']} {where} at {body.get('position_ms', 0)} ms on {d.id}")
             d.push(command)
             if not d.played:
                 d.played = True
@@ -720,6 +754,7 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     this._repeat = 0;        // 0 off, 1 the context, 2 the track
     this._context = null;
     this._autoplay = null;
+    this._autoplayContext = null;
     this._ended = false;
     this._polling = false;
     this._audio = new Audio();
@@ -796,13 +831,15 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   Player.prototype._command = function (c) {
     if (c.type === 'play' || c.type === 'foreign') {
       var tracks = c.type === 'play' ? c.tracks.slice() : [c.track];
-      if (this._shuffle) tracks.sort(function () { return Math.random() - 0.5; });
+      var index = c.index || 0;  // a context's offset (design 26c §5.9)
+      if (this._shuffle) { tracks.sort(function () { return Math.random() - 0.5; }); index = 0; }
       if (this._current) this._history.push(this._current);
       this._queue = tracks;
-      this._index = 0;
-      this._current = tracks[0];
+      this._index = index;
+      this._current = tracks[index];
       this._context = c.context_uri || null;
       this._autoplay = c.type === 'play' ? c.autoplay : null;
+      this._autoplayContext = c.type === 'play' ? c.autoplay_context : null;
       this._active = true;
       this._ended = false;
       this._start(c.position_ms || 0);
@@ -864,6 +901,8 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     } else if (this._autoplay && !this._ended) {
       this._ended = true;
       this._current = this._autoplay;
+      // after a context, Autoplay plays in a context of its own (a uri list keeps none)
+      if (this._autoplayContext) this._context = this._autoplayContext;
       this._start(0);
     } else {
       this._history.pop();
@@ -902,8 +941,17 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   };
   Player.prototype.togglePlay = function () { return this._audio.paused ? this.resume() : this.pause(); };
   Player.prototype.seek = function (ms) { this._audio.currentTime = ms / 1000; this._changed(); return Promise.resolve(); };
+  // Spotify's previous: more than 3 s into a track restarts it, else the track before it in the context
   Player.prototype.previousTrack = function () {
-    if (this._index > 0) { this._index--; this._current = this._queue[this._index]; this._start(0); }
+    if ((this._audio.currentTime || 0) > 3 || this._index === 0) {
+      this._audio.currentTime = 0;
+      this._changed();
+    } else {
+      if (this._current) this._history.push(this._current);
+      this._index--;
+      this._current = this._queue[this._index];
+      this._start(0);
+    }
     return Promise.resolve();
   };
   Player.prototype.nextTrack = function () {
@@ -978,7 +1026,10 @@ def selftest():
     states = sorted(os.listdir(os.path.join(MUSIC_FIXTURES, "sdk_states")))
     for name in states:
         doc = music_fixture(os.path.join("sdk_states", name))
-        assert doc["queue"] and all(URI.match(q["uri"]) for q in doc["queue"]), name
+        if "context" in doc:   # context mode (design 26c §5.9, step 6): the context and its stored live track, no queue
+            assert CONTEXT.match(doc["context"]) and (doc["live"] is None or URI.match(doc["live"])) and "queue" not in doc, name
+        else:
+            assert doc["queue"] and all(URI.match(q["uri"]) for q in doc["queue"]), name
         for step in doc["steps"]:
             if isinstance(step.get("state"), dict):
                 assert list(step["state"]) == keys, (name, list(step["state"]), keys)
@@ -1100,6 +1151,12 @@ def selftest():
         status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after=1&wait=1")
         assert [c["type"] for c in cmds["commands"]] == ["play", "transfer", "queue"], cmds
         assert cmds["commands"][2]["track"]["uri"] == "spotify:track:FAKEtrack0000000000004" and cmds["seq"] == 4
+        # the context form (design 26c §5.9): the library's playlist 6 in context mode - no fixture names its id, so
+        # FAKEtrack 1..5 - from the offset's track (2: index 1) at the place
+        ctx = cmds["commands"][0]
+        assert ctx["context_uri"] == "spotify:playlist:FAKEplaylist0000000001" and ctx["position_ms"] == 42000, ctx
+        assert [t["uri"] for t in ctx["tracks"]] == [fake_track(n)["uri"] for n in range(1, 6)] and ctx["index"] == 1, ctx
+        assert ctx["autoplay"] is None and ctx["autoplay_context"] is None
         bare = {"Authorization": "Bearer " + kid_access}
         for name, sent in (("shuffle", False), ("repeat", 0)):
             query = shapes[name]["query"].replace("fakedevice0000000000000000000000000000001", device)
@@ -1108,6 +1165,20 @@ def selftest():
             assert call(sp, "PUT", f"{shapes[name]['path']}?state=off&device_id=nobody", None, bare)[0] == 404, name
         status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after=4&wait=1")
         assert [(c["type"], c["state"]) for c in cmds["commands"]] == [("shuffle", False), ("repeat", 0)], cmds
+        # context answers: the fixture artist from Spotify's start (no offset, no position), the fixture playlist from an
+        # offset that isn't in it (the top), and a context that is neither a playlist nor an artist refused
+        artist = json.dumps({"context_uri": sp.artist["uri"]}, separators=(",", ":"))
+        assert call(sp, "PUT", "/v1/me/player/play?device_id=" + device, artist, put)[0] == 204
+        listed = json.dumps({"context_uri": f"spotify:playlist:{sp.playlist_id}", "offset": {"uri": "spotify:track:FAKEnotInIt0000000001"},
+                             "position_ms": 5000}, separators=(",", ":"))
+        assert call(sp, "PUT", "/v1/me/player/play?device_id=" + device, listed, put)[0] == 204
+        assert call(sp, "PUT", "/v1/me/player/play?device_id=" + device, json.dumps({"context_uri": "spotify:album:x"}), put)[0] == 400
+        status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after=6&wait=1")
+        by_artist, by_list = cmds["commands"]
+        album = [t["uri"] for t in sp.album["tracks"]["items"] + server_fixture("album_tracks.json")["items"]]
+        assert [t["uri"] for t in by_artist["tracks"]] == album and by_artist["index"] == 0 and by_artist["position_ms"] == 0, by_artist
+        assert [t["uri"] for t in by_list["tracks"]] == [t["uri"] for t in sp.listed_tracks()] and by_list["index"] == 0, by_list
+        assert by_list["context_uri"] == f"spotify:playlist:{sp.playlist_id}" and cmds["seq"] == 8
         assert call(sp, "GET", f"/fake/device/{device}/token?token={kid_access}")[2] == {"ok": True}
         assert call(sp, "GET", f"/fake/device/{device}/token?token=FAKE-ACCESS-99")[2] == {"ok": False}
         status, headers, t = call(sp, "GET", "/fake/token?user=kid")
@@ -1115,7 +1186,8 @@ def selftest():
         assert headers.get("Access-Control-Allow-Origin") == "*"
         status, _, me = call(sp, "GET", "/v1/me", headers={"Authorization": "Bearer " + t["access_token"]})
         assert me["id"] == "fakekid", "the phone's token is the kid's"
-        print("4. the stub device: connect, the play body of play_request.json (and its context form), the long-poll "
+        print("4. the stub device: connect, the play body of play_request.json (and its context form: the context's tracks "
+              "from the offset - the fixture artist's, the fixture playlist's, generated ones), the long-poll "
               "(play, transfer, queue, shuffle off, repeat off), 404/400 for a stranger, the phone's token route OK")
 
         # 5. the tone: a WAV of the track's length; Range 206 and 416
@@ -1202,6 +1274,11 @@ def selftest():
             and tracks[2]["linked_from"] == "spotify:track:FAKEtrack0000000000003" and tracks[0]["duration_ms"] == 5000
         assert cmds[0]["autoplay"]["uri"] == AUTOPLAY["uri"] and cmds[2]["track"]["uri"] == FOREIGN["uri"]
         assert cmds[2]["context_uri"] == FOREIGN_CONTEXT
+        assert cmds[0]["autoplay_context"] is None, "after a uri list, Autoplay keeps no context"
+        body = json.dumps({"context_uri": "spotify:artist:FAKEartist000000000001"})
+        assert call(sp, "PUT", "/v1/me/player/play?device_id=" + d["device_id"], body, put)[0] == 204
+        ctx = call(sp, "GET", f"/fake/device/{d['device_id']}/commands?after=3&wait=1")[2]["commands"][0]
+        assert ctx["autoplay_context"] == AUTOPLAY_CONTEXT and ctx["autoplay"]["uri"] == AUTOPLAY["uri"], ctx
     finally:
         srv.shutdown()
     print("6. --rotate, --rate-limit 3, --expire-refresh, --bad-client, --deny, --quota, --not-premium (403 and account_error), "
@@ -1231,10 +1308,17 @@ def selftest():
     assert "this._userQueue.length" in STUB_SDK.split("Player.prototype._advance = function () {")[1].split("};")[0], \
         "after a track, Spotify's queue plays before the context"
     assert "repeat_mode: this._repeat" in STUB_SDK and "shuffle: this._shuffle" in STUB_SDK
+    # context mode (design 26c §5.9): the play starts at the offset's index, previous follows Spotify's 3 s rule, and
+    # Autoplay after a context plays in its own context (the phone pauses it: not ours)
+    assert "var index = c.index || 0;" in play_branch and "this._current = tracks[index];" in play_branch
+    previous = STUB_SDK.split("Player.prototype.previousTrack = function () {")[1].split("};")[0]
+    assert "(this._audio.currentTime || 0) > 3" in previous and "this._index--;" in previous
+    assert "if (this._autoplayContext) this._context = this._autoplayContext;" in \
+        STUB_SDK.split("Player.prototype._advance = function () {")[1].split("};")[0]
     assert re.search(r"new Spotify\.Player\(|new window\.Spotify\.Player\(", js), "player.js makes a Spotify.Player"
     print(f"7. the stub SDK: {len(documented)} documented methods, the events and errors, the state's fields (shuffle and "
           f"repeat_mode too); player.js's {len(used)} calls and {len(events)} events all in it; Spotify's queue kept across "
-          f"a play; relative URLs, plain GETs OK")
+          f"a play; a context from its offset, previous's 3 s rule, Autoplay's own context; relative URLs, plain GETs OK")
 
     # 8. the debug feed's documents
     sp = Spotify(defaults())
@@ -1248,7 +1332,12 @@ def selftest():
     library = json.load(open(LIBRARY, encoding="utf-8"))
     six = next(e for e in library["entries"] if e["id"] == 6)
     assert six["source"] == "spotify" and six["items"] == "11ee11ee11ee11ee" and six["spotify"] == "list"
-    print("8. --print-listing (the fixture playlist as the server lists it, --tracks 60) for the library snapshot's entry 6 OK")
+    # entry 7, the artist in context mode (design 26c §5.9): its listing has no items, and its context plays FAKEtrack 1..5
+    seven = next(e for e in library["entries"] if e["id"] == 7)
+    assert seven["spotify"] == "context" and sp.listing(7, seven["items"], 0)["items"] == []
+    assert [t["uri"] for t in sp.context_tracks(seven["target"])] == [fake_track(n)["uri"] for n in range(1, CONTEXT_TRACKS + 1)]
+    print("8. --print-listing (the fixture playlist as the server lists it, --tracks 60) for the library snapshot's entry 6, "
+          "entry 7's empty context listing (--tracks 0) and its context's tracks OK")
     print("\nFAKE SPOTIFY SELFTEST OK - answers built from the same fixtures the tests read.")
 
 
