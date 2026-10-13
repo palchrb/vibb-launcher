@@ -96,7 +96,6 @@ pub const MAX_DISPLAY_NAME_CHARS: usize = 60;
 /// A pasted or typed link longer than this is no link.
 pub const MAX_LINK_CHARS: usize = 2000;
 /// A short link is followed this many hops at most (§3.1).
-#[cfg_attr(not(test), allow(dead_code))]
 pub const SHORT_LINK_HOPS: usize = 3;
 /// The Web API's page size for every list read.
 pub const PAGE_LIMIT: usize = 50;
@@ -168,13 +167,11 @@ impl SpotifyRef {
     }
 
     /// The entry's key: vibb's `state_key` (`bm_path`) of the same URI (2b's add form).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn key(&self) -> String {
         crate::music::state_key(&self.target())
     }
 
     /// The link back to Spotify (Developer Policy, §3.6; 2b's card).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_url(&self) -> String {
         format!(
             "https://open.spotify.com/{}/{}",
@@ -203,7 +200,6 @@ pub enum LinkError {
 
 impl LinkError {
     /// The add form's sentence (2b).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn message(self) -> &'static str {
         match self {
             LinkError::NotALink => {
@@ -1257,6 +1253,9 @@ impl Accounts {
                     Some(&detail),
                 )
                 .await;
+                // The Spotify entries that failed for want of a (good) login are due now
+                // (`music_sweep::SPOTIFY_LOGIN_ERRORS`, design 26c step 2b).
+                state.music_sweep.wake();
                 LoginOutcome::Ok(name)
             }
             Err((code, outcome)) => {
@@ -1937,6 +1936,163 @@ pub fn try_next_reader(err: &SpotifyError) -> bool {
     )
 }
 
+/// Every reader failed (§3.3): the error to report, and whether **every** reader answered 403 or
+/// 404 - no account may see it (qa-26c-step2a-code M1: only then is a playlist a context; any
+/// other failure fails the read and keeps the last good list).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoReader {
+    pub err: SpotifyError,
+    pub refused: bool,
+}
+
+/// The readers' turns at one read (§3.3), shared by the sweep's check and the add form's check so
+/// both agree on what a refusal is (qa-26c-step2a-code's note for 2b): a reader whose failure says
+/// it may not see it (403, 404) or can't be used now ([try_next_reader]) lets the next try; any
+/// other failure ends the read **as that failure, never a refusal**. Every reader failing:
+/// `refused` only when each answered 403/404; the error is the first account-level one (the login,
+/// the key: what the parent can mend), else 404 if one said so, else 403.
+#[derive(Debug, Default)]
+pub struct ReaderTurns {
+    unusable: Option<SpotifyError>,
+    tried: usize,
+    refusals: usize,
+    not_found: bool,
+}
+
+impl ReaderTurns {
+    /// One reader's failure: `Some` ends the read with it, `None` lets the next reader try.
+    pub fn failed(&mut self, err: SpotifyError) -> Option<NoReader> {
+        self.tried += 1;
+        match err {
+            SpotifyError::NotFound | SpotifyError::Status(403) => {
+                self.refusals += 1;
+                self.not_found |= err == SpotifyError::NotFound;
+                None
+            }
+            err if try_next_reader(&err) => {
+                self.unusable.get_or_insert(err);
+                None
+            }
+            err => Some(NoReader {
+                err,
+                refused: false,
+            }),
+        }
+    }
+
+    /// Every reader failed (or there was none).
+    pub fn end(self) -> NoReader {
+        let refused = self.refusals > 0 && self.refusals == self.tried;
+        let err = match self.unusable {
+            Some(err) => err,
+            None if self.not_found => SpotifyError::NotFound,
+            None if self.refusals > 0 => SpotifyError::Status(403),
+            None => SpotifyError::NoAccount,
+        };
+        NoReader { err, refused }
+    }
+}
+
+/// How long the add form's check may take in all (§3.2: like NRK's add check and Storytel's
+/// probe), the gate's wait included - a feed fetch can hold the one gate for 120 s.
+pub const ADD_BUDGET: Duration = Duration::from_secs(45);
+
+/// What the add form's check found (§3.2): the metadata (the entry's name, its picture) and, for a
+/// playlist, whether no logged-in account may list its tracks (the phones then play it as a
+/// Spotify context; the sweep's first check decides for good).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddCheck {
+    pub meta: Meta,
+    pub context: bool,
+}
+
+/// The add form's check (§3.2): the kind's metadata read with the first reader that answers
+/// (§3.3's turns, [ReaderTurns]), and for a playlist its first items page with each reader in turn
+/// until one may list it - none may: [AddCheck::context]. A failure of the items read other than
+/// every reader's refusal adds the playlist anyway (the sweep decides its mode). No request without
+/// a usable account or inside the quota pause. The caller bounds it ([ADD_BUDGET]).
+pub async fn add_check(state: &AppState, reference: &SpotifyRef) -> Result<AddCheck, NoReader> {
+    let refuse = |err: SpotifyError| NoReader {
+        err,
+        refused: false,
+    };
+    let readers = readers(&state.db, None)
+        .await
+        .map_err(|err| refuse(err.into()))?;
+    if let Some(err) = readers.refusal() {
+        return Err(refuse(err));
+    }
+    if state.spotify.quota_until().is_some() {
+        return Err(refuse(SpotifyError::Quota));
+    }
+    let accounts = &state.spotify;
+    let id = reference.id.as_str();
+    let read = match reference.kind {
+        LinkKind::Playlist => Read::Playlist(id),
+        LinkKind::Album => Read::Album(id),
+        LinkKind::Track => Read::Track(id),
+        LinkKind::Artist => Read::Artist(id),
+        LinkKind::Show => Read::Show(id),
+        LinkKind::Episode => Read::Episode(id),
+    };
+    let first = |url: String| {
+        let ids = readers.ids.clone();
+        async move {
+            let mut turns = ReaderTurns::default();
+            for account in ids {
+                match accounts.api_get(state, account, &url, Kind::Page).await {
+                    Ok(response) => return Ok(response.body),
+                    Err(err) => {
+                        if let Some(end) = turns.failed(err) {
+                            return Err(end);
+                        }
+                    }
+                }
+            }
+            Err(turns.end())
+        }
+    };
+    let body = first(accounts.read_url(read)).await?;
+    let meta = match reference.kind {
+        LinkKind::Playlist => parse_playlist_meta(&body),
+        LinkKind::Artist | LinkKind::Show => parse_named(&body),
+        LinkKind::Album => parse_album(&body).map(|(meta, _)| meta),
+        LinkKind::Track => parse_track(&body).map(|(meta, _)| meta),
+        LinkKind::Episode => parse_episode(&body).map(|(meta, _)| meta),
+    }
+    .ok_or(refuse(SpotifyError::BadAnswer))?;
+    let context = reference.kind == LinkKind::Playlist
+        && matches!(
+            first(accounts.read_url(Read::PlaylistItems(id, 0))).await,
+            Err(NoReader { refused: true, .. })
+        );
+    Ok(AddCheck { meta, context })
+}
+
+/// The add form's sentence for a failed check (§3.2): every account refused (404/403) - Spotify
+/// won't let this app open it; the network, a timeout, Spotify's 5xx or a rate limit - try again;
+/// otherwise the error's own line.
+pub fn add_refusal(none: &NoReader) -> String {
+    match &none.err {
+        SpotifyError::NotFound | SpotifyError::Status(403) => {
+            "Spotify doesn't let this app open it - Spotify's own playlists (made by Spotify) \
+             aren't available to developer apps, or the link is private or deleted."
+                .to_string()
+        }
+        SpotifyError::Fetch(_) | SpotifyError::RateLimited(_) => {
+            "Spotify couldn't be reached - try again.".to_string()
+        }
+        SpotifyError::Status(status) if *status >= 500 => {
+            "Spotify couldn't be reached - try again.".to_string()
+        }
+        SpotifyError::NoAccount => "Log in with a Spotify account first.".to_string(),
+        SpotifyError::Reauthorize => {
+            "The Spotify logins need renewing - log in again first.".to_string()
+        }
+        other => other.message(),
+    }
+}
+
 /// One listed track or episode (§3.4): the id (the item's key), the title (`"<name> — <artist>,
 /// <artist>"` for a track, vibb's row title; the name for an episode - not cut yet), the duration
 /// and the picture (a track's album image, an episode's own).
@@ -2252,7 +2408,6 @@ pub fn parse_artist_albums(body: &[u8]) -> Option<(Vec<AlbumRef>, bool)> {
 
 /// Why a short link didn't resolve (§3.1; 2b's add form).
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum ShortLinkError {
     /// No redirect, a redirect off Spotify's three hosts, or more than [SHORT_LINK_HOPS].
     Dead,
@@ -2261,7 +2416,6 @@ pub enum ShortLinkError {
     Unreachable(FetchError),
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl ShortLinkError {
     /// The add form's sentence (2b).
     pub fn message(&self) -> String {
@@ -2281,7 +2435,6 @@ impl ShortLinkError {
 /// https URL on `spotify.link`, `spotify.app.link` or `open.spotify.com`, at most
 /// [SHORT_LINK_HOPS] requests; the first `open.spotify.com` URL is parsed (not asked). Only the
 /// add form uses it (2b); never at play time.
-#[cfg_attr(not(test), allow(dead_code))]
 pub async fn resolve_short_link(
     source: &dyn Source,
     short: &str,

@@ -3397,7 +3397,11 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
             "NRK series · oldest first · newest 42 kept offline",
             "a Pi value kept",
         ),
-        ("Spotify comes in a later version", "spotify"),
+        (
+            "Spotify playlist · natural order · streamed, on no phone yet · continues where it \
+             stopped",
+            "spotify (design 26c §3.2: imported, on no phone)",
+        ),
         (
             "Storytel series · natural order · every book downloaded · continues where it stopped",
             "storytel (design 26b §2.6: cache 0 is all)",
@@ -3414,7 +3418,7 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     // " podkast " matches the existing Podkast (trimmed, case-insensitive).
     assert!(page.contains("<option value=\"4\" selected>Podkast</option>"));
     assert!(page.contains("<option value=\"new\" selected>New: Eventyr og sånt</option>"));
-    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "0.3", "1.0"]);
+    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "0.2", "0.3", "1.0"]);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM music_entries")
             .fetch_one(&app.db)
@@ -3537,17 +3541,18 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     );
     assert_eq!(
         events(&app, "music_library_imported").await,
-        vec!["4 entries, 1 categories, 6 skipped".to_string()]
+        vec!["4 entries, 1 categories, 5 skipped".to_string()]
     );
 
     // The result, once, at #import.
     let page = app.get_page("/music", &cookie).await.text();
     assert!(page.contains("id=\"import\" open"));
     assert!(
-        page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 6 skipped:"),
+        page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 5 skipped:"),
         "{page}"
     );
-    assert!(page.contains("podkast / Spilleliste: Spotify comes in a later version"));
+    // The Spotify row (design 26c §3.2) was offered and left unticked: not "skipped".
+    assert!(!page.contains("podkast / Spilleliste"));
     assert!(page.contains("Eventyr og sånt / Abels tårn (igjen): it is in the file twice"));
     let again = app.get_page("/music", &cookie).await.text();
     assert!(!again.contains("Imported 4 entries"), "shown once");
@@ -3830,10 +3835,10 @@ async fn the_confirm_trusts_nothing_in_the_form() {
     let res = import_confirm(&app, &cookie, &[("row", "0.0")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
-    // A document edited to carry a Spotify row, a folder and 201 entries: only what a fresh upload
-    // would allow gets in.
+    // A document edited to carry a Spotify short link, a folder and 201 entries: only what a fresh
+    // upload would allow gets in.
     let mut entries = vec![
-        json!({"name": "Spill", "target": "spotify:playlist:1"}),
+        json!({"name": "Spill", "target": "https://spotify.link/abc"}),
         json!({"name": "Mappe", "target": "/srv/x"}),
     ];
     entries.extend((0..201).map(
@@ -3859,7 +3864,9 @@ async fn the_confirm_trusts_nothing_in_the_form() {
             .any(|n| n == "Spill" || n == "Mappe" || n == "F200")
     );
     let page = app.get_page("/music", &cookie).await.text();
-    assert!(page.contains("Podkast / Spill: Spotify comes in a later version"));
+    assert!(page.contains(
+        "Podkast / Spill: a Spotify short link - resolve it by adding it on the Spotify page"
+    ));
     assert!(page.contains("Podkast / F200: the library holds at most 200 entries"));
     assert!(app.fetch.calls.lock().unwrap().is_empty());
 }

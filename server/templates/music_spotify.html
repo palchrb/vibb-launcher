@@ -18,6 +18,11 @@
 #setup > summary h2 { display: inline; }
 code { overflow-wrap: anywhere; word-break: break-all; }
 input, select { max-width: 100%; }
+.sp-phones { margin: 4px 0 12px; border: 1px solid var(--color-border); }
+.sp-phones .row input { flex: none; width: 22px; height: 22px; margin: 0; }
+.sp-phones-title { margin: 12px 0 6px; font-weight: 600; }
+.sp-notes { margin: 6px 0 0; padding-left: 1.2em; }
+.sp-notes li { word-break: break-word; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -55,6 +60,7 @@ input, select { max-width: 100%; }
         {% else %}
         <p>No Spotify app is set up on this server yet. Follow the steps below, then save your app's Client ID.</p>
         {% if let Some(error) = login_error %}<div class="error">{{ error }}</div>{% endif %}
+        {% if let Some(error) = add.error %}<div class="error">{{ error }}</div>{% endif %}
         {% endif %}
 
         {% if !client_from_env || !redirect_from_env %}
@@ -150,6 +156,54 @@ input, select { max-width: 100%; }
             <button type="submit">Finish the login</button>
         </form>
         {% endif %}
+    </div>
+
+    <div class="card" id="add">
+        <h2>Add a Spotify link</h2>
+        {% if let Some(added) = added %}
+        <div class="flash" id="added">
+            Added <a href="/music#entry-{{ added.id }}">{{ added.name }}</a>. {% if added.ticked.is_empty() %}Turn it on for a phone on that phone's Music card.{% else %}On {{ added.ticked.join(", ") }} within a few minutes.{% endif %}
+            {% if added.context || !added.skipped.is_empty() %}
+            <ul class="sp-notes">
+                {% if added.context %}<li>No logged-in account owns this playlist or collaborates on it, so the phones can't show its tracks: they play it in Spotify's order. Log in as its owner to get the track list.</li>{% endif %}
+                {% for line in added.skipped %}<li>{{ line }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
+        <div class="subtitle">A playlist, album, track, artist or podcast: in Spotify, Share › Copy link.
+            <details class="info"><summary aria-label="About Spotify links"><span aria-hidden="true">ⓘ</span></summary><div class="info-panel"><p>It plays like a podcast: its list, where it stopped, the same player. Nothing is downloaded, so it needs Wi-Fi, or mobile data if the phone may use it.</p><p>Only phones that play as a Spotify account get it (each phone's Music card).</p></div></details></div>
+        {% if !add.usable %}
+        <p class="subtitle">Log in with a Spotify account above first.</p>
+        {% endif %}
+        <form method="post" action="/music/spotify/add">
+            <label for="spotify_link">Spotify link</label>
+            <input type="text" id="spotify_link" name="link" value="{{ add.link }}" maxlength="2000" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://open.spotify.com/playlist/..." required{% if add.error.is_some() && add.error_field != "device" && add.error_field != "category" %} autofocus aria-invalid="true"{% endif %}>
+            {% if add.error_field != "device" && add.error_field != "category" %}{% if let Some(error) = add.error %}<div class="error">{{ error }}{% if let Some(id) = add.existing %} <a href="/music#entry-{{ id }}">See it in the library</a>{% endif %}</div>{% endif %}{% endif %}
+            <label for="spotify_category">Category</label>
+            <select id="spotify_category" name="category"{% if add.error_field == "category" %} autofocus aria-invalid="true"{% endif %}>
+                <option value=""{% if add.category.is_empty() %} selected{% endif %}>By its kind</option>
+                {% for (id, name) in add.categories %}
+                <option value="{{ id }}"{% if add.category == id.to_string() %} selected{% endif %}>{{ name }}</option>
+                {% endfor %}
+            </select>
+            {% if add.error_field == "category" %}{% if let Some(error) = add.error %}<div class="error">{{ error }}</div>{% endif %}{% endif %}
+            <p class="sp-phones-title">On these phones</p>
+            {% if add.phones.is_empty() %}
+            <p class="subtitle">No phone is connected yet.</p>
+            {% else %}
+            <div class="group sp-phones">
+                {% for phone in add.phones %}
+                <label class="row">
+                    <input type="checkbox" name="device" value="{{ phone.id }}"{% if phone.checked %} checked{% endif %}{% if loop.first && add.error_field == "device" %} autofocus{% endif %}>
+                    <span class="row-label">{{ phone.name }}<span class="row-sub">{% if let Some(account) = phone.plays_as %}Plays as {{ account }}{% else %}Spotify is off on this phone{% endif %}</span></span>
+                </label>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if add.error_field == "device" %}{% if let Some(error) = add.error %}<div class="error">{{ error }}</div>{% endif %}{% endif %}
+            <button type="submit">Add</button>
+        </form>
     </div>
     {% endif %}
 </main>

@@ -13,6 +13,11 @@
 //! page, where the Strict cookie is sent again. The paste (`POST /music/spotify/paste`) runs the
 //! same code path for the loopback redirect, from the admin who started the login.
 //!
+//! Entries (§3.2, step 2b): `POST /music/spotify/add` turns a share link into a library entry
+//! after the add check ([spotify::add_check]: the metadata read with the first account that may,
+//! a playlist's first items page with each in turn) and ticks it, in the same transaction, on the
+//! phones the parent picked that play as an account; the others are named in the notice.
+//!
 //! No form makes the page jump to the top: every save redirects to its card's anchor, a refused
 //! one (400) shows the page again with the error by the field, which is `autofocus`ed.
 //! Nothing secret is ever on the page: the client ID is public by design (it is in the address
@@ -28,8 +33,9 @@ use axum::response::{AppendHeaders, Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 use chrono::{DateTime, Utc};
 
-use super::music::{log_event, nudge, server_error};
+use super::music::{BELOW_ENTRY_LIMIT, NEXT_SORT, log_event, nudge, server_error};
 use crate::AppState;
+use crate::music::{self, MAX_ENTRIES, MAX_NAME_CHARS};
 use crate::music_sweep::parse_stamp;
 use crate::security::CurrentAdmin;
 use crate::spotify::{self, LoginOutcome};
@@ -43,6 +49,40 @@ fn field(form: &FormMap, key: &str) -> String {
 /// "12 Oct 2026".
 fn day(time: DateTime<Utc>) -> String {
     time.format("%-d %b %Y").to_string()
+}
+
+/// A phone on the add form: its name, whom it plays as (`None` = Spotify is off on it), ticked.
+pub struct PhoneChoice {
+    pub id: i64,
+    pub name: String,
+    pub plays_as: Option<String>,
+    pub checked: bool,
+}
+
+/// The add form (`#add`, §3.2) as shown: the values (as entered after a refusal) and the error by
+/// its field.
+pub struct AddView {
+    pub link: String,
+    /// The picked category's id, or "" = by the link's kind.
+    pub category: String,
+    pub categories: Vec<(i64, String)>,
+    pub phones: Vec<PhoneChoice>,
+    /// An account that can read is logged in (else the form says to log in first).
+    pub usable: bool,
+    pub error: Option<String>,
+    pub error_field: &'static str,
+    /// The link is in the library already: its entry's id (the card's anchor).
+    pub existing: Option<i64>,
+}
+
+/// After an add (`?added=<id>...#added`): the entry, whether no account may list it (a playlist
+/// played as a Spotify context), the phones it was ticked on and those it wasn't (and why).
+pub struct AddedView {
+    pub id: i64,
+    pub name: String,
+    pub context: bool,
+    pub ticked: Vec<String>,
+    pub skipped: Vec<String>,
 }
 
 /// One account on the page.
@@ -97,11 +137,26 @@ struct SpotifyTemplate {
     accounts_notice: Option<String>,
     accounts_notice_good: bool,
     loopback_redirect: &'static str,
+    add: AddView,
+    added: Option<AddedView>,
+}
+
+/// What a refused add brings back: the link, the category, the phones, the error and its field,
+/// the entry it already is.
+#[derive(Default)]
+struct AddEntered {
+    link: String,
+    category: String,
+    devices: Vec<i64>,
+    error: String,
+    field: &'static str,
+    existing: Option<i64>,
 }
 
 /// What a refused form brings back.
 #[derive(Default)]
 struct Entered {
+    add: Option<AddEntered>,
     app: Option<(String, String, String, &'static str)>,
     clear_error: Option<String>,
     login_error: Option<String>,
@@ -263,6 +318,8 @@ async fn page(
         None => (String::new(), None),
     };
     let redirect_uri = app.as_ref().and_then(|a| a.redirect_uri.clone());
+    let add = add_view(state, &rows, entered.add).await?;
+    let added = added_view(state, query).await?;
     Ok(SpotifyTemplate {
         title: "Spotify".to_string(),
         key_available: state.music_key.is_some(),
@@ -294,7 +351,110 @@ async fn page(
         accounts_notice,
         accounts_notice_good,
         loopback_redirect: spotify::LOOPBACK_REDIRECT,
+        add,
+        added,
     })
+}
+
+/// The add form's values: the phones with whom each plays as, the categories, an account that can
+/// read; as entered after a refusal.
+async fn add_view(
+    state: &AppState,
+    rows: &[spotify::AccountRow],
+    entered: Option<AddEntered>,
+) -> Result<AddView, sqlx::Error> {
+    let categories: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, name FROM music_categories ORDER BY sort, id")
+            .fetch_all(&state.db)
+            .await?;
+    let phones: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT d.id, d.name, a.display_name FROM devices d \
+         LEFT JOIN device_policy p ON p.device_id = d.id \
+         LEFT JOIN music_spotify_accounts a ON a.id = p.music_spotify_account \
+         ORDER BY d.name, d.id",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let entered = entered.unwrap_or_default();
+    Ok(AddView {
+        link: entered.link,
+        category: entered.category,
+        categories,
+        phones: phones
+            .into_iter()
+            .map(|(id, name, plays_as)| PhoneChoice {
+                checked: entered.devices.contains(&id),
+                id,
+                name,
+                plays_as,
+            })
+            .collect(),
+        usable: rows.iter().any(|row| row.needs_login == 0),
+        error: (!entered.error.is_empty()).then_some(entered.error),
+        error_field: entered.field,
+        existing: entered.existing,
+    })
+}
+
+/// Ids from a query value: "3,5" (at most [MAX_ENTRIES] of them; anything else is skipped).
+fn ids(query: &HashMap<String, String>, key: &str) -> Vec<i64> {
+    query
+        .get(key)
+        .map(|v| {
+            v.split(',')
+                .filter_map(|id| id.trim().parse().ok())
+                .take(MAX_ENTRIES as usize)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The notice after an add (`?added=<id>&context=1&on=..&off=..&big=..`), when the entry exists.
+async fn added_view(
+    state: &AppState,
+    query: &HashMap<String, String>,
+) -> Result<Option<AddedView>, sqlx::Error> {
+    let Some(id) = query.get("added").and_then(|id| id.parse::<i64>().ok()) else {
+        return Ok(None);
+    };
+    let Some(name) = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM music_entries WHERE id = ? AND source = 'spotify'",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let names: HashMap<i64, String> =
+        sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM devices")
+            .fetch_all(&state.db)
+            .await?
+            .into_iter()
+            .collect();
+    let named = |key: &str| -> Vec<String> {
+        ids(query, key)
+            .into_iter()
+            .filter_map(|id| names.get(&id).cloned())
+            .collect()
+    };
+    let mut skipped: Vec<String> = named("off")
+        .into_iter()
+        .map(|phone| format!("{phone}: not ticked - Spotify is off on this phone"))
+        .collect();
+    skipped.extend(named("big").into_iter().map(|phone| {
+        format!(
+            "{phone}: not ticked - its music library would be bigger than {} MB",
+            music::MAX_LIBRARY_BYTES / 1_000_000
+        )
+    }));
+    Ok(Some(AddedView {
+        id,
+        name,
+        context: query.get("context").is_some_and(|v| v == "1"),
+        ticked: named("on"),
+        skipped,
+    }))
 }
 
 /// `GET /music/spotify[?login=<outcome>|saved=N|cleared=1|removed=1]`.
@@ -441,6 +601,8 @@ pub async fn save_app(
         detail.push_str(&format!(" ({removed} accounts of the old app removed)"));
     }
     log_event(&state, &admin, "spotify_app_saved", &detail).await;
+    // The Spotify entries that failed for want of an app are due now (design 26c step 2b).
+    state.music_sweep.wake();
     Redirect::to(&format!("/music/spotify?saved={removed}#app")).into_response()
 }
 
@@ -814,4 +976,274 @@ pub async fn remove_account(
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(err) => server_error(err, "couldn't remove a Spotify account"),
     }
+}
+
+/// At most this many fields in the add form (a phone per `device`; Storytel's Add's bound).
+const MAX_ADD_FIELDS: usize = 200;
+
+/// `POST /music/spotify/add` (`link`, `category`, `device` repeated; design 26c §3.2): a Spotify
+/// share link (a URI, an `open.spotify.com` link, or a short link resolved one hop at a time)
+/// becomes a library entry - source `spotify`, the canonical target, vibb's key, the name Spotify
+/// gives, the category picked or by its kind, order `auto`, `cache` 0 (it streams), resume on -
+/// after the add check ([spotify::add_check], within [spotify::ADD_BUDGET] with the short link),
+/// and is ticked in the same transaction on each picked phone that plays as an account (within
+/// its library's size). The others are named in the notice. Refused (400, nothing stored): no
+/// app, no usable account, a link that isn't one, one already in the library, Spotify's refusal,
+/// Spotify unreachable, a full library.
+pub async fn add(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<Vec<(String, String)>>,
+) -> Response {
+    let value = |key: &str| {
+        form.iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    let link_text = value("link");
+    let picked = value("category");
+    let mut devices: Vec<i64> = Vec::new();
+    let mut bad_device = false;
+    for (name, v) in &form {
+        if name != "device" {
+            continue;
+        }
+        match v.trim().parse::<i64>() {
+            Ok(id) if !devices.contains(&id) => devices.push(id),
+            Ok(_) => {}
+            Err(_) => bad_device = true,
+        }
+    }
+    let peer_trusted = trusted(&state, peer);
+    let refuse = |error: String, field: &'static str, existing: Option<i64>| Entered {
+        add: Some(AddEntered {
+            link: link_text.clone(),
+            category: picked.clone(),
+            devices: devices.clone(),
+            error,
+            field,
+            existing,
+        }),
+        ..Default::default()
+    };
+    macro_rules! refused {
+        ($error:expr, $field:expr) => {
+            refused!($error, $field, None)
+        };
+        ($error:expr, $field:expr, $existing:expr) => {
+            return render(
+                &state,
+                &headers,
+                peer_trusted,
+                StatusCode::BAD_REQUEST,
+                refuse($error.to_string(), $field, $existing),
+            )
+            .await
+        };
+    }
+    if form.len() > MAX_ADD_FIELDS {
+        refused!(
+            format!("At most {MAX_ADD_FIELDS} phones at once - nothing was added."),
+            "device"
+        );
+    }
+    match spotify::app(&state).await {
+        Ok(Some(_)) => {}
+        Ok(None) => refused!("Set up your Spotify app first.", "link"),
+        Err(err) => return server_error(err, "couldn't read the Spotify app"),
+    }
+    match spotify::readers(&state.db, None).await.map(|r| r.refusal()) {
+        Ok(None) => {}
+        Ok(Some(spotify::SpotifyError::Reauthorize)) => refused!(
+            "The Spotify logins need renewing - log in again with a Spotify account first.",
+            "link"
+        ),
+        Ok(Some(_)) => refused!("Log in with a Spotify account first.", "link"),
+        Err(err) => return server_error(err, "couldn't read the Spotify accounts"),
+    }
+    // The phones picked, each with whether it plays as an account (the gate's condition).
+    let mut bound: HashMap<i64, bool> = HashMap::new();
+    for &device in &devices {
+        let row: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM device_policy p \
+               JOIN music_spotify_accounts a ON a.id = p.music_spotify_account \
+               WHERE p.device_id = d.id) FROM devices d WHERE d.id = ?",
+        )
+        .bind(device)
+        .fetch_optional(&state.db)
+        .await;
+        match row {
+            Ok(Some(plays)) => {
+                bound.insert(device, plays);
+            }
+            Ok(None) => bad_device = true,
+            Err(err) => return server_error(err, "couldn't read the phones"),
+        }
+    }
+    if bad_device {
+        refused!(
+            "One of the phones doesn't exist any more - pick the phones again.",
+            "device"
+        );
+    }
+    let deadline = tokio::time::Instant::now() + spotify::ADD_BUDGET;
+    let reference = match spotify::parse_link(&link_text) {
+        Ok(spotify::Link::Ref(reference)) => reference,
+        Ok(spotify::Link::Short(short)) => {
+            let resolved = tokio::time::timeout_at(
+                deadline,
+                spotify::resolve_short_link(state.music_fetch.as_ref(), &short),
+            )
+            .await;
+            match resolved {
+                Ok(Ok(reference)) => reference,
+                Ok(Err(err)) => refused!(err.message(), "link"),
+                Err(_) => refused!("Spotify couldn't be reached - try again.", "link"),
+            }
+        }
+        Err(err) => refused!(err.message(), "link"),
+    };
+    let target = reference.target();
+    let existing: Option<i64> =
+        match sqlx::query_scalar("SELECT id FROM music_entries WHERE target = ?")
+            .bind(&target)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(existing) => existing,
+            Err(err) => return server_error(err, "music entry lookup failed"),
+        };
+    if let Some(id) = existing {
+        refused!("Already in the library.", "link", Some(id));
+    }
+    let categories: Vec<music::MusicCategory> =
+        match sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
+            .fetch_all(&state.db)
+            .await
+        {
+            Ok(categories) => categories,
+            Err(err) => return server_error(err, "music category lookup failed"),
+        };
+    let category = match picked.trim().parse::<i64>() {
+        Ok(id) => match categories.iter().find(|c| c.id == id) {
+            Some(c) => c.id,
+            None => refused!("That category doesn't exist any more.", "category"),
+        },
+        Err(_) => match music::default_category_for(&categories, "spotify", Some(&target)) {
+            Some(c) => c.id,
+            None => refused!("Add a category first (on the Music page).", "category"),
+        },
+    };
+    let check =
+        match tokio::time::timeout_at(deadline, spotify::add_check(&state, &reference)).await {
+            Ok(Ok(check)) => check,
+            Ok(Err(none)) => {
+                if let spotify::SpotifyError::Database(err) = &none.err {
+                    return server_error(err, "couldn't read the Spotify accounts");
+                }
+                refused!(spotify::add_refusal(&none), "link")
+            }
+            Err(_) => refused!("Spotify couldn't be reached - try again.", "link"),
+        };
+    let name = check
+        .meta
+        .name
+        .as_deref()
+        .and_then(|name| music::cut_title(name, MAX_NAME_CHARS))
+        .unwrap_or_else(|| music::kind_label("spotify", Some(&target)).to_string());
+    // The entry and its ticks in one write transaction: the limit is the INSERT's own condition,
+    // each tick's size check and write the import's (`music::tick_fits`).
+    let mut on = Vec::new();
+    let mut off = Vec::new();
+    let mut big = Vec::new();
+    let inserted: Result<Option<i64>, sqlx::Error> = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let id: Option<i64> = sqlx::query_scalar(&format!(
+            "INSERT INTO music_entries (name, category_id, source, target, key, play_order, \
+             cache, resume, sort) SELECT ?, ?, 'spotify', ?, ?, 'auto', 0, 1, {NEXT_SORT} \
+             {BELOW_ENTRY_LIMIT} RETURNING id"
+        ))
+        .bind(&name)
+        .bind(category)
+        .bind(&target)
+        .bind(reference.key())
+        .bind(MAX_ENTRIES)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(id) = id else {
+            return Ok(None);
+        };
+        for &device in &devices {
+            if !bound.get(&device).copied().unwrap_or(false) {
+                off.push(device);
+                continue;
+            }
+            if !music::tick_fits(&mut tx, device, id).await? {
+                big.push(device);
+                continue;
+            }
+            sqlx::query(
+                "INSERT OR IGNORE INTO device_music_entries (device_id, entry_id) VALUES (?, ?)",
+            )
+            .bind(device)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            on.push(device);
+        }
+        tx.commit().await?;
+        Ok(Some(id))
+    }
+    .await;
+    let id = match inserted {
+        Ok(Some(id)) => id,
+        Ok(None) => refused!(
+            format!("The library has {MAX_ENTRIES} entries - delete one first."),
+            "link"
+        ),
+        // Added by another request since the check above.
+        Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
+            refused!("Already in the library.", "link")
+        }
+        Err(err) => return server_error(err, "couldn't add a Spotify entry"),
+    };
+    // Its first check comes before anything waiting (design 21b §2.2): listed within a minute.
+    state.music_sweep.wake();
+    nudge(&state, &on);
+    let list = |phones: &[i64]| {
+        phones
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    log_event(
+        &state,
+        &admin,
+        "music_entry_added",
+        &format!(
+            "entry {id}: Spotify: {name} ({target}){}",
+            if on.is_empty() {
+                String::new()
+            } else {
+                format!(", ticked on phones {}", list(&on))
+            }
+        ),
+    )
+    .await;
+    let mut url = format!("/music/spotify?added={id}");
+    if check.context {
+        url.push_str("&context=1");
+    }
+    for (key, phones) in [("on", &on), ("off", &off), ("big", &big)] {
+        if !phones.is_empty() {
+            url.push_str(&format!("&{key}={}", list(phones)));
+        }
+    }
+    url.push_str("#added");
+    Redirect::to(&url).into_response()
 }

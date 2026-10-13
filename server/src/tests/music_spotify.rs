@@ -175,6 +175,8 @@ async fn routes_need_a_session() {
         "/music/spotify/login",
         "/music/spotify/paste",
         "/music/spotify/accounts/1/remove",
+        "/music/spotify/add",
+        "/devices/1/music/spotify",
     ] {
         let res = app
             .request_form(Method::POST, path, None, &[("confirm", "on")])
@@ -1505,21 +1507,21 @@ mod listing {
     use crate::spotify::tests::{TOKEN_URL, fixture, save_app, store_account};
     use crate::spotify::{self, Accounts, Config, LOOPBACK_REDIRECT, LinkKind, Read};
 
-    const PLAYLIST: &str = "0FakePlaylistKveld0001";
-    const ALBUM_X: &str = "2FakeAlbumX00000000001";
+    pub(super) const PLAYLIST: &str = "0FakePlaylistKveld0001";
+    pub(super) const ALBUM_X: &str = "2FakeAlbumX00000000001";
     const ALBUM_Y: &str = "2FakeAlbumY00000000002";
     const ALBUM_Z: &str = "2FakeAlbumZ00000000003";
-    const TRACK_A: &str = "1FakeTrackA00000000001";
-    const TRACK_C: &str = "1FakeTrackC00000000003";
-    const TRACK_D: &str = "1FakeTrackD00000000004";
-    const ARTIST: &str = "3FakeArtist00000000001";
-    const SHOW: &str = "4FakeShow0000000000001";
-    const MOSAIC: &str = "https://mosaic.scdn.co/640/fake-mosaic-kveld";
-    const ART_X: &str = "https://i.scdn.co/image/fake-album-x-300";
-    const ART_Y: &str = "https://i.scdn.co/image/fake-album-y-640";
+    pub(super) const TRACK_A: &str = "1FakeTrackA00000000001";
+    pub(super) const TRACK_C: &str = "1FakeTrackC00000000003";
+    pub(super) const TRACK_D: &str = "1FakeTrackD00000000004";
+    pub(super) const ARTIST: &str = "3FakeArtist00000000001";
+    pub(super) const SHOW: &str = "4FakeShow0000000000001";
+    pub(super) const MOSAIC: &str = "https://mosaic.scdn.co/640/fake-mosaic-kveld";
+    pub(super) const ART_X: &str = "https://i.scdn.co/image/fake-album-x-300";
+    pub(super) const ART_Y: &str = "https://i.scdn.co/image/fake-album-y-640";
 
     /// A Spotify entry straight into the table (2b's add form makes them).
-    async fn entry(app: &TestApp, kind: &str, id: &str) -> i64 {
+    pub(super) async fn entry(app: &TestApp, kind: &str, id: &str) -> i64 {
         let target = format!("spotify:{kind}:{id}");
         sqlx::query_scalar(
             "INSERT INTO music_entries (name, category_id, source, target, key, play_order, cache, \
@@ -1536,7 +1538,7 @@ mod listing {
     }
 
     /// The app set up, one account (the kid's) logged in, the accounts service answering.
-    async fn ready(app: &TestApp) -> i64 {
+    pub(super) async fn ready(app: &TestApp) -> i64 {
         app.state.music_sweep.set_art_per_check(0);
         save_app(app, LOOPBACK_REDIRECT).await;
         app.fetch
@@ -1544,12 +1546,12 @@ mod listing {
         store_account(app, "fakekid", "Ella", "FAKE-REFRESH-1").await
     }
 
-    fn url(app: &TestApp, read: Read<'_>) -> String {
+    pub(super) fn url(app: &TestApp, read: Read<'_>) -> String {
         app.state.spotify.read_url(read)
     }
 
     /// The fixture playlist's metadata and items, and its mosaic cover.
-    fn answer_playlist(app: &TestApp) {
+    pub(super) fn answer_playlist(app: &TestApp) {
         app.fetch.answer(
             &url(app, Read::Playlist(PLAYLIST)),
             200,
@@ -2732,5 +2734,1024 @@ mod listing {
                 .unwrap(),
             0
         );
+    }
+}
+
+/// Step 2b of design 26c (§3.2, §3.6, §2.5, §10's add/ticks/binding/cards/gate/import rows): the
+/// add form with its check and per-phone ticks, the library gate on the library, cover and art
+/// routes, the library cards and the entry page, Check now, the device card's "Spotify plays as",
+/// and the entries a new login or app save makes due.
+mod entries {
+    use axum::http::{Method, StatusCode};
+    use chrono::TimeDelta;
+    use serde_json::{Value, json};
+
+    use super::super::music::{device_get, events, nudged, tick};
+    use super::super::music_sweep::{check, items, lib_entry, listing, t0, tick_on};
+    use super::super::{TestApp, TestResponse};
+    use super::listing::{ALBUM_X, PLAYLIST, SHOW, answer_playlist, entry, ready, url};
+    use super::{bind, binding, revision};
+    use crate::music_sweep::{self as sweep, stamp};
+    use crate::spotify::tests::{fixture, save_app, store_account};
+    use crate::spotify::{LOOPBACK_REDIRECT, Read};
+
+    fn page_text(res: &TestResponse) -> String {
+        res.text().replace("&#39;", "'").replace("&quot;", "\"")
+    }
+
+    async fn add(app: &TestApp, cookie: &str, fields: &[(&str, &str)]) -> TestResponse {
+        app.request_form(Method::POST, "/music/spotify/add", Some(cookie), fields)
+            .await
+    }
+
+    /// The Music page's "From Spotify ›" row (design 31 §3.4's Add rows): its link and value.
+    async fn from_spotify(app: &TestApp, cookie: &str) -> String {
+        let page = app.get_page("/music", cookie).await.text();
+        let row = &page[page.find("data-row=\"from-spotify\"").expect("the row")..];
+        assert!(
+            page.contains("<a class=\"row\" href=\"/music/spotify\" data-row=\"from-spotify\">")
+        );
+        let value = &row[row.find("class=\"row-value\">").unwrap() + 18..];
+        value[..value.find('<').unwrap()].to_string()
+    }
+
+    async fn entry_count(app: &TestApp) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM music_entries")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    }
+
+    async fn ticks(app: &TestApp, entry: i64) -> Vec<i64> {
+        sqlx::query_scalar(
+            "SELECT device_id FROM device_music_entries WHERE entry_id = ? ORDER BY device_id",
+        )
+        .bind(entry)
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+    }
+
+    /// A phone's library: whether it has `entry`, and the entry as served.
+    async fn in_library(app: &TestApp, token: &str, entry: i64) -> Option<Value> {
+        let res = device_get(app, "/api/devices/music/library", token, &[]).await;
+        if res.status != StatusCode::OK {
+            return None;
+        }
+        res.json()["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == entry)
+            .cloned()
+    }
+
+    async fn report(app: &TestApp, device: i64, state: Value) {
+        sqlx::query(
+            "INSERT INTO device_status (device_id, lock_reason, kiosk_engaged, music_state_json, \
+             reported_at) VALUES (?, 'NONE', 1, ?, datetime('now'))",
+        )
+        .bind(device)
+        .bind(state.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+
+    /// The acceptance's add: a share link (`open.spotify.com` with `?si=`) is read with the kid's
+    /// account (the playlist's metadata, then its first items page), stored as a Spotify entry
+    /// (Spotify's name, Musikk by its kind, order auto, cache 0, resume on, vibb's key) and ticked
+    /// on the picked phone that plays as an account - the other picked phone is named, not
+    /// ticked. The sweep is woken, the ticked phone nudged, the event written; the page after it
+    /// says so at `#added`.
+    #[tokio::test]
+    async fn a_link_is_added_and_ticked_on_the_phones_that_play_spotify() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let kid = ready(&app).await;
+        let (ella, ella_token) = app.enrolled_device("Ella").await;
+        let (ola, ola_token) = app.enrolled_device("Ola").await;
+        bind(&app, ella, kid).await;
+        answer_playlist(&app);
+        let mut nudges = app.state.command_notify.subscribe();
+        let ella_id = ella.to_string();
+        let ola_id = ola.to_string();
+        let link = format!("https://open.spotify.com/playlist/{PLAYLIST}?si=abc123");
+        let res = add(
+            &app,
+            &cookie,
+            &[
+                ("link", link.as_str()),
+                ("category", ""),
+                ("device", ella_id.as_str()),
+                ("device", ola_id.as_str()),
+            ],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let row: (i64, String, i64, String, String, String, i64, bool) = sqlx::query_as(
+            "SELECT id, name, category_id, source, target, play_order, cache, resume \
+             FROM music_entries",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let id = row.0;
+        let target = format!("spotify:playlist:{PLAYLIST}");
+        assert_eq!(
+            row,
+            (
+                id,
+                "Kveldsmusikk".to_string(),
+                1,
+                "spotify".to_string(),
+                target.clone(),
+                "auto".to_string(),
+                0,
+                true
+            )
+        );
+        let key: String = sqlx::query_scalar("SELECT key FROM music_entries WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(key, crate::music::state_key(&target));
+        assert_eq!(
+            res.location(),
+            Some(format!("/music/spotify?added={id}&on={ella}&off={ola}#added").as_str())
+        );
+        assert_eq!(ticks(&app, id).await, [ella]);
+        // The add check: the token, the metadata, the first items page (with the kid's account).
+        let calls = app.fetch.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            [
+                crate::spotify::tests::TOKEN_URL.to_string(),
+                url(&app, Read::Playlist(PLAYLIST)),
+                url(&app, Read::PlaylistItems(PLAYLIST, 0)),
+            ]
+        );
+        assert!(app.state.music_sweep.woken().await);
+        assert_eq!(nudged(&mut nudges), [ella]);
+        let added = events(&app, "music_entry_added").await;
+        assert_eq!(added.len(), 1);
+        assert!(added[0].contains("Spotify: Kveldsmusikk"), "{added:?}");
+        // The page after it: what happened, at `#added`.
+        let page = page_text(
+            &app.get_page(res.location().unwrap().trim_end_matches("#added"), &cookie)
+                .await,
+        );
+        assert!(page.contains("id=\"added\""), "{page}");
+        assert!(page.contains("On Ella within a few minutes."), "{page}");
+        assert!(page.contains("Ola: not ticked - Spotify is off on this phone"));
+        assert!(!page.contains("No logged-in account owns this playlist"));
+
+        // Before its first check the phone hides it: no mode, no items (§3.6).
+        let served = in_library(&app, &ella_token, id).await.unwrap();
+        assert!(served.get("spotify").is_none(), "{served}");
+        assert_eq!(served["items"], Value::Null);
+        assert_eq!(
+            (served["cache"].as_i64(), served["lan"].as_bool()),
+            (Some(0), Some(false))
+        );
+        // The first check lists it: the library says `list` and the listing's version.
+        assert_eq!(check(&app, id, t0()).await.error, None);
+        let served = in_library(&app, &ella_token, id).await.unwrap();
+        assert_eq!(served["spotify"], "list");
+        assert_eq!(
+            served["items"].as_str(),
+            listing(&app, id).await.version.as_deref()
+        );
+        assert_eq!(served["source"], "spotify");
+        // Ola, ticked on the device card but not playing as an account: nothing (the gate).
+        assert_eq!(
+            tick(&app, &cookie, ola, id, true).await.status,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(ticks(&app, id).await, [ella, ola]);
+        assert_eq!(in_library(&app, &ola_token, id).await, None);
+        bind(&app, ola, kid).await;
+        assert_eq!(
+            in_library(&app, &ola_token, id).await.unwrap()["spotify"],
+            "list"
+        );
+    }
+
+    /// §3.2's refusals: each a 400 by the field with the values kept and nothing stored, and no
+    /// request where none is needed.
+    #[tokio::test]
+    async fn the_add_form_refuses_with_nothing_stored() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let link = format!("https://open.spotify.com/playlist/{PLAYLIST}");
+        let refused = |res: TestResponse, text: &str| {
+            assert_eq!(res.status, StatusCode::BAD_REQUEST, "{text}");
+            let page = page_text(&res);
+            assert!(page.contains(text), "{text}: {page}");
+            page
+        };
+        // No app: not even the form would be shown; a POST is refused.
+        let page = refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Set up your Spotify app first.",
+        );
+        assert!(!page.contains("Add a Spotify link"));
+        assert_eq!(from_spotify(&app, &cookie).await, "No app");
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        assert_eq!(from_spotify(&app, &cookie).await, "No login");
+        // No account.
+        let page = refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Log in with a Spotify account first.",
+        );
+        assert!(
+            page.contains(&format!("value=\"{link}\"")),
+            "the link is kept"
+        );
+        // Every login ended.
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "The Spotify logins need renewing",
+        );
+        assert_eq!(from_spotify(&app, &cookie).await, "No login");
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 0")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(from_spotify(&app, &cookie).await, "Signed in");
+        app.fetch.answer(
+            crate::spotify::tests::TOKEN_URL,
+            200,
+            fixture("token_refresh.json"),
+        );
+        assert!(app.fetch.calls.lock().unwrap().is_empty());
+        // Links that aren't one, or can't be played here.
+        refused(
+            add(&app, &cookie, &[("link", "https://example.org/x")]).await,
+            "That isn't a Spotify link",
+        );
+        refused(
+            add(
+                &app,
+                &cookie,
+                &[(
+                    "link",
+                    "https://open.spotify.com/audiobook/7FakeBook0000000000001",
+                )],
+            )
+            .await,
+            "Spotify audiobooks can't be played here.",
+        );
+        refused(
+            add(&app, &cookie, &[("link", "spotify:user:kari:collection")]).await,
+            "Liked Songs and Spotify profiles can't be added",
+        );
+        // A phone that doesn't exist, a category that doesn't.
+        refused(
+            add(&app, &cookie, &[("link", link.as_str()), ("device", "999")]).await,
+            "One of the phones doesn't exist any more",
+        );
+        refused(
+            add(
+                &app,
+                &cookie,
+                &[("link", link.as_str()), ("category", "999")],
+            )
+            .await,
+            "That category doesn't exist any more.",
+        );
+        assert!(app.fetch.calls.lock().unwrap().is_empty());
+        // Spotify won't open it for any account (404), or can't be reached.
+        app.fetch
+            .answer(&url(&app, Read::Playlist(PLAYLIST)), 404, "{}");
+        refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Spotify doesn't let this app open it - Spotify's own playlists (made by Spotify) \
+             aren't available to developer apps, or the link is private or deleted.",
+        );
+        app.fetch
+            .answer(&url(&app, Read::Playlist(PLAYLIST)), 503, "{}");
+        refused(
+            add(&app, &cookie, &[("link", link.as_str())]).await,
+            "Spotify couldn't be reached - try again.",
+        );
+        assert_eq!(entry_count(&app).await, 0);
+        // Already in the library: a link to its card.
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        let page = refused(
+            add(
+                &app,
+                &cookie,
+                &[("link", format!("spotify:playlist:{PLAYLIST}").as_str())],
+            )
+            .await,
+            "Already in the library.",
+        );
+        assert!(
+            page.contains(&format!("href=\"/music#entry-{id}\"")),
+            "{page}"
+        );
+        assert_eq!(entry_count(&app).await, 1);
+        assert!(events(&app, "music_entry_added").await.is_empty());
+        let _ = kid;
+    }
+
+    /// A playlist no logged-in account may list (§3.2 step 2): added with the context notice; a
+    /// short link is followed hop by hop at add (§3.1) and stored canonical; a show goes to the
+    /// podcasts by its kind; an album is named "<album> — <first artist>".
+    #[tokio::test]
+    async fn context_playlists_short_links_and_kinds() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        ready(&app).await;
+        store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-2").await;
+        app.fetch.answer(
+            &url(&app, Read::Playlist(PLAYLIST)),
+            200,
+            fixture("playlist.json"),
+        );
+        app.fetch.answer(
+            &url(&app, Read::PlaylistItems(PLAYLIST, 0)),
+            403,
+            fixture("forbidden.json"),
+        );
+        let res = add(
+            &app,
+            &cookie,
+            &[("link", format!("spotify:playlist:{PLAYLIST}").as_str())],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let location = res.location().unwrap().to_string();
+        assert!(location.contains("&context=1"), "{location}");
+        // Both accounts were asked for the items.
+        assert_eq!(
+            app.fetch
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|u| **u == url(&app, Read::PlaylistItems(PLAYLIST, 0)))
+                .count(),
+            2
+        );
+        let page = page_text(
+            &app.get_page(location.trim_end_matches("#added"), &cookie)
+                .await,
+        );
+        assert!(page.contains(
+            "No logged-in account owns this playlist or collaborates on it, so the phones can't \
+             show its tracks"
+        ));
+        assert!(page.contains("Turn it on for a phone on that phone's Music card."));
+
+        // A short link: two hops, then the album.
+        app.fetch.redirect(
+            "https://spotify.link/AbC123",
+            302,
+            "https://spotify.app.link/XyZ789?x=1",
+        );
+        app.fetch.redirect(
+            "https://spotify.app.link/XyZ789?x=1",
+            307,
+            &format!("https://open.spotify.com/album/{ALBUM_X}?si=zz"),
+        );
+        app.fetch
+            .answer(&url(&app, Read::Album(ALBUM_X)), 200, fixture("album.json"));
+        let res = add(&app, &cookie, &[("link", "https://spotify.link/AbC123")]).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let (name, category, location): (String, i64, Option<String>) =
+            sqlx::query_as("SELECT name, category_id, NULL FROM music_entries WHERE target = ?")
+                .bind(format!("spotify:album:{ALBUM_X}"))
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            (name.as_str(), category, location),
+            ("Nattlys — Ola Fjell", 1, None)
+        );
+        // The same short link again is the same entry.
+        let res = add(&app, &cookie, &[("link", "https://spotify.link/AbC123")]).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert!(page_text(&res).contains("Already in the library."));
+        // A dead short link.
+        app.fetch
+            .answer("https://spotify.link/Dead00", 200, "<html></html>");
+        let res = add(&app, &cookie, &[("link", "https://spotify.link/Dead00")]).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert!(page_text(&res).contains("That Spotify link didn't lead anywhere."));
+
+        // A show: Podkast by its kind.
+        app.fetch
+            .answer(&url(&app, Read::Show(SHOW)), 200, fixture("show.json"));
+        let res = add(
+            &app,
+            &cookie,
+            &[(
+                "link",
+                format!("https://open.spotify.com/show/{SHOW}").as_str(),
+            )],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let category: i64 =
+            sqlx::query_scalar("SELECT category_id FROM music_entries WHERE target = ?")
+                .bind(format!("spotify:show:{SHOW}"))
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(category, 4, "a show goes to Podkast");
+        // A picked category wins over the kind.
+        let other_show = "4FakeShow0000000000002";
+        app.fetch.answer(
+            &url(&app, Read::Show(other_show)),
+            200,
+            fixture("show.json"),
+        );
+        let res = add(
+            &app,
+            &cookie,
+            &[
+                ("link", format!("spotify:show:{other_show}").as_str()),
+                ("category", "2"),
+            ],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let category: i64 =
+            sqlx::query_scalar("SELECT category_id FROM music_entries WHERE target = ?")
+                .bind(format!("spotify:show:{other_show}"))
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(category, 2);
+        assert_eq!(entry_count(&app).await, 4);
+    }
+
+    /// The library's gate (§3.6) on the library, the listing, the cover and the art routes: a
+    /// bound phone gets the entry, its listing cover, the parent's cover and a track's art; an
+    /// unbound one none of them; unbinding drops them, a login that needs renewing doesn't.
+    #[tokio::test]
+    async fn the_gate_holds_on_library_covers_and_art() {
+        let app = TestApp::new().await;
+        let kid = ready(&app).await;
+        // The tracks' pictures are fetched (`ready` turns the art pass off).
+        app.state.music_sweep.set_art_per_check(20);
+        let (ella, ella_token) = app.enrolled_device("Ella").await;
+        let (ola, ola_token) = app.enrolled_device("Ola").await;
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        tick_on(&app, ella, id).await;
+        tick_on(&app, ola, id).await;
+        bind(&app, ella, kid).await;
+        answer_playlist(&app);
+        app.fetch.answer(
+            super::listing::ART_X,
+            200,
+            super::super::music_art::png(0b0110_0110, 300, 300),
+        );
+        app.fetch.answer(
+            super::listing::ART_Y,
+            200,
+            super::super::music_art::png(0b1010_0101, 640, 640),
+        );
+        assert_eq!(check(&app, id, t0()).await.error, None);
+        let cover = listing(&app, id).await.cover_hash.unwrap();
+        let art = items(&app, id)
+            .await
+            .into_iter()
+            .find_map(|i| i.art_hash)
+            .expect("a track's picture");
+        let has = |token: String| {
+            let app = &app;
+            let cover = cover.clone();
+            let art = art.clone();
+            async move {
+                let library = in_library(app, &token, id).await.is_some();
+                let listing = device_get(
+                    app,
+                    &format!("/api/devices/music/entries/{id}/items"),
+                    &token,
+                    &[],
+                )
+                .await
+                .status;
+                let cover = device_get(
+                    app,
+                    &format!("/api/devices/music/covers/{cover}"),
+                    &token,
+                    &[],
+                )
+                .await
+                .status;
+                let art = device_get(
+                    app,
+                    &format!("/api/devices/music/covers/{art}"),
+                    &token,
+                    &[],
+                )
+                .await
+                .status;
+                (library, listing, cover, art)
+            }
+        };
+        let ok = (true, StatusCode::OK, StatusCode::OK, StatusCode::OK);
+        let none = (
+            false,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+            StatusCode::NOT_FOUND,
+        );
+        assert_eq!(has(ella_token.clone()).await, ok);
+        assert_eq!(has(ola_token.clone()).await, none);
+        // The parent's own cover (`cover_in_library`'s first branch) follows the gate too.
+        sqlx::query("UPDATE music_entries SET cover_hash = ? WHERE id = ?")
+            .bind(&cover)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(has(ella_token.clone()).await, ok);
+        assert_eq!(has(ola_token.clone()).await, none);
+        // A login that needs renewing keeps the tiles (§3.6).
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(has(ella_token.clone()).await, ok);
+        // Unbinding drops it (the revision moves: the cached library is rebuilt).
+        let before = revision(&app).await;
+        sqlx::query("UPDATE device_policy SET music_spotify_account = NULL WHERE device_id = ?")
+            .bind(ella)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(revision(&app).await > before);
+        assert_eq!(has(ella_token.clone()).await, none);
+        assert_eq!(binding(&app, ella).await, None);
+    }
+
+    /// The library cards (§3.6): the kind, "N tracks · read as <account>", what was left out,
+    /// per-phone lines ("plays as", "not sent - Spotify is off on this phone", `unplayable`), "on N
+    /// phones" counting only the bound, the link back to Spotify, no offline select; context
+    /// mode's notice; no app: every phone gated. Check now on the card lists the playlist (the
+    /// acceptance), `/music/cards` serves its status, the offline save stores 0.
+    #[tokio::test]
+    async fn the_cards_and_check_now() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let kid = ready(&app).await;
+        let (ella, _) = app.enrolled_device("Ella").await;
+        let (ola, _) = app.enrolled_device("Ola").await;
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        tick_on(&app, ella, id).await;
+        tick_on(&app, ola, id).await;
+        bind(&app, ella, kid).await;
+        answer_playlist(&app);
+        let music = || {
+            let cookie = cookie.clone();
+            let app = &app;
+            async move { page_text(&app.get_page("/music", &cookie).await) }
+        };
+        // Not listed yet: waiting for the first check; Check now asks for it.
+        let page = music().await;
+        assert!(page.contains("Spotify playlist"), "{page}");
+        assert!(page.contains("Waiting for the first check"), "{page}");
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/entries/{id}/check"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER);
+        assert_eq!(res.location(), Some(format!("/music#entry-{id}").as_str()));
+        assert!(listing(&app, id).await.requested_at.is_some());
+        assert_eq!(events(&app, "music_check_requested").await.len(), 1);
+        // The sweep's next pass takes it: the playlist is listed.
+        let now = app.state.music_sweep.now();
+        let due = sweep::due(&app.db, now).await.unwrap();
+        assert_eq!(
+            due.first().map(|d| (d.entry_id, d.why)),
+            Some((id, sweep::Why::CheckNow))
+        );
+        assert_eq!(check(&app, id, now).await.error, None);
+        assert_eq!(items(&app, id).await.len(), 3);
+        report(
+            &app,
+            ella,
+            json!({"item_errors": [{"entry": id, "version": listing(&app, id).await.version.unwrap(),
+                     "item": super::listing::TRACK_A, "error": "unplayable"}]}),
+        )
+        .await;
+        let page = music().await;
+        assert!(page.contains("3 tracks · read as Ella"), "{page}");
+        assert!(page.contains("4 left out: not playable here, local files or podcast episodes"));
+        assert!(page.contains("on 1 phone"), "{page}");
+        assert!(page.contains(
+            "Ella: plays as Ella · 1 failing (Spotify couldn't play this track on the phone)"
+        ));
+        assert!(page.contains("Ola: not sent - Spotify is off on this phone"));
+        assert!(page.contains(&format!(
+            "href=\"https://open.spotify.com/playlist/{PLAYLIST}\" rel=\"noopener noreferrer\""
+        )));
+        assert!(!page.contains(&format!("/music/entries/{id}/offline")));
+        // The in-place status.
+        let res = app
+            .get_page(&format!("/music/cards?ids={id}"), &cookie)
+            .await;
+        assert_eq!(res.status, StatusCode::OK);
+        assert_eq!(res.json()["cards"][0]["id"], id);
+        assert!(
+            res.json()["cards"][0]["html"]
+                .as_str()
+                .unwrap()
+                .contains("Checked")
+        );
+        // The offline save stores 0, whatever is posted.
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/entries/{id}/offline"),
+                Some(&cookie),
+                &[("cache", "5")],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER);
+        let cache: i64 = sqlx::query_scalar("SELECT cache FROM music_entries WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(cache, 0);
+
+        // Context mode: its notice and no track count.
+        app.fetch.answer(
+            &url(&app, Read::PlaylistItems(PLAYLIST, 0)),
+            403,
+            fixture("forbidden.json"),
+        );
+        let later = now + TimeDelta::hours(1);
+        sweep::request_check(&app.db, id, later).await.unwrap();
+        assert_eq!(check(&app, id, later).await.error, None);
+        let page = music().await;
+        assert!(
+            page.contains("Spotify picks the order · read as Ella"),
+            "{page}"
+        );
+        assert!(page.contains("No logged-in account owns this playlist or collaborates on it"));
+        // No app: every phone gated, counted on none.
+        sqlx::query("DELETE FROM music_spotify_app")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let page = music().await;
+        assert!(
+            page.contains("Ella: not sent - no Spotify app is set up"),
+            "{page}"
+        );
+        assert!(page.contains("Ola: not sent - no Spotify app is set up"));
+        assert!(page.contains("on 0 phones"));
+    }
+
+    /// The entry page (§3.6): the kind, the link back to Spotify, no offline choice; in context
+    /// mode no order either, and a save keeps the stored order; a save stores cache 0.
+    #[tokio::test]
+    async fn the_entry_page_has_no_offline_and_in_context_mode_no_order() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        ready(&app).await;
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        answer_playlist(&app);
+        assert_eq!(check(&app, id, t0()).await.error, None);
+        let path = format!("/music/entries/{id}");
+        let page = page_text(&app.get_page(&path, &cookie).await);
+        assert!(page.contains("Spotify playlist"));
+        assert!(page.contains("Open in Spotify"));
+        assert!(page.contains("name=\"order\""));
+        assert!(!page.contains("name=\"cache\""), "{page}");
+        assert!(page.contains("Check now"));
+        let res = app
+            .request_form(
+                Method::POST,
+                &path,
+                Some(&cookie),
+                &[
+                    ("name", "Kveld"),
+                    ("category", "1"),
+                    ("order", "newest_first"),
+                    ("resume", "on"),
+                ],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let row: (String, i64) =
+            sqlx::query_as("SELECT play_order, cache FROM music_entries WHERE id = ?")
+                .bind(id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(row, ("newest_first".to_string(), 0));
+        // Context mode: no order select; a save keeps the order.
+        app.fetch.answer(
+            &url(&app, Read::PlaylistItems(PLAYLIST, 0)),
+            403,
+            fixture("forbidden.json"),
+        );
+        let later = t0() + TimeDelta::hours(1);
+        sweep::request_check(&app.db, id, later).await.unwrap();
+        assert_eq!(check(&app, id, later).await.error, None);
+        let page = page_text(&app.get_page(&path, &cookie).await);
+        assert!(!page.contains("name=\"order\""), "{page}");
+        assert!(page.contains("Spotify picks the order"));
+        let res = app
+            .request_form(
+                Method::POST,
+                &path,
+                Some(&cookie),
+                &[("name", "Kveld"), ("category", "1"), ("cache", "5")],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let row: (String, i64, bool) =
+            sqlx::query_as("SELECT play_order, cache, resume FROM music_entries WHERE id = ?")
+                .bind(id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(row, ("newest_first".to_string(), 0, false));
+    }
+
+    /// The device card's "Spotify plays as" (§2.5, §3.6): absent until an app is set up; the
+    /// select binds (the revision moves, the phone is nudged, the event), "off" unbinds, an unknown
+    /// account is refused back at `#music-spotify` with nothing changed, an unknown phone is a
+    /// 404; the account's state, one account on two phones, the phone's own outcome in words, the
+    /// mobile-data text and the DNS note while bound.
+    #[tokio::test]
+    async fn the_device_card_binds_a_phone_to_an_account() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (ella, _) = app.enrolled_device("Ella").await;
+        let (ola, _) = app.enrolled_device("Ola").await;
+        let card = |device: i64| {
+            let cookie = cookie.clone();
+            let app = &app;
+            async move { page_text(&app.get_page(&format!("/devices/{device}"), &cookie).await) }
+        };
+        let page = card(ella).await;
+        assert!(
+            !page.contains("id=\"music-spotify\""),
+            "no Spotify control before an app"
+        );
+        assert!(page.contains("This includes Spotify, which streams (about 60-150 MB an hour)."));
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-2").await;
+        let page = card(ella).await;
+        assert!(page.contains("id=\"music-spotify\""));
+        assert!(
+            page.contains(&format!("<option value=\"{kid}\" >Ella</option>")),
+            "{page}"
+        );
+        assert!(page.contains("Use the child's own Spotify account"));
+        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
+        let save = |device: i64, account: String| {
+            let cookie = cookie.clone();
+            let app = &app;
+            async move {
+                app.request_form(
+                    Method::POST,
+                    &format!("/devices/{device}/music/spotify"),
+                    Some(&cookie),
+                    &[("account", account.as_str())],
+                )
+                .await
+            }
+        };
+        let mut nudges = app.state.command_notify.subscribe();
+        let before = revision(&app).await;
+        let res = save(ella, kid.to_string()).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER);
+        assert_eq!(
+            res.location(),
+            Some(format!("/devices/{ella}#music-spotify").as_str())
+        );
+        assert_eq!(binding(&app, ella).await, Some(kid));
+        assert!(revision(&app).await > before);
+        assert_eq!(nudged(&mut nudges), [ella]);
+        assert_eq!(
+            events(&app, "music_spotify_binding_changed").await,
+            [format!("device {ella}: Spotify plays as Ella")]
+        );
+        let page = card(ella).await;
+        assert!(page.contains(&format!("<option value=\"{kid}\" selected>Ella</option>")));
+        assert!(
+            page.contains("Ella: logged in, log in again before"),
+            "{page}"
+        );
+        assert!(page.contains("Spotify's hosts are allowed on this phone while Spotify is on"));
+        // An account that isn't logged in here, or junk: refused, nothing changed.
+        for junk in ["999".to_string(), "x".to_string()] {
+            let res = save(ella, junk).await;
+            assert_eq!(
+                res.location(),
+                Some(
+                    format!("/devices/{ella}?music_notice=spotify_unknown#music-spotify").as_str()
+                )
+            );
+            assert_eq!(binding(&app, ella).await, Some(kid));
+        }
+        let page = page_text(
+            &app.get_page(
+                &format!("/devices/{ella}?music_notice=spotify_unknown"),
+                &cookie,
+            )
+            .await,
+        );
+        assert!(page.contains("Not saved: that Spotify account isn't logged in here"));
+        assert_eq!(
+            save(999, kid.to_string()).await.status,
+            StatusCode::NOT_FOUND
+        );
+        // One account on two phones: a warning on both cards.
+        save(ola, kid.to_string()).await;
+        for device in [ella, ola] {
+            assert!(card(device).await.contains(
+                "Spotify plays on one device at a time per account: Ella's and Ola's phones \
+                 both play as Ella - give each child their own account."
+            ));
+        }
+        save(ola, parent.to_string()).await;
+        assert!(
+            !card(ella)
+                .await
+                .contains("one device at a time per account")
+        );
+        // The phone's own outcome, and the account's state.
+        report(&app, ella, json!({"spotify": "not_premium"})).await;
+        assert!(card(ella).await.contains(
+            "On the phone: Spotify says this account has no Premium - the phone can't play \
+             Spotify."
+        ));
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1 WHERE id = ?")
+            .bind(kid)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(card(ella).await.contains(
+            "Ella's Spotify login needs renewing: log in again as Ella on the Spotify page."
+        ));
+        // Ticked Spotify entries on an unbound phone: why they aren't sent.
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        tick_on(&app, ella, id).await;
+        let res = save(ella, "off".to_string()).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER);
+        assert_eq!(binding(&app, ella).await, None);
+        let page = card(ella).await;
+        assert!(page.contains("Spotify is off on this phone: its Spotify entry isn't sent."));
+        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
+        assert_eq!(
+            events(&app, "music_spotify_binding_changed")
+                .await
+                .last()
+                .unwrap(),
+            &format!("device {ella}: Spotify off")
+        );
+    }
+
+    /// Entries failing for want of an app or a login are due at once after an app save or a new
+    /// login (as Storytel's after a save), not after their backoff.
+    #[tokio::test]
+    async fn a_new_login_or_app_save_makes_the_waiting_entries_due() {
+        let app = TestApp::new().await;
+        app.state.music_sweep.set_art_per_check(0);
+        let id = entry(&app, "playlist", PLAYLIST).await;
+        let t = t0();
+        assert_eq!(
+            check(&app, id, t).await.error.as_deref(),
+            Some("spotify_off")
+        );
+        let due = |now| {
+            let app = &app;
+            async move {
+                sweep::due(&app.db, now)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|d| d.entry_id == id)
+            }
+        };
+        assert!(!due(t + TimeDelta::minutes(1)).await, "backing off");
+        // The app saved after the failure: due now.
+        sqlx::query(
+            "INSERT INTO music_spotify_app (id, client_id, redirect_uri, saved_at) VALUES \
+             (1, ?, ?, ?)",
+        )
+        .bind(crate::spotify::tests::CLIENT)
+        .bind(LOOPBACK_REDIRECT)
+        .bind(stamp(t + TimeDelta::seconds(30)))
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(due(t + TimeDelta::minutes(1)).await);
+        let t2 = t + TimeDelta::minutes(1);
+        assert_eq!(
+            check(&app, id, t2).await.error.as_deref(),
+            Some("no_account")
+        );
+        assert!(!due(t2 + TimeDelta::minutes(1)).await, "backing off again");
+        // A login after that failure: due now.
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        sqlx::query("UPDATE music_spotify_accounts SET authorized_at = ? WHERE id = ?")
+            .bind(stamp(t2 + TimeDelta::seconds(30)))
+            .bind(kid)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(due(t2 + TimeDelta::minutes(1)).await);
+        // A login from before the failure cures nothing.
+        sqlx::query("UPDATE music_spotify_accounts SET authorized_at = ? WHERE id = ?")
+            .bind(stamp(t2 - TimeDelta::seconds(30)))
+            .bind(kid)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(!due(t2 + TimeDelta::minutes(1)).await);
+    }
+
+    /// The import (§3.2) through the routes: a Spotify URI and an `open.spotify.com` link are
+    /// imported as Spotify entries (cache 0) on no phone, though the phones were picked; a short
+    /// link is skipped with its reason. Nothing is fetched.
+    #[tokio::test]
+    async fn a_vibb_library_imports_spotify_entries_on_no_phone() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (ella, _) = app.enrolled_device("Ella").await;
+        let doc = json!({"sections": [{"name": "Musikk", "entries": [
+            {"name": "Kveld", "target": format!("spotify:playlist:{PLAYLIST}"), "order": "auto", "cache": 5, "resume": true},
+            {"name": "Album", "target": format!("https://open.spotify.com/album/{ALBUM_X}?si=x"), "cache": -1},
+            {"name": "Kort", "target": "https://spotify.link/AbC123"},
+            {"name": "Feed", "target": "https://example.org/feed.rss"},
+        ]}]})
+        .to_string();
+        let ella_id = ella.to_string();
+        let res = app
+            .request_form(
+                Method::POST,
+                "/music/import/confirm",
+                Some(&cookie),
+                &[
+                    ("doc", doc.as_str()),
+                    ("row", "0.0"),
+                    ("row", "0.1"),
+                    ("row", "0.2"),
+                    ("row", "0.3"),
+                    ("section_0", "1"),
+                    ("phone", ella_id.as_str()),
+                ],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let rows: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT source, target, cache FROM music_entries ORDER BY id")
+                .fetch_all(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "spotify".to_string(),
+                    format!("spotify:playlist:{PLAYLIST}"),
+                    0
+                ),
+                ("spotify".to_string(), format!("spotify:album:{ALBUM_X}"), 0),
+                (
+                    "rss".to_string(),
+                    "https://example.org/feed.rss".to_string(),
+                    5
+                ),
+            ]
+        );
+        let ticked: Vec<String> = sqlx::query_scalar(
+            "SELECT e.source FROM device_music_entries d JOIN music_entries e ON e.id = d.entry_id",
+        )
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(ticked, ["rss"]);
+        assert!(app.fetch.calls.lock().unwrap().is_empty());
+        let page = page_text(&app.get_page("/music", &cookie).await);
+        assert!(
+            page.contains("a Spotify short link - resolve it by adding it on the Spotify page"),
+            "{page}"
+        );
+        let _ = lib_entry;
     }
 }

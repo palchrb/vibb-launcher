@@ -1023,6 +1023,8 @@ pub fn build_admin_router(
         )
         .route("/music/spotify/login", post(handlers::music_spotify::login))
         .route("/music/spotify/paste", post(handlers::music_spotify::paste))
+        // Step 2b: a share link becomes an entry, ticked on the phones that play Spotify.
+        .route("/music/spotify/add", post(handlers::music_spotify::add))
         .route(
             "/music/spotify/accounts/{id}/remove",
             post(handlers::music_spotify::remove_account),
@@ -1073,6 +1075,10 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/music/sonos-rooms",
             post(handlers::music::save_device_sonos_rooms),
+        )
+        .route(
+            "/devices/{id}/music/spotify",
+            post(handlers::music::save_device_spotify),
         )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))

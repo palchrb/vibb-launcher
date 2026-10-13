@@ -16,7 +16,8 @@
 //!   Each NRK/RSS entry names its listing's version (`items`, 21b §4.1) and falls back to the
 //!   source's cover. Own files that aren't on disk (never backed up) stay listed as `missing`
 //!   (QA #3). Storytel entries only while the phone's Storytel switch is on and a login is stored
-//!   ([storytel_gate], 26b §2.7).
+//!   ([storytel_gate], 26b §2.7); Spotify entries only while the phone plays as a Spotify account
+//!   ([spotify_gate], 26c §3.6), each with its mode (`spotify`: `list` or `context`).
 //! - **Policy** `music` ([policy_music]): the version, mobile data, the volume cap and the Storytel
 //!   generation - or `null` when it can't be read, never an empty library.
 
@@ -352,7 +353,18 @@ pub fn kind_label(source: &str, target: Option<&str>) -> &'static str {
         "nrk" => "NRK podcast",
         "storytel" if target.is_some_and(|t| t.starts_with("storytel:book:")) => "Storytel book",
         "storytel" => "Storytel series",
-        "spotify" => "Spotify",
+        "spotify" => match target
+            .and_then(crate::spotify::parse_target)
+            .map(|r| r.kind)
+        {
+            Some(crate::spotify::LinkKind::Playlist) => "Spotify playlist",
+            Some(crate::spotify::LinkKind::Album) => "Spotify album",
+            Some(crate::spotify::LinkKind::Track) => "Spotify track",
+            Some(crate::spotify::LinkKind::Artist) => "Spotify artist",
+            Some(crate::spotify::LinkKind::Show) => "Spotify podcast",
+            Some(crate::spotify::LinkKind::Episode) => "Spotify episode",
+            None => "Spotify",
+        },
         _ => "Other",
     }
 }
@@ -749,6 +761,12 @@ pub struct LibEntry {
     /// checked), and the music app then refuses private addresses for the entry's audio
     /// (qa-21b-step1c-code #14, the user's decision of 2026-10-09).
     pub lan: bool,
+    /// A Spotify entry's mode (design 26c §3.3, §3.6): `"list"` (the phone plays our listing by
+    /// track URI) or `"context"` (Spotify's own order, no items). Absent on every other source -
+    /// and on a Spotify entry not listed yet, whose `items` is then null too - so the library of a
+    /// phone without Spotify entries keeps its bytes and its version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spotify: Option<String>,
     pub sort: i64,
 }
 
@@ -863,10 +881,12 @@ macro_rules! storytel_gate {
     };
 }
 
-/// The Spotify gate of a phone's listing (design 26c §3.6), for an entry `e` and the phone bound at
-/// its `?`: a Spotify entry only while the phone plays as an account (`music_spotify_account` set;
-/// the FK makes the account exist). Step 2a gates the listing route with it; the library, the
-/// cover and the art routes take it in step 2b.
+/// The Spotify gate of a phone's library (design 26c §3.6), for an entry `e` and the phone bound
+/// at its `?`: a Spotify entry only while the phone plays as an account (`music_spotify_account`
+/// set; the FK makes the account exist). The library, the listing route, the cover route and the
+/// art route all use it, so unbinding a phone (or removing its account) drops the entries from it;
+/// migration 0073's trigger rebuilds the cached libraries. A login that needs renewing doesn't
+/// close it: the tiles stay and say so on the phone.
 #[macro_export]
 macro_rules! spotify_gate {
     () => {
@@ -877,16 +897,20 @@ macro_rules! spotify_gate {
 }
 
 /// The entries in a phone's library: its ticks (plus `extra`, an entry about to be ticked - the
-/// size check), the sources the music app plays (NRK, RSS, own files and Storytel behind its gate),
-/// with their listing (design 21b). Binds: the phone, `extra`, the phone (the gate).
+/// size check), the sources the music app plays (NRK, RSS, own files, Storytel and Spotify behind
+/// their gates), with their listing (design 21b). Binds: the phone, `extra`, the phone (the
+/// Storytel gate), the phone (the Spotify gate).
 const LIBRARY_ENTRIES: &str = concat!(
     "SELECT e.id, e.name, e.category_id, e.source, e.target, e.key, \
      e.play_order, e.cache, e.resume, e.cover_hash, e.sort, l.version AS listing_version, \
-     l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end, l.lan AS listing_lan \
+     l.cover_hash AS listing_cover, l.keep_end AS listing_keep_end, l.lan AS listing_lan, \
+     l.spotify_mode AS listing_spotify_mode \
      FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
-     WHERE e.source IN ('nrk', 'rss', 'own', 'storytel') AND (e.id IN \
+     WHERE e.source IN ('nrk', 'rss', 'own', 'storytel', 'spotify') AND (e.id IN \
        (SELECT entry_id FROM device_music_entries WHERE device_id = ?) OR e.id = ?) AND ",
     storytel_gate!(),
+    " AND ",
+    spotify_gate!(),
     " ORDER BY e.sort, e.id"
 );
 
@@ -899,6 +923,7 @@ struct LibraryRow {
     listing_cover: Option<String>,
     listing_keep_end: Option<String>,
     listing_lan: Option<bool>,
+    listing_spotify_mode: Option<String>,
 }
 
 /// The order the phone plays an entry in: as set, except that an `auto` NRK series whose list keeps
@@ -926,6 +951,7 @@ pub async fn library_for(
     let rows: Vec<LibraryRow> = sqlx::query_as(LIBRARY_ENTRIES)
         .bind(device_id)
         .bind(extra)
+        .bind(device_id)
         .bind(device_id)
         .fetch_all(&mut *db)
         .await?;
@@ -990,6 +1016,13 @@ pub async fn library_for(
         .map(|row| {
             let e = row.entry;
             let own = e.source == "own";
+            // A Spotify entry's mode, `list` or `context`; one not listed yet has neither a mode
+            // nor items (the phone hides it until it is listed, §3.6).
+            let spotify = (e.source == "spotify")
+                .then(|| row.listing_spotify_mode.clone())
+                .flatten()
+                .filter(|mode| matches!(mode.as_str(), "list" | "context"));
+            let listed = e.source != "spotify" || spotify.is_some();
             LibEntry {
                 id: e.id,
                 key: e.key,
@@ -1003,15 +1036,22 @@ pub async fn library_for(
                 target: e.target,
                 // Own files are all on the phone; a Storytel entry's 0 is all (vibb library.py
                 // 87-89: download-only).
+                // Spotify streams only: nothing is ever downloaded (§3.2).
                 cache: match e.source.as_str() {
                     "own" => -1,
                     "storytel" => crate::storytel::cache_value(e.cache),
+                    "spotify" => 0,
                     _ => e.cache,
                 },
                 resume: e.resume,
                 cover: e.cover_hash.or(if own { None } else { row.listing_cover }),
-                items: if own { None } else { row.listing_version },
+                items: if own || !listed {
+                    None
+                } else {
+                    row.listing_version
+                },
                 lan: e.source == "rss" && row.listing_lan == Some(true),
+                spotify,
                 sort: e.sort,
                 source: e.source,
             }
@@ -1204,9 +1244,11 @@ pub async fn cover_in_library(
     sqlx::query_scalar(concat!(
         "SELECT EXISTS(SELECT 1 FROM music_entries e \
            JOIN device_music_entries d ON d.entry_id = e.id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'own', 'storytel') \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'own', 'storytel', 'spotify') \
              AND e.cover_hash = ? AND ",
         storytel_gate!(),
+        " AND ",
+        spotify_gate!(),
         " UNION ALL SELECT 1 FROM music_files f \
            JOIN music_entries e ON e.id = f.entry_id \
            JOIN device_music_entries d ON d.entry_id = f.entry_id \
@@ -1214,18 +1256,22 @@ pub async fn cover_in_library(
          UNION ALL SELECT 1 FROM music_listings l \
            JOIN music_entries e ON e.id = l.entry_id \
            JOIN device_music_entries d ON d.entry_id = l.entry_id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel', 'spotify') \
              AND e.cover_hash IS NULL AND l.cover_hash = ? AND ",
         storytel_gate!(),
+        " AND ",
+        spotify_gate!(),
         ")"
     ))
     .bind(device_id)
     .bind(hash)
     .bind(device_id)
     .bind(device_id)
+    .bind(device_id)
     .bind(hash)
     .bind(device_id)
     .bind(hash)
+    .bind(device_id)
     .bind(device_id)
     .fetch_one(db)
     .await
@@ -1246,13 +1292,16 @@ pub async fn art_in_library(
            JOIN music_entries e ON e.id = i.entry_id \
            JOIN device_music_entries d ON d.entry_id = i.entry_id \
            JOIN music_listings l ON l.entry_id = i.entry_id \
-           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') \
+           WHERE d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel', 'spotify') \
              AND i.state != 'pending' AND l.version IS NOT NULL AND i.art_hash = ? AND ",
         storytel_gate!(),
+        " AND ",
+        spotify_gate!(),
         ")"
     ))
     .bind(device_id)
     .bind(hash)
+    .bind(device_id)
     .bind(device_id)
     .fetch_one(db)
     .await
@@ -1549,6 +1598,10 @@ pub struct MusicState {
     pub entry_errors: Vec<EntryError>,
     /// The Storytel login on the phone ("ok", "none", "login_failed", ...).
     pub storytel: Option<String>,
+    /// The phone's last Spotify outcome (design 26c §4.4): one of [SPOTIFY_WORDS], else dropped.
+    /// Not written when absent, so a report without it is stored as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spotify: Option<String>,
     pub item_errors: Vec<ItemError>,
     pub downloads: Vec<Download>,
     /// The Sonos rooms the music app knows (its speaker cache; design 26a §5.5): what the parent
@@ -1563,6 +1616,20 @@ pub struct SonosRoom {
     pub uid: String,
     pub name: String,
 }
+
+/// What a phone may report as its last Spotify outcome (design 26c §4.4): `none` (not bound, or
+/// never played), `ok`, `reauthorize`, `refused` (the play call's 403), `not_premium`,
+/// `no_widevine`, `unreachable`, `quota`. Never a token, an account or a device id.
+pub const SPOTIFY_WORDS: [&str; 8] = [
+    "none",
+    "ok",
+    "reauthorize",
+    "refused",
+    "not_premium",
+    "no_widevine",
+    "unreachable",
+    "quota",
+];
 
 fn word(value: Option<String>) -> Option<String> {
     value.filter(|w| {
@@ -1628,6 +1695,9 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
             .take(MAX_ENTRY_ERRORS)
             .collect(),
         storytel: word(state.storytel),
+        spotify: state
+            .spotify
+            .filter(|w| SPOTIFY_WORDS.contains(&w.as_str())),
         item_errors: state
             .item_errors
             .into_iter()
@@ -1672,12 +1742,14 @@ pub fn sanitize_music_state(value: &serde_json::Value) -> Option<String> {
     serde_json::to_string(&clean).ok()
 }
 
-/// `http_<3 digits>`, `bad_media`, `network` or `no_audio` (a Storytel book the phone's mint got
-/// no audio URL for: locked, not in this country, gone; design 26b §2.5).
+/// `http_<3 digits>`, `bad_media`, `network`, `no_audio` (a Storytel book the phone's mint got
+/// no audio URL for: locked, not in this country, gone; design 26b §2.5) or `unplayable` (a
+/// Spotify track or episode the web player couldn't play, or Spotify skipped: region, the
+/// explicit filter, removed; design 26c §4.4, §5.8).
 fn item_error_code(code: &str) -> bool {
     match code.strip_prefix("http_") {
         Some(status) => status.len() == 3 && status.bytes().all(|b| b.is_ascii_digit()),
-        None => matches!(code, "bad_media" | "network" | "no_audio"),
+        None => matches!(code, "bad_media" | "network" | "no_audio" | "unplayable"),
     }
 }
 
@@ -1697,6 +1769,8 @@ pub fn entry_error_text(code: &str) -> String {
         "bad_media" => "what came back isn't audio".to_string(),
         // Storytel (design 26b §2.4, §2.5).
         "no_audio" => "Storytel gave no audio for this book".to_string(),
+        // Spotify (design 26c §3.6, §5.8).
+        "unplayable" => "Spotify couldn't play this track on the phone".to_string(),
         "not_on_shelf" => "no longer on the Storytel shelf".to_string(),
         "login_refused" => "Storytel refused the login".to_string(),
         "storytel_off" => "no Storytel login on this server".to_string(),
@@ -1961,6 +2035,7 @@ mod tests {
             cover: None,
             items: None,
             lan: false,
+            spotify: None,
             sort: 10,
         };
         let a = Library::build(vec![category.clone()], vec![entry.clone()], vec![], None);
@@ -1995,6 +2070,18 @@ mod tests {
         assert_ne!(one.version, none.version);
         let served: serde_json::Value = serde_json::from_slice(&a.json).unwrap();
         assert_eq!(served["sonos_rooms"], serde_json::Value::Null);
+        // A Spotify entry's mode (design 26c §3.6) is hashed and served; every other entry has
+        // no `spotify` key at all, so their bytes (and the snapshot) stay as they were.
+        assert!(served["entries"][0].get("spotify").is_none());
+        let spotify = LibEntry {
+            source: "spotify".into(),
+            spotify: Some("list".into()),
+            ..entry.clone()
+        };
+        let listed = Library::build(vec![category.clone()], vec![spotify], vec![], None);
+        assert_ne!(listed.version, a.version);
+        let served_listed: serde_json::Value = serde_json::from_slice(&listed.json).unwrap();
+        assert_eq!(served_listed["entries"][0]["spotify"], "list");
         let served: serde_json::Value = serde_json::from_slice(&one.json).unwrap();
         assert_eq!(
             served["sonos_rooms"],
@@ -2077,6 +2164,68 @@ mod tests {
         let old =
             parse_music_state(sanitize_music_state(&serde_json::json!({})).as_deref()).unwrap();
         assert!(old.sonos_rooms.is_empty());
+    }
+
+    /// Design 26c §4.4 (step 2b): the phone's `spotify` outcome is kept only as one of its words,
+    /// never written when absent; `unplayable` is an item error; a Spotify entry's label names
+    /// its kind.
+    #[test]
+    fn spotify_words_and_labels() {
+        for word in SPOTIFY_WORDS {
+            let state = parse_music_state(
+                sanitize_music_state(&serde_json::json!({"spotify": word})).as_deref(),
+            )
+            .unwrap();
+            assert_eq!(state.spotify.as_deref(), Some(word));
+        }
+        for junk in [
+            serde_json::json!("FAKE-ACCESS-1"),
+            serde_json::json!("ok "),
+            serde_json::json!("premium"),
+            serde_json::json!(3),
+        ] {
+            // A word not on the list is dropped; a value that isn't text drops the report (as
+            // every other field's wrong type does).
+            let stored = sanitize_music_state(&serde_json::json!({"spotify": junk}));
+            assert!(
+                stored.as_deref().is_none_or(|s| !s.contains("spotify")),
+                "{stored:?}"
+            );
+        }
+        let stored = sanitize_music_state(&serde_json::json!({
+            "item_errors": [
+                {"entry": 3, "version": "0123456789abcdef", "item": "1FakeTrackA00000000001",
+                 "error": "unplayable"},
+                {"entry": 3, "version": "0123456789abcdef", "item": "1FakeTrackA00000000001",
+                 "error": "spotify_refused"}
+            ]
+        }))
+        .unwrap();
+        let state = parse_music_state(Some(&stored)).unwrap();
+        assert_eq!(state.item_errors.len(), 1);
+        assert_eq!(state.item_errors[0].error, "unplayable");
+        assert_eq!(
+            sweep_error_text("spotify", "unplayable"),
+            "Spotify couldn't play this track on the phone"
+        );
+        let id = "0FakePlaylistKveld0001";
+        for (kind, label) in [
+            ("playlist", "Spotify playlist"),
+            ("album", "Spotify album"),
+            ("track", "Spotify track"),
+            ("artist", "Spotify artist"),
+            ("show", "Spotify podcast"),
+            ("episode", "Spotify episode"),
+        ] {
+            assert_eq!(
+                kind_label("spotify", Some(&format!("spotify:{kind}:{id}"))),
+                label
+            );
+        }
+        assert_eq!(
+            kind_label("spotify", Some("spotify:audiobook:x")),
+            "Spotify"
+        );
     }
 
     /// `testdata/music_state.json` is every field the launcher and the music app send (both apps'

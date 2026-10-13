@@ -27,11 +27,11 @@ input, select { max-width: 100%; }
         <h1>{{ entry.name }}</h1>
         <a href="/music#entry-{{ entry.id }}" class="button-small button-secondary">Back to the library</a>
     </div>
-    <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · {% if storytel %}{{ target }} (<a href="/music/storytel">the Storytel shelf</a>){% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}{% endif %}</p>
+    <p class="subtitle" style="overflow-wrap:anywhere;">{{ kind }}{% if let Some(target) = entry.target %} · {% if storytel %}{{ target }} (<a href="/music/storytel">the Storytel shelf</a>){% else if spotify %}{{ target }}{% if let Some(link) = spotify_link %} (<a href="{{ link }}" rel="noopener noreferrer" target="_blank">Open in Spotify</a>){% endif %}{% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}{% endif %}</p>
 
     {% if let Some(sweep) = sweep %}
     <div class="card" id="status">
-        <h2>Episodes</h2>
+        <h2>{% if spotify %}Tracks{% else %}Episodes{% endif %}</h2>
         {% if let Some(title) = sweep.source_title %}
         <p class="subtitle music-oneline">At the source: {{ title }}</p>
         {% endif %}
@@ -76,7 +76,19 @@ input, select { max-width: 100%; }
             <option value="{{ id }}"{% if form.category == *id %} selected{% endif %}>{{ name }}</option>
             {% endfor %}
         </select>
-        {% if !own %}
+        {% if spotify %}
+        {% if spotify_context %}
+        <p class="hint">Spotify picks the order: no logged-in account may list this one's tracks, so the phones play it as Spotify does.</p>
+        {% else %}
+        <label for="entry_order">Play order</label>
+        <select id="entry_order" name="order"{% if form.error_field == "order" %} autofocus{% endif %}>
+            {% for (value, label) in orders %}
+            <option value="{{ value }}"{% if form.order == **value %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
+        <p class="hint" style="margin-top:4px;">Spotify streams: nothing is kept on the phone for offline listening. It plays on Wi-Fi unless the phone may use mobile data (its Music card).</p>
+        {% else if !own %}
         <label for="entry_order">Play order</label>
         <select id="entry_order" name="order"{% if form.error_field == "order" %} autofocus{% endif %}>
             {% for (value, label) in orders %}

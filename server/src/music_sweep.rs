@@ -61,7 +61,7 @@ use crate::AppState;
 use crate::music::{CheckError, Link, PSAPI};
 use crate::music_net::{self, FetchError, Kind, Reach, Source, SourceRequest, SourceResponse};
 use crate::music_sources::{self as sources, Manifest};
-use crate::spotify::{self, LinkKind, Read, SpotifyError};
+use crate::spotify::{self, LinkKind, NoReader, Read, SpotifyError};
 
 /// NRK lists keep at most this many episodes (vibb `MAX_EPISODES`), RSS lists this many.
 pub const MAX_NRK_ITEMS: usize = 100;
@@ -414,11 +414,26 @@ struct ScheduleRow {
     error_at: Option<String>,
     /// When the Storytel login was last saved (NULL without one).
     storytel_saved_at: Option<String>,
+    /// When the Spotify app was last saved in the PWA, and the newest Spotify login (design 26c
+    /// step 2b): either can cure a Spotify entry's [SPOTIFY_LOGIN_ERRORS].
+    spotify_app_saved_at: Option<String>,
+    spotify_login_at: Option<String>,
 }
 
 /// The check errors a saved login can cure: a Storytel entry failing with one of them since before
 /// the last save is due at once (QA L1 of 2b).
 const LOGIN_ERRORS: [&str; 4] = ["storytel_off", "login_refused", "storytel_key", "no_jwt"];
+
+/// The Spotify check errors a saved app or a new login can cure (design 26c step 2b, as Storytel's
+/// [LOGIN_ERRORS]): a Spotify entry failing with one of them since before the last app save or the
+/// newest login is due at once, not after its backoff.
+const SPOTIFY_LOGIN_ERRORS: [&str; 5] = [
+    "spotify_off",
+    "no_account",
+    "reauthorize",
+    "key",
+    "app_refused",
+];
 
 /// How often a listed entry is checked (§2.2's table; design 26c §3.4: by the link's kind): NRK
 /// every `max(I, min(2I, 12 h))`; a Spotify album, track, episode or artist daily (vibb's daily
@@ -534,16 +549,26 @@ fn schedule_one(
             (-created.timestamp(), String::new(), row.sort),
         );
     }
-    let login_saved_since = row.source == "storytel"
-        && row.failures > 0
+    let (cures, cured_at) = match row.source.as_str() {
+        "storytel" => (
+            &LOGIN_ERRORS[..],
+            row.storytel_saved_at.as_deref().and_then(parse_stamp),
+        ),
+        "spotify" => (
+            &SPOTIFY_LOGIN_ERRORS[..],
+            [&row.spotify_app_saved_at, &row.spotify_login_at]
+                .into_iter()
+                .filter_map(|at| at.as_deref().and_then(parse_stamp))
+                .max(),
+        ),
+        _ => (&[][..], None),
+    };
+    let login_saved_since = row.failures > 0
         && row
             .error
             .as_deref()
-            .is_some_and(|code| LOGIN_ERRORS.contains(&code))
-        && match (
-            row.error_at.as_deref().and_then(parse_stamp),
-            row.storytel_saved_at.as_deref().and_then(parse_stamp),
-        ) {
+            .is_some_and(|code| cures.contains(&code))
+        && match (row.error_at.as_deref().and_then(parse_stamp), cured_at) {
             (Some(failed), Some(saved)) => failed < saved,
             _ => false,
         };
@@ -609,7 +634,9 @@ pub async fn schedule(
            EXISTS(SELECT 1 FROM music_items i WHERE i.entry_id = e.id AND i.state = 'pending' \
              AND i.attempts = 0) AS untried, l.error, l.error_at, \
            (SELECT s.saved_at FROM music_storytel s WHERE s.id = 1 AND s.ciphertext IS NOT NULL) \
-             AS storytel_saved_at \
+             AS storytel_saved_at, \
+           (SELECT a.saved_at FROM music_spotify_app a WHERE a.id = 1) AS spotify_app_saved_at, \
+           (SELECT MAX(a.authorized_at) FROM music_spotify_accounts a) AS spotify_login_at \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
          WHERE e.source IN ('nrk', 'rss', 'storytel', 'spotify') AND e.target IS NOT NULL",
     )
@@ -2583,14 +2610,6 @@ struct SpotifyReads<'s, 'j, 'a> {
     job: &'j mut Job<'a>,
 }
 
-/// Every reader failed: the error to report, and whether **every** reader answered 403 or 404 -
-/// no account may see it (qa-26c-step2a-code M1: only then is a playlist a context; any other
-/// failure fails the check and keeps the last good list).
-struct NoReader {
-    err: SpotifyError,
-    refused: bool,
-}
-
 impl SpotifyReads<'_, '_, '_> {
     /// One GET as `account`, within the check's budget (past it: `timeout`).
     async fn get(&mut self, account: i64, url: &str) -> Result<Vec<u8>, SpotifyError> {
@@ -2614,35 +2633,18 @@ impl SpotifyReads<'_, '_, '_> {
     /// failing: `refused` only when each answered 403/404; the error is the first account-level
     /// one (the login, the key: what the parent can mend), else 404 if one said so, else 403.
     async fn first(&mut self, ids: &[i64], url: &str) -> Result<(i64, Vec<u8>), NoReader> {
-        let mut unusable: Option<SpotifyError> = None;
-        let mut refusals = 0;
-        let mut not_found = false;
+        let mut turns = spotify::ReaderTurns::default();
         for &account in ids {
             match self.get(account, url).await {
                 Ok(body) => return Ok((account, body)),
-                Err(err @ (SpotifyError::NotFound | SpotifyError::Status(403))) => {
-                    refusals += 1;
-                    not_found |= err == SpotifyError::NotFound;
-                }
-                Err(err) if spotify::try_next_reader(&err) => {
-                    unusable.get_or_insert(err);
-                }
                 Err(err) => {
-                    return Err(NoReader {
-                        err,
-                        refused: false,
-                    });
+                    if let Some(end) = turns.failed(err) {
+                        return Err(end);
+                    }
                 }
             }
         }
-        let refused = refusals > 0 && refusals == ids.len();
-        let err = match unusable {
-            Some(err) => err,
-            None if not_found => SpotifyError::NotFound,
-            None if refusals > 0 => SpotifyError::Status(403),
-            None => SpotifyError::NoAccount,
-        };
-        Err(NoReader { err, refused })
+        Err(turns.end())
     }
 
     /// The pages after `page` (read as `account`): `next_read(offset)` for each next page, until

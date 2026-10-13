@@ -71,6 +71,14 @@ input, select { max-width: 100%; }
         <p class="hint" style="margin-top:8px;">Storytel: pick from the shelf - <a href="/music/storytel">the Storytel shelf</a> (the login goes in the Storytel card below).</p>
     </form>
 
+    <div class="group" id="spotify">
+        <a class="row" href="/music/spotify" data-row="from-spotify">
+            <span class="row-label">From Spotify</span>
+            <span class="row-value">{{ spotify_state }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+    </div>
+
     <form method="post" action="/music/own" class="card" id="own">
         <h2>Own files</h2>
         <p class="subtitle">Your own recordings or albums (mp3, m4a, m4b, ogg, opus, flac or wav). Make an entry here, then upload the files on its page. They are stored on this server (not in its backups) and copied to the phones that have the entry.</p>
@@ -230,11 +238,6 @@ input, select { max-width: 100%; }
         {% endif %}
     </div>
 
-    <div class="card" id="spotify">
-        <h2>Spotify</h2>
-        <p class="subtitle">Spotify playlists, albums, artists and podcasts, played on the phones through your family's own Spotify developer app and the Spotify accounts you log in (Premium). Nothing changes here until it is set up.</p>
-        <p><a href="/music/spotify">Set up Spotify and its logins</a></p>
-    </div>
 
     <div class="card" id="app">
         <h2>The music app</h2>
@@ -249,7 +252,7 @@ input, select { max-width: 100%; }
     </div>
     <details class="card" id="import"{% if import.open %} open{% endif %}>
         <summary><h2>Import from Vibb</h2></summary>
-        <p class="subtitle">Bring a Vibb box's library over in one go: its podcasts and NRK series become entries here, each Vibb section a category. Copy the file from the box first, for example with <code>scp &lt;pi&gt;:/etc/vibb/library.json .</code> (the box's <code>GET /library</code> answer works too). You see what would be added before anything is saved. Nothing is fetched while importing; Spotify, Storytel and the box's own folders aren't brought over, nor positions or downloads.</p>
+        <p class="subtitle">Bring a Vibb box's library over in one go: its podcasts and NRK series become entries here, each Vibb section a category. Copy the file from the box first, for example with <code>scp &lt;pi&gt;:/etc/vibb/library.json .</code> (the box's <code>GET /library</code> answer works too). You see what would be added before anything is saved. Nothing is fetched while importing. Storytel and Spotify entries come over too (Spotify ones on no phone yet); Spotify short links and profiles, the box's own folders, positions and downloads don't.</p>
         {% if let Some(result) = import.result %}
         <div class="success">{{ result.summary }}</div>
         {% if !result.lines.is_empty() %}

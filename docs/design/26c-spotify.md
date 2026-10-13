@@ -2024,3 +2024,170 @@ requires - it now sets `{% let tab = "music" %}` before the header include (it h
 in `server/src/music*.rs`, `handlers/music.rs`, migrations or testdata changed on main. On the merge: `cargo fmt
 --check` clean, `cargo clippy --all-targets` the 12 known warnings, `cargo test` 733 passed, 0 failed -
 `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` passes now (main changed `tests/parent_pin.rs`).
+## Step 2b implementation status (2026-10-13)
+
+Built on branch `music-3-spotify` on top of the merge of main (`5d6bd5b`, above: step 2a and its fix round plus
+design 31 step 1's shell), one commit: §11 step 2b, server only, its templates on design 31's shell.
+No new dependency, no migration (0073's frozen columns as they are: `device_policy.music_spotify_account` and its
+revision trigger, `music_listings.spotify_*`). Nothing device-facing beyond the gate: no token endpoint, no policy key
+`music.spotify`, no DNS hosts (step 3). `music_library_snapshot`, `music_listing_snapshot` and
+`policy_json_keys_snapshot` pass unchanged (the library's fixture has no Spotify entry, and `LibEntry.spotify` is
+skipped when absent); `testdata/music_state.json` is unchanged too (`MusicState.spotify` is not written when absent).
+
+- **Entries** (`S/handlers/music_spotify.rs`, §3.2): `POST /music/spotify/add` (`link`, `category`, `device` repeated,
+  read as `Form<Vec<(String, String)>>`; more than 200 fields a 400). In order: no app "Set up your Spotify app first.",
+  no usable account "Log in with a Spotify account first." (every login ended: "The Spotify logins need renewing - log
+  in again ..."), a picked phone that doesn't exist, `spotify::parse_link` (its sentences), a short link resolved hop
+  by hop (`resolve_short_link`), "Already in the library." with a link to its card (`/music#entry-<id>`), the category
+  (picked, else `default_category_for` by the link's kind: a show or episode to Podkast), then **the add check**
+  (`spotify::add_check`): the kind's metadata read with the readers in turn, and for a playlist its first items page
+  with each reader until one may list it - every reader 403/404 = the context notice. The short link and the check
+  share one `ADD_BUDGET` (45 s, the gate's wait included). Every account refusing (404/403) is "Spotify doesn't let
+  this app open it - Spotify's own playlists (made by Spotify) aren't available to developer apps, or the link is
+  private or deleted."; the network, a timeout, a 5xx or a rate limit "Spotify couldn't be reached - try again.";
+  anything else the error's own line (`add_refusal`). Then one `BEGIN IMMEDIATE` transaction: the INSERT (source
+  `spotify`, the canonical target, `SpotifyRef::key`, the metadata's name cut to 60 - else the kind's label -, order
+  `auto`, cache 0, resume on, sort next, `BELOW_ENTRY_LIMIT`), and each picked phone that plays as an account ticked
+  through `music::tick_fits`; the others are named in the notice ("Ola: not ticked - Spotify is off on this phone", "...
+  - its music library would be bigger than 3 MB"). The sweep woken, the ticked phones nudged, `music_entry_added`
+  ("entry N: Spotify: <name> (<target>), ticked on phones ..."), 303 to
+  `/music/spotify?added=<id>[&context=1][&on=..][&off=..][&big=..]#added`. Every refusal is a 400 with the page again,
+  the link, category and phones as entered and the error by its field (`autofocus`).
+- **The readers' turns are shared** (qa-26c-step2a-code's note): `spotify::ReaderTurns` (and `NoReader`, moved from
+  `music_sweep`) is the one rule - 403/404 and an account that can't be used now pass to the next reader, anything
+  else ends the read as that failure, `refused` only when every reader said 403/404 - used by
+  `music_sweep::SpotifyReads::first` and by the add check.
+- **The page** (`templates/music_spotify.html`, `tab` = music): an "Add a Spotify link" card (`#add`, once an app is
+  set up) - one line ("A playlist, album, track, artist or podcast: in Spotify, Share › Copy link.") with the rest
+  behind an ⓘ (`details.info`, design 31 §4.4), the link, the category ("By its kind" or one), the phones as a grouped
+  list (`.group` of `label.row`, each "Plays as <account>" / "Spotify is off on this phone" as `.row-sub`), the
+  refusal by its field (`aria-invalid`, `autofocus`), and after an add a `.flash` at `#added` ("Added <name>. On Ella
+  within a few minutes." / "Turn it on for a phone on that phone's Music card." and the per-phone notes). The app and
+  accounts cards stay on `/music/spotify` as step 1 built them: design 31 step 12 moves the login/app part to
+  `/music/settings`, which doesn't exist yet and isn't built here.
+- **Music's Add section** (`templates/music.html`, design 31 §3.4): step 1's Spotify card is replaced by a grouped-list
+  navigation row **From Spotify ›** (`/music/spotify`, `id="spotify"` so the page's back link still lands) whose value
+  is "Signed in" (an account without `needs_login`), "No login" or "No app" - the place §3.4 gives "From Storytel ›"
+  (main's Music page has no Storytel row yet: step 12 builds those rows).
+- **The library gate** (`S/music.rs`, §3.6): `LIBRARY_ENTRIES`' `IN` takes `'spotify'` behind `spotify_gate!()` (a
+  fourth bind), and so do `cover_in_library` (both entry branches) and `art_in_library`. `LibEntry.spotify`
+  (`#[serde(skip_serializing_if = "Option::is_none")]`): `"list"`/`"context"` from `music_listings.spotify_mode` for a
+  Spotify entry, absent for every other source and for a Spotify entry not listed yet - whose `items` is then null too
+  (the phone hides it until it is listed); a Spotify entry's `cache` is sent as 0, `lan` false. `needs_login` doesn't
+  close the gate.
+- **Words** (`S/music.rs`): `kind_label` "Spotify playlist" / "album" / "track" / "artist" / "podcast" / "episode";
+  `item_error_code` takes `unplayable` ("Spotify couldn't play this track on the phone"); `MusicState.spotify` keeps
+  only `SPOTIFY_WORDS` (`none`, `ok`, `reauthorize`, `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`).
+- **The cards** (`S/handlers/music.rs`): `SweepView` loads whether an app is set up, the bound phones (with their
+  account's name) and the accounts' names; `gated` gives a Spotify entry "no Spotify app is set up" on every phone
+  without an app and "Spotify is off on this phone" on an unbound one, and `phone_count` counts only the others.
+  `SweepView::spotify_card`: "42 tracks · read as Pål" (a show or episode "episodes"), context mode "Spotify picks the
+  order · read as Pål" with its notice (a playlist: "No logged-in account owns this playlist ..."; an artist: "An
+  artist plays as Spotify picks ..." or, with `SPOTIFY_ARTIST_ALBUMS`, "Spotify refused the artist's albums - played
+  as Spotify picks."), "N left out: not playable here, local files or podcast episodes", the caps ("the first 1000
+  tracks (the playlist has more)", a show's newest 100, the artist option's 20 albums / 500 tracks), "Open in Spotify"
+  (`open.spotify.com/<kind>/<id>`, `rel="noopener noreferrer"`), no offline select (`SweepCard.offline`). Per-phone
+  lines: "Ella: plays as Ella" plus "· N failing (Spotify couldn't play this track on the phone)" from `item_errors` at
+  the current version; no "on the phone" counts. The never-listed text goes through `CheckError::Spotify`. `check_now`
+  and `/music/cards` take Spotify; `save_offline` stores 0 for a Spotify entry whatever is posted.
+- **The entry page** (`templates/music_entry.html`): the target with "Open in Spotify", "Tracks" for the status card, no
+  offline select (a hint that Spotify streams instead), and in context mode no order select ("Spotify picks the order
+  ..."); `save_entry` stores cache 0 and keeps the stored order when none is posted.
+- **The device card** (`#music-spotify`, `S/handlers/music.rs`, `templates/device_detail.html`, §2.5): in the
+  existing Music card's style (design 31 steps 3-10 haven't rebuilt the device page), shown once an app is set up, or
+  while accounts or a binding remain (step 1's QA note: accounts left without an app still show).
+  "Spotify plays as: Off | <accounts>" (`data-autosave`, a `<noscript>` Save; `POST /devices/{id}/music/spotify`, `account` = `off` or an id;
+  the account's existence is checked in the `UPDATE` itself; an unknown or junk id is refused back at
+  `#music-spotify` with `music_notice=spotify_unknown`, nothing changed; an unknown phone 404; the phone nudged; event
+  `music_spotify_binding_changed`), the hint to use the child's own account (§2.2's scope note), the bound account's
+  line ("Ella: logged in, log in again before ...") or warning (needs a new login, another key, ends within 14 days),
+  "Spotify plays on one device at a time per account: Ella's and Ola's phones both play as Ella - give each child their
+  own account." on every such card, the phone's `music_state.spotify` in words ("On the phone: Spotify plays." / ...
+  `not_premium`, `no_widevine`, `reauthorize`, `refused` as warnings), "Spotify is off on this phone: its N Spotify
+  entries aren't sent." for ticked entries on an unbound phone, no app set up as a warning. The mobile-data text gains
+  "This includes Spotify, which streams (about 60-150 MB an hour)."; the DNS section (the VPN card) says "Spotify's
+  hosts are allowed on this phone while Spotify is on ..." while the phone is bound. `DevicePolicy.music_spotify_account`.
+- **Due after a login or an app save** (2a's owed item, Storytel's L1): `schedule` reads the app's `saved_at` and the
+  newest `authorized_at`; a Spotify entry failing `spotify_off`, `no_account`, `reauthorize`, `key` or `app_refused`
+  since before either is due at once (`Why::Rework`). `complete_login` and the app's save wake the sweep.
+- **The import** (`S/music_import.rs`, `S/handlers/music_import.rs`, §3.2): `Skip::Spotify` is gone. A target
+  `spotify::parse_link` takes as a `Ref` (a URI, an `open.spotify.com` link with `intl-xx`/`?si=`) imports as a Spotify
+  entry (name, order, resume; cache 0) and is ticked on no phone, though phones were picked; a short link is
+  `Skip::SpotifyShortLink` ("a Spotify short link - resolve it by adding it on the Spotify page"); audiobooks and Liked
+  Songs/profiles are `Skip::BadLink` with §3.1's sentence; a `spotify:` text that isn't a link too; any other text on
+  Spotify's hosts goes on to `parse_link` (the pointer); a look-alike host is a feed as before. `spotify_user` sections
+  stay `Skip::SpotifyProfile` (its reason now "... which can't be followed here - add its playlists on the Spotify
+  page"). The preview words a Spotify row "streamed, on no phone yet". The /music import text and Spotify card follow.
+- **Validation** (from `server/`): `cargo fmt --check` clean; `cargo clippy --all-targets` the 12 known warnings
+  (`models.rs`, `dns_engine.rs`, `handlers/devices.rs`), none new; `cargo test` 744 passed, 0 failed (the
+  `parent_pin` test passes since the merge).
+- **Tests**: `tests::music_spotify::entries` 9 - `a_link_is_added_and_ticked_on_the_phones_that_play_spotify` (the
+  exact requests of the add check, the row, the key, the redirect, the tick on the bound phone only, the wake, the
+  nudge, the event, the page's notice; before its first check the library hides it - no `spotify`, `items` null, cache
+  0; after it `spotify: "list"` and the version; an unbound phone ticked on its card gets nothing until bound),
+  `the_add_form_refuses_with_nothing_stored` (no app, no account, every login ended, junk, an audiobook, Liked Songs, an
+  unknown phone and category - no request for any of them -, 404 for every account, 503, already in the library with
+  its link; the link kept), `context_playlists_short_links_and_kinds` (403 items for both readers -> `context=1` and the
+  notice; a short link over two hops stored canonical with "Nattlys — Ola Fjell" in Musikk, again = already in the
+  library, a dead one; a show to Podkast, a picked category wins), `the_gate_holds_on_library_covers_and_art` (library,
+  listing, listing cover, parent's cover, a track's art: 200 bound, 404 unbound; `needs_login` keeps it; unbinding drops
+  it and moves the revision), `the_cards_and_check_now` (the acceptance's Check now: the card's Check now asks, the
+  next pass's first due entry is it, the check lists the playlist; "3 tracks · read as Ella", the left-out note, "on 1
+  phone", the per-phone lines with `unplayable`, the link back, no offline form, `/music/cards`, the offline save's 0;
+  context mode's card; no app = every phone gated, "on 0 phones"),
+  `the_entry_page_has_no_offline_and_in_context_mode_no_order`, `the_device_card_binds_a_phone_to_an_account` (absent
+  before an app; bind, revision, nudge, event; junk and unknown refused at `#music-spotify`; 404; one account on two
+  phones on both cards; `not_premium`; `needs_login`; off; the ticked-but-off note; the mobile-data text; the DNS note
+  only while bound), `a_new_login_or_app_save_makes_the_waiting_entries_due` (`spotify_off` cured by an app save,
+  `no_account` by a newer login, not by an older one), `a_vibb_library_imports_spotify_entries_on_no_phone` (through
+  the confirm route: no request, the RSS row ticked, the Spotify rows not, the short link's reason). `routes_need_a_session`
+  covers the two new routes. `music::tests::spotify_words_and_labels`, a `LibEntry.spotify` row in
+  `the_version_ignores_itself_and_follows_every_field` (absent = no key and the old bytes; `"list"` hashed and served),
+  `music_import::tests::spotify_links_import_as_spotify_entries`; the import route tests and
+  `rows_are_classified_like_add_without_a_fetch` updated for the Spotify rows that now import (their skipped row is a
+  short link now; `a_vibb_library_is_previewed_then_imported_without_a_fetch` offers the Spotify row - left unticked,
+  so "5 skipped"). `the_add_form_refuses_with_nothing_stored` also reads the "From Spotify ›" row's value through
+  No app / No login / Signed in. Every template touched sets `tab` and has no inline `onchange`
+  (`tests::shell` green).
+
+Deviations from the spec (each with its reason):
+1. **The add doesn't write the listing's cover candidate** (§3.2 step 3): no `music_listings` row is made at add (a row
+   without a version would change how `schedule` treats a new entry); the add wakes the sweep, whose first check -
+   within a minute, first in line as `Why::New` - writes the same picture from the same metadata read.
+2. **The add check reads a playlist's items only for the notice**: a failure there other than every reader's
+   403/404 adds the playlist without it (the sweep's first check decides list or context mode for good); §3.2 names no
+   outcome for it.
+3. **An unknown account on the binding select is a 303 back to `#music-spotify` with a notice**
+   (`music_notice=spotify_unknown`), not a 400: the device page has no 400 re-render, and the card's other refusals
+   (Sonos rooms, too-big ticks) answer the same way.
+4. **More codes cure a waiting entry**: `key` and `app_refused` too (a new login and a new app save cure them as well
+   as `spotify_off`, `no_account`, `reauthorize`).
+5. **The card's line is "42 tracks · read as Pål"** and the left-out count is its own note ("3 left out: not playable
+   here, local files or podcast episodes", §3.4's wording) rather than "· 3 left out" on the line: the line is one
+   ellipsised row on a 360 px card.
+6. **More words on the device card**: `refused` and `quota` (§4.4's words) have lines too, `none` none; "no Spotify
+   app is set up" is a warning there; the account's 6-month line and its warnings are the Spotify page's (§2.2).
+7. **The import ticks a Spotify entry on no phone** (§3.2's "untick") even when the parent picked phones; a `spotify:`
+   text that isn't a link is `BadLink` with §3.1's sentence, and other text on Spotify's hosts falls through to
+   `parse_link`'s pointer (so `open.spotify.com.example.org` stays a feed).
+8. **Names**: an entry Spotify gave no name is named by its kind's label ("Spotify playlist", ...); a Spotify entry's
+   name is cut like a title (`cut_title`, 60).
+
+Found in the spec:
+- §3.6's `gated` says "on every phone while no app is set up, 'no Spotify app is set up'", but `spotify_gate!()`
+  (§3.6's own SQL) doesn't look at the app: Clear and a new client ID unbind every phone, so the two agree except when
+  `SPOTIFY_CLIENT_ID` is taken away between restarts with accounts and bindings left - then the bound phones still get
+  the entries (the token endpoint, step 3, answers `off`) while the card says they aren't sent. Built as written; step
+  3's token route is where "off" reaches the phone.
+- §3.2's "A target already in the library: 'Already in the library'" comes after the parse and the short link's
+  resolution (the canonical target is needed); built in that order.
+- Nothing in §11 step 2b was impossible.
+
+Owed: design 31 step 12 (the Music tab: `/music/settings` takes the Spotify app and logins as it takes Storytel's
+login; the entry page and the cards as list rows; `overflow-wrap` fallbacks and inline flex `gap` in the `music*.html`
+style blocks, which step 1 left for it); QA checklist item 3 [device check] (a real playlist added and listed; Check
+now on its card); the PWA at 360/390 px, light and dark, JS off, in a browser (no browser here: the new forms use the existing classes, `max-width: 100%` on fields, wrapping text, no
+fixed width; every save redirects to its anchor - `#added`, `#music-spotify`, `#entry-<id>`); step 3: the token
+endpoint, `music.spotify` in the policy through `policy_music` (which then reads `DevicePolicy.music_spotify_account`),
+the delivered blocklist's drop and `compute_dns_filter_version`'s binding, the library snapshot with a Spotify entry
+(its `spotify` field) and `music_state.json`'s `spotify` - the device card's DNS note is true only from then on.

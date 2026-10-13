@@ -452,7 +452,7 @@
         <form method="post" action="/devices/{{ device.id }}/music" id="music-settings">
             <label class="checkbox-row">
                 <input type="checkbox" name="mobile_data" value="on" {% if music.mobile_data %}checked{% endif %} data-autosave>
-                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere. This includes Storytel books, often several hundred MB each.
+                Music may use mobile data: downloads and streaming also off Wi-Fi (never while roaming). Off: only on Wi-Fi; what's downloaded still plays anywhere. This includes Storytel books, often several hundred MB each. This includes Spotify, which streams (about 60-150 MB an hour).
             </label>
             <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
             <select id="music_volume_cap" name="volume_cap" data-autosave>
@@ -470,6 +470,33 @@
             {% endif %}
             <noscript><button type="submit">Save</button></noscript>
         </form>
+
+        {% if let Some(spotify) = music.spotify %}
+        <h3 id="music-spotify">Spotify</h3>
+        {% if let Some(notice) = spotify.notice %}
+        <div class="error">{{ notice }}</div>
+        {% endif %}
+        <form method="post" action="/devices/{{ device.id }}/music/spotify">
+            <label for="music_spotify_account">Spotify plays as</label>
+            <select id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
+                <option value="off" {% if spotify.bound.is_none() %}selected{% endif %}>Off</option>
+                {% for (id, name) in spotify.accounts %}
+                <option value="{{ id }}" {% if spotify.bound == Some(**id) %}selected{% endif %}>{{ name }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="button-small">Save</button></noscript>
+        </form>
+        <p class="hint" style="margin-top:4px;">Use the child's own Spotify account (Premium): the phone gets an hour's access at a time to the account it plays as, its private playlists included. Off: the phone gets no Spotify entries. Accounts are logged in on the <a href="/music/spotify#accounts">Spotify page</a>.</p>
+        {% for warning in spotify.warnings %}
+        <div class="error">{{ warning }}</div>
+        {% endfor %}
+        {% for line in spotify.lines %}
+        <p class="subtitle">{{ line }}</p>
+        {% endfor %}
+        {% if let Some(note) = spotify.note %}
+        <p class="subtitle">{{ note }}</p>
+        {% endif %}
+        {% endif %}
 
         <h3 id="music-sonos">Sonos speakers</h3>
         {% if let Some(notice) = music.sonos.notice %}
@@ -732,6 +759,9 @@
             <input type="checkbox" name="vpn_filter_enabled" value="on" {% if vpn_filter_enabled %}checked{% endif %}>
             Enable ad/content filtering on this device
         </label>
+        {% if let Some(music) = music %}{% if let Some(spotify) = music.spotify %}{% if spotify.bound.is_some() %}
+        <p class="subtitle">Spotify's hosts are allowed on this phone while Spotify is on (its Music card): a block of spotify.com or scdn.co in a blocklist or a custom domain doesn't apply to this phone then - for every app on it, not only the music app.</p>
+        {% endif %}{% endif %}{% endif %}
 
         <button type="submit">Save changes</button>
     </form>

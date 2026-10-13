@@ -104,6 +104,10 @@ pub struct DevicePolicy {
     pub music_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
+    /// The Spotify account this phone plays as (design 26c §2.5, migrations/0073): `None` = Spotify
+    /// is off on this phone (the default). The phone's library, listings and covers hold Spotify
+    /// entries only while it is set (`music::spotify_gate`); the FK makes the account exist.
+    pub music_spotify_account: Option<i64>,
     /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
     /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
     pub override_pin_easy: Option<bool>,

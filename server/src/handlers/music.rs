@@ -156,8 +156,13 @@ pub struct SweepCard {
     pub status: StatusBlock,
     /// Check now isn't allowed before this ("14:20 UTC").
     pub check_after: Option<String>,
+    /// The offline select (never for Spotify: it streams, design 26c §3.2).
+    pub offline: bool,
     pub cache: i64,
     pub caches: Vec<(i64, String)>,
+    /// A Spotify entry's link back to Spotify (`https://open.spotify.com/<kind>/<id>`, the
+    /// Developer Policy's link-back, design 26c §3.6, §7.3).
+    pub spotify_link: Option<String>,
 }
 
 /// The card's status (`.music-status`, two lines at least, swapped in place by
@@ -267,6 +272,9 @@ struct MusicTemplate {
     /// The sweep setting (design 21b §3, `#sweep`): the hours and every choice.
     sweep_hours: i64,
     sweep_choices: Vec<i64>,
+    /// The "From Spotify ›" row's value (design 31 §3.4's Add rows, design 26c step 2b): "Signed
+    /// in" (an account that can read), "No login", or "No app".
+    spotify_state: &'static str,
 }
 
 /// What a refused form on `/music` brings back.
@@ -524,6 +532,17 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
             })?,
         sweep_hours: view.setting,
         sweep_choices: crate::music_sweep::SWEEP_HOURS.to_vec(),
+        spotify_state: if !view.spotify_configured {
+            "No app"
+        } else if crate::spotify::accounts(&state.db)
+            .await?
+            .iter()
+            .any(|row| row.needs_login == 0)
+        {
+            "Signed in"
+        } else {
+            "No login"
+        },
     })
 }
 
@@ -1651,6 +1670,11 @@ struct EntryTemplate {
     own: bool,
     /// A Storytel entry: its own offline choices (books in reading order), the target as text.
     storytel: bool,
+    /// A Spotify entry (design 26c §3.6): no offline choice (it streams), the link back to
+    /// Spotify; in context mode no play order either (Spotify picks it).
+    spotify: bool,
+    spotify_context: bool,
+    spotify_link: Option<String>,
     form: EntryForm,
     categories: Vec<(i64, String)>,
     orders: Vec<(&'static str, &'static str)>,
@@ -1742,6 +1766,18 @@ async fn render_entry(
         .await?;
         let view = SweepView::load(state, state.music_sweep.now()).await?;
         let storytel = entry.source == "storytel";
+        let spotify = entry.source == "spotify";
+        let spotify_context = spotify
+            && view
+                .listings
+                .get(&entry.id)
+                .is_some_and(|l| l.spotify_mode.as_deref() == Some("context"));
+        let spotify_link = entry
+            .target
+            .as_deref()
+            .filter(|_| spotify)
+            .and_then(crate::spotify::parse_target)
+            .map(|r| r.open_url());
         let form = entered.form.unwrap_or_else(|| EntryForm {
             name: entry.name.clone(),
             category: entry.category_id,
@@ -1785,6 +1821,9 @@ async fn render_entry(
             kind: music::kind_label(&entry.source, entry.target.as_deref()),
             own: entry.source == "own",
             storytel,
+            spotify,
+            spotify_context,
+            spotify_link,
             form,
             categories,
             orders: ORDERS.to_vec(),
@@ -1849,15 +1888,20 @@ pub async fn save_entry(
     };
     let own = entry.source == "own";
     let storytel = entry.source == "storytel";
+    let spotify = entry.source == "spotify";
     let name_text = field(&form, "name");
     let category = field(&form, "category").trim().parse::<i64>().unwrap_or(-1);
-    let order = if own {
+    // A Spotify entry in context mode has no order select (Spotify picks it, design 26c §3.3).
+    let order = if own || (spotify && !form.contains_key("order")) {
         entry.play_order.clone()
     } else {
         field(&form, "order")
     };
     let cache = if own {
         -1
+    } else if spotify {
+        // Spotify streams: nothing is kept offline (design 26c §3.2).
+        0
     } else {
         let cache = field(&form, "cache")
             .trim()
@@ -1915,7 +1959,7 @@ pub async fn save_entry(
     } else {
         music::valid_cache(cache)
     };
-    if !own && !choice && cache != entry.cache {
+    if !own && !spotify && !choice && cache != entry.cache {
         let entered = refuse("Pick one of the offline choices.".to_string(), "cache");
         return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
     }
@@ -2684,6 +2728,13 @@ struct SweepView {
     /// (design 26b §2.7) for the per-phone lines and the phone count (QA L2 of 2b).
     storytel_stored: bool,
     storytel_off: HashSet<i64>,
+    /// A Spotify app is set up, the phones that play as an account (phone -> the account's
+    /// name) and every account's name (the reader line): the Spotify gate (design 26c §3.6).
+    spotify_configured: bool,
+    spotify_bound: HashMap<i64, String>,
+    spotify_accounts: HashMap<i64, String>,
+    /// `SPOTIFY_ARTIST_ALBUMS` (design 26c §3.3): an artist in context mode was refused its albums.
+    spotify_artist_albums: bool,
 }
 
 impl SweepView {
@@ -2766,6 +2817,22 @@ impl SweepView {
                 .await?
                 .into_iter()
                 .collect();
+        let spotify_configured = crate::spotify::app(state).await?.is_some();
+        let spotify_bound: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
+            "SELECT p.device_id, a.display_name FROM device_policy p \
+             JOIN music_spotify_accounts a ON a.id = p.music_spotify_account",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
+        let spotify_accounts: HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
+            "SELECT id, display_name FROM music_spotify_accounts",
+        )
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect();
         Ok(SweepView {
             now,
             setting: sweep::sweep_hours(&state.db).await?,
@@ -2779,20 +2846,34 @@ impl SweepView {
             check_block: sweep::check_now_blocked_until(&state.db, -1, now).await?,
             storytel_stored,
             storytel_off,
+            spotify_configured,
+            spotify_bound,
+            spotify_accounts,
+            spotify_artist_albums: state.spotify.config().artist_albums,
         })
     }
 
-    /// Why the library's gate keeps `entry` from `device` (design 26b §2.7); `None` = it is sent.
+    /// Why the library's gate keeps `entry` from `device` (design 26b §2.7, 26c §3.6); `None` =
+    /// it is sent.
     fn gated(&self, entry: &MusicEntry, device: i64) -> Option<&'static str> {
-        if entry.source != "storytel" {
-            return None;
+        match entry.source.as_str() {
+            "storytel" => {
+                if !self.storytel_stored {
+                    return Some("no Storytel login is saved");
+                }
+                self.storytel_off
+                    .contains(&device)
+                    .then_some("Storytel is off on this phone")
+            }
+            "spotify" => {
+                if !self.spotify_configured {
+                    return Some("no Spotify app is set up");
+                }
+                (!self.spotify_bound.contains_key(&device))
+                    .then_some("Spotify is off on this phone")
+            }
+            _ => None,
         }
-        if !self.storytel_stored {
-            return Some("no Storytel login is saved");
-        }
-        self.storytel_off
-            .contains(&device)
-            .then_some("Storytel is off on this phone")
     }
 
     /// The phones that get `entry` ("on N phones"): its ticks the gate lets through.
@@ -2886,10 +2967,10 @@ impl SweepView {
                 ),
                 (None, _) => format!(
                     "Couldn't list it: {}{next}",
-                    if entry.source == "storytel" {
-                        music::CheckError::Storytel(code).message()
-                    } else {
-                        music::CheckError::from_code(&code).message()
+                    match entry.source.as_str() {
+                        "storytel" => music::CheckError::Storytel(code).message(),
+                        "spotify" => music::CheckError::Spotify(code).message(),
+                        _ => music::CheckError::from_code(&code).message(),
                     }
                 ),
             };
@@ -2908,10 +2989,16 @@ impl SweepView {
             .and_then(|l| l.cover_hash.clone())
     }
 
-    /// The sweep part of an NRK/RSS/Storytel card; `None` for own files.
+    /// The sweep part of an NRK/RSS/Storytel/Spotify card; `None` for own files.
     fn card(&self, entry: &MusicEntry) -> Option<SweepCard> {
-        if !matches!(entry.source.as_str(), "nrk" | "rss" | "storytel") {
+        if !matches!(
+            entry.source.as_str(),
+            "nrk" | "rss" | "storytel" | "spotify"
+        ) {
             return None;
+        }
+        if entry.source == "spotify" {
+            return Some(self.spotify_card(entry));
         }
         use crate::music_sweep::parse_stamp;
         let storytel = entry.source == "storytel";
@@ -2973,13 +3060,6 @@ impl SweepView {
                 ));
             }
         }
-        let requested_gap = listing
-            .and_then(|l| l.requested_at.as_deref().and_then(parse_stamp))
-            .map(|at| at + chrono::TimeDelta::minutes(crate::music_sweep::CHECK_NOW_GAP_MINUTES))
-            .filter(|at| *at > self.now);
-        let check_after = requested_gap
-            .max(self.check_block)
-            .map(|at| utc_time(at, self.now));
         // A Storytel entry offers vibb's choices (all, the first 5, 10, 20; a stored 0 is all).
         let (cache, caches) = if storytel {
             (
@@ -3004,10 +3084,122 @@ impl SweepView {
             episodes,
             notes,
             status: self.status(entry),
-            check_after,
+            check_after: self.check_after(entry),
+            offline: true,
             cache,
             caches,
+            spotify_link: None,
         })
+    }
+
+    /// Check now isn't allowed before this ("14:20 UTC"): the entry's 15 minutes, the hourly and
+    /// daily limits.
+    fn check_after(&self, entry: &MusicEntry) -> Option<String> {
+        use crate::music_sweep::parse_stamp;
+        let requested_gap = self
+            .listings
+            .get(&entry.id)
+            .and_then(|l| l.requested_at.as_deref().and_then(parse_stamp))
+            .map(|at| at + chrono::TimeDelta::minutes(crate::music_sweep::CHECK_NOW_GAP_MINUTES))
+            .filter(|at| *at > self.now);
+        requested_gap
+            .max(self.check_block)
+            .map(|at| utc_time(at, self.now))
+    }
+
+    /// A Spotify card's sweep part (design 26c §3.6): "42 tracks · read as Pål", what was left
+    /// out, a cap, context mode's notice; no offline select (it streams); the link back to
+    /// Spotify.
+    fn spotify_card(&self, entry: &MusicEntry) -> SweepCard {
+        use crate::spotify::LinkKind;
+        let reference = entry
+            .target
+            .as_deref()
+            .and_then(crate::spotify::parse_target);
+        let kind = reference.as_ref().map(|r| r.kind);
+        let listing = self.listings.get(&entry.id).filter(|l| l.version.is_some());
+        let mut notes = Vec::new();
+        let episodes = listing.map(|l| {
+            let reader = l
+                .spotify_reader
+                .and_then(|id| self.spotify_accounts.get(&id))
+                .map(|name| format!(" · read as {name}"))
+                .unwrap_or_default();
+            if l.spotify_mode.as_deref() == Some("context") {
+                return format!("Spotify picks the order{reader}");
+            }
+            let (one, many) = match kind {
+                Some(LinkKind::Show | LinkKind::Episode) => ("episode", "episodes"),
+                _ => ("track", "tracks"),
+            };
+            format!(
+                "{} {}{reader}",
+                l.item_count,
+                if l.item_count == 1 { one } else { many }
+            )
+        });
+        if let Some(listing) = listing {
+            if listing.spotify_mode.as_deref() == Some("context") {
+                notes.push(match kind {
+                    Some(LinkKind::Artist) if self.spotify_artist_albums => {
+                        "Spotify refused the artist's albums - played as Spotify picks.".to_string()
+                    }
+                    Some(LinkKind::Artist) => "An artist plays as Spotify picks: no track list, \
+                         and it starts from Spotify's own beginning each time."
+                        .to_string(),
+                    _ => "No logged-in account owns this playlist or collaborates on it, so the \
+                          phones can't show its tracks: they play it in Spotify's order. Log in \
+                          as its owner to get the track list."
+                        .to_string(),
+                });
+            } else {
+                if listing.spotify_skipped > 0 {
+                    notes.push(format!(
+                        "{} left out: not playable here, local files or podcast episodes",
+                        listing.spotify_skipped
+                    ));
+                }
+                if listing.capped {
+                    notes.push(match kind {
+                        Some(LinkKind::Show) => format!(
+                            "the newest {} episodes (the podcast has more)",
+                            crate::spotify::MAX_SHOW_EPISODES
+                        ),
+                        Some(LinkKind::Artist) => format!(
+                            "the newest {} albums and singles, at most {} tracks (the artist \
+                             has more)",
+                            crate::spotify::MAX_ARTIST_ALBUMS,
+                            crate::spotify::MAX_ARTIST_TRACKS
+                        ),
+                        _ => format!(
+                            "the first {} tracks (the {} has more)",
+                            crate::spotify::MAX_LIST_TRACKS,
+                            if kind == Some(LinkKind::Album) {
+                                "album"
+                            } else {
+                                "playlist"
+                            }
+                        ),
+                    });
+                }
+            }
+        }
+        SweepCard {
+            source_title: self
+                .listings
+                .get(&entry.id)
+                .and_then(|l| l.title.clone())
+                .filter(|t| t != &entry.name),
+            lan: false,
+            episodes,
+            notes,
+            status: self.status(entry),
+            check_after: self.check_after(entry),
+            offline: false,
+            cache: 0,
+            caches: Vec::new(),
+            spotify_link: reference.map(|r| r.open_url()),
+        }
     }
 
     /// One line per phone with the entry ticked, from its last report (§3).
@@ -3022,6 +3214,9 @@ impl SweepView {
             .map(|(device, name)| {
                 if let Some(why) = self.gated(entry, *device) {
                     return format!("{name}: not sent - {why}");
+                }
+                if entry.source == "spotify" {
+                    return self.spotify_phone_line(entry, *device, name, current.as_deref());
                 }
                 let Some((report, at)) = self.reports.get(device) else {
                     return format!("{name}: not reported yet");
@@ -3077,6 +3272,40 @@ impl SweepView {
             })
             .collect()
     }
+
+    /// A bound phone's line on a Spotify card (design 26c §3.6): whom it plays as, and the tracks
+    /// it couldn't play at the current list (`unplayable`). Nothing is downloaded, so no "on the
+    /// phone" counts.
+    fn spotify_phone_line(
+        &self,
+        entry: &MusicEntry,
+        device: i64,
+        name: &str,
+        current: Option<&str>,
+    ) -> String {
+        let mut line = match self.spotify_bound.get(&device) {
+            Some(account) => format!("{name}: plays as {account}"),
+            None => format!("{name}: Spotify is off on this phone"),
+        };
+        if let Some((report, at)) = self.reports.get(&device) {
+            let failing: Vec<&music::ItemError> = report
+                .item_errors
+                .iter()
+                .filter(|e| e.entry == entry.id && current == Some(e.version.as_str()))
+                .collect();
+            if let Some(first) = failing.first() {
+                line.push_str(&format!(
+                    " · {} failing ({})",
+                    failing.len(),
+                    music::sweep_error_text(&entry.source, &first.error)
+                ));
+                if let Some(at) = at.filter(|at| *at < self.now - chrono::TimeDelta::hours(1)) {
+                    line.push_str(&format!(" (as of {})", at.format("%-d %b %H:%M UTC")));
+                }
+            }
+        }
+        line
+    }
 }
 
 /// `POST /music/sweep` (`hours`): the family-wide sweep cadence; back to `#sweep`.
@@ -3131,10 +3360,13 @@ pub async fn check_now(
         Ok(None) => return (StatusCode::NOT_FOUND, "No such entry").into_response(),
         Err(err) => return server_error(err, "music entry lookup failed"),
     };
-    if !matches!(entry.source.as_str(), "nrk" | "rss" | "storytel") {
+    if !matches!(
+        entry.source.as_str(),
+        "nrk" | "rss" | "storytel" | "spotify"
+    ) {
         return (
             StatusCode::BAD_REQUEST,
-            "Only NRK, RSS and Storytel entries are checked",
+            "Only NRK, RSS, Storytel and Spotify entries are checked",
         )
             .into_response();
     }
@@ -3159,7 +3391,8 @@ pub async fn check_now(
 }
 
 /// `POST /music/entries/{id}/offline` (`cache`): the card's offline select; back to the card. A
-/// Storytel entry takes vibb's choices only, 0 saved as all (design 26b §2.3, QA M3).
+/// Storytel entry takes vibb's choices only, 0 saved as all (design 26b §2.3, QA M3); a Spotify
+/// entry has no select and is always saved as 0 (design 26c §3.2).
 pub async fn save_offline(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -3182,7 +3415,10 @@ pub async fn save_offline(
         .trim()
         .parse::<i64>()
         .unwrap_or(i64::MIN);
-    let (cache, allowed) = if entry.source == "storytel" {
+    let (cache, allowed) = if entry.source == "spotify" {
+        // Spotify streams: nothing is ever kept offline, whatever is posted (design 26c §3.2).
+        (0, true)
+    } else if entry.source == "storytel" {
         let cache = crate::storytel::cache_value(posted);
         let allowed = crate::storytel::CACHE_CHOICES
             .iter()
@@ -3234,7 +3470,7 @@ pub struct CardsQuery {
 /// Most cards the in-place update asks for at once.
 pub const MAX_CARD_IDS: usize = 200;
 
-/// `GET /music/cards?ids=1,2,3` (admin): each NRK/RSS/Storytel card's status block, for
+/// `GET /music/cards?ids=1,2,3` (admin): each NRK/RSS/Storytel/Spotify card's status block, for
 /// `static/music-cards.js` while a card says Checking or Waiting.
 pub async fn cards(
     State(state): State<AppState>,
@@ -3256,7 +3492,8 @@ pub async fn cards(
         let view = SweepView::load(&state, state.music_sweep.now()).await?;
         let entries: Vec<MusicEntry> = sqlx::query_as(
             "SELECT id, name, category_id, source, target, key, play_order, cache, resume, \
-             cover_hash, sort FROM music_entries WHERE source IN ('nrk', 'rss', 'storytel')",
+             cover_hash, sort FROM music_entries \
+             WHERE source IN ('nrk', 'rss', 'storytel', 'spotify')",
         )
         .fetch_all(&state.db)
         .await?;
@@ -3363,6 +3600,21 @@ impl SonosRoomsCard {
     }
 }
 
+/// The Music card's Spotify part (`#music-spotify`, design 26c §2.5, §3.6): "Spotify plays as"
+/// and what goes with it. Shown once a Spotify app is set up (or accounts or a binding remain).
+pub struct SpotifyBindingCard {
+    /// Every logged-in account (id, display name), by id.
+    pub accounts: Vec<(i64, String)>,
+    /// The account this phone plays as.
+    pub bound: Option<i64>,
+    pub lines: Vec<String>,
+    pub warnings: Vec<String>,
+    /// Why this phone's ticked Spotify entries aren't sent (not bound).
+    pub note: Option<String>,
+    /// One-shot message after a refused save (`?music_notice=spotify_...`).
+    pub notice: Option<&'static str>,
+}
+
 /// The device page's "Music" card (`#music`).
 pub struct MusicCard {
     pub app: Option<MusicAppSwitch>,
@@ -3382,6 +3634,7 @@ pub struct MusicCard {
     /// One-shot message after a refused tick (`?music_notice=`).
     pub notice: Option<&'static str>,
     pub sonos: SonosRoomsCard,
+    pub spotify: Option<SpotifyBindingCard>,
 }
 
 /// `?music_notice=` codes.
@@ -3393,6 +3646,9 @@ pub fn notice_text(code: &str) -> Option<&'static str> {
         }
         "sonos_too_many" => "Not saved: at most 32 speakers can be ticked. Untick one first.",
         "sonos_unknown" => "Not saved: that isn't a Sonos speaker.",
+        "spotify_unknown" => {
+            "Not saved: that Spotify account isn't logged in here (any more) - pick another one."
+        }
         _ => return None,
     })
 }
@@ -3404,9 +3660,14 @@ pub(crate) async fn device_card(
     notice: Option<&str>,
     notice_entry: Option<i64>,
 ) -> Result<MusicCard, sqlx::Error> {
-    // A refused Sonos save goes by the Sonos rooms (qa-26a-step3c-code L4).
+    // A refused Sonos save goes by the Sonos rooms (qa-26a-step3c-code L4), a refused Spotify
+    // binding by its select.
     let (sonos_notice, notice) = match notice {
         Some(code) if code.starts_with("sonos_") => (notice_text(code), None),
+        other => (None, other),
+    };
+    let (spotify_notice, notice) = match notice {
+        Some(code) if code.starts_with("spotify_") => (notice_text(code), None),
         other => (None, other),
     };
     let notice = notice.and_then(notice_text);
@@ -3432,6 +3693,10 @@ pub(crate) async fn device_card(
     let storytel_ticked = entries
         .iter()
         .filter(|(_, _, source, _, _, checked)| *checked && source == "storytel")
+        .count();
+    let spotify_ticked = entries
+        .iter()
+        .filter(|(_, _, source, _, _, checked)| *checked && source == "spotify")
         .count();
     let ticks = entries
         .into_iter()
@@ -3593,6 +3858,15 @@ pub(crate) async fn device_card(
         );
     }
 
+    let spotify = spotify_binding_card(
+        state,
+        policy,
+        state_report.as_ref().and_then(|r| r.spotify.as_deref()),
+        spotify_ticked,
+        spotify_notice,
+    )
+    .await?;
+
     Ok(MusicCard {
         app,
         ticks,
@@ -3632,7 +3906,220 @@ pub(crate) async fn device_card(
         warnings,
         notice,
         sonos,
+        spotify,
     })
+}
+
+/// The Music card's "Spotify plays as" (design 26c §2.5, §3.6): the select's accounts, the bound
+/// account's login state, one account bound to more than one phone, the phone's own last Spotify
+/// outcome (`music_state.spotify`) in words, and ticked Spotify entries an unbound phone isn't
+/// sent. `None` while nothing about Spotify exists here (no app, no account, no binding).
+async fn spotify_binding_card(
+    state: &AppState,
+    policy: &DevicePolicy,
+    reported: Option<&str>,
+    ticked: usize,
+    notice: Option<&'static str>,
+) -> Result<Option<SpotifyBindingCard>, sqlx::Error> {
+    let configured = crate::spotify::app(state).await?.is_some();
+    let rows = crate::spotify::accounts(&state.db).await?;
+    let bound = policy
+        .music_spotify_account
+        .filter(|id| rows.iter().any(|row| row.id == *id));
+    if !configured && rows.is_empty() && bound.is_none() {
+        return Ok(None);
+    }
+    let now = state.music_sweep.now();
+    let mut lines = Vec::new();
+    let mut warnings = Vec::new();
+    if !configured {
+        warnings.push(
+            "No Spotify app is set up on this server (the Spotify page): Spotify can't play."
+                .to_string(),
+        );
+    }
+    if let Some(row) = bound.and_then(|id| rows.iter().find(|row| row.id == id)) {
+        let name = &row.display_name;
+        if row.needs_login != 0 {
+            warnings.push(format!(
+                "{name}'s Spotify login needs renewing: log in again as {name} on the Spotify \
+                 page."
+            ));
+        } else if row.refresh_error.as_deref() == Some("key") {
+            warnings.push(format!(
+                "{name}'s saved Spotify login was locked with another key: log in again as \
+                 {name} on the Spotify page."
+            ));
+        } else if let Some(ends) = row.login_ends() {
+            if row.login_ending(now) {
+                warnings.push(if now < ends {
+                    format!(
+                        "{name}'s Spotify login ends on {}: log in again on the Spotify page.",
+                        ends.format("%-d %b")
+                    )
+                } else {
+                    format!("{name}'s Spotify login has ended: log in again on the Spotify page.")
+                });
+            } else {
+                lines.push(format!(
+                    "{name}: logged in, log in again before {}",
+                    ends.format("%-d %b %Y")
+                ));
+            }
+        }
+        // One account plays on one device at a time (§2.5).
+        let phones: Vec<String> = sqlx::query_scalar(
+            "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id \
+             WHERE p.music_spotify_account = ? ORDER BY d.name, d.id",
+        )
+        .bind(row.id)
+        .fetch_all(&state.db)
+        .await?;
+        if phones.len() > 1 {
+            let owners: Vec<String> = phones.iter().map(|p| format!("{p}'s")).collect();
+            let listed = match owners.split_last() {
+                Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                None => String::new(),
+            };
+            warnings.push(format!(
+                "Spotify plays on one device at a time per account: {listed} phones {} play as \
+                 {name} - give each child their own account.",
+                if phones.len() == 2 { "both" } else { "all" }
+            ));
+        }
+        // The phone's last Spotify outcome (§3.6, §4.4).
+        match reported {
+            Some("ok") => lines.push("On the phone: Spotify plays.".to_string()),
+            Some("reauthorize") => warnings.push(
+                "On the phone: the Spotify login needs renewing on the Spotify page.".to_string(),
+            ),
+            Some("refused") => warnings.push(
+                "On the phone: Spotify refused this account or the app - check the account under \
+                 User Management in your app's dashboard."
+                    .to_string(),
+            ),
+            Some("not_premium") => warnings.push(
+                "On the phone: Spotify says this account has no Premium - the phone can't play \
+                 Spotify."
+                    .to_string(),
+            ),
+            Some("no_widevine") => warnings.push(
+                "On the phone: this phone's web player can't play Spotify (no Widevine)."
+                    .to_string(),
+            ),
+            Some("unreachable") => lines.push(
+                "On the phone: the phone couldn't reach Spotify the last time it tried."
+                    .to_string(),
+            ),
+            Some("quota") => lines.push(
+                "On the phone: Spotify's limit for this app was reached - it tries again later."
+                    .to_string(),
+            ),
+            _ => {}
+        }
+    }
+    let note = (bound.is_none() && ticked > 0).then(|| match ticked {
+        1 => "Spotify is off on this phone: its Spotify entry isn't sent.".to_string(),
+        n => format!("Spotify is off on this phone: its {n} Spotify entries aren't sent."),
+    });
+    Ok(Some(SpotifyBindingCard {
+        accounts: rows
+            .iter()
+            .map(|row| (row.id, row.display_name.clone()))
+            .collect(),
+        bound,
+        lines,
+        warnings,
+        note,
+        notice,
+    }))
+}
+
+/// `POST /devices/{id}/music/spotify` (`account`: "" or "off" = Spotify off on this phone, else
+/// an account's id; design 26c §2.5): which Spotify account the phone plays as. One auto-saving
+/// select; an account that isn't logged in here is refused back at `#music-spotify` with nothing
+/// changed (checked in the `UPDATE` itself, so a Remove can't slip in between). The binding moves
+/// the library revision (0073's trigger): the phone's Spotify entries come or go with it.
+pub async fn save_device_spotify(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<FormMap>,
+) -> Response {
+    let account = match field(&form, "account").trim() {
+        "" | "off" => None,
+        value => match value.parse::<i64>() {
+            Ok(account) => Some(account),
+            Err(_) => {
+                return Redirect::to(&format!(
+                    "/devices/{id}?music_notice=spotify_unknown#music-spotify"
+                ))
+                .into_response();
+            }
+        },
+    };
+    let saved: Result<Option<Option<String>>, sqlx::Error> = async {
+        let updated = sqlx::query(
+            "UPDATE device_policy SET music_spotify_account = ?, updated_at = datetime('now') \
+             WHERE device_id = ? AND (? IS NULL OR EXISTS \
+               (SELECT 1 FROM music_spotify_accounts WHERE id = ?))",
+        )
+        .bind(account)
+        .bind(id)
+        .bind(account)
+        .bind(account)
+        .execute(&state.db)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Ok(None);
+        }
+        let name: Option<String> = match account {
+            Some(account) => {
+                sqlx::query_scalar("SELECT display_name FROM music_spotify_accounts WHERE id = ?")
+                    .bind(account)
+                    .fetch_optional(&state.db)
+                    .await?
+            }
+            None => None,
+        };
+        Ok(Some(name))
+    }
+    .await;
+    let name = match saved {
+        Ok(Some(name)) => name,
+        Ok(None) => {
+            let device: Result<bool, sqlx::Error> = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?)",
+            )
+            .bind(id)
+            .fetch_one(&state.db)
+            .await;
+            return match device {
+                Ok(true) => Redirect::to(&format!(
+                    "/devices/{id}?music_notice=spotify_unknown#music-spotify"
+                ))
+                .into_response(),
+                Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+                Err(err) => server_error(err, "couldn't read a phone's policy"),
+            };
+        }
+        Err(err) => return server_error(err, "couldn't save a phone's Spotify account"),
+    };
+    nudge(&state, &[id]);
+    log_event(
+        &state,
+        &admin,
+        "music_spotify_binding_changed",
+        &match (account, name) {
+            (Some(account), name) => format!(
+                "device {id}: Spotify plays as {}",
+                name.unwrap_or_else(|| format!("account {account}"))
+            ),
+            (None, _) => format!("device {id}: Spotify off"),
+        },
+    )
+    .await;
+    Redirect::to(&format!("/devices/{id}#music-spotify")).into_response()
 }
 
 /// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving tick.

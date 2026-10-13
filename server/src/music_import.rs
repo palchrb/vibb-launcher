@@ -6,7 +6,9 @@
 //!
 //! No network: a target goes through `music::parse_link` only (the same normalised target, source
 //! and key as "Add"), never `check_link`; a `storytel:` target through the Storytel grammar
-//! (design 26b §2.6: a Storytel entry, cache 0 read as all). The commit wakes the sweep, which
+//! (design 26b §2.6: a Storytel entry, cache 0 read as all); a Spotify URI or `open.spotify.com`
+//! link through `spotify::parse_link` (design 26c §3.2: a Spotify entry, cache 0, on no phone - a
+//! short link would need a request and is skipped). The commit wakes the sweep, which
 //! fills the new entries in the background (design 21b); a dead feed shows up as its card's
 //! first-check error, a book no longer on the shelf as `not_on_shelf`, no login as `storytel_off`.
 //! Positions and downloads aren't imported (design 20: no position mirroring).
@@ -42,7 +44,8 @@ pub struct Candidate {
 /// Why a row isn't imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Skip {
-    Spotify,
+    /// A `spotify.link` short link: resolving it needs a request (design 26c §3.2).
+    SpotifyShortLink,
     Folder,
     /// `parse_link` refused it (its reason).
     BadLink(&'static str),
@@ -57,14 +60,18 @@ pub enum Skip {
 impl Skip {
     pub fn reason(&self) -> String {
         match self {
-            Skip::Spotify => "Spotify comes in a later version of the music app".to_string(),
+            Skip::SpotifyShortLink => {
+                "a Spotify short link - resolve it by adding it on the Spotify page".to_string()
+            }
             Skip::Folder => {
                 "a folder on the Vibb box - upload the files as an own-files entry".to_string()
             }
             Skip::BadLink(reason) => reason.trim_end_matches('.').to_string(),
             Skip::NoName => "it has no name".to_string(),
             Skip::SpotifyProfile => {
-                "it comes from a Spotify profile (later version of the music app)".to_string()
+                "it comes from a Spotify profile, which can't be followed here - add its playlists \
+                 on the Spotify page"
+                    .to_string()
             }
             Skip::InLibrary => "already in the library".to_string(),
             Skip::Repeat => "it is in the file twice - the first one is used".to_string(),
@@ -113,11 +120,27 @@ fn classify(target: &str, spotify_user: bool) -> Result<music::Link, Skip> {
     }
     let trimmed = target.trim();
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("spotify:")
-        || lower.contains("open.spotify.com")
-        || lower.contains("spotify.link/")
-    {
-        return Err(Skip::Spotify);
+    // Design 26c §3.2: a URI or an `open.spotify.com` link is a Spotify entry (no request; the
+    // sweep lists it, or reports `no_account`); a short link would need one. Audiobooks, Liked
+    // Songs and profiles are refused with their sentence; any other link on Spotify's hosts goes
+    // on to `parse_link`, which points it to the Spotify page.
+    match crate::spotify::parse_link(trimmed) {
+        Ok(crate::spotify::Link::Ref(reference)) => {
+            return Ok(music::Link::Spotify {
+                kind: reference.kind,
+                id: reference.id,
+            });
+        }
+        Ok(crate::spotify::Link::Short(_)) => return Err(Skip::SpotifyShortLink),
+        Err(
+            err @ (crate::spotify::LinkError::Audiobook | crate::spotify::LinkError::Collection),
+        ) => {
+            return Err(Skip::BadLink(err.message()));
+        }
+        Err(crate::spotify::LinkError::NotALink) if lower.starts_with("spotify:") => {
+            return Err(Skip::BadLink(crate::spotify::LinkError::NotALink.message()));
+        }
+        Err(crate::spotify::LinkError::NotALink) => {}
     }
     if lower.starts_with("storytel:") {
         // vibb's grammar, as the shelf picker writes it (no fetch: the sweep lists it).
@@ -160,11 +183,12 @@ fn row_of(entry: &serde_json::Map<String, Value>, spotify_user: bool) -> Row {
             name,
             target,
             order: order.clone(),
-            // Storytel is download-only: 0 is all (vibb library.py 87-89).
-            cache: if source == "storytel" {
-                crate::storytel::cache_value(cache)
-            } else {
-                cache
+            // Storytel is download-only: 0 is all (vibb library.py 87-89); Spotify streams only
+            // (design 26c §3.2: cache 0).
+            cache: match source {
+                "storytel" => crate::storytel::cache_value(cache),
+                "spotify" => 0,
+                _ => cache,
             },
             resume,
         })
@@ -374,9 +398,9 @@ mod tests {
             vec![
                 Ok("https://radio.nrk.no/podkast/abels_taarn"),
                 Ok("https://example.org/feed.xml"),
-                Err(Skip::Spotify),
-                Err(Skip::Spotify),
-                Err(Skip::Spotify),
+                Ok("spotify:playlist:1"),
+                Ok("spotify:playlist:1"),
+                Err(Skip::SpotifyShortLink),
                 Ok("storytel:series:9"),
                 Err(Skip::Folder),
                 Err(Skip::BadLink(
@@ -572,6 +596,64 @@ mod tests {
                 row.target
             );
         }
+        // The preview document reads back the same.
+        assert_eq!(parse(document(&sections).as_bytes()).unwrap(), sections);
+    }
+
+    /// Design 26c §3.2: a Spotify URI or `open.spotify.com` link imports as a Spotify entry (its
+    /// name, order and resume; cache 0) without a request; a short link is skipped (resolving it
+    /// is a request), audiobooks and Liked Songs with their sentence, a profile's section as
+    /// before; a look-alike host is no Spotify link.
+    #[test]
+    fn spotify_links_import_as_spotify_entries() {
+        let id = "37i9dQZF1DXcBWIGoYBM5M";
+        let file = json!({"sections": [{"name": "Musikk", "entries": [
+            {"name": "Kveld", "target": format!("spotify:playlist:{id}"), "order": "newest_first", "cache": 5, "resume": false},
+            {"name": "Album", "target": "https://open.spotify.com/intl-de/album/2FakeAlbumX00000000001?si=abc", "cache": -1},
+            {"name": "Kort", "target": "https://spotify.link/AbC123"},
+            {"name": "Bok", "target": "https://open.spotify.com/audiobook/7FakeBook0000000000001"},
+            {"name": "Likt", "target": "spotify:user:kari:collection"},
+            {"name": "Rar", "target": "spotify:playlist:a-b"},
+            {"name": "Feed", "target": "https://open.spotify.com.example.org/feed.rss"},
+        ]}, {"name": "Profil", "spotify_user": "kari", "entries": [entry("P", &format!("spotify:playlist:{id}"))]}]});
+        let sections = parse(file.to_string().as_bytes()).unwrap();
+        let rows = &sections[0].rows;
+        let playlist = rows[0].outcome.as_ref().unwrap();
+        assert_eq!(
+            (
+                playlist.source,
+                playlist.target.as_str(),
+                playlist.order.as_str()
+            ),
+            (
+                "spotify",
+                format!("spotify:playlist:{id}").as_str(),
+                "newest_first"
+            )
+        );
+        assert_eq!(playlist.key, music::state_key(&playlist.target));
+        assert_eq!((playlist.cache, playlist.resume), (0, false));
+        assert_eq!(
+            music::kind_label(playlist.source, Some(&playlist.target)),
+            "Spotify playlist"
+        );
+        let album = rows[1].outcome.as_ref().unwrap();
+        assert_eq!(
+            (album.target.as_str(), album.cache),
+            ("spotify:album:2FakeAlbumX00000000001", 0)
+        );
+        assert_eq!(rows[2].outcome, Err(Skip::SpotifyShortLink));
+        assert!(Skip::SpotifyShortLink.reason().contains("Spotify page"));
+        assert_eq!(
+            rows[3].outcome,
+            Err(Skip::BadLink("Spotify audiobooks can't be played here."))
+        );
+        assert!(matches!(&rows[4].outcome, Err(Skip::BadLink(r)) if r.contains("Liked Songs")));
+        assert!(
+            matches!(&rows[5].outcome, Err(Skip::BadLink(r)) if r.contains("isn't a Spotify link"))
+        );
+        assert_eq!(rows[6].outcome.as_ref().unwrap().source, "rss");
+        assert_eq!(sections[1].rows[0].outcome, Err(Skip::SpotifyProfile));
         // The preview document reads back the same.
         assert_eq!(parse(document(&sections).as_bytes()).unwrap(), sections);
     }
