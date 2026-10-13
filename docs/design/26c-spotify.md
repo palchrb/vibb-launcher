@@ -1109,7 +1109,7 @@ The parent sees the same through `music_state` on the device card (§3.6). Nothi
 | `onItemChanged()` (`:1048-1080`) | an unplayable item moves on, else pauses with `NOT_DOWNLOADED` | a Spotify entry: the network check as `start` (pause with the Spotify state, never move on) - as built (deviation 4) for Spotify's own advance (`auto`) only: a load, a step and the renderer's own moves were gated where they were made; **the natural-advance seek (`auto && kind == LOCAL`) stays `LOCAL` only** (QA M4: on Spotify, as on a room, the next track starts where Spotify starts it) |
 | `onError()` (`:1150-1182`) | records `item_errors` only for `url != null`; `NOT_DOWNLOADED` when offline (design 30: or `gated`, the phone's own player's stream gate; an `http_416` reloads the item uncached, `renderer.kind == LOCAL` only) | a Spotify item: `unplayable` is recorded (`ItemErrors.record`), the message `CANT_PLAY`, the queue moves on (the renderer stops after 3 in a row, §5.4); the offline test doesn't apply. As built in step 5a: the existing move-on (`seekTo(next)`, `prepare()`, `play()`) **inside** the renderer's `Error("unplayable")` is the renderer's own move-on - no call when Spotify already plays that item or past it, nothing after the third - so **`onError` must stay synchronous on main for a Spotify item** (a `post`/`launch` around the move-on would make it an unguarded play; 5b pins it) |
 | `mediaItem()` (`:726-768`) | uri = the url (empty for url-null), an `ItemTag` (design 30: `through` for NRK/RSS) | a Spotify item: uri `uriOf(kind, key)` (`spotify:track:<key>` / `spotify:episode:<key>`; the context item the entry's target), **no `ItemTag`, no cache key** - `GuardsTest`: a Spotify MediaItem never reaches `ItemMediaSourceFactory`, so design 30's cache-through sink never sees one |
-| design 30's `markPlayed`, `updateHeld`, `activeFor`'s claim (merged from main 571f86f) | the phone's own player: a played mark (`downloads.playedAt`), the held set, the queue's claim | `renderer.kind != LOCAL` returns first: the web player marks nothing played, holds nothing, claims nothing; `downloadPlan` prunes any Spotify row, never a played extra (`SpotifyRulesTest`) |
+| design 30's `markPlayed`, `updateHeld`, `activeFor`'s claim (merged from main 571f86f) | the phone's own player: a played mark (`downloads.playedAt`), the held set, the queue's claim | `markPlayed`/`updateHeld`: `renderer.kind != LOCAL` returns first, so the web player marks nothing played and holds nothing; the claim follows the **queue's** kind: `playEntry`, `playItem` and `restore` build a queue with `queueKind(renderer.kind, entry)` (the phone's renderer for the entry on the phone, else the room - never the attached one, still the web player after a Spotify play; qa-26c-merge-code M1) and `activeFor` claims only when `claimsQueue(kind, entry)` (`LOCAL`, not own files), so a Spotify queue claims nothing and the next NRK/RSS/Storytel queue after it does; `downloadPlan` prunes any Spotify row, never a played extra (`SpotifyRulesTest`) |
 | `wakeModeFor()` (`:721-724`) | `WAKE_MODE_LOCAL`/`NETWORK` | a no-op on the Spotify renderer (its own locks, §5.7) |
 | `onIsPlayingChanged()` (`:1137-1148`) | deletes the item's error when it plays | unchanged (a Spotify item has no `fileId`) |
 | `onPlaybackResumption()` (`:473-509`) | not a room: `restore()` and the items handed to the session (Media3 plays them on `KidPlayer(local.player)`) | **a stored Spotify queue takes the room's shape** (QA H2): attach the Spotify renderer, `resumeLast()` (through `start`, gated), and fail the future ("playing on Spotify") - no local items; `restore()` builds for the renderer its entry needs |
@@ -1778,15 +1778,30 @@ mode), 7 (docs).
 
 - **Server 0.26.0** (`server/Cargo.toml` and the `kid_phone_server` entry in `Cargo.lock`), migration **0074**, tagged
   `server-v0.26.0` on `main` after the merge (26b's 0.25.0 first: deploy 0.25.0's migrations before or with this one,
-  in order - 0072, design 30's 0073, then 0074). The release signing and the `release` environment as 26b's Release says.
+  in order - 0072, design 30's 0073, then 0074; the release order below). The release signing and the `release`
+  environment as 26b's Release says.
 - **Launcher**: a `launcher-v*` tag after the merge (the token courier, the DNS exemption, the WebView guard, the policy
   key). Its number follows 26b's open point 3 (the versionCode line above 25000 if a phone ever had
   `launcher-v0.25.0-rc.1`).
 - **Music**: **`music-v0.4.0-rc.1`** on the merge commit (versionName `0.4.0-rc.1`, versionCode **3999**, a prerelease,
   never "latest"), above 26b's `music-v0.3.0-rc.1` (2999); the stable `music-v0.4.0` (4000) after the QA checklist.
-- **Deploy order**: the server first (an older music app drops Spotify entries with their ids kept; an older launcher
-  ignores `music.spotify` and has no `getSpotifyToken`, so the music app reads "trenger internett" until it is updated),
-  then the launcher, then the music app through the catalog.
+- **Release and deploy order** (since the merge of main 571f86f, qa-26c-merge-code L2; design 30's step 1 L4 and the
+  2026-10-13 handoff note: no `server-v*` carrying design 30 before the `launcher-v*` and `music-v*` that read its two
+  switches - else the device card's "Update both" names updates that don't exist). Every server built from `main` after
+  design 30 carries its 0073, so:
+  1. a `launcher-v*` that reads `stream_mobile_data`/`download_mobile_data`/`storage_limit_gb` (design 30 step 2 -
+     main's own, or this design's launcher tag if it is the first after the merge);
+  2. a `music-v*` that reads them (design 30 steps 3a/3b - main's own, or `music-v0.4.0-rc.1` if it is the first),
+     through the catalog;
+  3. then the first `server-v*` carrying design 30's 0073 (26b's 0.25.0 if it is tagged after design 30 reached
+     `main`, else this design's 0.26.0);
+  4. then `server-v0.26.0` with Spotify's 0074 (after 0073, or in the same release as it - never before).
+
+  Spotify tolerates the apps first: an older server sends no `music.spotify` (false) and no Spotify entry, so a new
+  launcher and music app show no Spotify and break nothing until the server comes. The reverse (the server first: an
+  older music app drops Spotify entries with their ids kept; an older launcher ignores `music.spotify` and has no
+  `getSpotifyToken`, so the music app reads "trenger internett" until it is updated) is only the better order once
+  design 30's apps are out - and then the launcher, then the music app.
 - **Before the stable tags**: §6l parts A and B on the emulator, the QA checklist above, the spike's remaining runs
   (§14 item 3), and the capture's host list in the three `spotify_hosts.json` copies (no longer provisional).
 
@@ -3366,11 +3381,14 @@ one merge commit; everything the merge broke is fixed inside it. Written here at
   `SpotifyRulesTest` "design 30 - a Spotify item is never a played extra, never downloaded, never under the storage
   limit" (a played Spotify row is pruned, never an extra, at depth 0, 5 and keep-all, held or not; nothing wanted, no
   Storytel floor, no `downloads` state); `GuardsTest`: `mediaItem`'s `through` is NRK/RSS only (a Spotify item has no
-  `ItemTag` at all, so the guarded sink never sees one), `markPlayed`, `updateHeld` and `activeFor`'s claim return or
-  skip unless `renderer.kind == LOCAL`, `onError`'s changed-source reload (`playOnUncached`) is `LOCAL` only, and §5.10's
+  `ItemTag` at all, so the guarded sink never sees one), `markPlayed` and `updateHeld` return unless
+  `renderer.kind == LOCAL`, `activeFor`'s claim needs the queue's kind `LOCAL` (fix round, M1), `onError`'s changed-source reload (`playOnUncached`) is `LOCAL` only, and §5.10's
   list of `RendererKind.` sites holds main's four `LOCAL` lines; the `renderer.load(` count is 2 (`start`, and
   `playOnUncached`, the phone's own player's).
 - Main's cleartext network security config doesn't widen the web player: `WebPolicy` refuses every http URL itself.
+  It does make §6l's fake reachable from the phone at all: before the merge the music app had no config and refused
+  every `http://10.0.2.2:8731` call of the debug switch (the Web API, the token route, the proxied SDK) - §6l part A2
+  and A1's phone half work only since this merge (fix round, L3).
 
 **Pins updated for main's code** (not behaviour changes): `start`'s no-playable branch now ends the queue's claims
 (`updateHeld(loaded = true)`, main's) - our "NOT_DOWNLOADED only for another source" pin includes it; `onError`'s
@@ -3380,7 +3398,11 @@ signature and `gated` branch; main's own `offline` pin follows our Spotify claus
 - server (`CARGO_TARGET_DIR` in the scratchpad): `cargo fmt --check` clean (after `cargo fmt` on the new device-card
   assertions); `cargo clippy --all-targets` 12 warnings (`dns_engine.rs`, `handlers/devices.rs`, `models.rs`' dead
   fields - the known set, in files where this branch differs from main only by the Spotify field), none new;
-  `cargo test` "test result: ok. 827 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out" (`parent_pin` passed).
+  `cargo test` "test result: ok. 827 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out" in this run - but
+  `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` is **not** reliably green: the merge's code QA
+  found it failing 4 of 4 on this tree and 2 of 2 on main's own `571f86f` (its events are stamped `now + 1-2 s` and
+  the notice clears only if the second PIN save lands after them). It is main's timing test, not this branch's;
+  flagged to the main session in `qa-26c-merge-code.md`.
 - launcher: `./gradlew assembleDebug testDebugUnitTest` BUILD SUCCESSFUL, 1145 tests, 0 failed.
 - music: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` BUILD
   SUCCESSFUL, 809 tests, 0 failed (the first run: 4 `GuardsTest` pins failed on main's changed service text - fixed as
@@ -3389,5 +3411,37 @@ signature and `gated` branch; main's own `offline` pin follows our Spotify claus
 
 **Owed** (unchanged by the merge, plus): §6l part A on the user's emulator now also checks the streaming switch line
 (`stream_mobile_data` false with `download_mobile_data` true: "Spotify - trenger Wi-Fi"); design 30's own owed checks
-(its §8, `scripts/fake-audio.py`) are main's. Release order: a server with design 30's 0073 before or with this
-branch's 0074 (Release).
+(its §8, `scripts/fake-audio.py`) are main's. Release order: Release's four steps (fix round, L2) - the launcher and
+music releases that read design 30's two switches before any `server-v*` with design 30, then 0073's server, then
+0074's (or both in one release, never 0074 first).
+
+### Fix round after QA's code review (qa-26c-merge-code, 2026-10-13)
+
+- **M1** (after a Spotify play the next podcast/Storytel queue skipped design 30's claim and stale check): pure
+  `queueKind(current, entry)` (on the phone the phone's renderer for the entry, else the room) and `claimsQueue(kind,
+  entry)` (`LOCAL`, not own files; main's `activeFor` condition, moved unchanged into a function) in `RendererRules.kt`;
+  `playEntry`, `playItem` and `restore` pass `queueKind(renderer.kind, entry)` to `queueFor`, `activeFor` asks
+  `claimsQueue(kind, entry)`. `RendererRulesTest`: LOCAL/SPOTIFY/SONOS x every source and Spotify, and the QA's
+  scenario (a Spotify play, then an NRK item with a stale partial: `queueKind` gives `LOCAL`, it claims, and
+  `staleThrough` marks the partial; the old `claimsQueue(SPOTIFY, nrk)` is false). `GuardsTest`: the three call sites,
+  exactly three `queueKind(renderer.kind, entry)`, no `queueFor(`/`activeFor(` call passing a bare `renderer.kind`,
+  `activeFor`'s `claimsQueue` line (main's own pin too); the `RendererKind.` site list drops the claim line (it is
+  `claimsQueue`'s now). Mutation (`playItem` back to `renderer.kind`): `GuardsTest` red. Also tightened main's
+  "start() giving up ends the claims" pin to our `if (first == null && !isSpotify(a.entry)) {` (it searched for main's
+  `if (first == null) {`, which no longer exists, so it read the whole body). §5.10's row and the section above say
+  the claim follows the queue's kind.
+- **L1** (the "never a played extra" check couldn't fail): the case gains depth 1 with the older track `t1` played and
+  held - outside the keep set (`t2`), listed and played, an extra for any other source. Mutation M (the Spotify block
+  after the extras rule): red, "depth 1: never an extra"; reverted.
+- **L2** (Release order against design 30's): Release now gives the exact order - a `launcher-v*` and a `music-v*`
+  that read the two switches, then the first `server-v*` with design 30's 0073, then Spotify's 0074 (after it, or in
+  the same release) - and why Spotify tolerates the apps first; the section above says so.
+- **L3** (the cleartext config's comment): `network_security_config.xml` names `fake-spotify.py` (the Web API, the
+  token route and the proxied SDK, debug switch only) and that the web player never loads http; the section above
+  says §6l's phone half needs main's config.
+- The section's `parent_pin` claim corrected (above): it passed in this branch's run, but QA saw it red 4 of 4 here and
+  2 of 2 on main - main's timing test, owed to the main session.
+- Validation: music `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`
+  BUILD SUCCESSFUL, 811 tests, 0 failed (809 + the two new `RendererRulesTest` cases), `lintDebug` passed (no error;
+  the known warnings); the four fakes' `--selftest` under `python3 -I`: all OK. No server or launcher file changed, so their
+  suites weren't re-run.

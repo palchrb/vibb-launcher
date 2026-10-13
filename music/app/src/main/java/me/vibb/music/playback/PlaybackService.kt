@@ -584,7 +584,7 @@ class PlaybackService : MediaSessionService() {
         var stale = emptySet<String>()
         var claimed = false
         try {
-            if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {
+            if (claimsQueue(kind, entry)) {
                 val before = PlayerHub.heldLocal
                 PlayerHub.claim(heldItems(entry.id, keys, start, start + 1))
                 claimed = true
@@ -651,7 +651,7 @@ class PlaybackService : MediaSessionService() {
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, renderer.kind) ?: return
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
         start(a, p)
     }
 
@@ -662,7 +662,7 @@ class PlaybackService : MediaSessionService() {
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
         val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, renderer.kind) ?: return
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
         start(a, p)
     }
 
@@ -718,7 +718,7 @@ class PlaybackService : MediaSessionService() {
         if (awaitsBook(snap, row.entryId) { entry, shown, listed -> storedRowAwaitsBook(entry, stored, row.index, shown, listed) }) return Restored.NotOnPhone
         val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return Restored.Empty
         val plan = storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { startPos(entry, snap.positions[entry.key]?.get(it)) } ?: return Restored.Empty
-        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, renderer.kind) ?: return Restored.Empty
+        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry)) ?: return Restored.Empty
         return Restored.Queue(a, p.startIndex, p.startPosMs)
     }
 

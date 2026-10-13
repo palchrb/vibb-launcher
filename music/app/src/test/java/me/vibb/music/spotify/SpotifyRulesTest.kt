@@ -180,10 +180,18 @@ class SpotifyRulesTest {
     @Test
     fun `design 30 - a Spotify item is never a played extra, never downloaded, never under the storage limit`() {
         val feed = entry(2)
-        for (playlist in listOf(spotify(6, "playlist"), spotify(6, "playlist").copy(cache = 5), spotify(6, "playlist").copy(cache = -1))) {
+        // (depth, the played track): at depth 1 the older track `t1` is listed, outside the keep set (`t2`, the
+        // newest) and played - a played extra for any other source, so this case is the one that can fail
+        // (qa-26c-merge-code L1); 0 is what the server sends, 5 and keep-all keep both tracks.
+        for ((playlist, key) in listOf(
+            spotify(6, "playlist") to "t2",
+            spotify(6, "playlist").copy(cache = 1) to "t1",
+            spotify(6, "playlist").copy(cache = 5) to "t2",
+            spotify(6, "playlist").copy(cache = -1) to "t2",
+        )) {
             val snap = snapshot(library(listOf(playlist, feed)), items = rows(6, listOf("t1", "t2")) + Fixtures.items(2, listOf("e1")))
-            val played = done(6, "t2").copy(playedAt = 1_760_000_000_000)
-            val held = setOf(me.vibb.music.logic.ItemRef(6, "t2"))
+            val played = done(6, key).copy(playedAt = 1_760_000_000_000)
+            val held = setOf(me.vibb.music.logic.ItemRef(6, key))
             for (plan in listOf(downloadPlan(snap, listOf(played), 0), downloadPlan(snap, listOf(played), 0, held))) {
                 assertTrue("depth ${playlist.cache}: never an extra", plan.extras.none { it.entryId == 6L })
                 assertEquals("depth ${playlist.cache}: pruned", listOf(played), plan.prune.filter { it.entryId == 6L })

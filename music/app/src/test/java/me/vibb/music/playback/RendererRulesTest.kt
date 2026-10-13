@@ -99,4 +99,48 @@ class RendererRulesTest {
         assertFalse("a withdrawn feed item without a copy", recordsItemError(entry(2), hasUrl = false))
         assertFalse("a Storytel book (no url; its failures are the download's)", recordsItemError(entry(5, Source.STORYTEL), hasUrl = false))
     }
+
+    @Test
+    fun `a new queue is built for the renderer that will play it - the phone's for its entry, a room stays (qa-26c-merge-code M1)`() {
+        val nrk = entry(2, Source.NRK)
+        for (current in listOf(RendererKind.LOCAL, RendererKind.SPOTIFY)) {
+            for (source in listOf(Source.NRK, Source.RSS, Source.OWN, Source.STORYTEL)) {
+                assertEquals("$current + $source", RendererKind.LOCAL, queueKind(current, entry(2, source)))
+            }
+            assertEquals("$current + Spotify", RendererKind.SPOTIFY, queueKind(current, spotify()))
+        }
+        assertEquals(RendererKind.SONOS, queueKind(RendererKind.SONOS, nrk))
+        assertEquals("a room keeps its renderer (its queue drops Spotify items)", RendererKind.SONOS, queueKind(RendererKind.SONOS, spotify()))
+        // design 30's claim and stale check: the phone's own player's queues of every entry but own files
+        assertTrue(claimsQueue(RendererKind.LOCAL, nrk))
+        assertTrue(claimsQueue(RendererKind.LOCAL, entry(3, Source.RSS)))
+        assertTrue(claimsQueue(RendererKind.LOCAL, entry(5, Source.STORYTEL)))
+        assertFalse(claimsQueue(RendererKind.LOCAL, entry(4, Source.OWN)))
+        assertFalse("the web player opens no cache", claimsQueue(RendererKind.SPOTIFY, spotify()))
+        assertFalse(claimsQueue(RendererKind.SONOS, nrk))
+    }
+
+    /**
+     * The QA's scenario (qa-26c-merge-code M1): a Spotify entry played (the attached renderer is the web player),
+     * then a tap on an NRK episode whose cache holds a partial from another source. Its queue must be the phone's
+     * own player's, so it claims the start item and the next and goes through `CacheThrough.queueRows`, where
+     * `staleThrough` marks the partial: the item plays uncached, never the old bytes first. Before the fix the
+     * queue was built with the attached renderer's kind (SPOTIFY) and skipped both.
+     */
+    @Test
+    fun `after a Spotify play an NRK item with a stale partial goes through the claim and the stale check`() {
+        val nrk = entry(2, Source.NRK)
+        val afterSpotify = phoneRendererFor(spotify())
+        assertEquals(RendererKind.SPOTIFY, afterSpotify)
+        assertFalse("the merge's bug: the attached renderer's kind skipped the claim", claimsQueue(afterSpotify, nrk))
+        val kind = queueKind(afterSpotify, nrk)
+        assertEquals(RendererKind.LOCAL, kind)
+        assertTrue("claimed, then CacheThrough.queueRows", claimsQueue(kind, nrk))
+        // what queueRows then finds for the episode: bytes from another file under its key - stale, played uncached
+        val url = "https://nrk.example.org/ep1.mp3?t=2"
+        assertTrue(me.vibb.music.logic.staleThrough(done = false, rowSource = "https://nrk.example.org/other.mp3", itemUrl = url, cachedBytes = 1_000))
+        assertTrue("an orphan's bytes too", me.vibb.music.logic.staleThrough(done = false, rowSource = null, itemUrl = url, cachedBytes = 1_000))
+        // and the reverse: a Spotify tap while the phone's own player is attached claims nothing
+        assertFalse(claimsQueue(queueKind(RendererKind.LOCAL, spotify()), spotify()))
+    }
 }

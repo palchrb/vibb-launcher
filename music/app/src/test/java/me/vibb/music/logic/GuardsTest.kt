@@ -723,9 +723,8 @@ class GuardsTest {
         val kinds = service.lines().filter { it.contains("RendererKind.") }.map { it.trim() }
         assertEquals(
             listOf(
-                // design 30 (merged from main 571f86f): the claim, the changed-source reload, the played mark and the
-                // held set are the phone's own player's (LOCAL) - never Spotify's web player, never a room
-                "if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {",
+                // design 30 (merged from main 571f86f): the changed-source reload, the played mark and the held set are
+                // the phone's own player's (LOCAL) - never Spotify's web player, never a room; the claim is claimsQueue's
                 "val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local",
                 "val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)",
                 "renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL",
@@ -809,7 +808,14 @@ class GuardsTest {
         assertTrue(media.contains("val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS"))
         assertTrue(serviceBody("private fun markPlayed(a: Active, item: PlayItem) {").contains("if (renderer.kind != RendererKind.LOCAL || item.fileId != null"))
         assertTrue(serviceBody("private fun updateHeld(loaded: Boolean = false) {").contains("renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0"))
-        assertTrue(serviceBody("private suspend fun activeFor(").contains("if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {"))
+        assertTrue(serviceBody("private suspend fun activeFor(").contains("if (claimsQueue(kind, entry)) {"))
+        // qa-26c-merge-code M1: a new queue's kind is the renderer that will play it, never the attached one
+        assertTrue(serviceBody("private suspend fun playEntry(entryId: Long) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry))"))
+        assertTrue(serviceBody("private suspend fun playItem(entryId: Long, key: String) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry))"))
+        assertTrue(serviceBody("private suspend fun restore(): Restored {").contains("queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry))"))
+        assertEquals(3, Regex("""queueKind\(renderer\.kind, entry\)""").findAll(service).count())
+        val queueCalls = Regex("""(queueFor|activeFor)\([^\n]*""").findAll(service).map { it.value }.toList()
+        assertTrue(queueCalls.toString(), queueCalls.isNotEmpty() && queueCalls.none { Regex("""[(,] ?renderer\.kind\)""").containsMatchIn(it) })
         // only the phone's own player has the media source factory ...
         val factory = mainSources().filter { code(it.path.substringAfter("music/app/")).contains("ItemMediaSourceFactory(") }.map { it.name }.sorted()
         assertEquals(listOf("ItemMediaSourceFactory.kt", "LocalRenderer.kt"), factory)
@@ -971,7 +977,7 @@ class GuardsTest {
         // Every other end of a queue's claims (qa-30-s3b-code L6): start() giving up, playback resumption once the
         // session has its items, and an exception between the claim and the queue.
         val start = body(service, "private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
-        assertTrue(start.substringAfter("if (first == null) {").substringBefore("return").contains("updateHeld(loaded = true)"))
+        assertTrue(start.substringAfter("if (first == null && !isSpotify(a.entry)) {").substringBefore("return").contains("updateHeld(loaded = true)"))
         assertTrue(Regex("future\\.set\\(MediaSession\\.MediaItemsWithStartPosition\\(a\\.items\\.map \\{ mediaItem\\(a, it\\) \\}, index, pos\\)\\)\\s*handler\\.post \\{ updateHeld\\(loaded = true\\) \\}").containsMatchIn(service))
         val active = body(service, "private suspend fun activeFor(")
         assertTrue(active.indexOf("PlayerHub.claim(") in 0 until active.indexOf("claimed = true"))
@@ -1074,6 +1080,6 @@ class GuardsTest {
             "val fresh = CacheThrough.queueRows(this, entry, if (through) items else emptyList(), before)",
         ).map { active.indexOf(it) }
         assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
-        assertTrue(active.contains("if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {"))
+        assertTrue(active.contains("if (claimsQueue(kind, entry)) {"))
     }
 }

@@ -8,6 +8,7 @@ import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.playability
 import me.vibb.music.logic.spotifyPlayability
 import me.vibb.music.model.Entry
+import me.vibb.music.model.Source
 import me.vibb.music.spotify.SPOTIFY_MODE_CONTEXT
 import me.vibb.music.spotify.spotifyTarget
 import me.vibb.music.spotify.uriOf
@@ -25,6 +26,23 @@ import me.vibb.music.spotify.uriOf
  * holds a Spotify item (`PlayBodies.speakerDropReason`, §4.2), so a Spotify entry never reaches it.
  */
 fun phoneRendererFor(entry: Entry): RendererKind = if (isSpotify(entry)) RendererKind.SPOTIFY else RendererKind.LOCAL
+
+/**
+ * The renderer a new queue for [entry] is built for (design 26c §5.10; the merge of main 571f86f, qa-26c-merge-code
+ * M1): on the phone, the phone's renderer for the entry ([phoneRendererFor]: `start` attaches it) - never the one
+ * that happens to be attached, which is still Spotify's web player after a Spotify play, or the phone's own player
+ * before one; on a room ([current] not `onPhone`), the room. `playEntry`, `playItem` and `restore` pass it to
+ * `queueFor`, as `comeHome` passes [phoneRendererFor].
+ */
+fun queueKind(current: RendererKind, entry: Entry): RendererKind = if (current.onPhone) phoneRendererFor(entry) else current
+
+/**
+ * Whether a new queue claims its start item and the next and re-reads its rows (design 30 §1.6, qa-30 L4:
+ * `PlayerHub.claim`, `CacheThrough.queueRows` - the stale-partial check): a queue for the phone's own player
+ * ([kind] `LOCAL`, the queue's kind from [queueKind]) of any entry but own files. Never a Spotify queue (its web
+ * player opens no cache) and never a room's.
+ */
+fun claimsQueue(kind: RendererKind, entry: Entry): Boolean = kind == RendererKind.LOCAL && entry.source != Source.OWN
 
 /**
  * Whether an item of [entry] can play now (§5.10 `playable`, QA H1): on a room ([kind] not `onPhone`)
