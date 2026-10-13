@@ -26,11 +26,42 @@ fun urlDirectory(url: String): String? {
 }
 
 /** `scheme://authority/path` of [url], without query or fragment. */
-private fun withoutQuery(url: String): String? {
+internal fun withoutQuery(url: String): String? {
     val uri = runCatching { URI(url) }.getOrNull() ?: return null
     val scheme = uri.scheme?.lowercase() ?: return null
     if (uri.rawAuthority == null) return null
     return "$scheme://${uri.rawAuthority}${uri.rawPath.orEmpty()}"
+}
+
+/**
+ * Is [a] the same source as [b] (design 30 §1.6, L5)? Two http(s) URLs are when they are equal without
+ * their query and fragment ([withoutQuery], the normalisation the HLS keys use: a re-resolved NRK token
+ * or a podcast host's new tracking query keeps a partial copy); anything else (a Storytel source id
+ * `storytel:book:<cid>`) only when the whole strings are.
+ */
+fun sameSource(a: String, b: String): Boolean {
+    if (a == b) return true
+    if (!isHttp(a) || !isHttp(b)) return false
+    val plain = withoutQuery(a) ?: return false
+    return plain == withoutQuery(b)
+}
+
+private fun isHttp(url: String): Boolean = url.substringBefore(':').lowercase().let { it == "http" || it == "https" }
+
+/**
+ * The item cache key in [cacheKeys] that the cache resource [resourceKey] belongs to: itself (a
+ * progressive item), or the one whose [hlsKeyPrefix] it starts with; null when none.
+ */
+fun itemOfResource(resourceKey: String, cacheKeys: Set<String>): String? {
+    if (resourceKey in cacheKeys) return resourceKey
+    if (!resourceKey.startsWith("hls:")) return null
+    var slash = resourceKey.indexOf('/', 4)
+    while (slash >= 0) {
+        val candidate = resourceKey.substring(4, slash)
+        if (candidate in cacheKeys) return candidate
+        slash = resourceKey.indexOf('/', slash + 1)
+    }
+    return null
 }
 
 /**

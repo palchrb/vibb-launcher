@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.Flow
 import me.vibb.music.logic.KnownEntry
 import me.vibb.music.logic.Listed
 import me.vibb.music.logic.NewsItem
+import me.vibb.music.logic.keepPlayedAt
 import me.vibb.music.logic.newsAfter
 import me.vibb.music.logic.newsBefore
 import me.vibb.music.logic.pruneTray
@@ -71,7 +72,10 @@ data class PositionRow(val entryKey: String, val itemKey: String, val posMs: Lon
 @Entity(tableName = "bookmarks")
 data class BookmarkRow(@PrimaryKey val entryKey: String, val itemKey: String, val posMs: Long, val updatedAt: Long)
 
-/** A download, finished or not. [url]/[hls] are what was fetched, so a withdrawn item's copy plays. */
+/**
+ * A download, finished or not. [url]/[hls] are what was fetched, so a withdrawn item's copy plays. A
+ * stream written as it plays (design 30 §1.4) has its row too, made by the sink before its first byte.
+ */
 @Entity(tableName = "downloads", primaryKeys = ["entryId", "itemKey"])
 data class DownloadRow(
     val entryId: Long,
@@ -90,6 +94,12 @@ data class DownloadRow(
     val failedCode: String? = null,
     val failedAt: Long? = null,
     val attempts: Int = 0,
+    /**
+     * When the phone's own player last started the item (design 30 §1.5, Room 4): a played item outside
+     * the keep set is a played extra, kept while there is room. Set only by `markPlayed`; a rewrite of the
+     * row keeps it (`upsertDownload`, `keepPlayedAt`).
+     */
+    val playedAt: Long? = null,
 )
 
 /** The latest failure per item (21b §4.3), cleared when the item plays or downloads, its listing changes or its entry goes. */
@@ -300,8 +310,28 @@ interface MusicDao {
     @Query("SELECT * FROM downloads")
     fun downloadsFlow(): Flow<List<DownloadRow>>
 
+    @Query("SELECT * FROM downloads WHERE entryId = :entryId AND itemKey = :itemKey")
+    suspend fun download(entryId: Long, itemKey: String): DownloadRow?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertDownload(row: DownloadRow)
+    suspend fun replaceDownload(row: DownloadRow)
+
+    /** A download row written whole, its played time kept (design 30 §1.5: the job's rows carry none). */
+    @Transaction
+    suspend fun upsertDownload(row: DownloadRow) {
+        replaceDownload(row.copy(playedAt = keepPlayedAt(download(row.entryId, row.itemKey)?.playedAt, row.playedAt)))
+    }
+
+    /**
+     * The stream's row before its first write (design 30 §1.4, M1): a not-done row, unless the item has
+     * one. Blocking: the sink calls it on ExoPlayer's loader thread, never on main.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertThrough(row: DownloadRow): Long
+
+    /** The phone's player started the item (design 30 §1.5): an existing row only, never a new one. */
+    @Query("UPDATE downloads SET playedAt = :at WHERE entryId = :entryId AND itemKey = :itemKey")
+    suspend fun markPlayed(entryId: Long, itemKey: String, at: Long): Int
 
     @Query("DELETE FROM downloads WHERE entryId = :entryId AND itemKey = :itemKey")
     suspend fun deleteDownload(entryId: Long, itemKey: String)
@@ -360,13 +390,16 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
         NewsBaselineRow::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
         // Design 29: known_entries and news_baseline, new tables only. Empty = no baseline yet; an
         // upgraded phone has positions, so its first sync takes the baseline from its library.
         AutoMigration(from = 2, to = 3),
+        // Design 30: downloads.playedAt, nullable. Null on every existing row: nothing was played as an
+        // extra before, so the first sync prunes outside the keep set as before.
+        AutoMigration(from = 3, to = 4),
     ],
 )
 abstract class MusicDb : RoomDatabase() {

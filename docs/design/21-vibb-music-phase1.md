@@ -186,7 +186,9 @@ no Firebase/GMS (`checkReleaseHasNoGoogleServices`); Nunito, night palette. Edge
 - **Downloads**: Media3 `DownloadManager` + `SimpleCache` (`NoOpCacheEvictor`), `customCacheKey` = item key,
   progressive and HLS. Wanted: the newest N by publication (vibb), all for -1, none for 0, plus the bookmarked item and
   the next in play order. NOT_METERED unless `mobile_data`, storage not low, paused while roaming. Items beyond the
-  depth and removed entries are deleted (`prune_cache`). Streams aren't cached.
+  depth and removed entries are deleted (`prune_cache`). Streams aren't cached. *(Changed by design 30
+  (`30-music-streaming-data.md`): two mobile-data switches, a stream written to the cache as it plays above depth 0,
+  played extras kept within the parent's storage limit and a free floor.)*
 - **New** (`_mark_new_seen`): an entry's first listing acknowledges all (and design 29: a new entry's one item);
   later, unseen item keys join the Nytt tray
   (Room, newest first, <= 30, dropped with their entry) and leave it when they start playing by any path or on "Fjern

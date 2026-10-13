@@ -1,5 +1,6 @@
 package me.vibb.music.logic
 
+import me.vibb.music.Fixtures
 import me.vibb.music.Fixtures.art
 import me.vibb.music.Fixtures.entry
 import me.vibb.music.Fixtures.items
@@ -12,6 +13,7 @@ import me.vibb.music.data.NewsRow
 import me.vibb.music.data.REAPPLY_LISTINGS_SQL
 import me.vibb.music.model.Source
 import me.vibb.music.sync.artWant
+import me.vibb.music.sync.downloadPlan
 import androidx.sqlite.db.SupportSQLiteDatabase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -103,6 +105,27 @@ class EpisodeArtTest {
         val w = artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList())
         assertEquals(listOf("b4", "b1", "b2", "b5").map { pics.getValue(it) }, w.later)
         assertFalse("book 3 isn't kept", pics.getValue("b3") in w.keep)
+    }
+
+    /** Design 30 §1.11 (L3): a kept episode's picture stays as long as its audio - a played extra's too. */
+    @Test
+    fun `an extra's picture is kept`() {
+        val keys = (1..10).map { "k$it" }
+        val pics = keys.associateWith { art(it) }
+        val e = entry(1, cache = 2)
+        val extra = Fixtures.done(1, "k4").copy(playedAt = 1_000L)
+        val snap = snapshot(library(listOf(e)), items(1, keys, art = pics), downloads = listOf(extra))
+        val rows = listOf(extra)
+        val plan = downloadPlan(snap, rows, 2_000L)
+        assertEquals(listOf("k4"), plan.extras.map { it.itemKey })
+        val w = artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList(), extras = plan.extras)
+        assertTrue(pics.getValue("k4") in w.keep)
+        assertTrue("fetched like the keep sets' art, later", pics.getValue("k4") in w.later)
+        assertFalse("without it the prune would take it", pics.getValue("k4") in artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList()).keep)
+        // The glue: the want set over the plan's extras, as the sync and the player compute it.
+        val glue = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
+        assertTrue(glue.contains("val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras"))
+        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras)"))
     }
 
     @Test

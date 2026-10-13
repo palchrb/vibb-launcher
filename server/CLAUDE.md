@@ -551,7 +551,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   GB/No limit, `storage_limit` = a choice or `none`, else 400; missing = the stored one kept), the note "This phone's
   launcher or music app is older ..." while the switches differ and the phone's app report (`cache_bytes`) has no
   `extra_bytes` (`music::older_phone_note`), the storage line and its over-the-limit warning (`music::storage_line`;
-  `audio_bytes`/`extra_bytes` reach `MusicState` in design 30 step 3a, until then today's "Stored on the phone"),
+  from the report's `audio_bytes`/`extra_bytes`, which a music app from design 30 step 3a on always sends - without
+  them, an older app, today's "Stored on the phone"; `MusicState` keeps and clamps both like `cache_bytes`),
   event `music_phone_settings` naming both switches and the limit -, volume cap Off/90/80/70/60 - NULL = off,
   Storytel switch, the Sonos rooms at `#music-sonos`
   - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event

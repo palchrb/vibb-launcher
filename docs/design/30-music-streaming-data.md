@@ -83,6 +83,10 @@ This design adds the parent's limit (§1.8) and one floor, `EXTRAS_FREE_FLOOR` (
 A stream on mobile data under the streaming switch writes its bytes too: they arrived anyway. It never starts a
 download on mobile data without the downloads switch. The rest of a keep-set item waits for the download gate.
 
+The downloads switch turned off while the phone is on mobile data stops a running download at the next sync
+(the launcher's nudge; `stopRunningDownload`, qa-30-s3a-code L1): the job is replaced and waits for Wi-Fi, where the
+partial item resumes with Range. On Wi-Fi a running job is never interrupted.
+
 ### 1.2 The migration: both switches take the old value
 
 Migration `0073_music_data_and_storage.sql` (**renumbered at the merge** if another branch takes 0073 first; main is
@@ -219,10 +223,12 @@ cache lock (H1):
 
 Settle runs:
 - when an item **leaves the held set** (§1.6), launched on `Dispatchers.IO` in the service's scope. Never on the
-  service's `writer`, where positions and bookmarks are written;
+  service's `writer`, where positions and bookmarks are written. A played row that stays incomplete enqueues the
+  download job, whose plan decides whether it is wanted (qa-30-s3b-code L4);
 - at every sync, **before** `Sync.runLock` is taken (design 29's mutex; `CacheThrough` has its own small mutex), as
-  `catchUp`: every row that is not done, has `playedAt`, and is not held. It enqueues the download job **once** if any
-  row is still incomplete. A partial extra is re-checked at every sync, which is cheap as a span check;
+  `catchUp`: every row that is not done, has `playedAt`, and is not held. It enqueues no job (qa-30-s3b-code L3): the
+  sync's own plan, built right after, enqueues one for the keep-set items still wanted. A partial extra is
+  re-checked at every sync, which is cheap as a span check;
 - never for a held item. The service's release can't settle (its scope is cancelled), so the next sync's `catchUp`
   covers it.
 
@@ -233,7 +239,10 @@ visible, and the download plan doesn't want it.
 
 **The held set** (`PlayerHub.heldLocal: Set<ItemRef>`, immutable and `@Volatile`, written on main) is every item the
 phone's ExoPlayer may have a period open for:
-- the current item and the next one in its timeline (shuffle included);
+- the current item and the next one in its timeline (shuffle included), and every item after it that starts within
+  `HELD_AHEAD_MS` (75 s) of the position: with items shorter than the load control's 50 s ExoPlayer opens more than
+  the next (qa-30-s3b-code L5; recomputed at every publish and every 15 s save tick). An item without a known
+  duration ends the window after the next item: the one case it can miss;
 - empty on a Sonos room or with nothing loaded.
 
 ExoPlayer opens the next item's period in the current item's last ~50 s, and with a sink a progressive period keeps
@@ -287,8 +296,11 @@ per request breaks that. The guard catches it by length, the cheap signal.
   gives `http_416` with no new mapping:
   - **the job:** `DownloadRun`'s existing `http_416` path drops the partial and fetches once from 0;
   - **the player** (`onError`, an item without a done copy, code `http_416`): its row is deleted (its bytes become
-    orphans, swept when not held). The item is replaced in place (`renderer.replaceItem`, a new source with
-    `ItemTag.uncached`) and sought to the saved position. It plays on, and no item error is recorded.
+    orphans, swept when not held). The queue is loaded again at that item and position with it `ItemTag.uncached` and
+    without a cache key (qa-30-s3b-code H1: `renderer.replaceItem` would be Media3's in-place update - its
+    `canUpdateMediaItem` never compares the tag - and keep the cache-backed source). It plays on, and no item error is
+    recorded. The guard's 416 carries a `SourceChangedException` cause, which the player's load policy never retries
+    (L1).
 
   Same-length re-stitching isn't caught. The copy then plays with a jump, and a parse failure still drops it
   (`bad_media`).
@@ -363,7 +375,8 @@ So extras go when space is needed (the floor) **or** when the cache is over the 
 the limit and the floor bound the extras, and an age limit would delete what the kid replays while there is room.
 
 Where eviction runs:
-- the sync: inside `runLock`, after the listings, with the prune. It never waits on a lock: held items are skipped, and
+- the sync: inside `runLock`, after the listings, the prune and the orphan sweep (the sweep first, so orphans about to
+  go never cost an extra, qa-30-s3b-code L2). It never waits on a lock: held items are skipped, and
   removing an unheld resource takes `SimpleCache`'s monitor only briefly;
 - the download job: each planning round, before fetching, so a Storytel book gets its floor;
 - both re-check the held set before each removal.
@@ -375,8 +388,9 @@ Bytes per item come from one pass over the cache's keys (`MediaCache.bytesByItem
 heldCacheKeys)`.
 - A resource key is an orphan when it is no row's `cacheKey` and doesn't start with any row's `hlsKeyPrefix`, and isn't
   held.
-- The cache's keys are read **before** the rows. The sink inserts its row before it writes, so a key seen first has
-  its row by the time the rows are read.
+- The cache's keys are read **before** the rows. The sink inserts its row before it writes, so a key with committed
+  bytes seen first has its row by the time the rows are read. (`SimpleCache` adds a key at the hole lock, before
+  the sink's row; such a key belongs to an item the player holds and has no committed span - qa-30-s3b-code N4.)
 - It removes what a still-open `CacheDataSource` committed after a prune, and a stale partial left by §1.6.
 
 ### 1.9 Removals
@@ -578,12 +592,12 @@ Step 3b (cache-through, extras, the limit):
   - every item and timeline change sets `heldLocal`. An item leaving it is settled on IO (§1.5);
   - `startedPlaying` (local renderer): `markPlayed` beside design 29's `deleteNews`;
   - `onError`: the length guard's `http_416` path and the gate's exception (§1.6).
-- `sync/CacheThrough.kt` (new): `settle(context, ref)`, `catchUp(context)` (one enqueue per sync),
+- `sync/CacheThrough.kt` (new): `settle(context, ref)`, `catchUp(context)` (no enqueue since qa-30-s3b-code L3),
   `evict(context, plan)` (re-checks `heldLocal` before each remove) and `sweepOrphans(context)`.
 - `sync/Downloads.kt`: the worker plans with `PlayerHub.heldLocal` and evicts each round before fetching, with
   `extrasFloor(plan.wantsStorytel, StorytelAccount.state() == "ok")` and the limit.
 - `sync/Sync.kt`: `catchUp` before `runLock`. Inside it, after the listings: the plan with `held`, the prune
-  (re-checking held), `evict`, `sweepOrphans`. `writeReport` computes `extra_bytes` from the plan (L1).
+  (re-checking held), `sweepOrphans`, `evict` (qa-30-s3b-code L2: the sweep first). `writeReport` computes `extra_bytes` from the plan (L1).
 - `sync/ArtPlan.kt`: extras' art in `keep` (§1.11).
 
 **Design 29 coordination:** step 3b builds on design 29 merged into main: Room 3 -> 4, design 29's `Sync.kt` (its two
@@ -802,7 +816,7 @@ Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in,
 - `migrations/0073_music_data_and_storage.sql` (main was at 0072): the two switches from `music_mobile_data`, the old
   column dropped, `music_storage_limit_gb INTEGER DEFAULT 2`.
 - `models.rs` `DevicePolicy`; `music.rs`: `MusicPolicy` in §3's order, `mobile_data_wire`, `STORAGE_LIMITS`,
-  `DEFAULT_STORAGE_LIMIT_GB`, `storage_limit`, `storage_limit_label`, `older_phone_note`, `storage_line`, `gigabytes`.
+  `DEFAULT_STORAGE_LIMIT_GB`, `storage_limit`, `storage_limit_label`, `older_phone_note`, `storage_line`, `gigabytes_up` (`gigabytes` until the QA fix round).
 - `handlers/music.rs`: `MusicCard` (the switches, `data_note`, `storage_limit(s)`; the storage line and its warning go
   into the card's `lines`/`warnings`), `mobile_switches`, `save_device_settings` (one `UPDATE ... RETURNING` that keeps
   the stored limit when the post has none, so the event names the limit in force).
@@ -831,6 +845,16 @@ Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in,
   launcher carries `music` as a raw object, so the new keys break nothing.
 - Docs: `server/CLAUDE.md` (Vibb music library: data, PWA, wire; the Storytel note).
 - Not device-tested: §8 check 1.
+- **Code QA fix round** (`qa-30-s1-code.md`, 0 High, 0 Medium, 4 Low):
+  - L1: the over-the-limit warning rounds the kept figure **up** to the tenth (`music::gigabytes_up`), so 2.04 GB
+    against 2 GB reads "2.1 GB of the 2 GB limit", never "2.0 GB"; tested from 2,000,000,001 bytes up.
+  - L2: `a_page_from_before_the_update_sets_both_switches_from_mobile_data` pins the event of an old page's post (the
+    kept limit, "storage limit 10 GB"); QA's mutation M11 (logging the posted limit) now goes red.
+  - L3 (no code change): **steps 1 and 2 merge to `main` together.** Step 2 updates the launcher's
+    `PolicyResponseCompatTest` to the seven-key music object, so `main` never has the two pins disagreeing.
+  - L4 (no code change, the note's wording kept): **release order: no `server-v*` release with step 1 before the
+    `launcher-v*` and `music-v*` releases that read the two switches (steps 2 and 3a).** Until then the card's "Update
+    both" would name an update that doesn't exist yet. The orchestrator holds the server tag.
 
 ## Step 2 implementation status (2026-10-13, branch `design-30-s2`)
 
@@ -888,3 +912,202 @@ music app's three constants; nothing of steps 3a or 3b (the music app reads none
   pins). QA's M12 (`|| true` on the own-file Wi-Fi choice) re-run: red. Launcher `assembleDebug testDebugUnitTest
   -PwarningsAsErrors=true`: 1079 tests, 0 failures. Music `testDebugUnitTest -PwarningsAsErrors=true`: 614 tests, 0
   failures.
+
+## Step 3a implementation status (2026-10-13, branch `design-30-s3a`)
+
+Branch `design-30-s3a` from step 2 (`777e4434`). Not pushed. The music app reads the two switches and the limit, the
+gate and the download job follow them, and the `audio_bytes`/`extra_bytes` contract commit across `server/`,
+`launcher/` and `music/` (M4); nothing of step 3b (no cache-through, extras, eviction or Room change).
+- `bridge/BridgeConfig.kt`: `streamMobileData`/`downloadMobileData` replace `mobileData`; `storageLimitGb: Int?`
+  (default `DEFAULT_STORAGE_LIMIT_GB` = 2, null = none); the pure `mobileSwitch(values, key)` and
+  `storageLimit(values)` (`MAX_STORAGE_LIMIT_GB` = 1000, the launcher's bound).
+- `logic/NetGate.kt`: `streamAllowed(caps, streamMobileData)`, `downloadAllowed(caps, downloadMobileData)` (one
+  private formula), `downloadWaiting(caps, downloadMobileData, storageLow)` through `downloadAllowed`,
+  `playability(..., streamMobileData)`; the header names both switches.
+- `logic/Report.kt`: `stateReport(versionCode, libraryVersion, cacheBytes, audioBytes, extraBytes, ...)`, both always
+  `put` after `cache_bytes`. `Sync.writeReport` sends `MediaCache.totalBytes` and 0 (the download job writes the
+  report through the same function).
+- `data/Store.kt`: `streamMobileData`, `downloadMobileData`, `storageLimitGb` (live from the managed config;
+  unmanaged, the debug feed's prefs). `DebugFeedReceiver`: `config.json`'s `stream_mobile_data`,
+  `download_mobile_data`, `storage_limit_gb`; a bare `mobile_data` sets both switches.
+- Callers: `PlaybackService.playable`/`playableFrom`/`onError` read the streaming switch; `Downloads.enqueue`'s network
+  constraint, `DownloadWorker` and `Sync` (`enqueue`, `downloadWaiting`) the downloads switch.
+- The contract commit: `server/testdata/music_state.json` (`"audio_bytes": 100000000, "extra_bytes": 23456789` after
+  `cache_bytes`); `music.rs` `MusicState.audio_bytes`/`extra_bytes`, clamped like `cache_bytes`; `handlers/music.rs`
+  `device_card` passes the report's values to `storage_line` and `older_phone_note` (step 1's two marked call sites);
+  the launcher's `musicState` key list.
+- **Interpreted:**
+  - `audioBytes`/`extraBytes` are required parameters of `stateReport` (no defaults), so no caller can leave them out.
+  - The music app's switch read: a key the launcher wrote counts as `== true` (a non-Boolean is off, as every
+    restriction); only an absent key falls back to `mobile_data`. The limit: only an `Int` counts (a `Long` is junk,
+    read as 2 GB; the launcher writes an Int, qa-21-step3-code H1).
+  - Unmanaged (the debug feed), a switch never set falls back to the old `mobile_data` pref, so an emulator fed before
+    this step keeps its setting.
+  - `Store.storageLimitGb` is read by nothing yet (3b's eviction).
+  - A report whose `audio_bytes`/`extra_bytes` isn't a number is refused whole by the server, as `cache_bytes` is.
+  - In 3a `extra_bytes` is 0, so the card's warning reads the whole audio cache as kept; true until 3b keeps extras.
+- Tests: music `BridgeTest` `the managed config the launcher writes`, `an older launcher's mobile_data sets both
+  switches and the limit is 2 GB`, `the storage limit - 0 is none, junk is 2 GB`, the contract test (the three keys
+  read), the report-keys fixture test; `NetTest` `streaming follows the streaming switch only`, `downloads follow the
+  downloads switch only`, `neither while roaming, both on Wi-Fi`; `ReportTest` `audio_bytes and extra_bytes are always
+  in the report` (+ the key set); `GuardsTest` `the stream switch is read live from the managed config`; launcher
+  `MusicPlanTest` `music_state passes audio_bytes and extra_bytes` (and the fixture end-to-end test); server
+  `music::tests` `music_state_keeps_every_field_the_phone_sends` (the new fixture), `music_state_clamps_audio_and_
+  extra_bytes`; `src/tests/music.rs` `the_card_says_an_older_phone_uses_mobile_data_only_with_both` (now with a
+  report that has `extra_bytes`), `the_storage_line_shows_the_limit_and_the_extras` (a 3a report through the card,
+  the line and the warning, then a higher limit).
+  Server `cargo test`: 671 passed, `fmt --check` clean, `clippy --all-targets` 13 warnings, all in code this step doesn't
+  touch (none new). Launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`: 1079 tests, 0 failures. Music
+  `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 621 tests, 0 failures.
+- Docs: `music/CLAUDE.md` (the gate rule, the bridge's keys and report fields, Storytel's switch), `server/CLAUDE.md`
+  (the storage line), `launcher/CLAUDE.md` (`music_state`), `docs/testing/emulator.md` §6f (`config.json`'s keys).
+- Not device-tested: §8 checks 2, 3, 4 and 11 are 3a's (with 3b's write-through for check 2's `du`).
+
+**Code QA fix round** (`qa-30-s3a-code.md`, 0 High, 0 Medium, 2 Low, 2 Nits; all fixed, its "Fixes" table):
+- L1: `logic/NetGate.kt` `stopRunningDownload(caps, downloadMobileData)` (= the network doesn't allow downloads now);
+  the sync passes it as `Downloads.enqueue(..., stopRunning)`, which then `REPLACE`s a running job instead of
+  appending (WorkManager stops it; the new job waits for its constraint; the partial resumes with Range). The
+  worker's own re-enqueues never stop. Only where the switch forbids the network, so a Wi-Fi download is never
+  interrupted by a sync. §1.1 says so.
+- L2: `Store`'s unmanaged path is the managed config's own rules on the feed's prefs (`mobileSwitch(prefs.all, key)`,
+  `storageLimit(prefs.all)`), pinned in `GuardsTest` with the debug feed's order (a bare `mobile_data` first, a key of
+  its own after it).
+- N1: `Downloads.kt`'s header names the downloads switch. N2: the debug feed stores `storage_limit_gb` as given; the
+  older-phone card test asserts the 3a report's storage line, so it proves the report was stored.
+- Music 622 tests, launcher 1079, server 671 (fmt clean, clippy unchanged at 13, none in this step's code); QA's M4
+  and two more mutations (the feed's order, `enqueue` ignoring `stopRunning`) go red.
+
+## Step 3b implementation status (2026-10-13, branch `design-30-s3b`)
+
+Branch `design-30-s3b` from step 3a with its fix round (`70a7e801`), step 1's fix round (`8f55d2b7`, branch
+`design-30-s1`) merged in: the code merged cleanly, the one conflict was this doc's status sections (both kept: step
+1's fix round under step 1's status, then steps 2 and 3a). Not pushed. Music app only (§5), plus
+`scripts/fake-audio.py` and its CI selftest; no server or launcher change (the PWA already reads `extra_bytes`, 3a).
+- `logic/CacheKeys.kt`: `withoutQuery` internal, `sameSource`, `itemOfResource` (the item cache key a resource
+  belongs to: itself, or the one whose `hlsKeyPrefix` it starts with - one rule for the orphan sweep and
+  `MediaCache.bytesByItem`).
+- `logic/Offline.kt` (the header names what is ours): `EXTRAS_FREE_FLOOR`, `storageLimitBytes`, `throughWrites`,
+  `staleThrough`, `sourceChanged`, `keepPlayedAt`, `heldItems`, `Extra`, `extrasToEvict`, `extrasFloor`,
+  `orphanResources`.
+- `data/MusicDb.kt`: `DownloadRow.playedAt`, Room **4** (`AutoMigration(3, 4)`, `schemas/.../4.json` exported and
+  committed); DAO `download`, `insertThrough` (blocking `INSERT OR IGNORE`), `markPlayed` (an `UPDATE` only),
+  `upsertDownload` a `@Transaction` through `keepPlayedAt` (`replaceDownload` underneath).
+- `media/MediaCache.kt`: `ThroughSink` (+ `Factory`), `StreamGate`/`StreamGateException`, `LengthGuard` (in `http(...)`
+  for both factories), `playbackFactory(..., through)` with `FLAG_IGNORE_CACHE_ON_ERROR`, `uncachedFactory`,
+  `copyOnlyFactory`, `throughSink`, `bytesByItem(context, cacheKeys)`, `resourceKeys`, `removeResource`, `freeBytes`
+  (moved from `Downloads`), `storedLength`, `gated`; the header no longer says "streams aren't cached".
+- `media/ItemMediaSourceFactory.kt`: `ItemTag.through`, `.uncached`, `.ref`. `playback/LocalRenderer.kt`: §1.7's
+  track selection; `RendererEvent.Error.gated`. `playback/PlayerHub.kt`: `heldLocal`, `claim`, `hold`.
+- `playback/PlaybackService.kt`: `activeFor(..., start)` claims the start and its next, then
+  `CacheThrough.queueRows` (rows read again, the stale ones dropped, `Active.uncached`); `mediaItem`'s tag;
+  `updateHeld` (from `publish`, and `loaded` after `renderer.load`/resumption) settles what left the held set on IO;
+  `markPlayed` from `startedPlaying` and `onIsPlayingChanged`; `onError(code, gated)` and `playOnUncached`;
+  `onDestroy` empties the held set without settling.
+- `sync/CacheThrough.kt` (new): `settle`, `catchUp`, `remove` (the prune), `evict`, `extraBytes`, `sweepOrphans`,
+  `queueRows`, `removeCopy` (the job's).
+- `sync/DownloadPlan.kt`: `downloadPlan(..., held)`, `DownloadPlan.extras`, `.wantsStorytel`. `sync/DownloadRun.kt`:
+  `sameSource` for the partial drop and `lastBytes`; `DownloadIo.removeCopy` is `suspend`. `sync/Downloads.kt`: the
+  plan with `PlayerHub.heldLocal`, `evict` each round before fetching. `sync/Sync.kt`: `catchUp` before `runLock`;
+  inside it the plan with the held set, `remove`, `evict`, `sweepOrphans`; `writeReport`'s `extra_bytes`.
+  `sync/ArtPlan.kt`: `artWant(..., extras)`, `ArtWants.compute` passes the plan's extras.
+- `scripts/fake-audio.py` (`--vary`, `--step`, `--print-listing ENTRY`, `--selftest`), run by `music.yml` (path filter
+  and a selftest step).
+- **Interpreted:**
+  - **`markPlayed` also at `onIsPlayingChanged(true)`**, not only `startedPlaying`: `start()` calls `startedPlaying`
+    right after `renderer.load`, before the loader has opened the data source, so for a fresh stream the sink's row
+    doesn't exist yet and the `UPDATE` would hit nothing - the item would be pruned as unplayed instead of kept. When
+    the player really plays, its bytes went through the sink's open, so the row is there. Both calls are the same
+    guarded helper (local renderer, no own file, no Storytel).
+  - **The claim** lives in `PlayerHub` beside the timeline part (`heldLocal = timeline + claims`); the claims end at
+    the queue's load (`updateHeld(loaded = true)` after `renderer.load`, after `start()` gives up, and posted after
+    playback resumption hands its items to the session). A plain `publish` keeps them, so an event of the old queue
+    can't drop a claim before the new queue loads.
+  - **The held set's next** is ExoPlayer's `nextMediaItemIndex`; the claim's next is `start + 1` of the plan's keys.
+  - **A held row outside the keep set that qualifies as an extra is in `extras`** (and the report's `extra_bytes`);
+    `extrasToEvict` skips it. A held row that isn't one is neither pruned nor an extra.
+  - **The mutex is held for one row at a time** (catch-up, the prune, eviction), so a new queue's `queueRows` never
+    waits for a whole pass; the orphan sweep takes none (an orphan has no row to settle, and only a held item gets a
+    new one - re-checked before each removal).
+  - **The stale-partial delete** (`queueRows`) keeps the bytes of an item the previous queue held (`before`, read
+    before the claim): re-reading `heldLocal` there would always find the queue's own claim. The orphan sweep takes
+    them once let go.
+  - **Settle**: a progressive copy needs its stored content length; HLS needs `#EXT-X-ENDLIST`, no separate audio
+    renditions (`EXT-X-MEDIA` with a URI), and every segment, initialization segment and key file cached. A settled
+    row's failure fields are cleared, like a finished download's. A settled item joins the service's queue at once
+    (`Active.copies`/`downloads`).
+  - **The job's partial drop for a held item** (`CacheThrough.removeCopy`) is skipped: only an HLS item can be held
+    and fetched (progressive held items are busy), and its bytes are what the player reads.
+  - **`playOnUncached` never calls `play()`**: `prepare()` keeps the play state, so a paused item that failed while
+    buffering stays paused ("nothing starts by itself"). It also needs the item's url (a withdrawn item without a copy
+    can't stream anyway), and an item already uncached takes the ordinary error path, so a server's own 416 can't loop.
+    It is a fifth reader of `positionMs()` (the seek back), added to `GuardsTest`'s allowlist.
+  - **`evict(context, plan, limitBytes, floorBytes)`**: the caller passes the limit and the floor (§5.2's worker line
+    names both), not `evict(context, plan)`.
+  - **Test names**: JVM method names can't hold `;` or `.`: OfflineTest's `... a changed source - unknown lengths are
+    not` and GuardsTest's `every MediaCache remove outside ...`. `CacheKeysTest` is a new file (cache keys had no test
+    class of their own); the sink and the guard's behaviour are in a new `media/ThroughSinkTest` (fakes of `Cache` and
+    `HttpDataSource`); NewItemsTest's schema test no longer pins `version = 3` (OfflineTest's v4 test does).
+- **Found, not changed:**
+  - **Cleartext**: the music app has no network security config and targets SDK 36, so Android refuses cleartext
+    http for every host - `http://10.0.2.2` included. OkHttp (and so Media3) then fails before connecting. That would
+    stop `fake-audio.py` (§8 check 10) and `fake-storytel.py` (§6i) on the emulator, and any `lan` RSS feed served
+    over plain http. To verify on the emulator before §8 check 10; a debug-only `network_security_config` for
+    10.0.2.2 would be the narrow fix.
+  - A synthetic 416 is `ERROR_CODE_IO_BAD_HTTP_STATUS` in Media3 1.7.1, so the player's load policy retries it a few
+    times (~3 s) before `onError` plays the item on uncached; the job takes its path at once.
+- Tests: `CacheKeysTest` `the same source ignores the query of an http url, compares a source id whole`, `a cache
+  resource belongs to its item's key or HLS prefix`; `OfflineTest` every §6 name (the ten rules, the schema, the eight
+  plan tests); `StorytelDownloadTest` `a changed source at a resume drops the partial and fetches from 0`, `a partial
+  from the same url with a new query is kept`; `EpisodeArtTest` `an extra's picture is kept`; `ReportTest` (the
+  `extra_bytes` glue); `ThroughSinkTest` (the row once, before the first write, only when writing; a failure is a
+  decline; the guard's 416); `GuardsTest` `playback writes the cache only through ThroughSink, with
+  FLAG_IGNORE_CACHE_ON_ERROR`, `settle and catchUp never run on writer, and catchUp runs outside runLock`,
+  `DownloadWorker and Sync plan with PlayerHub's held set`, `every MediaCache remove outside PlaybackService's own load
+  re-reads heldLocal`, `the phone's player marks what it played, an existing row only` (and the existing pins moved
+  to the new code).
+  Music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 654 tests (622 before), 0
+  failures. `python3 -I scripts/fake-audio.py --selftest` OK.
+- Docs: `music/CLAUDE.md` (layout, "Playback never waits", the new cache-through rule, "Prune only on a parsed
+  listing", the bridge's report fields, `fake-audio.py`), design 21 §4.5 (a pointer here), `docs/testing/emulator.md`
+  §6f (§8's checks, the fake host), root `CLAUDE.md` (scripts, `music.yml`), `PLAN.md`.
+- Not device-tested: §8 checks 2 (the `du`), 5-10.
+
+**Code QA fix round** (`qa-30-s3b-code.md`: 2 High (H2 pre-existing), 1 Medium, 6 Low, 4 Nits; all addressed):
+- **H1:** `playOnUncached` loads the queue again (`renderer.load(..., index, pos, playNow = false)`: every source built
+  anew, the play state kept) instead of `replaceItem`, which Media3 turns into an in-place update of the same
+  cache-backed source (`canUpdateMediaItem` compares the uri and the cache key or stream keys, never the tag). The
+  uncached item carries no `customCacheKey`, so no request names the stale copy's key and the guard can't trip on
+  its old stored length. `GuardsTest` pins both (the load, no `replaceItem`, the missing key); the pins fail on
+  `d3c8b648`.
+- **H2:** `res/xml/network_security_config.xml`: `base-config cleartextTrafficPermitted="true"`, system trust anchors
+  only, referenced from the manifest (no `usesCleartextTraffic`), lint's `InsecureBaseConfiguration` ignored on that
+  element with a comment. Nothing narrower: Sonos speakers sit on whatever LAN address the home's router gives them,
+  and a network security config can only name hosts (`domain-config`), not ranges; http enclosures and `lan` feeds are
+  arbitrary hosts too. The app's own address rules still decide what may be fetched. `SourceScanTest` `cleartext is
+  allowed for Sonos, http enclosures, lan feeds and the fakes - the system CAs only` pins the file, the reference, no
+  other config, no domain or debug overrides. `music/CLAUDE.md` has the rule.
+- **M1:** `the keep set and the held items are never evicted, even over the limit` now plays the whole keep set (the
+  newest two, the bookmark and its next, all played before the extras) and asserts none of it is an extra or pruned;
+  `a played item outside the keep set ...` plays its keep set too. QA's mutation M1 goes red.
+- **L1:** the guard's 416 has a `SourceChangedException` cause (`errorCode` still `http_416`); `SourceChangedPolicy`
+  (Media3's default, except `C.TIME_UNSET` for it) is the player's load policy (`LocalRenderer`). `ThroughSinkTest`
+  `the player doesn't retry a changed source, and retries everything else as Media3 does`.
+- **L2:** the sync sweeps before it evicts (§1.8, §5.2 amended); `GuardsTest` pins the order.
+- **L3:** `catchUp` enqueues nothing (§1.5 amended): the sync's own plan enqueues for wanted keep-set items.
+- **L4:** `settle` (the service's, when an item leaves the held set) enqueues the job when a played row stays
+  incomplete; the job's plan decides whether it is wanted. Only a played row: a preloaded next item the kid never
+  started doesn't start a job.
+- **L5:** the held set reaches every item that starts within `HELD_AHEAD_MS` (75 s: the load control's 50 s plus the
+  15 s save tick, which now recomputes it) of the position (`heldAhead`, pure; `OfflineTest` `short items - ...`). An
+  unknown length ends the window after the next item - the limit left, documented in §1.6 (an item with no
+  listed or known duration is rare: the server lists durations). A sixth `positionMs()` reader (the window), in the
+  allowlist.
+- **L6:** `GuardsTest` pins the other ends of a claim (`start()`'s give-up, resumption's post) and `activeFor` ends its
+  claims when anything throws between the claim and the queue (`catch (e: Throwable)`, rethrown).
+- **N1:** `evict`'s `extrasToEvict(extras, PlayerHub.heldLocal, ...)` pinned. **N2:** emulator.md §6f: the fake needs
+  more episodes than the depth (`--episodes ep1,...,ep7` or depth 1), and cleartext now works. **N3:** no change - the
+  spec's choice (the sink's 1 GiB floor vs the job's 1.5 GB while a Storytel book is wanted); the churn is bounded by
+  what the kid plays. **N4:** the sweep's KDoc and §1.8 say a key can appear at the hole lock before its row, and why
+  that is harmless.
+- Music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 657 tests (654 before), 0
+  failures; `fake-audio.py --selftest` OK.

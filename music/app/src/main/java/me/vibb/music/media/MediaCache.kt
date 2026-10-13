@@ -1,35 +1,57 @@
 package me.vibb.music.media
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.ParserException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSink
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
+import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import me.vibb.music.BuildConfig
+import me.vibb.music.data.DownloadRow
+import me.vibb.music.data.Store
+import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.hlsKeyPrefix
 import me.vibb.music.logic.hlsResourceKey
 import me.vibb.music.logic.isPrivateAddress
 import me.vibb.music.logic.itemErrorCode
+import me.vibb.music.logic.itemOfResource
+import me.vibb.music.logic.sourceChanged
+import me.vibb.music.logic.streamAllowed
+import me.vibb.music.logic.throughWrites
+import me.vibb.music.sync.netCaps
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
 import java.net.Proxy
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 /**
- * The one download cache (design 21 §4.5): a Media3 [SimpleCache] in noBackupFilesDir that never
- * evicts by itself (the keep/prune rule decides), written only by downloads; playback reads it and
- * streams the rest without caching (21 §4.5 "streams aren't cached"). Each item has its own
- * [keyFactory] (QA #2, qa-21-step2-code S3): a progressive item is one resource keyed
- * "<entry key>:<item key>", an HLS item's playlists and segments are keyed by their path under it.
+ * The one audio cache (design 21 §4.5): a Media3 [SimpleCache] in noBackupFilesDir that never evicts
+ * by itself (the keep/prune rule and the parent's storage limit decide, design 30 §1.8). The download
+ * job writes it, and so does a stream as it plays (design 30 §1.4: through the [ThroughSink], above
+ * depth 0, above the free floor); the player reads it first. Each item has its own [keyFactory] (QA #2,
+ * qa-21-step2-code S3): a progressive item is one resource keyed "<entry key>:<item key>", an HLS
+ * item's playlists and segments are keyed by their path under it.
  */
 @OptIn(UnstableApi::class)
 object MediaCache {
@@ -103,22 +125,52 @@ object MediaCache {
      */
     fun httpClient(publicOnly: Boolean): OkHttpClient = if (publicOnly) publicClient else lanClient
 
-    /** Only http(s) upstream for NRK and RSS (a playlist can't open a file: or content: URI); an
-     * HTML answer is never audio (21b §2.5 `bad_media`). */
-    private fun http(publicOnly: Boolean, followRedirects: Boolean = true): OkHttpDataSource.Factory =
-        OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))
+    /**
+     * Only http(s) upstream for NRK and RSS (a playlist can't open a file: or content: URI); an HTML
+     * answer is never audio (21b §2.5 `bad_media`). Behind the [LengthGuard], for the player and the
+     * job alike (design 30 §1.6, M5).
+     */
+    private fun http(context: Context, publicOnly: Boolean, followRedirects: Boolean = true): DataSource.Factory {
+        val okhttp = OkHttpDataSource.Factory(if (followRedirects) httpClient(publicOnly) else noRedirectClients.getValue(publicOnly))
             .setUserAgent("VibbMusic/${BuildConfig.VERSION_NAME}")
             .setContentTypePredicate { type -> !type.lowercase().startsWith("text/html") }
+        val cache = get(context)
+        return DataSource.Factory { LengthGuard(okhttp.createDataSource()) { key -> storedLength(cache, key) } }
+    }
+
+    /** [upstream] behind the [StreamGate]: the streaming switch, asked at every open (design 30 §1.6, L4). */
+    private fun gated(context: Context, upstream: DataSource.Factory): DataSource.Factory {
+        val app = context.applicationContext
+        val store = Store.get(app)
+        return DataSource.Factory { StreamGate(upstream.createDataSource()) { streamAllowed(netCaps(app), store.streamMobileData) } }
+    }
 
     /**
-     * For the player: the item's copy first (read only), then the network - or, for [copyOnly] (a
-     * Storytel book, design 26b §4.4: download-only), the copy and nothing else: no upstream at all
-     * (Media3 then reads through a placeholder that fails to open), so a missing part is an error,
-     * never a request.
+     * For the player: the item's copy first, then the network through the [StreamGate] - or, for
+     * [copyOnly] (a Storytel book, design 26b §4.4: download-only), the copy and nothing else: no
+     * upstream at all (Media3 then reads through a placeholder that fails to open), so a missing part
+     * is an error, never a request. What streams is written to the cache only through [through] (design
+     * 30 §1.4, the [ThroughSink]; null = read only), and a cache error never fails playback
+     * (`FLAG_IGNORE_CACHE_ON_ERROR`: the read goes on uncached).
      */
-    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, copyOnly: Boolean = false): CacheDataSource.Factory = CacheDataSource.Factory()
+    fun playbackFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, copyOnly: Boolean = false, through: ThroughSink.Factory? = null): CacheDataSource.Factory =
+        CacheDataSource.Factory()
+            .setCache(get(context))
+            .setUpstreamDataSourceFactory(if (copyOnly) null else gated(context, http(context, publicOnly)))
+            .setCacheWriteDataSinkFactory(if (copyOnly) null else through)
+            .setCacheKeyFactory(keys)
+            .setFlags(if (copyOnly) 0 else CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+
+    /** For an item whose cached bytes are stale (design 30 §1.6, `ItemTag.uncached`): plain http through the gate, no cache. */
+    fun uncachedFactory(context: Context, publicOnly: Boolean): DataSource.Factory = gated(context, http(context, publicOnly))
+
+    /**
+     * The cache and nothing else (design 30 §1.5, settle): no upstream, no sink, and a plain
+     * `createDataSource()` - never `FLAG_BLOCK_ON_CACHE` - so a read never waits on a lock.
+     */
+    fun copyOnlyFactory(context: Context, keys: CacheKeyFactory): CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(get(context))
-        .setUpstreamDataSourceFactory(if (copyOnly) null else http(publicOnly))
+        .setUpstreamDataSourceFactory(null)
         .setCacheWriteDataSinkFactory(null)
         .setCacheKeyFactory(keys)
 
@@ -126,8 +178,39 @@ object MediaCache {
     fun downloadFactory(context: Context, publicOnly: Boolean, keys: CacheKeyFactory, followRedirects: Boolean = true): CacheDataSource.Factory =
         CacheDataSource.Factory()
             .setCache(get(context))
-            .setUpstreamDataSourceFactory(http(publicOnly, followRedirects))
+            .setUpstreamDataSourceFactory(http(context, publicOnly, followRedirects))
             .setCacheKeyFactory(keys)
+
+    /**
+     * The sink of item [ref] (design 30 §1.4): it writes at an open only while [throughWrites] says so -
+     * [through] (NRK/RSS), the entry's depth in the current library, the free space now - and makes the
+     * item's not-done row ([url], [hls]) before its first write.
+     */
+    fun throughSink(context: Context, ref: ItemRef, through: Boolean, cacheKey: String, url: String, hls: Boolean): ThroughSink.Factory {
+        val app = context.applicationContext
+        val store = Store.get(app)
+        return ThroughSink.Factory(
+            get(app),
+            decide = { throughWrites(through, store.library()?.entry(ref.entryId)?.cache, freeBytes(app)) },
+            firstWrite = { store.db.insertThrough(DownloadRow(ref.entryId, ref.itemKey, cacheKey, url, hls, false, 0, null, null)) },
+        )
+    }
+
+    /**
+     * The free space where the cache lives (noBackupFilesDir): vibb's `_free_bytes` (`disk_usage(...).free`),
+     * not what the system could clear for us - the floors keep the card from filling, they don't make room.
+     */
+    @SuppressLint("UsableSpace")
+    fun freeBytes(context: Context): Long = context.noBackupFilesDir.usableSpace
+
+    /** The stored total length of cache resource [key], or null when unknown. */
+    fun storedLength(cache: Cache, key: String): Long? = ContentMetadata.getContentLength(cache.getContentMetadata(key)).takeIf { it >= 0 }
+
+    /** Did the playback fail at the [StreamGate] (the streaming switch, design 30 §1.6)? */
+    fun gated(error: Throwable): Boolean = generateSequence(error) { it.cause }.any { it is StreamGateException }
+
+    /** Did a load fail at the [LengthGuard] (a changed source, design 30 §1.6)? */
+    fun sourceChanged(error: Throwable): Boolean = generateSequence(error) { it.cause }.any { it is SourceChangedException }
 
     /** Delete an item's audio. */
     fun remove(context: Context, cacheKey: String, hls: Boolean) {
@@ -149,6 +232,26 @@ object MediaCache {
 
     fun totalBytes(context: Context): Long = get(context).cacheSpace
 
+    /**
+     * Bytes cached per item of [cacheKeys], in one pass over the cache's keys (design 30 §1.8): an HLS
+     * item's resources grouped by its [me.vibb.music.logic.hlsKeyPrefix] ([itemOfResource]).
+     */
+    fun bytesByItem(context: Context, cacheKeys: Set<String>): Map<String, Long> {
+        val c = get(context)
+        val bytes = HashMap<String, Long>()
+        for (key in c.keys) {
+            val item = itemOfResource(key, cacheKeys) ?: continue
+            bytes[item] = (bytes[item] ?: 0L) + c.getCachedSpans(key).sumOf { it.length }
+        }
+        return bytes
+    }
+
+    /** Every resource key in the cache. */
+    fun resourceKeys(context: Context): Set<String> = get(context).keys.toSet()
+
+    /** Delete one cache resource (the orphan sweep, design 30 §1.8). */
+    fun removeResource(context: Context, key: String) = get(context).removeResource(key)
+
     /** The `item_errors` code of a failed download or stream (21b §4.3). */
     fun errorCode(error: Throwable): String {
         var e: Throwable? = error
@@ -161,4 +264,129 @@ object MediaCache {
         }
         return itemErrorCode(null, false)
     }
+}
+
+/**
+ * The playback factory's cache sink (design 30 §1.4): Media3's [CacheDataSink], deciding at every open
+ * - one per hole of a progressive item, one per HLS segment or playlist - from live state ([decide]).
+ * Declined, the open writes nothing (the same no-op as [CacheDataSink]'s unknown-length path). Before
+ * its first write it makes the item's row ([firstWrite], M1), so every byte it writes has one. A failure
+ * of either is a decline: a stream never fails for its cache.
+ */
+@OptIn(UnstableApi::class)
+class ThroughSink(cache: Cache, private val decide: () -> Boolean, private val firstWrite: () -> Unit) : DataSink {
+    private val sink = CacheDataSink(cache, CacheDataSink.DEFAULT_FRAGMENT_SIZE)
+    private var writing = false
+    private var rowMade = false
+
+    override fun open(dataSpec: DataSpec) {
+        writing = try {
+            decide().also { if (it && !rowMade) firstWrite() }
+        } catch (e: Exception) {
+            false
+        }
+        if (!writing) return
+        rowMade = true
+        sink.open(dataSpec)
+    }
+
+    override fun write(buffer: ByteArray, offset: Int, length: Int) {
+        if (writing) sink.write(buffer, offset, length)
+    }
+
+    override fun close() {
+        if (!writing) return
+        writing = false
+        sink.close()
+    }
+
+    /** One sink per data source the player opens for the item. */
+    class Factory(private val cache: Cache, private val decide: () -> Boolean, private val firstWrite: () -> Unit) : DataSink.Factory {
+        override fun createDataSink(): DataSink = ThroughSink(cache, decide, firstWrite)
+    }
+}
+
+/**
+ * The [LengthGuard]'s reason, the cause of its synthetic 416 (`errorCode` still reads `http_416`): another
+ * request would only trip the guard again, so the player's [SourceChangedPolicy] doesn't retry it.
+ */
+class SourceChangedException : IOException("the source changed under a partial copy")
+
+/**
+ * The player's load policy (qa-30-s3b-code L1): Media3's default, except that a changed source fails at once
+ * - the default retries anything that isn't a parse error or the like after 0, 1 and 2 s, three more
+ * requests the guard would close, before the player hears of it.
+ */
+@OptIn(UnstableApi::class)
+class SourceChangedPolicy : DefaultLoadErrorHandlingPolicy() {
+    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+        if (MediaCache.sourceChanged(loadErrorInfo.exception)) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
+}
+
+/** The streaming switch refused a request (design 30 §1.6): "Ikke lastet ned - trenger Wi-Fi", never an item error. */
+class StreamGateException : IOException("streaming is not allowed on this network now")
+
+/**
+ * The player's upstream (design 30 §1.6, L4): every open asks [allowed] (`streamAllowed` with the
+ * streaming switch, live) - a copy's holes and the next item's preload included, which ExoPlayer opens
+ * whatever the queue's own check said. The download factory has none: the job has its own gate.
+ */
+@OptIn(UnstableApi::class)
+class StreamGate(private val upstream: DataSource, private val allowed: () -> Boolean) : DataSource {
+    override fun addTransferListener(transferListener: TransferListener) = upstream.addTransferListener(transferListener)
+
+    override fun open(dataSpec: DataSpec): Long {
+        if (!allowed()) throw StreamGateException()
+        return upstream.open(dataSpec)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = upstream.read(buffer, offset, length)
+
+    override fun getUri(): Uri? = upstream.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
+
+    override fun close() = upstream.close()
+}
+
+/**
+ * The length guard (design 30 §1.6, M5) around the http source, for the player and the job: a source
+ * is assumed to serve the same bytes for every request, and a host that stitches ads per request breaks
+ * that. A response at a position above 0 whose total length differs from the stored length of the
+ * request's cache key ([storedLength]; `CacheDataSource` sets the key) is a changed source
+ * ([sourceChanged]): a synthetic 416, so the job takes its `http_416` path (drop the partial, fetch from
+ * 0) and the player plays the item on uncached. Same-length re-stitching isn't caught.
+ */
+@OptIn(UnstableApi::class)
+class LengthGuard(private val upstream: HttpDataSource, private val storedLength: (String) -> Long?) : DataSource {
+    override fun addTransferListener(transferListener: TransferListener) = upstream.addTransferListener(transferListener)
+
+    override fun open(dataSpec: DataSpec): Long {
+        val length = upstream.open(dataSpec)
+        val key = dataSpec.key
+        if (dataSpec.position > 0 && key != null) {
+            val headers = upstream.responseHeaders
+            val changed = sourceChanged(
+                storedLength(key), upstream.responseCode, header(headers, "Content-Range"),
+                header(headers, "Content-Length")?.trim()?.toLongOrNull(), dataSpec.position,
+            )
+            if (changed) {
+                upstream.close()
+                // The cause names it, so the player's load policy doesn't retry it (SourceChangedPolicy).
+                throw HttpDataSource.InvalidResponseCodeException(416, "the source changed under a partial copy", SourceChangedException(), headers, dataSpec, ByteArray(0))
+            }
+        }
+        return length
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = upstream.read(buffer, offset, length)
+
+    override fun getUri(): Uri? = upstream.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = upstream.responseHeaders
+
+    override fun close() = upstream.close()
+
+    private fun header(headers: Map<String, List<String>>, name: String): String? =
+        headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value?.firstOrNull()
 }

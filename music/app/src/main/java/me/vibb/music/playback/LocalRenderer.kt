@@ -22,12 +22,14 @@ import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.HLS_MAX_BITRATE
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.save
 import me.vibb.music.logic.showsPlaying
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.MediaCache
+import me.vibb.music.media.SourceChangedPolicy
 
 /** Speech (podcasts, stories: a notification pauses rather than ducks) or music. */
 internal fun audioAttributes(speech: Boolean): AudioAttributes = AudioAttributes.Builder()
@@ -49,11 +51,19 @@ internal class LocalRenderer(
     private val queue: () -> Active?,
 ) : Renderer {
     private val exo: ExoPlayer = ExoPlayer.Builder(context)
-        .setMediaSourceFactory(ItemMediaSourceFactory(context))
+        .setMediaSourceFactory(ItemMediaSourceFactory(context).setLoadErrorHandlingPolicy(SourceChangedPolicy()))
         .setAudioAttributes(audioAttributes(speech = true), true)
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
+        .also { exo ->
+            // Design 30 §1.7: a stream plays - and so writes to the cache - the HLS rendition a download
+            // keeps (`pickVariant`: the highest up to HLS_MAX_BITRATE, else the lowest), never adaptive.
+            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                .setMaxAudioBitrate(HLS_MAX_BITRATE)
+                .setForceHighestSupportedBitrate(true)
+                .build()
+        }
 
     override val player: Player get() = exo
     override val kind: RendererKind get() = RendererKind.LOCAL
@@ -99,7 +109,7 @@ internal class LocalRenderer(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = emit(RendererEvent.IsPlaying(isPlaying))
 
-        override fun onPlayerError(error: PlaybackException) = emit(RendererEvent.Error(MediaCache.errorCode(error)))
+        override fun onPlayerError(error: PlaybackException) = emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error)))
 
         override fun onEvents(player: Player, events: Player.Events) = emit(RendererEvent.StateChanged)
     }

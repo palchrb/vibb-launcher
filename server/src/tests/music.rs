@@ -1214,6 +1214,14 @@ async fn a_page_from_before_the_update_sets_both_switches_from_mobile_data() {
         (&json!(true), &json!(true), &json!(true))
     );
     assert_eq!(music["storage_limit_gb"], json!(10), "the limit unchanged");
+    // The event names the limit in force, not the absent posted one (qa-30-s1-code L2).
+    assert_eq!(
+        events(&app, "music_phone_settings").await.last().unwrap(),
+        &format!(
+            "device {device}: streaming on mobile data true, downloads on mobile data true, \
+             storage limit 10 GB, volume cap off, Storytel false"
+        )
+    );
     // Its checkbox off: both off. Today's switch names without `v` aren't read.
     app.request_form(
         Method::POST,
@@ -1413,8 +1421,23 @@ async fn the_card_says_an_older_phone_uses_mobile_data_only_with_both() {
     assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
     save_switches(&app, &cookie, device, false, false).await;
     assert!(!music_card(&app, &cookie, device).await.contains(NOTE));
-    // A report with `extra_bytes` (design 30 step 3a) is a phone that reads both switches: the
-    // pure rule is `music::tests::older_phone_note_needs_an_app_report_without_extra_bytes`.
+    // A report with `extra_bytes` (design 30 step 3a; 0 counts, it is always sent) is a phone
+    // that reads both switches: no note while they differ.
+    save_switches(&app, &cookie, device, true, false).await;
+    report_music_state(
+        &app,
+        &token,
+        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000,
+               "audio_bytes": 900_000, "extra_bytes": 0}),
+    )
+    .await;
+    let shown = music_card(&app, &cookie, device).await;
+    assert!(!shown.contains(NOTE), "{shown}");
+    // The report landed (a refused one is stored as nothing, which would hide the note too): its line shows.
+    assert!(
+        shown.contains("Stored on the phone: 1.0 MB. Music downloads: 0.9 MB of the 2 GB limit."),
+        "{shown}"
+    );
 }
 
 #[tokio::test]
@@ -1448,7 +1471,45 @@ async fn the_storage_line_shows_the_limit_and_the_extras() {
         );
         assert!(!card.contains("Music downloads:") && !card.contains("Kept episodes"));
     }
-    // With `audio_bytes`/`extra_bytes` (they reach `MusicState` in step 3a), the pure line:
+    // A design 30 app (step 3a on) reports `audio_bytes` and `extra_bytes`: the line with the
+    // limit and the extras, and the warning when the kept items alone pass the limit.
+    report_music_state(
+        &app,
+        &token,
+        json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 3_500_000_000_i64,
+               "audio_bytes": 3_400_000_000_i64, "extra_bytes": 200_000_000}),
+    )
+    .await;
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/music"),
+        Some(&cookie),
+        &[("v", "2"), ("storage_limit", "2")],
+    )
+    .await;
+    let card = music_card(&app, &cookie, device).await;
+    assert!(
+        card.contains(
+            "Stored on the phone: 3500.0 MB. Music downloads: 3400.0 MB of the 2 GB limit, \
+             200.0 MB of it played beyond the offline depth (kept while there is room)."
+        ),
+        "{card}"
+    );
+    assert!(
+        card.contains("Kept episodes and books alone use 3.2 GB of the 2 GB limit"),
+        "{card}"
+    );
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{device}/music"),
+        Some(&cookie),
+        &[("v", "2"), ("storage_limit", "5")],
+    )
+    .await;
+    let card = music_card(&app, &cookie, device).await;
+    assert!(card.contains("3400.0 MB of the 5 GB limit"), "{card}");
+    assert!(!card.contains("Kept episodes"), "{card}");
+    // The pure line's variants:
     use crate::music::storage_line;
     assert_eq!(
         storage_line(1_234_500_000, Some(980_000_000), Some(210_000_000), Some(2)),
@@ -1503,10 +1564,23 @@ fn the_card_warns_when_kept_items_alone_pass_the_limit() {
         storage_line(0, Some(2_000_000_000), Some(0), Some(2)).1,
         None
     );
+    // Just over the limit reads over it, never "2.0 GB of the 2 GB limit" (qa-30-s1-code L1).
+    let just_over = |kept: i64| storage_line(0, Some(kept), Some(0), Some(2)).1.unwrap();
+    for kept in [2_000_000_001, 2_040_000_000, 2_099_999_999, 2_100_000_000] {
+        assert_eq!(
+            just_over(kept),
+            "Kept episodes and books alone use 2.1 GB of the 2 GB limit - lower an entry's \
+             offline depth or raise the limit.",
+            "{kept}"
+        );
+    }
+    assert!(just_over(2_100_000_001).contains("use 2.2 GB of the 2 GB limit"));
     assert!(
-        storage_line(0, Some(2_000_000_001), Some(0), Some(2))
+        storage_line(0, Some(i64::MAX), Some(0), Some(10))
             .1
-            .is_some()
+            .unwrap()
+            .contains("of the 10 GB limit"),
+        "the round-up never overflows"
     );
     // No limit: never a warning. An older app (no `audio_bytes`): never a warning.
     assert_eq!(storage_line(0, Some(i64::MAX), Some(0), None).1, None);
