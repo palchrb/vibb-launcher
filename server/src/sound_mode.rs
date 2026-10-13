@@ -1,7 +1,8 @@
 //! Sound mode (design 18, `docs/design/18-sound-mode.md` at the monorepo root). The kid's Settings
 //! page has a sound row (quick-controls bit 8: Sound / Silent (vibrate) - never Android's Silent,
 //! which is Do Not Disturb), and every status report carries the phone's ringer mode and its
-//! interruption filter (DND), so the device page can say why a call wasn't heard.
+//! interruption filter (DND), so About This Phone can say why a call wasn't heard (design 31:
+//! typed values, [state]; Do Not Disturb is also an Attention row).
 
 /// The latest report's `ringer_mode`, kept only if it is one the launcher sends; anything else
 /// (or a missing field from an older launcher) is stored as NULL.
@@ -26,40 +27,104 @@ pub fn sanitize_interruption_filter(value: Option<&str>) -> Option<&'static str>
     }
 }
 
-/// The device page's Status card: what the sound was at the last sync. Nothing for a value the
-/// phone didn't report; Do Not Disturb only while it is on.
-pub fn status_lines(ringer_mode: Option<&str>, interruption_filter: Option<&str>) -> Vec<String> {
-    let mut lines = Vec::new();
-    let sound = match sanitize_ringer_mode(ringer_mode) {
-        Some("normal") => Some("Sound at the last sync: on."),
-        Some("vibrate") => {
-            Some("Sound at the last sync: silent (vibrate) - calls and notifications only vibrate.")
+/// The ringer at the last sync (`AudioManager` ringer mode).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ringer {
+    Normal,
+    Vibrate,
+    Silent,
+}
+
+impl Ringer {
+    /// The row's value on About This Phone.
+    pub fn label(self) -> &'static str {
+        match self {
+            Ringer::Normal => "On",
+            Ringer::Vibrate => "Vibrate",
+            Ringer::Silent => "Silent",
         }
-        Some("silent") => Some(
-            "Sound at the last sync: fully silent - calls and notifications neither ring nor \
-             vibrate (set with the phone's volume buttons; the kid's sound row only offers sound \
-             and silent with vibration).",
-        ),
-        _ => None,
-    };
-    lines.extend(sound.map(str::to_string));
-    let dnd = match sanitize_interruption_filter(interruption_filter) {
-        Some("priority") => Some(
-            "Do Not Disturb at the last sync: on (priority only) - only the calls it lets \
-             through ring. The kid can't change the sound from the launcher while it is on.",
-        ),
-        Some("alarms") => Some(
-            "Do Not Disturb at the last sync: on (alarms only) - calls don't ring. The kid can't \
-             change the sound from the launcher while it is on.",
-        ),
-        Some("none") => Some(
-            "Do Not Disturb at the last sync: on (total silence) - calls and alarms don't ring. \
-             The kid can't change the sound from the launcher while it is on.",
-        ),
-        _ => None,
-    };
-    lines.extend(dnd.map(str::to_string));
-    lines
+    }
+
+    /// The ⓘ under the row, for a ringer that isn't on.
+    pub fn detail(self) -> Option<&'static str> {
+        match self {
+            Ringer::Normal => None,
+            Ringer::Vibrate => Some("Calls and notifications only vibrate."),
+            Ringer::Silent => Some(
+                "Calls and notifications neither ring nor vibrate. It is set with the phone's \
+                 volume buttons: your child's sound row offers only sound and vibrate.",
+            ),
+        }
+    }
+}
+
+/// Do Not Disturb at the last sync (the interruption filter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dnd {
+    Off,
+    PriorityOnly,
+    AlarmsOnly,
+    TotalSilence,
+}
+
+impl Dnd {
+    pub fn is_on(self) -> bool {
+        self != Dnd::Off
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Dnd::Off => "Off",
+            Dnd::PriorityOnly => "Priority only",
+            Dnd::AlarmsOnly => "Alarms only",
+            Dnd::TotalSilence => "Total silence",
+        }
+    }
+
+    /// The ⓘ under the row while it is on.
+    pub fn detail(self) -> Option<&'static str> {
+        Some(match self {
+            Dnd::Off => return None,
+            Dnd::PriorityOnly => {
+                "Only the calls it lets through ring. Your child can't change the sound from Vibb \
+                 while it is on."
+            }
+            Dnd::AlarmsOnly => {
+                "Calls don't ring. Your child can't change the sound from Vibb while it is on."
+            }
+            Dnd::TotalSilence => {
+                "Calls and alarms don't ring. Your child can't change the sound from Vibb while it \
+                 is on."
+            }
+        })
+    }
+}
+
+/// The sound at the last sync (design 31 M5: the typed values About's rows show). `None` for what
+/// the phone didn't report, or reported as something unknown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SoundState {
+    pub ringer: Option<Ringer>,
+    pub dnd: Option<Dnd>,
+}
+
+/// The latest report's ringer mode and interruption filter, typed.
+pub fn state(ringer_mode: Option<&str>, interruption_filter: Option<&str>) -> SoundState {
+    SoundState {
+        ringer: match sanitize_ringer_mode(ringer_mode) {
+            Some("normal") => Some(Ringer::Normal),
+            Some("vibrate") => Some(Ringer::Vibrate),
+            Some("silent") => Some(Ringer::Silent),
+            _ => None,
+        },
+        dnd: match sanitize_interruption_filter(interruption_filter) {
+            Some("all") => Some(Dnd::Off),
+            Some("priority") => Some(Dnd::PriorityOnly),
+            Some("alarms") => Some(Dnd::AlarmsOnly),
+            Some("none") => Some(Dnd::TotalSilence),
+            _ => None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -83,20 +148,39 @@ mod tests {
     }
 
     #[test]
-    fn the_status_says_what_the_phone_reported() {
-        assert!(status_lines(None, None).is_empty());
-        assert!(status_lines(Some("bogus"), Some("bogus")).is_empty());
-        // DND off is not worth a line.
-        assert_eq!(
-            status_lines(Some("normal"), Some("all")),
-            vec!["Sound at the last sync: on.".to_string()]
+    fn the_state_is_what_the_phone_reported() {
+        assert_eq!(state(None, None), SoundState::default());
+        assert_eq!(state(Some("bogus"), Some("bogus")), SoundState::default());
+        let on = state(Some("normal"), Some("all"));
+        assert_eq!(on.ringer, Some(Ringer::Normal));
+        assert_eq!(on.dnd, Some(Dnd::Off));
+        assert!(!Dnd::Off.is_on());
+        assert_eq!(Ringer::Normal.label(), "On");
+        assert_eq!(Ringer::Normal.detail(), None);
+        assert_eq!(Dnd::Off.label(), "Off");
+        assert_eq!(Dnd::Off.detail(), None);
+        let quiet = state(Some("vibrate"), Some("priority"));
+        assert_eq!(quiet.ringer, Some(Ringer::Vibrate));
+        assert_eq!(quiet.dnd, Some(Dnd::PriorityOnly));
+        assert_eq!(state(Some("silent"), None).ringer, Some(Ringer::Silent));
+        assert_eq!(state(None, Some("none")).dnd, Some(Dnd::TotalSilence));
+        assert_eq!(state(None, Some("alarms")).dnd, Some(Dnd::AlarmsOnly));
+        for (dnd, label) in [
+            (Dnd::PriorityOnly, "Priority only"),
+            (Dnd::AlarmsOnly, "Alarms only"),
+            (Dnd::TotalSilence, "Total silence"),
+        ] {
+            assert!(dnd.is_on());
+            assert_eq!(dnd.label(), label);
+            assert!(dnd.detail().unwrap().contains("can't change the sound"));
+        }
+        assert_eq!(Ringer::Vibrate.label(), "Vibrate");
+        assert_eq!(Ringer::Silent.label(), "Silent");
+        assert!(
+            Ringer::Silent
+                .detail()
+                .unwrap()
+                .contains("neither ring nor vibrate")
         );
-        let lines = status_lines(Some("vibrate"), Some("priority"));
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("silent (vibrate)"));
-        assert!(lines[1].contains("Do Not Disturb at the last sync: on (priority only)"));
-        assert!(status_lines(Some("silent"), None)[0].contains("fully silent"));
-        assert!(status_lines(None, Some("none"))[0].contains("total silence"));
-        assert!(status_lines(None, Some("alarms"))[0].contains("alarms only"));
     }
 }

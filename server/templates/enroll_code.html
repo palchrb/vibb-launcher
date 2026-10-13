@@ -20,7 +20,8 @@
         {% if enrolled %}
         <div class="error">{{ device.name }} is enrolled now. Using this code gives the phone that uses it a new token and disconnects the one enrolled now.</div>
         {% endif %}
-        <a href="/devices/{{ device.id }}#access" class="button-small">Back to {{ device.name }}</a>
+        {#- Back where "New Setup Code" was: Advanced › Connection, or the not-enrolled card. -#}
+        <a href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}" class="button-small">Back to {{ device.name }}</a>
     </div>
 </main>
 </body>

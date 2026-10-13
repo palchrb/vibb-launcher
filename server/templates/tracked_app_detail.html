@@ -4,9 +4,8 @@
 {% include "partials/head.html" %}
 </head>
 <body>
-{% let subpage = true %}
 {% let tab = "apps" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
     <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Apps</a>
     <h1 class="page-title">{{ app.name }}</h1>

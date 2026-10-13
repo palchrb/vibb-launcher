@@ -275,7 +275,7 @@ pub struct GlobalSchedule {
     pub daily_budget_json: String,
 }
 
-#[derive(sqlx::FromRow, Clone)]
+#[derive(sqlx::FromRow, Clone, Default)]
 pub struct DeviceStatus {
     pub id: i64,
     pub device_id: i64,
@@ -342,7 +342,7 @@ pub struct DeviceStatus {
     // remote_wipe_ready (migration 0065, QA of the launcher wave Low 4) is read directly by
     // handlers::locate.
     /// The launcher's declared device-admin policies Android hasn't granted yet (JSON list, see
-    /// [admin_policy_notice]; migration 0065). `None` from older launchers.
+    /// [admin_policy_effects]; migration 0065). `None` from older launchers.
     pub admin_policies_pending_json: Option<String>,
     /// Every app the phone has blocked now (design 24b, fix of 2026-10-12, migration 0067), see
     /// `window_relock::RelockBlock`. `None` from older launchers.
@@ -1188,21 +1188,16 @@ pub fn admin_policies_json(pending: Option<&Vec<String>>) -> Option<String> {
     serde_json::to_string(&known).ok()
 }
 
-/// The device page's warning while the launcher's admin lacks policies Android grants at the next
-/// restart (an Android 16 emulator refused the lock-screen camera switch that way).
-pub fn admin_policy_notice(json: Option<&str>) -> Option<String> {
-    let pending: Vec<String> = serde_json::from_str(json?).ok()?;
-    let effects: Vec<&str> = ADMIN_POLICY_EFFECTS
+/// What the launcher can't do yet while its admin lacks policies Android grants at the next
+/// restart (an Android 16 emulator refused the lock-screen camera switch that way): "Restart the
+/// phone once" (an Attention row, and Advanced › App screens with these). Empty: nothing pending.
+pub fn admin_policy_effects(json: Option<&str>) -> Vec<&'static str> {
+    let Some(pending) = json.and_then(|j| serde_json::from_str::<Vec<String>>(j).ok()) else {
+        return Vec::new();
+    };
+    ADMIN_POLICY_EFFECTS
         .iter()
         .filter(|(tag, _)| pending.iter().any(|p| p == tag))
         .map(|(_, effect)| *effect)
-        .collect();
-    if effects.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "Restart the phone once: after a launcher update Android hasn't yet given the launcher what it \
-         needs to {}.",
-        effects.join(", and to ")
-    ))
+        .collect()
 }

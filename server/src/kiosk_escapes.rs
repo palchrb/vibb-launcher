@@ -3,7 +3,7 @@
 //! notification auto-cancel rule, and what the phone reports about them - `update_fence` and
 //! `notification_cancels`, stored re-serialized and capped like `lock_state`, so nothing but the
 //! known fields (package and channel ids, counts - never notification text) reaches the database.
-//! Pure; the device page's card is [escapes_card].
+//! Pure; Advanced › Updates & notifications shows [escapes_card] (design 31 step 3).
 
 use serde::{Deserialize, Serialize};
 
@@ -129,7 +129,8 @@ pub fn parse_notification_cancels(json: Option<&str>) -> Option<NotificationCanc
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// The device page's "Launcher updates and notifications" card.
+/// Advanced › Updates & notifications (design 31 step 3; the device page's "Launcher updates and
+/// notifications" card until then): the three switches and what the phone reports, typed (M5).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct EscapesCard {
     /// `device_policy.update_fence`.
@@ -138,12 +139,350 @@ pub struct EscapesCard {
     pub notification_auto_cancel: bool,
     /// `device_policy.boot_cover` (design 16b).
     pub boot_cover: bool,
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
+    pub notes: Vec<EscapeNote>,
+    /// What the notification filter removed since the previous report, at most
+    /// [REMOVED_SHOWN] (app, channel) pairs.
+    pub removed: Vec<NotificationCancel>,
+    /// Pairs left out of [Self::removed] (here or on the phone).
+    pub more_removed: i64,
 }
 
-/// What the latest report and the switches mean for the parent. [capable]: the reporting
-/// launcher has [KIOSK_ESCAPES_CAPABILITY]; [reported]: there is a report at all.
+/// At most this many removed (app, channel) pairs are listed.
+pub const REMOVED_SHOWN: usize = 5;
+
+/// How the launcher's last update fence ended (`update_fence.last_release`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Release {
+    /// "replaced", "replaced_backstop": the update went in.
+    Replaced,
+    InstallFailed,
+    CommitFailed,
+    /// A paused home screen without its fence record (lost or corrupt); the phone lifted it.
+    Orphan,
+    Rebooted,
+    Expired,
+    /// A reason this server doesn't know.
+    Other(String),
+}
+
+impl Release {
+    /// `None` for an end not worth a row (switched off, unmanaged).
+    pub fn parse(reason: &str) -> Option<Release> {
+        Some(match reason {
+            "replaced" | "replaced_backstop" => Release::Replaced,
+            "install_failed" => Release::InstallFailed,
+            "commit_failed" => Release::CommitFailed,
+            "orphan" => Release::Orphan,
+            "rebooted" => Release::Rebooted,
+            "expired" => Release::Expired,
+            "switched_off" | "unmanaged" => return None,
+            other => Release::Other(other.to_string()),
+        })
+    }
+
+    /// A warning, not a plain row.
+    pub fn failed(&self) -> bool {
+        matches!(
+            self,
+            Release::InstallFailed | Release::CommitFailed | Release::Orphan
+        )
+    }
+}
+
+/// Why the night window's gate waited last (`update_fence.waiting_for`).
+fn wait_text(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "call" => "a call was on",
+        "emergency" => "an emergency call was recent",
+        "screen_on" => "the screen was on",
+        "screen_off_short" => "the screen had only just gone off",
+        "outside_window" => "waiting for the night window",
+        _ => return None,
+    })
+}
+
+/// How the boot cover handed over at the last start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handover {
+    /// The cover saw Vibb ready and stepped aside by itself.
+    ByItself,
+    /// Vibb took over when it started.
+    WhenVibbStarted,
+}
+
+/// One thing the phone's reports say about the update fence, the notification filter or the boot
+/// cover (design 31 M5: typed; [EscapeNote::note] words it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EscapeNote {
+    /// The reporting launcher has neither the fence nor the filter: update it.
+    NeedsUpdate,
+    /// A fence is up (planned or fenced). `stale`: it started more than 15 minutes ago and the
+    /// phone hasn't reported since, so it is no longer "now".
+    Fencing {
+        started_at_ms: Option<i64>,
+        stale: bool,
+    },
+    /// Home screens Android refused to pause during the update.
+    Unsuspendable(Vec<String>),
+    /// The launcher isn't Android's Home app: the fence is only partial.
+    PartialFence,
+    LastRelease(Release),
+    /// A downloaded launcher update waits for the night window.
+    UpdateWaiting {
+        tag: String,
+        /// It has waited a day: any quiet screen-off will do.
+        overdue: bool,
+        waiting_for: Option<&'static str>,
+    },
+    /// The filter is on, but the launcher has no notification access.
+    FilterWithoutAccess,
+    /// The filter is on, but not active on the phone yet.
+    FilterNotActive,
+    /// The boot cover is on, but the reporting launcher hasn't got it.
+    BootCoverNeedsUpdate,
+    /// The boot cover crashed twice in one start and switched itself off.
+    BootCoverTripped,
+    /// Armed at the next shutdown or restart.
+    BootCoverArmed,
+    BootCoverShown {
+        at_ms: i64,
+        handover: Option<Handover>,
+    },
+    /// Armed at a shutdown, but not shown at the start after it.
+    BootCoverNotShown {
+        armed_at_ms: i64,
+    },
+}
+
+impl EscapeNote {
+    /// A warning (an orange row above the group), not a plain row in it.
+    pub fn is_warning(&self) -> bool {
+        match self {
+            EscapeNote::NeedsUpdate
+            | EscapeNote::Unsuspendable(_)
+            | EscapeNote::PartialFence
+            | EscapeNote::FilterWithoutAccess
+            | EscapeNote::BootCoverNeedsUpdate
+            | EscapeNote::BootCoverTripped
+            | EscapeNote::BootCoverNotShown { .. } => true,
+            EscapeNote::LastRelease(release) => release.failed(),
+            EscapeNote::Fencing { .. }
+            | EscapeNote::UpdateWaiting { .. }
+            | EscapeNote::FilterNotActive
+            | EscapeNote::BootCoverArmed
+            | EscapeNote::BootCoverShown { .. } => false,
+        }
+    }
+
+    /// The words: a short title, a value for a row, the sentence behind its ⓘ.
+    pub fn note(
+        &self,
+        zone: &crate::display_time::Zone,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> crate::handlers::device_pages::Note {
+        let when = |ms: i64| {
+            chrono::DateTime::from_timestamp_millis(ms)
+                .map(|t| zone.when(t, now))
+                .unwrap_or_default()
+        };
+        let (title, value, detail): (String, Option<String>, Option<String>) = match self {
+            EscapeNote::NeedsUpdate => (
+                "Update Vibb for these switches".into(),
+                None,
+                Some(
+                    "This phone's Vibb has neither the update fence nor the notification filter \
+                     yet. Until it updates, an update shows Android's own home screen for about a \
+                     minute, and other apps' notifications can open screens outside the allowed \
+                     apps."
+                        .into(),
+                ),
+            ),
+            EscapeNote::Fencing {
+                started_at_ms,
+                stale: false,
+            } => (
+                "Update installing".into(),
+                Some(
+                    started_at_ms
+                        .map(|ms| format!("Since {}", when(ms)))
+                        .unwrap_or_else(|| "Now".into()),
+                ),
+                Some(
+                    "Other home screens and the notification shade are paused until Vibb is back."
+                        .into(),
+                ),
+            ),
+            EscapeNote::Fencing {
+                started_at_ms,
+                stale: true,
+            } => (
+                "Update started".into(),
+                started_at_ms.map(when),
+                Some("The phone hasn't reported since.".into()),
+            ),
+            EscapeNote::Unsuspendable(packages) => (
+                "Some home screens weren't paused".into(),
+                None,
+                Some(format!(
+                    "Android refused to pause these during the update: {}.",
+                    packages.join(", ")
+                )),
+            ),
+            EscapeNote::PartialFence => (
+                "Vibb isn't the Home app".into(),
+                None,
+                Some(
+                    "So the update fence is only partial. Check that the phone is still managed \
+                     by Vibb (device owner)."
+                        .into(),
+                ),
+            ),
+            EscapeNote::LastRelease(release) => {
+                let (title, value, detail) = match release {
+                    Release::Replaced => (
+                        "Last update",
+                        Some("Installed"),
+                        "It went in; the update fence was lifted once Vibb was back.".to_string(),
+                    ),
+                    Release::InstallFailed => (
+                        "Last update failed to install",
+                        None,
+                        "The fence was lifted at once. The phone keeps the download and tries \
+                         again in a night window an hour or more later (a wrong signing key or an \
+                         older version waits for a new release)."
+                            .to_string(),
+                    ),
+                    Release::CommitFailed => (
+                        "Last update couldn't start",
+                        None,
+                        "The fence was lifted at once. The phone keeps the download and tries \
+                         again in a night window an hour or more later."
+                            .to_string(),
+                    ),
+                    Release::Orphan => (
+                        "Update fence record lost",
+                        None,
+                        "A paused home screen was found without its record (lost or corrupt); \
+                         the phone lifted it."
+                            .to_string(),
+                    ),
+                    Release::Rebooted => (
+                        "Last update",
+                        Some("Interrupted by a restart"),
+                        "The phone restarted during the update; the fence was lifted at boot."
+                            .to_string(),
+                    ),
+                    Release::Expired => (
+                        "Last update",
+                        Some("Took too long"),
+                        "It took longer than 10 minutes; the fence was lifted.".to_string(),
+                    ),
+                    Release::Other(reason) => (
+                        "Last update",
+                        Some("Ended"),
+                        format!("The phone said: {reason}."),
+                    ),
+                };
+                (title.into(), value.map(Into::into), Some(detail))
+            }
+            EscapeNote::UpdateWaiting {
+                tag,
+                overdue,
+                waiting_for,
+            } => {
+                let mut detail = format!(
+                    "Downloaded ({tag}). It goes in at night (02:00-05:00, screen off for 30 \
+                     seconds, no call)"
+                );
+                if *overdue {
+                    detail.push_str(". It has waited a day, so any quiet screen-off will do");
+                }
+                if let Some(why) = waiting_for {
+                    detail.push_str(&format!(". Last check: {why}"));
+                }
+                detail.push('.');
+                (
+                    "Update waiting".into(),
+                    Some(tag.strip_prefix("launcher-v").unwrap_or(tag).to_string()),
+                    Some(detail),
+                )
+            }
+            EscapeNote::FilterWithoutAccess => (
+                "Filter has no notification access".into(),
+                None,
+                Some(
+                    "Vibb has no notification access (\"App badges\"), so nothing is removed. \
+                     Grant it with adb before setting the phone up."
+                        .into(),
+                ),
+            ),
+            EscapeNote::FilterNotActive => (
+                "Notification filter".into(),
+                Some("Not active yet".into()),
+                Some(
+                    "It waits for the next sync, and pauses while the Parent PIN's override or a \
+                     pause is in use."
+                        .into(),
+                ),
+            ),
+            EscapeNote::BootCoverNeedsUpdate => (
+                "Update Vibb for the boot cover".into(),
+                None,
+                Some(
+                    "This phone's Vibb doesn't have it yet; until then the switch does nothing."
+                        .into(),
+                ),
+            ),
+            EscapeNote::BootCoverTripped => (
+                "Boot cover switched itself off".into(),
+                None,
+                Some(
+                    "It crashed twice during one start. Turn the switch off and on to try again \
+                     (after a Vibb update)."
+                        .into(),
+                ),
+            ),
+            EscapeNote::BootCoverArmed => (
+                "Cover at the next start".into(),
+                Some("Ready".into()),
+                Some(
+                    "It shows from the phone's next shutdown or restart from its power menu; a \
+                     crash or a forced restart skips it."
+                        .into(),
+                ),
+            ),
+            EscapeNote::BootCoverShown { at_ms, handover } => (
+                "Cover at the last start".into(),
+                Some(format!("Shown {}", when(*at_ms))),
+                handover.map(|h| {
+                    match h {
+                        Handover::ByItself => "It handed over to Vibb by itself.",
+                        Handover::WhenVibbStarted => "It handed over when Vibb started.",
+                    }
+                    .to_string()
+                }),
+            ),
+            EscapeNote::BootCoverNotShown { armed_at_ms } => (
+                "Boot cover wasn't shown".into(),
+                None,
+                Some(format!(
+                    "It was armed at the shutdown at {} but not shown at the start after it: \
+                     Android picked another home screen on this phone. Switch it off here.",
+                    when(*armed_at_ms)
+                )),
+            ),
+        };
+        crate::handlers::device_pages::Note {
+            warning: self.is_warning(),
+            title,
+            value,
+            detail,
+        }
+    }
+}
+
+/// What the latest report and the switches mean for the parent. `capable`: the reporting
+/// launcher has [KIOSK_ESCAPES_CAPABILITY]; `reported`: there is a report at all.
 #[allow(clippy::too_many_arguments)]
 pub fn escapes_card(
     update_fence: bool,
@@ -161,159 +500,56 @@ pub fn escapes_card(
         ..Default::default()
     };
     if reported && !capable {
-        card.warnings.push(
-            "This phone's launcher has neither the update fence nor the notification filter yet - \
-             update the launcher. Until then a launcher update shows Android's own home screen for \
-             about a minute, and other apps' notifications can open screens outside the kiosk."
-                .to_string(),
-        );
+        card.notes.push(EscapeNote::NeedsUpdate);
         return card;
-    }
-    if !update_fence {
-        card.lines.push(
-            "Update fence off: while the launcher installs its own update (at night, screen off) \
-             the phone may show Android's own home screen and shade for about a minute."
-                .to_string(),
-        );
     }
     if let Some(fence) = fence {
         if fence.state == "fenced" || fence.state == "planned" {
-            // A phone that went silent while fenced must not say "right now" forever.
-            match fence
-                .last_fenced_at_ms
-                .filter(|at| now_ms.saturating_sub(*at) > FENCE_STALE_MS)
-            {
-                Some(at) => card.lines.push(format!(
-                    "A launcher update started at {} and the phone hasn't reported since.",
-                    utc_time(at)
-                )),
-                None => card.lines.push(
-                    "The launcher is installing its own update right now: other home screens and \
-                     the notification shade are paused until it is back."
-                        .to_string(),
-                ),
-            }
+            // A phone that went silent while fenced must not say "now" forever.
+            card.notes.push(EscapeNote::Fencing {
+                started_at_ms: fence.last_fenced_at_ms,
+                stale: fence
+                    .last_fenced_at_ms
+                    .is_some_and(|at| now_ms.saturating_sub(at) > FENCE_STALE_MS),
+            });
         }
         if !fence.unsuspendable.is_empty() {
-            card.warnings.push(format!(
-                "Android refused to pause these home screens during the update: {}.",
-                fence.unsuspendable.join(", ")
-            ));
+            card.notes
+                .push(EscapeNote::Unsuspendable(fence.unsuspendable.clone()));
         }
         if update_fence && fence.home_role_held == Some(false) {
-            card.warnings.push(
-                "The launcher isn't Android's Home app on this phone, so the update fence is only \
-                 partial. Check that the phone is still device owner."
-                    .to_string(),
-            );
+            card.notes.push(EscapeNote::PartialFence);
         }
-        if let Some(text) = fence.last_release.as_deref().and_then(release_text) {
-            if matches!(
-                fence.last_release.as_deref(),
-                Some("install_failed" | "commit_failed" | "orphan")
-            ) {
-                card.warnings.push(text);
-            } else {
-                card.lines.push(text);
-            }
+        if let Some(release) = fence.last_release.as_deref().and_then(Release::parse) {
+            card.notes.push(EscapeNote::LastRelease(release));
         }
         if let Some(tag) = fence.pending_tag.as_deref() {
-            let overdue = fence
-                .pending_since_ms
-                .is_some_and(|since| now_ms.saturating_sub(since) >= 24 * 60 * 60 * 1000);
-            let mut line = format!(
-                "Launcher update {tag} is downloaded and goes in at night (02:00-05:00, screen off \
-                 for 30 seconds, no call)"
-            );
-            if overdue {
-                line.push_str(" - it has waited a day, so any quiet screen-off will do");
-            }
-            if let Some(why) = fence.waiting_for.as_deref().and_then(wait_text) {
-                line.push_str(&format!(". Last check: {why}"));
-            }
-            line.push('.');
-            card.lines.push(line);
+            card.notes.push(EscapeNote::UpdateWaiting {
+                tag: tag.to_string(),
+                overdue: fence
+                    .pending_since_ms
+                    .is_some_and(|since| now_ms.saturating_sub(since) >= 24 * 60 * 60 * 1000),
+                waiting_for: fence.waiting_for.as_deref().and_then(wait_text),
+            });
         }
     }
     if notification_auto_cancel && listener_enabled == Some(false) {
-        card.warnings.push(
-            "The notification filter is on, but the launcher has no notification access (\"App \
-             badges\"), so nothing is removed. Grant it with adb before enrolling (see the \
-             emulator/provisioning notes)."
-                .to_string(),
-        );
+        card.notes.push(EscapeNote::FilterWithoutAccess);
     }
     if let Some(cancels) = cancels {
         if notification_auto_cancel && !cancels.active && listener_enabled != Some(false) {
-            card.lines.push(
-                "The notification filter isn't active on the phone yet (it waits for the next \
-                 sync, and pauses while the parent PIN's override or the pause is in use)."
-                    .to_string(),
-            );
+            card.notes.push(EscapeNote::FilterNotActive);
         }
-        for entry in cancels.entries.iter().take(5) {
-            let channel = entry
-                .channel
-                .as_deref()
-                .map(|c| format!(" ({c})"))
-                .unwrap_or_default();
-            let mut line = format!(
-                "Removed since the last report: {}{channel} - {} notification(s)",
-                entry.package_name, entry.cancelled
-            );
-            if entry.snoozed > 0 {
-                line.push_str(&format!(
-                    ", {} snoozed for an hour (it kept coming back)",
-                    entry.snoozed
-                ));
-            }
-            line.push('.');
-            card.lines.push(line);
-        }
-        let more = (cancels.entries.len().saturating_sub(5) as i64).saturating_add(cancels.dropped);
-        if more > 0 {
-            card.lines
-                .push(format!("... and {more} more app/channel pair(s)."));
-        }
+        card.removed = cancels
+            .entries
+            .iter()
+            .take(REMOVED_SHOWN)
+            .cloned()
+            .collect();
+        card.more_removed = (cancels.entries.len().saturating_sub(REMOVED_SHOWN) as i64)
+            .saturating_add(cancels.dropped);
     }
     card
-}
-
-/// The device page's text for `update_fence.last_release`; `None` = nothing worth saying.
-pub fn release_text(reason: &str) -> Option<String> {
-    Some(match reason {
-        "replaced" | "replaced_backstop" => {
-            "The last launcher update went in; the update fence was lifted once the launcher was \
-             back."
-                .to_string()
-        }
-        "install_failed" => {
-            "The last launcher update failed to install; the update fence was lifted at once. \
-             The phone keeps the download and tries again in an update window an hour or more \
-             later (a wrong signing key or an older version waits for a new release)."
-                .to_string()
-        }
-        "commit_failed" => {
-            "The last launcher update couldn't be started on the phone; the update fence was \
-             lifted at once. The phone keeps the download and tries again in an update window an \
-             hour or more later."
-                .to_string()
-        }
-        "orphan" => {
-            "A paused home screen was found without its update fence record (lost or corrupt); \
-             the phone lifted it."
-                .to_string()
-        }
-        "rebooted" => "The phone restarted during the last launcher update; the update fence was \
-            lifted at boot."
-            .to_string(),
-        "expired" => {
-            "The last launcher update took longer than 10 minutes; the update fence was lifted."
-                .to_string()
-        }
-        "switched_off" | "unmanaged" => return None,
-        other => format!("The last update fence ended: {other}."),
-    })
 }
 
 /// Status-report capability: the launcher has the boot cover and reads `boot_cover` (design 16b).
@@ -356,85 +592,53 @@ pub fn parse_boot_cover(json: Option<&str>) -> Option<BootCoverState> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// What the device page says about the boot cover (lines, warnings): nothing while the switch is
-/// off; "update the launcher" when the reporting launcher hasn't got it; the phone's state
-/// otherwise - a tripped guard is a warning, so "test it on this phone first" can be checked here.
+/// What the phone says about the boot cover: nothing while the switch is off; "update Vibb" when
+/// the reporting launcher hasn't got it; the phone's state otherwise - a tripped guard is a
+/// warning, so "test it on this phone first" can be checked on Advanced.
 pub fn boot_cover_notes(
     switch_on: bool,
     capable: bool,
     reported: bool,
     state: Option<&BootCoverState>,
-) -> (Vec<String>, Vec<String>) {
-    let (mut lines, mut warnings) = (Vec::new(), Vec::new());
+) -> Vec<EscapeNote> {
     if !switch_on {
-        return (lines, warnings);
+        return Vec::new();
     }
     if reported && !capable {
-        warnings.push(
-            "This phone's launcher doesn't have the boot cover yet - update the launcher. Until \
-             then the switch does nothing."
-                .to_string(),
-        );
-        return (lines, warnings);
+        return vec![EscapeNote::BootCoverNeedsUpdate];
     }
     let Some(state) = state else {
-        return (lines, warnings);
+        return Vec::new();
     };
     if state.tripped {
-        warnings.push(
-            "The boot cover crashed twice during one start and switched itself off on this phone. \
-             Turn the switch off and on again to try once more (after a launcher update)."
-                .to_string(),
-        );
-        return (lines, warnings);
+        return vec![EscapeNote::BootCoverTripped];
     }
-    match (state.last_armed_at_ms, state.last_shown_at_ms) {
-        (None, _) => lines.push(
-            "Boot cover: armed at the phone's next shutdown or restart from its power menu (a \
-             crash or a forced restart skips it)."
-                .to_string(),
-        ),
-        (Some(armed), Some(shown)) if shown >= armed => {
-            let by = match state.last_handover.as_deref() {
-                Some("cover") => " and handed over to the launcher by itself",
-                Some("launcher") => " and handed over when the launcher started",
-                _ => "",
-            };
-            lines.push(format!(
-                "Boot cover: shown at the last start ({}){by}.",
-                utc_time(shown)
-            ));
-        }
-        (Some(armed), _) => warnings.push(format!(
-            "The boot cover was armed at the shutdown at {} but not shown at the start after it - \
-             Android picked another home screen on this phone. Switch it off here.",
-            utc_time(armed)
-        )),
-    }
-    (lines, warnings)
-}
-
-fn utc_time(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_default()
-}
-
-fn wait_text(reason: &str) -> Option<&'static str> {
-    Some(match reason {
-        "call" => "a call was on",
-        "emergency" => "an emergency call was recent",
-        "screen_on" => "the screen was on",
-        "screen_off_short" => "the screen had only just gone off",
-        "outside_window" => "waiting for the night window",
-        _ => return None,
-    })
+    vec![match (state.last_armed_at_ms, state.last_shown_at_ms) {
+        (None, _) => EscapeNote::BootCoverArmed,
+        (Some(armed), Some(shown)) if shown >= armed => EscapeNote::BootCoverShown {
+            at_ms: shown,
+            handover: match state.last_handover.as_deref() {
+                Some("cover") => Some(Handover::ByItself),
+                Some("launcher") => Some(Handover::WhenVibbStarted),
+                _ => None,
+            },
+        },
+        (Some(armed), _) => EscapeNote::BootCoverNotShown { armed_at_ms: armed },
+    }]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn oslo() -> crate::display_time::Zone {
+        crate::display_time::Zone::from_setting("Europe/Oslo")
+    }
+
+    fn at(ms: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp_millis(ms).unwrap()
+    }
 
     #[test]
     fn boot_cover_state_is_sanitized_and_explained() {
@@ -450,37 +654,70 @@ mod tests {
         assert!(sanitize_boot_cover(&serde_json::json!("on")).is_none());
 
         // Switch off: nothing; an older launcher: update it.
+        assert!(boot_cover_notes(false, true, true, Some(&state)).is_empty());
         assert_eq!(
-            boot_cover_notes(false, true, true, Some(&state)),
-            (vec![], vec![])
+            boot_cover_notes(true, false, true, None),
+            vec![EscapeNote::BootCoverNeedsUpdate]
         );
-        let (_, w) = boot_cover_notes(true, false, true, None);
-        assert!(w[0].contains("update the launcher"));
-        // Shown after the arm: a line.
+        // Shown after the arm: a row.
         let shown = BootCoverState {
             last_handover: Some("cover".into()),
             ..state.clone()
         };
-        let (l, w) = boot_cover_notes(true, true, true, Some(&shown));
-        assert!(w.is_empty());
-        assert!(l[0].contains("shown at the last start") && l[0].contains("by itself"));
+        let notes = boot_cover_notes(true, true, true, Some(&shown));
+        assert_eq!(
+            notes,
+            vec![EscapeNote::BootCoverShown {
+                at_ms: 2_000,
+                handover: Some(Handover::ByItself)
+            }]
+        );
+        let note = notes[0].note(&oslo(), at(10_000));
+        assert!(!note.warning);
+        assert_eq!(note.value.as_deref(), Some("Shown 01:00"));
+        assert!(note.detail.unwrap().contains("by itself"));
         // Armed but never shown: a warning.
         let missed = BootCoverState {
             last_shown_at_ms: None,
             ..state.clone()
         };
-        let (_, w) = boot_cover_notes(true, true, true, Some(&missed));
-        assert!(w[0].contains("not shown"));
+        let notes = boot_cover_notes(true, true, true, Some(&missed));
+        assert_eq!(
+            notes,
+            vec![EscapeNote::BootCoverNotShown { armed_at_ms: 1_000 }]
+        );
+        assert!(notes[0].is_warning());
+        assert!(
+            notes[0]
+                .note(&oslo(), at(10_000))
+                .detail
+                .unwrap()
+                .contains("not shown")
+        );
         // Tripped: a warning, nothing else.
         let tripped = BootCoverState {
             tripped: true,
             ..state.clone()
         };
-        let (l, w) = boot_cover_notes(true, true, true, Some(&tripped));
-        assert!(l.is_empty() && w[0].contains("crashed twice"));
+        let notes = boot_cover_notes(true, true, true, Some(&tripped));
+        assert_eq!(notes, vec![EscapeNote::BootCoverTripped]);
+        assert!(
+            notes[0]
+                .note(&oslo(), at(0))
+                .detail
+                .unwrap()
+                .contains("crashed twice")
+        );
         // Not armed yet.
-        let (l, _) = boot_cover_notes(true, true, true, Some(&BootCoverState::default()));
-        assert!(l[0].contains("power menu"));
+        let notes = boot_cover_notes(true, true, true, Some(&BootCoverState::default()));
+        assert_eq!(notes, vec![EscapeNote::BootCoverArmed]);
+        assert!(
+            notes[0]
+                .note(&oslo(), at(0))
+                .detail
+                .unwrap()
+                .contains("power menu")
+        );
     }
 
     #[test]
@@ -546,8 +783,12 @@ mod tests {
     #[test]
     fn card_without_the_capability_only_says_update() {
         let card = escapes_card(true, true, false, true, None, None, Some(true), 0);
-        assert_eq!(card.warnings.len(), 1);
-        assert!(card.lines.is_empty());
+        assert_eq!(card.notes, vec![EscapeNote::NeedsUpdate]);
+        assert!(card.notes[0].is_warning());
+        assert!(card.removed.is_empty());
+        // No report at all: nothing to say.
+        let card = escapes_card(true, true, false, false, None, None, None, 0);
+        assert!(card.notes.is_empty());
     }
 
     #[test]
@@ -565,21 +806,46 @@ mod tests {
         };
         let day = 24 * 60 * 60 * 1000;
         let card = escapes_card(true, false, true, true, Some(&fence), None, None, day);
-        let all = format!("{:?}", card);
-        assert!(all.contains("installing its own update right now"), "{all}");
-        assert!(all.contains("com.oem.home"), "{all}");
-        assert!(
-            all.contains("only \\\n                 partial") || all.contains("partial"),
-            "{all}"
+        assert_eq!(
+            card.notes,
+            vec![
+                EscapeNote::Fencing {
+                    started_at_ms: None,
+                    stale: false
+                },
+                EscapeNote::Unsuspendable(vec!["com.oem.home".to_string()]),
+                EscapeNote::PartialFence,
+                EscapeNote::LastRelease(Release::InstallFailed),
+                EscapeNote::UpdateWaiting {
+                    tag: "launcher-v1.4.0".to_string(),
+                    overdue: true,
+                    waiting_for: Some("waiting for the night window"),
+                },
+            ]
         );
+        let warnings: Vec<bool> = card.notes.iter().map(EscapeNote::is_warning).collect();
+        assert_eq!(warnings, [false, true, true, true, false]);
+        let notes: Vec<_> = card
+            .notes
+            .iter()
+            .map(|n| n.note(&oslo(), at(day)))
+            .collect();
+        assert_eq!(notes[0].title, "Update installing");
+        assert_eq!(notes[0].value.as_deref(), Some("Now"));
+        assert!(notes[1].detail.as_deref().unwrap().contains("com.oem.home"));
+        assert!(notes[2].detail.as_deref().unwrap().contains("only partial"));
+        assert_eq!(notes[3].title, "Last update failed to install");
+        assert_eq!(notes[4].value.as_deref(), Some("1.4.0"));
+        let waiting = notes[4].detail.as_deref().unwrap();
+        assert!(waiting.contains("launcher-v1.4.0"), "{waiting}");
+        assert!(waiting.contains("any quiet screen-off"), "{waiting}");
         assert!(
-            card.warnings
-                .iter()
-                .any(|w| w.contains("failed to install"))
+            waiting.contains("waiting for the night window"),
+            "{waiting}"
         );
-        assert!(all.contains("launcher-v1.4.0"), "{all}");
-        assert!(all.contains("any quiet screen-off"), "{all}");
-        assert!(all.contains("waiting for the night window"), "{all}");
+        // The switch off: no partial-fence warning.
+        let card = escapes_card(false, false, true, true, Some(&fence), None, None, day);
+        assert!(!card.notes.contains(&EscapeNote::PartialFence));
     }
 
     #[test]
@@ -597,20 +863,27 @@ mod tests {
             dropped: 1,
         };
         let card = escapes_card(false, true, true, true, None, Some(&cancels), Some(true), 0);
-        assert!(card.lines.iter().any(|l| l.contains("Update fence off")));
-        assert!(
-            card.lines
-                .iter()
-                .any(|l| l.contains("pkg0 (nag)") && l.contains("snoozed"))
-        );
-        assert!(card.lines.iter().any(|l| l.contains("3 more")));
+        assert!(card.notes.is_empty(), "{:?}", card.notes);
+        assert_eq!(card.removed.len(), REMOVED_SHOWN);
+        assert_eq!(card.removed[0].package_name, "pkg0");
+        assert_eq!(card.removed[0].snoozed, 1);
+        assert_eq!(card.more_removed, 3);
         let no_access = escapes_card(false, true, true, true, None, None, Some(false), 0);
+        assert_eq!(no_access.notes, vec![EscapeNote::FilterWithoutAccess]);
         assert!(
-            no_access
-                .warnings
-                .iter()
-                .any(|w| w.contains("no notification access"))
+            no_access.notes[0]
+                .note(&oslo(), at(0))
+                .detail
+                .unwrap()
+                .contains("no notification access")
         );
+        // On, but not active on the phone yet.
+        let idle = NotificationCancels {
+            active: false,
+            ..Default::default()
+        };
+        let card = escapes_card(false, true, true, true, None, Some(&idle), Some(true), 0);
+        assert_eq!(card.notes, vec![EscapeNote::FilterNotActive]);
     }
 
     #[test]
@@ -656,59 +929,76 @@ mod tests {
                 None,
                 now,
             );
-            assert!(!card.lines.is_empty());
+            assert!(!card.notes.is_empty());
+            for note in &card.notes {
+                note.note(&oslo(), at(0));
+            }
+            assert_eq!(card.more_removed, i64::MAX);
         }
     }
 
     #[test]
-    fn a_stale_fence_is_no_longer_right_now() {
+    fn a_stale_fence_is_no_longer_now() {
         let fence = UpdateFenceState {
             state: "fenced".to_string(),
             last_fenced_at_ms: Some(1_000),
             ..Default::default()
         };
-        let fresh = escapes_card(
-            true,
-            false,
-            true,
-            true,
-            Some(&fence),
-            None,
-            None,
-            1_000 + 60_000,
+        let card = |now: i64| escapes_card(true, false, true, true, Some(&fence), None, None, now);
+        assert_eq!(
+            card(1_000 + 60_000).notes,
+            vec![EscapeNote::Fencing {
+                started_at_ms: Some(1_000),
+                stale: false
+            }]
         );
-        assert!(fresh.lines.iter().any(|l| l.contains("right now")));
-        let stale = escapes_card(
-            true,
-            false,
-            true,
-            true,
-            Some(&fence),
-            None,
-            None,
-            1_000 + FENCE_STALE_MS + 1,
+        let stale = card(1_000 + FENCE_STALE_MS + 1).notes;
+        assert_eq!(
+            stale,
+            vec![EscapeNote::Fencing {
+                started_at_ms: Some(1_000),
+                stale: true
+            }]
         );
-        assert!(
-            stale
-                .lines
-                .iter()
-                .any(|l| l.contains("hasn't reported since")),
-            "{stale:?}"
-        );
-        assert!(!stale.lines.iter().any(|l| l.contains("right now")));
+        let note = stale[0].note(&oslo(), at(1_000 + FENCE_STALE_MS + 1));
+        assert_eq!(note.title, "Update started");
+        assert!(note.detail.unwrap().contains("hasn't reported since"));
+        // Exactly 15 minutes is still now.
+        assert!(matches!(
+            card(1_000 + FENCE_STALE_MS).notes[0],
+            EscapeNote::Fencing { stale: false, .. }
+        ));
     }
 
     #[test]
-    fn release_texts() {
-        assert!(release_text("replaced").unwrap().contains("went in"));
-        assert!(release_text("rebooted").unwrap().contains("restarted"));
-        assert_eq!(release_text("switched_off"), None);
-        assert!(
-            release_text("commit_failed")
-                .unwrap()
-                .contains("couldn't be started")
+    fn releases() {
+        assert_eq!(Release::parse("replaced"), Some(Release::Replaced));
+        assert_eq!(Release::parse("replaced_backstop"), Some(Release::Replaced));
+        assert_eq!(Release::parse("rebooted"), Some(Release::Rebooted));
+        assert_eq!(Release::parse("switched_off"), None);
+        assert_eq!(Release::parse("unmanaged"), None);
+        assert_eq!(Release::parse("commit_failed"), Some(Release::CommitFailed));
+        assert_eq!(Release::parse("orphan"), Some(Release::Orphan));
+        assert_eq!(
+            Release::parse("weird"),
+            Some(Release::Other("weird".to_string()))
         );
-        assert!(release_text("orphan").unwrap().contains("lifted it"));
-        assert!(release_text("weird").unwrap().contains("weird"));
+        for (release, failed) in [
+            (Release::Replaced, false),
+            (Release::InstallFailed, true),
+            (Release::CommitFailed, true),
+            (Release::Orphan, true),
+            (Release::Rebooted, false),
+            (Release::Expired, false),
+        ] {
+            assert_eq!(release.failed(), failed, "{release:?}");
+        }
+        let note = EscapeNote::LastRelease(Release::Other("weird".into())).note(&oslo(), at(0));
+        assert!(note.detail.unwrap().contains("weird"));
+        let note = EscapeNote::LastRelease(Release::Replaced).note(&oslo(), at(0));
+        assert_eq!(
+            (note.title.as_str(), note.value.as_deref()),
+            ("Last update", Some("Installed"))
+        );
     }
 }

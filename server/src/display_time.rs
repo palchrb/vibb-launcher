@@ -15,8 +15,9 @@
 //!   the visible value.
 //!
 //! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its callers
-//! (the Status card's notices, the PIN events, the relock and boot notes) move here as the steps
-//! that rebuild their pages switch them to typed values (design 31 §8, steps 3, 4 and 10).
+//! (the Status card's notices, the PIN events, the relock notes) move here as the steps that
+//! rebuild their pages switch them to typed values (design 31 §8, steps 4 and 10; step 3 moved
+//! the boot notes).
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use chrono_tz::Tz;
@@ -141,6 +142,37 @@ impl Zone {
         self.date(t, now)
     }
 
+    /// When something happened, as a value in a row: "10:59" today, "yesterday 21:40", else
+    /// "12 Oct" ("12 Oct 2025" in another year). A time ahead of `now` on the same day is its
+    /// clock time too.
+    pub fn when(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        if day == today {
+            self.clock(t)
+        } else if today.pred_opt() == Some(day) {
+            format!("yesterday {}", self.clock(t))
+        } else {
+            self.date(t, now)
+        }
+    }
+
+    /// When something ends, for "until …": "14:05" today, "00:05 tomorrow" (the lock badge's
+    /// wording, §3.10), "Mon 14:30" within the week, else "20 Oct 14:30" - always with its clock
+    /// time, the one thing an end is for (qa-31-s3-code M2). A time already past reads as [when].
+    pub fn until(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        if t <= now {
+            return self.when(t, now);
+        }
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        let days = (day - today).num_days();
+        match days {
+            0 => self.clock(t),
+            1 => format!("{} tomorrow", self.clock(t)),
+            2..=6 => format!("{} {}", self.local(t).format("%a"), self.clock(t)),
+            _ => format!("{} {}", self.date(t, now), self.clock(t)),
+        }
+    }
+
     /// "12 Oct", or "12 Oct 2025" in another year than `now`'s.
     fn date(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
         let local = self.local(t);
@@ -246,6 +278,47 @@ mod tests {
         assert_eq!(
             zone.relative(utc("2026-10-12 21:50:00"), after_midnight),
             "20 min ago"
+        );
+    }
+
+    #[test]
+    fn when_is_a_clock_time_today_and_a_date_before() {
+        let zone = oslo();
+        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
+        let when = |s: &str| zone.when(utc(s), now);
+        assert_eq!(when("2026-10-13 06:12:00"), "08:12");
+        assert_eq!(
+            when("2026-10-12 22:00:00"),
+            "00:00",
+            "local midnight is today"
+        );
+        assert_eq!(when("2026-10-12 21:59:00"), "yesterday 23:59");
+        assert_eq!(when("2026-10-11 21:59:00"), "11 Oct");
+        assert_eq!(when("2025-12-31 12:00:00"), "31 Dec 2025");
+        assert_eq!(when("2026-10-13 14:00:00"), "16:00", "ahead, same day");
+        assert_eq!(
+            Zone::utc_fallback().when(utc("2026-10-13 06:12:00"), now),
+            "06:12 UTC"
+        );
+    }
+
+    #[test]
+    fn until_keeps_the_clock_time_past_midnight() {
+        let zone = oslo();
+        let now = utc("2026-10-13 21:50:00"); // 23:50 in Oslo, a Tuesday
+        let until = |s: &str| zone.until(utc(s), now);
+        assert_eq!(until("2026-10-13 21:55:00"), "23:55");
+        // A code made at 23:50 (15 min), install mode, a typed-code pause.
+        assert_eq!(until("2026-10-13 22:05:00"), "00:05 tomorrow");
+        assert_eq!(until("2026-10-14 21:59:00"), "23:59 tomorrow");
+        assert_eq!(until("2026-10-15 12:30:00"), "Thu 14:30");
+        assert_eq!(until("2026-10-19 12:30:00"), "Mon 14:30");
+        assert_eq!(until("2026-10-20 12:30:00"), "20 Oct 14:30");
+        // Already past: as `when`.
+        assert_eq!(until("2026-10-13 21:00:00"), "23:00");
+        assert_eq!(
+            Zone::utc_fallback().until(utc("2026-10-13 22:05:00"), now),
+            "22:05 UTC"
         );
     }
 

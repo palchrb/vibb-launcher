@@ -176,12 +176,8 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             &[],
         )
         .await;
-    assert!(res.status.is_redirection());
-    // Back to the card, not the top of the page (qa-19-code #4).
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}#play-kiosk").as_str())
-    );
+    // Back to Advanced with no fragment: scroll-restore.js keeps the position (qa-31-s3-code M3).
+    super::assert_redirect(&res, &format!("/devices/{id}/advanced"), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, &token).await["block_activity_start"],
@@ -219,8 +215,19 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             .await
             .unwrap();
     assert_eq!(stored, Some(false));
-    let html = page(&app, &cookie, &format!("/devices/{id}")).await;
-    assert!(html.contains("kiosk app block below is off"), "{html}");
+    let html = page(&app, &cookie, &format!("/devices/{id}/advanced")).await;
+    assert!(
+        html.contains("Play can&#39;t be paused on this phone"),
+        "{html}"
+    );
+    assert!(
+        html.contains("Block other apps&#39; screens is off, so apps can open the Play Store"),
+        "{html}"
+    );
+    assert_eq!(
+        super::input_checked(&html, "block_activity_start", "on"),
+        Some(false)
+    );
 }
 
 #[tokio::test]

@@ -667,6 +667,39 @@ details.info > summary:not(.row) {
     margin: 8px 0 0;
 }
 
+/* The footer's ⓘ follows its text on the same line (a browser that can't make <details> inline
+   puts it on the next line, which works too). */
+.group-footer details.info {
+    display: inline;
+}
+
+/* A value row whose whole row opens its ⓘ (About This Phone): the icon after the value. */
+details.info > summary.row .info-icon {
+    margin-left: 8px;
+}
+
+.row-value-alarm { color: var(--red-text); }
+.row-value-action { color: var(--orange-text); }
+
+/* A crash report's trace, in its ⓘ panel. */
+.info-panel pre {
+    margin: 8px 0 0;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* A sub-page warning (§4.2): an Attention-coloured block that isn't a link. */
+div.attention {
+    cursor: default;
+}
+
+/* The checkbox a confirm needs before its button (Disconnect Phone…). */
+.confirm-body .checkbox-row {
+    margin: 0 0 12px;
+}
+
 /* ---- Badges, dots, counts ---- */
 
 .badge {

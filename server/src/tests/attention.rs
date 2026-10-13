@@ -91,12 +91,58 @@ async fn each_fact_raises_its_own_row() {
                                   "ledger_unreadable": true}}),
         ),
         ("launcher-without-rules", json!({"capabilities": []})),
+        // Design 31 step 3 fix round (qa-31-s3-code M4): install mode opens the Play Store.
+        (
+            "play-install-mode",
+            json!({"install_mode": {"until_ms": now_ms + 600_000}}),
+        ),
     ];
     for (key, extra) in cases {
         let (id, token) = clean_phone(&app, key).await;
         report(&app, &token, extra).await;
         assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
     }
+
+    // Each needs a switch on this server and the report that goes with it (M4, L4). The switch
+    // on its own, with a report that says nothing, raises nothing.
+    let escapes = ["time_rules_v1", "kiosk_escapes_v1", "boot_cover_v1"];
+    let cases: Vec<(&str, &str, Value)> = vec![
+        (
+            "play-store-openable",
+            "block_activity_start = 0",
+            json!({"play_store_suspendable": false}),
+        ),
+        (
+            "not-home-app",
+            "update_fence = 1",
+            json!({"capabilities": escapes,
+                   "update_fence": {"enabled": true, "state": "none", "home_role_held": false}}),
+        ),
+        (
+            "boot-cover-not-shown",
+            "boot_cover = 1",
+            json!({"capabilities": escapes,
+                   "boot_cover": {"wanted": true, "last_armed_at_ms": now_ms - 3_600_000}}),
+        ),
+    ];
+    for (key, setting, extra) in cases {
+        let (id, token) = clean_phone(&app, key).await;
+        sqlx::query(&format!(
+            "UPDATE device_policy SET {setting} WHERE device_id = ?"
+        ))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        report(&app, &token, json!({"capabilities": escapes})).await;
+        assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new(), "{key}");
+        report(&app, &token, extra).await;
+        assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
+    }
+    // Play not pausable with "Block other apps' screens" on: Play stays blocked, no row.
+    let (blocked, token) = clean_phone(&app, "blocked").await;
+    report(&app, &token, json!({"play_store_suspendable": false})).await;
+    assert_eq!(rows(&app, &cookie, blocked).await, Vec::<String>::new());
 
     // The settings this server keeps.
     let (easy, _) = clean_phone(&app, "easy").await;

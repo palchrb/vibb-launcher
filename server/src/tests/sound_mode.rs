@@ -1,10 +1,10 @@
 //! Sound mode (design 18): the kid's sound row is bit 8 of `quick_controls_mask`, and the phone's
-//! ringer mode and Do Not Disturb filter from every status report show on the device page.
+//! ringer mode and Do Not Disturb filter from every status report show on About This Phone.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
-use super::TestApp;
+use super::{Section, TestApp, device_page};
 
 async fn policy(app: &TestApp, token: &str) -> Value {
     app.request(Method::GET, "/api/devices/policy", Some(token), None)
@@ -87,7 +87,9 @@ async fn the_sound_bit_saves_and_reaches_the_phone() {
 }
 
 /// The phone's ringer mode and Do Not Disturb at the last sync: stored when known, NULL from an
-/// older launcher or for a value the launcher never sends, and shown in the Status card.
+/// older launcher or for a value the launcher never sends, and shown as About This Phone's Sound
+/// rows (design 31 step 3; the Status card's lines until then). Do Not Disturb on is also an
+/// Attention alarm linking there.
 #[tokio::test]
 async fn sound_state_is_stored_and_shown() {
     let app = TestApp::new().await;
@@ -98,16 +100,24 @@ async fn sound_state_is_stored_and_shown() {
         let app = &app;
         let cookie = cookie.clone();
         async move {
-            app.get_page(&format!("/devices/{device}"), &cookie)
+            app.get_page(&device_page(device, Section::About), &cookie)
                 .await
                 .text()
         }
+    };
+    // The value of the row `key`, if there is one.
+    let value = |html: &str, key: &str| -> Option<String> {
+        let row = &html[html.find(&format!("data-row=\"{key}\""))?..];
+        let value = &row[row.find("row-value")?..];
+        let value = &value[value.find('>')? + 1..];
+        Some(value[..value.find('<')?].to_string())
     };
 
     // An older launcher: no fields, nothing shown.
     report(&app, &token, json!({})).await;
     assert_eq!(stored(&app, id).await, (None, None));
-    assert!(!page(id).await.contains("at the last sync"));
+    let html = page(id).await;
+    assert!(!html.contains("id=\"sound\""), "{html}");
 
     report(
         &app,
@@ -120,15 +130,24 @@ async fn sound_state_is_stored_and_shown() {
         (Some("vibrate".into()), Some("priority".into()))
     );
     let html = page(id).await;
+    assert_eq!(value(&html, "ringer").as_deref(), Some("Vibrate"), "{html}");
+    assert_eq!(
+        value(&html, "do-not-disturb").as_deref(),
+        Some("Priority only")
+    );
     assert!(
-        html.contains("Sound at the last sync: silent (vibrate)"),
+        html.contains("Only the calls it lets through ring"),
         "{html}"
     );
-    assert!(html.contains("Do Not Disturb at the last sync: on (priority only)"));
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(summary.contains(&format!("href=\"/devices/{id}/about#sound\"")));
     // Only this phone.
-    assert!(!page(other).await.contains("at the last sync"));
+    assert!(!page(other).await.contains("id=\"sound\""));
 
-    // DND off is no line; sound on is one.
+    // Off and on are plain rows.
     report(
         &app,
         &token,
@@ -136,8 +155,9 @@ async fn sound_state_is_stored_and_shown() {
     )
     .await;
     let html = page(id).await;
-    assert!(html.contains("Sound at the last sync: on."));
-    assert!(!html.contains("Do Not Disturb at the last sync"));
+    assert_eq!(value(&html, "ringer").as_deref(), Some("On"));
+    assert_eq!(value(&html, "do-not-disturb").as_deref(), Some("Off"));
+    assert!(!html.contains("row-value-alarm"), "{html}");
 
     // Unknown values (and explicit nulls) are stored as NULL, never shown.
     report(
@@ -148,5 +168,5 @@ async fn sound_state_is_stored_and_shown() {
     .await;
     assert_eq!(stored(&app, id).await, (None, None));
     let html = page(id).await;
-    assert!(!html.contains("at the last sync") && !html.contains("loud"));
+    assert!(!html.contains("id=\"sound\"") && !html.contains("loud"));
 }
