@@ -387,6 +387,14 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
 - **Idea, long list (user, 2026-10-12): a widget on the lock's glance page**, e.g. a Fossify widget
   (calendar, clock, weather). Not designed yet. Open: privacy on a locked phone (a widget shows its app's
   data to whoever holds it), `AppWidgetHost` in the lock activity, and which widgets the parent may allow.
+- **Idea, long list (user, 2026-10-13): several families.** Parked by the user. The server is one family per
+  instance; one family can share one admin login. Options, cheapest first:
+  - (A) one instance per family: the Docker image, own data dir, port and Caddy site; needs only a setup script and docs;
+  - (B) one process with a SQLite file per family, routed by login and device token; the shared state (catalog,
+    music files, Storytel, DNS lists, backups) moves per family; about 8-12 steps;
+  - (C) `family_id` on every table and query; 15-20 steps and a leak risk in every future feature.
+
+  Hosting other families' data makes the operator the GDPR controller for it. Recommendation: (A).
 
 ## Phases
 
