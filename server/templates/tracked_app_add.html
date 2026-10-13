@@ -4,55 +4,74 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% let subpage = true %}
 {% let tab = "apps" %}
 {% include "partials/app_header.html" %}
 <main class="container container-narrow">
-    <h1>Add an app</h1>
-    <p class="subtitle">Either watch a GitHub repo's Releases for a new APK and push it to devices automatically, or upload APKs yourself whenever a new version is ready. Both work the same way once set up - devices get updates either way, silently.</p>
+    <a class="nav-back" href="/apps"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Apps</a>
+    <h1 class="page-title">Add App</h1>
+
     <form method="post" action="/apps/tracked/new">
-        <label for="name">Name</label>
-        <input type="text" id="name" name="name" value="{{ name }}" placeholder="e.g. Tailscale" required{% if error.is_none() %} autofocus{% endif %}>
-
-        <label for="package_name">Android package name (optional)</label>
-        <input type="text" id="package_name" name="package_name" value="{{ package_name }}" placeholder="e.g. com.tailscale.ipn">
-        <p class="hint">Not required - devices install whatever APK is in the release, and Android determines the real package from the APK itself. Only useful here for your own reference.</p>
-
-        <label class="checkbox-row">
-            <input type="radio" name="source_type" value="github"{% if !manual %} checked{% endif %} onchange="document.getElementById('source_github_fields').style.display='';">
-            Track a GitHub repo's Releases
-        </label>
-        <label class="checkbox-row">
-            <input type="radio" name="source_type" value="manual"{% if manual %} checked{% endif %} onchange="document.getElementById('source_github_fields').style.display='none';">
-            I'll upload APKs myself
-        </label>
-
-        <div id="source_github_fields"{% if manual %} style="display:none;"{% endif %}>
-            <label for="github_repo">GitHub repo</label>
-            <input type="text" id="github_repo" name="github_repo" value="{{ github_repo }}" placeholder="e.g. tailscale/tailscale-android">
-
-            <label for="asset_pattern">Asset filename filter (optional)</label>
-            {% if error_field == "asset_pattern" %}{% if let Some(e) = error %}
-            <div class="error">{{ e }}</div>
-            {% endif %}{% endif %}
-            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Leave blank to use the first .apk found"{% if error_field == "asset_pattern" %} autofocus{% endif %}>
-            <p class="hint">Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$)</p>
-            <p class="hint">Only needed if a release has more than one APK (e.g. per architecture) - the first .apk that matches is used (only .apk files are picked).</p>
-
-            <label for="release_tag_prefix">Release tag prefix (optional)</label>
-            {% if error_field == "release_tag_prefix" %}{% if let Some(e) = error %}
-            <div class="error">{{ e }}</div>
-            {% endif %}{% endif %}
-            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ release_tag_prefix }}" placeholder="e.g. launcher-v"{% if error_field == "release_tag_prefix" %} autofocus{% endif %}>
-            <p class="hint">Only releases whose tag starts with this - for a repo that publishes several apps. This project's repo: launcher-v for the launcher, music-v for the music app. Blank: any release except this server's (server-v) and the music app's (music-v).</p>
-
-            <label class="checkbox-row">
-                <input type="checkbox" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}>
-                Include pre-releases
-            </label>
-            <p class="hint">Needed for a repo that only ever publishes to a rolling/pre-release tag (like this project's own launcher) - otherwise a repo with no full releases will never be found.</p>
+        <div class="group form-group">
+            <div class="field">
+                <label class="field-label" for="name">Name</label>
+                <input type="text" id="name" name="name" value="{{ name }}" placeholder="e.g. Tailscale" required{% if error.is_none() %} autofocus{% endif %}>
+            </div>
         </div>
 
-        <button type="submit">Add app</button>
+        {#- The source: two radios before the groups, so CSS can mark the chosen row and hide the
+            GitHub fields for uploads - no script. -#}
+        <h2 class="group-header" id="source-header">Source</h2>
+        <div class="source-choice" role="radiogroup" aria-labelledby="source-header">
+            <input type="radio" class="choice-radio" id="source-github" name="source_type" value="github"{% if !manual %} checked{% endif %}>
+            <input type="radio" class="choice-radio" id="source-manual" name="source_type" value="manual"{% if manual %} checked{% endif %}>
+            <div class="group">
+                <label class="row choice-row" for="source-github"><span class="row-label">GitHub releases</span><svg class="choice-check check-github" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+                <label class="row choice-row" for="source-manual"><span class="row-label">Upload APKs yourself</span><svg class="choice-check check-manual" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+            </div>
+            <p class="group-footer">Phones get each new version by themselves.</p>
+
+            <div class="github-only">
+                <div class="group form-group">
+                    <div class="field">
+                        <label class="field-label" for="github_repo">GitHub repo</label>
+                        <input type="text" id="github_repo" name="github_repo" value="{{ github_repo }}" placeholder="owner/repo, or its link">
+                    </div>
+                </div>
+
+                <details class="section" id="more"{% if self.more_open() %} open{% endif %}>
+                    <summary class="row section-toggle"><span class="row-label">More Options</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+                    <div class="group form-group">
+                        <div class="field">
+                            <label class="field-label" for="asset_pattern">File name contains</label>
+                            <details class="info field-info"><summary aria-label="About the file name filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$). Only .apk files are picked: needed when a release has several, one per architecture for instance.</p></div></details>
+                            <input type="text" id="asset_pattern" name="asset_pattern" value="{{ asset_pattern }}" placeholder="Any .apk"{% if error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
+                            {% if error_field == "asset_pattern" %}{% if let Some(e) = error %}<p class="field-error" id="asset_pattern-error">{{ e }}</p>{% endif %}{% endif %}
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="release_tag_prefix">Tag starts with</label>
+                            <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Only releases whose tag starts with this, for a repo with several apps: launcher-v for the launcher and music-v for the music app in this project's repo.</p><p>Blank: any release but this server's (server-v) and the music app's (music-v).</p></div></details>
+                            <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ release_tag_prefix }}" placeholder="e.g. launcher-v"{% if error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
+                            {% if error_field == "release_tag_prefix" %}{% if let Some(e) = error %}<p class="field-error" id="release_tag_prefix-error">{{ e }}</p>{% endif %}{% endif %}
+                        </div>
+                        <div class="field">
+                            <label class="field-label" for="package_name">Package (optional)</label>
+                            <details class="info field-info"><summary aria-label="About the package"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Not needed, and not saved: the app's package is read from its first release's APK.</p></div></details>
+                            <input type="text" id="package_name" name="package_name" value="{{ package_name }}" placeholder="e.g. com.tailscale.ipn">
+                        </div>
+                    </div>
+                    <div class="group">
+                        <label class="row">
+                            <span class="row-label">Include pre-releases</span>
+                            <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if include_prereleases %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                        </label>
+                    </div>
+                    <p class="group-footer">For a repo that only publishes pre-releases.</p>
+                </details>
+            </div>
+        </div>
+
+        <button type="submit" class="button-wide">Add App</button>
     </form>
 </main>
 </body>

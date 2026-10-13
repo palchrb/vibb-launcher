@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2030,3 +2030,70 @@ designs 30, 32 step 1 and 33):
 | L5 | The user's decision (§3.2 item 2): no rows for a phone not set up; an Offline or Disconnected phone's report-based rows say "At last report" and still count; list and summary count the same `items`. |
 | Checks | `cargo test` 725 passed (with `main` merged); `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
 | Nits | A time more than 5 min ahead reads "today 16:00" on the same day; the key test uses a set and documents that calls rows share "calls"; the device page passes its built cards to `attention::facts_of` (`call_warnings` is gone, the page uses `call_report`); the avatar letter is the first letter or digit, one character ("ß" kept, emoji and flags skipped); the Backups page labels its times "server time" (it matches the file names; the hub uses the Phone Setup zone); the `title=` on the list's "seen" stays (the header's ⓘ is step 10's). §3.8 no longer names music and escapes as sources. |
+
+## Step 11 implementation status (2026-10-13)
+
+Built on branch `design-31-s11` (from `4d225da4`, with steps 1 and 2 in), in parallel with step 3; server only, no
+migration, no new crate, `style.css?v=11`.
+- **Apps tab** (`apps_list.html`, `tracked_apps::list_apps`): the large title; **On phones**, one row per phone
+  (36px avatar from step 2's `devices::avatar_class`/`initial`, the name, "14 allowed" or "Not set up" or "List
+  unreadable", a chevron); **Catalog**, one row per app: a 36px tile (the catalog icon on its colour, else the first
+  letter), the name phones show ("Chat"), a sub-line ("Launcher · all phones", "Element X · 1 phone", "No phones"),
+  the version from the tag (`version_of`: "launcher-v0.32.0" -> "0.32.0", "v26.10.1" -> "26.10.1") or a badge
+  instead: **Off** (grey, disabled), **Update failed** (red, the last sync failed), **No release yet** (grey); the
+  launcher first, then by name; the footer and **Add App**.
+- **The app page** (`tracked_app_detail.html`): the sub-page header ("‹ Apps", the large title, no brand bar); the top
+  group (Version, "Last checked 2 h ago" with the exact time in `title`, the running state "Checking now…" or the
+  failure's short title with the raw error and its exact time behind ⓘ, **Check Now**); **Show on phones as** (the
+  `app_display_form` partial unchanged, as one row of a group, with a one-line footer); **On phones** (new: the phones
+  with it ticked - every set-up phone for the launcher - each linking to its row on the phone's page); **Source &
+  Signing**, a `<details>` (closed; open when a refused save or upload is in it) holding Release (GitHub link or
+  "Uploaded by you", the full tag, the file, the package with the confirm-a-candidate forms, the signing key short
+  with the whole key behind ⓘ, **Forget Package and Key…** as a `<details>` confirm - M6), Details (the one form:
+  name, repo, "File name contains", "Tag starts with", their hints behind ⓘ, the error under the field with
+  `aria-invalid`/`aria-describedby`), Updates (Include pre-releases, Enabled, This is the launcher app: switches,
+  one form each as before, now with a `<noscript>` Save) and, for an uploaded app, Upload a new version; **Remove
+  App…** in red behind its confirm.
+- **Add App** (`tracked_app_add.html`): name, the source as two rows (GitHub releases / Upload APKs yourself), the
+  repo; "File name contains", "Tag starts with", the package and Include pre-releases under **More Options**, open
+  when one holds something or was refused. The source's inline `onchange` script is gone (§5.2): the two radios sit
+  before the rows, so CSS marks the chosen row and hides the GitHub fields for an upload.
+- **Rust texts**: a sync failure is typed (`tracked_apps::SyncProblem`, 13 kinds, each with a title of at most 6
+  words; `Failure { problem, detail }`), set where each error happens - GitHub unreachable / 404 / other answers, no
+  matching release, download, unreadable APK, another app, another key, can't check, a package taken, server, removed.
+  `check_pins` and `check_new_package` return it; a refused release keeps its kind ("not downloaded again" keeps
+  the title). Upload and package refusals show the same way in their group (a red title, the reason behind ⓘ).
+  The field errors say "The file name filter is ..." and "The tag prefix may only hold ...".
+- **Every form keeps its POST target and behaviour**; each redirects to the app's page as before (Display to
+  `#display`, Remove to `/apps`, Add to the new app). `tests/tracked_apps.rs`
+  `every_form_on_the_app_pages_returns_to_its_page` is this step's part of §5.1's redirect table: it posts every form
+  the GitHub and the uploaded app's pages render and fails on a form it has no row for.
+- **Tests**: `tests/tracked_apps.rs` (the tab: rows, count equal to the phone page's ticks, order, badges, icon, footer;
+  the app page: no brand, its phones and their links, the switches' forms, the two confirms, the launcher's and an
+  uploaded app's page; Add App's More Options and radios; the redirect table; the existing tests through the step 1
+  helpers, the failure as title + ⓘ and the catalog's "Update failed"), `tests/catalog_pins.rs` (each refused upload's
+  title, the raw reason kept, Source & Signing open), unit tests `a_release_tag_reads_as_a_version`,
+  `sync_problems_have_short_titles` and the typed failures in the sync tests. Checked in headless Chromium at 390 px,
+  light and dark, with and without JS: no horizontal scroll, the source rows switch the GitHub fields with CSS alone.
+
+Choices made while building:
+1. **"On phones" links** (the tab and the app page) go to the phone's page - at the app's own row
+   (`#app-<package>`) from an app page - until step 6 builds `/devices/{id}/apps`; one function,
+   `tracked_apps::phone_apps_href`, to repoint then. `device_detail.html` is untouched (step 3 works on it).
+2. **"N allowed"** counts what the phone's Apps card ticks (`tracked_apps::allowed_count`): reported apps on its
+   allowlist (not Play's core) plus catalog apps chosen for it and not reported installed; the launcher isn't
+   counted. A test checks the two agree.
+3. **The brand bar** leaves the two rebuilt inner pages (§3.0): they set `{% let subpage = true %}` before the tab, and
+   `partials/app_header.html` skips the bar when it is defined (`is defined`, Askama 0.16). Step 3's sub-pages can use
+   the same flag; if it chose another one, the merge picks one.
+4. **The catalog row's name** is the name phones show (the mockup's "Chat") with the admin name in the sub-line;
+   the app page keeps the admin name as its title.
+5. **"Update failed"** reads the in-memory sync status, so it clears on a restart until the next hourly check, like
+   the app page's failure line.
+6. **The shared `app_display_form` partial** is not reworded: the device page uses it too, and step 6 restyles it
+   there. Its summary keeps the native disclosure marker.
+7. **The add form's package field** is kept under More Options as §3.3 says, though the server never stored it; its
+   ⓘ now says so.
+8. **Button and row case**: action rows and confirms in Title Case as the mockups draw them ("Check Now", "Add App",
+   "Remove App…", "Forget Package and Key…").
+9. Not checked here: a real phone (iOS Safari 14, Chrome 80) - owed before merging, as for steps 1 and 2.

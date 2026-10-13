@@ -444,7 +444,7 @@ the old launcher as a second app. And once this server is updated, the provision
    `releases/latest/download/kids-launcher-mdm.apk` is the renamed build.
 3. **Only then update this server.** Until step 2 is done, the provisioning QR doesn't work (it names the new package
    while "latest" still serves the old one) - provision with adb meanwhile.
-- then, on the app's page, turn on "This is the launcher app"
+- then, on the app's page, turn on "This is the launcher app" (Source & Signing)
 
 A release launcher can't be downgraded: Android refuses an install with a lower versionCode. If a launcher release is
 broken, fix it forward by releasing the old (or fixed) code under a higher `launcher-v*` tag.
@@ -485,7 +485,7 @@ The Music tab holds the library for the Vibb music app; each phone's page has a 
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
   `vibb-music.apk` as the launcher update. Migration 0049 sets the launcher row to `launcher-v*` releases and
   `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
-  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Release tag prefix".
+  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Tag starts with" (Source & Signing).
 - **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
   or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
   0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
@@ -576,7 +576,7 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
-  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget the package and key" on
+  already has from Play or as a system app. A phone allows a catalog app once the launcher has installed it there. If the developer really changed keys, "Forget Package and Key…" (Source & Signing) on
   the app's page lets the next release set them again.
 - **A new phone starts with only its clock, calculator, camera, Vibb Music, phone app and Messages allowed** (never
   Settings, a browser or a file manager): it can call and text, but every other app stays hidden until you allow it

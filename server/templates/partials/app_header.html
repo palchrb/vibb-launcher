@@ -1,9 +1,13 @@
 {#- The brand bar and the 5-tab bar (design 31 §3.1). The page sets its tab before including this:
     {% let tab = "devices" %} - one of devices, apps, locate, music, settings - and the server marks
-    that tab aria-current="page", so no script is needed. -#}
+    that tab aria-current="page", so no script is needed. A rebuilt inner page with its own
+    sub-page header (a back link and the large title, §3.0) sets {% let subpage = true %} first and
+    gets no brand bar. -#}
+{% if subpage is not defined -%}
 <header class="app-header">
     <a href="/" class="brand">Vibb Phone</a>
 </header>
+{%- endif %}
 
 <nav class="tab-bar" aria-label="Main">
     <a href="/devices" class="tab" data-tab="devices"{% if tab == "devices" %} aria-current="page"{% endif %}>

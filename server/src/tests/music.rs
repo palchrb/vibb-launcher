@@ -3829,7 +3829,7 @@ async fn the_release_tag_prefix_is_edited_on_the_app_page() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let text = res.text();
-    assert!(text.contains("release tag prefix may only hold"));
+    assert!(text.contains("tag prefix may only hold"));
     assert!(text.contains("value=\"bad prefix\""));
     let res = app
         .request_form(

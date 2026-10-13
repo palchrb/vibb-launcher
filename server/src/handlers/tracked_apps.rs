@@ -78,7 +78,7 @@ const MAX_PATTERN_CHARS: usize = 256;
 const MAX_REGEX_BYTES: usize = 1 << 20;
 
 impl AssetFilter {
-    /// `Err(reason)` completes "the asset filename filter is ...": over [MAX_PATTERN_CHARS], or a
+    /// `Err(reason)` completes "the file name filter is ...": over [MAX_PATTERN_CHARS], or a
     /// `^` pattern that doesn't compile within [MAX_REGEX_BYTES].
     fn parse(pattern: Option<&str>) -> Result<Self, String> {
         let pattern = match pattern {
@@ -129,7 +129,7 @@ impl AssetFilter {
 fn validate_asset_pattern(pattern: Option<&str>) -> Result<(), String> {
     AssetFilter::parse(pattern)
         .map(|_| ())
-        .map_err(|reason| format!("The asset filename filter is {reason}. Nothing was saved."))
+        .map_err(|reason| format!("The file name filter is {reason}. Nothing was saved."))
 }
 
 #[derive(Deserialize)]
@@ -160,22 +160,39 @@ async fn fetch_latest_release(
     include_prereleases: bool,
     asset_pattern: Option<&str>,
     tag_prefix: Option<&str>,
-) -> Result<(GithubRelease, GithubAsset), String> {
+) -> Result<(GithubRelease, GithubAsset), Failure> {
+    use SyncProblem::*;
     let filter = AssetFilter::parse(asset_pattern)
-        .map_err(|reason| format!("the asset filename filter is {reason}"))?;
+        .map_err(|reason| Failure::new(Filter, format!("the file name filter is {reason}")))?;
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::new(Server, e.to_string()))?;
 
     let url = format!("https://api.github.com/repos/{github_repo}/releases?per_page=100");
-    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| Failure::new(GithubUnreachable, e.to_string()))?;
     if !response.status().is_success() {
-        return Err(format!("GitHub API returned {}", response.status()));
+        let problem = if response.status() == reqwest::StatusCode::NOT_FOUND {
+            RepoNotFound
+        } else {
+            GithubError
+        };
+        return Err(Failure::new(
+            problem,
+            format!("GitHub API returned {}", response.status()),
+        ));
     }
-    let releases: Vec<GithubRelease> = response.json().await.map_err(|e| e.to_string())?;
+    let releases: Vec<GithubRelease> = response
+        .json()
+        .await
+        .map_err(|e| Failure::new(GithubError, e.to_string()))?;
     newest_matching_release(releases, include_prereleases, &filter, tag_prefix)
+        .map_err(|e| Failure::new(NoRelease, e))
 }
 
 /// Whether a catalog row may take a release with this tag: never a `server-v*` one (the server's
@@ -215,7 +232,7 @@ fn parse_tag_prefix(input: &str) -> Result<Option<String>, String> {
         Ok(Some(prefix.to_string()))
     } else {
         Err(format!(
-            "The release tag prefix may only hold letters, digits, '.', '_' and '-' (at most \
+            "The tag prefix may only hold letters, digits, '.', '_' and '-' (at most \
              {MAX_TAG_PREFIX_CHARS}), e.g. launcher-v. Nothing was saved."
         ))
     }
@@ -508,36 +525,39 @@ async fn apk_identity(path: &str) -> Result<crate::apk::ApkIdentity, String> {
 pub(crate) fn check_pins(
     app: &TrackedApp,
     identity: &crate::apk::ApkIdentity,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     match (&identity.package, app.package_name.is_empty()) {
         (Some(package), false) if *package != app.package_name => {
-            return Err(format!(
-                "refused: the release is the Android package {package}, this app is {} (if the \
-                 catalog has it wrong, forget the package name and signing key below)",
-                app.package_name
+            return Err(Failure::new(
+                SyncProblem::OtherApp,
+                format!(
+                    "refused: the release is the Android package {package}, this app is {} (if \
+                     the catalog has it wrong, forget the package name and signing key)",
+                    app.package_name
+                ),
             ));
         }
         (None, false) => {
-            return Err(
+            return Err(Failure::new(
+                SyncProblem::CantCheck,
                 "refused: the release's Android package can't be read from its APK, so it can't \
-                 be checked against this app's"
-                    .to_string(),
-            );
+                 be checked against this app's",
+            ));
         }
         _ => {}
     }
     match (&app.signer_sha256, &identity.signer_sha256) {
-        (Some(pinned), Some(signer)) if pinned != signer => Err(
+        (Some(pinned), Some(signer)) if pinned != signer => Err(Failure::new(
+            SyncProblem::OtherKey,
             "refused: the release is signed with a different key than this app's earlier \
              releases (if its developer really changed keys, forget the package name and signing \
-             key below)"
-                .to_string(),
-        ),
-        (Some(_), None) => Err(
+             key)",
+        )),
+        (Some(_), None) => Err(Failure::new(
+            SyncProblem::CantCheck,
             "refused: the release has no APK Signature Scheme v2/v3 signature to check against \
-             this app's signing key"
-                .to_string(),
-        ),
+             this app's signing key",
+        )),
         _ => Ok(()),
     }
 }
@@ -593,7 +613,7 @@ async fn check_new_package(
     state: &AppState,
     app: &TrackedApp,
     identity: &crate::apk::ApkIdentity,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let Some(package) = identity
         .package
         .as_deref()
@@ -602,18 +622,27 @@ async fn check_new_package(
         return Ok(());
     };
     if never_a_catalog_package(package) {
-        return Err(format!(
-            "refused: the release is the Android package {package}, which belongs to the system - \
-             a catalog app can't be it"
+        return Err(Failure::new(
+            SyncProblem::Taken,
+            format!(
+                "refused: the release is the Android package {package}, which belongs to the \
+                 system - a catalog app can't be it"
+            ),
         ));
     }
     match foreign_on_a_phone(state, package).await {
         Ok(None) => Ok(()),
-        Ok(Some(phone)) => Err(format!(
-            "refused: the release is the Android package {package}, which {phone} already has as \
-             a system app or from another store - a catalog app can't take it over"
+        Ok(Some(phone)) => Err(Failure::new(
+            SyncProblem::Taken,
+            format!(
+                "refused: the release is the Android package {package}, which {phone} already has \
+                 as a system app or from another store - a catalog app can't take it over"
+            ),
         )),
-        Err(err) => Err(format!("refused: couldn't check the phones' apps ({err})")),
+        Err(err) => Err(Failure::new(
+            SyncProblem::Server,
+            format!("refused: couldn't check the phones' apps ({err})"),
+        )),
     }
 }
 
@@ -710,14 +739,90 @@ struct SyncStatus {
     /// The release (tag, asset id) the last sync refused for its package or key, and why: the
     /// hourly sync doesn't download it again (QA of the security wave, Low 5 - a 326 MB APK every
     /// hour); "Check now" and "Forget" do.
-    refused: Option<(String, i64, String)>,
+    refused: Option<(String, i64, Failure)>,
 }
 
 #[derive(Clone)]
 pub struct SyncFailure {
     /// UTC, like `tracked_apps.last_checked_at`.
     pub at: String,
-    pub message: String,
+    pub failure: Failure,
+}
+
+/// Why a sync or an upload didn't take a release, as a kind (design 31 §4.4, step 11): the app's
+/// page shows [SyncProblem::title], the raw error ([Failure::detail]) behind its ⓘ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncProblem {
+    /// The stored file name filter doesn't compile (the forms refuse one, so only an old row).
+    Filter,
+    /// No answer from GitHub: the network, DNS, a timeout.
+    GithubUnreachable,
+    /// GitHub answered 404: a wrong or private repo.
+    RepoNotFound,
+    /// GitHub answered another error (a rate limit's 403, a 5xx) or something unreadable.
+    GithubError,
+    /// No release (of the allowed tags) has a matching .apk.
+    NoRelease,
+    /// The download failed, stalled, took too long, was too big or wasn't a whole APK.
+    Download,
+    /// The APK's manifest or signature can't be read.
+    Unreadable,
+    /// The release is another package than the app's pinned one.
+    OtherApp,
+    /// The release is signed with another key than the pinned one.
+    OtherKey,
+    /// Pinned, but the release's package or signature can't be read to check it.
+    CantCheck,
+    /// The release's package is the system's, or one a phone has from elsewhere.
+    Taken,
+    /// This server couldn't store or check something (disk, database).
+    Server,
+    /// The app was removed while it synced.
+    Removed,
+}
+
+impl SyncProblem {
+    /// The short title (at most 6 words, §4.2) the app's page shows.
+    pub fn title(self) -> &'static str {
+        match self {
+            SyncProblem::Filter => "File name filter is invalid",
+            SyncProblem::GithubUnreachable => "Couldn't reach GitHub",
+            SyncProblem::RepoNotFound => "Repo not found on GitHub",
+            SyncProblem::GithubError => "GitHub returned an error",
+            SyncProblem::NoRelease => "No matching release found",
+            SyncProblem::Download => "Download failed",
+            SyncProblem::Unreadable => "Couldn't read the APK",
+            SyncProblem::OtherApp => "Release is a different app",
+            SyncProblem::OtherKey => "Signed with a different key",
+            SyncProblem::CantCheck => "Release can't be checked",
+            SyncProblem::Taken => "Package belongs to another app",
+            SyncProblem::Server => "Something went wrong",
+            SyncProblem::Removed => "The app was removed",
+        }
+    }
+}
+
+/// A failed sync or upload: its kind and the raw error (reqwest, sqlx and file errors included),
+/// which only the ⓘ panel and the log show.
+#[derive(Clone, Debug)]
+pub struct Failure {
+    pub problem: SyncProblem,
+    pub detail: String,
+}
+
+impl Failure {
+    pub fn new(problem: SyncProblem, detail: impl Into<String>) -> Self {
+        Failure {
+            problem,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.problem.title(), self.detail)
+    }
 }
 
 fn utc_now() -> String {
@@ -749,13 +854,13 @@ impl AppSyncs {
         self.lock().get(&id).cloned().unwrap_or_default()
     }
 
-    fn refused(&self, id: i64) -> Option<(String, i64, String)> {
+    fn refused(&self, id: i64) -> Option<(String, i64, Failure)> {
         self.lock()
             .get(&id)
             .and_then(|status| status.refused.clone())
     }
 
-    fn set_refused(&self, id: i64, refused: Option<(String, i64, String)>) {
+    fn set_refused(&self, id: i64, refused: Option<(String, i64, Failure)>) {
         self.lock().entry(id).or_default().refused = refused;
     }
 }
@@ -767,11 +872,11 @@ pub(crate) struct SyncGuard {
 }
 
 impl SyncGuard {
-    pub(crate) fn finish(self, result: &Result<(), String>) {
+    pub(crate) fn finish(self, result: &Result<(), Failure>) {
         self.syncs.lock().entry(self.id).or_default().last_error =
-            result.as_ref().err().map(|message| SyncFailure {
+            result.as_ref().err().map(|failure| SyncFailure {
                 at: utc_now(),
-                message: message.clone(),
+                failure: failure.clone(),
             });
     }
 }
@@ -786,7 +891,7 @@ impl Drop for SyncGuard {
 
 enum SyncError {
     AlreadyRunning,
-    Failed(String),
+    Failed(Failure),
 }
 
 /// Syncs app `id` unless a sync of it already runs, and records how it ended. See [sync_one_app];
@@ -807,13 +912,13 @@ async fn sync_app(state: &AppState, id: i64, forced: bool) -> Result<(), SyncErr
 /// Used by both the scheduled loop and the admin's manual "Check now"
 /// button, so they can never drift apart. Only through [sync_app], which holds the app's guard:
 /// the row is read here, under it, so the comparison is with what the last sync stored.
-async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), String> {
+async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), Failure> {
     let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "the app was removed".to_string())?;
+        .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?
+        .ok_or_else(|| Failure::new(SyncProblem::Removed, "the app was removed"))?;
     if app.source_type != "github" {
         return Ok(());
     }
@@ -843,14 +948,19 @@ async fn sync_release(
     tag: &str,
     asset: &GithubAsset,
     forced: bool,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
+    use SyncProblem::*;
     if !forced
         && let Some((refused_tag, refused_asset, why)) = state.app_syncs.refused(app.id)
         && refused_tag == tag
         && refused_asset == asset.id
     {
-        return Err(format!(
-            "{why} (not downloaded again until the release changes; \"Check now\" tries again)"
+        return Err(Failure::new(
+            why.problem,
+            format!(
+                "{} (not downloaded again until the release changes; \"Check now\" tries again)",
+                why.detail
+            ),
         ));
     }
 
@@ -867,7 +977,7 @@ async fn sync_release(
     let app_dir = state.tracked_apps_dir.join(app.id.to_string());
     tokio::fs::create_dir_all(&app_dir)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::new(Server, e.to_string()))?;
     let file_path = app_dir
         .join(format!("{}-{}.apk", tag, asset.id))
         .to_string_lossy()
@@ -877,13 +987,20 @@ async fn sync_release(
         tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(asset, &file_path))
             .await
             .map_err(|_| {
-                format!(
-                    "download of {} stopped after {} minutes",
-                    asset.name,
-                    DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
+                Failure::new(
+                    Download,
+                    format!(
+                        "download of {} stopped after {} minutes",
+                        asset.name,
+                        DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
+                    ),
                 )
-            })??;
-    let checked = match apk_identity(&file_path).await {
+            })?
+            .map_err(|e| Failure::new(Download, e))?;
+    let checked = match apk_identity(&file_path)
+        .await
+        .map_err(|e| Failure::new(Unreadable, e))
+    {
         Ok(identity) => match check_pins(app, &identity) {
             Ok(()) => check_new_package(state, app, &identity)
                 .await
@@ -921,12 +1038,15 @@ async fn sync_release(
         Ok(result) => result.rows_affected() > 0,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
-            return Err(err.to_string());
+            return Err(Failure::new(Server, err.to_string()));
         }
     };
     replace_cached_file(stored, &file_path, app.latest_release_file_path.as_deref()).await;
     if !stored {
-        return Err("the app was removed during the download".to_string());
+        return Err(Failure::new(
+            Removed,
+            "the app was removed during the download",
+        ));
     }
     store_pins(state, app, &identity).await;
     Ok(())
@@ -979,25 +1099,276 @@ fn random_label() -> String {
     generate_device_token()
 }
 
+/// One phone on the Apps tab or an app's page (design 31 §3.3): its avatar, its name and, on the
+/// tab, how many apps it allows.
+struct PhoneRow {
+    id: i64,
+    name: String,
+    initial: String,
+    avatar: &'static str,
+    /// "14 allowed", "Not set up"; empty on an app's page.
+    value: String,
+    href: String,
+}
+
+impl PhoneRow {
+    fn new(device: &crate::models::Device, value: String, href: String) -> Self {
+        PhoneRow {
+            id: device.id,
+            name: device.name.clone(),
+            initial: crate::handlers::devices::initial(&device.name),
+            avatar: crate::handlers::devices::avatar_class(device),
+            value,
+            href,
+        }
+    }
+}
+
+/// A catalog row's icon tile: the catalog icon on its colour (what the phones show), else the
+/// first letter of the name on a colour by the app's id.
+struct AppTile {
+    letter: String,
+    colour: &'static str,
+    /// The icon key (`/static/app-icons/<key>.svg`) and the tile's colour.
+    icon: Option<(String, &'static str)>,
+}
+
+/// One app on the Apps tab's catalog (design 31 §3.3).
+struct CatalogRow {
+    id: i64,
+    /// The name phones show ("Chat"), else the app's own.
+    label: String,
+    /// "Launcher · all phones", "Element X · 1 phone", "No phones".
+    sub: String,
+    /// "26.10.1", from the release tag.
+    version: Option<String>,
+    /// Instead of the version: "Off", "Update failed", "No release yet", and the badge's class.
+    badge: Option<(&'static str, &'static str)>,
+    tile: AppTile,
+}
+
+/// Where a phone's allowed apps are listed: until design 31 step 6 builds `/devices/{id}/apps`,
+/// the device page, at the app's row (`#app-<package>`) when there is one.
+fn phone_apps_href(device_id: i64, package: Option<&str>) -> String {
+    match package.filter(|p| crate::app_display::valid_package_name(p)) {
+        Some(package) => format!("/devices/{device_id}#app-{package}"),
+        None => format!("/devices/{device_id}"),
+    }
+}
+
+/// A release tag as a version: without the row's tag prefix and a leading "v" before a digit
+/// ("launcher-v0.32.0" -> "0.32.0", "v26.09.4" -> "26.09.4"); a manual upload's label as typed.
+fn version_of(tag: &str, prefix: Option<&str>) -> String {
+    let rest = prefix
+        .and_then(|prefix| tag.strip_prefix(prefix))
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(tag);
+    let starts_with_digit = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
+    let rest = match rest.rfind("-v") {
+        Some(at) if starts_with_digit(&rest[at + 2..]) => &rest[at + 2..],
+        _ => rest,
+    };
+    match rest.strip_prefix(['v', 'V']) {
+        Some(version) if starts_with_digit(version) => version.to_string(),
+        _ => rest.to_string(),
+    }
+}
+
+/// "1 phone", "2 phones", "no phones".
+fn phones_text(count: i64) -> String {
+    match count {
+        0 => "no phones".to_string(),
+        1 => "1 phone".to_string(),
+        n => format!("{n} phones"),
+    }
+}
+
+/// The first letter upper-cased ("no phones" -> "No phones").
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+fn app_tile(app: &TrackedApp, label: &str) -> AppTile {
+    let colours = crate::handlers::devices::AVATAR_COLOURS;
+    AppTile {
+        letter: crate::handlers::devices::initial(label),
+        colour: colours[app.id.rem_euclid(colours.len() as i64) as usize],
+        icon: app
+            .display_icon
+            .as_deref()
+            .filter(|key| crate::app_display::icon_known(key))
+            .map(|key| {
+                (
+                    key.to_string(),
+                    crate::app_display::tile_of(&app.display_color),
+                )
+            }),
+    }
+}
+
+/// The catalog row of `app`, which `phones` phones have ticked.
+fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64) -> CatalogRow {
+    let label = app
+        .display_label
+        .clone()
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or_else(|| app.name.clone());
+    let mut sub = Vec::new();
+    if app.is_launcher {
+        sub.push("Launcher".to_string());
+    } else if label != app.name {
+        sub.push(app.name.clone());
+    }
+    sub.push(if app.is_launcher {
+        "all phones".to_string()
+    } else {
+        phones_text(phones)
+    });
+    let badge = if !app.enabled {
+        Some(("Off", "badge"))
+    } else if state.app_syncs.status(app.id).last_error.is_some() {
+        Some(("Update failed", "badge badge-red"))
+    } else if app.latest_release_tag.is_none() {
+        Some(("No release yet", "badge"))
+    } else {
+        None
+    };
+    CatalogRow {
+        id: app.id,
+        tile: app_tile(app, &label),
+        label,
+        sub: capitalised(&sub.join(" · ")),
+        version: app
+            .latest_release_tag
+            .as_deref()
+            .map(|tag| version_of(tag, app.release_tag_prefix.as_deref())),
+        badge,
+    }
+}
+
+/// How many apps a phone allows, as the device page's Apps card ticks them (design 31 §3.3,
+/// "14 allowed"): the apps it reported that its allowlist has (not Play's core), and the catalog
+/// apps chosen for it that it hasn't reported installed; not the launcher. `None` when the stored
+/// allowlist can't be read.
+async fn allowed_count(state: &AppState, device_id: i64, catalog: &[TrackedApp]) -> Option<usize> {
+    let allowlist: Option<String> =
+        sqlx::query_scalar("SELECT allowlist_json FROM device_policy WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()?
+            .flatten();
+    let allowed: std::collections::HashSet<String> = allowlist
+        .as_deref()
+        .map(serde_json::from_str::<Vec<String>>)
+        .transpose()
+        .ok()?
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let report: Option<String> = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+    let installed: Vec<crate::models::InstalledApp> = report
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let selected: std::collections::HashSet<i64> =
+        sqlx::query_scalar("SELECT tracked_app_id FROM device_tracked_apps WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_all(&state.db)
+            .await
+            .ok()?
+            .into_iter()
+            .collect();
+    let installed: Vec<&crate::models::InstalledApp> = installed
+        .iter()
+        .filter(|app| !crate::play::is_play_core(&app.package_name))
+        .collect();
+    let seen: std::collections::HashSet<&str> = installed
+        .iter()
+        .map(|app| app.package_name.as_str())
+        .collect();
+    let reported = installed
+        .iter()
+        .filter(|app| allowed.contains(&app.package_name))
+        .count();
+    let waiting = catalog
+        .iter()
+        .filter(|t| !t.is_launcher && !crate::play::is_play_core(&t.package_name))
+        .filter(|t| t.package_name.is_empty() || !seen.contains(t.package_name.as_str()))
+        .filter(|t| selected.contains(&t.id))
+        .count();
+    Some(reported + waiting)
+}
+
 #[derive(Template)]
 #[template(path = "apps_list.html")]
 struct AppsListTemplate {
     title: String,
-    tracked: Vec<TrackedApp>,
+    phones: Vec<PhoneRow>,
+    apps: Vec<CatalogRow>,
 }
 
-/// The Apps tab - one card per tracked app, whatever its source (including
-/// the launcher itself, which is just another GitHub-sourced row here).
+/// The Apps tab (design 31 §3.3): each phone with how many apps it allows, the catalog - every
+/// app the server keeps up to date, the launcher's own row included - and Add App.
 pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
     let tracked = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps ORDER BY name")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
+    let devices = sqlx::query_as::<_, crate::models::Device>("SELECT * FROM devices ORDER BY name")
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+    let mut phones = Vec::with_capacity(devices.len());
+    for device in &devices {
+        let value = if device.enrolled_at.is_none() {
+            "Not set up".to_string()
+        } else {
+            match allowed_count(&state, device.id, &tracked).await {
+                Some(count) => format!("{count} allowed"),
+                None => "List unreadable".to_string(),
+            }
+        };
+        phones.push(PhoneRow::new(
+            device,
+            value,
+            phone_apps_href(device.id, None),
+        ));
+    }
+    let counts: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT tracked_app_id, COUNT(*) FROM device_tracked_apps GROUP BY tracked_app_id",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+    let mut apps: Vec<CatalogRow> = tracked
+        .iter()
+        .map(|app| catalog_row(&state, app, counts.get(&app.id).copied().unwrap_or(0)))
+        .collect();
+    // The launcher first (the mockup's "Vibb"), then by the name the parent sees.
+    let launcher: Option<i64> = tracked.iter().find(|t| t.is_launcher).map(|t| t.id);
+    apps.sort_by_key(|row| (Some(row.id) != launcher, row.label.to_lowercase()));
 
     Html(
         AppsListTemplate {
             title: "Apps".to_string(),
-            tracked,
+            phones,
+            apps,
         }
         .render()
         .unwrap(),
@@ -1022,10 +1393,21 @@ struct TrackedAppAddTemplate {
     error_field: &'static str,
 }
 
+impl TrackedAppAddTemplate {
+    /// "More options" starts open when one of its fields holds something or was refused.
+    fn more_open(&self) -> bool {
+        self.error.is_some()
+            || !self.package_name.trim().is_empty()
+            || !self.asset_pattern.trim().is_empty()
+            || !self.release_tag_prefix.trim().is_empty()
+            || self.include_prereleases
+    }
+}
+
 pub async fn new_tracked_app_form() -> impl IntoResponse {
     Html(
         TrackedAppAddTemplate {
-            title: "Add an app".to_string(),
+            title: "Add App".to_string(),
             error: None,
             name: String::new(),
             package_name: String::new(),
@@ -1111,7 +1493,7 @@ pub async fn create_tracked_app(
     };
     if let Some((error, error_field)) = refused {
         let page = TrackedAppAddTemplate {
-            title: "Add an app".to_string(),
+            title: "Add App".to_string(),
             error: Some(error),
             name: field("name"),
             package_name: field("package_name"),
@@ -1151,17 +1533,87 @@ pub async fn create_tracked_app(
 struct TrackedAppDetailTemplate {
     title: String,
     app: TrackedApp,
-    error: Option<String>,
+    /// A refused upload, shown in the Upload group (§3.0's flash).
+    upload_error: Option<Flash>,
+    /// A refused package confirmation, shown under the package row.
+    package_error: Option<Flash>,
     details: DetailsForm,
-    /// A sync of this app is running since then (UTC) - "Check now" says so.
-    sync_running_since: Option<String>,
+    /// "0.32.0", from the cached release's tag.
+    version: Option<String>,
+    /// When the last check (or upload) found a release, local and relative.
+    last_checked: Option<When>,
+    /// A sync of this app is running since then - "Check now" says so.
+    sync_running: Option<When>,
     /// How the last sync (hourly or "Check now") failed, if it did.
-    sync_failure: Option<SyncFailure>,
-    /// "Show on the kid's phones as" (design 14): the default for every phone with the app
+    sync_failure: Option<FailureView>,
+    /// "Show on phones as" (design 14): the default for every phone with the app
     /// (`partials/app_display_form.html` reads `form`).
     form: crate::app_display::AppDisplayForm,
     /// For an app without a package: what the parent may confirm as its package ([package_candidates]).
     package_candidates: Vec<String>,
+    /// The phones that have it ticked (every set-up phone for the launcher).
+    phones: Vec<PhoneRow>,
+    /// "0796f180…65ef4be3"; the whole key is in the ⓘ panel.
+    signer_short: Option<String>,
+    /// Source & signing starts open when a refused save or upload is in it.
+    source_open: bool,
+}
+
+/// A local time on a page: "2 h ago" and the exact time for `title=` and ⓘ panels.
+struct When {
+    text: String,
+    exact: String,
+}
+
+impl When {
+    fn of(
+        zone: &crate::display_time::Zone,
+        at: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<Self> {
+        let at = crate::display_time::parse_db_utc(at)?;
+        Some(When {
+            text: zone.relative(at, now),
+            exact: zone.exact(at),
+        })
+    }
+}
+
+/// The last failed sync: a short title, the raw error behind ⓘ (§4.4).
+struct FailureView {
+    title: &'static str,
+    detail: String,
+    when: Option<When>,
+}
+
+/// A refused form's result, in the group of that form: a short title, the reason behind ⓘ.
+struct Flash {
+    title: String,
+    detail: Option<String>,
+}
+
+impl Flash {
+    fn title(title: &str) -> Self {
+        Flash {
+            title: title.to_string(),
+            detail: None,
+        }
+    }
+}
+
+impl From<Failure> for Flash {
+    fn from(failure: Failure) -> Self {
+        Flash {
+            title: failure.problem.title().to_string(),
+            detail: Some(failure.detail),
+        }
+    }
+}
+
+/// Which group a refused form's [Flash] belongs to.
+enum Refused {
+    Upload(Flash),
+    Package(Flash),
 }
 
 /// What the Details form shows: the saved values, or - when a save was refused - what was
@@ -1184,24 +1636,19 @@ pub async fn view_tracked_app(
     render_detail(&state, id, None).await
 }
 
-async fn render_detail(state: &AppState, id: i64, error: Option<String>) -> Response {
-    render_detail_page(state, id, error, None).await
+async fn render_detail(state: &AppState, id: i64, refused: Option<Refused>) -> Response {
+    render_detail_full(state, id, refused, None, None).await
 }
 
-async fn render_detail_page(
-    state: &AppState,
-    id: i64,
-    error: Option<String>,
-    details: Option<DetailsForm>,
-) -> Response {
-    render_detail_full(state, id, error, details, None).await
+async fn render_detail_page(state: &AppState, id: i64, details: Option<DetailsForm>) -> Response {
+    render_detail_full(state, id, None, details, None).await
 }
 
-/// The app's page; `display` = a refused "Show on the kid's phone as" save (design 14).
+/// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14).
 async fn render_detail_full(
     state: &AppState,
     id: i64,
-    error: Option<String>,
+    refused: Option<Refused>,
     details: Option<DetailsForm>,
     display: Option<crate::app_display::Entered>,
 ) -> Response {
@@ -1224,6 +1671,8 @@ async fn render_detail_full(
         error: None,
         error_field: "",
     });
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
     let sync = state.app_syncs.status(id);
     let package_candidates = if app.package_name.is_empty() {
         package_candidates(state, id).await
@@ -1243,16 +1692,77 @@ async fn render_detail_full(
         &current,
         display.as_ref(),
     );
+    // The phones with the app ticked; the launcher is on every phone that is set up.
+    let devices: Vec<crate::models::Device> = if app.is_launcher {
+        sqlx::query_as(
+            "SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name COLLATE NOCASE",
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT d.* FROM devices d JOIN device_tracked_apps dta ON dta.device_id = d.id \
+             WHERE dta.tracked_app_id = ? ORDER BY d.name COLLATE NOCASE",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    };
+    let row_package =
+        (!app.is_launcher && !app.package_name.is_empty()).then_some(app.package_name.as_str());
+    let phones = devices
+        .iter()
+        .map(|device| {
+            PhoneRow::new(
+                device,
+                String::new(),
+                phone_apps_href(device.id, row_package),
+            )
+        })
+        .collect();
+    let (upload_error, package_error) = match refused {
+        Some(Refused::Upload(flash)) => (Some(flash), None),
+        Some(Refused::Package(flash)) => (None, Some(flash)),
+        None => (None, None),
+    };
+    let source_open = upload_error.is_some() || package_error.is_some() || details.error.is_some();
     Html(
         TrackedAppDetailTemplate {
             title: app.name.clone(),
+            version: app
+                .latest_release_tag
+                .as_deref()
+                .map(|tag| version_of(tag, app.release_tag_prefix.as_deref())),
+            last_checked: app
+                .last_checked_at
+                .as_deref()
+                .and_then(|at| When::of(&zone, at, now)),
+            sync_running: sync
+                .running_since
+                .as_deref()
+                .and_then(|at| When::of(&zone, at, now)),
+            sync_failure: sync.last_error.map(|failed| FailureView {
+                title: failed.failure.problem.title(),
+                detail: failed.failure.detail,
+                when: When::of(&zone, &failed.at, now),
+            }),
+            signer_short: app.signer_sha256.as_deref().map(|key| {
+                if key.len() > 16 && key.is_ascii() {
+                    format!("{}…{}", &key[..8], &key[key.len() - 8..])
+                } else {
+                    key.to_string()
+                }
+            }),
             form,
             app,
-            error,
+            upload_error,
+            package_error,
             details,
-            sync_running_since: sync.running_since,
-            sync_failure: sync.last_error,
             package_candidates,
+            phones,
+            source_open,
         }
         .render()
         .unwrap(),
@@ -1334,7 +1844,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some("Fill in a release label and choose a file.".to_string()),
+            Some(Refused::Upload(Flash::title("Add a version and a file"))),
         )
         .await;
     };
@@ -1343,7 +1853,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some("Fill in a release label and choose a file.".to_string()),
+            Some(Refused::Upload(Flash::title("Add a version and a file"))),
         )
         .await;
     }
@@ -1353,7 +1863,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some("Failed to save the uploaded file.".to_string()),
+            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
@@ -1365,24 +1875,25 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some("Failed to save the uploaded file.".to_string()),
+            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
 
     let identity = match apk_identity(&file_path)
         .await
+        .map_err(|err| Failure::new(SyncProblem::Unreadable, err))
         .and_then(|identity| check_pins(&app, &identity).map(|()| identity))
     {
         Ok(identity) => identity,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
-            return render_detail(&state, id, Some(err)).await;
+            return render_detail(&state, id, Some(Refused::Upload(err.into()))).await;
         }
     };
     if let Err(err) = check_new_package(&state, &app, &identity).await {
         tokio::fs::remove_file(&file_path).await.ok();
-        return render_detail(&state, id, Some(err)).await;
+        return render_detail(&state, id, Some(Refused::Upload(err.into()))).await;
     }
 
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
@@ -1406,7 +1917,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some("Failed to save the uploaded file.".to_string()),
+            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
@@ -1538,7 +2049,7 @@ pub async fn update_tracked_app(
             error: Some(error),
             error_field,
         };
-        let mut page = render_detail_page(&state, id, None, Some(details)).await;
+        let mut page = render_detail_page(&state, id, Some(details)).await;
         *page.status_mut() = StatusCode::BAD_REQUEST;
         return page;
     }
@@ -1672,11 +2183,14 @@ pub async fn confirm_package(
             render_detail(
                 &state,
                 id,
-                Some(format!(
-                    "{} isn't an app the launcher installed on a phone that has this app - \
-                     nothing was changed.",
-                    form.package
-                )),
+                Some(Refused::Package(Flash {
+                    title: "Vibb didn't install that app".to_string(),
+                    detail: Some(format!(
+                        "{} isn't an app Vibb installed on a phone that has this app. Nothing \
+                         was changed.",
+                        form.package
+                    )),
+                })),
             )
             .await,
         )
@@ -1693,7 +2207,9 @@ pub async fn confirm_package(
         return render_detail(
             &state,
             id,
-            Some("Couldn't save - nothing was changed.".into()),
+            Some(Refused::Package(Flash::title(
+                "Couldn't save. Nothing was changed.",
+            ))),
         )
         .await;
     }
@@ -2001,7 +2517,7 @@ mod tests {
              as one"
         );
         let message = validate_asset_pattern(Some("^[")).unwrap_err();
-        assert!(message.starts_with("The asset filename filter is not a valid regular expression"));
+        assert!(message.starts_with("The file name filter is not a valid regular expression"));
         assert!(message.ends_with("Nothing was saved."), "{message}");
         // Over the compiled size limit (qa-catalog #5): refused, not compiled with 10 MiB.
         let huge = AssetFilter::parse(Some(r"^(\w{1,100}){1,100}"))
@@ -2012,7 +2528,7 @@ mod tests {
         let long = "a".repeat(MAX_PATTERN_CHARS + 1);
         assert_eq!(
             validate_asset_pattern(Some(&long)).unwrap_err(),
-            "The asset filename filter is longer than 256 characters. Nothing was saved."
+            "The file name filter is longer than 256 characters. Nothing was saved."
         );
         assert!(validate_asset_pattern(Some(&format!("^{}", &long[1..]))).is_err());
         assert!(validate_asset_pattern(Some(&long[1..])).is_ok());
@@ -2216,6 +2732,59 @@ mod tests {
         remove_partial_downloads(&root.path().join("missing")).await;
     }
 
+    /// Design 31 step 11: a catalog row's version is its tag without the row's prefix and a "v"
+    /// before a digit; a manual label stays as typed.
+    #[test]
+    fn a_release_tag_reads_as_a_version() {
+        assert_eq!(version_of("launcher-v0.32.0", Some("launcher-v")), "0.32.0");
+        assert_eq!(
+            version_of("music-v0.3.0-rc.1", Some("music-v")),
+            "0.3.0-rc.1"
+        );
+        assert_eq!(version_of("launcher-v0.32.0", None), "0.32.0");
+        assert_eq!(version_of("v26.10.1", None), "26.10.1");
+        assert_eq!(version_of("V1.76.0", None), "1.76.0");
+        assert_eq!(version_of("1.2.0", None), "1.2.0");
+        assert_eq!(version_of("pre-release", None), "pre-release");
+        assert_eq!(version_of("vibb", None), "vibb");
+        assert_eq!(version_of("launcher-v", Some("launcher-v")), "launcher-v");
+        assert_eq!(capitalised(&phones_text(0)), "No phones");
+        assert_eq!(phones_text(1), "1 phone");
+        assert_eq!(phones_text(2), "2 phones");
+    }
+
+    /// Every sync problem has its own short title (§4.2: a warning title is at most 6 words).
+    #[test]
+    fn sync_problems_have_short_titles() {
+        use SyncProblem::*;
+        let all = [
+            Filter,
+            GithubUnreachable,
+            RepoNotFound,
+            GithubError,
+            NoRelease,
+            Download,
+            Unreadable,
+            OtherApp,
+            OtherKey,
+            CantCheck,
+            Taken,
+            Server,
+            Removed,
+        ];
+        let titles: std::collections::HashSet<&str> = all.iter().map(|p| p.title()).collect();
+        assert_eq!(titles.len(), all.len());
+        for title in titles {
+            assert!(title.split_whitespace().count() <= 6, "{title}");
+            assert!(!title.ends_with('.'), "{title}");
+        }
+        let failure = Failure::new(RepoNotFound, "GitHub API returned 404 Not Found");
+        assert_eq!(
+            failure.to_string(),
+            "Repo not found on GitHub: GitHub API returned 404 Not Found"
+        );
+    }
+
     /// One sync per app (qa-catalog #1): a second start of the same app is refused until the
     /// first one ends - also when its future is dropped - and the last failure is kept.
     #[test]
@@ -2225,13 +2794,15 @@ mod tests {
         assert!(syncs.start(1).is_none());
         let other = syncs.start(2).expect("another app syncs in parallel");
         assert!(syncs.status(1).running_since.is_some());
-        first.finish(&Err("GitHub API returned 403".to_string()));
+        first.finish(&Err(Failure::new(
+            SyncProblem::GithubError,
+            "GitHub API returned 403",
+        )));
         let status = syncs.status(1);
         assert!(status.running_since.is_none());
-        assert_eq!(
-            status.last_error.unwrap().message,
-            "GitHub API returned 403"
-        );
+        let failure = status.last_error.unwrap().failure;
+        assert_eq!(failure.problem, SyncProblem::GithubError);
+        assert_eq!(failure.detail, "GitHub API returned 403");
 
         let again = syncs.start(1).expect("free again");
         drop(again);
@@ -2306,11 +2877,15 @@ mod tests {
         };
 
         let first = sync_release(&app.state, &row().await, "v2", &asset, false).await;
-        assert!(first.unwrap_err().contains("different key"));
+        let first = first.unwrap_err();
+        assert_eq!(first.problem, SyncProblem::OtherKey);
+        assert!(first.detail.contains("different key"));
         assert_eq!(downloads.load(Ordering::SeqCst), 1);
         // The hourly sync: not downloaded again, the reason kept.
         let hourly = sync_release(&app.state, &row().await, "v2", &asset, false).await;
-        assert!(hourly.unwrap_err().contains("not downloaded again"));
+        let hourly = hourly.unwrap_err();
+        assert_eq!(hourly.problem, SyncProblem::OtherKey, "the reason kept");
+        assert!(hourly.detail.contains("not downloaded again"));
         assert_eq!(downloads.load(Ordering::SeqCst), 1);
         // "Check now": downloaded again (and refused again).
         assert!(
