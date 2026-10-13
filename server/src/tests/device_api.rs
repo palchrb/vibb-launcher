@@ -422,14 +422,18 @@ async fn policy_json_keys_snapshot() {
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
-    // defaults; only `library_version` and `volume_cap_pct` may be null. `null` as a whole only when
-    // it can't be read (tests/music.rs).
+    // defaults; only `library_version`, `volume_cap_pct` and `storage_limit_gb` may be null. `null`
+    // as a whole only when it can't be read (tests/music.rs). Design 30: `mobile_data` stays (both
+    // switches on), the two switches and the storage limit (a fresh phone's 2 GB) are added.
     assert_eq!(
         object["music"],
         serde_json::json!({
             "library_version": null,
             "mobile_data": false,
+            "stream_mobile_data": false,
+            "download_mobile_data": false,
             "volume_cap_pct": null,
+            "storage_limit_gb": 2,
             "storytel_generation": 0
         })
     );

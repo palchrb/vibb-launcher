@@ -792,3 +792,40 @@ played first; the keep set and the held set never go, and the card warns when th
   - `catchUp` enqueues the job once per sync;
   - partial extras are re-checked at every sync, which is cheap as a span check (§1.5);
   - a host without `Content-Length` never writes and never settles (§1.4).
+
+## Step 1 implementation status (2026-10-13, branch `design-30-s1`)
+
+Branch `design-30-s1` from `c1b3068f` with `main` (designs 28 and 29) merged in, no conflicts. Not pushed. Server only
+(§3); nothing of steps 2, 3a or 3b.
+- `migrations/0073_music_data_and_storage.sql` (main was at 0072): the two switches from `music_mobile_data`, the old
+  column dropped, `music_storage_limit_gb INTEGER DEFAULT 2`.
+- `models.rs` `DevicePolicy`; `music.rs`: `MusicPolicy` in §3's order, `mobile_data_wire`, `STORAGE_LIMITS`,
+  `DEFAULT_STORAGE_LIMIT_GB`, `storage_limit`, `storage_limit_label`, `older_phone_note`, `storage_line`, `gigabytes`.
+- `handlers/music.rs`: `MusicCard` (the switches, `data_note`, `storage_limit(s)`; the storage line and its warning go
+  into the card's `lines`/`warnings`), `mobile_switches`, `save_device_settings` (one `UPDATE ... RETURNING` that keeps
+  the stored limit when the post has none, so the event names the limit in force).
+- `templates/device_detail.html` (`#music-settings`, same id and redirect anchor, scroll-restore untouched; the older
+  phone note is an `error` block, like the card's other warnings), `templates/music_entry.html`.
+- **Interpreted:**
+  - `older_phone_note` and `storage_line` take the report's numbers (`cache_bytes`, `extra_bytes`, `audio_bytes`) as
+    plain `Option<i64>`s instead of `&MusicState`: `MusicState` has no `audio_bytes`/`extra_bytes` until 3a, and this
+    way both rules are complete and unit-tested now. The card passes `None` for the two until 3a, which then only
+    wires `report.audio_bytes`/`report.extra_bytes` in (two marked call sites in `device_card`).
+  - The 0073 test builds its 0072 database with `tests::cleanup::migrated_before(73)` + `finish`, the helper every
+    other migration test uses (0048, 0049, ...); `old_database` (L7) stays in `docker.rs`, where its admin row and
+    session are what the Docker tests need. Nothing else needed a 0072 database.
+  - A `storage_limit` field that is present but not a choice (an empty string too) is 400; only a missing field keeps
+    the stored limit.
+- Tests: `music::tests` `storage_limit_reads_choices_null_and_junk`, `older_phone_note_needs_an_app_report_without_
+  extra_bytes`; `src/tests/music.rs` `the_policy_carries_a_small_music_object` (updated), `mobile_data_on_the_wire_is_
+  both_switches`, `migration_0073_gives_both_switches_the_old_value_and_every_phone_2_gb`, the 0049 defaults test,
+  `a_page_from_before_the_update_sets_both_switches_from_mobile_data`, `the_card_shows_two_switches_and_the_limit_and_
+  saves_back_to_music_settings`, `the_card_says_an_older_phone_uses_mobile_data_only_with_both` (the "report has
+  `extra_bytes`" case is the pure test's until 3a), `the_storage_line_shows_the_limit_and_the_extras`,
+  `the_card_warns_when_kept_items_alone_pass_the_limit`; `device_api.rs` `policy_json_keys_snapshot`;
+  `music_storytel.rs` `library_gates_storytel` (the help text moved to the downloads switch).
+  `music_state_keeps_every_field_the_phone_sends` / `music_state_clamps_audio_and_extra_bytes` are 3a's.
+- The launcher's `PolicyResponseCompatTest` and `MusicPlanTest` literals keep today's four keys until step 2 (§4): the
+  launcher carries `music` as a raw object, so the new keys break nothing.
+- Docs: `server/CLAUDE.md` (Vibb music library: data, PWA, wire; the Storytel note).
+- Not device-tested: §8 check 1.

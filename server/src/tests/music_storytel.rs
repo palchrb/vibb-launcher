@@ -1536,7 +1536,8 @@ async fn library_gates_storytel() {
         .text()
         .replace("&#39;", "'");
     assert!(page.contains("Storytel is off on this phone: its Storytel entry isn't sent."));
-    assert!(page.contains("This includes Storytel books, often several hundred MB each."));
+    // The downloads switch names the books (design 30).
+    assert!(page.contains("Storytel books also download off Wi-Fi - a Storytel book is often"));
     // The switch on: in.
     let before = revision(&app).await;
     sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")

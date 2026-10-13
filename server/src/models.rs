@@ -98,12 +98,19 @@ pub struct DevicePolicy {
     /// download on an unmetered network only; the launcher's own update after 3 days on any
     /// non-roaming one.
     pub app_updates_wifi_only: bool,
-    /// Vibb music (design 21, migrations/0049): music downloads and streaming may use mobile data
-    /// (default off), the volume cap in percent (`None` = off, the default; see
-    /// `music::VOLUME_CAPS`) and whether this phone gets the family's Storytel login.
-    pub music_mobile_data: bool,
+    /// Vibb music (design 21, migrations/0049): the volume cap in percent (`None` = off, the
+    /// default; see `music::VOLUME_CAPS`) and whether this phone gets the family's Storytel login.
+    /// Mobile data (design 30, migrations/0073, both default off): streaming (an item that isn't
+    /// downloaded plays off Wi-Fi) and downloads (the offline episodes and Storytel books download
+    /// off Wi-Fi); the policy's `mobile_data` is both.
+    pub music_stream_mobile_data: bool,
+    pub music_download_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
+    /// The parent's music storage limit in GB (design 30 §1.8, migrations/0073): one of
+    /// `music::STORAGE_LIMITS`, `None` = no limit; default 2. Anything else is sent as 2
+    /// (`music::storage_limit`).
+    pub music_storage_limit_gb: Option<i64>,
     /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
     /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
     pub override_pin_easy: Option<bool>,
