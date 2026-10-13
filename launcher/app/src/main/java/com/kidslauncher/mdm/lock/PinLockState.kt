@@ -160,7 +160,8 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
         // up already, the power button only silences the ring (the runtime does that).
         event.voip == VoipPhase.IN_CALL -> LockStep(LockMode.LOCKED)
         event.voip == VoipPhase.RINGING && mode == LockMode.LOCKED -> LockStep(LockMode.LOCKED)
-        // Started at once while the screen is off, so it is drawn before the next screen-on.
+        // Started at once while the screen is off. It can't draw while dark, so it is drawn only after
+        // the next screen-on (design 32); what it starts is the lock-up's plan ([lockUpStarts]).
         else -> LockStep(LockMode.LOCKED, showLock = !event.systemCall)
     }
 
