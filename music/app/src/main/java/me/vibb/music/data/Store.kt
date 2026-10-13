@@ -120,6 +120,22 @@ class Store private constructor(context: Context) {
 
     fun ownFile(fileId: Long): File = File(ownDir, fileId.toString())
 
+    /** The SHA-256 checked when [fileId]'s copy arrived (design 29 step 4), beside it; not a copy (its name isn't a number). */
+    private fun ownShaFile(fileId: Long): File = File(ownDir, "$fileId.sha256")
+
+    /** The recorded SHA-256 of [fileId]'s copy, or null (none: a copy from before design 29). */
+    fun ownSha(fileId: Long): String? = runCatching { ownShaFile(fileId).readText().trim() }.getOrNull()
+
+    fun recordOwnSha(fileId: Long, sha: String) {
+        runCatching { writeAtomic(ownShaFile(fileId), sha.toByteArray()) } // without it the copy is hashed again
+    }
+
+    /** A copy goes with its record. */
+    fun deleteOwnCopy(fileId: Long) {
+        ownFile(fileId).delete()
+        ownShaFile(fileId).delete()
+    }
+
     /** Own files with a copy on the phone. */
     fun ownCopies(): Set<Long> = ownDir.listFiles().orEmpty().mapNotNull { it.name.toLongOrNull() }.toSet()
 

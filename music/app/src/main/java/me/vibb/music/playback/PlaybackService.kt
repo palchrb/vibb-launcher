@@ -53,7 +53,6 @@ import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.NowPlayingKeys
 import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
-import me.vibb.music.data.NewsRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.ShuffleRow
@@ -63,7 +62,6 @@ import me.vibb.music.logic.CallAction
 import me.vibb.music.logic.CallPause
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.NetCaps
-import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
 import me.vibb.music.logic.TransportAction
@@ -83,7 +81,6 @@ import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playability
-import me.vibb.music.logic.playedFromTray
 import me.vibb.music.logic.previousAction
 import me.vibb.music.logic.publicOnly
 import me.vibb.music.logic.homePlan
@@ -1184,13 +1181,10 @@ class PlaybackService : MediaSessionService() {
     private fun startedPlaying(a: Active, index: Int) {
         val entryId = a.entry.id
         val key = a.items[index].key
+        // `playedFromTray` as one statement: a read and a replace here would race the sync's tray
+        // write and bring the row back (design 29 §1.6, QA M3).
         scope.launch(writer) {
-            val tray = store.db.news().map { NewsItem(it.entryId, it.key, it.seq) }
-            val next = playedFromTray(tray, entryId, key)
-            if (next != tray) {
-                store.db.replaceNews(next.map { NewsRow(it.entryId, it.key, it.seq) })
-                NewNotifier.update(this@PlaybackService, store.snapshot())
-            }
+            if (store.db.deleteNews(entryId, key) > 0) NewNotifier.update(this@PlaybackService, store.snapshot())
         }
     }
 

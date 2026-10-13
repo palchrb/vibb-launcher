@@ -33,9 +33,29 @@ object Inbox {
         copyChecked(input, store.coverFile(hash), MAX_COVER_BYTES) { size, sha -> size > 0 && sha == hash }
             .also { if (it) store.coversChanged() }
 
-    /** An own file's copy: size and SHA-256 must match the library (21 §2 "Own files"). */
+    /**
+     * An own file's copy: size and SHA-256 must match the library (21 §2 "Own files"). The checked
+     * SHA-256 is recorded beside it (design 29 step 4), so a reused file id is caught later.
+     */
     fun putOwnFile(store: Store, file: OwnFile, input: InputStream): Boolean =
         copyChecked(input, store.ownFile(file.id), MAX_FILE_BYTES) { size, sha -> size == file.size && sha == file.sha256 }
+            .also { if (it) store.recordOwnSha(file.id, file.sha256) }
+
+    /** [file]'s SHA-256 (lowercase hex), or null when it can't be read. */
+    fun sha256(file: File): String? = runCatching {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        hex(digest)
+    }.getOrNull()
+
+    private fun hex(digest: MessageDigest): String = digest.digest().joinToString("") { "%02x".format(it) }
 
     private fun copyChecked(input: InputStream, dest: File, max: Long, ok: (Long, String) -> Boolean): Boolean {
         dest.parentFile?.mkdirs()
@@ -54,8 +74,7 @@ object Inbox {
                     out.write(buf, 0, n)
                 }
             }
-            val sha = digest.digest().joinToString("") { "%02x".format(it) }
-            return ok(size, sha) && part.renameTo(dest)
+            return ok(size, hex(digest)) && part.renameTo(dest)
         } finally {
             part.delete()
         }
