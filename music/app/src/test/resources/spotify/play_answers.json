@@ -1,0 +1,11 @@
+{
+  "about": "The Web API's answers to a play, transfer or queue call (design 26c §5.4 step 3) as SpotifyApi reads them; scripts/fake-spotify.py answers with these. The 404's and the 403's reasons are Spotify's documented error shape with fake text [unverified: the exact reasons a dev-mode app gets].",
+  "ok": {"status": 204, "retry_after": null, "body": null},
+  "device_unknown": {"status": 404, "retry_after": null, "body": {"error": {"status": 404, "message": "Device not found", "reason": "NO_ACTIVE_DEVICE"}}},
+  "unauthorized": {"status": 401, "retry_after": null, "body": {"error": {"status": 401, "message": "The access token expired"}}},
+  "not_premium": {"status": 403, "retry_after": null, "body": {"error": {"status": 403, "message": "Player command failed: Premium required", "reason": "PREMIUM_REQUIRED"}}},
+  "refused": {"status": 403, "retry_after": null, "body": {"error": {"status": 403, "message": "Check settings on developer.spotify.com/dashboard, the user may not be registered."}}},
+  "quota": {"status": 429, "retry_after": null, "body": {"error": {"status": 429, "message": "Quota exceeded for this application", "reason": "QUOTA_EXCEEDED"}}},
+  "rate_limited": {"status": 429, "retry_after": "2", "body": {"error": {"status": 429, "message": "API rate limit exceeded"}}},
+  "unavailable": {"status": 503, "retry_after": null, "body": null}
+}

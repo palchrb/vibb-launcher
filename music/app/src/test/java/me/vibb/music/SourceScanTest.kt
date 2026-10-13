@@ -217,11 +217,12 @@ class SourceScanTest {
     }
 
     @Test
-    fun `the bearer header is set in StorytelApi only, and the Storytel client never follows the asset's redirect`() {
+    fun `the bearer header is set in StorytelApi and SpotifyApi only, and the Storytel client never follows the asset's redirect`() {
         for (f in sources("src/main")) {
             val text = code(f)
             for (token in listOf("Authorization", "Bearer")) {
-                if (text.contains(token)) assertEquals("${f.path} names $token", "StorytelApi.kt", f.name)
+                // design 26c §7.1: the Spotify access token rides only in SpotifyApi's header
+                if (text.contains(token)) assertTrue("${f.path} names $token", f.name in setOf("StorytelApi.kt", "SpotifyApi.kt"))
             }
             assertFalse("${f.path}: positions live in Room, never a destructive migration", text.contains("fallbackToDestructiveMigration"))
         }
@@ -247,7 +248,8 @@ class SourceScanTest {
     @Test
     fun `the debug base is assigned only in src-debug and read only by its four readers (M2)`() {
         for (f in sources("src/main")) {
-            if (code(f).contains("debugBase")) assertEquals(f.path, "StorytelEndpoints.kt", f.name)
+            // Storytel's switch and Spotify's (design 26c §9.3, the next test), each in its own endpoints file
+            if (code(f).contains("debugBase")) assertTrue(f.path, f.name in setOf("StorytelEndpoints.kt", "SpotifyEndpoints.kt"))
         }
         val endpoints = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelEndpoints.kt"))
         assertTrue(endpoints.contains("var debugBase: String? = null"))
@@ -271,6 +273,65 @@ class SourceScanTest {
         }
         val assigning = sources("src/debug").filter { Regex("debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
         assertEquals("only the debug feed assigns it", listOf("DebugStorytel.kt"), assigning)
+    }
+
+    /**
+     * Spotify's debug switch (design 26c §9.3, QA M3: 26b M2's way again): one declaration in
+     * SpotifyEndpoints.kt, never assigned outside src/debug (DebugSpotify.kt, step 5a), and exactly six
+     * readers there, each taking the base only through the fake-homes parse. Who may call each reader:
+     * the WebView host and the renderer are step 5a's files.
+     */
+    @Test
+    fun `Spotify's debug base is assigned only in src-debug and read only by its six readers (26c M3)`() {
+        val endpoints = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyEndpoints.kt"))
+        assertTrue(endpoints.contains("var debugBase: String? = null"))
+        assertEquals("one declaration and six reads", 7, Regex("\\bdebugBase\\b").findAll(endpoints).count())
+        assertFalse("main never assigns it", Regex("debugBase\\s*=[^=]").containsMatchIn(endpoints.replace("var debugBase: String? = null", "")))
+        val readers = mapOf(
+            "apiBase" to setOf("SpotifyRenderer.kt"),
+            "apiOverLan" to setOf("SpotifyRenderer.kt"),
+            "sdkUrl" to setOf("SpotifyWebHost.kt"),
+            "webHosts" to setOf("WebPolicy.kt"),
+            "webProxy" to setOf("WebPolicy.kt"),
+            "debugTokens" to setOf("SpotifyRenderer.kt"),
+        )
+        for ((reader, allowed) in readers) {
+            assertTrue("no reader $reader", endpoints.contains("fun $reader("))
+            val body = endpoints.substringAfter("fun $reader(").split(Regex("\\n    (private )?fun ")).first()
+            assertTrue("$reader reads the switch through the fake-homes parse", body.contains("parse(debugBase)"))
+            for (f in sources("src/main/java")) {
+                if (code(f).contains("SpotifyEndpoints.$reader(") || code(f).contains("SpotifyEndpoints::$reader")) {
+                    assertTrue("${f.name} reads $reader", f.name in allowed)
+                }
+            }
+        }
+        val assigning = sources("src/debug").filter { Regex("SpotifyEndpoints\\.debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
+        assertTrue("only the debug feed assigns it: $assigning", assigning.all { it == "DebugSpotify.kt" })
+    }
+
+    /** Design 26c §7.1: the Spotify token's holders print it redacted, and the Spotify code logs nothing (the debug log is step 5a's, fixed words only). */
+    @Test
+    fun `every type holding a Spotify token prints it redacted, and spotify-slash logs nothing`() {
+        val holders = mapOf(
+            "src/main/java/me/vibb/music/spotify/SpotifyHttp.kt" to listOf("class SpotifyRequest(", "class SpotifyResponse("),
+            "src/main/java/me/vibb/music/bridge/SpotifyBridgeToken.kt" to listOf("data class Ok("),
+        )
+        for ((path, classes) in holders) {
+            val text = code(moduleFile(path))
+            for (c in classes) {
+                val b = body(text, Regex(Regex.escape(c) + "[^)]*\\)\\s*(:[^{\\n]*)?\\{"))
+                assertTrue("$path: $c needs an explicit toString()", b.contains("override fun toString()"))
+            }
+        }
+        val spotify = sources("src/main/java/me/vibb/music/spotify")
+        assertTrue(spotify.size >= 9)
+        for (f in spotify) {
+            assertFalse("${f.name} logs", code(f).contains("Log.") || code(f).contains("println("))
+            assertFalse("${f.name}: a data class would print its token", code(f).contains("data class SpotifyRequest") || code(f).contains("data class TokenCache"))
+        }
+        val http = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyHttp.kt"))
+        assertTrue("a Web API call never follows a redirect", http.contains(".followRedirects(false)") && http.contains(".followSslRedirects(false)"))
+        assertFalse("never a logging interceptor", http.contains("Interceptor"))
     }
 
     @Test

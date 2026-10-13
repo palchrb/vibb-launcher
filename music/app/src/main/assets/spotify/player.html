@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The music app's Spotify page (design 26c §5.2, §5.3, §7.2). Part of handy (palchrb/vibb-launcher),
+     GPL-3.0-or-later. Never shown: the playback service's headless web player loads it under
+     https://appassets.androidplatform.net/spotify/. Nothing of Spotify's is in this file: the SDK is
+     loaded at run time from sdk.scdn.co and never copied or pinned. No inline script and no inline
+     event handler: player.js (ours) first, then the SDK, which calls window.onSpotifyWebPlaybackSDKReady.
+     The SDK's URL and its origin are the template's only substitution (SpotifyPage.html in WebPolicy.kt). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://appassets.androidplatform.net {{SDK_ORIGIN}}; frame-src {{SDK_ORIGIN}}; connect-src https: wss:; media-src https: blob:; img-src https: data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vibb</title>
+</head>
+<body>
+<script src="player.js"></script>
+<script src="{{SDK_URL}}"></script>
+</body>
+</html>

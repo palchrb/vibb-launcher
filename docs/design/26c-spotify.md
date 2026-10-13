@@ -2450,3 +2450,194 @@ All six findings fixed; none disputed. The shared files are unchanged (still byt
   music `SpotifyHostsTest` in step 4), §10 (step 3's rows as built), §11 steps 3 and 4 (`logic/Spotify.kt`,
   `sonos/PlayBody.kt`, `sync/DownloadPlan.kt`, the `/dns` page; step 4's `SpotifyHosts.kt` + `SpotifyHostsTest` and
   the retry). §4.4 stands as written after L4.
+
+## Step 4 implementation status (2026-10-13)
+
+Built on branch `music-3-spotify` on top of step 3 and its fix round (`726f533`), one commit: §11 step 4, the music
+app's Android-free Spotify core and the fake. No new dependency (OkHttp, kotlinx.serialization and coroutines, all
+already in the build; `org.json` is a stub in the JVM tests, so the pure code reads JSON with kotlinx), no contract
+file changed (§8's files are byte-identical as step 3 left them), nothing Android-side (no WebView host, renderer or
+service change: step 5a), `SPOTIFY_PLAYABLE` still false. The launcher's tests read no file this commit touches.
+
+- **`M/spotify/SpotifyHosts.kt`**: `SPOTIFY_HOST_SUFFIXES`, `SPOTIFY_EXACT_HOSTS`, `isSpotifyHost` - the server's and
+  the launcher's rule; `SpotifyHostsTest` checks the constants against the music copy of `spotify_hosts.json` (§8
+  item 5's music half, owed by step 3).
+- **`M/spotify/SpotifyEndpoints.kt`**: the Web API base, `SDK_URL`, `FAKE_HOST` (`fake-spotify.invalid`) and the debug
+  switch `debugBase` with exactly its six readers (§9.3): `apiBase()`, `apiOverLan()`, `sdkUrl()`, `webHosts()`,
+  `webProxy(url)`, `debugTokens()`, each through one parse that takes only `http://` on 10.0.2.2 or loopback without
+  user info. Nothing assigns it yet (`src/debug`'s `DebugSpotify.kt` is step 5a's).
+- **`M/spotify/SpotifyHttp.kt`**: the seam (`SpotifyHttp`, `SpotifyRequest`, `SpotifyResponse` with `Retry-After`,
+  both printing no token, body capped at 64 KB) and `OkHttpSpotifyHttp` (redirects never followed, the User-Agent on
+  every request, an empty body for a body-less PUT/POST, the call timeout).
+- **`M/spotify/SpotifyApi.kt`**: `PlayBody` (`Uris` - play_request.json's exact body - and step 6's `Context`),
+  `play`/`transfer`/`queue` (§5.4; the bearer header here and in `StorytelApi.kt` only), `classify` into `PlayOutcome`
+  (204 ok, 404 device unknown, 401, 403 `PREMIUM_REQUIRED` -> not premium and any other 403 -> refused - never an item
+  error, QA M5 -, 429 `QUOTA_EXCEEDED` -> quota, else rate limited with `Retry-After`), and the suspend `start` with
+  §5.4 step 3's retries inside the start's deadline: a 401 renews the token once; a 404 transfers once, awaits the
+  transfer's 204, then `awaitDevice` (a state or `ready`, at most 3 s) and plays once more; a `Retry-After` of at most
+  5 s is waited once; each call at most 10 s cut to the deadline. `StartResult.problem()` maps to §5.8. Also
+  `debugToken`/`tokenAnswer`: the fake's token route read in the server route's shape (§2.6), for `debugTokens()`.
+- **`M/spotify/SdkState.kt`**: the page's post parsed (`Inactive` for `null`, `SdkState` for an object with a boolean
+  `paused` and a numeric `position`, else junk): 8 KB, uris checked, at most 3 next/prev, names 200 code points, 10
+  artists, times clamped to a day; `title` and `listingTitle`/`cutTitle` - the server's `track_title` + `cut_title`
+  exactly (Unicode White_Space split, controls dropped after the join, 200 code points).
+- **`M/spotify/SpotifyTracker.kt`**: §5.4's state machine (modes `IDLE`, `STARTING`, `OURS`, `ENDED`, `LOST`; events
+  `Started`, `ItemChanged(auto)`, `Unplayable(stop)`, `Paused(ours)`, `Resumed`, `NotOurs(playing)`, `Ended`,
+  `NewWindow`, `QueueAdd`, `Look`, `Elsewhere`; `measured` only from states of ours, as received). The strict ownership
+  rule: our sent uri or the expected next by uri, `linked` or title + duration within 2 s; anything else is `NotOurs`
+  and from then on every playing state is paused until our next play - also after `Ended`, three unplayable and a
+  confirmed `null`. The end rule, the unplayable rule (a `playback_error`, or a skip past ours before it played 3 s;
+  three in a row stop), the `null` confirmed by a second one 2 s on or a `not_ready`, the add-to-queue one track
+  ahead (`queued` when the add's 204 comes; playing an item is knowing it).
+- **`M/spotify/TokenCache.kt`**: §5.5 over an `ask` function (the bridge, or `debugToken`): the kept token with 5
+  minutes left, one ask in flight shared by its waiters and kept when its waiter gave up at the deadline, the
+  cooldowns (`reauthorize` 10 minutes, `busy` its wait, `unreachable` none, `off` clears), **the one prompt retry 5 s
+  after `unreachable` at a start** (qa-26c-step3-code L3), and the refresh ahead of expiry while playing
+  (`prefetchDue`, `nextPrefetchAtMs`, `prefetch`: at 10 minutes left, again every 2 minutes until the old token
+  expires; QA M2). `TokenResult.problem()` maps to §5.8. The debug log callback gets fixed words only.
+- **`M/spotify/WebPolicy.kt`**: `WebPolicy.decide(url)` -> `Asset(path)` (our two assets), `NotFound` (anything else on
+  our origin), `Pass` (https on 443 to a Spotify host; `blob:`/`data:`), `Proxy(url)` (the fake's https name, debug
+  switch only), `Block` (everything else: http, odd ports, user info, other hosts, other schemes); `WebPolicy.current()`
+  reads `webHosts()`/`webProxy`. `SpotifyPage`: the origin, `BASE_URL`, the bridge's names both ways (`BRIDGE`
+  `VibbSpotify`, `FROM_PAGE`, `TO_PAGE`, `ERROR_KINDS`), `PLAYER_NAME` "Vibb", `csp(sdkOrigin)` (§5.2's policy),
+  `html(template, sdkUrl)` (the substitution) and `call(name, args)` (an `evaluateJavascript` call with every argument
+  a quoted JSON literal, U+2028/2029 escaped).
+- **`M/logic/Spotify.kt`**: `spotifyPlayability` (STREAM or NEEDS_NETWORK, never GONE: H1), `spotifyNetworkLine`,
+  `contextItem` (key `context`, the entry's name, no url, no duration: H3), `SPOTIFY_WINDOW_MAX` 50 and `playWindow`,
+  `nextQueueAdd` (one track ahead), the start's budgets (25 s, ready 20 s, a call 10 s, the first state 10 s, the
+  transfer's settle 3 s, the 5 s post and 30 s gap, the 300 ms step coalescing, the 5-minute idle host),
+  `SpotifyLine`, `SpotifyWords`, `SpotifyProblem` (§5.8's table row by row: the line and the stored word),
+  `sdkErrorProblem`, `spotifyTileLine` (the stored outcome on every tile) and `SpotifyOutcome` (the
+  `spotify_state.json` round trip, written only when the word changes; L8).
+- **`assets/spotify/player.html`, `player.js`** (GPL, ours): the page per §5.2/§5.3 - a CSP meta, no inline script or
+  handler, `player.js` before the SDK (`{{SDK_URL}}`, unpinned), the `VibbSpotify` bridge (`ready`, `notReady`,
+  `needToken`, `state`, `error`) and `window.vibb`'s ten entry points; `getOAuthToken` asks the host and the answer goes
+  only to its callback; `new Spotify.Player({name, getOAuthToken, volume: 1.0})` (no `enableMediaSession`); the state
+  compacted to `SdkState.KEYS` on every `player_state_changed` and every 5 s while playing; the SDK's four errors,
+  `autoplay_failed` and a script that failed to load (a capture-phase `error` listener) as `error(kind, message)`.
+- **`src/test/resources/spotify/`**: `play_request.json` (the exact play, context play, transfer and queue requests),
+  `play_answers.json` (every answer the start reads), `token_answers.json` (the token route's six answers), and
+  `sdk_states/` - 16 sequences: `start`, `advance`, `end_of_window`, `end_of_window_gap`, `end_of_queue`, `pause`,
+  `elsewhere`, `elsewhere_not_ready`, `relinked`, `relinked_not_by_name`, `relinked_other_artist`, `unplayable`,
+  `unplayable_reset`, `autoplay`, `autoplay_window`, `transfer_in` (each step a command or a posted state with the
+  events it must give, and the end's index, mode and measured position).
+- **`scripts/fake-spotify.py`** (GPL, stdlib, `-I`, port 8731): the accounts service (`/authorize` auto-consent with
+  `--as` and `--deny`, `/api/token` with the S256 check, single-use codes, `--rotate`, `--access-ttl`,
+  `--expire-refresh`, `--bad-client`), the Web API subset (`/v1/me`, the fixture playlist with its owner check and
+  `--snapshot`, album, tracks, track, artist, artist albums, show, episodes, episode; the play body checked against
+  play_request.json's shapes, 404 for an unknown or another account's device, `--not-premium`, transfer, queue,
+  `--rate-limit N`, `--quota`), the stub SDK (`/sdk/spotify-player.js`: the documented `Spotify.Player` surface over a
+  long-poll, a tone per track from `/fake/audio/<id>.wav` with Range, the fixture's length or `--track-seconds`;
+  `--elsewhere`, `--autoplay`, `--transfer-in`, `--unplayable`, `--relink`, `--no-eme`, `--not-premium`, `--slow-ready`,
+  `--token-ttl`), `/fake/token?user=kid`, `--print-listing ENTRY [--tracks N]`, `--print-library`, and `--selftest`
+  (8 parts: the fixtures and fake values, PKCE with RFC 7636's vector, rotation and refusals, every route against its
+  fixture, the device and the play body, the tone, every option, the stub against what `player.js` uses, the debug
+  feed's documents). `.github/workflows/music.yml` runs it after the build and watches `server/testdata/spotify/` and
+  the script; root `CLAUDE.md`'s `scripts/` and CI lines say so.
+- **Tests** (music, 9 new or extended classes): `SpotifyTrackerTest` (every `sdk_states/` sequence through
+  `SdkState.parse`; autoplay after the window and the queue paused and never measured; relinking three ways and not by
+  name alone; three unplayable in a row stop and a fresh play restarts the count; the `null` look; nothing measured
+  from a start, a stale or a foreign state; the queue add one ahead; an idle player; an episode relinked by its name),
+  `SdkStateTest`, `SpotifyApiTest` (the exact requests, every answer, 401 once, 404 -> transfer -> its 204 -> the
+  settle -> once, `Retry-After`, the deadline, the problems, the fake's token route), `SpotifyHttpTest` (the wire bytes
+  = play_request.json, no redirect followed, `Retry-After`, the body cap, the timeout, a whole start over loopback),
+  `TokenCacheTest` (the margin, one ask in flight, the cooldowns, the prompt retry, the deadline, the prefetch and its
+  2-minute retry, redaction), `SpotifyHostsTest`, `WebPolicyTest` (our assets, Spotify's hosts, http and the rest
+  refused, the fake only with the switch, the six readers, the CSP and the substitution, the quoted calls),
+  `PlayerJsTest`, `SpotifyRulesTest` (+7: the gate, the context item, the window and the add, the budget, §5.8's table,
+  the tile line, `SpotifyOutcome`), `SourceScanTest` (the bearer in `SpotifyApi.kt` too; Spotify's debug base, one
+  declaration and six readers, never assigned in main; the Spotify holders' redacted `toString`s; no `Log.` in
+  `spotify/`; no redirect followed). Checked by mutation (each red): the relink without its duration, a stop after
+  four, the end rule ignoring our pause, no prompt retry, the prefetch at 5 minutes, a transfer-in read as an end.
+- **Validation** (from `music/`): `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+  -PwarningsAsErrors=true` BUILD SUCCESSFUL, 679 JVM tests (624 before), 0 failures; lint 0 errors, the same 39
+  warnings as step 3, none in a file this step touches. `python3 -I scripts/fake-spotify.py --selftest` "FAKE SPOTIFY
+  SELFTEST OK"; `fake-storytel.py` and `fake-sonos.py --selftest` OK (unchanged). The launcher's suite not run: no file
+  its tests read changed.
+
+Deviations from the spec (each with its reason):
+1. **`SdkState.contextUri` and the post's `context` key** (§5.3's JSON lists no context): §5.9's context ownership
+   (step 6) needs the state's context, and the page's post is pinned now (`PlayerJsTest`, `SdkState.KEYS`), so it is in
+   from step 4; the tracker doesn't read it yet.
+2. **The page template has two slots of one value** (§5.2: "the only substitution"): `{{SDK_URL}}` in the script tag
+   and `{{SDK_ORIGIN}}` (its origin) in the CSP's `script-src`/`frame-src`, so the debug build's fake origin needs no
+   second template; a release page's CSP is §5.2's exactly (`PlayerJsTest`, `WebPolicyTest`).
+3. **`WebDecision` has `NotFound` and `Proxy(url)`** besides §5.1's `Asset`/`Pass`/`Block` (§5.2's own 404 for our
+   origin, §9.3's proxy), and `blob:`/`data:` pass (in memory: the SDK's media source, an inline picture; the CSP's
+   `media-src blob:`, `img-src data:`).
+4. **`SpotifyApi.start` is a suspend function with its waits as functions** (`tokens(renew)`, `awaitDevice(timeout)`,
+   `sleep`); the blocking calls run in `runInterruptible(Dispatchers.IO)`. The 404 -> transfer path awaits the
+   transfer's 204 and then `awaitDevice` (the renderer completes it on a state or `ready`, 5a).
+5. **`TokenCache.get(deadlineMs, minLeftMs, atStart)`** (§5.1 wrote `get(minLeftMs, deadlineMs)`): the prompt retry is
+   asked for by `atStart`; `prefetchDue`/`nextPrefetchAtMs`/`prefetch` are the M2 refresh's pure half (the renderer's
+   timer and wake lock are 5a's). A refresh that brings the same token back (lasting no longer) counts as failed, so a
+   server answering with its kept token can't loop; `reauthorize`, `busy` and `unreachable` during a refresh keep the
+   old token until it expires.
+6. **The tracker's readings where §5.4 is open:**
+   a. the end rule's "last playing position within 3 s of the duration" carries that position on by the time since its
+      state - for reading the end only, never a saved position: the page posts every 5 s, so the last post can be up to
+      5 s short and the literal rule would read the end of a list as a plain pause. And only after a playing state: a
+      track paused near its end that a transfer-in replaces hours later didn't play out (it must not start the next
+      window);
+   b. "Spotify skipping past one of our uris": a later uri of the window Spotify knows (by uri only) is ours, every item
+      between it and the current one unplayable; at a start only when it plays and names the sent uri among its `prev`
+      (else it is a stale state of what played before - a step back would read as a skip); "played 3 s" is the
+      furthest playing position past the first, or the playing time since the last playing state;
+   c. relinking (`linked`, title + duration) applies to the sent item too, not only the expected next; an episode
+      matches by its name alone too (the server lists an episode by its name; the SDK may name the show as an artist);
+   d. `NewWindow(index)` also when ours played out and a track that isn't ours plays (Autoplay after the window: §5.4's
+      "a failed add is a gap" with Autoplay instead of a pause); after the queue that is `NotOurs` + `Ended`;
+   e. while `IDLE` (nothing sent since the queue was loaded) every playing state is `NotOurs` - a transfer-in to an
+      idle host, paused at once (§5.7's accepted moment);
+   f. "three in a row" restarts on a fresh play of the kid's (`played(fresh = true)`), not on the renderer's own move-on;
+      one `Unplayable` per item (a `playback_error` and then Spotify moving on is one);
+   g. a playing state while our pause is pending is passed over (from before the pause took effect); a paused state
+      under 1 s reads as position 0;
+   h. `played()` takes no position and `measured` stays null until a state of ours: the start position is the stored
+      bookmark, not a measurement.
+7. **`SpotifyLine.UNAVAILABLE`** is the quota's line (§5.8: `SPOTIFY_NEEDS_INTERNET`'s carrier with "Spotify er ikke
+   tilgjengelig nå"), so 5a can map it to that state with its own text; **`spotifyTileLine("no_widevine")`** is "spør en
+   voksen" (§5.8's two tile phrases), the renderer's own line `NOT_ON_PHONE`; **a `busy` token** is `UNREACHABLE`
+   (§5.8 has no row for it); **`spotifyNetworkLine`**: Wi-Fi when a network with internet is refused by the gate
+   (metered without the switch, or roaming), else internet.
+8. **The fake:**
+   a. it answers from step 2a's fixture names (`playlist.json`, `playlist_items.json`, `album_tracks.json`,
+      `forbidden.json`, ...), not §9.2's earlier list (`playlist_meta.json`, `playlist_items_1.json`, `playlist_404.json`,
+      ...): 2a named them;
+   b. the stub's own protocol is plain GETs (`/fake/device/connect?name=&token=`, `/commands?after=`,
+      `/token?token=`), answered with `Access-Control-Allow-Origin: *`: the debug interceptor sees no request body
+      (`shouldInterceptRequest` has none) and an `Authorization` header would cost a CORS preflight. The fake token rides
+      in the stub's query to the fake only (fake values; the real SDK is Spotify's own);
+   c. `GET /fake/as?user=kid|parent` switches the auto-consent while running (both logins in one §6j run);
+      `--print-library` prints the library snapshot (entries 6 and 7 are Spotify's, as §6i copies it for Storytel);
+      `--tracks N` makes `--print-listing` list N generated tracks (60 for the past-the-window line; 0 for the context
+      artist's empty list); `--not-premium` is both the play's 403 and the SDK's `account_error`; `--elsewhere` and
+      `--transfer-in` count from the device's first play;
+   d. the selftest checks the stub's JavaScript as text (no browser in CI): the documented names, every method and
+      event `player.js` uses, relative URLs, GETs only.
+9. **`SourceScanTest`'s Spotify readers** name step 5a's files as their callers (`apiBase`, `apiOverLan`,
+   `debugTokens`: `SpotifyRenderer.kt`; `sdkUrl`: `SpotifyWebHost.kt`; `webHosts`/`webProxy`: `WebPolicy.kt`) - 5a
+   moves a name if its split differs.
+
+Found in the spec:
+- §5.3's post has no `context`, which §5.9 needs (deviation 1).
+- §5.2's "only substitution" and the debug build's CSP host can't both hold with one slot (deviation 2).
+- §5.4's end rule read literally misses the end with the page's 5 s posts (deviation 6a).
+- §9.3's proxy can't carry a request body or decide CORS on its own: the stub uses GETs only (deviation 8b), and step
+  5a's proxy must forward the `Range` header and pass back the status, `Content-Type`, `Content-Range`,
+  `Accept-Ranges` and `Access-Control-Allow-Origin` (the tone's seek and the stub's fetches need them).
+- §5.1's "`SpotifyTrackerTest` (synthetic sequences + the fake's recorded ones)": the stub can't run without a browser
+  here, so `sdk_states/` are synthetic; recording the stub's sequences from the emulator is owed to step 5b's §6j run.
+- §9.2's fixture list (deviation 8a).
+- Nothing in §11 step 4 was impossible.
+
+Owed: step 5a - the host applies `WebPolicy.current()` (frames and the service-worker client), serves the assets,
+proxies the fake (above), maps the tracker's events (`Look` -> `vibb.state()` 2 s later; `NotOurs(playing)` ->
+`vibb.pause()`; `QueueAdd` -> `SpotifyApi.queue` then `queued`; `NewWindow` -> a play from that index with
+`played(fresh = false)`, an auto advance to the service; `Unplayable` -> `Error("unplayable")`, moving on only when the
+tracker's index hasn't moved past it already), runs the prefetch timer under its wake lock, `DebugSpotify.kt` (and
+`SourceScanTest`'s assignment list), the `RendererState` strings for `SpotifyLine`; step 5b - `SPOTIFY_PLAYABLE`, the
+`spotify_state.json` file through `SpotifyOutcome`, §6j with the fake (its recorded state sequences); step 6 - the
+context ownership through `SdkState.contextUri`. [unverified]: the 404's reason `NO_ACTIVE_DEVICE` in
+play_answers.json, the real SDK's state shapes beyond the documented ones (`linked_from`), episodes in a `uris` list
+(§3.1, `SHOWS_PLAYABLE`).

@@ -4,9 +4,10 @@ name: Music
 # - Every push to master/main and every PR: music-build (debug, unsigned release, lint, unit tests)
 #   runs when music/, this workflow, the music files shared with the server (Spotify's host list
 #   included), the launcher's copies of the bridge's AIDL and contract and of Spotify's host list
-#   (BridgeTest compares them), scripts/fake-sonos.py or scripts/fake-storytel.py
-#   (they serve the Sonos and Storytel fixtures in music/app/src/test/resources/; their --selftests run
-#   here) changed, and uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
+#   (BridgeTest compares them), scripts/fake-sonos.py, scripts/fake-storytel.py or scripts/fake-spotify.py
+#   (they serve the Sonos, Storytel and Spotify fixtures in music/app/src/test/resources/ - the Spotify
+#   fake also server/testdata/spotify/, watched here too; their --selftests run here) changed, and
+#   uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
 #   master/main: music-release-build builds the unsigned release APK (no secrets),
 #   music-release-sign signs and verifies it in the protected "release" environment with the
@@ -62,7 +63,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$)'; then
           changed=true
         else
           changed=false
@@ -107,6 +108,12 @@ jobs:
       # §4.6, docs/testing/emulator.md §6i): the login, the 302, the CDN with Range, the token TTL and the
       # dropped transfer, against itself. Stdlib only.
       run: python3 -I ../scripts/fake-storytel.py --selftest
+    - name: Fake Spotify selftest
+      # The emulator's fake Spotify answers from the same fixtures the tests read (design 26c §9.2,
+      # docs/testing/emulator.md §6j): server/testdata/spotify/ and music's spotify/ - the accounts
+      # service with PKCE and rotation, the Web API routes, the play body, the stub SDK's surface against
+      # what player.js uses, the tone - against itself. Stdlib only.
+      run: python3 -I ../scripts/fake-spotify.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:

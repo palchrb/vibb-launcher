@@ -18,6 +18,23 @@ import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.naturallyNewestFirst
 import me.vibb.music.logic.newsEligible
 import me.vibb.music.logic.wantedDownloads
+import me.vibb.music.logic.NetCaps
+import me.vibb.music.logic.Playability
+import me.vibb.music.logic.SPOTIFY_CONTEXT_KEY
+import me.vibb.music.logic.SPOTIFY_START_BUDGET_MS
+import me.vibb.music.logic.SPOTIFY_WINDOW_MAX
+import me.vibb.music.logic.SpotifyLine
+import me.vibb.music.logic.SpotifyOutcome
+import me.vibb.music.logic.SpotifyProblem
+import me.vibb.music.logic.SpotifyWords
+import me.vibb.music.logic.contextItem
+import me.vibb.music.logic.nextQueueAdd
+import me.vibb.music.logic.playWindow
+import me.vibb.music.logic.sdkErrorProblem
+import me.vibb.music.logic.spotifyNetworkLine
+import me.vibb.music.logic.spotifyPlayability
+import me.vibb.music.logic.spotifyStartDeadline
+import me.vibb.music.logic.spotifyTileLine
 import me.vibb.music.model.Entry
 import me.vibb.music.model.ListingItem
 import me.vibb.music.model.PlayItem
@@ -30,7 +47,11 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 26c §4 as step 3 brings it: the target grammar, the library's rules, and Spotify hidden until step 5b. */
+/**
+ * Design 26c §4 as step 3 brings it - the target grammar, the library's rules, and Spotify hidden until
+ * step 5b - and step 4's player rules (§5.4, §5.8-§5.10): the network gate, the context item, the play
+ * window and the queue add, the start's budget, the lines and words, the stored outcome.
+ */
 class SpotifyRulesTest {
     private fun spotify(id: Long, kind: String, mode: String = SPOTIFY_MODE_LIST, order: String = "auto"): Entry =
         entry(id, Source.SPOTIFY, target = "spotify:$kind:FAKEid$id", order = order, cache = 0)
@@ -141,5 +162,109 @@ class SpotifyRulesTest {
         val strings = Fixtures.moduleFile("src/main/res/values/strings.xml").readText()
         val nb = Fixtures.moduleFile("src/main/res/values-nb/strings.xml").readText()
         assertTrue("the attribution, both locales", strings.contains("<string name=\"kind_spotify\">Spotify</string>") && nb.contains("<string name=\"kind_spotify\">Spotify</string>"))
+    }
+
+    // --- step 4: the player's pure rules -------------------------------------------------------------
+
+    private val wifi = NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
+    private val mobile = NetCaps(internet = true, notMetered = false, notRoaming = true, physical = true)
+    private val roaming = NetCaps(internet = true, notMetered = false, notRoaming = false, physical = true)
+    private val noInternet = NetCaps(internet = false, notMetered = true, notRoaming = true, physical = true)
+
+    @Test
+    fun `spotifyPlayability is the stream gate - never GONE, never LOCAL (H1)`() {
+        assertEquals(Playability.STREAM, spotifyPlayability(wifi, mobileData = false))
+        assertEquals(Playability.STREAM, spotifyPlayability(mobile, mobileData = true))
+        for ((caps, mobileData) in listOf(mobile to false, roaming to true, noInternet to true, null to true)) {
+            assertEquals("$caps $mobileData", Playability.NEEDS_NETWORK, spotifyPlayability(caps, mobileData))
+        }
+        assertNull(spotifyNetworkLine(wifi, false))
+        assertEquals("mobile data not allowed", SpotifyLine.NEEDS_WIFI, spotifyNetworkLine(mobile, false))
+        assertEquals("roaming: Wi-Fi would do", SpotifyLine.NEEDS_WIFI, spotifyNetworkLine(roaming, true))
+        assertEquals("offline", SpotifyLine.NEEDS_INTERNET, spotifyNetworkLine(noInternet, true))
+        assertEquals(SpotifyLine.NEEDS_INTERNET, spotifyNetworkLine(null, true))
+    }
+
+    @Test
+    fun `contextItem - one stable key, the entry's name, no url and no duration (H3)`() {
+        val artist = spotify(7, "artist", mode = SPOTIFY_MODE_CONTEXT)
+        val item = contextItem(artist)
+        assertEquals(PlayItem(7, "context", "Entry 7", null, false, null), item)
+        assertEquals(SPOTIFY_CONTEXT_KEY, contextItem(artist.copy(name = "Another name")).key)
+        assertFalse("never a Spotify id's shape", Regex("[A-Za-z0-9]{22}").matches(SPOTIFY_CONTEXT_KEY))
+    }
+
+    @Test
+    fun `the play window - at most 50 from the current index - and the queue add one track ahead`() {
+        val uris = (1..60).map { "spotify:track:FAKEtrack%013d".format(it) }
+        assertEquals(50, SPOTIFY_WINDOW_MAX)
+        assertEquals(uris.subList(0, 50), playWindow(uris, 0))
+        assertEquals(uris.subList(20, 60), playWindow(uris, 20))
+        assertEquals(listOf(uris.last()), playWindow(uris, 59))
+        assertEquals(emptyList<String>(), playWindow(uris, 60))
+        assertEquals(emptyList<String>(), playWindow(uris, -1))
+        assertEquals(uris.subList(3, 5), playWindow(uris, 3, max = 2))
+        // window 0..49 of 60: nothing until the window's last item is current, then 50; then 51 once 50 plays
+        assertNull(nextQueueAdd(current = 48, known = 49, size = 60))
+        assertEquals(50, nextQueueAdd(current = 49, known = 49, size = 60))
+        assertNull("50 added: Spotify knows it", nextQueueAdd(current = 49, known = 50, size = 60))
+        assertEquals(51, nextQueueAdd(current = 50, known = 50, size = 60))
+        assertNull("the queue's last item", nextQueueAdd(current = 59, known = 59, size = 60))
+        assertNull("a list that fits one window", nextQueueAdd(current = 9, known = 9, size = 10))
+    }
+
+    @Test
+    fun `the start's budget`() {
+        assertEquals(25_000L, SPOTIFY_START_BUDGET_MS)
+        assertEquals(1_025_000L, spotifyStartDeadline(1_000_000L))
+    }
+
+    @Test
+    fun `every problem's line and word, as section 5_8's table says`() {
+        val table = mapOf(
+            SpotifyProblem.NO_WIFI to (SpotifyLine.NEEDS_WIFI to null),
+            SpotifyProblem.UNREACHABLE to (SpotifyLine.NEEDS_INTERNET to "unreachable"),
+            SpotifyProblem.REAUTHORIZE to (SpotifyLine.ASK_ADULT to "reauthorize"),
+            SpotifyProblem.REFUSED to (SpotifyLine.ASK_ADULT to "refused"),
+            SpotifyProblem.NOT_PREMIUM to (SpotifyLine.ASK_ADULT to "not_premium"),
+            SpotifyProblem.QUOTA to (SpotifyLine.UNAVAILABLE to "quota"),
+            SpotifyProblem.NO_WIDEVINE to (SpotifyLine.NOT_ON_PHONE to "no_widevine"),
+            SpotifyProblem.ELSEWHERE to (SpotifyLine.ELSEWHERE to null),
+            SpotifyProblem.STOPPED to (SpotifyLine.STOPPED to null),
+            SpotifyProblem.OFF to (null to "none"),
+        )
+        assertEquals(SpotifyProblem.entries.toSet(), table.keys)
+        for ((problem, want) in table) assertEquals(problem.name, want, problem.line to problem.outcome)
+        for (p in SpotifyProblem.entries) p.outcome?.let { assertTrue(it, it in SpotifyWords.ALL) }
+        assertEquals("the server's SPOTIFY_WORDS", listOf("none", "ok", "reauthorize", "refused", "not_premium", "no_widevine", "unreachable", "quota"), SpotifyWords.ALL)
+        assertEquals(SpotifyProblem.NO_WIDEVINE, sdkErrorProblem("initialization"))
+        assertEquals(SpotifyProblem.NOT_PREMIUM, sdkErrorProblem("account"))
+        assertEquals(SpotifyProblem.UNREACHABLE, sdkErrorProblem("script"))
+        for (k in listOf("authentication", "playback", "autoplay", "other")) assertNull(k, sdkErrorProblem(k))
+    }
+
+    @Test
+    fun `the stored outcome shows on every tile until a play succeeds`() {
+        for (w in listOf("reauthorize", "refused", "not_premium", "no_widevine")) assertEquals(w, SpotifyLine.ASK_ADULT, spotifyTileLine(w))
+        assertEquals(SpotifyLine.UNAVAILABLE, spotifyTileLine("quota"))
+        for (w in listOf("none", "ok", "unreachable", null, "junk")) assertNull("$w", spotifyTileLine(w))
+    }
+
+    @Test
+    fun `SpotifyOutcome - the file round trip, written only when the word changes (L8)`() {
+        val o = SpotifyOutcome("not_premium", 1_760_000_000_000)
+        assertEquals("""{"outcome":"not_premium","at":1760000000000}""", o.encode())
+        assertEquals(o, SpotifyOutcome.decode(o.encode()))
+        for (junk in listOf(null, "", "{", "[]", """{"outcome":"ok"}""", """{"outcome":"ok","at":"1"}""", """{"outcome":"bearer","at":1}""",
+            """{"outcome":7,"at":1}""")) {
+            assertNull(junk, SpotifyOutcome.decode(junk))
+        }
+        assertEquals("unknown fields ignored", SpotifyOutcome("ok", 5), SpotifyOutcome.decode("""{"outcome":"ok","at":5,"x":1}"""))
+        assertNull("nothing stored is none", SpotifyOutcome.next(null, "none", 10))
+        assertEquals(SpotifyOutcome("ok", 10), SpotifyOutcome.next(null, "ok", 10))
+        assertNull("unchanged: nothing to write", SpotifyOutcome.next(SpotifyOutcome("ok", 10), "ok", 20))
+        assertEquals(SpotifyOutcome("quota", 20), SpotifyOutcome.next(SpotifyOutcome("ok", 10), "quota", 20))
+        assertNull("an unknown word is never stored", SpotifyOutcome.next(SpotifyOutcome("ok", 10), "FAKE-ACCESS-1", 20))
+        assertNull(SpotifyOutcome.next(SpotifyOutcome("ok", 10), null, 20))
     }
 }

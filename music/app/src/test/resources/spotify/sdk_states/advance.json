@@ -1,0 +1,18 @@
+{
+  "about": "The natural advance (§5.4): Spotify plays on through the window by itself; the expected next uri is ItemChanged(auto) and nothing is sent. Positions are the states' own.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 2}},
+    {"at": 500, "state": {"paused": false, "position": 12000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": ["Started 0"]},
+    {"at": 5500, "state": {"paused": false, "position": 17000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null}, "expect": []},
+    {"at": 8600, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000003"], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null}, "expect": ["ItemChanged 1 auto"]},
+    {"at": 13600, "state": {"paused": false, "position": 5000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000003"], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null}, "expect": []},
+    {"at": 28700, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000003", "linked": null, "type": "track", "name": "Fake track 3", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002"], "context": null}, "expect": ["ItemChanged 2 auto"]},
+    {"at": 30700, "state": {"paused": false, "position": 2000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000003", "linked": null, "type": "track", "name": "Fake track 3", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002"], "context": null}, "expect": []}
+  ],
+  "end": {"index": 2, "mode": "OURS", "measured": {"index": 2, "position": 2000, "at": 30700, "playing": true}}
+}

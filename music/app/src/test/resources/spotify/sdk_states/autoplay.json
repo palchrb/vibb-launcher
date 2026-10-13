@@ -1,0 +1,16 @@
+{
+  "about": "Autoplay after the queue (QA H4): the last item played out and Spotify plays a track it picked - not ours: paused at once, Ended, never measured; it keeps being paused.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 2, "known": 2}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000003", "linked": null, "type": "track", "name": "Fake track 3", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002"], "context": null}, "expect": ["Started 2"]},
+    {"at": 15500, "state": {"paused": false, "position": 15000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000003", "linked": null, "type": "track", "name": "Fake track 3", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002"], "context": null}, "expect": []},
+    {"at": 20600, "state": {"paused": false, "position": 0, "duration": 180000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": [], "context": null}, "expect": ["NotOurs playing", "Ended"]},
+    {"at": 20900, "state": {"paused": false, "position": 300, "duration": 180000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": [], "context": null}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 2, "mode": "ENDED", "measured": {"index": 2, "position": 15000, "at": 15500, "playing": true}}
+}
