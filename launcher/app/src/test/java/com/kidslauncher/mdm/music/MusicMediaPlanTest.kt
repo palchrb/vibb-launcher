@@ -159,7 +159,9 @@ class MusicMediaPlanTest {
 /**
  * A suspended music app is never played from a launcher surface (qa-21-step4-code M1; the music app
  * refuses it too, `GuardsTest`): the controls look the app up at the tap, the surfaces re-render on
- * suspension events, and `apply()` pauses before it suspends.
+ * suspension events, and `apply()` pauses before it suspends. Also the other source pins of the
+ * music glue that need these helpers: the call rule, the Sonos session, and design 28's feed (the
+ * bridge stamps the end of play, the headset watch's place, baseline and lazy stamps).
  */
 class MusicSuspensionGuardTest {
     private fun file(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
@@ -249,9 +251,12 @@ class MusicSuspensionGuardTest {
         assertTrue(file("music/MusicSessions.kt").contains("MusicCalls.init(app)\n            MusicListening.init(app)"))
         val listening = file("music/MusicListening.kt")
         val init = body(listening, "fun init(")
-        val baseline = init.indexOf("am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)")
+        val baseline = init.indexOf("val baseline = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)")
+        // the baseline reaches the watch (step 2 code QA L1: without it a launcher restart with buds in stamps)
+        val seed = init.indexOf("watch = headsetBaseline(watch, baseline, SystemClock.elapsedRealtime())")
         val register = init.indexOf("am.registerAudioDeviceCallback(")
-        assertTrue("baseline at $baseline, register at $register", baseline in 0 until register)
+        assertTrue("baseline at $baseline, seed at $seed, register at $register", baseline in 0 until seed && seed < register)
+        assertEquals(1, Regex("headsetBaseline\\(").findAll(listening).count())
         assertTrue(init.contains("} catch (e: Exception) {"))
         assertFalse("init loads no stamps", init.contains("load("))
         for (entry in listOf("fun listening()", "fun observePlay(", "fun devicesAdded(")) {

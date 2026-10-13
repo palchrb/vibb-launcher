@@ -46,7 +46,8 @@ object MusicListening {
     /**
      * From [MusicMedia.init] (process start, main thread), on its own: the devices connected now are
      * the baseline - read **before** registering, since AOSP calls `onAudioDevicesAdded` once at
-     * registration with every current device -, then the callback.
+     * registration with every current device -, and so is anything in the next 2 minutes
+     * ([headsetBaseline]); then the callback.
      */
     fun init(context: Context) {
         try {
@@ -54,7 +55,7 @@ object MusicListening {
             synchronized(this) { app = ctx }
             val am = ctx.getSystemService(AudioManager::class.java) ?: return
             val baseline = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.id }
-            synchronized(this) { watch = watch.copy(known = watch.known + baseline) }
+            synchronized(this) { watch = headsetBaseline(watch, baseline, SystemClock.elapsedRealtime()) }
             am.registerAudioDeviceCallback(
                 object : AudioDeviceCallback() {
                     override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {

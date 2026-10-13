@@ -86,6 +86,23 @@ class MusicWindowTest {
     }
 
     @Test
+    fun `an end of play counts only within 60 s of the last playing report - a stale flag in the same boot keeps the stamp`() {
+        // Step 2 code QA L2: the bridge refreshes "playing" every 15 s; an older playing_at is stale.
+        val last = at(start)
+        assertEquals("a pause between two reports", at(start + 15_000), playedStampAfter(last, true, false, at(start + 15_000)))
+        assertEquals("at 60 s - 1 ms", at(start + END_OF_PLAY_STAMP_MAX_AGE_MS - 1), playedStampAfter(last, true, false, at(start + END_OF_PLAY_STAMP_MAX_AGE_MS - 1)))
+        assertSame("at exactly 60 s", last, playedStampAfter(last, true, false, at(start + END_OF_PLAY_STAMP_MAX_AGE_MS)))
+        // both processes died while playing (or a late report after the player's death); hours later the
+        // music app's next report says paused: no window then
+        val hoursLater = at(start + 3 * 3_600_000L)
+        val kept = playedStampAfter(last, wasPlaying = true, playing = false, now = hoursLater)
+        assertSame(last, kept)
+        assertNull(musicShownUntil(false, Listening(kept, null), hoursLater))
+        assertFalse(playStampNotifies(last, kept, playing = false))
+        assertEquals("playing again always stamps", hoursLater, playedStampAfter(last, true, true, hoursLater))
+    }
+
+    @Test
     fun `an end of play after a reboot (previous stamp from another boot or none) keeps nothing`() {
         // QA L1: playing_at survived a dead battery; the music app's first report after the boot says paused.
         val now = at(90_000)
@@ -158,15 +175,20 @@ class MusicWindowTest {
 
     @Test
     fun `devices at registration are the baseline, never fresh`() {
-        // AOSP calls onAudioDevicesAdded once at registration with every device read just before.
-        val baseline = HeadsetWatch(setOf(1, 2), emptyMap())
-        val (watch, fresh) = headsetAdded(baseline, listOf(bt(1), bt(2, type = AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, address = "")), start)
+        // AOSP calls onAudioDevicesAdded once at registration with every device read just before
+        // (step 2 code QA L1: a launcher restart with buds connected never stamps).
+        val baseline = headsetBaseline(empty, listOf(1, 2), start)
+        assertEquals(setOf(1, 2), baseline.known)
+        val replay = listOf(bt(1), bt(2, type = AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, address = ""))
+        val (watch, fresh) = headsetAdded(baseline, replay, start)
         assertFalse(fresh)
         assertEquals(setOf(1, 2), watch.known)
-        val (_, later) = headsetAdded(watch, listOf(bt(3)), start)
+        assertFalse("the replay is never fresh, after the grace too", headsetAdded(baseline, replay, start + 10 * HEADSET_BOOT_GRACE_MS).second)
+        val (_, later) = headsetAdded(watch, listOf(bt(3)), start + HEADSET_BOOT_GRACE_MS)
         assertTrue("one added after the read is a real connection", later)
         val (_, again) = headsetAdded(HeadsetWatch(setOf(3), emptyMap()), listOf(bt(3)), start)
         assertFalse("a known id twice", again)
+        assertEquals("the removals are kept", mapOf("x" to 5L), headsetBaseline(HeadsetWatch(emptySet(), mapOf("x" to 5L)), listOf(1), start).removedAt)
     }
 
     @Test
@@ -212,6 +234,22 @@ class MusicWindowTest {
         assertTrue("still joins the baseline", 1 in watch.known)
         assertFalse("not later either", headsetAdded(watch, listOf(bt(1)), HEADSET_BOOT_GRACE_MS + 1).second)
         assertTrue("from 2 min", headsetAdded(empty, listOf(bt(2)), HEADSET_BOOT_GRACE_MS).second)
+    }
+
+    @Test
+    fun `connections in the first 2 minutes after the registration are baseline too - the later of boot and registration`() {
+        // Step 2 code QA L3: the watch registers at the first unlock; buds that connect only then are no fresh headset.
+        val lateUnlock = headsetBaseline(empty, emptyList(), 10 * 60_000L)
+        assertEquals(12 * 60_000L, lateUnlock.freshFromMs)
+        assertFalse("1 min after the unlock", headsetAdded(lateUnlock, listOf(bt(1)), 11 * 60_000L).second)
+        assertFalse("2 min - 1 ms after", headsetAdded(lateUnlock, listOf(bt(2)), 12 * 60_000L - 1).second)
+        assertTrue("2 min after", headsetAdded(lateUnlock, listOf(bt(3)), 12 * 60_000L).second)
+        val early = headsetBaseline(empty, emptyList(), 0)
+        assertEquals("registered at boot: the boot grace", HEADSET_BOOT_GRACE_MS, early.freshFromMs)
+        assertEquals("never earlier than before", 12 * 60_000L, headsetBaseline(lateUnlock, emptyList(), 0).freshFromMs)
+        val (added, _) = headsetAdded(lateUnlock, listOf(bt(4)), 11 * 60_000L)
+        assertEquals("kept by an add", 12 * 60_000L, added.freshFromMs)
+        assertEquals("kept by a removal", 12 * 60_000L, headsetRemoved(added, listOf(bt(4)), 11 * 60_000L).freshFromMs)
     }
 
     @Test

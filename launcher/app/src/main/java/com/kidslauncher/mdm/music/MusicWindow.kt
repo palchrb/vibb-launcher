@@ -18,11 +18,21 @@ data class Listening(val playedAt: BootStamp?, val headsetAt: BootStamp?)
 /** How long a surface stays after the end of play or a fresh headset. */
 const val MUSIC_LINGER_MS = 10 * 60_000L
 
-/** Connections this soon after boot are the bonded devices coming back by themselves: baseline. */
+/**
+ * Connections this soon after boot - or after the watch registered, at the first unlock (QA L3 of
+ * the step 2 code review) - are the bonded devices coming back by themselves: baseline.
+ */
 const val HEADSET_BOOT_GRACE_MS = 2 * 60_000L
 
 /** A device back this soon after it went (a BT blip, a codec change, an active-device switch) is not fresh (QA M2). */
 const val HEADSET_REJOIN_MS = 60_000L
+
+/**
+ * An end of play counts only this soon after the last stamp: the bridge refreshes "playing" every
+ * 15 s, so an older one is a stale `playing_at` (both processes died, or a late report after the
+ * player's death), and the music app's next report must not open a window then (step 2 code QA L2).
+ */
+const val END_OF_PLAY_STAMP_MAX_AGE_MS = 60_000L
 
 /** A stamp counts only in [now]'s boot (a known one) and not from the future: anything else is nothing. */
 private fun BootStamp.validAt(now: BootStamp): Boolean =
@@ -49,11 +59,12 @@ fun windowedSession(session: MusicSession?, listening: Listening, now: BootStamp
  * The stamp after a bridge observation (§2.1): playing moves it to [now]; the end of play (playing
  * before, not now) too, but only after a stamp valid in [now]'s boot (QA L1: a battery that died
  * while it played leaves `playing_at` set across the boot, and the music app's first report after
- * it must not open a window). Anything else keeps it.
+ * it must not open a window) and younger than [END_OF_PLAY_STAMP_MAX_AGE_MS] (a stale flag in the
+ * same boot). Anything else keeps it.
  */
 fun playedStampAfter(previous: BootStamp?, wasPlaying: Boolean, playing: Boolean, now: BootStamp): BootStamp? = when {
     playing -> now
-    wasPlaying && previous != null && previous.validAt(now) -> now
+    wasPlaying && previous != null && previous.validAt(now) && now.elapsedMs - previous.elapsedMs < END_OF_PLAY_STAMP_MAX_AGE_MS -> now
     else -> previous
 }
 
@@ -83,29 +94,43 @@ fun countsAsHeadset(out: AudioOut): Boolean = out.sink && out.type in HEADSET_TY
 /** A device across its connections: the BT address is stable per device; a wired one keys by its type alone. */
 private fun headsetKey(out: AudioOut) = "${out.type}/${out.address}"
 
-/** The device ids seen (the baseline and every one added since), and when each counted device last went (key -> elapsed). */
-data class HeadsetWatch(val known: Set<Int>, val removedAt: Map<String, Long>)
+/**
+ * The device ids seen (the baseline and every one added since), when each counted device last went
+ * (key -> elapsed), and from when a connection may be fresh: the boot grace's end, moved on by
+ * [headsetBaseline] to 2 minutes after the registration.
+ */
+data class HeadsetWatch(val known: Set<Int>, val removedAt: Map<String, Long>, val freshFromMs: Long = HEADSET_BOOT_GRACE_MS)
+
+/**
+ * The watch at the callback's registration ([nowElapsedMs]): the output ids present now are known
+ * (AOSP replays them to the new callback), and connections in the next [HEADSET_BOOT_GRACE_MS] are
+ * baseline too - the watch starts only at the first unlock, which may be long after the boot, and
+ * bonded buds may connect only then (step 2 code QA L1, L3).
+ */
+fun headsetBaseline(watch: HeadsetWatch, ids: List<Int>, nowElapsedMs: Long): HeadsetWatch =
+    watch.copy(known = watch.known + ids, freshFromMs = maxOf(watch.freshFromMs, nowElapsedMs + HEADSET_BOOT_GRACE_MS))
 
 private fun Map<String, Long>.recent(nowElapsedMs: Long) = filterValues { nowElapsedMs - it in 0 until HEADSET_REJOIN_MS }
 
 /**
  * The watch after added devices, and whether a fresh headset connected: a counted type whose id
- * isn't known (the baseline at registration, AOSP's first callback), after the boot grace, and not
- * the same device back within [HEADSET_REJOIN_MS]. Every added id joins [HeadsetWatch.known].
+ * isn't known (the baseline at registration, AOSP's first callback), from [HeadsetWatch.freshFromMs]
+ * (the boot and registration grace), and not the same device back within [HEADSET_REJOIN_MS]. Every
+ * added id joins [HeadsetWatch.known].
  */
 fun headsetAdded(watch: HeadsetWatch, added: List<AudioOut>, nowElapsedMs: Long): Pair<HeadsetWatch, Boolean> {
     val recent = watch.removedAt.recent(nowElapsedMs)
-    val fresh = nowElapsedMs >= HEADSET_BOOT_GRACE_MS && added.any {
+    val fresh = nowElapsedMs >= watch.freshFromMs && added.any {
         countsAsHeadset(it) && it.id !in watch.known && headsetKey(it) !in recent
     }
-    return HeadsetWatch(watch.known + added.map { it.id }, recent) to fresh
+    return watch.copy(known = watch.known + added.map { it.id }, removedAt = recent) to fresh
 }
 
 /** The watch after removed devices: their ids go, and each counted device's removal is kept for the rejoin rule. */
 fun headsetRemoved(watch: HeadsetWatch, removed: List<AudioOut>, nowElapsedMs: Long): HeadsetWatch =
-    HeadsetWatch(
-        watch.known - removed.map { it.id }.toSet(),
-        watch.removedAt.recent(nowElapsedMs) + removed.filter(::countsAsHeadset).associate { headsetKey(it) to nowElapsedMs },
+    watch.copy(
+        known = watch.known - removed.map { it.id }.toSet(),
+        removedAt = watch.removedAt.recent(nowElapsedMs) + removed.filter(::countsAsHeadset).associate { headsetKey(it) to nowElapsedMs },
     )
 
 /**

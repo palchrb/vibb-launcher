@@ -187,10 +187,11 @@ android {
 }
 
 /**
- * The design 16d lock-task override hook lives in src/debug only (docs/testing/emulator.md §6e), and
- * so do design 24b's vault-key and design 28's fake-headset receivers. This scans a variant's merged manifest and its APKs' dex for the hook's names: a release build
- * fails if any is there ([expectPresent] false, a dependency of assembleRelease), and the debug
- * build checks they are there (a positive control: the scan really finds them).
+ * The debug hooks live in src/debug only: design 16d's lock-task override (docs/testing/emulator.md
+ * §6e), design 24b's vault-key receiver and design 28's fake headset. This scans a variant's merged
+ * manifest and its APKs' dex for the hooks' names: a release build fails if any is there
+ * ([expectPresent] false, a dependency of assembleRelease), and the debug build checks they are all
+ * there (a positive control: the scan really finds them).
  */
 abstract class CheckDebugHook : DefaultTask() {
     @get:InputFile
@@ -223,9 +224,9 @@ abstract class CheckDebugHook : DefaultTask() {
         }
         if (expectPresent.get()) {
             val missing = names.get() - found
-            if (missing.isNotEmpty()) throw GradleException("Debug build lacks the 16d hook ($missing) - the release check would prove nothing")
+            if (missing.isNotEmpty()) throw GradleException("Debug build lacks a debug hook ($missing of ${names.get()}) - the release check would prove nothing")
         } else if (found.isNotEmpty()) {
-            throw GradleException("The debug-only lock-task hook is in a release build: $found (keep it in src/debug)")
+            throw GradleException("A debug-only hook is in a release build: $found of ${names.get()} (keep them in src/debug)")
         }
         logger.lifecycle("${name}: ${if (expectPresent.get()) "hook present" else "no debug hook"} in ${apks.map { it.name }}")
     }

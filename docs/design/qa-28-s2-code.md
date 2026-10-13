@@ -138,3 +138,12 @@ wants it, and the debug receiver can't reach a release build. The Lows are one u
 - `MusicMediaPlanTest.kt`: the two new source scans are in `MusicSuspensionGuardTest` (they need its `file`/`body`
   helpers). Fine, but the class name no longer describes them; a line in its KDoc ("and the design 28 feed pins") would
   help the next reader.
+
+## Fixes (implementer, 2026-10-13, on `design-28-s2`)
+
+| # | Fix | Test |
+|---|---|---|
+| L1 | The seed is the pure `headsetBaseline(watch, ids, nowElapsedMs)` in `MusicWindow.kt`; `MusicListening.init` calls it once, between `getDevices` and `registerAudioDeviceCallback`. | `MusicWindowTest` `devices at registration are the baseline, never fresh` (the replay after the grace too); `MusicMediaPlanTest`'s headset-watch pin checks the call and its place. Removing the line turns that pin red. |
+| L2 | Not only documented: `playedStampAfter` counts an end of play only when the previous stamp is younger than `END_OF_PLAY_STAMP_MAX_AGE_MS` (60 s, against the 15 s refresh). Spec §2.1 (the rule and its cost), §3, §9. | `an end of play counts only within 60 s of the last playing report - a stale flag in the same boot keeps the stamp` (a pause between reports counts, 60 s - 1 ms counts, exactly 60 s and hours later don't). |
+| L3 | Done in the rule, not left to the device check: `HeadsetWatch.freshFromMs` (default the boot grace) is moved by `headsetBaseline` to registration + 2 min, never earlier, and `headsetAdded` checks it. Spec §2.3 ("The registration"), §3, §9; §8 check 9 gains the late unlock, checks 5 and 7 the launcher process's own 2 minutes. | `connections in the first 2 minutes after the registration are baseline too - the later of boot and registration`. |
+| L4 | `CheckDebugHook`'s KDoc rewrapped and naming all three hooks; both messages say "debug hook" and list the names. `MusicSuspensionGuardTest`'s KDoc names the design 28 pins it holds. | - |

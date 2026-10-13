@@ -100,6 +100,12 @@ grid, §5).
   - An observation with `!playing && wasPlaying` sets it to now (the end of play), **but only when the previous
     `playedAt` is valid in this boot** (QA L1). A battery that dies mid-play leaves `playing_at` set across the boot,
     and the music app's first report after it (`setNowPlaying(null)` or a paused restore) must not open a window.
+  - **And only when the previous `playedAt` is younger than `END_OF_PLAY_STAMP_MAX_AGE_MS` (60 s)** (step 2 code QA
+    L2). While it plays the bridge refreshes the stamp every 15 s, so a real pause is always within that. An older
+    stamp means a stale `playing_at` in this boot: both processes died while the launcher was down, or a oneway
+    "playing" report was handled after the token's death. The music app's next report (hours later, after a tap or a
+    media command) then opens no window. The cost: a stop the bridge reports more than 60 s after the last playing
+    report (none is expected; a Sonos stop noticed only after a long deep sleep would be one) opens no window either.
   - Anything else keeps the stamp.
   - So the stamp is "the last moment we knew it played, in this boot".
 - **No session feed** (QA L2). On the phone a PLAYING session implies `showsPlaying`. On Sonos the session holds
@@ -108,7 +114,8 @@ grid, §5).
   sites and a kept context in `MusicSessions`. A bridge that never binds gives no stamps, and then the card shows only
   while playing (fail closed).
 - **Stale flags.** "Playing now" for the surfaces is the live session only, never the bridge's `playing_at`. That
-  flag can stay stale when both processes died while the launcher was down. Without listener access there are no
+  flag can stay stale when both processes died while the launcher was down (and the end-of-play rule ignores it after
+  60 s, above). Without listener access there are no
   surfaces at all (21 §3), so the session is always there when it matters.
 - **What doesn't stamp.** The music app restoring itself paused ("Nothing starts by itself", playing=false after
   playing=false) never stamps, so its restart or a reboot shows no card.
@@ -156,11 +163,12 @@ grid, §5).
   empty for wired. A device's key is `type + address`, so a wired device keys by its type. The glue keeps `known`
   (output ids; `getId()` is the audio port, new for every `AVAILABLE`) and `recentlyRemoved` (key -> removed at
   elapsed).
-  - At `init`, `known` is the `getDevices(GET_DEVICES_OUTPUTS)` ids, read **before** registering. AOSP calls
-    `onAudioDevicesAdded` once at registration with every current device; those are all in `known`, so no stamp. A
-    device added between the read and the registration is a real connection.
+  - At `init`, `known` is the `getDevices(GET_DEVICES_OUTPUTS)` ids, read **before** registering (pure
+    `headsetBaseline`). AOSP calls `onAudioDevicesAdded` once at registration with every current device; those are all
+    in `known`, so no stamp. A device added between the read and the registration is a real connection (after the
+    grace below).
   - An added device stamps `headsetAt` when it is a counted type, its id is not in `known`,
-    `nowElapsed >= HEADSET_BOOT_GRACE_MS`, and its key was **not removed in the last `HEADSET_REJOIN_MS` (60 s)**
+    `nowElapsed >= freshFromMs` (the grace, below), and its key was **not removed in the last `HEADSET_REJOIN_MS` (60 s)**
     (QA M2). A link drop and auto-reconnect, an A2DP codec re-negotiation (AudioPolicyManager toggles the device
     UNAVAILABLE -> AVAILABLE, which is removed + added with a new id) and an active-device switch between two connected
     sinks are all a re-add of the same key within seconds. A second device with another address is fresh.
@@ -170,6 +178,11 @@ grid, §5).
   devices reconnect on their own some seconds after the adapter comes up, which can be after our registration. So
   connections while `elapsedRealtime < 2 min` (`HEADSET_BOOT_GRACE_MS`) are baseline too. Buds already in the ears at
   boot give no card.
+- **The registration** (step 2 code QA L3). The watch starts only at the first unlock, which can be long after the boot,
+  and a phone's Bluetooth stack may connect A2DP only after it. So connections within 2 minutes of the registration are
+  baseline too: `HeadsetWatch.freshFromMs` is the later of boot + 2 min and registration + 2 min (`headsetBaseline`).
+  The same holds after a launcher process restart: a headset put on in the first 2 minutes of the new process gives no
+  card.
 - **A launcher process restart** never stamps (baseline). An earlier persisted headset stamp still runs out its window
   (§2.2).
 
@@ -213,18 +226,22 @@ data class Listening(val playedAt: BootStamp?, val headsetAt: BootStamp?)
 const val MUSIC_LINGER_MS = 10 * 60_000L
 const val HEADSET_BOOT_GRACE_MS = 2 * 60_000L
 const val HEADSET_REJOIN_MS = 60_000L
+const val END_OF_PLAY_STAMP_MAX_AGE_MS = 60_000L     // step 2 code QA L2
 
 /** Long.MAX_VALUE while [playing]; else the elapsed end of the later valid window when now < end, or null (hidden). */
 fun musicShownUntil(playing: Boolean, listening: Listening, now: BootStamp): Long?
 /** The live session a surface may show: shownSession's result, kept while playing or inside a window. */
 fun windowedSession(session: MusicSession?, listening: Listening, now: BootStamp): MusicSession?
-/** The stamp after a bridge observation (§2.1): an end of play only after a stamp valid in [now]'s boot. */
+/** The stamp after a bridge observation (§2.1): an end of play only after a stamp valid in [now]'s boot, < 60 s old. */
 fun playedStampAfter(previous: BootStamp?, wasPlaying: Boolean, playing: Boolean, now: BootStamp): BootStamp?
 /** Notify only when an end of play moved the stamp. */
 fun playStampNotifies(previous: BootStamp?, next: BootStamp?, playing: Boolean): Boolean
 data class AudioOut(val id: Int, val type: Int, val sink: Boolean, val address: String)
 fun countsAsHeadset(out: AudioOut): Boolean          // §2.3's types, sinks only
-data class HeadsetWatch(val known: Set<Int>, val removedAt: Map<String, Long>)  // key "type/address" -> elapsed
+data class HeadsetWatch(val known: Set<Int>, val removedAt: Map<String, Long>,  // key "type/address" -> elapsed
+                        val freshFromMs: Long = HEADSET_BOOT_GRACE_MS)
+/** The watch at registration: the ids present are known, and fresh only from registration + 2 min (step 2 code QA L1, L3). */
+fun headsetBaseline(watch: HeadsetWatch, ids: List<Int>, nowElapsedMs: Long): HeadsetWatch
 /** The watch after added devices, and whether a fresh headset connected (baseline, grace, rejoin). */
 fun headsetAdded(watch: HeadsetWatch, added: List<AudioOut>, nowElapsedMs: Long): Pair<HeadsetWatch, Boolean>
 fun headsetRemoved(watch: HeadsetWatch, removed: List<AudioOut>, nowElapsedMs: Long): HeadsetWatch
@@ -354,6 +371,7 @@ the update fence.
 - `no stamp - only playing shows`
 - `the stamp moves on playing and on the end of play, not on paused after paused`
 - `an end of play after a reboot (previous stamp from another boot or none) keeps nothing`
+- `an end of play counts only within 60 s of the last playing report - a stale flag in the same boot keeps the stamp`
 - `only an end of play that moved the stamp notifies`
 - `windowedSession keeps a playing session, a paused one inside the window, nothing else`
 - `headset types - wired, USB headset, A2DP, LE headset and speaker; not SCO, ASHA hearing aid, broadcast, USB device, HDMI, built-ins or sources`
@@ -362,6 +380,7 @@ the update fence.
 - `a second device (another address) is fresh`
 - `a wired device keys by its type`
 - `connections in the first 2 minutes after boot are baseline`
+- `connections in the first 2 minutes after the registration are baseline too - the later of boot and registration`
 - `the recheck delay is the time left and at least 1 ms, null while playing or without an end`
 
 `MusicCardTest` (the helper gets an open window by default):
@@ -429,17 +448,20 @@ broadcast".
    with the card, and it goes at the original +10 min.
 4. Reboot after a pause, then again with `adb reboot` **while it plays**. No card and no tile after either boot, and
    none after opening and closing the player (QA L1).
-5. With uptime > 2 min, send the broadcast on a visible Home. The snapshot card appears at once. Its play button opens
+5. With uptime > 2 min and the launcher's process older than 2 min (§2.3, the registration's grace), send the broadcast on a visible Home. The snapshot card appears at once. Its play button opens
    the player playing (`EXTRA_RESUME`). Pause: the card goes 10 min after the pause.
 6. In the same launcher process (each broadcast is its own device), outside a window: with the music app's session
    still live and paused, the broadcast brings the glance tile back on the lock (play works from it). Force-stop the
    music app and send it again: the lock shows no tile, and Home shows the snapshot.
-7. Reboot and send the broadcast while uptime < 2 min: no card.
+7. Reboot and send the broadcast while uptime < 2 min: no card. Then crash the launcher (as in check 3) and send it
+   within 2 min of Home coming back: no card either.
 8. Sonos (§6h, fake speaker): play on the fake room, so the card is playing. Pause from the player: the card stays
    paused and goes about 10 min after the player shows paused.
 9. The real phone (Jelly Star; not on the emulator):
    - BT buds connected with nothing played for an hour show the card for 10 min.
    - Buds in the ears at boot give no card.
+   - Reboot with the buds in, wait 3 minutes before the PIN, unlock: no card (step 2 code QA L3: the grace counts from
+     the watch's registration too).
    - Walk out of range for about 10 s and come back: no new card.
    - Switch the BT codec in Developer options: no card.
    - A call over the buds and its end: no card.
@@ -464,7 +486,9 @@ lists by accident; note the device page's `play_store_suspendable`: false on thi
 
 - The lock never shows the snapshot (no controls without opening the app). Home does.
 - SCO-only devices and ASHA hearing aids (`TYPE_HEARING_AID`) are not headsets. LE broadcast is not a connection.
-- The boot grace is 2 minutes of elapsed time.
+- The boot grace is 2 minutes of elapsed time, counted from the boot and again from the watch's start (the first unlock,
+  or a launcher restart).
+- An end of play counts only within 60 s of the last "playing" report: a stale flag opens no window.
 - A device that comes back within **60 s** of going (a BT blip, a codec change, an active-device switch) is not a
   fresh connection.
 - A launcher restart inside the window brings the card back for the rest of it.
@@ -536,9 +560,17 @@ window yet** (step 3), so the phone behaves as before; the stamps are written an
   boot count (logcat `HeadsetDebug` and the broadcast's result data). Exported and guarded by DUMP in
   `src/debug/AndroidManifest.xml`. It is in `CheckDebugHook`'s names (`checkDebugHasDebugHook` finds it) and in
   `DebugHookAbsentTest`'s banned list. That test's manifest check now covers all three debug receivers.
-- **Tests**: `MusicWindowTest` (§6's 17 cases). `MusicMediaPlanTest`: `the end of play is fed by the bridge`, plus a pin
+- **Tests**: `MusicWindowTest` (§6's 17 cases at `f0b83ffd`, 19 after the fix round). `MusicMediaPlanTest`: `the end of play is fed by the bridge`, plus a pin
   for the headset watch: `MusicListening.init(app)` after `MusicCalls.init(app)`, the baseline read before the
   registration, `init`'s own catch, and the stamps loaded by `listening`/`observePlay`/`devicesAdded`, not `init`.
   `DebugHookAbsentTest`: the banned name, the three receivers, the hook's own id and address.
+- **Code QA fix round** (`qa-28-s2-code.md`, 0 High, 0 Medium, 4 Low, all fixed; its "Fixes" table):
+  - L1: the baseline seed is the pure `headsetBaseline` (tested; `MusicMediaPlanTest` pins its one call between the read
+    and the registration).
+  - L2: an end of play counts only within `END_OF_PLAY_STAMP_MAX_AGE_MS` (60 s) of the last stamp (§2.1).
+  - L3: `HeadsetWatch.freshFromMs`, the later of boot + 2 min and registration + 2 min (§2.3), and §8 check 9's late
+    unlock (check 5 and 7 adjusted).
+  - L4: `CheckDebugHook`'s comment and messages name every hook; `MusicSuspensionGuardTest`'s KDoc names the design 28
+    pins.
 - **Left for step 3**: the launcher `CLAUDE.md` (also a line on the new debug receiver next to the 16d hook's bullet)
   and `docs/testing/emulator.md` §6j.
