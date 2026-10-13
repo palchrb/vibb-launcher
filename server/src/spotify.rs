@@ -1,8 +1,12 @@
 //! The server's Spotify side, step 1 of design 26c (`docs/design/26c-spotify.md` §2, §7.1, §9.3):
 //! the family's own developer app (bring your own client ID: this server ships none), the Spotify
 //! accounts the parent logs in with PKCE in their own browser, each account's refresh token sealed
-//! with the music key, and the access-token cache. The listing (step 2a), the entries and the
-//! binding (2b) and the phones' token endpoint (step 3) build on it.
+//! with the music key, and the access-token cache; and step 2a's listing (§3.1, §3.3, §3.4): the
+//! Web API's answers read into tracks and episodes ([parse_playlist_items] and its siblings, over
+//! `items[].item`), the readers ([readers]: the accounts that may read, the listing's last reader
+//! first) and short links resolved one hop at a time ([resolve_short_link]). The sweep's check is
+//! `music_sweep::spotify_check`; the entries and the binding (2b) and the phones' token endpoint
+//! (step 3) build on it.
 //!
 //! - **The app** ([App]): one `music_spotify_app` row from the PWA, or `SPOTIFY_CLIENT_ID` (and
 //!   `SPOTIFY_REDIRECT_URI`) from the environment, which wins. A PKCE client ID is public (it is in
@@ -16,7 +20,8 @@
 //!   access token is used. `invalid_grant` = the login ended (`needs_login`, never tried again until
 //!   a new login), `invalid_client` = the app is gone or refused.
 //! - **Reads** ([Accounts::api_get]): the bearer, a 401 refreshes once, a short `Retry-After` is
-//!   waited for once, `QUOTA_EXCEEDED` stops every Web API read for [QUOTA_PAUSE].
+//!   waited for once, `QUOTA_EXCEEDED` stops every Web API read for [QUOTA_PAUSE]. Every URL is
+//!   built from a canonical id ([Accounts::read_url]), never from pasted text.
 //! - **Every request** goes through `AppState.music_fetch` (the one gate), [Reach::Public] - and
 //!   [Reach::Any] only while a loopback base override (§9.3: the fake on 127.0.0.1) is set.
 //! - **Secrets** (§7.1): refresh tokens, access tokens, the PKCE verifier and the authorization
@@ -40,7 +45,7 @@ use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 
 use crate::AppState;
-use crate::music_net::{FetchError, Kind, Reach, SourceRequest, SourceResponse};
+use crate::music_net::{FetchError, Kind, Reach, Source, SourceRequest, SourceResponse};
 use crate::music_sweep::{parse_stamp, stamp};
 
 // --- CONSTANTS -----------------------------------------------------------------------------------
@@ -89,16 +94,27 @@ pub const QUOTA_PAUSE: Duration = Duration::from_secs(3600);
 /// `/me`'s display name is cut to this.
 pub const MAX_DISPLAY_NAME_CHARS: usize = 60;
 /// A pasted or typed link longer than this is no link.
-#[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_LINK_CHARS: usize = 2000;
+/// A short link is followed this many hops at most (§3.1).
+#[cfg_attr(not(test), allow(dead_code))]
+pub const SHORT_LINK_HOPS: usize = 3;
+/// The Web API's page size for every list read.
+pub const PAGE_LIMIT: usize = 50;
+/// A playlist or an album lists at most this many tracks (`keep_end = 'first'`, `capped` past it).
+pub const MAX_LIST_TRACKS: usize = 1000;
+/// A show keeps its newest this many episodes (NRK podcast's rule).
+pub const MAX_SHOW_EPISODES: usize = 100;
+/// The artist option (§3.3): at most this many albums and singles, newest first...
+pub const MAX_ARTIST_ALBUMS: usize = 20;
+/// ...and this many tracks.
+pub const MAX_ARTIST_TRACKS: usize = 500;
+/// The artist option reads at most this many pages of albums (sorted by date after).
+pub const MAX_ARTIST_ALBUM_PAGES: usize = 10;
 
-// --- links (the grammar only; resolving a short link is step 2a's) --------------------------------
-// Step 2a's add form, the import and the sweep read these; until then only the tests do (hence
-// `allow(dead_code)` outside the tests).
+// --- links (the grammar; a short link is resolved by [resolve_short_link]) -----------------------
 
 /// The kinds of link an entry can be made of (§3.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum LinkKind {
     Playlist,
     Album,
@@ -108,7 +124,6 @@ pub enum LinkKind {
     Episode,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl LinkKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -136,25 +151,25 @@ impl LinkKind {
 
 /// A playlist, album, track, artist, show or episode: `spotify:<kind>:<id>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct SpotifyRef {
     pub kind: LinkKind,
     pub id: String,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl SpotifyRef {
     /// The canonical target (the entry's `target`).
     pub fn target(&self) -> String {
         format!("spotify:{}:{}", self.kind.as_str(), self.id)
     }
 
-    /// The entry's key: vibb's `state_key` (`bm_path`) of the same URI.
+    /// The entry's key: vibb's `state_key` (`bm_path`) of the same URI (2b's add form).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn key(&self) -> String {
         crate::music::state_key(&self.target())
     }
 
-    /// The link back to Spotify (Developer Policy, §3.6).
+    /// The link back to Spotify (Developer Policy, §3.6; 2b's card).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn open_url(&self) -> String {
         format!(
             "https://open.spotify.com/{}/{}",
@@ -166,25 +181,24 @@ impl SpotifyRef {
 
 /// What a pasted link is.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum Link {
     Ref(SpotifyRef),
     /// `https://spotify.link/<code>` or `https://spotify.app.link/<code>`: resolved once at add
-    /// time, one hop at a time (step 2a).
+    /// time, one hop at a time ([resolve_short_link]).
     Short(String),
 }
 
 /// Why a link can't be added, each with its sentence (§3.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub enum LinkError {
     NotALink,
     Audiobook,
     Collection,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl LinkError {
+    /// The add form's sentence (2b).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn message(self) -> &'static str {
         match self {
             LinkError::NotALink => {
@@ -199,12 +213,10 @@ impl LinkError {
 }
 
 /// A Spotify id: 1 to 64 of `[A-Za-z0-9]` (base62; 22 characters in practice).
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn id_ok(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn kind_and_id(kind: &str, id: &str) -> Result<Link, LinkError> {
     match kind {
         "audiobook" | "chapter" => return Err(LinkError::Audiobook),
@@ -222,7 +234,6 @@ fn kind_and_id(kind: &str, id: &str) -> Result<Link, LinkError> {
 }
 
 /// `intl-de`, `intl-pt-br`: open.spotify.com's language prefix.
-#[cfg_attr(not(test), allow(dead_code))]
 fn intl_prefix(segment: &str) -> bool {
     segment.strip_prefix("intl-").is_some_and(|rest| {
         (2..=8).contains(&rest.len()) && rest.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')
@@ -233,7 +244,6 @@ fn intl_prefix(segment: &str) -> bool {
 /// `https://open.spotify.com/[intl-<xx>/]<kind>/<id>[?si=...][#...]` (query and fragment
 /// dropped), or a `spotify.link`/`spotify.app.link` short link. Audiobooks, Liked Songs and
 /// profiles are refused with their sentence; anything else is no link. No request is made.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_link(text: &str) -> Result<Link, LinkError> {
     let text = text.trim();
     if text.is_empty() || text.len() > MAX_LINK_CHARS {
@@ -286,7 +296,6 @@ pub fn parse_link(text: &str) -> Result<Link, LinkError> {
 }
 
 /// A stored target, canonical only (`spotify:<kind>:<id>`).
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_target(target: &str) -> Option<SpotifyRef> {
     match parse_link(target) {
         Ok(Link::Ref(reference)) if reference.target() == target => Some(reference),
@@ -391,6 +400,9 @@ pub struct Config {
     pub api_override: bool,
     /// `INSECURE_COOKIES`: the login cookie isn't `Secure` (the emulator loop over plain http).
     pub insecure_cookies: bool,
+    /// `SPOTIFY_ARTIST_ALBUMS` (`1`/`true`; off by default): an artist is listed as its albums'
+    /// tracks instead of played as a context (§3.3's option, QA checklist item 18).
+    pub artist_albums: bool,
     /// One line per variable that was ignored, for the start's log.
     pub warnings: Vec<String>,
 }
@@ -472,6 +484,9 @@ impl Config {
             insecure_cookies: vars
                 .get("INSECURE_COOKIES")
                 .is_some_and(|v| v == "true" || v == "1"),
+            artist_albums: vars
+                .get("SPOTIFY_ARTIST_ALBUMS")
+                .is_some_and(|v| matches!(v.trim(), "1" | "true")),
             warnings,
         }
     }
@@ -1398,18 +1413,20 @@ impl Accounts {
         account: i64,
         min_left: Duration,
     ) -> Result<Minted, SpotifyError> {
-        self.mint(state, account, min_left, None).await
+        self.mint(state, account, min_left, None, &mut 0).await
     }
 
     /// [Accounts::access_token]; with `rejected` (a token the Web API answered 401 to) the kept
     /// token is used only when it is another one - a concurrent 401 refreshed it already - else
-    /// it is refreshed (code QA L3: two 401s with one token make one refresh).
+    /// it is refreshed (code QA L3: two 401s with one token make one refresh). `sent` counts the
+    /// requests made (the sweep's budget).
     async fn mint(
         &self,
         state: &AppState,
         account: i64,
         min_left: Duration,
         rejected: Option<&AccessToken>,
+        sent: &mut u32,
     ) -> Result<Minted, SpotifyError> {
         let slot = self.slot(account);
         let mut slot = slot.lock().await;
@@ -1484,6 +1501,7 @@ impl Accounts {
             .append_pair("refresh_token", &refresh.0)
             .append_pair("client_id", &app.client_id)
             .finish();
+        *sent += 1;
         let answer = match state.music_fetch.get(self.token_request(form)).await {
             Ok(response) => read_token_answer(&response),
             Err(err) => Err(TokenError::Other(SpotifyError::Fetch(err))),
@@ -1618,6 +1636,20 @@ impl Accounts {
         url: &str,
         kind: Kind,
     ) -> Result<SourceResponse, SpotifyError> {
+        self.api_get_counted(state, account, url, kind, &mut 0)
+            .await
+    }
+
+    /// [Accounts::api_get], counting in `sent` every request it made - the token refreshes too
+    /// (the sweep's budget, `music_sweep::spotify_check`).
+    pub async fn api_get_counted(
+        &self,
+        state: &AppState,
+        account: i64,
+        url: &str,
+        kind: Kind,
+        sent: &mut u32,
+    ) -> Result<SourceResponse, SpotifyError> {
         let mut refreshed = false;
         let mut rejected: Option<AccessToken> = None;
         let mut waited = false;
@@ -1627,8 +1659,15 @@ impl Accounts {
             }
             // After a 401 the next token is another one than the rejected (code QA L3).
             let minted = self
-                .mint(state, account, READ_MIN_LEFT, rejected.take().as_ref())
+                .mint(
+                    state,
+                    account,
+                    READ_MIN_LEFT,
+                    rejected.take().as_ref(),
+                    sent,
+                )
                 .await?;
+            *sent += 1;
             let response = state
                 .music_fetch
                 .get(self.api_request(url, kind, &minted.token))
@@ -1725,6 +1764,558 @@ async fn record_error(state: &AppState, account: i64, generation: i64, code: &st
     if let Err(err) = recorded {
         tracing::error!(account, %err, "spotify: couldn't record a refresh's outcome");
     }
+}
+
+// --- the listing (step 2a: §3.1, §3.3, §3.4) ------------------------------------------------------
+
+/// One Web API read of a listing, built from a canonical id only (§2.4): its URL is
+/// [Accounts::read_url]'s.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Read<'a> {
+    /// `GET /playlists/{id}?fields=name,snapshot_id,images,owner(id,display_name)`.
+    Playlist(&'a str),
+    /// `GET /playlists/{id}/items?limit=50&offset=N&additional_types=track&market=from_token`.
+    PlaylistItems(&'a str, usize),
+    /// `GET /albums/{id}?market=from_token` (the first 50 tracks inside).
+    Album(&'a str),
+    /// `GET /albums/{id}/tracks?limit=50&offset=N&market=from_token`.
+    AlbumTracks(&'a str, usize),
+    /// `GET /tracks/{id}?market=from_token`.
+    Track(&'a str),
+    /// `GET /artists/{id}`.
+    Artist(&'a str),
+    /// `GET /artists/{id}/albums?include_groups=album,single&limit=50&offset=N&market=from_token`
+    /// (the artist option, §3.3).
+    ArtistAlbums(&'a str, usize),
+    /// `GET /shows/{id}?market=from_token`.
+    Show(&'a str),
+    /// `GET /shows/{id}/episodes?limit=50&offset=N&market=from_token` (newest first).
+    ShowEpisodes(&'a str, usize),
+    /// `GET /episodes/{id}?market=from_token`.
+    Episode(&'a str),
+}
+
+impl Accounts {
+    /// The URL of a listing read: the API base, the path from the canonical id, the query by
+    /// `form_urlencoded`.
+    pub fn read_url(&self, read: Read<'_>) -> String {
+        let limit = PAGE_LIMIT.to_string();
+        let (path, query): (String, Vec<(&str, String)>) = match read {
+            Read::Playlist(id) => (
+                format!("/v1/playlists/{id}"),
+                vec![(
+                    "fields",
+                    "name,snapshot_id,images,owner(id,display_name)".to_string(),
+                )],
+            ),
+            Read::PlaylistItems(id, offset) => (
+                format!("/v1/playlists/{id}/items"),
+                vec![
+                    ("limit", limit),
+                    ("offset", offset.to_string()),
+                    ("additional_types", "track".to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::Album(id) => (
+                format!("/v1/albums/{id}"),
+                vec![("market", "from_token".to_string())],
+            ),
+            Read::AlbumTracks(id, offset) => (
+                format!("/v1/albums/{id}/tracks"),
+                vec![
+                    ("limit", limit),
+                    ("offset", offset.to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::Track(id) => (
+                format!("/v1/tracks/{id}"),
+                vec![("market", "from_token".to_string())],
+            ),
+            Read::Artist(id) => (format!("/v1/artists/{id}"), Vec::new()),
+            Read::ArtistAlbums(id, offset) => (
+                format!("/v1/artists/{id}/albums"),
+                vec![
+                    ("include_groups", "album,single".to_string()),
+                    ("limit", limit),
+                    ("offset", offset.to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::Show(id) => (
+                format!("/v1/shows/{id}"),
+                vec![("market", "from_token".to_string())],
+            ),
+            Read::ShowEpisodes(id, offset) => (
+                format!("/v1/shows/{id}/episodes"),
+                vec![
+                    ("limit", limit),
+                    ("offset", offset.to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::Episode(id) => (
+                format!("/v1/episodes/{id}"),
+                vec![("market", "from_token".to_string())],
+            ),
+        };
+        let mut url = self.api_url(&path);
+        if !query.is_empty() {
+            let mut serializer = form_urlencoded::Serializer::new(String::new());
+            for (key, value) in &query {
+                serializer.append_pair(key, value);
+            }
+            url.push('?');
+            url.push_str(&serializer.finish());
+        }
+        url
+    }
+}
+
+/// The accounts a listing may be read with (§3.3): those without `needs_login`, the listing's last
+/// reader first (an id no row has any more - a removed account - counts for nothing), then by id;
+/// and how many accounts there are at all (none = `no_account`, all needing a login =
+/// `reauthorize`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Readers {
+    pub ids: Vec<i64>,
+    pub accounts: usize,
+}
+
+impl Readers {
+    /// Why no account can read, before any request: `None` when one can.
+    pub fn refusal(&self) -> Option<SpotifyError> {
+        match (self.ids.is_empty(), self.accounts) {
+            (false, _) => None,
+            (true, 0) => Some(SpotifyError::NoAccount),
+            (true, _) => Some(SpotifyError::Reauthorize),
+        }
+    }
+}
+
+pub async fn readers(db: &sqlx::SqlitePool, last: Option<i64>) -> Result<Readers, sqlx::Error> {
+    let rows: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT id, needs_login FROM music_spotify_accounts ORDER BY id")
+            .fetch_all(db)
+            .await?;
+    let mut ids: Vec<i64> = rows
+        .iter()
+        .filter(|(_, needs_login)| *needs_login == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    if let Some(at) = last.and_then(|last| ids.iter().position(|id| *id == last)) {
+        let first = ids.remove(at);
+        ids.insert(0, first);
+    }
+    Ok(Readers {
+        ids,
+        accounts: rows.len(),
+    })
+}
+
+/// Whether a reader's failure lets the next reader try (§3.3): the account can't see it (403,
+/// 404: another account may own it), or the account itself can't be used now (its login ended,
+/// another key, removed, a 401 after the refresh). Anything else - the app refused, the quota, a
+/// rate limit, the network, Spotify's 5xx, a bad answer - is the same for every account and ends
+/// the read.
+pub fn try_next_reader(err: &SpotifyError) -> bool {
+    matches!(
+        err,
+        SpotifyError::NotFound
+            | SpotifyError::Status(401 | 403)
+            | SpotifyError::Reauthorize
+            | SpotifyError::Key
+            | SpotifyError::NoAccount
+    )
+}
+
+/// One listed track or episode (§3.4): the id (the item's key), the title (`"<name> — <artist>,
+/// <artist>"` for a track, vibb's row title; the name for an episode - not cut yet), the duration
+/// and the picture (a track's album image, an episode's own).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Listed {
+    pub id: String,
+    pub title: String,
+    pub duration_ms: Option<i64>,
+    pub art: Option<String>,
+    /// An album track's `(disc_number, track_number)`: an album lists in that order.
+    pub disc_track: Option<(i64, i64)>,
+}
+
+/// One page of tracks or episodes as read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Page {
+    pub listed: Vec<Listed>,
+    /// Left out (§3.4): not playable here, local files, podcast episodes in a playlist, removed
+    /// tracks (`item: null`), entries without an id.
+    pub skipped: usize,
+    /// Spotify has a next page (`next` is a URL; the next page's URL is built from the offset,
+    /// never taken from the answer).
+    pub next: bool,
+    /// The paging object's `total`, when it says.
+    pub total: Option<usize>,
+}
+
+/// What a metadata read says (§3.4's listing row, §3.2's entry name).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Meta {
+    /// The entry's name (§3.2): a playlist's, show's, artist's or episode's name, an album's
+    /// `"<album> — <first artist>"`, a track's `"<name> — <artists>"`.
+    pub name: Option<String>,
+    /// The picture: of at least 300 px the narrowest, else the widest ([pick_image]).
+    pub image: Option<String>,
+    /// A playlist's `snapshot_id`.
+    pub snapshot: Option<String>,
+}
+
+/// The longest `snapshot_id` kept.
+const MAX_SNAPSHOT_CHARS: usize = 200;
+
+/// The picture of an `images` array (§3.4): the narrowest of at least 300 px, else the widest
+/// (an image without a width counts as 0); only an http(s) URL without userinfo.
+pub fn pick_image(images: Option<&Value>) -> Option<String> {
+    let images: Vec<(i64, &str)> = images?
+        .as_array()?
+        .iter()
+        .filter_map(|image| {
+            let url = image.get("url")?.as_str()?;
+            crate::music_net::media_url_ok(url)
+                .then(|| (image.get("width").and_then(Value::as_i64).unwrap_or(0), url))
+        })
+        .collect();
+    let big = images
+        .iter()
+        .filter(|(width, _)| *width >= 300)
+        .min_by_key(|(width, _)| *width);
+    big.or_else(|| images.iter().max_by_key(|(width, _)| *width))
+        .map(|(_, url)| url.to_string())
+}
+
+/// A row title (vibb's): `"<name> — <artist>, <artist>"`, or the name alone without artists.
+/// The phone builds the same from the SDK's state to match a relinked track (§5.4).
+pub fn track_title(name: &str, artists: &[String]) -> String {
+    if artists.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} — {}", artists.join(", "))
+    }
+}
+
+fn text(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn artists_of(value: &Value) -> Vec<String> {
+    value
+        .get("artists")
+        .and_then(Value::as_array)
+        .map(|artists| artists.iter().filter_map(|a| text(a, "name")).collect())
+        .unwrap_or_default()
+}
+
+fn duration(value: &Value) -> Option<i64> {
+    value
+        .get("duration_ms")
+        .and_then(Value::as_i64)
+        .filter(|ms| *ms > 0)
+}
+
+/// A track object as one listed track, or `None` = left out (§3.4): not a track, a local file, no
+/// usable id, `is_playable: false`. `art` is the track's album image (`album` absent in an
+/// album's own track list).
+fn track(value: &Value) -> Option<Listed> {
+    if value.get("type").and_then(Value::as_str) != Some("track")
+        || value.get("is_local").and_then(Value::as_bool) == Some(true)
+        || value.get("is_playable").and_then(Value::as_bool) == Some(false)
+    {
+        return None;
+    }
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| id_ok(id))?;
+    let name = text(value, "name").unwrap_or_default();
+    let number = |key: &str| value.get(key).and_then(Value::as_i64);
+    Some(Listed {
+        id: id.to_string(),
+        title: track_title(&name, &artists_of(value)),
+        duration_ms: duration(value),
+        art: pick_image(value.get("album").and_then(|album| album.get("images"))),
+        disc_track: number("disc_number").zip(number("track_number")),
+    })
+}
+
+/// An episode object as one listed episode, or `None` = left out: not an episode, no usable id,
+/// `is_playable: false`. Its own picture.
+fn episode(value: &Value) -> Option<Listed> {
+    if value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind != "episode")
+        || value.get("is_playable").and_then(Value::as_bool) == Some(false)
+    {
+        return None;
+    }
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| id_ok(id))?;
+    Some(Listed {
+        id: id.to_string(),
+        title: text(value, "name").unwrap_or_default(),
+        duration_ms: duration(value),
+        art: pick_image(value.get("images")),
+        disc_track: None,
+    })
+}
+
+/// A paging object's `items`, each through `one` (`None` = left out), with `next` and `total`.
+fn paging(value: &Value, one: impl Fn(&Value) -> Option<Listed>) -> Option<Page> {
+    let items = value.get("items")?.as_array()?;
+    let mut page = Page {
+        next: value
+            .get("next")
+            .and_then(Value::as_str)
+            .is_some_and(|next| !next.is_empty()),
+        total: value
+            .get("total")
+            .and_then(Value::as_u64)
+            .map(|total| total as usize),
+        ..Page::default()
+    };
+    for item in items {
+        match one(item) {
+            Some(listed) => page.listed.push(listed),
+            None => page.skipped += 1,
+        }
+    }
+    Some(page)
+}
+
+fn object(body: &[u8]) -> Option<Value> {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .filter(Value::is_object)
+}
+
+/// `GET /playlists/{id}?fields=...`: the name, the snapshot and the picture.
+pub fn parse_playlist_meta(body: &[u8]) -> Option<Meta> {
+    let value = object(body)?;
+    Some(Meta {
+        name: text(&value, "name"),
+        image: pick_image(value.get("images")),
+        snapshot: text(&value, "snapshot_id").filter(|s| s.chars().count() <= MAX_SNAPSHOT_CHARS),
+    })
+}
+
+/// A page of `GET /playlists/{id}/items` (§3.4): one track per `items[].item` (the February 2026
+/// name; `track`, the older one, is read too) whose `type` is `track`, that isn't a local file and
+/// whose `is_playable` isn't false; everything else - podcast episodes, local files, removed
+/// tracks - counted as left out.
+pub fn parse_playlist_items(body: &[u8]) -> Option<Page> {
+    let value = object(body)?;
+    paging(&value, |entry| {
+        if entry.get("is_local").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        entry
+            .get("item")
+            .or_else(|| entry.get("track"))
+            .filter(|item| item.is_object())
+            .and_then(track)
+    })
+}
+
+/// `GET /albums/{id}`: `"<album> — <first artist>"`, the cover, and the first page of its tracks
+/// (an album's own track list has no album, so no per-track picture: the entry's cover shows).
+pub fn parse_album(body: &[u8]) -> Option<(Meta, Page)> {
+    let value = object(body)?;
+    let name = text(&value, "name")?;
+    let page = paging(value.get("tracks")?, track)?;
+    let meta = Meta {
+        name: Some(match artists_of(&value).first() {
+            Some(artist) => format!("{name} — {artist}"),
+            None => name,
+        }),
+        image: pick_image(value.get("images")),
+        snapshot: None,
+    };
+    Some((meta, page))
+}
+
+/// A page of `GET /albums/{id}/tracks`.
+pub fn parse_album_tracks(body: &[u8]) -> Option<Page> {
+    paging(&object(body)?, track)
+}
+
+/// `GET /tracks/{id}`: the track as the entry's one item; the name is its row title, the picture
+/// its album's.
+pub fn parse_track(body: &[u8]) -> Option<(Meta, Page)> {
+    let value = object(body)?;
+    let name = text(&value, "name")?;
+    let meta = Meta {
+        name: Some(track_title(&name, &artists_of(&value))),
+        image: pick_image(value.get("album").and_then(|album| album.get("images"))),
+        snapshot: None,
+    };
+    let mut page = Page::default();
+    match track(&value) {
+        Some(listed) => page.listed.push(listed),
+        None => page.skipped = 1,
+    }
+    Some((meta, page))
+}
+
+/// `GET /artists/{id}` (and the show's metadata, `GET /shows/{id}`): the name and the picture.
+pub fn parse_named(body: &[u8]) -> Option<Meta> {
+    let value = object(body)?;
+    Some(Meta {
+        name: Some(text(&value, "name")?),
+        image: pick_image(value.get("images")),
+        snapshot: None,
+    })
+}
+
+/// A page of `GET /shows/{id}/episodes` (newest first).
+pub fn parse_show_episodes(body: &[u8]) -> Option<Page> {
+    paging(&object(body)?, |item| {
+        item.is_object().then(|| episode(item)).flatten()
+    })
+}
+
+/// `GET /episodes/{id}`: the episode as the entry's one item; its picture, else its show's.
+pub fn parse_episode(body: &[u8]) -> Option<(Meta, Page)> {
+    let value = object(body)?;
+    let name = text(&value, "name")?;
+    let meta = Meta {
+        name: Some(name),
+        image: pick_image(value.get("images"))
+            .or_else(|| pick_image(value.get("show").and_then(|show| show.get("images")))),
+        snapshot: None,
+    };
+    let mut page = Page::default();
+    match episode(&value) {
+        Some(listed) => page.listed.push(listed),
+        None => page.skipped = 1,
+    }
+    Some((meta, page))
+}
+
+/// One of an artist's albums (the option, §3.3): its id and release date as Spotify writes it
+/// (`2024`, `2024-05`, `2024-05-17`: compared as text, newest first).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlbumRef {
+    pub id: String,
+    pub released: String,
+}
+
+/// A page of `GET /artists/{id}/albums`: the albums with a usable id, and whether there are more.
+pub fn parse_artist_albums(body: &[u8]) -> Option<(Vec<AlbumRef>, bool)> {
+    let value = object(body)?;
+    let items = value.get("items")?.as_array()?;
+    let albums = items
+        .iter()
+        .filter_map(|album| {
+            let id = album.get("id")?.as_str().filter(|id| id_ok(id))?;
+            Some(AlbumRef {
+                id: id.to_string(),
+                released: text(album, "release_date").unwrap_or_default(),
+            })
+        })
+        .collect();
+    let next = value
+        .get("next")
+        .and_then(Value::as_str)
+        .is_some_and(|next| !next.is_empty());
+    Some((albums, next))
+}
+
+/// Why a short link didn't resolve (§3.1; 2b's add form).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub enum ShortLinkError {
+    /// No redirect, a redirect off Spotify's three hosts, or more than [SHORT_LINK_HOPS].
+    Dead,
+    /// It led to a link that can't be added (an audiobook, Liked Songs, a profile, junk).
+    Link(LinkError),
+    Unreachable(FetchError),
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl ShortLinkError {
+    /// The add form's sentence (2b).
+    pub fn message(&self) -> String {
+        match self {
+            ShortLinkError::Dead => "That Spotify link didn't lead anywhere.".to_string(),
+            ShortLinkError::Link(err) => err.message().to_string(),
+            ShortLinkError::Unreachable(_) => {
+                "Spotify couldn't be reached - try again.".to_string()
+            }
+        }
+    }
+}
+
+/// A `spotify.link`/`spotify.app.link` short link resolved like vibb's `urlopen(target).url`
+/// (`spotify.py:42-46`), but **one hop at a time** (§3.1): a GET through `source` (the gate),
+/// [Reach::Public], `follow: false`; each 3xx's `Location` (relative ones resolved) must be an
+/// https URL on `spotify.link`, `spotify.app.link` or `open.spotify.com`, at most
+/// [SHORT_LINK_HOPS] requests; the first `open.spotify.com` URL is parsed (not asked). Only the
+/// add form uses it (2b); never at play time.
+#[cfg_attr(not(test), allow(dead_code))]
+pub async fn resolve_short_link(
+    source: &dyn Source,
+    short: &str,
+) -> Result<SpotifyRef, ShortLinkError> {
+    let mut url = reqwest::Url::parse(short).map_err(|_| ShortLinkError::Dead)?;
+    for _ in 0..SHORT_LINK_HOPS {
+        let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+        if url.scheme() != "https" || !matches!(host.as_str(), "spotify.link" | "spotify.app.link")
+        {
+            return Err(ShortLinkError::Dead);
+        }
+        let mut request = SourceRequest::new(url.as_str(), Kind::Page, Reach::Public);
+        request.follow = false;
+        let answer = source
+            .get(request)
+            .await
+            .map_err(ShortLinkError::Unreachable)?;
+        let location = match answer.location {
+            Some(location)
+                if (300..400).contains(&answer.status)
+                    && location.chars().count() <= MAX_LINK_CHARS =>
+            {
+                location
+            }
+            _ => return Err(ShortLinkError::Dead),
+        };
+        let next = url.join(&location).map_err(|_| ShortLinkError::Dead)?;
+        let next_host = next.host_str().unwrap_or("").to_ascii_lowercase();
+        if next.scheme() != "https"
+            || !next.username().is_empty()
+            || next.password().is_some()
+            || next.port().is_some()
+        {
+            return Err(ShortLinkError::Dead);
+        }
+        match next_host.as_str() {
+            "open.spotify.com" => {
+                return match parse_link(next.as_str()) {
+                    Ok(Link::Ref(reference)) => Ok(reference),
+                    Ok(Link::Short(_)) => Err(ShortLinkError::Dead),
+                    Err(err) => Err(ShortLinkError::Link(err)),
+                };
+            }
+            "spotify.link" | "spotify.app.link" => url = next,
+            _ => return Err(ShortLinkError::Dead),
+        }
+    }
+    Err(ShortLinkError::Dead)
 }
 
 #[cfg(test)]
@@ -2893,10 +3484,24 @@ pub(crate) mod tests {
             .answer(TOKEN_URL, 200, fixture("token_refresh_rotated.json"));
         app.fetch.delay(20);
         app.fetch.clear_calls();
+        let (mut sent_a, mut sent_b) = (0, 0);
         let (a, b) = tokio::join!(
-            spotify.mint(&app.state, account, READ_MIN_LEFT, Some(&rejected)),
-            spotify.mint(&app.state, account, READ_MIN_LEFT, Some(&rejected)),
+            spotify.mint(
+                &app.state,
+                account,
+                READ_MIN_LEFT,
+                Some(&rejected),
+                &mut sent_a
+            ),
+            spotify.mint(
+                &app.state,
+                account,
+                READ_MIN_LEFT,
+                Some(&rejected),
+                &mut sent_b
+            ),
         );
+        assert_eq!(sent_a + sent_b, 1, "one refresh counted");
         let (a, b) = (a.ok().unwrap(), b.ok().unwrap());
         assert_eq!(a.token.secret(), "FAKE-ACCESS-3");
         assert_eq!(b.token.secret(), "FAKE-ACCESS-3");
@@ -2910,7 +3515,7 @@ pub(crate) mod tests {
         app.fetch
             .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
         let c = spotify
-            .mint(&app.state, account, READ_MIN_LEFT, Some(&a.token))
+            .mint(&app.state, account, READ_MIN_LEFT, Some(&a.token), &mut 0)
             .await
             .ok()
             .unwrap();
@@ -2925,5 +3530,479 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!((token_calls(&app), app.fetch.count()), (1, 3));
+    }
+
+    // --- step 2a: the listing ---
+
+    /// §3.4 over the fixtures: `items[].item`, local files, `is_playable: false`, episodes in a
+    /// playlist and removed tracks left out and counted, titles "Name — A, B", the image pick.
+    #[test]
+    fn listing_parsers_read_the_fixtures() {
+        let meta = parse_playlist_meta(&fixture("playlist.json")).unwrap();
+        assert_eq!(meta.name.as_deref(), Some("Kveldsmusikk"));
+        assert_eq!(meta.snapshot.as_deref(), Some("AAAAA0fakeSnapshotKveld1"));
+        assert_eq!(
+            meta.image.as_deref(),
+            Some("https://mosaic.scdn.co/640/fake-mosaic-kveld"),
+            "a mosaic without sizes is still the picture"
+        );
+        let page = parse_playlist_items(&fixture("playlist_items.json")).unwrap();
+        let rows: Vec<(&str, &str, Option<&str>)> = page
+            .listed
+            .iter()
+            .map(|t| (t.id.as_str(), t.title.as_str(), t.art.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "1FakeTrackA00000000001",
+                    "Stille natt — Ola Fjell, Kari Li",
+                    Some("https://i.scdn.co/image/fake-album-x-300")
+                ),
+                (
+                    "1FakeTrackC00000000003",
+                    "Månesang — Kari Li",
+                    Some("https://i.scdn.co/image/fake-album-x-300")
+                ),
+                (
+                    "1FakeTrackA00000000001",
+                    "Stille natt — Ola Fjell, Kari Li",
+                    Some("https://i.scdn.co/image/fake-album-x-300")
+                ),
+                (
+                    "1FakeTrackD00000000004",
+                    "Uten artist",
+                    Some("https://i.scdn.co/image/fake-album-y-640")
+                ),
+            ],
+            "the parser keeps a repeat; the sweep lists it once"
+        );
+        assert_eq!(page.listed[0].duration_ms, Some(201_000));
+        // The episode, the local file, the unplayable track and the removed one.
+        assert_eq!(page.skipped, 4);
+        assert!(!page.next);
+        assert_eq!(page.total, Some(8));
+        // The older name of the field (`track`) is read too; a next page is seen.
+        let older = serde_json::json!({
+            "items": [{"is_local": false, "track": {
+                "type": "track", "id": "1FakeTrackA00000000001", "name": "X",
+                "artists": [{"name": "Y"}]}}],
+            "next": "https://api.spotify.com/v1/playlists/x/items?offset=50", "total": 51
+        });
+        let page = parse_playlist_items(older.to_string().as_bytes()).unwrap();
+        assert_eq!(page.listed[0].title, "X — Y");
+        assert!(page.next);
+        for junk in [&b"<html>"[..], b"[]", b"{}", br#"{"items": {}}"#] {
+            assert_eq!(parse_playlist_items(junk), None, "{junk:?}");
+        }
+
+        let (album, page) = parse_album(&fixture("album.json")).unwrap();
+        assert_eq!(album.name.as_deref(), Some("Nattlys — Ola Fjell"));
+        assert_eq!(
+            album.image.as_deref(),
+            Some("https://i.scdn.co/image/fake-album-x-300")
+        );
+        assert_eq!(
+            page.listed.iter().map(|t| t.disc_track).collect::<Vec<_>>(),
+            [Some((1, 1)), Some((1, 3))]
+        );
+        assert!(
+            page.listed.iter().all(|t| t.art.is_none()),
+            "no album inside"
+        );
+        assert_eq!((page.skipped, page.next), (1, true));
+        let more = parse_album_tracks(&fixture("album_tracks.json")).unwrap();
+        assert_eq!(more.listed[0].title, "Bonusspor — Ola Fjell");
+        assert!(!more.next);
+
+        let (track, page) = parse_track(&fixture("track.json")).unwrap();
+        assert_eq!(
+            track.name.as_deref(),
+            Some("Fjellvise — Ola Fjell, Kari Li")
+        );
+        assert_eq!(
+            track.image.as_deref(),
+            Some("https://i.scdn.co/image/fake-album-y-300")
+        );
+        assert_eq!(page.listed[0].art, track.image);
+        let mut unplayable: Value = serde_json::from_slice(&fixture("track.json")).unwrap();
+        unplayable["is_playable"] = Value::Bool(false);
+        let (_, page) = parse_track(unplayable.to_string().as_bytes()).unwrap();
+        assert_eq!((page.listed.len(), page.skipped), (0, 1));
+
+        let artist = parse_named(&fixture("artist.json")).unwrap();
+        assert_eq!(artist.name.as_deref(), Some("Ola Fjell"));
+        assert_eq!(
+            artist.image.as_deref(),
+            Some("https://i.scdn.co/image/fake-artist-320")
+        );
+        let (albums, next) = parse_artist_albums(&fixture("artist_albums.json")).unwrap();
+        assert_eq!(albums.len(), 3);
+        assert_eq!(albums[2].released, "2026-03");
+        assert!(!next);
+
+        let show = parse_named(&fixture("show.json")).unwrap();
+        assert_eq!(show.name.as_deref(), Some("Eventyrstund"));
+        let page = parse_show_episodes(&fixture("show_episodes.json")).unwrap();
+        assert_eq!(
+            page.listed
+                .iter()
+                .map(|e| e.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Episode 3: Trollet", "Episode 1: Prinsessen"],
+            "newest first, as Spotify sends it"
+        );
+        // A null entry and an unplayable episode.
+        assert_eq!(page.skipped, 2);
+        assert_eq!(
+            page.listed[0].art.as_deref(),
+            Some("https://i.scdn.co/image/fake-episode-3")
+        );
+        let (episode, page) = parse_episode(&fixture("episode.json")).unwrap();
+        assert_eq!(episode.name.as_deref(), Some("Episode 3: Trollet"));
+        assert_eq!(
+            episode.image.as_deref(),
+            Some("https://i.scdn.co/image/fake-episode-3-300")
+        );
+        assert_eq!(page.listed[0].duration_ms, Some(900_000));
+        for junk in [&b"null"[..], b"{}", br#"{"name": ""}"#] {
+            assert_eq!(parse_named(junk), None);
+            assert_eq!(parse_track(junk), None);
+            assert_eq!(parse_episode(junk), None);
+            assert_eq!(parse_album(junk), None);
+        }
+    }
+
+    /// §3.4's pick: of at least 300 px the narrowest, else the widest; never a URL that isn't
+    /// http(s) without userinfo.
+    #[test]
+    fn the_image_pick() {
+        let pick = |images: Value| pick_image(Some(&images));
+        let image = |url: &str, width: Option<u64>| serde_json::json!({"url": url, "width": width});
+        assert_eq!(
+            pick(serde_json::json!([
+                image("https://a/640", Some(640)),
+                image("https://a/300", Some(300)),
+                image("https://a/64", Some(64)),
+            ]))
+            .as_deref(),
+            Some("https://a/300")
+        );
+        assert_eq!(
+            pick(serde_json::json!([
+                image("https://a/64", Some(64)),
+                image("https://a/200", Some(200)),
+            ]))
+            .as_deref(),
+            Some("https://a/200"),
+            "all small: the widest"
+        );
+        assert_eq!(
+            pick(serde_json::json!([
+                image("javascript:alert(1)", Some(640)),
+                image("https://user@a/x", Some(640)),
+                image("https://a/ok", None),
+            ]))
+            .as_deref(),
+            Some("https://a/ok")
+        );
+        assert_eq!(pick(serde_json::json!([])), None);
+        assert_eq!(pick(serde_json::json!("x")), None);
+        assert_eq!(pick_image(None), None);
+        assert_eq!(track_title("A", &[]), "A");
+        assert_eq!(
+            track_title("A", &["B".to_string(), "C".to_string()]),
+            "A — B, C"
+        );
+    }
+
+    /// Every read's URL, built from the canonical id (§3.1's table).
+    #[test]
+    fn read_urls_are_exact() {
+        let accounts = Accounts::default();
+        let id = "0FakePlaylistKveld0001";
+        for (read, url) in [
+            (
+                Read::Playlist(id),
+                "/v1/playlists/0FakePlaylistKveld0001?fields=name%2Csnapshot_id%2Cimages%2C\
+                 owner%28id%2Cdisplay_name%29",
+            ),
+            (
+                Read::PlaylistItems(id, 50),
+                "/v1/playlists/0FakePlaylistKveld0001/items?limit=50&offset=50\
+                 &additional_types=track&market=from_token",
+            ),
+            (
+                Read::Album(id),
+                "/v1/albums/0FakePlaylistKveld0001?market=from_token",
+            ),
+            (
+                Read::AlbumTracks(id, 100),
+                "/v1/albums/0FakePlaylistKveld0001/tracks?limit=50&offset=100&market=from_token",
+            ),
+            (
+                Read::Track(id),
+                "/v1/tracks/0FakePlaylistKveld0001?market=from_token",
+            ),
+            (Read::Artist(id), "/v1/artists/0FakePlaylistKveld0001"),
+            (
+                Read::ArtistAlbums(id, 0),
+                "/v1/artists/0FakePlaylistKveld0001/albums?include_groups=album%2Csingle\
+                 &limit=50&offset=0&market=from_token",
+            ),
+            (
+                Read::Show(id),
+                "/v1/shows/0FakePlaylistKveld0001?market=from_token",
+            ),
+            (
+                Read::ShowEpisodes(id, 0),
+                "/v1/shows/0FakePlaylistKveld0001/episodes?limit=50&offset=0&market=from_token",
+            ),
+            (
+                Read::Episode(id),
+                "/v1/episodes/0FakePlaylistKveld0001?market=from_token",
+            ),
+        ] {
+            assert_eq!(accounts.read_url(read), format!("{API_BASE}{url}"));
+        }
+    }
+
+    /// §3.3: the readers - no `needs_login`, the last reader first, a removed one counts for
+    /// nothing; none at all = `no_account`, every login ended = `reauthorize`.
+    #[tokio::test]
+    async fn readers_put_the_last_one_first() {
+        let app = TestApp::new().await;
+        let none = readers(&app.db, None).await.unwrap();
+        assert_eq!(none.refusal(), Some(SpotifyError::NoAccount));
+        let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let third = store_account(&app, "fakeother", "Ola", "FAKE-REFRESH-8").await;
+        assert_eq!(
+            readers(&app.db, None).await.unwrap().ids,
+            [kid, parent, third]
+        );
+        assert_eq!(
+            readers(&app.db, Some(third)).await.unwrap().ids,
+            [third, kid, parent]
+        );
+        assert_eq!(
+            readers(&app.db, Some(999)).await.unwrap().ids,
+            [kid, parent, third],
+            "a removed reader's id is none"
+        );
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1 WHERE id IN (?, ?)")
+            .bind(kid)
+            .bind(third)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let some = readers(&app.db, Some(third)).await.unwrap();
+        assert_eq!((some.ids.as_slice(), some.refusal()), (&[parent][..], None));
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let ended = readers(&app.db, None).await.unwrap();
+        assert_eq!(ended.refusal(), Some(SpotifyError::Reauthorize));
+        assert_eq!(ended.accounts, 3);
+        // Which failures let the next reader try.
+        for err in [
+            SpotifyError::NotFound,
+            SpotifyError::Status(403),
+            SpotifyError::Status(401),
+            SpotifyError::Reauthorize,
+            SpotifyError::Key,
+            SpotifyError::NoAccount,
+        ] {
+            assert!(try_next_reader(&err), "{err:?}");
+        }
+        for err in [
+            SpotifyError::AppRefused,
+            SpotifyError::Quota,
+            SpotifyError::RateLimited(None),
+            SpotifyError::Fetch(FetchError::Timeout),
+            SpotifyError::Status(500),
+            SpotifyError::BadAnswer,
+            SpotifyError::TooBig,
+        ] {
+            assert!(!try_next_reader(&err), "{err:?}");
+        }
+    }
+
+    /// §3.1 (QA L4): a short link followed hop by hop - `follow: false`, `Reach::Public`, at most
+    /// three requests, each `Location` https on Spotify's three hosts, the first
+    /// `open.spotify.com` URL parsed and never asked.
+    #[tokio::test]
+    async fn short_links_are_followed_hop_by_hop() {
+        let app = TestApp::new().await;
+        let source = app.state.music_fetch.as_ref();
+        let id = "0FakePlaylistKveld0001";
+        app.fetch.redirect(
+            "https://spotify.link/AbC123",
+            307,
+            "https://spotify.app.link/AbC123?_p=c1",
+        );
+        app.fetch.redirect(
+            "https://spotify.app.link/AbC123?_p=c1",
+            302,
+            &format!("https://open.spotify.com/playlist/{id}?si=x&utm_source=copy-link"),
+        );
+        let found = resolve_short_link(source, "https://spotify.link/AbC123")
+            .await
+            .unwrap();
+        assert_eq!(found.target(), format!("spotify:playlist:{id}"));
+        let requests = app.fetch.requests.lock().unwrap().clone();
+        assert_eq!(
+            requests.iter().map(|r| r.url.as_str()).collect::<Vec<_>>(),
+            [
+                "https://spotify.link/AbC123",
+                "https://spotify.app.link/AbC123?_p=c1"
+            ],
+            "open.spotify.com is parsed, not asked"
+        );
+        assert!(requests.iter().all(|r| !r.follow && r.method == "GET"));
+        assert!(
+            app.fetch
+                .reaches
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, reach)| *reach == Reach::Public)
+        );
+        // A relative Location on the same host.
+        app.fetch
+            .redirect("https://spotify.link/Rel1", 301, "/Rel2");
+        app.fetch.redirect(
+            "https://spotify.link/Rel2",
+            301,
+            &format!("https://open.spotify.com/intl-de/album/{id}"),
+        );
+        assert_eq!(
+            resolve_short_link(source, "https://spotify.link/Rel1")
+                .await
+                .unwrap()
+                .kind,
+            LinkKind::Album
+        );
+        // Off Spotify's hosts, plain http, a port, userinfo: nowhere (nothing asked there).
+        for (code, location) in [
+            ("Off1", "https://evil.example/playlist/x"),
+            (
+                "Off2",
+                "http://open.spotify.com/playlist/0FakePlaylistKveld0001",
+            ),
+            (
+                "Off3",
+                "https://open.spotify.com:8443/playlist/0FakePlaylistKveld0001",
+            ),
+            ("Off4", "https://user@spotify.app.link/x"),
+            ("Off5", "ftp://spotify.link/x"),
+        ] {
+            app.fetch
+                .redirect(&format!("https://spotify.link/{code}"), 302, location);
+            app.fetch.clear_calls();
+            assert_eq!(
+                resolve_short_link(source, &format!("https://spotify.link/{code}")).await,
+                Err(ShortLinkError::Dead),
+                "{location}"
+            );
+            assert_eq!(app.fetch.count(), 1, "{location}");
+        }
+        // No redirect at all; a 404.
+        app.fetch
+            .answer("https://spotify.link/Page1", 200, "<html>");
+        app.fetch.answer("https://spotify.link/Gone1", 404, "");
+        for code in ["Page1", "Gone1"] {
+            assert_eq!(
+                resolve_short_link(source, &format!("https://spotify.link/{code}")).await,
+                Err(ShortLinkError::Dead)
+            );
+        }
+        // A chain longer than three hops: three requests, then nowhere.
+        for n in 0..5 {
+            app.fetch.redirect(
+                &format!("https://spotify.link/Loop{n}"),
+                302,
+                &format!("https://spotify.app.link/Loop{}", n + 1),
+            );
+            app.fetch.redirect(
+                &format!("https://spotify.app.link/Loop{}", n + 1),
+                302,
+                &format!("https://spotify.link/Loop{}", n + 2),
+            );
+        }
+        app.fetch.clear_calls();
+        assert_eq!(
+            resolve_short_link(source, "https://spotify.link/Loop0").await,
+            Err(ShortLinkError::Dead)
+        );
+        assert_eq!(app.fetch.count(), SHORT_LINK_HOPS);
+        // Led to an audiobook: its sentence; the network: unreachable.
+        app.fetch.redirect(
+            "https://spotify.link/Book1",
+            302,
+            &format!("https://open.spotify.com/audiobook/{id}"),
+        );
+        let err = resolve_short_link(source, "https://spotify.link/Book1")
+            .await
+            .unwrap_err();
+        assert_eq!(err, ShortLinkError::Link(LinkError::Audiobook));
+        assert_eq!(err.message(), "Spotify audiobooks can't be played here.");
+        let err = resolve_short_link(source, "https://spotify.link/Unknown1")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ShortLinkError::Unreachable(_)));
+        assert_eq!(err.message(), "Spotify couldn't be reached - try again.");
+        assert_eq!(
+            ShortLinkError::Dead.message(),
+            "That Spotify link didn't lead anywhere."
+        );
+        // Only a short link is asked at all.
+        app.fetch.clear_calls();
+        assert_eq!(
+            resolve_short_link(source, "https://open.spotify.com/x").await,
+            Err(ShortLinkError::Dead)
+        );
+        assert_eq!(app.fetch.count(), 0);
+    }
+
+    /// The sweep's budget counts every request a read makes, the token refresh included.
+    #[tokio::test]
+    async fn reads_count_their_requests() {
+        let app = TestApp::new().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let account = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        app.fetch
+            .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
+        app.fetch.answer(ME_URL, 200, fixture("me_kid.json"));
+        app.fetch.answer_once(ME_URL, 401, "");
+        let spotify = &app.state.spotify;
+        let mut sent = 0;
+        spotify
+            .api_get_counted(&app.state, account, ME_URL, Kind::Page, &mut sent)
+            .await
+            .unwrap();
+        // A refresh, the 401, a second refresh, the read.
+        assert_eq!(sent, 4);
+        assert_eq!(app.fetch.count(), 4);
+        let mut sent = 0;
+        spotify
+            .api_get_counted(&app.state, account, ME_URL, Kind::Page, &mut sent)
+            .await
+            .unwrap();
+        assert_eq!(sent, 1, "the kept token");
+    }
+
+    /// `SPOTIFY_ARTIST_ALBUMS` switches §3.3's option on (off by default).
+    #[test]
+    fn the_artist_option_is_off_by_default() {
+        assert!(!Config::default().artist_albums);
+        for (value, on) in [("1", true), ("true", true), ("0", false), ("yes", false)] {
+            let config = Config::from_vars(
+                &[("SPOTIFY_ARTIST_ALBUMS".to_string(), value.to_string())].into(),
+            );
+            assert_eq!(config.artist_albums, on, "{value}");
+        }
     }
 }

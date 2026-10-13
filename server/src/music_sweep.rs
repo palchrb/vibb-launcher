@@ -34,6 +34,14 @@
 //!   refused-login cooldown the check fails `login_refused` without a request; a refused login or
 //!   an outage fails the check with its code (the sweep's read never falls back to a kept shelf).
 //!   Saving the login makes the entries that failed for want of one due at once.
+//! - **Spotify** (design `26c-spotify.md` §3.3-§3.5, [spotify_check]): a playlist, album, track,
+//!   show or episode is listed with the Web API like a feed (one `ok` item per track or episode,
+//!   key = the Spotify id, no URL - the phone plays `spotify:<type>:<key>`), read with the first
+//!   account that may (the listing's last reader first); a playlist's `snapshot_id` gates its item
+//!   read (one request when unchanged, the items again after a day or for Check now). An artist,
+//!   and a playlist no account may list, is **context mode**: no items, the phone plays the
+//!   Spotify context. No app, no usable account or Spotify's quota pause fail the check without a
+//!   request; every failure keeps the last good list.
 //!
 //! Ported in behaviour from palchrb/vibb `pi/vibb/content.py` (`_catalog`, `_new_episodes`,
 //! `_psapi_episodes`, `_manifest_url`, `_series`, `sync_feed`; for episode art, branch `pipewire`'s
@@ -53,6 +61,7 @@ use crate::AppState;
 use crate::music::{CheckError, Link, PSAPI};
 use crate::music_net::{self, FetchError, Kind, Reach, Source, SourceRequest, SourceResponse};
 use crate::music_sources::{self as sources, Manifest};
+use crate::spotify::{self, LinkKind, Read, SpotifyError};
 
 /// NRK lists keep at most this many episodes (vibb `MAX_EPISODES`), RSS lists this many.
 pub const MAX_NRK_ITEMS: usize = 100;
@@ -411,13 +420,22 @@ struct ScheduleRow {
 /// the last save is due at once (QA L1 of 2b).
 const LOGIN_ERRORS: [&str; 4] = ["storytel_off", "login_refused", "storytel_key", "no_jwt"];
 
-/// How often a listed entry is checked (§2.2's table).
-pub fn interval(source: &str, ticked: bool, setting_hours: i64) -> TimeDelta {
+/// How often a listed entry is checked (§2.2's table; design 26c §3.4: by the link's kind): NRK
+/// every `max(I, min(2I, 12 h))`; a Spotify album, track, episode or artist daily (vibb's daily
+/// re-ask of what doesn't change); everything else - RSS, Storytel, a Spotify playlist or show -
+/// the setting `I`. An entry no phone has: daily.
+pub fn interval(link: &Link, ticked: bool, setting_hours: i64) -> TimeDelta {
     if !ticked {
         return hours(24);
     }
-    match source {
-        "nrk" => hours(setting_hours.max((2 * setting_hours).min(12))),
+    match link {
+        Link::NrkPodcast { .. } | Link::NrkSeries { .. } => {
+            hours(setting_hours.max((2 * setting_hours).min(12)))
+        }
+        Link::Spotify {
+            kind: LinkKind::Album | LinkKind::Track | LinkKind::Episode | LinkKind::Artist,
+            ..
+        } => hours(24),
         _ => hours(setting_hours),
     }
 }
@@ -453,11 +471,17 @@ fn schedule_one(
     recheck_room: bool,
     now: DateTime<Utc>,
 ) -> Option<Scheduled> {
-    let link = crate::music::entry_link(&row.source, row.target.as_deref()?)?;
+    let Some(link) = crate::music::entry_link(&row.source, row.target.as_deref()?) else {
+        tracing::debug!(
+            entry_id = row.entry_id,
+            "music sweep: an entry's target doesn't parse - not scheduled"
+        );
+        return None;
+    };
     let checked = row.checked_at.as_deref().and_then(parse_stamp);
     let requested = row.requested_at.as_deref().and_then(parse_stamp);
     let created = parse_stamp(&row.created_at).unwrap_or(now);
-    let every = interval(&row.source, row.ticked, setting_hours);
+    let every = interval(&link, row.ticked, setting_hours);
     // Its regular time: after a success the interval, after a failure the backoff (daily after a
     // week of failures).
     let regular = if row.failures > 0 {
@@ -567,7 +591,7 @@ async fn rechecks_today(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<i64
         .await
 }
 
-/// Every NRK/RSS/Storytel entry with its due time and reason - a pure function of the stamps, the
+/// Every NRK/RSS/Storytel/Spotify entry with its due time and reason - a pure function of the stamps, the
 /// setting, the ticks and `now` (§2.2). Sorted: what is due first (by reason), then by due time.
 pub async fn schedule(
     db: &sqlx::SqlitePool,
@@ -587,7 +611,7 @@ pub async fn schedule(
            (SELECT s.saved_at FROM music_storytel s WHERE s.id = 1 AND s.ciphertext IS NOT NULL) \
              AS storytel_saved_at \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
-         WHERE e.source IN ('nrk', 'rss', 'storytel') AND e.target IS NOT NULL",
+         WHERE e.source IN ('nrk', 'rss', 'storytel', 'spotify') AND e.target IS NOT NULL",
     )
     .fetch_all(db)
     .await?;
@@ -761,6 +785,16 @@ pub struct Listing {
     pub art_same_run: i64,
     pub art_backlog_at: Option<String>,
     pub art_refresh: bool,
+    /// Spotify (design 26c §3.3-§3.4, migration 0073): `list` or `context`.
+    pub spotify_mode: Option<String>,
+    /// A playlist's `snapshot_id` at the last item read.
+    pub spotify_snapshot: Option<String>,
+    /// The last full item read.
+    pub spotify_items_at: Option<String>,
+    /// The account that last read it (no FK: a removed account's id counts for nothing).
+    pub spotify_reader: Option<i64>,
+    /// Tracks or episodes left out (not playable here, local files, podcast episodes).
+    pub spotify_skipped: i64,
 }
 
 pub async fn load_listing(
@@ -920,37 +954,131 @@ pub fn build_listing(
     })
 }
 
+/// A Spotify listing in context mode (design 26c §3.3): no items - the phone plays the Spotify
+/// context - and a version that moves with the mode, the title and the cover's source URL (not
+/// its stored file, so a cover forgotten after a restore doesn't move what is served).
+pub fn build_context_listing(
+    entry_id: i64,
+    title: Option<&str>,
+    cover_url: Option<&str>,
+) -> BuiltListing {
+    let seed = serde_json::json!({
+        "v": LISTING_FORMAT,
+        "entry": entry_id,
+        "spotify": "context",
+        "title": title,
+        "cover": cover_url,
+    });
+    let version = hex::encode(Sha256::digest(seed.to_string().as_bytes()))[..16].to_string();
+    let json = serde_json::to_vec(&ListingDocument {
+        v: LISTING_FORMAT,
+        entry: entry_id,
+        version: &version,
+        items: &[],
+    })
+    .expect("a listing always serializes");
+    BuiltListing {
+        version,
+        json,
+        count: 0,
+        cut: false,
+    }
+}
+
+/// A listing from its stored parts (the check, the route and the restamp build it alike): a
+/// Spotify entry in context mode as [build_context_listing], every other as [build_listing]
+/// (anchored at the start when `keep_end` is `first`) - and a Spotify list that became empty (a
+/// playlist the parent emptied) as an empty list, so the route serves what the library names.
+pub fn listing_for(
+    entry_id: i64,
+    items: &[Item],
+    keep_end: Option<&str>,
+    spotify_mode: Option<&str>,
+    title: Option<&str>,
+    cover_url: Option<&str>,
+) -> Option<BuiltListing> {
+    match spotify_mode {
+        Some("context") => Some(build_context_listing(entry_id, title, cover_url)),
+        Some(_) => Some(
+            build_listing(entry_id, items, keep_end == Some("first"))
+                .unwrap_or_else(|| empty_listing(entry_id)),
+        ),
+        None => build_listing(entry_id, items, keep_end == Some("first")),
+    }
+}
+
+/// A listing of no items (a Spotify list that became empty), its version [build_listing]'s rule.
+fn empty_listing(entry_id: i64) -> BuiltListing {
+    let body = serde_json::to_vec(&ListingBody {
+        v: LISTING_FORMAT,
+        entry: entry_id,
+        items: &[],
+    })
+    .expect("a listing always serializes");
+    let version = hex::encode(Sha256::digest(&body))[..16].to_string();
+    let json = serde_json::to_vec(&ListingDocument {
+        v: LISTING_FORMAT,
+        entry: entry_id,
+        version: &version,
+        items: &[],
+    })
+    .expect("a listing always serializes");
+    BuiltListing {
+        version,
+        json,
+        count: 0,
+        cut: false,
+    }
+}
+
+/// A listing row's parts that [listing_for] needs.
+type StoredParts = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 /// The listing a phone gets for `entry_id` (`GET /api/devices/music/entries/{id}/items`): only for
-/// an entry it has ticked (a Storytel one only through the library's gate, design 26b §2.7), and
-/// only once listed. Built from the rows in one read transaction, the same way the sweep built the
-/// version it stored.
+/// an entry it has ticked (a Storytel one only through the library's gate, design 26b §2.7; a
+/// Spotify one only while the phone plays as an account, 26c §3.6), and only once listed. Built
+/// from the rows in one read transaction, the same way the sweep built the version it stored.
 pub async fn device_listing(
     db: &sqlx::SqlitePool,
     device_id: i64,
     entry_id: i64,
 ) -> Result<Option<BuiltListing>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let found: Option<(Option<String>, Option<String>)> = sqlx::query_as(concat!(
-        "SELECT l.version, l.keep_end FROM music_listings l \
+    let found: Option<StoredParts> = sqlx::query_as(concat!(
+        "SELECT l.version, l.keep_end, l.spotify_mode, l.title, l.cover_url \
+         FROM music_listings l \
          JOIN music_entries e ON e.id = l.entry_id \
          JOIN device_music_entries d ON d.entry_id = l.entry_id \
-         WHERE l.entry_id = ? AND d.device_id = ? AND e.source IN ('nrk', 'rss', 'storytel') AND ",
-        crate::storytel_gate!()
+         WHERE l.entry_id = ? AND d.device_id = ? \
+           AND e.source IN ('nrk', 'rss', 'storytel', 'spotify') AND ",
+        crate::storytel_gate!(),
+        " AND ",
+        crate::spotify_gate!()
     ))
     .bind(entry_id)
     .bind(device_id)
     .bind(device_id)
+    .bind(device_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((Some(_version), keep_end)) = found else {
+    let Some((Some(_version), keep_end, mode, title, cover_url)) = found else {
         return Ok(None);
     };
     let items = load_items(&mut tx, entry_id).await?;
     tx.commit().await?;
-    Ok(build_listing(
+    Ok(listing_for(
         entry_id,
         &items,
-        keep_end.as_deref() == Some("first"),
+        keep_end.as_deref(),
+        mode.as_deref(),
+        title.as_deref(),
+        cover_url.as_deref(),
     ))
 }
 
@@ -961,24 +1089,32 @@ pub async fn device_listing(
 pub async fn restamp_versions(db: &sqlx::SqlitePool) -> Result<usize, sqlx::Error> {
     let listed: Vec<i64> = sqlx::query_scalar(
         "SELECT l.entry_id FROM music_listings l JOIN music_entries e ON e.id = l.entry_id \
-         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss', 'storytel')",
+         WHERE l.version IS NOT NULL AND e.source IN ('nrk', 'rss', 'storytel', 'spotify')",
     )
     .fetch_all(db)
     .await?;
     let mut changed = 0;
     for entry_id in listed {
         let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-        let row: Option<(Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT version, keep_end FROM music_listings WHERE entry_id = ?")
-                .bind(entry_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let Some((Some(version), keep_end)) = row else {
+        let row: Option<StoredParts> = sqlx::query_as(
+            "SELECT version, keep_end, spotify_mode, title, cover_url FROM music_listings \
+             WHERE entry_id = ?",
+        )
+        .bind(entry_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((Some(version), keep_end, mode, title, cover_url)) = row else {
             continue;
         };
         let items = load_items(&mut tx, entry_id).await?;
-        if let Some(built) = build_listing(entry_id, &items, keep_end.as_deref() == Some("first"))
-            && built.version != version
+        if let Some(built) = listing_for(
+            entry_id,
+            &items,
+            keep_end.as_deref(),
+            mode.as_deref(),
+            title.as_deref(),
+            cover_url.as_deref(),
+        ) && built.version != version
         {
             sqlx::query(
                 "UPDATE music_listings SET version = ?, item_count = ?, bytes = ?, cut = ? \
@@ -1005,7 +1141,8 @@ pub async fn restamp_versions(db: &sqlx::SqlitePool) -> Result<usize, sqlx::Erro
 /// Flags the items a phone reports failing, when the report counts (§2.5): an entry it has ticked,
 /// a key of that entry, the current listing version, a 401/403/404/410, and no re-resolve of the
 /// item in the last 24 h. Never a Storytel entry's (design 26b §2.4: nothing to re-resolve - the
-/// phone mints its own URL, a mint failure is the phone's). Returns how many were flagged; the
+/// phone mints its own URL, a mint failure is the phone's), nor a Spotify one's (design 26c §3.4:
+/// a track the phone can't play is the phone's `unplayable`). Returns how many were flagged; the
 /// caller wakes the sweeper.
 pub async fn flag_reports(
     db: &sqlx::SqlitePool,
@@ -1026,7 +1163,8 @@ pub async fn flag_reports(
              WHERE entry_id = ? AND key = ? AND recheck = 0 \
                AND (rechecked_at IS NULL OR rechecked_at <= ?) \
                AND entry_id IN (SELECT entry_id FROM device_music_entries WHERE device_id = ?) \
-               AND entry_id NOT IN (SELECT id FROM music_entries WHERE source = 'storytel') \
+               AND entry_id NOT IN \
+                 (SELECT id FROM music_entries WHERE source IN ('storytel', 'spotify')) \
                AND EXISTS (SELECT 1 FROM music_listings l \
                            WHERE l.entry_id = music_items.entry_id AND l.version = ?)",
         )
@@ -1185,6 +1323,31 @@ struct Plan {
     rechecked: HashSet<String>,
     /// Episode art (design 27): the reference prints and the backlog.
     art: ArtPlan,
+    /// A Spotify listing's state (design 26c §3.4).
+    spotify: SpotifyPlan,
+}
+
+/// A check's Spotify state (design 26c §3.3-§3.4, migration 0073's columns), from and to
+/// `music_listings`; kept as it was by a failed check.
+#[derive(Clone, Default)]
+struct SpotifyPlan {
+    mode: Option<String>,
+    snapshot: Option<String>,
+    items_at: Option<String>,
+    reader: Option<i64>,
+    skipped: i64,
+}
+
+impl SpotifyPlan {
+    fn from_listing(old: &Listing) -> SpotifyPlan {
+        SpotifyPlan {
+            mode: old.spotify_mode.clone(),
+            snapshot: old.spotify_snapshot.clone(),
+            items_at: old.spotify_items_at.clone(),
+            reader: old.spotify_reader,
+            skipped: old.spotify_skipped,
+        }
+    }
 }
 
 /// A check's episode-art state (design 27 §1.2-§1.4, QA M2/M3), from and to `music_listings`.
@@ -1297,9 +1460,9 @@ struct Mode {
     requested: bool,
 }
 
-/// Checks one entry now (§2.3): the start stamp, the listing (NRK, RSS or Storytel), the rechecks,
-/// the cover and one closing transaction. `Ok(None)` = the entry is gone (or isn't
-/// NRK/RSS/Storytel).
+/// Checks one entry now (§2.3): the start stamp, the listing (NRK, RSS, Storytel or Spotify), the
+/// rechecks, the cover and one closing transaction. `Ok(None)` = the entry is gone (or isn't
+/// NRK/RSS/Storytel/Spotify).
 pub async fn check_entry(
     state: &AppState,
     entry_id: i64,
@@ -1400,6 +1563,7 @@ async fn run_check(
         recheck_room,
         rechecked: HashSet::new(),
         art: ArtPlan::from_listing(old),
+        spotify: SpotifyPlan::from_listing(old),
     };
     let mut job = Job {
         source: state.music_fetch.as_ref(),
@@ -1445,6 +1609,9 @@ async fn run_check(
         }
         Link::Storytel { .. } => {
             storytel_check(state, &mut job, &mut plan, &link.target(), mode).await
+        }
+        Link::Spotify { kind, id } => {
+            spotify_check(state, &mut job, &mut plan, *kind, id, old, mode).await?
         }
     };
     if whole {
@@ -2406,6 +2573,437 @@ async fn storytel_check(
 }
 
 // ------------------------------------------------------------------------------------------------
+// Spotify (design 26c §3.3-§3.4)
+// ------------------------------------------------------------------------------------------------
+
+/// The Web API reads of one check, each counted against the check's budget (the token refreshes
+/// too) through `job`.
+struct SpotifyReads<'s, 'j, 'a> {
+    state: &'s AppState,
+    job: &'j mut Job<'a>,
+}
+
+/// Every reader failed: the error to report, and whether one of them answered 403 or 404 (the
+/// account may not see it - another may).
+struct NoReader {
+    err: SpotifyError,
+    refused: bool,
+}
+
+impl SpotifyReads<'_, '_, '_> {
+    /// One GET as `account`, within the check's budget (past it: `timeout`).
+    async fn get(&mut self, account: i64, url: &str) -> Result<Vec<u8>, SpotifyError> {
+        if self.job.spent() {
+            return Err(SpotifyError::Fetch(FetchError::Timeout));
+        }
+        let mut sent = 0;
+        let answer = self
+            .state
+            .spotify
+            .api_get_counted(self.state, account, url, Kind::Page, &mut sent)
+            .await;
+        self.job.requests += sent;
+        answer.map(|response| response.body)
+    }
+
+    /// The first reader that answers (§3.3), in `ids`' order: a reader whose failure says it may
+    /// not see it, or can't be used now ([spotify::try_next_reader]), lets the next try; any other
+    /// failure ends the read. Every reader failing: 404 if one said so, else the first failure.
+    async fn first(&mut self, ids: &[i64], url: &str) -> Result<(i64, Vec<u8>), NoReader> {
+        let mut first: Option<SpotifyError> = None;
+        let mut refused = false;
+        for &account in ids {
+            match self.get(account, url).await {
+                Ok(body) => return Ok((account, body)),
+                Err(err) if spotify::try_next_reader(&err) => {
+                    refused |= matches!(err, SpotifyError::NotFound | SpotifyError::Status(403));
+                    if err == SpotifyError::NotFound || first.is_none() {
+                        first = Some(err);
+                    }
+                }
+                Err(err) => return Err(NoReader { err, refused }),
+            }
+        }
+        Err(NoReader {
+            err: first.unwrap_or(SpotifyError::NoAccount),
+            refused,
+        })
+    }
+
+    /// The pages after `page` (read as `account`): `next_read(offset)` for each next page, until
+    /// `max` are kept (`capped` when more were left) or Spotify has no next page. A track twice is
+    /// kept once, at its first place (21b's dedupe rule). `(kept, left out, capped)`.
+    async fn pages(
+        &mut self,
+        account: i64,
+        mut page: spotify::Page,
+        max: usize,
+        next_url: impl Fn(usize) -> String,
+        parse: fn(&[u8]) -> Option<spotify::Page>,
+    ) -> Result<(Vec<spotify::Listed>, usize, bool), SpotifyError> {
+        let mut kept: Vec<spotify::Listed> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut skipped = 0;
+        let mut offset = 0;
+        // A list of nothing but left-out entries still ends: at most twice the pages `max` needs.
+        let most_pages = max.div_ceil(spotify::PAGE_LIMIT) * 2;
+        let mut read = 0;
+        loop {
+            read += 1;
+            skipped += page.skipped;
+            let mut listed = std::mem::take(&mut page.listed).into_iter();
+            for item in listed.by_ref() {
+                if !seen.insert(item.id.clone()) {
+                    continue;
+                }
+                if kept.len() == max {
+                    return Ok((kept, skipped, true));
+                }
+                kept.push(item);
+            }
+            if !page.next {
+                return Ok((kept, skipped, false));
+            }
+            if kept.len() == max || read >= most_pages {
+                return Ok((kept, skipped, true));
+            }
+            offset += spotify::PAGE_LIMIT;
+            let body = self.get(account, &next_url(offset)).await?;
+            page = parse(&body).ok_or(SpotifyError::BadAnswer)?;
+        }
+    }
+}
+
+/// A Spotify entry's check (design 26c §3.4; vibb `library.py`'s precache gate and
+/// `context_tracks`): without an app `spotify_off`, without a usable account `no_account` (or
+/// `reauthorize` when every login ended), inside the quota pause `quota` - no request. Then the
+/// kind's reads with the readers (§3.3): a playlist's metadata (its `snapshot_id` unchanged and
+/// the items read in the last day: done, one request - not for Check now), then its items with
+/// each reader in turn until one may list them (none: context mode); an album's tracks in disc and
+/// track order; a track or an episode as one item; a show's newest 100 episodes; an artist in
+/// context mode - or, with `SPOTIFY_ARTIST_ALBUMS`, as its albums' tracks. Every failure keeps the
+/// last good list (`finish`). The items keep their rows (first sighting, the art pass's result) as
+/// a feed's do; a track that left the playlist leaves the list.
+async fn spotify_check(
+    state: &AppState,
+    job: &mut Job<'_>,
+    plan: &mut Plan,
+    kind: LinkKind,
+    id: &str,
+    old: &Listing,
+    mode: Mode,
+) -> Result<Result<(), CheckError>, sqlx::Error> {
+    let fail = |err: SpotifyError| Ok(Err(CheckError::Spotify(err.code())));
+    let Some(_app) = spotify::app(state).await? else {
+        return fail(SpotifyError::Off);
+    };
+    let readers = spotify::readers(&state.db, old.spotify_reader).await?;
+    if let Some(err) = readers.refusal() {
+        return fail(err);
+    }
+    if state.spotify.quota_until().is_some() {
+        return fail(SpotifyError::Quota);
+    }
+    let ids = readers.ids;
+    let now = job.now;
+    let accounts = &state.spotify;
+    let mut reads = SpotifyReads { state, job };
+    plan.lan = Some(false);
+    plan.fallback = false;
+    let mut listed: Vec<spotify::Listed>;
+    let skipped: usize;
+    let mut capped = false;
+    let mut keep_end = "first";
+    let mut snapshot = None;
+    let reader;
+    // The metadata read: the name, the picture (a playlist's snapshot).
+    let meta_read = match kind {
+        LinkKind::Playlist => Read::Playlist(id),
+        LinkKind::Album => Read::Album(id),
+        LinkKind::Track => Read::Track(id),
+        LinkKind::Artist => Read::Artist(id),
+        LinkKind::Show => Read::Show(id),
+        LinkKind::Episode => Read::Episode(id),
+    };
+    let (meta_reader, body) = match reads.first(&ids, &accounts.read_url(meta_read)).await {
+        Ok(found) => found,
+        Err(none) => return fail(none.err),
+    };
+    // The metadata, and an album's, track's or episode's items with it.
+    let (meta, first_page) = match kind {
+        LinkKind::Playlist => (spotify::parse_playlist_meta(&body), None),
+        LinkKind::Artist | LinkKind::Show => (spotify::parse_named(&body), None),
+        LinkKind::Album => {
+            spotify::parse_album(&body).map_or((None, None), |(m, p)| (Some(m), Some(p)))
+        }
+        LinkKind::Track => {
+            spotify::parse_track(&body).map_or((None, None), |(m, p)| (Some(m), Some(p)))
+        }
+        LinkKind::Episode => {
+            spotify::parse_episode(&body).map_or((None, None), |(m, p)| (Some(m), Some(p)))
+        }
+    };
+    let Some(meta) = meta else {
+        return fail(SpotifyError::BadAnswer);
+    };
+    plan.title = meta
+        .name
+        .as_deref()
+        .and_then(|name| crate::music::cut_title(name, sources::MAX_TITLE_CHARS))
+        .or(plan.title.take());
+    plan.cover_candidate = meta.image.clone();
+    match kind {
+        LinkKind::Playlist => {
+            // The snapshot gate (vibb `_precache_due`): an unchanged playlist whose items were
+            // read in the last day costs this one request. Check now reads them anyway; a
+            // playlist in context mode is tried again at every check.
+            let fresh = old
+                .spotify_items_at
+                .as_deref()
+                .and_then(parse_stamp)
+                .is_some_and(|at| at > now - hours(24));
+            if !mode.requested
+                && fresh
+                && old.spotify_mode.as_deref() == Some("list")
+                && meta.snapshot.is_some()
+                && old.spotify_snapshot == meta.snapshot
+            {
+                return Ok(Ok(()));
+            }
+            snapshot = meta.snapshot.clone();
+            let url = accounts.read_url(Read::PlaylistItems(id, 0));
+            let (items_reader, body) = match reads.first(&ids, &url).await {
+                Ok(found) => found,
+                // No account owns it or collaborates on it: the phones play it as a context.
+                Err(none) if none.refused => {
+                    spotify_context(plan, Some(meta_reader), snapshot);
+                    return Ok(Ok(()));
+                }
+                Err(none) => return fail(none.err),
+            };
+            let Some(page) = spotify::parse_playlist_items(&body) else {
+                return fail(SpotifyError::BadAnswer);
+            };
+            let next = |offset| accounts.read_url(Read::PlaylistItems(id, offset));
+            match reads
+                .pages(
+                    items_reader,
+                    page,
+                    spotify::MAX_LIST_TRACKS,
+                    next,
+                    spotify::parse_playlist_items,
+                )
+                .await
+            {
+                Ok(read) => (listed, skipped, capped) = read,
+                Err(err) => return fail(err),
+            }
+            reader = items_reader;
+        }
+        LinkKind::Album => {
+            let page = first_page.unwrap_or_default();
+            let next = |offset| accounts.read_url(Read::AlbumTracks(id, offset));
+            match reads
+                .pages(
+                    meta_reader,
+                    page,
+                    spotify::MAX_LIST_TRACKS,
+                    next,
+                    spotify::parse_album_tracks,
+                )
+                .await
+            {
+                Ok(read) => (listed, skipped, capped) = read,
+                Err(err) => return fail(err),
+            }
+            // Disc and track order (Spotify's own; kept as read where a number is missing).
+            if listed.iter().all(|t| t.disc_track.is_some()) {
+                listed.sort_by_key(|t| t.disc_track);
+            }
+            reader = meta_reader;
+        }
+        LinkKind::Track | LinkKind::Episode => {
+            let page = first_page.unwrap_or_default();
+            skipped = page.skipped;
+            listed = page.listed;
+            reader = meta_reader;
+        }
+        LinkKind::Show => {
+            let url = accounts.read_url(Read::ShowEpisodes(id, 0));
+            let page = match reads.get(meta_reader, &url).await {
+                Ok(body) => match spotify::parse_show_episodes(&body) {
+                    Some(page) => page,
+                    None => return fail(SpotifyError::BadAnswer),
+                },
+                Err(err) => return fail(err),
+            };
+            let next = |offset| accounts.read_url(Read::ShowEpisodes(id, offset));
+            match reads
+                .pages(
+                    meta_reader,
+                    page,
+                    spotify::MAX_SHOW_EPISODES,
+                    next,
+                    spotify::parse_show_episodes,
+                )
+                .await
+            {
+                Ok(read) => (listed, skipped, capped) = read,
+                Err(err) => return fail(err),
+            }
+            // Spotify lists a show newest first; the list is kept oldest first, as a podcast's.
+            listed.reverse();
+            keep_end = "newest";
+            reader = meta_reader;
+        }
+        LinkKind::Artist => {
+            if !accounts.config().artist_albums {
+                // Context mode (the default, §3.3): the metadata only, one request a day.
+                spotify_context(plan, Some(meta_reader), None);
+                return Ok(Ok(()));
+            }
+            match artist_albums(&mut reads, &ids, id).await {
+                Ok(Some((read_by, read))) => {
+                    (listed, skipped, capped) = read;
+                    reader = read_by;
+                }
+                // Spotify refused the artist's albums: played as Spotify picks.
+                Ok(None) => {
+                    spotify_context(plan, Some(meta_reader), None);
+                    return Ok(Ok(()));
+                }
+                Err(err) => return fail(err),
+            }
+        }
+    }
+    // The items: a known one keeps its row (its first sighting, the art pass's result).
+    let mut known: HashMap<String, Item> = std::mem::take(&mut plan.items)
+        .into_iter()
+        .map(|item| (item.key.clone(), item))
+        .collect();
+    plan.new_items += listed.iter().filter(|t| !known.contains_key(&t.id)).count();
+    plan.items = listed
+        .into_iter()
+        .map(|track| {
+            let row = known
+                .remove(&track.id)
+                .unwrap_or_else(|| Item::new(track.id.clone(), now));
+            Item {
+                state: "ok".to_string(),
+                title: crate::music::cut_title(&track.title, sources::MAX_TITLE_CHARS),
+                url: None,
+                hls: false,
+                duration_ms: track.duration_ms,
+                art_url: track.art.filter(|a| music_net::media_url_ok(a)),
+                attempts: 0,
+                ..row
+            }
+        })
+        .collect();
+    plan.capped = capped;
+    plan.keep_end = Some(keep_end.to_string());
+    plan.spotify = SpotifyPlan {
+        mode: Some("list".to_string()),
+        snapshot,
+        items_at: Some(stamp(now)),
+        reader: Some(reader),
+        skipped: skipped as i64,
+    };
+    Ok(Ok(()))
+}
+
+/// Context mode (design 26c §3.3): no items - the phone plays the Spotify context - and the
+/// listing's mode, reader and snapshot.
+fn spotify_context(plan: &mut Plan, reader: Option<i64>, snapshot: Option<String>) {
+    plan.items.clear();
+    plan.capped = false;
+    plan.keep_end = Some("first".to_string());
+    plan.spotify = SpotifyPlan {
+        mode: Some("context".to_string()),
+        snapshot,
+        items_at: None,
+        reader,
+        skipped: 0,
+    };
+}
+
+/// The artist option (design 26c §3.3, `SPOTIFY_ARTIST_ALBUMS`): the artist's albums and singles
+/// (with the first reader that may), newest first, at most [spotify::MAX_ARTIST_ALBUMS] of them
+/// and [spotify::MAX_ARTIST_TRACKS] tracks, each album's tracks in order with the album's picture.
+/// `Ok(None)` = every reader got 403/404 for the albums (context mode then); an album that is
+/// gone (404) is passed over. `(reader, (kept, left out, capped))`.
+#[allow(clippy::type_complexity)]
+async fn artist_albums(
+    reads: &mut SpotifyReads<'_, '_, '_>,
+    ids: &[i64],
+    id: &str,
+) -> Result<Option<(i64, (Vec<spotify::Listed>, usize, bool))>, SpotifyError> {
+    let accounts = &reads.state.spotify;
+    let (reader, body) = match reads
+        .first(ids, &accounts.read_url(Read::ArtistAlbums(id, 0)))
+        .await
+    {
+        Ok(found) => found,
+        Err(none) if none.refused => return Ok(None),
+        Err(none) => return Err(none.err),
+    };
+    let (mut albums, mut next) =
+        spotify::parse_artist_albums(&body).ok_or(SpotifyError::BadAnswer)?;
+    let mut pages = 1;
+    while next && pages < spotify::MAX_ARTIST_ALBUM_PAGES {
+        let url = accounts.read_url(Read::ArtistAlbums(id, pages * spotify::PAGE_LIMIT));
+        let body = reads.get(reader, &url).await?;
+        let (more, more_next) =
+            spotify::parse_artist_albums(&body).ok_or(SpotifyError::BadAnswer)?;
+        albums.extend(more);
+        next = more_next;
+        pages += 1;
+    }
+    let mut seen_albums = HashSet::new();
+    albums.retain(|album| seen_albums.insert(album.id.clone()));
+    // Newest first (a stable sort: Spotify's order among albums of one date).
+    albums.sort_by(|a, b| b.released.cmp(&a.released));
+    let mut capped = next || albums.len() > spotify::MAX_ARTIST_ALBUMS;
+    albums.truncate(spotify::MAX_ARTIST_ALBUMS);
+    let mut kept: Vec<spotify::Listed> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut skipped = 0;
+    for album in albums {
+        let room = spotify::MAX_ARTIST_TRACKS - kept.len();
+        if room == 0 {
+            capped = true;
+            break;
+        }
+        let body = match reads
+            .get(reader, &accounts.read_url(Read::Album(&album.id)))
+            .await
+        {
+            Ok(body) => body,
+            Err(SpotifyError::NotFound) => continue,
+            Err(err) => return Err(err),
+        };
+        let (meta, page) = spotify::parse_album(&body).ok_or(SpotifyError::BadAnswer)?;
+        let album_id = album.id.clone();
+        let next = |offset| accounts.read_url(Read::AlbumTracks(&album_id, offset));
+        let (mut tracks, left_out, more) = reads
+            .pages(reader, page, room, next, spotify::parse_album_tracks)
+            .await?;
+        skipped += left_out;
+        if tracks.iter().all(|t| t.disc_track.is_some()) {
+            tracks.sort_by_key(|t| t.disc_track);
+        }
+        for mut track in tracks {
+            if seen.insert(track.id.clone()) {
+                track.art = meta.image.clone();
+                kept.push(track);
+            }
+        }
+        capped |= more;
+    }
+    Ok(Some((reader, (kept, skipped, capped))))
+}
+
+// ------------------------------------------------------------------------------------------------
 // Covers (§2.6)
 // ------------------------------------------------------------------------------------------------
 
@@ -2585,12 +3183,30 @@ fn series_picture(print: i64, refs: &[i64]) -> bool {
 
 /// Whether an item takes part in the art pass at all: listed (`ok`) with a picture URL, and
 /// playable from the list - an NRK/RSS episode with its source URL, or a Storytel book (design 26b
-/// §5.5, step 4a: `ok` with `url` NULL by design, its `art_url` the shelf's cover). The entry's
-/// link tells the two apart: an NRK/RSS item without a URL isn't playable, and it is skipped
-/// without taking a place in [ART_WINDOW].
+/// §5.5, step 4a: `ok` with `url` NULL by design, its `art_url` the shelf's cover) or a Spotify
+/// track or episode (design 26c §3.5: `ok` with `url` NULL, the phone plays its URI). The entry's
+/// link tells them apart: an NRK/RSS item without a URL isn't playable, and it is skipped without
+/// taking a place in [ART_WINDOW].
 pub fn art_candidate(item: &Item, link: &Link) -> bool {
-    let playable = item.url.is_some() || matches!(link, Link::Storytel { .. });
+    let playable =
+        item.url.is_some() || matches!(link, Link::Storytel { .. } | Link::Spotify { .. });
     item.state == "ok" && playable && item.art_url.is_some()
+}
+
+/// Whether an entry's item pictures are judged against nothing (every fetched one its own: no
+/// reference prints, no `same`, no twin merge): a Storytel book's (qa-26b-step4a-code M1), and a
+/// Spotify playlist's, track's or artist's track (design 26c §3.5: a playlist's mosaic cover is no
+/// reference for its tracks; their album pictures are their own). A Spotify show's episodes are
+/// judged as an RSS episode's.
+fn art_judged_alone(link: &Link) -> bool {
+    matches!(
+        link,
+        Link::Storytel { .. }
+            | Link::Spotify {
+                kind: LinkKind::Playlist | LinkKind::Track | LinkKind::Album | LinkKind::Artist,
+                ..
+            }
+    )
 }
 
 /// Whether an item's picture is to be tried now (§1.3): a URL not tried yet, or a failure a day
@@ -2798,14 +3414,11 @@ async fn art_pass(
     // A Storytel book is judged against nothing (qa-26b-step4a-code M1): its "series cover" is
     // only the shelf's first-seen book's cover, so `same` (show the entry cover) could show
     // another book's face - after the first book changes, with a parent's cover, or with
-    // templated covers. Every fetched cover is the book's own, and two books are never twins.
-    let storytel = matches!(link, Link::Storytel { .. });
-    let refs = if storytel {
-        Vec::new()
-    } else {
-        plan.art.refs()
-    };
-    if storytel {
+    // templated covers. Every fetched cover is the book's own, and two books are never twins. A
+    // Spotify playlist's, track's or artist's track pictures likewise ([art_judged_alone]).
+    let alone = art_judged_alone(link);
+    let refs = if alone { Vec::new() } else { plan.art.refs() };
+    if alone {
         for item in plan.items.iter_mut() {
             if item.art_state.as_deref() == Some("same") {
                 art_untried(item);
@@ -2863,6 +3476,9 @@ async fn art_pass(
             Link::Storytel { .. } => false,
             Link::NrkSeries { .. } => plan.keep_end.as_deref() == Some("newest"),
             Link::NrkPodcast { .. } | Link::Rss { .. } => true,
+            // A show newest first (a podcast; the phone's `naturallyNewestFirst`), a playlist
+            // from the top, an album in track order (design 26c §4.2).
+            Link::Spotify { kind, .. } => *kind == LinkKind::Show,
         },
     };
     let mut order: Vec<usize> = (0..plan.items.len()).collect();
@@ -2897,6 +3513,10 @@ async fn art_pass(
     let reach = if lan { Reach::Any } else { Reach::Public };
     // Network errors (and 5xx answers) in a row: an image host that is down (code QA M2).
     let mut unreachable = 0;
+    // The pass's memo of URLs it sent a request for and got no picture from (design 26c §3.5: a
+    // playlist repeats its albums' pictures): the next item naming one costs no request. A URL
+    // judged in this pass is found again by step 2 (this entry's items first).
+    let mut tried: HashMap<String, bool> = HashMap::new();
     for index in candidates {
         let Some(url) = plan.items[index].art_url.clone() else {
             continue;
@@ -2905,7 +3525,7 @@ async fn art_pass(
             plan.items[index].art_fails = 0;
         }
         // 1. The series picture's own URL: no request (never for a book, see above).
-        let series_print = if storytel {
+        let series_print = if alone {
             None
         } else if plan.art.cover_url.as_deref() == Some(url.as_str()) {
             Some(plan.art.cover_print)
@@ -2928,9 +3548,23 @@ async fn art_pass(
                 continue;
             }
             if let Some(hash) = hash {
-                art_own(plan, index, url, hash, print, tone, None, !storytel, now);
+                art_own(plan, index, url, hash, print, tone, None, !alone, now);
                 continue;
             }
+        }
+        // The memo: this pass got no picture from the URL already - failed (a try used, as for
+        // the first item), or its host was in trouble (a day later, no try used).
+        if let Some(&host_trouble) = tried.get(&url) {
+            let item = &mut plan.items[index];
+            if host_trouble {
+                item.art_at = Some(stamp(now));
+                if item.art_state.is_none() {
+                    item.art_from = Some(url);
+                }
+            } else {
+                art_failed(item, url, now);
+            }
+            continue;
         }
         // 3. One request, within the budgets.
         if gets == 0 {
@@ -2940,6 +3574,7 @@ async fn art_pass(
             break;
         }
         if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
+            tried.insert(url.clone(), false);
             art_failed(&mut plan.items[index], url, now);
             continue;
         }
@@ -2961,6 +3596,7 @@ async fn art_pass(
             Got::Skipped => false,
         };
         if host_trouble {
+            tried.insert(url.clone(), true);
             let item = &mut plan.items[index];
             item.art_at = Some(stamp(now));
             if item.art_state.is_none() {
@@ -2989,6 +3625,7 @@ async fn art_pass(
         };
         // 5. A failure never fails the check; the item shows the series cover.
         let Some((photo, (print, tone))) = printed else {
+            tried.insert(url.clone(), false);
             art_failed(&mut plan.items[index], url, now);
             continue;
         };
@@ -3007,7 +3644,7 @@ async fn art_pass(
                 print,
                 Some(tone),
                 Some(photo),
-                !storytel,
+                !alone,
                 now,
             );
         }
@@ -3139,8 +3776,16 @@ async fn finish(
         prune_art(stored_art).await;
         return Ok(None);
     }
-    let anchored = plan.keep_end.as_deref() == Some("first");
-    let built = build_listing(entry_id, &plan.items, anchored);
+    // A Spotify entry in context mode has no items and is listed (design 26c §3.3).
+    let context = plan.spotify.mode.as_deref() == Some("context");
+    let built = listing_for(
+        entry_id,
+        &plan.items,
+        plan.keep_end.as_deref(),
+        plan.spotify.mode.as_deref(),
+        plan.title.as_deref(),
+        cover_url.as_deref(),
+    );
     let has_ok = plan.items.iter().any(|i| i.state == "ok");
     let untried = plan
         .items
@@ -3150,7 +3795,7 @@ async fn finish(
     // listed entry whose every item was withdrawn is listed so: the phones get `url: null`
     // (hard rule 5 over §2.4, QA 1c #3).
     let failure = match failure {
-        None if !recheck_only && !has_ok && !untried && old.version.is_none() => {
+        None if !recheck_only && !has_ok && !untried && !context && old.version.is_none() => {
             Some(CheckError::NoItems)
         }
         other => other,
@@ -3166,7 +3811,7 @@ async fn finish(
     match &failure {
         Some(err) => report.error = Some(err.code()),
         None => {
-            if (has_ok || old.version.is_some())
+            if (has_ok || context || old.version.is_some())
                 && let Some(built) = &built
             {
                 version = Some(built.version.clone());
@@ -3281,7 +3926,9 @@ async fn finish(
            listed_at = CASE WHEN ? THEN ? ELSE listed_at END, full_recheck_at = ?, error = ?, \
            error_at = ?, failing_since = ?, failures = ?, requests = ?, cover_print = ?, \
            cover_alt_url = ?, cover_alt_print = ?, cover_alt_at = ?, old_prints = ?, \
-           art_refs = ?, art_backlog = ?, art_same_run = ?, art_backlog_at = ?, art_refresh = ? \
+           art_refs = ?, art_backlog = ?, art_same_run = ?, art_backlog_at = ?, art_refresh = ?, \
+           spotify_mode = ?, spotify_snapshot = ?, spotify_items_at = ?, spotify_reader = ?, \
+           spotify_skipped = ? \
          WHERE entry_id = ?",
     )
     .bind(if keep_fields {
@@ -3351,6 +3998,32 @@ async fn finish(
         old.art_refresh
     } else {
         plan.art.refresh
+    })
+    // A failed check keeps the last good list's Spotify state (design 26c §3.4).
+    .bind(if keep_fields {
+        old.spotify_mode.clone()
+    } else {
+        plan.spotify.mode.clone()
+    })
+    .bind(if keep_fields {
+        old.spotify_snapshot.clone()
+    } else {
+        plan.spotify.snapshot.clone()
+    })
+    .bind(if keep_fields {
+        old.spotify_items_at.clone()
+    } else {
+        plan.spotify.items_at.clone()
+    })
+    .bind(if keep_fields {
+        old.spotify_reader
+    } else {
+        plan.spotify.reader
+    })
+    .bind(if keep_fields {
+        old.spotify_skipped
+    } else {
+        plan.spotify.skipped
     })
     .bind(entry_id)
     .execute(&mut *tx)

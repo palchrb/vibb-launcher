@@ -1838,3 +1838,139 @@ pre-existing warnings, none added; `cargo test` all pass but the pre-existing, t
   logged in` x2, `a login failed`, `access token refreshed`, `a refresh failed`), so a partial capture fails rather
   than passes. Six parallel runs of `cargo test tests::music` (149 tests) captured everything on the first try; a
   mutation logging the code at `trace` fails the test.
+
+## Step 2a implementation status (2026-10-13)
+
+Built on branch `music-3-spotify` on top of step 1 and its fix round (`ca2b454`), one commit: §11 step 2a, server
+only. No new dependency, no migration (0073's frozen columns are used as they are), nothing device-facing: a phone's
+library still leaves Spotify out (`LIBRARY_ENTRIES` is 2b's), so `music_library_snapshot`, `music_listing_snapshot`
+and `policy_json_keys_snapshot` pass unchanged.
+
+- **In**: `S/spotify.rs` - the listing (§3.1, §3.3, §3.4): `Read` and `Accounts::read_url` (every Web API URL built
+  from the canonical id with `form_urlencoded`, `market=from_token` on every track/episode read; the exact queries
+  pinned), the parsers over the fixtures (`parse_playlist_meta`, `parse_playlist_items` over `items[].item`,
+  `parse_album` + `parse_album_tracks`, `parse_track`, `parse_named` for an artist and a show, `parse_show_episodes`,
+  `parse_episode`, `parse_artist_albums`) into `Listed` (id, title `"<name> — <artist>, <artist>"` by `track_title`,
+  duration, picture, an album track's disc/track) and `Page` (left out counted: episodes in a playlist, local files,
+  `is_playable: false`, removed `item: null`, no usable id; `next`, `total`), `pick_image` (of at least 300 px the
+  narrowest, else the widest; `media_url_ok`), `Meta` (§3.2's entry name, the picture, a playlist's snapshot),
+  `readers` (no `needs_login`, the last reader first, a removed reader's id counts for nothing; `Readers::refusal` =
+  `no_account` / `reauthorize` before any request), `try_next_reader`, `Config.artist_albums`
+  (`SPOTIFY_ARTIST_ALBUMS`, `1`/`true`, off by default), `resolve_short_link` (one hop at a time: `follow: false`,
+  `Reach::Public`, at most `SHORT_LINK_HOPS` = 3 requests, each `Location` - relative ones resolved - https on
+  `spotify.link`/`spotify.app.link`/`open.spotify.com` without userinfo or port, the first `open.spotify.com` URL
+  parsed and never asked; `ShortLinkError::{Dead, Link, Unreachable}` with their sentences), and
+  `Accounts::api_get_counted` (the read counting every request it makes, token refreshes included, for the sweep's
+  budget; `mint` counts). Step 1's `cfg_attr(not(test), allow(dead_code))` is gone from everything 2a uses; it stays
+  only on what 2b's add form and card will use (`SpotifyRef::key`/`open_url`, `LinkError::message`,
+  `ShortLinkError`, `resolve_short_link`, `SHORT_LINK_HOPS`). `S/music_net.rs`: `SourceRequest.follow` (default
+  `true`; `false` = two more clients with `redirect::Policy::none()`, the public one keeping its resolver) and
+  `SourceResponse.location` (cut one character past 2000; in `Debug` only as present/absent). `S/music.rs`:
+  `Link::Spotify { kind, id }` (`target`, `source`), `entry_link("spotify", ..)` through `spotify::parse_target`
+  (canonical only), `parse_link`'s pointer (`SPOTIFY_ON_ITS_PAGE` for a `spotify:` URI or any link on Spotify's three
+  hosts), `default_kind_for` + `default_category_for` (a Spotify show or episode is a podcast), `CheckError::Spotify`
+  with `spotify_check_message`, `sweep_error_text("spotify", ..)` with §3.4's sentences, `check_link` refusing a
+  Spotify link like a Storytel one, and `spotify_gate!()`. `S/music_sweep.rs`: `schedule` and `check_entry` take
+  `'spotify'` (a target that doesn't parse is skipped with a debug line); `interval(link, ticked, setting)` (NRK as
+  before; a Spotify album, track, episode or artist daily; the rest - RSS, Storytel, a Spotify playlist or show - the
+  setting); `spotify_check` (below); the listing row's Spotify state (`Listing.spotify_*`, a `SpotifyPlan` kept as it
+  was by a failed check); `listing_for` / `build_context_listing` (the check, the route and the restamp build a
+  listing alike); `device_listing` and `restamp_versions` take `'spotify'`; `flag_reports` skips Spotify;
+  `art_candidate` takes a Spotify item without a URL; `art_judged_alone` (Storytel, and a Spotify playlist's,
+  track's, album's or artist's track pictures: own, no references, no twin merge; a show's episodes as RSS); the art
+  pass's play order for a show newest first; the per-pass memo. `server/testdata/spotify/`: `playlist.json`,
+  `playlist_items.json`, `album.json`, `album_tracks.json`, `track.json`, `artist.json`, `artist_albums.json`,
+  `show.json`, `show_episodes.json`, `episode.json`, `forbidden.json` (ids `0Fake…`/`1Fake…`; pictures on
+  `i.scdn.co`/`mosaic.scdn.co` under `fake-…` paths). `S/tests/music.rs`: `Canned.location`, `CannedFetch::redirect`,
+  `Recorded.follow`.
+- **The check** (`spotify_check`): no app `spotify_off`, no account `no_account`, every login ended `reauthorize`,
+  inside the quota pause `quota` - each without a request. Then the kind's metadata read with the first reader that
+  answers (403/404/401 and an account that can't be used now let the next try; anything else - `app_refused`,
+  `quota`, `rate_limited`, the network, 5xx, `bad_answer` - ends it; every reader failing reports `not_found` if one
+  said 404, else the first failure). The listing's title is the metadata's name (§3.2's), its cover candidate the
+  picked image. A **playlist**: the snapshot gate (list mode, the same `snapshot_id`, the items read under 24 h ago,
+  not Check now: done, one request), else `/items` with each reader in turn: one may list - its pages with that
+  reader, at most 1000 kept (`capped`), a repeat once (its first place), list mode, `spotify_reader` = that reader;
+  none may (every one 403 or 404) - **context mode**. An **album**: the embedded first page and `/tracks` pages,
+  sorted by disc and track when every track has both. A **track** / **episode**: one item. A **show**: `/shows/{id}`
+  then `/episodes` pages, the newest 100 (`capped`), kept oldest first, `keep_end = 'newest'`. An **artist**: context
+  mode (one read); with the option, `/artists/{id}/albums` (the first reader that may; every one 403/404 = context
+  mode), at most 10 pages, newest first by `release_date` (a stable sort), 20 albums, each album read (a 404 album
+  passed over) with its tracks in order and the album's picture, 500 tracks, `capped` when anything was cut.
+  **Context mode**: no items, `keep_end = 'first'`, the reader and (a playlist's) snapshot kept, `spotify_items_at`
+  NULL; a playlist in context mode is read again at every check and flips back as soon as a reader may list it.
+  Items keep their rows (first sighting, the art pass's result) as a feed's; one that left the list is gone from it.
+  Every request counts against the check's budget; past it `timeout`.
+- **Tests**: `spotify::tests` 25 (7 new: `listing_parsers_read_the_fixtures`, `the_image_pick`,
+  `read_urls_are_exact`, `readers_put_the_last_one_first`, `short_links_are_followed_hop_by_hop`,
+  `reads_count_their_requests`, `the_artist_option_is_off_by_default`; `two_401s_refresh_once` now also counts its
+  one refresh). `tests::music_spotify::listing` 12 - `a_check_lists_the_fixture_playlist` (the acceptance's first line;
+  the exact requests, the bearer, `Reach::Public`, the listing route 404 for a phone not bound and the list for a
+  bound one, an emptied playlist served empty), `the_snapshot_gate` (one request when unchanged; the items after a
+  day, for Check now, for a new snapshot), `a_403_playlist_goes_to_context_mode_and_back` (the second line; each
+  reader in turn, context mode's version and empty list served, the revision moved, re-read at every check, back to
+  list mode read by the parent, the parent asked first from then on, a removed reader counting for nothing),
+  `an_artist_is_a_context_unless_the_option_lists_its_albums` (and the option's 403 fallback),
+  `albums_tracks_shows_and_episodes_are_listed`, `long_playlists_and_shows_are_capped` (1000 tracks in 20 pages,
+  the 21st never asked; a show's newest 100), `failures_keep_the_last_good_list` (`rate_limited`, `not_found`,
+  `http_503`, `bad_answer` with one request; `reauthorize`, `no_account`, `spotify_off` with none - the list, the
+  version and the Spotify state kept), `the_quota_ends_the_passs_spotify_checks` (one Spotify read in a pass, then
+  `quota` without a request, the RSS entry checked, Spotify asked again after the pause), `the_interval_follows_the_kind`,
+  `track_art_is_own_and_each_url_is_asked_once` (two tracks, one album picture, one request; own even when the album
+  picture is the playlist's cover; a failing picture asked once for both; a show's episode `same` by the show
+  picture's URL), `a_restore_restamps_a_spotify_listing` (the third line; the route serves the restamped version; a
+  context listing restamps to itself), `reports_never_flag_spotify_items`. `music::tests::
+  spotify_entries_have_their_own_link_and_kind` (entry links, the pointer for every Spotify form, `default_kind_for`
+  and `default_category_for`, the sentences). `music_net`'s client test: `follow: false` answers the 3xx with its
+  `Location`, never past the public rule. `tests::music_sweep::the_cadence_follows_the_setting` on links.
+
+Deviations from the spec (each with its reason):
+1. **`spotify_gate!()` is defined in 2a and used by `device_listing`** (the macro and `LIBRARY_ENTRIES`,
+   `cover_in_library`, `art_in_library` were 2b's): 2a adds `'spotify'` to the listing route's `IN`, and without the
+   gate a ticked phone that doesn't play Spotify could fetch a Spotify listing; §3.6's "a phone not bound gets no
+   Spotify listing" holds at every commit. 2b adds it to the other three.
+2. **Context mode's version moves with the mode, the title and the cover's source URL** (`cover_url`), not the
+   stored cover's hash: `MUSIC_COVERS.recover_missing` forgets a listing's `cover_hash` and keeps its URL without a
+   restamp, and a version built from the hash would then differ from what the route rebuilds. The route serves a
+   context listing as `{v, entry, version, items: []}` (no new field: the listing contract is step 3's).
+3. **A Spotify list that became empty is listed and served empty** (`listing_for`; not in the spec): `build_listing`
+   gives nothing for no items, which for NRK/RSS/Storytel keeps the old version while the route answers 404; a
+   playlist the parent empties is ordinary, so the library and the route agree on an empty list. A first fill with
+   nothing playable is still `no_items`.
+4. **Items 404 for every reader is context mode too** (the spec says 403): dev mode's documented refusal is 403, but
+   a private playlist answers 404 to an account that may not see it, and the metadata read already answered; the
+   only other outcome would be a failing check with the playlist playable as a context.
+5. **The per-pass URL memo is two parts**: a URL judged in the pass is found again by design 27's step 2 (this
+   entry's items first, so no request and no database read); the new `tried` map remembers a URL that got no picture
+   (failed - a try used, as for the first item - or its host in trouble - a day later, no try used), so a failing
+   album picture costs one request, not one per track. It applies to every source.
+6. **The artist option's details** (§3.3 leaves them open): the albums pages (at most 10) are read before the newest
+   20 are picked (Spotify orders by group, then date), dates compared as text (`2026-03` > `2025-11-14` > `2019`); a
+   404 album is passed over; a track on two albums is kept once; `capped` when an album or a track was cut.
+7. **`parse_playlist_items` also reads `track`** (the field's name before February 2026) where `item` is absent - a
+   grandfathered app's answer still lists; `item` wins.
+8. **The generic add form's pointer is a sentence** (`SPOTIFY_ON_ITS_PAGE`, naming `/music/spotify` and the Spotify
+   card below the form), not an anchor: the form's error is plain text, and the template is 2b's (the PWA).
+9. **Web API reads and short-link hops use `Kind::Page`** (2 MB / 30 s; the spec names no kind; a 50-track page is a
+   few hundred KB): no new `Kind`.
+10. **A playlist's metadata read uses `fields=` without `market`**, every other read `market=from_token`; the show's
+    episodes come from `/shows/{id}/episodes` from offset 0 (the spec's two reads), the album's first 50 tracks from
+    `/albums/{id}` (the spec's).
+11. **`sweep_error_text("spotify", ..)` also covers `key` and `no_items`** ("nothing in it can be played here").
+
+Found in the spec:
+- §4.1's `uriOf` ("a show's items are `spotify:episode:<key>`, everything else's `spotify:track:<key>`") is wrong for
+  an **episode entry**: its one item is an episode (`spotify:episode:<key>`). Step 3's `uriOf` must take `show` and
+  `episode` to `spotify:episode:`. Nothing server-side depends on it.
+- §3.4's "Errors (`sweep_error_text`)" lists no text for `key` or `no_items` (11 above).
+- Nothing in §11 step 2a was impossible.
+
+Owed: 2b (the add form with the add check - it can reuse `readers`, `try_next_reader`, `read_url`, the parsers and
+`resolve_short_link`; the library gate in `LIBRARY_ENTRIES`, `cover_in_library`, `art_in_library`; the cards'
+lines, `SweepView::gated`/`phone_count`, `check_now` and `/music/cards` taking Spotify; the import; and - as Storytel's
+L1 - making entries that failed `spotify_off`/`no_account`/`reauthorize` due at once after a new login or app save,
+which 2a doesn't do: they wait for their backoff). Step 3: the token route, the policy, the listing contract (a
+Spotify entry's `spotify` field in the library; an empty `items` for context mode is already what the route serves).
+QA checklist item 18 (the artist option on a real dev-mode app). The real Web API's shapes are from the reference and
+the February 2026 migration guide, not a run [unverified]: `items[].item`, `is_playable` with `market=from_token`, a
+403 (or 404) on another account's playlist items.

@@ -1,0 +1,18 @@
+{
+  "duration_ms": 900000,
+  "id": "5FakeEpisode0000000003",
+  "images": [
+    {"height": 640, "url": "https://i.scdn.co/image/fake-episode-3", "width": 640},
+    {"height": 300, "url": "https://i.scdn.co/image/fake-episode-3-300", "width": 300}
+  ],
+  "is_playable": true,
+  "name": "Episode 3: Trollet",
+  "release_date": "2026-10-10",
+  "show": {
+    "id": "4FakeShow0000000000001",
+    "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-show-640", "width": 640}],
+    "name": "Eventyrstund"
+  },
+  "type": "episode",
+  "uri": "spotify:episode:5FakeEpisode0000000003"
+}

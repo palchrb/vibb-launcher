@@ -958,6 +958,7 @@ async fn unchanged_feeds_cost_one_request_and_nothing_else() {
             body: body.clone().into_bytes(),
             etag: Some("\"v1\"".into()),
             last_modified: None,
+            location: None,
         },
     );
     check(&app, id, t0()).await;
@@ -1150,10 +1151,29 @@ async fn a_failing_source_keeps_the_last_good_list() {
 #[tokio::test]
 async fn the_cadence_follows_the_setting() {
     for (setting, rss, nrk) in [(1, 1, 2), (3, 3, 6), (6, 6, 12), (12, 12, 12), (24, 24, 24)] {
-        assert_eq!(sweep::interval("rss", true, setting), TimeDelta::hours(rss));
-        assert_eq!(sweep::interval("nrk", true, setting), TimeDelta::hours(nrk));
-        assert_eq!(sweep::interval("nrk", false, setting), TimeDelta::hours(24));
-        assert_eq!(sweep::interval("rss", false, setting), TimeDelta::hours(24));
+        let rss_link = crate::music::parse_link("https://example.org/t.rss").unwrap();
+        let nrk_link = crate::music::parse_link("https://radio.nrk.no/podkast/x").unwrap();
+        let series = crate::music::parse_link("https://radio.nrk.no/serie/x").unwrap();
+        assert_eq!(
+            sweep::interval(&rss_link, true, setting),
+            TimeDelta::hours(rss)
+        );
+        assert_eq!(
+            sweep::interval(&nrk_link, true, setting),
+            TimeDelta::hours(nrk)
+        );
+        assert_eq!(
+            sweep::interval(&series, true, setting),
+            TimeDelta::hours(nrk)
+        );
+        assert_eq!(
+            sweep::interval(&nrk_link, false, setting),
+            TimeDelta::hours(24)
+        );
+        assert_eq!(
+            sweep::interval(&rss_link, false, setting),
+            TimeDelta::hours(24)
+        );
     }
     assert_eq!(
         sweep::backoff(1, TimeDelta::hours(12)),
@@ -1493,6 +1513,7 @@ pub(super) async fn day_library(setting: i64) -> (TestApp, i64) {
                 body: feed(&[("a", "https://example.org/a.mp3")], true).into_bytes(),
                 etag: Some(format!("\"{n}\"")),
                 last_modified: None,
+                location: None,
             },
         );
         tick_on(&app, phone, id).await;
@@ -3070,6 +3091,7 @@ async fn a_routine_nrk_check_starts_with_five_episodes() {
             body: page.to_string().into_bytes(),
             etag: Some("\"p1\"".to_string()),
             last_modified: None,
+            location: None,
         },
     );
     check(&app, id, t0() + TimeDelta::hours(25)).await;

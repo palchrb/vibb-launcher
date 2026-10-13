@@ -1,0 +1,16 @@
+{
+  "description": "Et lite fortellerprogram.",
+  "explicit": false,
+  "id": "4FakeShow0000000000001",
+  "images": [
+    {"height": 640, "url": "https://i.scdn.co/image/fake-show-640", "width": 640},
+    {"height": 300, "url": "https://i.scdn.co/image/fake-show-300", "width": 300},
+    {"height": 64, "url": "https://i.scdn.co/image/fake-show-64", "width": 64}
+  ],
+  "media_type": "audio",
+  "name": "Eventyrstund",
+  "publisher": "Fake Radio",
+  "total_episodes": 3,
+  "type": "show",
+  "uri": "spotify:show:4FakeShow0000000000001"
+}

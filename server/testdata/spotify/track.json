@@ -1,0 +1,25 @@
+{
+  "album": {
+    "album_type": "single",
+    "id": "2FakeAlbumY00000000002",
+    "images": [
+      {"height": 640, "url": "https://i.scdn.co/image/fake-album-y-640", "width": 640},
+      {"height": 300, "url": "https://i.scdn.co/image/fake-album-y-300", "width": 300}
+    ],
+    "name": "Fjellsanger"
+  },
+  "artists": [
+    {"id": "3FakeArtist00000000001", "name": "Ola Fjell", "type": "artist"},
+    {"id": "3FakeArtist00000000002", "name": "Kari Li", "type": "artist"}
+  ],
+  "disc_number": 1,
+  "duration_ms": 190000,
+  "explicit": false,
+  "id": "1FakeTrackH00000000008",
+  "is_local": false,
+  "is_playable": true,
+  "name": "Fjellvise",
+  "track_number": 1,
+  "type": "track",
+  "uri": "spotify:track:1FakeTrackH00000000008"
+}

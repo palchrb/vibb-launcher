@@ -26,6 +26,8 @@ pub struct Canned {
     pub body: Vec<u8>,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// A 3xx's `Location` (design 26c §3.1: a short link's hop).
+    pub location: Option<String>,
 }
 
 /// One request as the canned fetch saw it (design 26b §2.2: the Storytel bookshelf's shape).
@@ -36,6 +38,8 @@ pub struct Recorded {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// The request's `follow` (design 26c §3.1).
+    pub follow: bool,
 }
 
 impl Recorded {
@@ -81,6 +85,19 @@ impl CannedFetch {
             Canned {
                 status,
                 body: body.into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Answers `url` with a redirect to `location` (never followed here: a canned answer is the
+    /// answer, as with `follow: false`).
+    pub fn redirect(&self, url: &str, status: u16, location: &str) {
+        self.canned(
+            url,
+            Canned {
+                status,
+                location: Some(location.to_string()),
                 ..Default::default()
             },
         );
@@ -211,6 +228,7 @@ impl crate::music_net::Source for CannedFetch {
                     .map(|(name, value)| (name.to_string(), value.clone()))
                     .collect(),
                 body: request.body.clone(),
+                follow: request.follow,
             });
             self.conditional
                 .lock()
@@ -262,6 +280,7 @@ impl crate::music_net::Source for CannedFetch {
                 etag: answer.etag,
                 last_modified: answer.last_modified,
                 retry_after: self.retry_after.lock().unwrap().get(&request.url).cloned(),
+                location: answer.location,
             })
         })
     }

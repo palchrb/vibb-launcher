@@ -1,0 +1,13 @@
+{
+  "href": "https://api.spotify.com/v1/artists/3FakeArtist00000000001/albums?include_groups=album,single&offset=0&limit=50&market=from_token",
+  "items": [
+    {"album_type": "album", "id": "2FakeAlbumX00000000001", "name": "Nattlys", "release_date": "2025-11-14", "type": "album"},
+    {"album_type": "album", "id": "2FakeAlbumZ00000000003", "name": "Gammel plate", "release_date": "2019", "type": "album"},
+    {"album_type": "single", "id": "2FakeAlbumY00000000002", "name": "Fjellsanger", "release_date": "2026-03", "type": "album"}
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total": 3
+}

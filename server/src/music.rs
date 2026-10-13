@@ -152,6 +152,13 @@ pub enum Link {
         kind: crate::storytel::TargetKind,
         id: String,
     },
+    /// A Spotify playlist, album, track, artist, show or episode (`spotify:<kind>:<id>`, design
+    /// 26c §3.1): only from the Spotify page's add form or an import ([entry_link]), never from the
+    /// generic add form ([parse_link] points to the Spotify page).
+    Spotify {
+        kind: crate::spotify::LinkKind,
+        id: String,
+    },
 }
 
 fn nrk_slug(segment: &str) -> Option<String> {
@@ -194,6 +201,7 @@ impl Link {
                 kind: crate::storytel::TargetKind::Book,
                 id,
             } => crate::storytel::book_target(id),
+            Link::Spotify { kind, id } => format!("spotify:{}:{id}", kind.as_str()),
         }
     }
 
@@ -201,24 +209,56 @@ impl Link {
         match self {
             Link::Rss { .. } => "rss",
             Link::Storytel { .. } => "storytel",
+            Link::Spotify { .. } => "spotify",
             _ => "nrk",
         }
     }
 }
 
-/// A stored entry's link (design 26b §2.4): a Storytel target through the grammar, an NRK or RSS
-/// target through [parse_link]; `None` for own files, Spotify and anything that doesn't parse.
+/// A stored entry's link (design 26b §2.4, 26c §3.4): a Storytel or Spotify target through its
+/// grammar (a Spotify one canonical only), an NRK or RSS target through [parse_link]; `None` for
+/// own files and anything that doesn't parse.
 pub fn entry_link(source: &str, target: &str) -> Option<Link> {
     match source {
         "storytel" => {
             crate::storytel::parse_target(target).map(|(kind, id)| Link::Storytel { kind, id })
         }
+        "spotify" => crate::spotify::parse_target(target).map(|reference| Link::Spotify {
+            kind: reference.kind,
+            id: reference.id,
+        }),
         "nrk" | "rss" => parse_link(target).ok(),
         _ => None,
     }
 }
 
-/// Parses a pasted link. `Err` is the parent-facing reason.
+/// The generic add form's answer to a Spotify link (design 26c §3.1): Spotify entries are made on
+/// their own page, which reads the link with the Web API and ticks the phones that play Spotify.
+pub const SPOTIFY_ON_ITS_PAGE: &str = "Spotify links are added on the Spotify page (/music/spotify) - its link is in the Spotify \
+     card below.";
+
+/// A Spotify link in any of its forms (a URI, `open.spotify.com`, a short link), or a link to a
+/// Spotify host.
+fn spotify_form(trimmed: &str) -> bool {
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("spotify:") {
+        return true;
+    }
+    let with_scheme = if lower.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    reqwest::Url::parse(&with_scheme).is_ok_and(|url| {
+        matches!(
+            url.host_str().map(str::to_ascii_lowercase).as_deref(),
+            Some("open.spotify.com" | "spotify.link" | "spotify.app.link")
+        )
+    })
+}
+
+/// Parses a pasted link. `Err` is the parent-facing reason; a Spotify link is pointed to the
+/// Spotify page ([SPOTIFY_ON_ITS_PAGE]).
 pub fn parse_link(input: &str) -> Result<Link, &'static str> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -226,6 +266,9 @@ pub fn parse_link(input: &str) -> Result<Link, &'static str> {
     }
     if trimmed.len() > 2000 || trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err("That doesn't look like a link.");
+    }
+    if spotify_form(trimmed) {
+        return Err(SPOTIFY_ON_ITS_PAGE);
     }
     let lower = trimmed.to_ascii_lowercase();
     let with_scheme = if lower.starts_with("http://") || lower.starts_with("https://") {
@@ -324,13 +367,39 @@ pub fn default_kind(source: &str) -> &'static str {
     }
 }
 
+/// [default_kind] by the entry's kind too (design 26c §3.2): a Spotify show or episode is a
+/// podcast, every other Spotify link music; every other source as [default_kind].
+pub fn default_kind_for(source: &str, target: Option<&str>) -> &'static str {
+    match (source, target.and_then(crate::spotify::parse_target)) {
+        ("spotify", Some(reference))
+            if matches!(
+                reference.kind,
+                crate::spotify::LinkKind::Show | crate::spotify::LinkKind::Episode
+            ) =>
+        {
+            "podcast"
+        }
+        _ => default_kind(source),
+    }
+}
+
 /// The category a new entry of `source` goes into unless the parent picks one: the first whose
 /// `default_kind` is the source's ([default_kind]), else the first category.
 pub fn default_category<'a>(
     categories: &'a [MusicCategory],
     source: &str,
 ) -> Option<&'a MusicCategory> {
-    let kind = default_kind(source);
+    default_category_for(categories, source, None)
+}
+
+/// [default_category] by the entry's kind ([default_kind_for]): a Spotify show goes to the
+/// podcasts.
+pub fn default_category_for<'a>(
+    categories: &'a [MusicCategory],
+    source: &str,
+    target: Option<&str>,
+) -> Option<&'a MusicCategory> {
+    let kind = default_kind_for(source, target);
     categories
         .iter()
         .find(|c| c.default_kind.as_deref() == Some(kind))
@@ -356,12 +425,18 @@ pub enum CheckError {
     /// `storytel_off`, `storytel_key`, `no_jwt`, `bad_shelf`, `too_big`, `http_<code>`, `network`,
     /// `timeout`), as [crate::storytel::StorytelError::code] gives it.
     Storytel(String),
+    /// A Spotify entry's check (design 26c §3.4): the code (`spotify_off`, `no_account`,
+    /// `reauthorize`, `app_refused`, `not_found`, `rate_limited`, `quota`, `network`, `timeout`,
+    /// `http_<n>`, `too_big`, `bad_answer`, `key`), as [crate::spotify::SpotifyError::code] gives
+    /// it.
+    Spotify(String),
 }
 
 impl CheckError {
     pub fn message(&self) -> String {
         match self {
             CheckError::Storytel(code) => storytel_check_message(code),
+            CheckError::Spotify(code) => spotify_check_message(code),
             CheckError::NotFound => {
                 "NRK doesn't know that podcast or series - check the link.".to_string()
             }
@@ -395,7 +470,7 @@ impl CheckError {
             CheckError::TooBig => "too_big".to_string(),
             CheckError::Network(_) => "network".to_string(),
             CheckError::Timeout => "timeout".to_string(),
-            CheckError::Storytel(code) => code.clone(),
+            CheckError::Storytel(code) | CheckError::Spotify(code) => code.clone(),
         }
     }
 
@@ -445,6 +520,24 @@ pub fn storytel_check_message(code: &str) -> String {
     }
 }
 
+/// The card's sentence for a Spotify entry never listed ("Couldn't list it: ...", design 26c
+/// §3.4).
+pub fn spotify_check_message(code: &str) -> String {
+    match code {
+        "no_items" => "Nothing in it can be played here.".to_string(),
+        "network" => "Spotify couldn't be reached.".to_string(),
+        "timeout" => "Spotify didn't answer in time.".to_string(),
+        other => {
+            let text = sweep_error_text("spotify", other);
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}.", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        }
+    }
+}
+
 impl From<crate::music_net::FetchError> for CheckError {
     fn from(err: crate::music_net::FetchError) -> CheckError {
         match err {
@@ -467,8 +560,9 @@ pub async fn check_link(
     let (url, slug) = match link {
         Link::NrkPodcast { slug } => (format!("{PSAPI}/radio/catalog/podcast/{slug}"), slug),
         Link::NrkSeries { slug, .. } => (format!("{PSAPI}/radio/catalog/series/{slug}"), slug),
-        // Never pasted: a Storytel entry comes from the shelf picker (design 26b §2.3).
-        Link::Storytel { .. } => return Err(CheckError::NotFound),
+        // Never pasted: a Storytel entry comes from the shelf picker (design 26b §2.3), a Spotify
+        // one from the Spotify page (design 26c §3.2).
+        Link::Storytel { .. } | Link::Spotify { .. } => return Err(CheckError::NotFound),
         Link::Rss { url } => {
             // The channel and its first episodes come first in a feed: a feed longer than the
             // cap is judged by what was read (qa-21-step1-code #10).
@@ -766,6 +860,17 @@ macro_rules! storytel_gate {
         "(e.source != 'storytel' OR EXISTS (SELECT 1 FROM device_policy p, music_storytel s \
          WHERE p.device_id = ? AND p.music_storytel = 1 AND s.id = 1 \
          AND s.ciphertext IS NOT NULL))"
+    };
+}
+
+/// The Spotify gate of a phone's listing (design 26c §3.6), for an entry `e` and the phone bound at
+/// its `?`: a Spotify entry only while the phone plays as an account (`music_spotify_account` set;
+/// the FK makes the account exist). Step 2a gates the listing route with it; the library, the
+/// cover and the art routes take it in step 2b.
+#[macro_export]
+macro_rules! spotify_gate {
+    () => {
+        "(e.source != 'spotify' OR EXISTS (SELECT 1 FROM device_policy p          JOIN music_spotify_accounts a ON a.id = p.music_spotify_account          WHERE p.device_id = ?))"
     };
 }
 
@@ -1613,6 +1718,33 @@ pub fn sweep_error_text(source: &str, code: &str) -> String {
         ("storytel", other) if other.starts_with("http_") => {
             format!("Storytel answered {}", &other[5..])
         }
+        // Spotify (design 26c §3.4).
+        ("spotify", "spotify_off") => "no Spotify app is set up on this server".to_string(),
+        ("spotify", "no_account") => "no Spotify account is logged in".to_string(),
+        ("spotify", "reauthorize") => "the Spotify logins need renewing".to_string(),
+        ("spotify", "app_refused") => {
+            "Spotify doesn't accept this server's client ID any more".to_string()
+        }
+        ("spotify", "not_found") => {
+            "Spotify doesn't let this app open it (or it was deleted)".to_string()
+        }
+        ("spotify", "rate_limited") => {
+            "Spotify asked this server to slow down - it tries again later".to_string()
+        }
+        ("spotify", "quota") => {
+            "Spotify's limit for this app was reached - it tries again later".to_string()
+        }
+        ("spotify", "network") => "Spotify couldn't be reached".to_string(),
+        ("spotify", "timeout") => "Spotify didn't answer in time".to_string(),
+        ("spotify", "too_big") => "Spotify's answer was too big to read".to_string(),
+        ("spotify", "bad_answer") => "Spotify sent an answer this server can't read".to_string(),
+        ("spotify", "key") => {
+            "a saved Spotify login was locked with another key - log in again".to_string()
+        }
+        ("spotify", "no_items") => "nothing in it can be played here".to_string(),
+        ("spotify", other) if other.starts_with("http_") => {
+            format!("Spotify answered {}", &other[5..])
+        }
         _ => entry_error_text(code),
     }
 }
@@ -2066,6 +2198,107 @@ mod tests {
         assert!(file_path(dir, "/etc/passwd").is_none());
         assert!(file_path(dir, "").is_none());
     }
+    /// Design 26c §3.1-§3.4: a Spotify entry's link from its canonical target only; the generic
+    /// add form points every Spotify form to the Spotify page; a Spotify show or episode goes to
+    /// the podcasts, every other Spotify kind to music.
+    #[test]
+    fn spotify_entries_have_their_own_link_and_kind() {
+        use crate::spotify::LinkKind;
+        let id = "0FakePlaylistKveld0001";
+        let link = entry_link("spotify", &format!("spotify:playlist:{id}")).unwrap();
+        assert_eq!(
+            link,
+            Link::Spotify {
+                kind: LinkKind::Playlist,
+                id: id.to_string()
+            }
+        );
+        assert_eq!(link.target(), format!("spotify:playlist:{id}"));
+        assert_eq!(link.source(), "spotify");
+        for stored in [
+            format!("https://open.spotify.com/playlist/{id}"),
+            format!("spotify:audiobook:{id}"),
+            "spotify:playlist:a-b".to_string(),
+        ] {
+            assert_eq!(entry_link("spotify", &stored), None, "{stored}");
+        }
+        for pasted in [
+            format!("spotify:playlist:{id}"),
+            format!("https://open.spotify.com/playlist/{id}?si=x"),
+            format!("open.spotify.com/intl-de/album/{id}"),
+            "https://spotify.link/AbC123".to_string(),
+            "https://spotify.app.link/AbC123".to_string(),
+            format!("https://open.spotify.com/audiobook/{id}"),
+            "SPOTIFY:user:fakekid:collection".to_string(),
+        ] {
+            assert_eq!(parse_link(&pasted), Err(SPOTIFY_ON_ITS_PAGE), "{pasted}");
+        }
+        assert!(SPOTIFY_ON_ITS_PAGE.contains("/music/spotify"));
+        // Not Spotify's hosts: as before.
+        assert!(matches!(
+            parse_link("https://open.spotify.com.example.org/feed.rss"),
+            Ok(Link::Rss { .. })
+        ));
+        for (kind, expected) in [
+            ("show", "podcast"),
+            ("episode", "podcast"),
+            ("playlist", "music"),
+            ("album", "music"),
+            ("track", "music"),
+            ("artist", "music"),
+        ] {
+            assert_eq!(
+                default_kind_for("spotify", Some(&format!("spotify:{kind}:{id}"))),
+                expected,
+                "{kind}"
+            );
+        }
+        assert_eq!(default_kind_for("spotify", None), "music");
+        assert_eq!(
+            default_kind_for("nrk", Some("https://radio.nrk.no/podkast/x")),
+            "podcast"
+        );
+        assert_eq!(default_kind_for("storytel", None), "audiobook");
+        let category = |id: i64, kind: &str| MusicCategory {
+            id,
+            name: kind.to_string(),
+            icon: "music".to_string(),
+            color: "blue".to_string(),
+            sort: id,
+            default_kind: Some(kind.to_string()),
+        };
+        let categories = [category(1, "music"), category(4, "podcast")];
+        assert_eq!(
+            default_category_for(&categories, "spotify", Some(&format!("spotify:show:{id}")))
+                .map(|c| c.id),
+            Some(4),
+            "a Spotify show goes to Podkast"
+        );
+        assert_eq!(
+            default_category_for(&categories, "spotify", Some(&format!("spotify:album:{id}")))
+                .map(|c| c.id),
+            Some(1)
+        );
+        assert_eq!(default_category(&categories, "rss").map(|c| c.id), Some(4));
+        assert!(
+            CheckError::Spotify("not_found".to_string())
+                .message()
+                .starts_with("Spotify doesn't let this app open it")
+        );
+        assert_eq!(
+            CheckError::Spotify("http_502".to_string()).message(),
+            "Spotify answered 502."
+        );
+        assert_eq!(
+            sweep_error_text("spotify", "reauthorize"),
+            "the Spotify logins need renewing"
+        );
+        assert_eq!(
+            sweep_error_text("nrk", "not_found"),
+            "not found at the source"
+        );
+    }
+
     #[test]
     fn storytel_entries_have_their_own_link_and_label() {
         use crate::storytel::TargetKind;

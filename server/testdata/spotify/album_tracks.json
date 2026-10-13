@@ -1,0 +1,16 @@
+{
+  "href": "https://api.spotify.com/v1/albums/2FakeAlbumX00000000001/tracks?offset=50&limit=50",
+  "items": [
+    {
+      "artists": [{"id": "3FakeArtist00000000001", "name": "Ola Fjell", "type": "artist"}],
+      "disc_number": 2, "duration_ms": 240000, "id": "1FakeTrackG00000000007",
+      "is_local": false, "is_playable": true, "name": "Bonusspor", "track_number": 1,
+      "type": "track", "uri": "spotify:track:1FakeTrackG00000000007"
+    }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 50,
+  "previous": "https://api.spotify.com/v1/albums/2FakeAlbumX00000000001/tracks?offset=0&limit=50",
+  "total": 4
+}

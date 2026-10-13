@@ -1,0 +1,47 @@
+{
+  "album_type": "album",
+  "artists": [
+    {"id": "3FakeArtist00000000001", "name": "Ola Fjell", "type": "artist"},
+    {"id": "3FakeArtist00000000002", "name": "Kari Li", "type": "artist"}
+  ],
+  "id": "2FakeAlbumX00000000001",
+  "images": [
+    {"height": 640, "url": "https://i.scdn.co/image/fake-album-x-640", "width": 640},
+    {"height": 300, "url": "https://i.scdn.co/image/fake-album-x-300", "width": 300},
+    {"height": 64, "url": "https://i.scdn.co/image/fake-album-x-64", "width": 64}
+  ],
+  "name": "Nattlys",
+  "release_date": "2025-11-14",
+  "release_date_precision": "day",
+  "total_tracks": 4,
+  "tracks": {
+    "href": "https://api.spotify.com/v1/albums/2FakeAlbumX00000000001/tracks?offset=0&limit=50",
+    "items": [
+      {
+        "artists": [{"id": "3FakeArtist00000000001", "name": "Ola Fjell", "type": "artist"}],
+        "disc_number": 1, "duration_ms": 201000, "id": "1FakeTrackA00000000001",
+        "is_local": false, "is_playable": true, "name": "Stille natt", "track_number": 1,
+        "type": "track", "uri": "spotify:track:1FakeTrackA00000000001"
+      },
+      {
+        "artists": [{"id": "3FakeArtist00000000001", "name": "Ola Fjell", "type": "artist"}],
+        "disc_number": 1, "duration_ms": 160000, "id": "1FakeTrackF00000000006",
+        "is_local": false, "is_playable": false, "name": "Bare i Sverige", "track_number": 2,
+        "type": "track", "uri": "spotify:track:1FakeTrackF00000000006"
+      },
+      {
+        "artists": [{"id": "3FakeArtist00000000002", "name": "Kari Li", "type": "artist"}],
+        "disc_number": 1, "duration_ms": 222000, "id": "1FakeTrackC00000000003",
+        "is_local": false, "is_playable": true, "name": "Månesang", "track_number": 3,
+        "type": "track", "uri": "spotify:track:1FakeTrackC00000000003"
+      }
+    ],
+    "limit": 50,
+    "next": "https://api.spotify.com/v1/albums/2FakeAlbumX00000000001/tracks?offset=50&limit=50",
+    "offset": 0,
+    "previous": null,
+    "total": 4
+  },
+  "type": "album",
+  "uri": "spotify:album:2FakeAlbumX00000000001"
+}

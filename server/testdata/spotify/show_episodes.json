@@ -1,0 +1,29 @@
+{
+  "href": "https://api.spotify.com/v1/shows/4FakeShow0000000000001/episodes?offset=0&limit=50&market=from_token",
+  "items": [
+    {
+      "duration_ms": 900000, "id": "5FakeEpisode0000000003", "is_playable": true,
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-episode-3", "width": 640}],
+      "name": "Episode 3: Trollet", "release_date": "2026-10-10", "type": "episode",
+      "uri": "spotify:episode:5FakeEpisode0000000003"
+    },
+    null,
+    {
+      "duration_ms": 880000, "id": "5FakeEpisode0000000002", "is_playable": false,
+      "images": [{"height": 640, "url": "https://i.scdn.co/image/fake-episode-2", "width": 640}],
+      "name": "Episode 2: Ikke her", "release_date": "2026-10-03", "type": "episode",
+      "uri": "spotify:episode:5FakeEpisode0000000002"
+    },
+    {
+      "duration_ms": 870000, "id": "5FakeEpisode0000000001", "is_playable": true,
+      "images": [{"height": 300, "url": "https://i.scdn.co/image/fake-show-300", "width": 300}],
+      "name": "Episode 1: Prinsessen", "release_date": "2026-09-26", "type": "episode",
+      "uri": "spotify:episode:5FakeEpisode0000000001"
+    }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total": 4
+}
