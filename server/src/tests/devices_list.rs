@@ -331,7 +331,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         "<a class=\"attention attention-action\" href=\"/devices/{anna}#time\" data-attention=\"launcher-without-rules\">"
     )));
     // The targets exist on their pages.
-    for anchor in ["status", "parent-pin", "time"] {
+    for anchor in ["status", "time"] {
         assert!(anna_page.contains(&format!("id=\"{anchor}\"")), "{anchor}");
     }
     for (page, anchor) in [
@@ -341,6 +341,8 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         ("advanced", "restrictions"),
         ("advanced", "app-screens"),
         ("advanced", "connection"),
+        ("lock", "parent-pin"),
+        ("lock", "child-pin"),
     ] {
         let html = app
             .get_page(&format!("/devices/{anna}/{page}"), &cookie)

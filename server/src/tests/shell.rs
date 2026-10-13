@@ -196,7 +196,7 @@ async fn auto_saving_controls_use_the_static_script() {
         Some(format!("/devices/{id}/hardening").as_str())
     );
     let html = app
-        .get_page(&device_page(id, Section::Summary), &cookie)
+        .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
     assert!(autosaves(&html, "screen_timeout_seconds"));

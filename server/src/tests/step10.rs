@@ -1,11 +1,12 @@
 //! Step 10 (design 10-lock-and-call-ui.md, QA 10): the kid's PIN for handy's own lock screen -
 //! validation, the override-PIN cross-checks, the policy's `kid_lock`, the safe-boot default,
-//! the phone's `lock_state` (stored sanitized and capped) and the device page's warnings.
+//! the phone's `lock_state` (stored sanitized and capped) and what Lock Screen & PINs says about it
+//! (design 31 step 4; the device page's Screen lock card before).
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
-use super::TestApp;
+use super::{Section, TestApp, assert_redirect, device_page};
 
 async fn policy(app: &TestApp, token: &str) -> Value {
     let res = app
@@ -90,13 +91,32 @@ async fn kid_pin_needs_an_override_pin_first() {
     let (id, token) = app.enrolled_device("phone").await;
 
     let location = set_kid_pin(&app, &cookie, id, "1234").await.unwrap();
-    assert!(location.contains("notice=needs_override"), "{location}");
+    // Back to Lock Screen & PINs, on the Child PIN group, where the flash is.
+    assert_eq!(
+        location,
+        format!(
+            "{}?notice=needs_override#child-pin",
+            device_page(id, Section::Lock)
+        )
+    );
     assert_eq!(kid_columns(&app, id).await, (None, None, None));
     assert!(policy(&app, &token).await["kid_lock"].is_null());
     assert!(!safe_boot(&app, id).await);
 
     let html = app.get_page(&location, &cookie).await.text();
-    assert!(html.contains("set a parent PIN first"), "{html}");
+    assert!(
+        html.contains("Not saved: set a Parent PIN first."),
+        "{html}"
+    );
+    // The form says so before a save too.
+    let html = app
+        .get_page(&device_page(id, Section::Lock), &cookie)
+        .await
+        .text();
+    assert!(
+        html.contains("Set a Parent PIN first: it opens the lock"),
+        "{html}"
+    );
 }
 
 #[tokio::test]
@@ -151,10 +171,11 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
     assert!(!safe_boot(&app, id).await);
     assert_eq!(kid_columns(&app, id).await.2, Some(6));
     let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
     assert!(html.contains("Safe mode is allowed"), "{html}");
+    assert!(html.contains(">On · 6 digits</span>"), "{html}");
 }
 
 #[tokio::test]
@@ -225,7 +246,11 @@ async fn clearing_the_kid_pin_switches_the_lock_off() {
             &[("clear_kid_pin", "on")],
         )
         .await;
-    assert!(res.location().unwrap().contains("notice=cleared"));
+    assert_redirect(
+        &res,
+        &format!("{}?notice=cleared", device_page(id, Section::Lock)),
+        Some("child-pin"),
+    );
     assert!(policy(&app, &token).await["kid_lock"].is_null());
     assert_eq!(kid_columns(&app, id).await, (None, None, None));
     assert_eq!(events(&app, "kid_pin_cleared").await, 1);
@@ -315,12 +340,22 @@ async fn lock_state_is_stored_sanitized_and_capped() {
     assert_eq!(json["inactive"].as_str().unwrap().len(), 64);
 }
 
-async fn device_page(app: &TestApp, cookie: &str, id: i64) -> String {
-    app.get_page(&format!("/devices/{id}"), cookie).await.text()
+async fn lock_page(app: &TestApp, cookie: &str, id: i64) -> String {
+    app.get_page(&device_page(id, Section::Lock), cookie)
+        .await
+        .text()
+}
+
+/// The Child PIN group's HTML.
+fn child_group(html: &str) -> &str {
+    let start = html
+        .find("<section id=\"child-pin\"")
+        .expect("the Child PIN group");
+    &html[start..start + html[start..].find("</section>").unwrap()]
 }
 
 #[tokio::test]
-async fn device_page_warns_about_the_lock_state() {
+async fn lock_page_warns_about_the_lock_state() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -328,16 +363,19 @@ async fn device_page_warns_about_the_lock_state() {
     set_kid_pin(&app, &cookie, id, "1357").await;
     // A launcher without the capability.
     post_status(&app, &token, json!({ "capabilities": ["call_policy_v1"] })).await;
+    let html = lock_page(&app, &cookie, id).await;
     assert!(
-        device_page(&app, &cookie, id)
-            .await
-            .contains("lock yet - update the launcher")
+        child_group(&html).contains("Vibb needs an update"),
+        "{html}"
     );
 
     for (inactive, text) in [
-        ("crash_guard", "crashed several times"),
-        ("android_credential", "Remove the Android screen lock"),
-        ("bad_hash", "so only the parent PIN ("),
+        ("crash_guard", "Lock turned off after crashes"),
+        ("bad_hash", "Phone can&#39;t read the Child PIN"),
+        (
+            "android_credential",
+            "Android&#39;s screen lock is still on",
+        ),
     ] {
         post_status(
             &app,
@@ -345,23 +383,37 @@ async fn device_page_warns_about_the_lock_state() {
             json!({ "capabilities": ["pin_lock_v1"], "lock_state": { "inactive": inactive } }),
         )
         .await;
-        let html = device_page(&app, &cookie, id).await;
-        assert!(html.contains(text), "{inactive}: {html}");
+        let html = lock_page(&app, &cookie, id).await;
+        assert!(child_group(&html).contains(text), "{inactive}: {html}");
     }
+    // The last one's adb command is behind the warning's ⓘ, not in its sentence.
+    let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    let command = group.find("adb shell locksettings clear").expect("the fix");
+    assert!(
+        group[..command].contains("aria-label=\"How to fix it\""),
+        "{group}"
+    );
 
     post_status(
         &app,
         &token,
         json!({ "capabilities": ["pin_lock_v1"],
-                "lock_state": { "active": true, "locked": false, "inactive": null } }),
+                "lock_state": { "active": true, "locked": false, "failures": 2, "inactive": null } }),
     )
     .await;
-    let html = device_page(&app, &cookie, id).await;
-    assert!(html.contains("The lock is on"));
-    assert!(!html.contains("Safe mode is allowed"));
-    assert!(html.contains("Parent code"));
+    let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    assert!(!group.contains("data-warning"), "{group}");
+    assert!(group.contains("<span class=\"row-label\">On the phone</span>"));
     assert!(
-        html.contains("after the 5th the phone waits 30 s"),
+        group.contains("<span class=\"row-value\">Unlocked · "),
+        "{group}"
+    );
+    assert!(group.contains("<span class=\"row-label\">Wrong PINs in a row</span>"));
+    assert!(group.contains("Parent code"));
+    assert!(
+        group.contains("After 5 wrong PINs the phone waits 30 s"),
         "qa-10-code #8"
     );
 }

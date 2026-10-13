@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -817,7 +817,8 @@ value.
   with QR code ›**, and today's notices, `access.typed_paused` included (L6);
 - Remove.
 
-The sub-page rows show greyed out with "After setup".
+The sub-page rows show greyed out with "After setup", except Lock Screen & PINs: the PINs can be set first (step 4,
+choice 11), so the phone's first policy already has its Parent PIN. Step 10 keeps that row live.
 
 ### 3.3 Apps
 
@@ -2233,3 +2234,111 @@ Choices made while building:
 | L7 | Add App's wrapper has no `role="radiogroup"`/`aria-labelledby` any more: the two radios with one name are the group. |
 | Nits | (1) the header partial says only definition counts ("set it to anything"); (2) `style.css?v=11` kept, `v=12` if step 3's CSS lands first; (3) `DEPLOY.md`'s launcher setup says Add App, "File name contains", "Tag starts with" and that the package is pinned from the APK; (4) "Check Now" in the refused-release detail; (5) `version_of` strips a leading "v" first, then takes the first "-v" before a digit (`v2.1.0-v8a` -> "2.1.0-v8a"); (6) phones sort by name the same way on the tab and the app page (the Devices list's binary order); (7) the launcher's row says "no phones" until one is set up (`the_launcher_is_on_all_phones_only_once_there_are_some`); (8) the two result ⓘ are labelled "More about the refused upload/package"; (9) `.group-tiles` is gone: step 2's `.group-avatars` hairline reads `--avatar-inset` (72px), `.group-small` sets 64px; the unstyled `.flash-line`, `.flash-info` and `.catalog-empty` hooks are gone; (10) the tab's phone rows still open the device page at its top until step 6 (choice 1); `device_detail.html` is step 3's. |
 | Mutations | Each surviving mutation the review lists now fails a test: confirm redirecting to `/apps` (the redirect table, the confirm test), 404 as `GithubError` (`github_answers_are_classified`), download errors re-kinded (`a_failed_download_leaves_no_file`), Forget's form outside its confirm (the app page test), `\|safe` on the failure detail, the catalog label or the shared result partial (the escaping test), Play's core counted (the tab test); and dropping the `#upload` fragment fails three tests. |
+
+## Step 4 implementation status (2026-10-13)
+
+Built on branch `design-31-s4` (from `main` at `571f86fa`, steps 1-3 and 11 merged); server only, no migration, no
+new crate, no API change (the policy JSON and the launcher are untouched).
+- **Route:** `GET /devices/{id}/lock` (`device_pages::view_lock`, `device_lock.html`). Unknown phone: 404, a DB
+  error 500 (`load_device`). Every POST route is unchanged; only where the forms return moved.
+- **Lock Screen & PINs**, in the LockScreen mockup's order:
+  - **Child PIN:** the row "Child PIN · On · 4 digits" / "Off" opens a `<details>` with the field and **Save Child
+    PIN** (`kid-lock`); "Set a Parent PIN first" sits in it while there is none. The phone's lock as rows (On the
+    phone · Locked/Unlocked/Waiting for a report, Wrong PINs in a row, Next try in, Stepped aside) and warnings
+    above the group (Safe mode is allowed, Vibb needs an update, the `inactive` reasons, Calls can't ring over the
+    lock). **Remove Child PIN…** is a `<details>` confirm (M6). The flash in the group. Footer "Locks the phone when
+    the screen turns off." with §4.5 #1/#2 and §6.0's back-off facts behind its ⓘ.
+  - **Parent PIN:** the row "Parent PIN · Set / Not set" opens its form (field, hint, "Remove it instead" kept as a
+    checkbox, **Save Parent PIN**); warnings above (No Parent PIN set - when managed, as the Attention alarm; easy to
+    guess; the older launcher's "used offline"); the flash in the group; the footer "Opens the phone's settings and
+    lifts limits, even offline." with what it opens, the lockout ladder and "typed where your child could see?"
+    behind its ⓘ. **Recent use** (its own group under it): the last 10 events as rows, title · local time (exact in
+    `title`), the details under the title, a lockout red.
+  - **Screen:** "Turn off after" as an inline select (`screen-timeout`); "On the phone now" only while the phone
+    reports another value. Footer: "With a Child PIN, the phone locks when the screen turns off."
+  - **Lock screen:** "Background" as an inline select (`lock-wallpaper`: Same as Home or one of the phone's ticked
+    wallpapers) and the "Show message text" switch (`lock-screen`); footer "Anyone holding the phone can read the
+    message text." with what the lock's first page shows, Low 8's names/login-codes caution and the photo caution
+    behind its ⓘ.
+  - **Notifications on the lock screen:** one switch per app (`lock-screen/apps`, `#lock-screen-app-{pkg}` kept), a
+    ticked app outside the list with "Not allowed" / "Not on the phone" under its name, the empty and unreadable
+    states, the warnings above; footer "Missed calls always show."
+- **Redirects** (§5.1): `kid-lock` → `/devices/{id}/lock?notice=…#child-pin`, `parent-pin` →
+  `/lock?notice=…#parent-pin` (each lands on its group, where its flash is); `screen-timeout`, `lock-wallpaper`,
+  `lock-screen`, `lock-screen/apps` → `/devices/{id}/lock` with **no fragment**, so `scroll-restore.js` keeps the
+  exact place (§5.1.4, qa-31-s3-code M3). Pinned by the redirect table built from the rendered forms.
+- **The device page:** the Screen lock, Remove the kid's PIN, Parent PIN and Screen timeout cards, the Wallpapers
+  card's "Lock screen background" and the Apps card's "On the lock screen" are gone. A row **Lock Screen & PINs ·
+  PIN on/off** (the mockup's lock tile) heads the bottom group, before About This Phone and Advanced. The Status
+  card's Parent PIN links (foreign app, notices, easy PIN) and the no-PIN card point to `/lock#parent-pin`.
+  Attention targets moved: no / easy Parent PIN → `/lock#parent-pin`, "Lock is off on the phone" → `/lock#child-pin`.
+- **Rust texts (M5):** `kid_lock::LockNote` and `kid_lock::Inactive` replace `LockCard.lines`/`warnings` and
+  `inactive_warning` (deleted, with their unit tests rewritten); `lock_glance::Note` replaces `notes`' sentences;
+  `parent_pin::event_row` (typed rows, local times, an end past midnight with its date and clock) replaces
+  `event_line` for the PWA, and `parent_pin::notices` takes the zone (local times; "Parent PIN" spelled as §4.3);
+  the security log keeps its UTC sentences (`log_line`, step 14 relabels it). `kid_lock::flash_text` and
+  `parent_pin::flash_text` reworded (Child PIN / Parent PIN, no "sync"). `device_pages::Note` gained `fix`: an
+  expert fix (an adb command, a package name) shown only behind an ⓘ after a warning's sentence (§4.2).
+- **Shared builder:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is cut
+  out of `render_device`; the device page and Lock Screen & PINs (`lock_screen_card`) use it, and step 6 can too.
+- **CSS** `?v=13`: `details.edit` (a row that opens its form, the chevron turning), `.edit-body`, `.field-hint`, the
+  warning's inline ⓘ (`.attention-sub details.info`).
+- **Docs (L8):** `server/CLAUDE.md` (step 10's PIN lock, the screen timeout, Parent PIN, the lock's glance page, the
+  scroll rule's example, and a "Lock Screen & PINs" section), `docs/testing/emulator.md` (setup and the lock runbook),
+  `PLAN.md` (the glance page), the Locate page's Lock hint.
+- **Tests:** `tests/device_pages.rs` (the moved forms gone from the device page, its row and value, the groups'
+  order, the PIN forms inside their `<details>`, the Remove confirm, the redirect table, a `<noscript>` Save for every
+  auto-save, a phone not set up, the 404); repointed through `device_page(id, Section::Lock)` (new): `parent_pin.rs`,
+  `step10.rs` (the lock-state warnings, the adb fix behind its ⓘ), `lock_glance.rs`, `window_relock.rs` (the
+  foreign-app link), `device_api.rs` (the screen timeout), `wallpapers.rs` (the background), `devices_list.rs` (the
+  Attention targets exist), `shell.rs`; unit tests in `kid_lock`, `parent_pin` (rows and notices in Oslo time),
+  `lock_glance`, `attention`. `cargo test` 757 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy:
+  the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **The PIN rows open a form, not a picker:** §3.2 says the row "opens a `<details>` under it with the change field
+   and Save". The forms keep `required` off the Parent PIN field (an empty field with "Remove it instead" ticked is
+   a valid post) and put it on the Child PIN's (its remove has its own form now).
+2. **A refusal opens the form again** (and an easy Parent PIN, which is saved but invites a better one), so the
+   parent can retype without hunting for the row.
+3. **"Recent use" is its own group** under the Parent PIN's footer, not rows in the PIN group: up to 10 rows would
+   push the footer and its ⓘ a screen away.
+4. **"On the phone now"** for the screen timeout shows only while the reported value differs from the chosen one
+   (the old card always repeated it).
+5. **The device page keeps the Status card's Parent PIN notices** and the no-PIN card until step 10 builds the
+   summary; their links go to this page.
+6. **Warnings with an adb fix** (`android_credential`, a VoIP app without full-screen intents) show the command and
+   the package name only behind the warning's ⓘ (§4.2), via `Note.fix`. Step 3's Unsuspendable note still lists its
+   packages in the sentence; it can move to `fix` when Advanced is next touched.
+7. **"No Parent PIN set"** is a warning on this page too (only when managed, as the Attention alarm), so the
+   Attention row lands on its explanation.
+8. **Labels:** "Turn off after", "Background", "Show message text", "Notifications on the lock screen" and the
+   footers follow the LockScreen mockup and §6.0's table; "Show what's playing" is not built (no such setting; the
+   ⓘ says the lock shows it).
+9. **The Child PIN's ⓘ** drops the old card's fingerprint, safe-mode and Locate sentences: safe mode has its own
+   warning while it is allowed, and the rest is §4.5's cut.
+10. **A ticked app outside the list** still shows its package name as its label (the server knows no other name for
+    it), as before.
+11. **A phone not set up has the page** (qa-31-s4-code L6): its PINs can be set before setup, so the first policy the
+    phone fetches already has a Parent PIN and it is never managed without one (the old device page offered the PIN
+    cards before setup too). §3.2's not-enrolled paragraph now makes this row the exception to "After setup".
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses only step 1-3
+  components plus the four small rules above.
+
+**Fix round after the code QA** (`qa-31-s4-code.md`: 0 High, 0 Medium, 6 Low, 4 nits; all fixed):
+
+| # | Fix |
+|---|---|
+| L1 | `parent_pin::flashes_render_inside_their_groups` checks that a refused Child PIN (`needs_override`) opens its form and a saved one (`saved`) doesn't. The mutation `child_open: false` now fails it. |
+| L2 | `device_pages::lock_screen_and_pins_holds_the_moved_forms` checks `new_pin` is `type="password"` with `autocomplete="new-password"` and `new_kid_pin` plain text. The mutation `type="text"` now fails it. |
+| L3 | "On the phone" reads "Locked · 10:59" / "Unlocked · yesterday 21:40" (`Zone::when` of the report's `reported_at`), "At the phone's last report." behind its ⓘ; `LockNote::note` takes the time. Test: `device_pages::the_lock_state_says_when_it_was_reported` (a report from yesterday). |
+| L4 | `device_pages::load_policy` returns a `Result`: a missing row is the defaults, a DB error the 500 "Couldn't read this phone - check the server log." on Lock Screen & PINs, About and Advanced. Test: `device_pages::an_unreadable_policy_is_an_error_not_off`. |
+| L5 | CrashGuard: "…tries it again within 10 minutes of its next check-in…"; KeyguardNotDisabled: "Vibb may no longer manage this phone.", the device-owner check (`adb shell dpm list-owners`) in its `fix`. The warnings test hides "sync", "device owner" and an unknown code. |
+| L6 | Choice 11 above, and §3.2's not-enrolled paragraph amended. |
+| N1 | `server/CLAUDE.md`: the lock background returns to `/devices/{id}/lock`; wrong tries are on Lock Screen & PINs › Recent use and counted in the Status card. |
+| N2 | `parent_pin::card(…, with_events)`: the device page passes `false` and loads no event list. |
+| N3 | `device_pages::has_capability`, used by Lock Screen & PINs and `escapes_card`. |
+| N4 | An unknown `inactive` code: "Vibb reported a reason this server doesn't know.", the code behind the ⓘ. |
+| Checks | `cargo test` 759 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |

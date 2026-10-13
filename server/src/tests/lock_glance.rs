@@ -253,14 +253,11 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
         v
     };
     assert_eq!(strip(before), strip(after));
-    // The device page says so instead of showing every box unticked.
+    // Lock Screen & PINs says so instead of showing every switch off.
     let cookie = app.admin_cookie().await;
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    let page = app.get_page(&lock_page(id), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(
-        subsection(&page.text())
-            .contains("The apps shown on the lock screen couldn't be read - check the server log.")
-    );
+    assert!(subsection(&page.text()).contains("The apps couldn't be read. Check the server log."));
 }
 
 // ---- the routes -------------------------------------------------------------------------------------
@@ -276,7 +273,7 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
         let res = tick(&app, Some(&cookie), id, "org.thoughtcrime.securesms", true).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
         // Exactly the page, no fragment: scroll-restore.js keeps the parent's place.
-        assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+        super::assert_redirect(&res, &lock_page(id), None);
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(
@@ -290,7 +287,7 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
 
     for _ in 0..2 {
         let res = tick(&app, Some(&cookie), id, ELEMENT_X, false).await;
-        assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+        super::assert_redirect(&res, &lock_page(id), None);
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(ticks(&app, id).await, ["org.thoughtcrime.securesms"]);
@@ -319,7 +316,7 @@ async fn the_text_switch_saves_logs_and_nudges() {
     for on in [true, true, false, false] {
         let res = switch(&app, Some(&cookie), id, on).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+        super::assert_redirect(&res, &lock_page(id), None);
         assert_eq!(nudges.try_recv().ok(), Some(id));
         assert_eq!(text_switch(&app, id).await, on);
         assert_eq!(
@@ -369,7 +366,7 @@ async fn refused_saves_write_nothing() {
     // No session: the login, and nothing written.
     let res = tick(&app, None, id, "com.a.chat", true).await;
     assert!(res.status.is_redirection());
-    assert_ne!(res.location(), Some(format!("/devices/{id}").as_str()));
+    assert_ne!(res.location(), Some(lock_page(id).as_str()));
     let res = tick(&app, None, id, ELEMENT_X, false).await;
     assert!(res.status.is_redirection());
     let res = switch(&app, None, id, true).await;
@@ -409,27 +406,34 @@ async fn refused_saves_write_nothing() {
     assert!(events(&app, "lock_screen_text_changed").await.is_empty());
 }
 
-// ---- the device page ----------------------------------------------------------------------------------
+// ---- Lock Screen & PINs (design 31 step 4; the device page's Apps card before) ----------------
 
-/// The subsection's HTML (from its heading to "Names and icons" or the next card).
-fn subsection(page: &str) -> &str {
-    let start = page
-        .find(r#"<h3 id="lock-screen">On the lock screen</h3>"#)
-        .expect("the subsection");
-    let rest = &page[start..];
-    let end = ["<h3>Names and icons", r#"<div class="card" id="music">"#]
-        .iter()
-        .filter_map(|marker| rest.find(marker))
-        .min()
-        .unwrap_or(rest.len());
-    &rest[..end]
+fn lock_page(id: i64) -> String {
+    super::device_page(id, super::Section::Lock)
 }
 
-/// The mini-form of `package`: its checkbox state and its note, if it is listed.
+/// The "Lock screen" and "Notifications on the lock screen" groups' HTML.
+fn subsection(page: &str) -> &str {
+    let start = page
+        .find(r#"<section id="lock-screen""#)
+        .expect("the Lock screen group");
+    let notifications = page[start..]
+        .find(r#"<section id="notifications""#)
+        .expect("the Notifications group")
+        + start;
+    let end = page[notifications..].find("</section>").unwrap() + notifications;
+    &page[start..end]
+}
+
+/// The form of `package`: its switch and its note, if it is listed.
 fn form_of(section: &str, package: &str) -> Option<String> {
     let id = section.find(&format!(r#"id="lock-screen-app-{package}""#))?;
     let rest = &section[section[..id].rfind("<form").unwrap()..];
     Some(rest[..rest.find("</form>").unwrap()].to_string())
+}
+
+fn switch_on(form: &str) -> bool {
+    super::input_checked(form, "on", "on").expect("a switch")
 }
 
 #[tokio::test]
@@ -467,55 +471,55 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     .await
     .unwrap();
 
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    let page = app.get_page(&lock_page(id), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
     let page = page.text();
-    // After the allow list, before "Names and icons".
-    let at = page.find(r#"id="lock-screen""#).unwrap();
-    assert!(
-        page.find(&format!(r#"action="/devices/{id}/apps/toggle""#))
-            .unwrap()
-            < at
-    );
-    assert!(at < page.find("Names and icons on the phone").unwrap());
+    // Gone from the device page.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("lock-screen"), "{summary}");
     let section = subsection(&page);
-    assert!(
-        section
-            .contains("Nothing can be answered, marked as read or dismissed from the lock screen")
-    );
+    assert!(section.contains("Nothing can be answered or dismissed there"));
     assert!(section.contains("login codes show too"));
-    assert!(section.contains(&format!(r#"action="/devices/{id}/lock-screen""#)));
-    assert!(section.contains(r#"name="show_text""#));
-    assert!(!section.contains(r#"name="show_text" value="on" checked"#));
+    assert!(section.contains("Missed calls always show."));
+    assert_eq!(
+        super::form_action_of(section, "show_text"),
+        Some(format!("/devices/{id}/lock-screen").as_str())
+    );
+    assert!(super::autosaves(section, "show_text"));
+    assert_eq!(
+        super::input_checked(section, "show_text", "on"),
+        Some(false)
+    );
 
     let element = form_of(section, ELEMENT_X).expect("Element X listed");
     assert!(
-        element.contains("checked") && element.contains("Element X"),
+        switch_on(&element) && element.contains("Element X"),
         "{element}"
     );
     assert!(element.contains(&format!(r#"action="/devices/{id}/lock-screen/apps""#)));
+    assert!(element.contains(r#"role="switch""#));
     assert!(super::autosaves(&element, "on"));
     let signal = form_of(section, "org.thoughtcrime.securesms").expect("Signal listed");
-    assert!(
-        !signal.contains("checked") && signal.contains("Signal"),
-        "{signal}"
-    );
+    assert!(!switch_on(&signal) && signal.contains("Signal"), "{signal}");
     // Not allowed: not listed - unless ticked, then with its note so it can be removed.
     assert!(form_of(section, "com.example.game").is_none());
     assert!(form_of(section, "com.android.vending").is_none());
     let old = form_of(section, "com.old.chat").expect("the ticked, not allowed app");
     assert!(
-        old.contains("checked") && old.contains("not allowed - ticked"),
+        switch_on(&old) && old.contains("<span class=\"row-sub\">Not allowed</span>"),
         "{old}"
     );
 
-    // The switch on shows checked.
+    // The switch on shows on.
     switch(&app, Some(&cookie), id, true).await;
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(subsection(&page).contains(r#"name="show_text" value="on" checked"#));
+    let page = app.get_page(&lock_page(id), &cookie).await.text();
+    assert_eq!(
+        super::input_checked(subsection(&page), "show_text", "on"),
+        Some(true)
+    );
 }
 
 #[tokio::test]
@@ -537,10 +541,7 @@ async fn without_an_allowlist_every_reported_app_is_listed() {
     .await;
     // Apps unmanaged (a calls-only phone): no allowlist, but the lock may still be on (QA Low 7).
     set_allowlist(&app, id, None).await;
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let page = app.get_page(&lock_page(id), &cookie).await.text();
     let section = subsection(&page);
     assert!(form_of(section, "com.example.game").is_some());
     assert!(form_of(section, "org.thoughtcrime.securesms").is_some());
@@ -549,7 +550,7 @@ async fn without_an_allowlist_every_reported_app_is_listed() {
     // Element X is ticked by default but not on this phone: still listed, so it can be unticked.
     let element = form_of(section, ELEMENT_X).expect("the default tick");
     assert!(
-        element.contains("checked") && element.contains("not on the phone - ticked"),
+        switch_on(&element) && element.contains("Not on the phone"),
         "{element}"
     );
     // Sorted by label: Game before Signal.
@@ -569,21 +570,15 @@ async fn unlisted_ticks_and_the_empty_list_say_the_right_thing() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     // Before any report: "hasn't reported", Element X's default tick shown so it can be removed.
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let page = app.get_page(&lock_page(id), &cookie).await.text();
     assert!(form_of(subsection(&page), ELEMENT_X).is_some());
     report(&app, &token, &[("com.example.game", "Game")], json!({})).await;
     // Element X in the allowlist (Play-installed later, say) but not reported: not on the phone.
     set_allowlist(&app, id, Some(&[ELEMENT_X])).await;
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let page = app.get_page(&lock_page(id), &cookie).await.text();
     let element = form_of(subsection(&page), ELEMENT_X).expect("the tick");
     assert!(
-        element.contains("not on the phone - ticked") && !element.contains("not allowed"),
+        element.contains("Not on the phone") && !element.contains("Not allowed"),
         "{element}"
     );
     // The phone reported its apps, nothing is allowed and nothing is ticked: no "hasn't reported".
@@ -593,10 +588,7 @@ async fn unlisted_ticks_and_the_empty_list_say_the_right_thing() {
         .execute(&app.db)
         .await
         .unwrap();
-    let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let page = app.get_page(&lock_page(id), &cookie).await.text();
     let section = subsection(&page);
     assert!(
         section.contains("No allowed apps to choose from"),
@@ -610,19 +602,16 @@ async fn the_page_shows_each_note() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let section = |page: String| subsection(&page).to_string();
+    let page =
+        || async { subsection(&app.get_page(&lock_page(id), &cookie).await.text()).to_string() };
 
-    // No report yet, no kid PIN: only the PIN note.
-    let page = section(
-        app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text(),
-    );
-    assert!(page.contains("There is no lock screen without a kid PIN - see Screen lock"));
-    assert!(!page.contains("update the launcher"));
-    assert!(!page.contains("shows missed calls only"));
+    // No report yet, no Child PIN: only the PIN warning.
+    let html = page().await;
+    assert!(html.contains("No lock without a Child PIN"), "{html}");
+    assert!(!html.contains("Vibb can&#39;t show these yet"));
+    assert!(!html.contains("Missed calls only"));
 
-    // A launcher without the capability and without notification access; a kid PIN.
+    // A launcher without the capability and without notification access; a Child PIN.
     sqlx::query(
         "UPDATE device_policy SET kid_pin_hash = 'aGFzaA', kid_pin_salt = 'c2FsdA', \
          kid_pin_length = 4 WHERE device_id = ?",
@@ -638,16 +627,12 @@ async fn the_page_shows_each_note() {
         json!({ "capabilities": ["pin_lock_v1"], "notification_listener_enabled": false }),
     )
     .await;
-    let page = section(
-        app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text(),
-    );
-    assert!(!page.contains("without a kid PIN"));
-    assert!(page.contains("update the launcher"));
-    assert!(page.contains("shows missed calls only; see Launcher for the fix"));
+    let html = page().await;
+    assert!(!html.contains("without a Child PIN"));
+    assert!(html.contains("Vibb can&#39;t show these yet"), "{html}");
+    assert!(html.contains("Missed calls only"), "{html}");
 
-    // An up-to-date launcher with access: no notes.
+    // An up-to-date launcher with access: no warnings.
     report(
         &app,
         &token,
@@ -655,16 +640,14 @@ async fn the_page_shows_each_note() {
         json!({ "capabilities": ["pin_lock_v1", "lock_glance_v1"], "notification_listener_enabled": true }),
     )
     .await;
-    let page = section(
-        app.get_page(&format!("/devices/{id}"), &cookie)
-            .await
-            .text(),
-    );
-    assert!(!page.contains(r#"class="error""#), "{page}");
+    let html = page().await;
+    assert!(!html.contains("data-warning"), "{html}");
 }
 
+/// The device page's Launcher card names the lock screen; Lock Screen & PINs says what its first
+/// page shows.
 #[tokio::test]
-async fn the_launcher_and_screen_lock_cards_name_the_lock_screen() {
+async fn the_launcher_card_and_the_lock_page_name_the_lock_screen() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -680,5 +663,8 @@ async fn the_launcher_and_screen_lock_cards_name_the_lock_screen() {
         .await
         .text();
     assert!(page.contains("the notifications on the lock screen are missed calls only"));
-    assert!(page.contains("Its first page shows the clock, the music and new missed calls and messages (Apps -> On the lock screen)"));
+    let lock = app.get_page(&lock_page(id), &cookie).await.text();
+    assert!(lock.contains(
+        "The lock's first page shows the clock, what's playing and the newest notifications."
+    ));
 }

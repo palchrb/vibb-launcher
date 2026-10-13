@@ -477,6 +477,7 @@ impl EscapeNote {
             title,
             value,
             detail,
+            fix: None,
         }
     }
 }

@@ -642,10 +642,8 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     let mut nudges = app.state.command_notify.subscribe();
     let res = lock_choice(&app, &cookie, id, "1").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-    assert_eq!(
-        res.location().map(str::to_string),
-        Some(format!("/devices/{id}"))
-    );
+    // Back to Lock Screen & PINs, no fragment: scroll-restore.js keeps the place.
+    super::assert_redirect(&res, &super::device_page(id, super::Section::Lock), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
     let logged: Vec<String> = sqlx::query_scalar(
@@ -659,10 +657,14 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
         [format!("device {id}: lock screen background: wallpaper 1")]
     );
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Lock), &cookie)
         .await
         .text();
-    assert!(page.contains("Lock screen background"));
+    assert_eq!(
+        super::form_action_of(&page, "wallpaper"),
+        Some(format!("/devices/{id}/lock-wallpaper").as_str())
+    );
+    assert!(super::autosaves(&page, "wallpaper"));
     assert!(
         page.contains(r#"<option value="1" selected>Navy</option>"#),
         "{page}"
@@ -725,7 +727,7 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     lock_choice(&app, &cookie, id, "").await;
     assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Lock), &cookie)
         .await
         .text();
     assert!(

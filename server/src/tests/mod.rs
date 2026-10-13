@@ -580,6 +580,9 @@ pub enum Section {
     Summary,
     /// `/devices/{id}/calls`: Calls & Contacts.
     Calls,
+    /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
+    /// the screen timeout, the lock's background and notifications.
+    Lock,
     /// `/devices/{id}/about`: About This Phone (design 31 step 3) - the connection, sound,
     /// software, crash reports, starts without Vibb and the time lock.
     About,
@@ -592,6 +595,7 @@ pub fn device_page(id: i64, section: Section) -> String {
     match section {
         Section::Summary => format!("/devices/{id}"),
         Section::Calls => format!("/devices/{id}/calls"),
+        Section::Lock => format!("/devices/{id}/lock"),
         Section::About => format!("/devices/{id}/about"),
         Section::Advanced => format!("/devices/{id}/advanced"),
     }

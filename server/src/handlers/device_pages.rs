@@ -1,10 +1,13 @@
-//! A phone's About This Phone and Advanced pages (design 31 §3.2, §8 step 3).
+//! A phone's About This Phone, Lock Screen & PINs and Advanced pages (design 31 §3.2, §8 steps 3
+//! and 4).
 //!
 //! - **About This Phone** (`GET /devices/{id}/about`, `device_about.html`) is read-only, like iOS
 //!   Settings › General › About: the connection (§3.10), the sound, the software, the crash
 //!   reports, the starts without Vibb and the time lock - the facts the old Status, Access and
 //!   "Play and kiosk" cards led with. Every time is local (Phone Setup's zone, `display_time`),
 //!   with the exact one in a `title`.
+//! - **Lock Screen & PINs** (`GET /devices/{id}/lock`, `device_lock.html`, step 4): the Child and
+//!   Parent PINs, the screen timeout, the lock's background and what shows on it ([view_lock]).
 //! - **Advanced** (`GET /devices/{id}/advanced`, `device_advanced.html`) holds what a parent sets
 //!   once or never: Restrictions (`/hardening`, one form), App screens (`/kiosk-block` and the Play
 //!   state), Updates & notifications (`/kiosk-escapes`, one form), Connection (`/regenerate-code`,
@@ -35,6 +38,9 @@ pub struct Note {
     pub title: String,
     pub value: Option<String>,
     pub detail: Option<String>,
+    /// An expert fix (an adb command, a package name) for a warning: behind its ⓘ, never in the
+    /// visible text (design 31 §4.2).
+    pub fix: Option<String>,
 }
 
 /// A value row on About: label · value, an optional coloured word before the value (the
@@ -170,6 +176,7 @@ impl PlayNote {
                     "Install mode is on. Apps installed now stay hidden until you allow them."
                         .to_string(),
                 ),
+                fix: None,
             },
             PlayNote::UpdateWindow => Note {
                 warning: false,
@@ -178,6 +185,7 @@ impl PlayNote {
                 detail: Some(
                     "The nightly update window is open while the screen is off.".to_string(),
                 ),
+                fix: None,
             },
             PlayNote::RestartOnce(effects) => Note {
                 warning: true,
@@ -187,6 +195,7 @@ impl PlayNote {
                     "After a Vibb update, Android hasn't yet given Vibb what it needs to {}.",
                     effects.join(", and to ")
                 )),
+                fix: None,
             },
             PlayNote::NotSuspendable { block_on } => Note {
                 warning: true,
@@ -197,6 +206,7 @@ impl PlayNote {
                 } else {
                     "Block other apps' screens is off, so apps can open the Play Store.".to_string()
                 }),
+                fix: None,
             },
         }
     }
@@ -346,18 +356,37 @@ async fn load_device(state: &AppState, id: i64) -> Result<Device, (StatusCode, &
     }
 }
 
-async fn load_policy(state: &AppState, id: i64) -> DevicePolicy {
-    sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
+/// The phone's settings: a missing row reads as the defaults, a DB error is a 500 (qa-31-s4-code
+/// L4: never "Child PIN · Off" because a read failed).
+async fn load_policy(
+    state: &AppState,
+    id: i64,
+) -> Result<DevicePolicy, (StatusCode, &'static str)> {
+    match sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten()
-        .unwrap_or(DevicePolicy {
+    {
+        Ok(policy) => Ok(policy.unwrap_or(DevicePolicy {
             device_id: id,
             vpn_filter_enabled: true,
             ..Default::default()
-        })
+        })),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the device's settings");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            ))
+        }
+    }
+}
+
+/// The last report lists the launcher capability `name`.
+fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
+    latest
+        .and_then(|s| s.capabilities_json.as_deref())
+        .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
 }
 
 async fn load_latest(state: &AppState, id: i64) -> Option<DeviceStatus> {
@@ -436,7 +465,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = load_policy(&state, id).await;
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
     let latest = load_latest(&state, id).await;
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
@@ -651,7 +683,10 @@ pub async fn view_advanced(
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = load_policy(&state, id).await;
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
     let latest = load_latest(&state, id).await;
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
@@ -696,6 +731,143 @@ pub async fn view_advanced(
     .into_response()
 }
 
+#[derive(Template)]
+#[template(path = "device_lock.html")]
+struct LockTemplate {
+    title: String,
+    device: Device,
+    /// Child PIN: set or not, its length; the phone's lock as warnings (above the group) and rows.
+    child: crate::kid_lock::LockCard,
+    child_warnings: Vec<Note>,
+    child_rows: Vec<Note>,
+    /// The flash after a Child PIN save, `(text, refused)`; a refusal opens the form again.
+    child_flash: Option<(&'static str, bool)>,
+    child_open: bool,
+    /// Parent PIN: set, easy, its flash, the phone's reports ("Recent use").
+    parent: crate::handlers::parent_pin::ParentPinCard,
+    /// A refused (or easy) Parent PIN opens its form again.
+    parent_open: bool,
+    /// Managed without a Parent PIN (the Attention alarm's facts).
+    no_parent_pin: bool,
+    /// An older launcher's "the offline override was used" (no PIN events).
+    offline_override_used: bool,
+    /// Screen: "Turn off after", the options, and what the phone last applied when it differs.
+    screen_timeout_seconds: i64,
+    screen_timeout_options: Vec<(i64, &'static str)>,
+    screen_timeout_applied: Option<String>,
+    /// Lock screen: the background's choices (the wallpapers ticked for this phone) and whether
+    /// it is Home's.
+    backgrounds: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
+    background_same_as_home: bool,
+    /// The message-text switch and the Notifications group.
+    lock_screen: crate::lock_glance::LockScreenCard,
+    lock_screen_warnings: Vec<Note>,
+}
+
+/// GET `/devices/{id}/lock`: Lock Screen & PINs (design 31 §3.2, step 4). The Child PIN
+/// (`/kid-lock`: set in a `<details>`, remove behind a confirm), the Parent PIN (`/parent-pin`,
+/// with what the phone reported), the screen timeout and the lock's background (inline selects),
+/// the message-text switch and one switch per app (`/lock-screen`, `/lock-screen/apps`). The
+/// forms keep their POST routes; they return here. A phone not set up yet has the page too: its
+/// PINs can be set before setup.
+pub async fn view_lock(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
+    let latest = load_latest(&state, id).await;
+    let zone = Zone::load(&state.db).await;
+    let now = Utc::now();
+    let notice = query.get("notice").map(String::as_str);
+
+    let child = crate::kid_lock::lock_card(
+        &policy,
+        crate::kid_lock::parse_lock_state(
+            latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
+        )
+        .as_ref(),
+        has_capability(latest.as_ref(), crate::kid_lock::PIN_LOCK_CAPABILITY),
+        latest.is_some(),
+        now.timestamp_millis(),
+    );
+    // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
+    let reported = latest
+        .as_ref()
+        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
+        .map(|t| zone.when(t, now));
+    let (child_warnings, child_rows): (Vec<Note>, Vec<Note>) = child
+        .notes
+        .iter()
+        .map(|n| n.note(reported.as_deref()))
+        .partition(|n| n.warning);
+    let parent = crate::handlers::parent_pin::card(
+        &state.db,
+        &policy,
+        latest.as_ref(),
+        notice,
+        &zone,
+        now,
+        true,
+    )
+    .await;
+
+    let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(&state, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "couldn't load the lock screen's backgrounds");
+            Vec::new()
+        })
+        .into_iter()
+        .filter(|w| w.checked)
+        .collect();
+    let rows = crate::handlers::devices::app_rows(&state, id, &policy, latest.as_ref()).await;
+    let lock_screen =
+        crate::handlers::devices::lock_screen_card(&state, &policy, latest.as_ref(), &rows).await;
+    let screen_timeout_seconds =
+        crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
+    let child_flash = notice.and_then(crate::kid_lock::flash_text);
+
+    Html(
+        LockTemplate {
+            title: format!("Lock Screen & PINs · {}", device.name),
+            child_warnings,
+            child_rows,
+            child_flash,
+            child_open: child_flash.is_some_and(|(_, refused)| refused),
+            parent_open: parent.notice.is_some_and(|(_, warning)| warning),
+            no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
+            offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
+            screen_timeout_seconds,
+            screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
+            // Only when the phone runs another value than the chosen one (it applies it at its
+            // next sync).
+            screen_timeout_applied: latest
+                .as_ref()
+                .and_then(|s| s.screen_timeout_seconds)
+                .filter(|applied| *applied != screen_timeout_seconds)
+                .map(crate::models::screen_timeout_label),
+            background_same_as_home: !backgrounds.iter().any(|w| w.lock),
+            backgrounds,
+            lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note()).collect(),
+            lock_screen,
+            child,
+            parent,
+            device,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
 /// The escapes card from the policy and the last report (capabilities, the fence, the filter,
 /// the listener, the boot cover).
 pub(crate) fn escapes_card(
@@ -704,11 +876,7 @@ pub(crate) fn escapes_card(
     now_ms: i64,
 ) -> crate::kiosk_escapes::EscapesCard {
     use crate::kiosk_escapes as ke;
-    let capability = |name: &str| {
-        latest
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
+    let capability = |name: &str| has_capability(latest, name);
     let mut card = ke::escapes_card(
         policy.update_fence,
         policy.notification_auto_cancel,

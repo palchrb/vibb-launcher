@@ -14,10 +14,9 @@
 //! - **The exact time** ("2026-10-13 10:59:13 CEST") is for a `title=` and the ⓘ panels, never
 //!   the visible value.
 //!
-//! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its callers
-//! (the Status card's notices, the PIN events, the relock notes) move here as the steps that
-//! rebuild their pages switch them to typed values (design 31 §8, steps 4 and 10; step 3 moved
-//! the boot notes).
+//! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its last
+//! callers, the relock notes, move here in design 31 §8 step 10 (step 3 moved the boot notes,
+//! step 4 the Parent PIN's notices and events).
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use chrono_tz::Tz;

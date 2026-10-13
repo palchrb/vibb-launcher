@@ -386,8 +386,9 @@ pub async fn save_device_wallpapers(
 
 /// `POST /devices/{id}/lock-wallpaper` (design 25, "Lock background"): `wallpaper` = `""` (the
 /// lock shows Home's wallpaper) or the id of a wallpaper ticked for this phone (else 400, nothing
-/// changes). 404 for an unknown device. Logged, nudges the phone, back to `/devices/{id}` without
-/// a fragment (`scroll-restore.js` keeps the parent's place).
+/// changes). 404 for an unknown device. Logged, nudges the phone, back to Lock Screen & PINs
+/// (`/devices/{id}/lock`, design 31 step 4) without a fragment (`scroll-restore.js` keeps the
+/// parent's place).
 pub async fn save_lock_wallpaper(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -454,7 +455,7 @@ pub async fn save_lock_wallpaper(
             )
             .await;
             nudge(&state, &[id]);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}/lock")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
             (StatusCode::NOT_FOUND, "Device not found").into_response()

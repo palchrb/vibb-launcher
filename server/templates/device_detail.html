@@ -58,7 +58,7 @@
                 {% for step in foreign.steps %}
                 <li>{{ step }}</li>
                 {% endfor %}
-                <li><a href="#parent-pin">Change the parent PIN</a>: the app may have read it.</li>
+                <li><a href="/devices/{{ device.id }}/lock#parent-pin">Change the Parent PIN</a>: the app may have read it.</li>
             </ol>
         </div>
         {% endif %}
@@ -109,17 +109,17 @@
         {% endif %}
         {% endif %}
         {% for n in parent_pin.notices %}
-        <p{% if n.error %} class="error"{% endif %}>{{ n.text }}{% if n.child_tail %} Typed where your child could see? <a href="#parent-pin">Change the parent PIN.</a>{% endif %}</p>
+        <p{% if n.error %} class="error"{% endif %}>{{ n.text }}{% if n.child_tail %} Typed where your child could see? <a href="/devices/{{ device.id }}/lock#parent-pin">Change the Parent PIN.</a>{% endif %}</p>
         {% endfor %}
         {% if parent_pin.easy %}
-        <div class="error">The parent PIN is easy to guess. <a href="#parent-pin">Change the parent PIN.</a></div>
+        <div class="error">The Parent PIN is easy to guess. <a href="/devices/{{ device.id }}/lock#parent-pin">Change the Parent PIN.</a></div>
         {% endif %}
     </div>
     {% endif %}
 
     {% if managed_without_pin %}
     <div class="card">
-        <div class="error">No parent PIN is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. <a href="#parent-pin">Set a PIN below.</a></div>
+        <div class="error">No parent PIN is set for this phone. Without one, the launcher's Settings can't be opened on the phone and there is no way to lift restrictions there. If this server ever becomes unreachable{% if hardening.disallow_debugging_features %} - with USB debugging blocked -{% endif %} the only way back is a reset from the phone's recovery menu and setting it up again. <a href="/devices/{{ device.id }}/lock#parent-pin">Set a Parent PIN.</a></div>
     </div>
     {% endif %}
 
@@ -243,37 +243,6 @@
                 </label>
             </form>
             {% endif %}
-            {% endfor %}
-        </div>
-        {% endif %}
-        <h3 id="lock-screen">On the lock screen</h3>
-        <p class="subtitle">When the phone is locked, the power button first shows the clock, what's playing and the newest notifications: missed calls always, and messages from the apps ticked here. Tapping one asks for the kid's PIN and then opens it. Nothing can be answered, marked as read or dismissed from the lock screen, and it can't be screenshotted. Each choice saves itself immediately.</p>
-        <p class="subtitle">Anyone holding the locked phone sees who wrote - also with the switch below off, and missed calls by their name in the phone book. With the switch on, a ticked SMS app's login codes show too.</p>
-        {% for note in lock_screen.notes %}
-        <div class="error">{{ note }}</div>
-        {% endfor %}
-        <form method="post" action="/devices/{{ device.id }}/lock-screen" id="lock-screen-text">
-            <label class="checkbox-row">
-                <input type="checkbox" name="show_text" value="on" {% if lock_screen.show_text %}checked{% endif %} data-autosave>
-                <span>Show the message text too, not just who it's from - anyone holding the locked phone can read it.</span>
-            </label>
-            <noscript><button type="submit" class="button-small">Save</button></noscript>
-        </form>
-        {% if lock_screen.unreadable %}
-        <div class="error">The apps shown on the lock screen couldn't be read - check the server log.</div>
-        {% else if lock_screen.apps.is_empty() %}
-        <p class="subtitle">{{ lock_screen.empty_text }}</p>
-        {% else %}
-        <div class="app-checkbox-list">
-            {% for app in lock_screen.apps %}
-            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" id="lock-screen-app-{{ app.package_name }}">
-                <input type="hidden" name="package_name" value="{{ app.package_name }}">
-                <label class="checkbox-row">
-                    <input type="checkbox" name="on" value="on" {% if app.on %}checked{% endif %} data-autosave>
-                    <span>{{ app.label }}{% if let Some(note) = app.note %} <span class="app-status" style="white-space:normal;">{{ note }}</span>{% endif %}</span>
-                </label>
-                <noscript><button type="submit" class="button-small">Save</button></noscript>
-            </form>
             {% endfor %}
         </div>
         {% endif %}
@@ -464,106 +433,7 @@
         </div>
         <noscript><button type="submit">Save</button></noscript>
     </form>
-    <form method="post" action="/devices/{{ device.id }}/lock-wallpaper" id="lock-wallpaper">
-        <h3>Lock screen background</h3>
-        <p class="subtitle">By default the lock shows the same wallpaper as the home screen - a photo included, so anyone holding the locked phone sees it. Choose another one of the ticked wallpapers to give the lock its own.</p>
-        <label for="lock-wallpaper-select">Lock screen</label>
-        <select id="lock-wallpaper-select" name="wallpaper" data-autosave>
-            <option value="" {% if lock_same_as_home %}selected{% endif %}>Same as Home</option>
-            {% for w in wallpapers %}{% if w.checked %}
-            <option value="{{ w.id }}" {% if w.lock %}selected{% endif %}>{{ w.label }}</option>
-            {% endif %}{% endfor %}
-        </select>
-        <noscript><button type="submit">Save</button></noscript>
-    </form>
     </div>
-
-    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card" id="screen-lock">
-        <h2>Screen lock</h2>
-        {% if let Some((text, warning)) = lock_notice %}
-        <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
-        {% endif %}
-        <p class="subtitle">Handy's lock replaces Android's screen lock: when the screen turns off, the phone locks and the kid opens it with a PIN only they and you know. Its first page shows the clock, the music and new missed calls and messages (Apps -> On the lock screen); "Lås opp" leads to the PIN. Calls from allowed contacts still ring and can be answered over the lock, and "Emergency call" always works. A small "Parent code" link on the lock takes the parent PIN - it opens the lock even while the phone is waiting after wrong PINs, and without network. 4 wrong PINs in a row are free; after the 5th the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries (about 100 tries a day at most); it never wipes itself.</p>
-        <p class="subtitle">It keeps people around him out, but the phone no longer has an Android code: its storage is encrypted with a key that doesn't depend on a code, so someone who steals it and has forensic tools may read photos and messages - the kid's PIN is not a secret against that, so don't reuse it anywhere else. Apps that require a screen lock (some bank/ID apps, Google Wallet, passkeys) may refuse to work. Fingerprint unlock isn't available. Safe mode starts the phone without the launcher and so skips the lock - keep "Block safe mode" on (Advanced › Restrictions). Lock and wipe on the Locate page still work.</p>
-        {% for line in lock.lines %}
-        <p>{{ line }}</p>
-        {% endfor %}
-        {% for warning in lock.warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        {% if lock.pin_set %}
-        <p class="subtitle">A kid PIN is set ({{ lock.pin_length }} digits).</p>
-        {% endif %}
-        {% if !pin_configured %}
-        <p class="subtitle">Set a parent PIN (below) first - it is the parent code on the lock screen.</p>
-        {% endif %}
-        <label for="new_kid_pin">{% if lock.pin_set %}Change the kid's PIN{% else %}Set the kid's PIN{% endif %} (4-6 digits, 4 is easiest for a child)</label>
-        <input type="text" id="new_kid_pin" name="new_kid_pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" autocomplete="off">
-        <button type="submit">Save PIN</button>
-    </form>
-    {% if lock.pin_set %}
-    <form method="post" action="/devices/{{ device.id }}/kid-lock" class="card">
-        <input type="hidden" name="clear_kid_pin" value="on">
-        <p class="subtitle">Removing the kid's PIN switches handy's lock off: the screen then opens without a code.</p>
-        <button type="submit" class="button-secondary">Remove the kid's PIN</button>
-    </form>
-    {% endif %}
-
-    <div class="card" id="parent-pin">
-        <h2>Parent PIN</h2>
-        {% if let Some((text, warning)) = parent_pin.notice %}
-        <div class="{% if warning %}error{% else %}success{% endif %}">{{ text }}</div>
-        {% endif %}
-        <p class="subtitle">The parent PIN works on the phone even when it can't reach this server. It opens the launcher's Settings (and there, pausing all restrictions and Play install mode). It is the "Parent code" on the kid's lock screen, where it opens only the lock. On a time lock, "Enter unlock code" lifts the app restrictions and time rules for up to two hours (until the phone next reaches this server). Calls stay within the call rules, and phone hardening stays. It must differ from the kid's PIN.</p>
-        <p class="subtitle">After 5 wrong tries the phone stops accepting the parent PIN for 15 minutes. Each further lockout doubles (30 minutes, 1 hour, 2 hours, ...) up to 24 hours. The right PIN doesn't reset this. It steps back down by one for every 24 hours without a wrong try. Saving a new parent PIN here resets it and ends a running lockout once the phone checks in. If the phone can't reach this server, a lockout has to be waited out (at most 24 hours).</p>
-        <p class="subtitle">Typed the PIN where your child could see it? Change it here. The phone uses the new PIN as soon as it checks in, usually within seconds.</p>
-        {% if parent_pin.easy %}
-        <div class="error">This parent PIN is easy to guess (all one digit, a run like 123456, or a common PIN). That's your choice, but a child who guesses it can lift every restriction on the phone.</div>
-        {% endif %}
-        {% if offline_override_used && !parent_pin.capable %}
-        <div class="error">The offline override was used since this device's last check-in.</div>
-        {% endif %}
-        <p>{% if parent_pin.pin_set %}A parent PIN is set.{% else %}No parent PIN is set yet.{% endif %}</p>
-        <form method="post" action="/devices/{{ device.id }}/parent-pin">
-            <label for="new_pin">New parent PIN (6-10 digits; birthdays and years are easy to guess)</label>
-            <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password">
-            <p class="subtitle">8 or more digits are much harder to crack if this server is ever copied.</p>
-            {% if parent_pin.pin_set %}
-            <label class="checkbox-row">
-                <input type="checkbox" name="clear_pin" value="on">
-                Remove the parent PIN instead (no offline override, no pausing restrictions, and no opening the launcher's Settings on the phone{% if lock.pin_set %} - not possible while the kid's PIN is set: it is the lock screen's parent code{% endif %})
-            </label>
-            {% endif %}
-            <button type="submit">Save parent PIN</button>
-        </form>
-        <h3>Reported by the phone</h3>
-        {% if !parent_pin.events.is_empty() %}
-        <ul class="pin-events">
-            {% for (when, line) in parent_pin.events %}
-            <li>{{ when }}: {{ line }}</li>
-            {% endfor %}
-        </ul>
-        {% else if !parent_pin.capable %}
-        <p class="subtitle">This phone's launcher doesn't report parent-PIN use yet; it will after its next update.</p>
-        {% else %}
-        <p class="subtitle">The phone hasn't reported any use of the parent PIN yet.</p>
-        {% endif %}
-    </div>
-
-    <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="card" id="screen-timeout">
-        <h2>Screen timeout</h2>
-        <p class="subtitle">How long the screen stays on without being touched. When it turns off, the phone locks (with a kid PIN set). The phone keeps this setting: changes made on the phone are put back. Saves itself immediately.</p>
-        <label for="screen_timeout_seconds">Turn the screen off after</label>
-        <select id="screen_timeout_seconds" name="screen_timeout_seconds" data-autosave>
-            {% for (seconds, label) in screen_timeout_options %}
-            <option value="{{ seconds }}" {% if *seconds == screen_timeout_seconds %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
-        {% if let Some(applied) = screen_timeout_applied %}
-        <p class="subtitle">The phone last reported: {{ applied }}.</p>
-        {% endif %}
-        <noscript><button type="submit">Save</button></noscript>
-    </form>
 
     <form method="post" action="/devices/{{ device.id }}/policy" class="card">
         <h2>Quick Controls (swipe-left screen)</h2>
@@ -595,9 +465,16 @@
         <button type="submit">Save changes</button>
     </form>
 
-    {#- Design 31 step 3: the Status/Access/Play/crash facts and the set-once controls moved to
-        their sub-pages; the rows stay where the summary (step 10) has them, at the bottom. -#}
+    {#- Design 31 steps 3-4: the Status/Access/Play/crash facts, the set-once controls and the
+        lock and PINs moved to their sub-pages; the rows stay where the summary (step 10) has
+        them, at the bottom. -#}
     <div class="group group-icons" id="more">
+        <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">
+            <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
+            <span class="row-label">Lock Screen &amp; PINs</span>
+            <span class="row-value">{{ lock_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/devices/{{ device.id }}/about" data-row="about">
             <span class="tile tile-grey"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 7.6v4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8.5" cy="5.2" r="1" fill="currentColor"/></svg></span>
             <span class="row-label">About This Phone</span>
