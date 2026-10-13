@@ -31,8 +31,9 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   context mode; entries, the gate and the binding in the PWA; the contract commit - the phone's token route, the
   launcher's courier, gated DNS exemption and WebView guard, the music app's parsing; the Android-free core and
   `scripts/fake-spotify.py`; the WebView host and `SpotifyRenderer`; the service, the UI and §6l; context mode and the
-  debug-only state recorder; the docs), each code step with QA's code review and its fix round; main merged in twice
-  (`a5d30b9`, then `571f86f` with design 30, which took 0073: Spotify's migration is **0074**). **Not done yet:**
+  debug-only state recorder; the docs), each step with QA's review and its fix round; main merged in twice
+  (at `a5d30b9`, merge `5d6bd5b`; then at `571f86f` with design 30, merge `e4d4feb` - design 30 took 0073, so
+  Spotify's migration is **0074**). **Not done yet:**
   `docs/testing/emulator.md` §6l (parts A1 and A2 never ran - steps 5b and 6's acceptance; part B needs the user's
   account), the DNS capture that replaces the provisional `spotify_hosts.json`, the Jelly Star checks (26c's QA
   checklist, the 2.5-hour Doze run); the merge to `main` is the user's, then the tags in 26c "Release" (a launcher tag,

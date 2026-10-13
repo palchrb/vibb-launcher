@@ -6,8 +6,9 @@ package me.vibb.music.spotify
  * is server/testdata/spotify_hosts.json's, byte-identical in this app's and the launcher's test
  * resources (ContractFilesTest, MusicPlanTest); SpotifyHostsTest checks these constants against the
  * music copy, and the rule is the server's `spotify::is_spotify_host` and the launcher's
- * `isSpotifyHost`. PROVISIONAL until the spike's DNS capture replaces it (design 26c step 6 at the
- * latest): then the three copies and the three constants change in one commit. Pure.
+ * `isSpotifyHost`. PROVISIONAL until the spike's DNS capture replaces it, before any tag of design
+ * 26c's release: then the three JSON copies (with their comment) and the three sides' constants change
+ * in one commit (26c "Release"). Pure.
  */
 
 /** A host equal to or under one of these is Spotify's. */

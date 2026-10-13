@@ -69,7 +69,7 @@ appended. `server/testdata/music_state.json` is every `music_state` field: the s
 keeps the music app's, the music app sends exactly those. Spotify's host list `server/testdata/spotify_hosts.json`
 (design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
 (`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
-one commit.
+one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS`).
 
 ## CI and releases
 

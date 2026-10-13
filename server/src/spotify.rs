@@ -136,8 +136,9 @@ pub const PHONE_TOKEN_BUDGET: Duration = Duration::from_secs(8);
 
 /// Spotify's hosts for the Web Playback SDK (§6.2; `testdata/spotify_hosts.json`, byte-identical
 /// in both apps' test resources, `tests::hosts_match_the_contract`): a domain equal to or under one
-/// of these. **Provisional** (unverified) until the spike's DNS capture replaces the list (design
-/// 26c step 6 at the latest).
+/// of these. **Provisional** (unverified) until the spike's DNS capture replaces the list (before
+/// any tag of design 26c's release: its "Release" names the one commit - the three JSON copies with
+/// their comment, these constants and both apps').
 pub const HOST_SUFFIXES: [&str; 5] = [
     "spotify.com",
     "scdn.co",
@@ -4493,13 +4494,38 @@ pub(crate) mod tests {
         };
         assert_eq!(list("suffixes"), HOST_SUFFIXES);
         assert_eq!(list("exact"), EXACT_HOSTS);
-        assert!(
-            contract["comment"]
-                .as_str()
-                .unwrap()
-                .contains("PROVISIONAL"),
-            "the list says it is provisional until the capture replaces it"
-        );
+        // The list's shape, never its wording (qa-26c-step7-docs M1): the DNS capture's commit
+        // changes the data and the comment, not this test. Exactly the three keys, a comment, and
+        // two lists of distinct lower-case host names without a leading or trailing dot; an exact
+        // host never lies under a suffix (it would say nothing the suffix doesn't).
+        let keys: Vec<&String> = contract.as_object().unwrap().keys().collect();
+        assert_eq!(keys.len(), 3, "{keys:?}");
+        assert!(!contract["comment"].as_str().unwrap().trim().is_empty());
+        for key in ["suffixes", "exact"] {
+            let hosts = list(key);
+            assert!(!hosts.is_empty(), "{key}");
+            let distinct: std::collections::HashSet<&String> = hosts.iter().collect();
+            assert_eq!(distinct.len(), hosts.len(), "{key} repeats a host");
+            for host in &hosts {
+                let ok = !host.is_empty()
+                    && !host.starts_with('.')
+                    && !host.ends_with('.')
+                    && host.contains('.')
+                    && !host.contains("..")
+                    && host.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-'
+                    });
+                assert!(ok, "{key}: {host:?}");
+            }
+        }
+        for host in list("exact") {
+            assert!(
+                !list("suffixes")
+                    .iter()
+                    .any(|s| host == *s || host.ends_with(&format!(".{s}"))),
+                "{host} lies under a suffix"
+            );
+        }
         for host in [
             "spotify.com",
             "api.spotify.com",

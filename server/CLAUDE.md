@@ -539,7 +539,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `cache` -1/0/1-100, own = -1; <= 200), `music_files` (own uploads, <= 300 per entry, `missing`),
   `device_music_entries` (ticks),
   `device_policy.music_volume_cap_pct/music_storytel` (and `music_spotify_account` since design 26c, migration
-  `0074`, NULL = Spotify off - "Vibb music: Spotify" below; and since design 30, migration `0073`,
+  `0074`, NULL = Spotify off - "Vibb music: Spotify on the server" below; and since design 30, migration `0073`,
   `music_stream_mobile_data`/`music_download_mobile_data`, which replaced `music_mobile_data` and both took its value,
   and `music_storage_limit_gb` - 1/2/5/10, NULL = no limit, default 2 for every phone), `music_storytel` singleton,
   `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
@@ -832,7 +832,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   downloaded: no offline select anywhere, a posted value saved as 0), resume on, the category by
   `default_kind_for(source, target)` (a show or episode to Podkast). The phones picked on the form are ticked in the
   insert's own `BEGIN IMMEDIATE` only when they play as an account (`PLAYS_SPOTIFY`, the gate's own `EXISTS`); the
-  others are named. The PWA's Music page has a "From Spotify ›" row (No app / No login / Signed in).
+  others are named. The PWA's Music page has a "From Spotify ›" row (No app / No login / Signed in). **For design 31
+  step 12** (which doesn't name Spotify; 26c "Release", open point 8): the row stays, as a fifth Add row; the app and
+  account cards may move to `/music/settings` behind a redirect from `/music/spotify`, but **`/music/spotify/callback`
+  and `/music/spotify/done` never move** - the callback is the redirect URI every family registered at Spotify
+  (`CALLBACK_PATH`, the only https path `valid_redirect_uri` takes, the login cookie's `Path`), and a new path breaks
+  every family's next login.
 - **Readers and the listing modes** (step 2a, `music_sweep::spotify_check`): the readers are the accounts without
   `needs_login`, the listing's last reader first (`music_listings.spotify_reader`), then by id. **`ReaderTurns`** is
   the one rule for the sweep and the add check: a 403/404 or an account that can't be used now passes to the next
@@ -844,7 +849,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`keep_end = 'newest'`); a track or episode one item. **Context mode** (`'context'`): an artist always (top tracks
   are gone in dev mode), and a playlist whose items every reader refuses - no items, the listing's version moving
   with the mode, the title and the cover URL; the phone plays the context. A context playlist is read again at every
-  check and flips back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (off by default; QA
+  check and flips back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
   checklist item 18) lists an artist as its newest 20 albums' tracks (pages of 10, at most 500 tracks), with a
   403/404 falling back to context mode. A playlist's `snapshot_id` gates its items (unchanged and read within 24 h:
   one request; Check now ignores it); `interval(link, ..)`: an album, track, episode or artist daily, a playlist or
@@ -878,8 +883,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
   the site-wide ones it overrides (`handlers::dns_filter`). `HOST_SUFFIXES`/`EXACT_HOSTS` are checked against
   `testdata/spotify_hosts.json`, byte-identical with both apps' copies (`spotify::tests::hosts_match_the_contract`
-  reads all three) - **provisional** until the user's DNS capture replaces the three copies and the constants in one
-  commit, before any tag of this release (26c "Release").
+  reads all three) - **provisional** until the user's DNS capture lands, before any tag of this release, as one commit
+  of the list, the constants and the comment (the three copies, the six constants on the three sides; 26c
+  "Release").
 - **Migration 0074** (`0074_music_spotify.sql`; written as 0073 on the branch, renumbered at the merge of main
   `571f86f`, where design 30 holds 0073): the two tables, `device_policy.music_spotify_account` (`REFERENCES` the
   accounts, NULL = Spotify off; unbind before delete, no `ON DELETE`), `music_listings.spotify_mode`/`_snapshot`/

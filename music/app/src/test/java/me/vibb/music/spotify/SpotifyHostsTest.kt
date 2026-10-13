@@ -24,7 +24,32 @@ class SpotifyHostsTest {
     fun `the constants are the shared list's`() {
         assertEquals(strings("suffixes"), SPOTIFY_HOST_SUFFIXES)
         assertEquals(strings("exact"), SPOTIFY_EXACT_HOSTS)
-        assertTrue("provisional until the capture", (contract["comment"] as JsonPrimitive).content.contains("PROVISIONAL"))
+    }
+
+    /**
+     * The list's shape, never its wording (qa-26c-step7-docs M1): the DNS capture's commit changes the data and
+     * the comment, not this test. Exactly the three keys, a comment, two lists of distinct lower-case host names
+     * without a leading or trailing dot, and no exact host under a suffix.
+     */
+    @Test
+    fun `the shared list has its shape`() {
+        assertEquals(setOf("comment", "suffixes", "exact"), contract.keys)
+        assertTrue((contract["comment"] as JsonPrimitive).content.isNotBlank())
+        for (key in listOf("suffixes", "exact")) {
+            val hosts = strings(key)
+            assertTrue(key, hosts.isNotEmpty())
+            assertEquals("$key repeats a host", hosts.size, hosts.toSet().size)
+            for (host in hosts) {
+                assertTrue("$key: $host", HOST_NAME.matches(host))
+            }
+        }
+        for (host in strings("exact")) {
+            assertFalse("$host lies under a suffix", strings("suffixes").any { host == it || host.endsWith(".$it") })
+        }
+    }
+
+    private companion object {
+        val HOST_NAME = Regex("^[a-z0-9-]+(\\.[a-z0-9-]+)+$")
     }
 
     @Test

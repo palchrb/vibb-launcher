@@ -354,9 +354,11 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   debug feed, B the real SDK with the user's account (the recorder, the DNS capture).
 - **Owed for Spotify** (26c "Release"): §6l A1 and A2 have never run (no emulator where it was built) - steps 5b and
   6's acceptance; part B, its recorded real `sdk_states/` and the DNS capture that replaces the provisional host list
-  (three `spotify_hosts.json` copies and three constants, one commit); the Jelly Star checks of 26c's QA checklist
-  (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus, the
-  protected-media origin, episodes in a `uris` list - `SHOWS_PLAYABLE` -, the `context` field around track changes,
+  (one commit of the list, the constants and the comment: the three `spotify_hosts.json` copies, the six constants -
+  this app's two in `SpotifyHosts.kt` among them - as 26c's "Release" names it); the Jelly Star checks of 26c's QA
+  checklist (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus, the
+  protected-media origin, episodes in a `uris` list - no switch is built: if the SDK refuses them, the server's parser
+  must refuse shows and episodes -, the `context` field around track changes,
   Autoplay after a list and after a context, the leftover queue add, shuffle and repeat).
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then

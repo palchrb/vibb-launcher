@@ -122,14 +122,21 @@ app on the phone. The parent adds a share link in the PWA with per-phone ticks; 
 with the family's own developer app (bring your own client ID, PKCE logins in the parent's browser, refresh tokens
 sealed); the phone plays it as a third renderer with a server-minted token. **Built** (2026-10-13): steps 1-7, each
 code step with QA's code review and its fix round, main merged in at `571f86f` (design 30; Spotify's migration is
-0074, after design 30's 0073). Owed: the DNS capture that replaces the provisional host list (three
-`spotify_hosts.json` copies and three constants, before any tag of this release), `docs/testing/emulator.md` §6l
+0074, after design 30's 0073). Owed: the DNS capture that replaces the provisional host list (one commit of the
+list, the constants and the comment - the three `spotify_hosts.json` copies, the six constants -, before any tag of
+this release), `docs/testing/emulator.md` §6l
 (parts A1/A2 never ran; part B with the user's account), the Jelly Star checks (26c's QA checklist, the 2.5-hour Doze
 run). Release after the user's merge (`--no-ff`; 26c "Release"): the launcher (`launcher-v0.26.0`, above
 `launcher-v0.25.0-rc.1`, unless `main` tags a launcher first), `music-v0.4.0-rc.1` (versionCode 3999), then the
 server - design 30's 0073 as 0.25.0 first (or in the same release), Spotify as **0.26.0** with 0074 (the bump a
 commit on `main` after the merge), never before 0073; the stable `music-v0.4.0` after the owed checks. `server-v0.24.0`
-is tagged (`6ae54e8`, Storytel's 0072) but its release run failed at the signing step - no release yet (main's).
+is tagged (`6ae54e8`, Storytel's 0072) but its release run failed at the signing step - no release yet. **Main's
+step 0**: the `release` environment admitted the tag and `SERVER_MINISIGN_KEY` is set, but minisign can't read it
+("Error while loading the secret key file"): re-enter it as the whole two-line key file from `minisign -G -W` (the
+pair whose public key is pinned), then re-run the failed `server-release-sign` job. **For design 31 step 12**, which
+doesn't name Spotify: keep "From Spotify ›" as a fifth Add row on the Music tab, and never move
+`/music/spotify/callback` (or `/done`) - it is the redirect URI every family registered at Spotify (26c "Release",
+open point 8).
 **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
 stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
 (2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a

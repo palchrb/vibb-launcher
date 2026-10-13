@@ -8,7 +8,8 @@ package com.kidslauncher.mdm.music
  * server drops them from that phone's delivered list too, and the parent's device page says so.
  * The list is server/testdata/spotify_hosts.json's (byte-identical in this app's and the music
  * app's test resources; SpotifyHostsTest, MusicPlanTest). PROVISIONAL until the spike's DNS capture
- * replaces it (design 26c step 6 at the latest). Pure.
+ * replaces it, before any tag of design 26c's release (its "Release" names the one commit: the three
+ * JSON copies with their comment, these constants, the server's and the music app's). Pure.
  */
 
 /** A domain equal to or under one of these is Spotify's. */

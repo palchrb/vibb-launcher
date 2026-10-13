@@ -435,7 +435,8 @@ hash of the same URI, so a Pi bookmark file and our entry key match).
 - **Episodes in the `uris` array** are not documented (the reference says "track URIs") [unverified]: shows and
   episodes are built, and step 5b's device check plays one; if the SDK refuses them, the parser refuses `show` and
   `episode` with "Spotify podcasts can't be played here - add the podcast's RSS feed instead" (one constant,
-  `SHOWS_PLAYABLE`), and nothing else changes.
+  `SHOWS_PLAYABLE`), and nothing else changes. **As built there is no such constant** (qa-26c-step7-docs L2): shows
+  and episodes are listed and played unconditionally; if the device check fails, that refusal is a small code change.
 - The generic add-by-link form on `/music` answers a Spotify link with "Spotify links are added on the Spotify page"
   and a link there (`parse_link` returns that error for every Spotify form; `Link::Spotify` is only made by
   `spotify::parse_link`).
@@ -1806,7 +1807,8 @@ mode), 7 (docs).
 Final (step 7, 2026-10-13; it replaces the drafts written with the design and at the merge of main `571f86f`).
 
 **The branch**: `music-3-spotify` holds §11 steps 1-7, each code step with QA's code review and its fix round, and
-two merges of `main` (`a5d30b9`; `571f86f` with its own code QA and fix round). `origin/main` is still `571f86f`, an
+two merges of `main` - at `a5d30b9` (merge commit `5d6bd5b`) and at `571f86f` (merge commit `e4d4feb`, with its own
+code QA and fix round). `origin/main` is still `571f86f`, an
 ancestor: nothing on `main` is missing here. Last full runs: server `cargo test` 827 passed (the merge; the flaky
 `parent_pin` test below aside), `cargo fmt --check` clean, clippy's 12 known warnings; launcher `assembleDebug
 testDebugUnitTest` 1145 tests (the merge; its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds);
@@ -1816,9 +1818,14 @@ round); the four fakes' `--selftest`s OK. Step 7 changed docs only.
 **Facts on 2026-10-13** (tags from `git ls-remote`, releases and runs from the GitHub REST API):
 - `server/Cargo.toml` says **0.24.0** here and on `main`. `server-v0.24.0` **is tagged** - on `6ae54e8`, a `main`
   commit with 0065-0072, so Storytel (26b) is 0.24.0, not the 0.25.0 26b's Release planned - but **its release run
-  failed** at `server-release-sign` ("Sign the tarball and update.sh") and **no GitHub release exists for it**: the
-  `SERVER_MINISIGN_KEY` secret or the `release` environment's `server-v*` rule (root `CLAUDE.md`, "no secret, no
-  release") - main's to fix and re-run. This repository has **no `server-v*` GitHub release at all** (the API lists
+  failed** at `server-release-sign` ("Sign the tarball and update.sh") and **no GitHub release exists for it**.
+  The cause, from the run's log (step 7's QA, run 38404900686): the `release` environment **admitted** the tag (the
+  `server-v*` rule is proven), the `SERVER_MINISIGN_KEY` secret **is set** (it passed the workflow's empty-secret
+  check), but minisign can't read it - `Error while loading the secret key file` (exit 2): not the whole two-line key
+  file (`untrusted comment:` line first), or a key made without `-W`. **The fix (main's, step 0 below)**: re-enter
+  the secret as the whole content of the `handy-server.key` that `minisign -G -W` wrote - the pair whose public key is
+  pinned in `server/deploy/*.sh` (DEPLOY.md, "Release signing", step 2) - then re-run the failed job (or delete and
+  re-push the tag). This repository has **no `server-v*` GitHub release at all** (the API lists
   only `music-v0.0.2`, `launcher-v0.2.7` and `launcher-v0.25.0-rc.1`; `server-v0.19.0`'s run of 2026-10-07 failed
   too). `main` after `6ae54e8` carries design 30's **0073** with `Cargo.toml` still 0.24.0.
 - Launcher tags: `launcher-v0.25.0-rc.1` (versionCode 24999, 2026-10-07) and `launcher-v0.2.7` (2007, GitHub's
@@ -1846,8 +1853,10 @@ must stay the highest - open point 7). CI on the merge commit runs all three bui
   split of 26b's open point 3 (every later launcher tag stays above 26000). It carries the token courier, the gated DNS
   exemption, the WebView provider in `neverRestrict` and the policy key - and design 30's switches, since `571f86f`
   is merged in. If `main` tags a launcher of its own first, this one is the next minor above the highest
-  `launcher-v*` then (`launcher-v0.27.0` after a `0.26.0`). Inert without Spotify: `music.spotify` is false until the
-  parent binds a phone, and nothing asks for a token before.
+  `launcher-v*` then (`launcher-v0.27.0` after a `0.26.0`). Inert without Spotify - `music.spotify` is false until the
+  parent binds a phone, and nothing asks for a token before - **except the WebView provider's place in
+  `neverRestrict`, which holds on every phone** at every `apply()` (§6.3; harmless: a system package without a
+  launcher icon, never Chrome at minSdk 34), the one enforcement change the moment this tag becomes "latest".
 - **Music: `music-v0.4.0-rc.1`** (versionName `0.4.0-rc.1`, versionCode **3999** = `0*1_000_000 + 4*1_000 + 0 - 1`),
   a prerelease, never "latest", on the merge commit (or the host-list commit below, if that lands on `main` after the
   merge: `music.yml` refuses a tag whose commit isn't on `main`). It is above `music-v0.0.2` (2) and above 26b's
@@ -1855,16 +1864,20 @@ must stay the highest - open point 7). CI on the merge commit runs all three bui
   30. The stable **`music-v0.4.0`** (4000) after the owed checks below. Through the catalog (the music row's "include
   prereleases" for the RC).
 - **The `release` environment** must allow `launcher-v*`, `music-v*` and `server-v*`, with `SERVER_MINISIGN_KEY` for
-  the server (the failed 0.24.0 run says it isn't proven yet).
+  the server - the rule is proven by the 0.24.0 run; **the server's signing secret isn't** (above).
 
 **Release and deploy order** (the merge's code QA L2 and design 30's step 1 L4: no `server-v*` carrying design 30
 before the `launcher-v*` and `music-v*` that read its two switches, else the device card's "Update both" names
 updates that don't exist):
-0. `main`'s `server-v0.24.0` published (its sign step fixed; Storytel's 0070-0072), and design 30's apps if `main`
-   releases them before the merge (then steps 1-2 below are only Spotify's).
+0. **Main's**: `server-v0.24.0` published - `SERVER_MINISIGN_KEY` re-entered as the whole two-line key file from
+   `minisign -G -W` (the pinned pair), then its failed `server-release-sign` job re-run (above); it carries 0070-0072
+   (design 27, 26a, 26b) and no 0073. And design 30's apps, if `main` releases them before the merge (then steps 1-2
+   below are only Spotify's).
 1. `launcher-v0.26.0` (it reads `stream_mobile_data`, `download_mobile_data` and `storage_limit_gb`, design 30
    step 2).
-2. `music-v0.4.0-rc.1` through the catalog (it reads them, design 30 steps 3a/3b).
+2. `music-v0.4.0-rc.1` through the catalog (it reads them, design 30 steps 3a/3b) - a prerelease, which the catalog
+   offers only with the music row's "include prereleases" on; with it off, step 3 waits for a stable `music-v*`
+   (design 30's L4 is about the phones having the app).
 3. The first `server-v*` carrying design 30's 0073: `server-v0.25.0` (main's) - or none, see 4.
 4. `server-v0.26.0` with Spotify's 0074: after 0073 or in the same release, **never before** (`pre_migration_backup`
    compares `MAX(version)` only: a 0073 reaching a server that ran 0074 is applied out of order with no backup -
@@ -1881,10 +1894,12 @@ until the parent registers an app on Music › From Spotify, logs an account in 
 "latest", the provisioning QR's APK -, and both carry the host list to every bound phone; "before any stable tag",
 read literally):
 - **The DNS capture** (§6.2, spike §7 item 10 step 7; §6l part B with the user's account, the emulator image of the
-  spike): its host set replaces the three provisional `spotify_hosts.json` copies and the three constants (the
-  server's `HOST_SUFFIXES`/`EXACT_HOSTS`, the launcher's and the music app's `SPOTIFY_HOST_SUFFIXES`/
-  `SPOTIFY_EXACT_HOSTS`; the JSON's "PROVISIONAL" comment goes) in **one commit**, all three suites green - on this
-  branch before the merge, or on `main` before the tags. If design 30's apps must go out before the capture, `main`
+  spike): **one commit** of the list, the constants and the comment - the three byte-identical
+  `spotify_hosts.json` copies (`server/testdata/`, both apps' `src/test/resources/`) with the captured hosts and a
+  comment that drops "PROVISIONAL" and names the capture's date and source; the six constants (the server's
+  `HOST_SUFFIXES`/`EXACT_HOSTS` in `spotify.rs`, the launcher's and the music app's `SPOTIFY_HOST_SUFFIXES`/
+  `SPOTIFY_EXACT_HOSTS` in their `SpotifyHosts.kt`) and their doc comments' "provisional" - all three suites green -
+  on this branch before the merge, or on `main` before the tags. If design 30's apps must go out before the capture, `main`
   tags them from a commit before the merge, never from this merge.
 - **§6l part A** (A1 the whole chain, A2 the phone alone) on the user's emulator: §11's acceptance of steps 5b and 6,
   **never run** (no emulator, VM or account where they were built) - every line, including the streaming-switch line
@@ -1899,7 +1914,8 @@ read literally):
   line; no token in logcat after a Wi-Fi drop; **the state recorder's real sequences** (an artist, a playlist the
   parent doesn't own, a context's end with Autoplay on and off, the `context` field around track changes, a paused
   `nextTrack`, an offset no longer in the playlist) turned into `sdk_states/*.json` for `SpotifyTrackerTest` (the
-  main session's follow-up).
+  main session's follow-up); and a cold start's `needToken` -> `vibb.token` -> `ready` order against the scripted
+  page's (qa-26c-step5a-code, "Owed by step 5b").
 - **The Jelly Star** (a real Premium Family member account): the QA checklist above, items 1-21 - in particular
   item 6, **2.5 hours screen off on battery in real Doze** (the spike's item 10 run with and without the wake lock,
   owed since 5b's acceptance: the token refreshed ahead of expiry at least twice, no audio or state-post gaps -
@@ -1907,7 +1923,8 @@ read literally):
   categories), item 17 (Autoplay after a list and after a context), item 18 (the artist option's dev-mode check),
   items 19-21 (a refused play, the leftover queue add, shuffle and repeat).
 - **Device checks with a default in code**: the WebView's own audio focus (§5.6; the renderer keeps its request),
-  episodes in a `uris` list (§3.1, `SHOWS_PLAYABLE`), the protected-media origin, `getCurrentWebViewPackage` on the
+  episodes in a `uris` list (§3.1; **no switch is built** - if the SDK refuses them, the server's parser must refuse
+  `show`/`episode`, a small code change), the protected-media origin, `getCurrentWebViewPackage` on the
   Jelly Star (§6.3), whether the player's account can open a playlist it doesn't own as a context (§5.9), what the
   real SDK posts at a context's end, whether `tailscale serve` sends `X-Forwarded-Proto` (§2.1; if not, the parent
   edits the redirect field).
@@ -1930,13 +1947,24 @@ read literally):
    stamping them in the past would fix it); a red run stops a `server-v*` release.
 7. **For the main session**: `pre_migration_backup` comparing the set of applied versions (not `MAX(version)`) would
    end the out-of-order hazard for good (§14 item 12, 26b open point 6); until then 0073 before (or with) 0074.
-8. **Design 31 step 12** moves the Spotify app and logins to `/music/settings` (2b built them on `/music/spotify`, the
-   "From Spotify ›" row links there); the callback's path and the login-address rule move with it.
+8. **A request to the main session for design 31 step 12**: design 31 doesn't name Spotify - its step 12 gives the
+   Music tab's Add four rows and its redirect list no `/music/spotify` entry, so built from design 31 alone it would
+   drop the "From Spotify ›" row (`templates/music.html`). When this branch merges, step 12 must take that row as a
+   **fifth Add row** (`/music/spotify`, the value "No app" / "No login" / "Signed in"), and may move the app and
+   account cards to `/music/settings` with a redirect from `/music/spotify` like its other anchors. **But
+   `/music/spotify/callback` and `/music/spotify/done` stay where they are, for good**: the callback is the redirect
+   URI every family registered in its Spotify dashboard (`spotify::CALLBACK_PATH`, the only https path
+   `valid_redirect_uri` accepts, the `spotify_login` cookie's `Path`, `SPOTIFY_REDIRECT_URI` in `.env`); moving it
+   breaks every family's next login until each parent edits the dashboard. The login-address rule stays too.
+   (`server/CLAUDE.md` and `PLAN.md` say the same.)
 9. **A later contract change**: an optional `{"rejected": true}` on the token route through a new appended bridge
    method would let the server refresh a token Spotify refused (§5.4's 401 row); the parent's card naming a context
    playlist the player's account can't open (§5.9) needs a report field.
 
 ### DEPLOY.md note (for the main session to paste into `server/DEPLOY.md`)
+
+Its place: after "Vibb music: episode art (design 27, migration 0070)", before "Server 0.23.0 (design 22)" - with the
+other music sections.
 
 ```markdown
 ## Vibb music: Spotify (server 0.26.0, design 26c, migration 0074)
@@ -1953,6 +1981,7 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
   |---|---|---|
   | `SPOTIFY_CLIENT_ID` | unset | The app's client ID (32 letters and digits). Wins over the page's, whose field is then read-only. A client ID is public; it is stored in the clear. |
   | `SPOTIFY_REDIRECT_URI` | unset | `https://<the PWA's host>/music/spotify/callback`, or exactly `http://127.0.0.1:43117/callback` (the paste, below). Wins over the page's. |
+  | `SPOTIFY_ARTIST_ALBUMS` | unset (off) | `1` (or `true`) lists an artist as the tracks of its newest 20 albums and singles - with a track list, resume and the order setting - instead of playing it as a Spotify context in Spotify's order. Opt-in: turn it on once the design's checklist item 18 shows the albums endpoint works for your app; an artist Spotify refuses falls back to a context. |
 
   A value that doesn't fit is ignored with one warning in the log at start.
 - **A Spotify login needs the PWA on https, or the paste.** Spotify accepts only https redirect URIs (or a loopback
@@ -1968,7 +1997,7 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
   `data/keys/music-secret.key`), like the Storytel login. Backups hold the sealed tokens, never the key: a restore on
   another box, or a lost key, means logging the accounts in again.
 - **What it fetches**: `accounts.spotify.com` and `api.spotify.com` (one request at a time through the music gate),
-  `spotify.link` short links when one is added, and covers and track pictures from Spotify's image hosts. Playlists
+  Spotify's short links (`spotify.link`, `spotify.app.link`) when one is added, and covers and track pictures from Spotify's image hosts. Playlists
   and shows are checked at the sweep's interval (a playlist's tracks are read again only when it changed, or after a
   day), albums, tracks, episodes and artists daily. The quota is per developer account and shared with the phones'
   play calls: if Spotify says it is used up, the server pauses its Spotify reads for an hour.
@@ -1978,8 +2007,7 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
 - **Testing only, never on a real server**: `SPOTIFY_ACCOUNTS_BASE` and `SPOTIFY_API_BASE` point the server at
   `scripts/fake-spotify.py` and are honoured **only** as `http://127.0.0.1:<port>` or `http://[::1]:<port>` (anything
   else is ignored with a warning; while one is set Spotify requests may go to a private address, and the start logs a
-  warning naming them). `SPOTIFY_ARTIST_ALBUMS=1` (off by default) lists an artist as its albums' tracks - for the
-  design's dev-mode check. `INSECURE_COOKIES` also drops `Secure` from the login cookie (the emulator loop over http).
+  warning naming them). `INSECURE_COOKIES` also drops `Secure` from the login cookie (the emulator loop over http).
 - **Order**: the launcher and the music app that read design 30's two switches first, then the server with design
   30's migration 0073 (0.25.0), then this one with 0074 - or 0073 and 0074 in one release, **never 0074 before
   0073** (the pre-migration backup compares the highest version only). A dev database that ran the Spotify branch
@@ -3954,7 +3982,8 @@ no contract file, no migration, no `Cargo.toml` (below); the shared files are by
      are the merge fix round's (L2), unchanged in substance.
   6. The owed checks in one list each (before the tags; before the stable music), the open points pruned from §14 to
      the nine that stand (the QA's two questions as assumptions, the wake lock, the logo, Sonos, `parent_pin`, the
-     backup check, design 31 step 12's move of the login pages, the later contract fields), and the **DEPLOY.md
+     backup check, design 31 step 12's "From Spotify ›" row and the callback that never moves - reworded in the
+     fix round, M2 -, the later contract fields), and the **DEPLOY.md
      note** as a block to paste (the env variables in DEPLOY.md's table form, the login's https-or-paste rule, keys and
      backups, what it fetches, the phones' DNS override, the testing-only overrides, the order with 0073 -> 0074, a
      smoke check, the rollback).
@@ -3969,3 +3998,47 @@ describe their branches as unmerged (main's to update).
 Owed: everything in the Release's two lists - the DNS capture's one commit and §6l part A before any tag; part B, the
 Jelly Star (QA checklist items 1-21, the Doze run) and the device checks before the stable `music-v0.4.0`; the merge,
 the server bump and the tags are the user's; the DEPLOY.md note is the main session's to paste.
+
+### Fix round after QA's review (qa-26c-step7-docs, 2026-10-13)
+
+All eight findings fixed; none disputed. The shared files are unchanged (the three `spotify_hosts.json` copies still
+byte-identical, still provisional).
+- **M1** (the capture's commit would turn three suites red): fixed at the root rather than by describing the test
+  edits - the three host-list tests no longer read the comment's wording. `spotify::tests::hosts_match_the_contract`
+  and both apps' `SpotifyHostsTest` now pin the list's **shape** (exactly `comment`, `suffixes`, `exact`; a non-blank
+  comment; non-empty lists of distinct lower-case host names without a leading, trailing or double dot; no exact host
+  under a suffix) besides the constants and the copies' identity (the server's byte comparison, `ContractFilesTest`,
+  `MusicPlanTest`, unchanged). So the capture is data only: **one commit of the list, the constants and the
+  comment** - the three copies (the comment without "PROVISIONAL", naming the capture's date and source), the **six**
+  constants and their doc comments - as the Release, `server/CLAUDE.md`, `launcher/CLAUDE.md`, `music/CLAUDE.md`,
+  root `CLAUDE.md` and `PLAN.md` now say (none names a test). The constants' doc comments (`spotify.rs`, both
+  `SpotifyHosts.kt`) lost their passed deadline ("step 6 at the latest") and point to the Release; the JSON's own
+  comment keeps it until the capture rewrites it (a contract file).
+- **M2** (open point 8): rewritten as a request to the main session - design 31 doesn't name Spotify, so its step 12
+  must take "From Spotify ›" as a fifth Add row and may move the app and account cards behind a redirect, but
+  `/music/spotify/callback` and `/done` never move (`CALLBACK_PATH`, the registered redirect URI, the cookie's
+  `Path`, `.env`). Said in `server/CLAUDE.md`'s Spotify section and in `PLAN.md` (it has no design 31 entry: the
+  line is in phase 3's paragraph). Design 31 itself is main's and not edited.
+- **L1**: the 0.24.0 run's cause as the QA read it from the log - the environment rule proven, the secret set but
+  unreadable (`Error while loading the secret key file`) - and the remedy (the whole two-line key file from
+  `minisign -G -W`, the pinned pair, then re-run the failed job), in the Release's facts, the environment bullet, the
+  order's step 0 (main's) and `PLAN.md`.
+- **L2**: `SHOWS_PLAYABLE` doesn't exist - the Release, `music/CLAUDE.md` and a note in §3.1 say no switch is built
+  (the parser's refusal would be a small code change).
+- **L3**: the DEPLOY note's `SPOTIFY_ARTIST_ALBUMS` moved into the `.env` table as the opt-in it is (`1`/`true`); the
+  testing bullet keeps the two base overrides and `INSECURE_COOKIES`; both short-link hosts named; the note's place in
+  DEPLOY.md (after "Vibb music: episode art", before "Server 0.23.0"). `server/CLAUDE.md` calls it an opt-in too.
+- **L4**: the launcher's "inert without Spotify" names the exception - the WebView provider in `neverRestrict` on
+  every phone; `launcher/CLAUDE.md` says "on every phone" too.
+- **L5**: step 0's migrations by design (0070-0072: 27, 26a, 26b); step 2's RC needs the music row's "include
+  prereleases", else step 3 waits for a stable `music-v*`; the merges named with their merge commits (`5d6bd5b`,
+  `e4d4feb`) here and in design 26; part B's list gains the cold start's `needToken` -> `vibb.token` -> `ready` order.
+- **L6**: the two cross-references name the real places (`launcher/CLAUDE.md`'s Spotify bullet, `server/CLAUDE.md`'s
+  "Vibb music: Spotify on the server").
+- **Validation**: server (from `server/`) `cargo fmt --check` clean (after `cargo fmt` on the new test), `cargo test`
+  826 passed, 1 failed - `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list`, main's timing test (open
+  point 6), the only failure; `spotify::tests::hosts_match_the_contract` green. Launcher `./gradlew assembleDebug
+  testDebugUnitTest` BUILD SUCCESSFUL, 1146 tests (1145 + the new shape test), 0 failed. Music `./gradlew
+  assembleDebug testDebugUnitTest -PwarningsAsErrors=true` BUILD SUCCESSFUL, 844 tests (843 + 1), 0 failed; both
+  `SpotifyHostsTest`s 3 tests. (`assembleDebug` because two main-source files changed - the `SpotifyHosts.kt` doc
+  comments only.) `python3 -I scripts/fake-{sonos,storytel,spotify,audio}.py --selftest`: all four OK.
