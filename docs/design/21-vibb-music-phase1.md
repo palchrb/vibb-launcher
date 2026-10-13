@@ -540,12 +540,16 @@ plus the pure `ui/home/MusicCard.kt` and `lock/LockMedia.kt`, with small hooks i
   `EXTRA_RESUME`). 52 dp art (the session's bitmap, the snapshot's art file, else a music note on the mockup's
   gradient), the entry, "Kapittel 3 · 7:46 av 18:30", the 44 dp peach button. Active only between Home's onStart and
   onStop with its content shown (never LOCKED); 1 s ticks only while playing.
+  Since design 28 (`28-music-card-session.md`) the card shows only while playing or for 10 minutes after the end of
+  play or a fresh headset; outside that window a paused session or the snapshot shows nothing.
 - **Lock media view** (Lock v12): a layer over the keypad, under the VoIP ring screen. When the lock comes up with
   the screen on - its first show, and after every screen-off - it shows the media view while the session plays, else
   the keypad. Clock, date, the tile (72 dp art, item, entry, 5 dp progress, previous / play-pause / next), "Lås opp"
   and the lock's emergency call. "Lås opp" -> the keypad with a back arrow by the prompt and the compact row (32 dp
   art, entry, play/pause) at the bottom; the clock and date give way, keys stay >= 52 dp at 320x569 dp with both bars
   at 48 dp. The view goes when the session does; a pause keeps it.
+  Replaced by design 25's glance page (its tile, 25b-G), and since design 28 a paused session's tile only inside the
+  same 10-minute listening window as Home's card.
 - **Time**: `screenTimeCounts(musicListening)`: the player in front (`setForeground`, cleared at every screen-off
   and at the token's death) while it plays (the last `setNowPlaying`) - each change re-running the tracker (since the
   fix round; first "the player in front"). The budget lock adds both music package names to its usable apps (the

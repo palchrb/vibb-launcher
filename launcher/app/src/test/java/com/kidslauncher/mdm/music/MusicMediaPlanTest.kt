@@ -161,7 +161,8 @@ class MusicMediaPlanTest {
  * refuses it too, `GuardsTest`): the controls look the app up at the tap, the surfaces re-render on
  * suspension events, and `apply()` pauses before it suspends. Also the other source pins of the
  * music glue that need these helpers: the call rule, the Sonos session, and design 28's feed (the
- * bridge stamps the end of play, the headset watch's place, baseline and lazy stamps).
+ * bridge stamps the end of play, the headset watch's place, baseline and lazy stamps) and surfaces
+ * (Home's card and the lock's tile read one window; Home renders the card at every resume).
  */
 class MusicSuspensionGuardTest {
     private fun file(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
@@ -262,5 +263,42 @@ class MusicSuspensionGuardTest {
         for (entry in listOf("fun listening()", "fun observePlay(", "fun devicesAdded(")) {
             assertTrue(entry, listening.substringAfter(entry).substringBefore("\n\n").contains("load("))
         }
+    }
+
+    @Test
+    fun `Home's card and the lock tile read the same window`() {
+        // Design 28 §4/§6 (QA L7): the card through the pure musicCard, the lock through one shown().
+        val home = file("music/MusicHomeCard.kt")
+        assertTrue(home.contains("musicCard("))
+        assertTrue(home.contains("listening = MusicListening.listening()"))
+        assertTrue(home.contains("bootCount = MusicListening.bootCount()"))
+        // one recheck at the window's end, posted only after the ticker's branch and removed with it
+        val render = body(home, "private fun render(")
+        assertTrue(render.contains("handler.removeCallbacks(ticker)\n        handler.removeCallbacks(expiry)"))
+        assertTrue(render.contains("musicRecheckInMs(card.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }"))
+        val setActive = body(home, "fun setActive(")
+        for (call in listOf("MusicListening.addListener(changed)", "MusicListening.removeListener(changed)", "handler.removeCallbacks(expiry)")) {
+            assertTrue(call, setActive.contains(call))
+        }
+        val lock = file("music/MusicLockPanel.kt")
+        assertEquals(1, Regex("windowedSession\\(").findAll(lock).count())
+        assertTrue(body(lock, "private fun shown(").contains("windowedSession("))
+        for (reader in listOf("fun lookUp(", "private fun render(")) assertTrue(reader, body(lock, reader).contains("session = shown()"))
+        assertFalse("nothing else reads the session for the tile", lock.contains("session = shownSession("))
+        assertTrue(body(lock, "fun lookUp(").contains("musicRecheckInMs(hideAt, SystemClock.elapsedRealtime())?.let { handler.postDelayed(expiry, it) }"))
+        assertTrue(lock.contains("private val expiry = Runnable { changed() }"))
+        assertTrue(body(lock, "fun start(").contains("MusicListening.addListener(changed)"))
+        val stop = body(lock, "fun stop(")
+        assertTrue(stop.contains("MusicListening.removeListener(changed)"))
+        assertTrue(stop.contains("handler.removeCallbacks(expiry)"))
+    }
+
+    @Test
+    fun `Home renders the card at every resume`() {
+        // Design 28 §2.4 (QA L5): the recheck's Handler delay stops in deep sleep; a resume renders from the clock.
+        val home = file("ui/HomeActivity.kt")
+        assertTrue(body(home, "private fun resumeContent(").contains("renderMusicCard()"))
+        assertTrue(home.contains("private fun renderMusicCard() = musicCard?.setActive(contentShown && started)"))
+        assertTrue("an active card renders again", body(file("music/MusicHomeCard.kt"), "fun setActive(").contains("if (on) render()"))
     }
 }

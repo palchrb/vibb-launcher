@@ -574,3 +574,47 @@ window yet** (step 3), so the phone behaves as before; the stamps are written an
     pins.
 - **Left for step 3**: the launcher `CLAUDE.md` (also a line on the new debug receiver next to the 16d hook's bullet)
   and `docs/testing/emulator.md` §6j.
+
+## Step 3 implementation status (2026-10-13)
+
+Branch `design-28-s3` on `486c3e57` (step 2 and its fix round; step 1, Part B, is on its own branch). Not pushed.
+Nothing was run on a device or the emulator. **The surfaces now read the window**: Home's card and the lock's tile show
+while playing or inside the listening window, and nothing outside it.
+
+- **`ui/home/MusicCard.kt`**: `musicCard(..., listening, bootCount)` returns null when `musicShownUntil(live?.playing
+  == true, ...)` is null, right after the locked/access/usable checks, so a paused session outside the window never
+  falls back to the snapshot. `MusicCardModel.hideAtElapsedMs` is the window's end, null while playing (no default:
+  every construction names it).
+- **`music/MusicHomeCard.kt`**: `render` passes `MusicListening.listening()`/`bootCount()` with one `now`; while
+  playing the 1 s ticker runs, otherwise one `expiry` (`render()`) is posted at `musicRecheckInMs(card.hideAtElapsedMs,
+  now)` - only while the card shows. Both runnables are removed at every render and on `setActive(false)`;
+  `setActive` adds and removes the `MusicListening` listener (the same `changed` as the sessions' and the bridge's).
+- **`ui/HomeActivity.kt`**: `resumeContent` calls `renderMusicCard()` after `render()` (QA L5).
+- **`music/MusicLockPanel.kt`**: one private `shown()` = `windowedSession(shownSession(...), listening, now)`, used by
+  `lookUp()` and `render()`. Reading: `shown()` also keeps the window's end (`hideAt`, from the same `listening` and
+  `now`) so that every window read is in that one function; `lookUp()` posts the `expiry` (-> `changed`: `lookUp` +
+  `onChange`, the panel refits without the tile) at `musicRecheckInMs(hideAt, now)`, only while started. `start`/`stop`
+  add and remove the `MusicListening` listener; `stop` also removes the expiry. `render`'s local `shown` became `size`
+  (it shadowed the function). It still calls nothing new on `MusicSessions`.
+- **`lock/LockGlance.kt`**: `glanceTile` unchanged; its comment says the session is the windowed one.
+- **Tests**:
+  - `MusicCardTest` (the helper gets an open window by default, the music stopped at elapsed 0 in boot 7): `the card
+    shows only while playing or inside the window` (10 min - 1 ms / exactly 10 min, the later headset window, another
+    boot, and the old gates still close it), `a paused live session outside the window hides the card - never the
+    snapshot instead`, `hideAt is the window's end while paused and null while playing` (with the recheck's delay).
+  - `MusicSuspensionGuardTest` (`MusicMediaPlanTest.kt`): `Home's card and the lock tile read the same window` (the
+    card's `musicCard(` with the window, its expiry beside the ticker and in `setActive`; in `MusicLockPanel.kt`
+    `windowedSession(` exactly once, in `shown()`, `session = shown()` in both `lookUp` and `render`, no other
+    `session = shownSession(`, the expiry and the listener in `start`/`stop`) and `Home renders the card at every
+    resume`.
+  - `LockMediaGuardTest` (extended): the panel's `MusicListening` calls are exactly `addListener`, `removeListener`,
+    `listening`, `bootCount` (the stamps are read, never written), and a new `the lock's tile is a live session only -
+    never the snapshot` (no `MusicNowPlaying`, snapshot, `openPlayer`, `EXTRA_RESUME` or `musicCard` in its code). The
+    `MusicSessions` call set is unchanged.
+  - Full build: `assembleDebug assembleRelease testDebugUnitTest -PwarningsAsErrors=true` green (stub `tsnet.aar`):
+    1063 tests in 118 classes, 0 failures; `checkDebugHasDebugHook` "hook present", `checkReleaseHasNoDebugHook` "no
+    debug hook". No new compiler warning.
+- **Docs**: launcher `CLAUDE.md` (the listening window, Home's card and the lock's tile in "media surfaces and time",
+  the glance section's tile rule, the debug headset next to the 16d hook's bullet); pointers in design 21's step 4
+  status and design 25 §1.1; `docs/testing/emulator.md` §6j (§8's checks with the debug broadcast; its Play checks
+  P1-P6 describe step 1's behaviour and need that branch merged).

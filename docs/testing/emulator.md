@@ -749,6 +749,72 @@ adb shell run-as me.vibb.music.debug cat no_backup/renderer.json
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
   drops for more than an hour, downloads under Doze, the Sonos items.
 
+## 6j. The music card's listening window; Play in the drawer during a window (design 28)
+
+Design 28 (`docs/design/28-music-card-session.md` §8): Home's "Spilles nå" card and the lock's music tile show while
+the music plays, and otherwise only for 10 minutes after the end of play or a fresh headset connection; during the
+override or the pause the Play Store is in the drawer. Set up: a managed phone with the debug music app and its feed
+(§6f), listener access granted (§4), and the screen kept on for the waits. The emulator has no headset, so the debug
+launcher has a receiver that connects a fake Bluetooth A2DP headset to the headset watch - through the same rules as a
+real one (each broadcast its own device; the 2-minute grace after the boot and after the launcher's process start; a
+device back within 60 s is not fresh). It lives only in `src/debug` (`checkReleaseHasNoDebugHook`,
+`DebugHookAbsentTest`) and needs `android.permission.DUMP` (shell has it).
+
+```
+P=me.vibb.launcher.debug
+H=$P/com.kidslauncher.mdm.music.HeadsetDebugReceiver
+adb shell svc power stayon true
+adb shell cat /proc/uptime                  # the boot's age in seconds (the first number)
+adb shell am broadcast -n $H                # "the broadcast" below; its result data and logcat say what it did
+adb logcat -s HeadsetDebug MusicListening   # "added AudioOut(id=-1000, ...) at uptime N s -> headsetAt=BootStamp(...)"
+adb shell run-as $P cat shared_prefs/music_bridge.xml   # listen_played_ms/_boot, listen_headset_ms/_boot
+```
+
+The broadcast's `headsetAt=null` (or an older stamp) means it wasn't fresh: in a grace, or the stamps not readable yet.
+
+**The card and the tile**
+- [ ] **Playing**: play an episode - the Home card ticks; screen off and on - the glance tile shows, playing.
+- [ ] **Paused, then 10 minutes**: pause in the player and go Home; note the time. The card shows paused. Don't touch
+  the phone: at +10 min it goes by itself. Lock the screen and wake it: no tile.
+- [ ] **A launcher restart inside the window**: play, pause, and at about +5 min `adb shell am crash $P`. Home comes
+  back with the card, and it goes at the original +10 min.
+- [ ] **Reboots**: reboot after a pause, then again with `adb reboot` **while it plays**. No card and no tile after
+  either boot, and none after opening and closing the player (a dead battery mid-play opens no window).
+- [ ] **A fresh headset**: with uptime > 2 min and the launcher's process older than 2 min, send the broadcast on a
+  visible Home. The snapshot card appears at once; its play button opens the player playing (`EXTRA_RESUME`). Pause:
+  the card goes 10 min after the pause.
+- [ ] **The lock**: in the same launcher process (each broadcast is its own device), outside a window, with the music
+  app's session still live and paused: the broadcast brings the glance tile back on the lock (play works from it).
+  Force-stop the music app (`adb shell am force-stop me.vibb.music.debug`) and send it again: the lock shows no tile
+  (never the snapshot - nothing on the lock opens the player), and Home shows the snapshot.
+- [ ] **The graces**: reboot and send the broadcast while uptime < 2 min: no card. Then `adb shell am crash $P` and
+  send it within 2 min of Home coming back: no card either.
+- [ ] **Sonos** (§6h, the fake speaker): play on the fake room, so the card is playing. Pause from the player: the card
+  stays paused and goes about 10 min after the player shows paused.
+- Real phone only (Jelly Star; not on the emulator): BT buds connected with nothing played for an hour show the card
+  for 10 min; buds in the ears at boot give no card; reboot with the buds in, wait 3 minutes before the PIN, unlock: no
+  card; walk out of range for about 10 s and come back: no new card; switch the BT codec in Developer options: no
+  card; a call over the buds and its end: no card; a USB-C headset behaves like the buds; an SCO-only car kit gives no
+  card.
+
+**Play in the drawer** (design 28 step 1). Do P1-P3 with **every installed app allowlisted**, so no other package's
+suspension edge refreshes the lists by accident; note the device page's `play_store_suspendable` (false on the Google
+Play emulator: the store is the package verifier and is never suspended).
+- [ ] **P1**: managed, kiosk on: no Play Store in the drawer or on Home.
+- [ ] **P2**: open the drawer and leave it open. Settings -> "Pause all restrictions" (parent PIN), then back to the
+  drawer: the Play Store is listed (no reopen needed). Home's grid shows no Play Store. Play opens from the drawer with
+  no "App is not available" and no lock-task toast;
+  `adb shell am start -a android.intent.action.VIEW -d market://details?id=org.example` opens Play.
+- [ ] **P3**: "Lock again" (Home's banner, Home staying in front): Play leaves the drawer at once. The market link: with
+  `play_store_suspendable` false it reaches Play and the kiosk stops the start (with the kiosk off it opens - design
+  09 B4's status quo); with true, "The Play Store is closed".
+- [ ] **P4**: let a pause run out by itself (or end it with the PWA's `end_windows`): Play leaves the drawer at the
+  relock.
+- [ ] **P5**: the same with a bedtime rule and the time lock's "Enter unlock code" (the override), and with the PWA's
+  pause.
+- [ ] **P6**: in no case do Play services or GSF show. Install mode is unchanged (§6b): the store is in the drawer and
+  on Home.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and the device page's "Play and
