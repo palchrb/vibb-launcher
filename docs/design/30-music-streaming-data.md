@@ -943,3 +943,98 @@ gate and the download job follow them, and the `audio_bytes`/`extra_bytes` contr
   older-phone card test asserts the 3a report's storage line, so it proves the report was stored.
 - Music 622 tests, launcher 1079, server 671 (fmt clean, clippy unchanged at 13, none in this step's code); QA's M4
   and two more mutations (the feed's order, `enqueue` ignoring `stopRunning`) go red.
+
+## Step 3b implementation status (2026-10-13, branch `design-30-s3b`)
+
+Branch `design-30-s3b` from step 3a with its fix round (`70a7e801`), step 1's fix round (`8f55d2b7`, branch
+`design-30-s1`) merged in: the code merged cleanly, the one conflict was this doc's status sections (both kept: step
+1's fix round under step 1's status, then steps 2 and 3a). Not pushed. Music app only (§5), plus
+`scripts/fake-audio.py` and its CI selftest; no server or launcher change (the PWA already reads `extra_bytes`, 3a).
+- `logic/CacheKeys.kt`: `withoutQuery` internal, `sameSource`, `itemOfResource` (the item cache key a resource
+  belongs to: itself, or the one whose `hlsKeyPrefix` it starts with - one rule for the orphan sweep and
+  `MediaCache.bytesByItem`).
+- `logic/Offline.kt` (the header names what is ours): `EXTRAS_FREE_FLOOR`, `storageLimitBytes`, `throughWrites`,
+  `staleThrough`, `sourceChanged`, `keepPlayedAt`, `heldItems`, `Extra`, `extrasToEvict`, `extrasFloor`,
+  `orphanResources`.
+- `data/MusicDb.kt`: `DownloadRow.playedAt`, Room **4** (`AutoMigration(3, 4)`, `schemas/.../4.json` exported and
+  committed); DAO `download`, `insertThrough` (blocking `INSERT OR IGNORE`), `markPlayed` (an `UPDATE` only),
+  `upsertDownload` a `@Transaction` through `keepPlayedAt` (`replaceDownload` underneath).
+- `media/MediaCache.kt`: `ThroughSink` (+ `Factory`), `StreamGate`/`StreamGateException`, `LengthGuard` (in `http(...)`
+  for both factories), `playbackFactory(..., through)` with `FLAG_IGNORE_CACHE_ON_ERROR`, `uncachedFactory`,
+  `copyOnlyFactory`, `throughSink`, `bytesByItem(context, cacheKeys)`, `resourceKeys`, `removeResource`, `freeBytes`
+  (moved from `Downloads`), `storedLength`, `gated`; the header no longer says "streams aren't cached".
+- `media/ItemMediaSourceFactory.kt`: `ItemTag.through`, `.uncached`, `.ref`. `playback/LocalRenderer.kt`: §1.7's
+  track selection; `RendererEvent.Error.gated`. `playback/PlayerHub.kt`: `heldLocal`, `claim`, `hold`.
+- `playback/PlaybackService.kt`: `activeFor(..., start)` claims the start and its next, then
+  `CacheThrough.queueRows` (rows read again, the stale ones dropped, `Active.uncached`); `mediaItem`'s tag;
+  `updateHeld` (from `publish`, and `loaded` after `renderer.load`/resumption) settles what left the held set on IO;
+  `markPlayed` from `startedPlaying` and `onIsPlayingChanged`; `onError(code, gated)` and `playOnUncached`;
+  `onDestroy` empties the held set without settling.
+- `sync/CacheThrough.kt` (new): `settle`, `catchUp`, `remove` (the prune), `evict`, `extraBytes`, `sweepOrphans`,
+  `queueRows`, `removeCopy` (the job's).
+- `sync/DownloadPlan.kt`: `downloadPlan(..., held)`, `DownloadPlan.extras`, `.wantsStorytel`. `sync/DownloadRun.kt`:
+  `sameSource` for the partial drop and `lastBytes`; `DownloadIo.removeCopy` is `suspend`. `sync/Downloads.kt`: the
+  plan with `PlayerHub.heldLocal`, `evict` each round before fetching. `sync/Sync.kt`: `catchUp` before `runLock`;
+  inside it the plan with the held set, `remove`, `evict`, `sweepOrphans`; `writeReport`'s `extra_bytes`.
+  `sync/ArtPlan.kt`: `artWant(..., extras)`, `ArtWants.compute` passes the plan's extras.
+- `scripts/fake-audio.py` (`--vary`, `--step`, `--print-listing ENTRY`, `--selftest`), run by `music.yml` (path filter
+  and a selftest step).
+- **Interpreted:**
+  - **`markPlayed` also at `onIsPlayingChanged(true)`**, not only `startedPlaying`: `start()` calls `startedPlaying`
+    right after `renderer.load`, before the loader has opened the data source, so for a fresh stream the sink's row
+    doesn't exist yet and the `UPDATE` would hit nothing - the item would be pruned as unplayed instead of kept. When
+    the player really plays, its bytes went through the sink's open, so the row is there. Both calls are the same
+    guarded helper (local renderer, no own file, no Storytel).
+  - **The claim** lives in `PlayerHub` beside the timeline part (`heldLocal = timeline + claims`); the claims end at
+    the queue's load (`updateHeld(loaded = true)` after `renderer.load`, after `start()` gives up, and posted after
+    playback resumption hands its items to the session). A plain `publish` keeps them, so an event of the old queue
+    can't drop a claim before the new queue loads.
+  - **The held set's next** is ExoPlayer's `nextMediaItemIndex`; the claim's next is `start + 1` of the plan's keys.
+  - **A held row outside the keep set that qualifies as an extra is in `extras`** (and the report's `extra_bytes`);
+    `extrasToEvict` skips it. A held row that isn't one is neither pruned nor an extra.
+  - **The mutex is held for one row at a time** (catch-up, the prune, eviction), so a new queue's `queueRows` never
+    waits for a whole pass; the orphan sweep takes none (an orphan has no row to settle, and only a held item gets a
+    new one - re-checked before each removal).
+  - **The stale-partial delete** (`queueRows`) keeps the bytes of an item the previous queue held (`before`, read
+    before the claim): re-reading `heldLocal` there would always find the queue's own claim. The orphan sweep takes
+    them once let go.
+  - **Settle**: a progressive copy needs its stored content length; HLS needs `#EXT-X-ENDLIST`, no separate audio
+    renditions (`EXT-X-MEDIA` with a URI), and every segment, initialization segment and key file cached. A settled
+    row's failure fields are cleared, like a finished download's. A settled item joins the service's queue at once
+    (`Active.copies`/`downloads`).
+  - **The job's partial drop for a held item** (`CacheThrough.removeCopy`) is skipped: only an HLS item can be held
+    and fetched (progressive held items are busy), and its bytes are what the player reads.
+  - **`playOnUncached` never calls `play()`**: `prepare()` keeps the play state, so a paused item that failed while
+    buffering stays paused ("nothing starts by itself"). It also needs the item's url (a withdrawn item without a copy
+    can't stream anyway), and an item already uncached takes the ordinary error path, so a server's own 416 can't loop.
+    It is a fifth reader of `positionMs()` (the seek back), added to `GuardsTest`'s allowlist.
+  - **`evict(context, plan, limitBytes, floorBytes)`**: the caller passes the limit and the floor (§5.2's worker line
+    names both), not `evict(context, plan)`.
+  - **Test names**: JVM method names can't hold `;` or `.`: OfflineTest's `... a changed source - unknown lengths are
+    not` and GuardsTest's `every MediaCache remove outside ...`. `CacheKeysTest` is a new file (cache keys had no test
+    class of their own); the sink and the guard's behaviour are in a new `media/ThroughSinkTest` (fakes of `Cache` and
+    `HttpDataSource`); NewItemsTest's schema test no longer pins `version = 3` (OfflineTest's v4 test does).
+- **Found, not changed:**
+  - **Cleartext**: the music app has no network security config and targets SDK 36, so Android refuses cleartext
+    http for every host - `http://10.0.2.2` included. OkHttp (and so Media3) then fails before connecting. That would
+    stop `fake-audio.py` (§8 check 10) and `fake-storytel.py` (§6i) on the emulator, and any `lan` RSS feed served
+    over plain http. To verify on the emulator before §8 check 10; a debug-only `network_security_config` for
+    10.0.2.2 would be the narrow fix.
+  - A synthetic 416 is `ERROR_CODE_IO_BAD_HTTP_STATUS` in Media3 1.7.1, so the player's load policy retries it a few
+    times (~3 s) before `onError` plays the item on uncached; the job takes its path at once.
+- Tests: `CacheKeysTest` `the same source ignores the query of an http url, compares a source id whole`, `a cache
+  resource belongs to its item's key or HLS prefix`; `OfflineTest` every §6 name (the ten rules, the schema, the eight
+  plan tests); `StorytelDownloadTest` `a changed source at a resume drops the partial and fetches from 0`, `a partial
+  from the same url with a new query is kept`; `EpisodeArtTest` `an extra's picture is kept`; `ReportTest` (the
+  `extra_bytes` glue); `ThroughSinkTest` (the row once, before the first write, only when writing; a failure is a
+  decline; the guard's 416); `GuardsTest` `playback writes the cache only through ThroughSink, with
+  FLAG_IGNORE_CACHE_ON_ERROR`, `settle and catchUp never run on writer, and catchUp runs outside runLock`,
+  `DownloadWorker and Sync plan with PlayerHub's held set`, `every MediaCache remove outside PlaybackService's own load
+  re-reads heldLocal`, `the phone's player marks what it played, an existing row only` (and the existing pins moved
+  to the new code).
+  Music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`: 654 tests (622 before), 0
+  failures. `python3 -I scripts/fake-audio.py --selftest` OK.
+- Docs: `music/CLAUDE.md` (layout, "Playback never waits", the new cache-through rule, "Prune only on a parsed
+  listing", the bridge's report fields, `fake-audio.py`), design 21 §4.5 (a pointer here), `docs/testing/emulator.md`
+  §6f (§8's checks, the fake host), root `CLAUDE.md` (scripts, `music.yml`), `PLAN.md`.
+- Not device-tested: §8 checks 2 (the `du`), 5-10.

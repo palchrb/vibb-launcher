@@ -67,7 +67,7 @@ class StorytelDownloadTest {
         override suspend fun saveRow(row: DownloadRow) {
             rows[row.entryId to row.itemKey] = row
         }
-        override fun removeCopy(cacheKey: String, hls: Boolean) {
+        override suspend fun removeCopy(cacheKey: String, hls: Boolean) {
             removed += cacheKey
         }
         override suspend fun fetch(w: WantedDownload, url: String): Pair<Long, Int?> {
@@ -349,6 +349,49 @@ class StorytelDownloadTest {
         assertTrue("nothing minted for a feed", io.minted.isEmpty())
         assertEquals(listOf("k1" to "https://cdn.example.org/new.mp3", "k1" to "https://cdn.example.org/new.mp3"), io.fetched)
         assertTrue(io.rows.getValue(1L to "k1").done)
+    }
+
+    // Design 30 §1.6: a stream's partial, completed by the job.
+
+    @Test
+    fun `a changed source at a resume drops the partial and fetches from 0`() {
+        // The length guard's synthetic 416 (MediaCache.LengthGuard: another total length at a resume) takes
+        // the job's existing http_416 path: the stream's partial goes, and the item comes once more from 0.
+        val rss = entry(1)
+        val url = "https://cdn.example.org/k1.mp3"
+        val item = PlayItem(1, "k1", "Episode", url, false, 600_000)
+        val io = Io(fetches = mutableMapOf("k1" to ArrayDeque(listOf("http_416"))))
+        io.rows[1L to "k1"] = DownloadRow(1, "k1", "e1:k1", url, false, false, 0, null, null, playedAt = now - 60_000)
+        io.run(listOf(WantedDownload(rss, item)))
+        assertEquals("the partial is the same source: kept until the 416, then dropped once", listOf("e1:k1"), io.removed)
+        assertEquals(listOf("k1" to url, "k1" to url), io.fetched)
+        assertTrue(io.rows.getValue(1L to "k1").done)
+        assertNull(io.errors[1L to "k1"])
+    }
+
+    @Test
+    fun `a partial from the same url with a new query is kept`() {
+        // A podcast host's new tracking query, a re-resolved token (L5): the same source, so the stream's
+        // bytes stay and the job fetches only what is missing (CacheWriter skips the cached ranges).
+        val rss = entry(1)
+        val item = PlayItem(1, "k1", "Episode", "https://cdn.example.org/k1.mp3?sid=2", false, 600_000)
+        val io = Io(fetches = mutableMapOf("k1" to ArrayDeque(listOf("network"))))
+        io.cached["e1:k1"] = 2_500_000
+        io.rows[1L to "k1"] = DownloadRow(
+            1, "k1", "e1:k1", "HTTPS://cdn.example.org/k1.mp3?sid=1", false, false, 2_000_000, null,
+            "https://cdn.example.org/k1.mp3?sid=2", "network", now - 600_000, 1,
+        )
+        io.run(listOf(WantedDownload(rss, item)))
+        assertTrue(io.removed.isEmpty())
+        val row = io.rows.getValue(1L to "k1")
+        assertEquals("the partial's size rode along (it grew by less than 1 MiB): the count goes on", 2, row.attempts)
+        assertEquals(2_500_000L, row.bytes)
+        assertEquals("the row names the source it fetches now", "https://cdn.example.org/k1.mp3?sid=2", row.url)
+        // Another path is another file: dropped as before.
+        val other = Io()
+        other.rows[1L to "k1"] = DownloadRow(1, "k1", "e1:k1", "https://cdn.example.org/k1-old.mp3?sid=1", false, false, 0, null, null)
+        other.run(listOf(WantedDownload(rss, item)))
+        assertEquals(listOf("e1:k1"), other.removed)
     }
 
     // The report (§4.5, M4)

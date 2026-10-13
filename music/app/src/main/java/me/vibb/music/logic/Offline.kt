@@ -15,6 +15,13 @@ import me.vibb.music.model.Entry
  * whether or not their url is null (or a daily feed would grow without bound); at a depth above 0 the
  * bookmarked item is never deleted. Prune runs only on a parsed listing (QA #3): an entry whose
  * listing isn't there keeps what it has.
+ *
+ * Ours, not vibb's (design 30 §1.4-§1.8, §1.12: vibb caches no stream and has no storage limit): a
+ * stream is written to the cache as it plays above depth 0 ([throughWrites]), a played item outside
+ * the keep set stays as a played extra, evicted least recently played first when the cache is over
+ * the parent's limit or free space under the floor ([extrasToEvict], [extrasFloor],
+ * [storageLimitBytes]), and the helpers around it: [staleThrough], [sourceChanged], [keepPlayedAt],
+ * [orphanResources], [heldItems].
  */
 
 /**
@@ -115,3 +122,88 @@ fun offlineSummary(visible: Collection<String>, onPhone: Set<String>): OfflineSu
  */
 fun visibleKeys(items: List<KeepItem>, onPhone: Set<String>): List<String> =
     items.filter { it.hasUrl || it.key in onPhone }.map { it.key }
+
+// --- Design 30 step 3b: the stream written as it plays, played extras, the parent's limit (ours) ---
+
+/** Free space a stream's write and the played extras leave where the cache lives (design 30 §1.4, §1.8). */
+const val EXTRAS_FREE_FLOOR = 1L shl 30
+
+/** The parent's storage limit in bytes (decimal GB, design 30 §1.8); null = no limit. */
+fun storageLimitBytes(gb: Int?): Long? = gb?.let { it * 1_000_000_000L }
+
+/**
+ * Does a stream write the cache at this open (design 30 §1.4)? Only for an NRK or RSS item ([through],
+ * the static part: never an own file or a Storytel book), whose entry is still in the library ([depth]
+ * null = gone) above depth 0 - "Ingen" keeps nothing, so nothing is written - with at least
+ * [EXTRAS_FREE_FLOOR] free now.
+ */
+fun throughWrites(through: Boolean, depth: Int?, freeBytes: Long): Boolean =
+    through && depth != null && depth != 0 && freeBytes >= EXTRAS_FREE_FLOOR
+
+/**
+ * Bytes a new queue must not stream through (design 30 §1.6): an item without a done copy whose cache
+ * holds bytes ([cachedBytes]) with no row (an orphan) or with a row from another source than [itemUrl]
+ * ([sameSource]). It plays uncached; its row goes. An item without a url can't stream: never.
+ */
+fun staleThrough(done: Boolean, rowSource: String?, itemUrl: String?, cachedBytes: Long): Boolean = when {
+    done || cachedBytes <= 0 || itemUrl == null -> false
+    rowSource == null -> true
+    else -> !sameSource(rowSource, itemUrl)
+}
+
+/**
+ * Did the source change under a partial copy (design 30 §1.6, the length guard)? A response to a request
+ * at [position] > 0 whose total length - `Content-Range`'s after the `/` for a 206, the [contentLength]
+ * of a 200 - differs from the copy's [storedLength]. Unknown on either side is no change.
+ */
+fun sourceChanged(storedLength: Long?, status: Int, contentRange: String?, contentLength: Long?, position: Long): Boolean {
+    if (position <= 0 || storedLength == null || storedLength < 0) return false
+    val total = when (status) {
+        206 -> contentRange?.substringAfterLast('/', "")?.trim()?.toLongOrNull()
+        200 -> contentLength
+        else -> null
+    } ?: return false
+    return total >= 0 && total != storedLength
+}
+
+/** A download row's played time across a rewrite (design 30 §1.5): the later one that is set. */
+fun keepPlayedAt(stored: Long?, incoming: Long?): Long? = listOfNotNull(stored, incoming).maxOrNull()
+
+/** The items the phone's player may have a period open for (design 30 §1.6): [current] and [next] of [keys]. */
+fun heldItems(entryId: Long, keys: List<String>, current: Int, next: Int): Set<ItemRef> =
+    listOf(current, next).mapNotNull { keys.getOrNull(it) }.mapTo(linkedSetOf()) { ItemRef(entryId, it) }
+
+/** A played extra as eviction sees it: its cache key, its bytes now and when the phone last started it. */
+data class Extra(val entryId: Long, val itemKey: String, val cacheKey: String, val bytes: Long, val playedAt: Long)
+
+/**
+ * The extras to evict (design 30 §1.8): the ones not [held], least recently played first, while the
+ * cache ([totalBytes]) is over [limitBytes] (null = no limit) or [freeBytes] is under [floorBytes] -
+ * each one lowers the first and raises the second by its bytes. Stops when both hold or none is left.
+ * The keep set is never an extra, so it never goes.
+ */
+fun extrasToEvict(extras: List<Extra>, held: Set<ItemRef>, totalBytes: Long, limitBytes: Long?, freeBytes: Long, floorBytes: Long): List<Extra> {
+    val candidates = extras.filter { ItemRef(it.entryId, it.itemKey) !in held }
+        .sortedWith(compareBy<Extra>({ it.playedAt }, { it.entryId }, { it.itemKey }))
+    var total = totalBytes
+    var free = freeBytes
+    val evict = mutableListOf<Extra>()
+    for (extra in candidates) {
+        if ((limitBytes == null || total <= limitBytes) && free >= floorBytes) break
+        evict += extra
+        total -= extra.bytes
+        free += extra.bytes
+    }
+    return evict
+}
+
+/** The free space eviction keeps (design 30 §1.8, L2): Storytel's while a book is wanted and the login works. */
+fun extrasFloor(wantsStorytel: Boolean, loginOk: Boolean): Long =
+    if (wantsStorytel && loginOk) STORYTEL_FREE_FLOOR else EXTRAS_FREE_FLOOR
+
+/**
+ * Cache resources no download row owns (design 30 §1.8, M1's backstop): neither a row's cache key nor
+ * under a row's [hlsKeyPrefix] - and not an item the player holds ([heldCacheKeys]).
+ */
+fun orphanResources(resourceKeys: Set<String>, rowCacheKeys: Set<String>, heldCacheKeys: Set<String>): Set<String> =
+    resourceKeys.filterTo(linkedSetOf()) { itemOfResource(it, rowCacheKeys) == null && itemOfResource(it, heldCacheKeys) == null }

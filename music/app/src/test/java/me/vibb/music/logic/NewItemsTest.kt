@@ -468,7 +468,7 @@ class NewItemsTest {
         assertFalse("new tables only", v2.contains("known_entries"))
         val db = moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
         assertTrue(db.contains("AutoMigration(from = 2, to = 3),"))
-        assertTrue(db.contains("version = 3,"))
+        // the version is 4 since design 30 step 3b (OfflineTest's schema test)
     }
 
     /** qa-29-code H1 (its probe T1): a phone set up over days, or on the shelf, never fills the tray before a play. */

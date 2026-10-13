@@ -119,7 +119,9 @@ class ReportTest {
         val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
         val write = sync.substringAfter("suspend fun writeReport(context: Context)").substringBefore("val text = report.toString()")
         assertTrue(write.contains("val audioBytes = MediaCache.totalBytes(context)"))
-        assertTrue(write.contains("audioBytes + ownBytes,\n            audioBytes,\n            0,"))
+        // design 30 step 3b: the played extras' bytes now, from the report's own plan (L1)
+        assertTrue(write.contains("val extraBytes = CacheThrough.extraBytes(context, plan)"))
+        assertTrue(write.contains("audioBytes + ownBytes,\n            audioBytes,\n            extraBytes,"))
     }
 
     /** Design 26b §4.5 (QA M4): a Storytel entry's waiting, and the account's word. */

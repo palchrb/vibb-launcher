@@ -26,8 +26,11 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `forRenderer(remote)` is the view for a renderer - on a room every Storytel book, on the phone only those with a copy).
 - `sync/` - the sync and download workers (WorkManager; never a dataSync FGS, QA #1), `DownloadPlan` and the pure
   `DownloadRun` (the worker's decisions behind a `DownloadIo` seam), `ArtPlan` (the art want set), `Inbox` (what the
-  bridge hands over, checked), the Nytt notification.
-- `media/` - the one `SimpleCache` (no evictor; item keys, an HLS key factory), the guarded OkHttp clients.
+  bridge hands over, checked), the Nytt notification, `CacheThrough` (design 30: a played stream settled into a
+  copy, the extras' eviction, the orphan sweep, a new queue's stale bytes).
+- `media/` - the one `SimpleCache` (no evictor; item keys, an HLS key factory), the guarded OkHttp clients, and design
+  30's wrappers: `ThroughSink` (the player's cache sink), `StreamGate` (the player's upstream asks the streaming
+  switch), `LengthGuard` (a changed source at a resume is a synthetic 416).
 - `playback/` - `PlaybackService` (MediaSessionService; FGS only from a tap or a media command), `PlayerHub` (the
   live state for the screens, same process) and the renderer axis (26a §0, §3): `Renderer` (who makes the sound),
   `LocalRenderer` (the ExoPlayer, the phone's 10 s sleep fade, audio focus) and `RendererGate` (the startup gate).
@@ -71,7 +74,9 @@ fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: th
 what `scripts/fake-storytel.py` answers from (`--selftest`, CI too): its options `--books cid:MB,...`, `--locked`,
 `--refuse`, `--no-jwt`, `--token-ttl`, `--drop-at`, `--slow-mint`, `--no-download` (minted but never on the phone, for
 a room) and `--print-listing ENTRY` (the debug feed's listing) drive docs/testing/emulator.md §6i; every value in it
-is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
+is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`). `scripts/fake-audio.py` is a fake podcast
+host for design 30's checks (silent WAV episodes with Range; `--vary` serves another length per request, the
+changed-source check; `--print-listing ENTRY`; `--selftest`, CI too; docs/testing/emulator.md §6f).
 
 ## Rules that are easy to break
 
@@ -80,11 +85,31 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   parent's "streaming may use mobile data" switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the
   queue moves on. The download job follows the other switch, "downloads may use mobile data" (design 30 §1.1:
   `streamAllowed`/`downloadAllowed` in `logic/NetGate.kt`, one formula, `Store.streamMobileData` /
-  `downloadMobileData`).
+  `downloadMobileData`). The player's upstream asks the streaming switch again at every open (`StreamGate`, design
+  30 §1.6): a copy's holes and the preloaded next item too; its refusal is "Ikke lastet ned", never an item error.
+- **A stream is written to the cache as it plays** (design 30 §1.4-§1.7; ours, not vibb's "streams aren't cached"):
+  the `ThroughSink` decides at every open (`throughWrites`: NRK/RSS, the entry's live depth above 0 - "Ingen" writes
+  nothing - and 1 GiB free), makes the item's not-done row before its first byte (`insertThrough`), and a cache
+  error never fails playback (`FLAG_IGNORE_CACHE_ON_ERROR`). "On the phone" is still a done row: a stream played to
+  its end is settled into one by a non-blocking span check (`CacheThrough.settle` when it leaves the held set, on
+  IO, never the service's `writer`; `catchUp` at every sync, before `runLock`); the job completes a partial with
+  Range. The player's **held set** (`PlayerHub.heldLocal`: the current item and the next, plus a new queue's
+  claims) is never pruned, evicted, swept or settled - every removal reads it again right before it removes - and
+  its progressive items that aren't done are never fetched (the downloader would wait on the player's lock).
+  `sameSource` ignores an http url's query; another source's partial, or bytes with no row, play uncached
+  (`staleThrough`); a resume against another total length is the `LengthGuard`'s synthetic `http_416` (the job
+  refetches from 0, the player drops the row and plays on uncached). The HLS rendition is pinned to the download's
+  (`setMaxAudioBitrate(HLS_MAX_BITRATE)` + highest). Sonos and Storytel never write through.
 - Prune only on a parsed listing, and only what the library no longer names: an entry or file the app can't read is
   hidden with everything kept (qa-21-step2-code H1). Positions and bookmarks are never deleted except by vibb's
   `clear_state` at a queue's natural end (partial positions only). Above depth 0 the bookmarked item is never
-  deleted; depth 0 ("Ingen") keeps nothing. A kept withdrawn copy plays.
+  deleted; depth 0 ("Ingen") keeps nothing. A kept withdrawn copy plays. Design 30 §1.8: a row outside the keep set
+  that the phone played (`playedAt`, Room 4; set by `markPlayed` only, kept by `upsertDownload`'s `keepPlayedAt`),
+  still listed, above depth 0 and not Storytel is a **played extra**: kept, never fetched, evicted least recently
+  played first (`extrasToEvict`) while the audio cache is over the parent's storage limit or free space under the
+  floor (`extrasFloor`: 1 GiB, 1.5 GB while a Storytel book is wanted and the login is ok) - by the sync and by the
+  job before each round. The keep set and the held set are never evicted. Cache bytes no row owns are swept at
+  every sync (`orphanResources`, keys read before rows).
 - Positions are keyed by (entry key, item key), never by URL.
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).
@@ -97,10 +122,11 @@ is fake (`FAKE-JWT-1`, `FAKE-SIG-<n>`, `k@example.invalid`, never `eyJ...`).
   signed like this app; honour `BRIDGE_CHANGED` only from a launcher. The two mobile-data switches
   (`stream_mobile_data`, `download_mobile_data`; a launcher from before design 30 writes neither, and then the old
   `mobile_data` counts for both - `mobileSwitch`), the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
-  2 GB - `storageLimit`; read from design 30 step 3a, used from 3b) and `volume_cap_pct` (the parent's cap on our own
-  Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
-  `audio_bytes` (the audio cache) and `extra_bytes` (0 until design 30 step 3b): their presence tells the PWA the app
-  reads both switches (design 30 §1.3). The AIDL is
+  2 GB - `storageLimit`; the played extras' eviction counts against it) and `volume_cap_pct` (the parent's cap on our
+  own Sonos volume sets, design 26a §5.3) are read live from the managed config. The report always carries
+  `audio_bytes` (the audio cache: what the limit counts) and `extra_bytes` (the played extras now, from the
+  report's own plan, so the job's report says it too): their presence tells the PWA the app reads both switches
+  (design 30 §1.3). The AIDL is
   byte-identical with `launcher/` - append, never reorder; shared names are in `bridge_contract.json`.
 - The launcher's media surfaces (design 21 step 4) read the platform session and `setNowPlaying` (also sent with
   every 15 s position save while playing); its Home card opens `MainActivity` with `EXTRA_OPEN` = player and, on its

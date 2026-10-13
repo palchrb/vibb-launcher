@@ -27,7 +27,7 @@ class OfflineTest {
     private val keys = (1..20).map { "k$it" } // oldest first
     private val now = 1_800_000_000_000L
 
-    private fun plan(snap: Snapshot, rows: List<DownloadRow> = emptyList(), at: Long = now) = downloadPlan(snap, rows, at)
+    private fun plan(snap: Snapshot, rows: List<DownloadRow> = emptyList(), at: Long = now, held: Set<ItemRef> = emptySet()) = downloadPlan(snap, rows, at, held)
 
     // tests/offline_keep_all.py
 
@@ -258,5 +258,237 @@ class OfflineTest {
         assertEquals(Playability.NEEDS_NETWORK, playability(hasCopy = false, hasUrl = true, caps = null, streamMobileData = false))
         val wifi = NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
         assertEquals(Playability.STREAM, playability(hasCopy = false, hasUrl = true, caps = wifi, streamMobileData = false))
+    }
+
+    // Design 30 step 3b (ours, not vibb's): the stream written as it plays, played extras, the parent's limit.
+
+    private val gib = 1L shl 30
+    private val gb = 1_000_000_000L
+    private val mb = 1_000_000L
+
+    private fun played(entryId: Long, key: String, at: Long, finished: Boolean = true) = done(entryId, key, finished = finished).copy(playedAt = at)
+
+    private fun extra(key: String, bytes: Long, at: Long, entryId: Long = 1) = Extra(entryId, key, "e$entryId:$key", bytes, at)
+
+    @Test
+    fun `the sink writes only for NRK and RSS above depth 0, for an entry still there, above the free floor`() {
+        assertEquals(1L shl 30, EXTRAS_FREE_FLOOR)
+        assertTrue(throughWrites(through = true, depth = 5, freeBytes = 2 * gib))
+        assertTrue("keep all, the floor exactly", throughWrites(true, -1, EXTRAS_FREE_FLOOR))
+        assertFalse("an own file or a Storytel book (the tag's static part)", throughWrites(false, 5, 2 * gib))
+        assertFalse("Ingen keeps nothing, so nothing is written", throughWrites(true, 0, 2 * gib))
+        assertFalse("the entry left the library", throughWrites(true, null, 2 * gib))
+        assertFalse("under the floor", throughWrites(true, 5, EXTRAS_FREE_FLOOR - 1))
+    }
+
+    @Test
+    fun `a stale partial - bytes with no row, or a row from another source`() {
+        val url = "https://cdn.example.org/k1.mp3?t=2"
+        assertTrue("bytes and no row: an orphan", staleThrough(false, null, url, 1000))
+        assertTrue("a row from another file", staleThrough(false, "https://cdn.example.org/other.mp3", url, 1000))
+        assertFalse("the same source with another query", staleThrough(false, "https://cdn.example.org/k1.mp3?t=1", url, 1000))
+        assertFalse("no bytes: nothing to mix with", staleThrough(false, null, url, 0))
+        assertFalse("a done copy plays as it is", staleThrough(true, "https://cdn.example.org/other.mp3", url, 1000))
+        assertFalse("no url: it can't stream", staleThrough(false, null, null, 1000))
+    }
+
+    @Test
+    fun `a different total length at a resume is a changed source - unknown lengths are not`() {
+        assertTrue(sourceChanged(1000, 206, "bytes 500-1199/1200", null, 500))
+        assertFalse(sourceChanged(1000, 206, "bytes 500-999/1000", 500, 500))
+        assertTrue("a 200 that ignored the Range: its Content-Length is the total", sourceChanged(1000, 200, null, 1200, 500))
+        assertFalse(sourceChanged(1000, 200, null, 1000, 500))
+        assertFalse("from 0 there is nothing to mix with", sourceChanged(1000, 200, null, 1200, 0))
+        assertFalse("an unknown total", sourceChanged(1000, 206, "bytes 500-999/*", null, 500))
+        assertFalse("no Content-Range", sourceChanged(1000, 206, null, 500, 500))
+        assertFalse("a 206's Content-Length is the range's, not the total", sourceChanged(1000, 206, "bytes 500-999/1000", 500, 500))
+        assertFalse("no stored length", sourceChanged(null, 206, "bytes 500-1199/1200", null, 500))
+        assertFalse("another status", sourceChanged(1000, 416, "bytes */1200", null, 500))
+    }
+
+    @Test
+    fun `the played time survives the job's row`() {
+        assertEquals(5L, keepPlayedAt(5, null))
+        assertEquals(9L, keepPlayedAt(5, 9))
+        assertEquals(9L, keepPlayedAt(9, 5))
+        assertEquals(7L, keepPlayedAt(null, 7))
+        assertNull(keepPlayedAt(null, null))
+        // The DAO: every whole-row write goes through it in one transaction; markPlayed only sets it, the
+        // sink's row is an INSERT OR IGNORE (it never overwrites a partial download's row).
+        val db = Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
+        assertTrue(db.contains("@Transaction\n    suspend fun upsertDownload(row: DownloadRow) {\n        replaceDownload(row.copy(playedAt = keepPlayedAt(download(row.entryId, row.itemKey)?.playedAt, row.playedAt)))"))
+        assertTrue(db.contains("@Query(\"UPDATE downloads SET playedAt = :at WHERE entryId = :entryId AND itemKey = :itemKey\")\n    suspend fun markPlayed("))
+        assertTrue(db.contains("@Insert(onConflict = OnConflictStrategy.IGNORE)\n    fun insertThrough(row: DownloadRow): Long"))
+        val writers = Fixtures.moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" && it.name != "MusicDb.kt" }
+            .filter { it.readText().contains("replaceDownload(") }.map { it.name }.toList()
+        assertTrue("whole rows go through upsertDownload only: $writers", writers.isEmpty())
+    }
+
+    @Test
+    fun `the schema is exported - version 4 adds downloads playedAt by an auto migration`() {
+        val v4 = Fixtures.moduleFile("schemas/me.vibb.music.data.MusicDb/4.json").readText()
+        assertTrue(v4.contains("\"version\": 4"))
+        assertTrue(v4.contains("`attempts` INTEGER NOT NULL, `playedAt` INTEGER, PRIMARY KEY(`entryId`, `itemKey`))"))
+        val db = Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
+        assertTrue(db.contains("AutoMigration(from = 3, to = 4),"))
+        assertTrue(db.contains("version = 4,"))
+    }
+
+    @Test
+    fun `over the limit the least recently played extras go until under it`() {
+        val extras = listOf(extra("a", 300, at = 3), extra("b", 300, at = 1), extra("c", 300, at = 2))
+        val gone = extrasToEvict(extras, emptySet(), totalBytes = 2000, limitBytes = 1500, freeBytes = 10 * gib, floorBytes = EXTRAS_FREE_FLOOR)
+        assertEquals("b first (played longest ago), then c: 1400 is under 1500", listOf("b", "c"), gone.map { it.itemKey })
+        assertTrue("at the limit nothing goes", extrasToEvict(extras, emptySet(), 1500, 1500, 10 * gib, EXTRAS_FREE_FLOOR).isEmpty())
+        // A stable order on a tie: entry id, then item key.
+        val tie = listOf(extra("z", 100, at = 1, entryId = 2), extra("y", 100, at = 1, entryId = 1), extra("x", 100, at = 1, entryId = 2))
+        assertEquals(listOf("y", "x", "z"), extrasToEvict(tie, emptySet(), 1000, 0, 10 * gib, 0).map { it.itemKey })
+        assertEquals("decimal GB", 2 * gb, storageLimitBytes(2))
+        assertNull("no limit", storageLimitBytes(null))
+    }
+
+    @Test
+    fun `under the free floor extras go until it holds, or none is left`() {
+        val extras = listOf(extra("a", 400 * mb, at = 1), extra("b", 400 * mb, at = 2), extra("c", 400 * mb, at = 3))
+        val free = EXTRAS_FREE_FLOOR - 500 * mb
+        assertEquals(listOf("a", "b"), extrasToEvict(extras, emptySet(), 1, 2 * gb, free, EXTRAS_FREE_FLOOR).map { it.itemKey })
+        assertEquals("all of them, and the floor still doesn't hold", 3, extrasToEvict(extras, emptySet(), 1, 2 * gb, 0, EXTRAS_FREE_FLOOR).size)
+        // Both rules at once: on until the cache is under the limit and the floor holds.
+        assertEquals(listOf("a", "b", "c"), extrasToEvict(extras, emptySet(), 2 * gb + 1100 * mb, 2 * gb, free, EXTRAS_FREE_FLOOR).map { it.itemKey })
+    }
+
+    @Test
+    fun `no limit - only the floor evicts`() {
+        val extras = listOf(extra("a", gb, at = 1), extra("b", gb, at = 2))
+        assertTrue("a 50 GB cache with room keeps its extras", extrasToEvict(extras, emptySet(), 50 * gb, null, 10 * gib, EXTRAS_FREE_FLOOR).isEmpty())
+        assertEquals(listOf("a"), extrasToEvict(extras, emptySet(), 50 * gb, null, EXTRAS_FREE_FLOOR - 1, EXTRAS_FREE_FLOOR).map { it.itemKey })
+    }
+
+    @Test
+    fun `the keep set and the held items are never evicted, even over the limit`() {
+        val e = entry(1, cache = 2)
+        val rows = listOf(done(1, "k20"), done(1, "k19"), played(1, "k10", at = 5), played(1, "k9", at = 1, finished = false))
+        val p = plan(snapshot(library(listOf(e)), items(1, keys), downloads = rows), rows)
+        assertEquals(listOf("k10", "k9"), p.extras.map { it.itemKey })
+        val extras = p.extras.map { Extra(it.entryId, it.itemKey, it.cacheKey, gb, it.playedAt!!) }
+        // The kept items alone are 3 GB of a 1 GB limit: every extra that isn't held goes, nothing else.
+        val gone = extrasToEvict(extras, setOf(ItemRef(1, "k9")), totalBytes = 5 * gb, limitBytes = gb, freeBytes = 10 * gib, floorBytes = EXTRAS_FREE_FLOOR)
+        assertEquals(listOf("k10"), gone.map { it.itemKey })
+    }
+
+    @Test
+    fun `the Storytel floor only while a book is wanted and the login is ok`() {
+        assertEquals(STORYTEL_FREE_FLOOR, extrasFloor(wantsStorytel = true, loginOk = true))
+        assertEquals("no login: the books can't download", EXTRAS_FREE_FLOOR, extrasFloor(wantsStorytel = true, loginOk = false))
+        assertEquals(EXTRAS_FREE_FLOOR, extrasFloor(wantsStorytel = false, loginOk = true))
+        val e = series()
+        assertTrue(plan(snapshot(library(listOf(e)), items(7, books, gone = books.toSet()))).wantsStorytel)
+        val all = books.map { book(7, it) }
+        assertFalse("every book on the phone", plan(snapshot(library(listOf(e)), items(7, books, gone = books.toSet()), downloads = all), all).wantsStorytel)
+        assertFalse(plan(snapshot(library(listOf(entry(1))), items(1, keys))).wantsStorytel)
+    }
+
+    @Test
+    fun `orphans - keys of no row and of no row's HLS prefix, never a held one`() {
+        val n1 = hlsKeyPrefix("e2:n1")
+        val keys = setOf("e1:a", "e1:gone", "${n1}master.m3u8", "${n1}v1/seg1.ts", "hls:e2:n9/seg1.ts", "e3:held", "hls:e3:h2/seg1.ts")
+        val orphans = orphanResources(keys, rowCacheKeys = setOf("e1:a", "e2:n1"), heldCacheKeys = setOf("e3:held", "e3:h2"))
+        assertEquals(setOf("e1:gone", "hls:e2:n9/seg1.ts"), orphans)
+        assertTrue(orphanResources(emptySet(), setOf("e1:a"), emptySet()).isEmpty())
+    }
+
+    // The plan (design 30 §1.6, §1.8)
+
+    @Test
+    fun `a played item outside the keep set is an extra, an unplayed one is pruned`() {
+        val e = entry(1, cache = 2)
+        val rows = listOf(
+            done(1, "k20"), done(1, "k19"),
+            played(1, "k10", at = now), done(1, "k9"),
+            played(1, "k8", at = now, finished = false), done(1, "k7", finished = false),
+        )
+        val p = plan(snapshot(library(listOf(e)), items(1, keys), downloads = rows), rows)
+        assertEquals("a played copy left behind by newer episodes, and a partial stream", listOf("k10", "k8"), p.extras.map { it.itemKey })
+        assertEquals(setOf("k9", "k7"), p.prune.map { it.itemKey }.toSet())
+        assertTrue("an extra is never fetched", p.wanted.isEmpty())
+        assertEquals("have and want count the keep set only", DownloadState(1, "0123456789abcdef", 2, 2, null), p.states.single())
+    }
+
+    @Test
+    fun `depth 0 has no extras - every row is pruned but the held ones`() {
+        val e = entry(1, cache = 0)
+        val rows = listOf(played(1, "k20", at = now), played(1, "k19", at = now, finished = false), done(1, "k5"))
+        val p = plan(snapshot(library(listOf(e)), items(1, keys), downloads = rows), rows, held = setOf(ItemRef(1, "k19")))
+        assertTrue(p.extras.isEmpty())
+        assertEquals(setOf("k20", "k5"), p.prune.map { it.itemKey }.toSet())
+        assertEquals("once the player lets go", setOf("k20", "k19", "k5"), plan(snapshot(library(listOf(e)), items(1, keys)), rows).prune.map { it.itemKey }.toSet())
+    }
+
+    @Test
+    fun `the held set is the current item and the next - neither pruned, the progressive ones not wanted`() {
+        assertEquals(setOf(ItemRef(1, "k3"), ItemRef(1, "k2")), heldItems(1, listOf("k4", "k3", "k2"), 1, 2))
+        assertEquals("the last item has no next", setOf(ItemRef(1, "k2")), heldItems(1, listOf("k4", "k3", "k2"), 2, -1))
+        assertTrue("nothing loaded", heldItems(1, emptyList(), 0, -1).isEmpty())
+        // Shuffled: k3 (the bookmark, half streamed) plays, k12 (outside the keep set, preloaded) is next.
+        val e = entry(1, cache = 2)
+        val bookmarks = mapOf("e1" to ("k3" to 60_000L))
+        val snap = snapshot(library(listOf(e)), items(1, keys), bookmarks = bookmarks)
+        val rows = listOf(played(1, "k3", at = now, finished = false), done(1, "k2", finished = false), done(1, "k12", finished = false))
+        val held = heldItems(1, listOf("k3", "k12"), 0, 1)
+        val p = plan(snap, rows, held = held)
+        assertTrue("held: never pruned", p.prune.isEmpty())
+        assertEquals("k3 is busy: the downloader would wait on the player's lock", listOf("k20", "k19", "k2"), p.wanted.map { it.item.key })
+        assertEquals("let go, k12 goes", listOf("k12"), plan(snap, rows).prune.map { it.itemKey })
+        // HLS isn't held back: a segment's lock lasts one segment load.
+        val hls = snapshot(library(listOf(e)), items(1, keys, hls = true), bookmarks = bookmarks)
+        assertEquals(listOf("k3", "k20", "k19", "k2"), plan(hls, rows, held = held).wanted.map { it.item.key })
+    }
+
+    @Test
+    fun `an item the listing dropped is pruned even when played`() {
+        val rows = listOf(played(1, "old", at = now), played(1, "old2", at = now, finished = false))
+        val p = plan(snapshot(library(listOf(entry(1, cache = 2))), items(1, keys)), rows)
+        assertEquals(setOf("old", "old2"), p.prune.map { it.itemKey }.toSet())
+        assertTrue(p.extras.isEmpty())
+    }
+
+    @Test
+    fun `a removed entry takes its extras`() {
+        val rows = listOf(played(9, "x", at = now), played(1, "k10", at = now))
+        val snap = snapshot(library(listOf(entry(1, cache = 2))), items(1, keys))
+        val p = plan(snap, rows)
+        assertEquals(listOf(9L to "x"), p.prune.map { it.entryId to it.itemKey })
+        assertEquals(listOf("k10"), p.extras.map { it.itemKey })
+        assertTrue("held, it waits until the player lets go", plan(snap, rows, held = setOf(ItemRef(9, "x"))).prune.isEmpty())
+    }
+
+    @Test
+    fun `an entry without a listing keeps its extras`() {
+        val rows = listOf(played(1, "k10", at = now), done(1, "k1"))
+        val p = plan(snapshot(library(listOf(entry(1, cache = 2))), emptyList(), listings = emptyMap()), rows)
+        assertTrue(p.prune.isEmpty())
+        assertTrue("nothing to evict from it either", p.extras.isEmpty())
+    }
+
+    @Test
+    fun `a Storytel book is never an extra`() {
+        val e = series(cache = 1)
+        val rows = books.map { book(7, it).copy(playedAt = now) }
+        val p = plan(snapshot(library(listOf(e)), items(7, books, gone = books.toSet()), downloads = rows), rows)
+        assertTrue(p.extras.isEmpty())
+        assertEquals(listOf("222", "333"), p.prune.map { it.itemKey })
+    }
+
+    @Test
+    fun `a settled stream counts as have and isn't wanted`() {
+        val e = entry(1, cache = 2)
+        // k19 streamed to its end and settled: a done row like a download's, with its played time.
+        val settled = played(1, "k19", at = now)
+        val snap = snapshot(library(listOf(e)), items(1, keys, gone = setOf("k19")), downloads = listOf(settled))
+        val p = plan(snap, listOf(settled))
+        assertEquals(listOf("k20"), p.wanted.map { it.item.key })
+        assertEquals(DownloadState(1, "0123456789abcdef", 1, 2, null), p.states.single())
+        assertTrue("withdrawn since, it stays visible: it is on the phone", snap.visible(e).any { it.key == "k19" })
+        assertEquals(Playability.LOCAL, playability(snap.hasCopy(1, "k19"), false, null, false))
     }
 }

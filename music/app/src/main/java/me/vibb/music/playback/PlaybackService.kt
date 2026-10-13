@@ -61,6 +61,7 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.CallAction
 import me.vibb.music.logic.CallPause
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.NetCaps
 import me.vibb.music.logic.Playability
 import me.vibb.music.logic.QueuePlan
@@ -83,6 +84,7 @@ import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playability
 import me.vibb.music.logic.previousAction
 import me.vibb.music.logic.publicOnly
+import me.vibb.music.logic.heldItems
 import me.vibb.music.logic.homePlan
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.resumeOverlapMs
@@ -118,6 +120,7 @@ import me.vibb.music.sonos.mustLeaveRoom
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
 import me.vibb.music.sync.ArtWants
+import me.vibb.music.sync.CacheThrough
 import me.vibb.music.sync.ItemErrors
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
@@ -141,6 +144,8 @@ internal class Active(
     val art: MutableMap<String, Uri>,
     /** The player's duration per item, once known (done marks don't depend on the listing's). */
     val durations: MutableMap<String, Long> = mutableMapOf(),
+    /** Items whose cached bytes are stale (design 30 §1.6): they play plain http, no cache (`ItemTag.uncached`). */
+    val uncached: MutableSet<String> = mutableSetOf(),
 )
 
 /**
@@ -345,6 +350,9 @@ class PlaybackService : MediaSessionService() {
             writer.close()
             locks.releaseAll()
         }
+        // The player is gone, its periods with it (design 30 §1.6). Nothing is settled here - the scope
+        // ends now - the next sync's catch-up does it.
+        PlayerHub.hold(emptySet(), loaded = true)
         scope.cancel()
         super.onDestroy()
     }
@@ -500,6 +508,8 @@ class PlaybackService : MediaSessionService() {
                         clearFault()
                         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
                         future.set(MediaSession.MediaItemsWithStartPosition(a.items.map { mediaItem(a, it) }, index, pos))
+                        // the session sets the items on the main thread: the queue's claims end after that (design 30 §1.6)
+                        handler.post { updateHeld(loaded = true) }
                     }
                 }
             }
@@ -524,12 +534,28 @@ class PlaybackService : MediaSessionService() {
      * (design 26a §4.2, `PlayBodies.speakerPlayable`: own files, withdrawn items, HLS outside an NRK
      * series and a public entry's private addresses drop out) - the renderer passed explicitly, never
      * read from a global (§9). The renderer never filters (`Renderer.currentIndex`).
+     *
+     * On the phone (design 30 §1.6, L4) the item at [start] of [keys] and its next are claimed as held
+     * before the rows are read again - a sync can no longer delete them under the new queue - and an
+     * NRK/RSS item whose cached bytes are stale (`staleThrough`) plays uncached, its row gone.
      */
-    private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean, kind: RendererKind): Active? {
+    private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean, kind: RendererKind, start: Int = 0): Active? {
         val order = snap.order(entry)
         val byKey = order.associateBy { it.key }
         val items = keys.mapNotNull { byKey[it] }.filter { kind == RendererKind.LOCAL || PlayBodies.speakerPlayable(entry, it) }
         if (items.isEmpty()) return null
+        var entryRows = rows.filter { it.entryId == entry.id }
+        var copies = snap.onPhone[entry.id].orEmpty().toMutableSet()
+        var stale = emptySet<String>()
+        if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {
+            val before = PlayerHub.heldLocal
+            PlayerHub.claim(heldItems(entry.id, keys, start, start + 1))
+            val through = entry.source == Source.NRK || entry.source == Source.RSS
+            val fresh = CacheThrough.queueRows(this, entry, if (through) items else emptyList(), before)
+            entryRows = fresh.rows
+            stale = fresh.stale
+            copies = entryRows.filter { it.done }.map { it.itemKey }.toMutableSet()
+        }
         // The entry's cover is made now; an item's own picture only where its small copy exists - the
         // rest when it becomes current (refreshArt), never a decode per queue item up front (QA H2).
         val art = withContext(writer) {
@@ -541,10 +567,11 @@ class PlaybackService : MediaSessionService() {
         return Active(
             entry, order, items,
             snap.positions[entry.key].orEmpty().toMutableMap(),
-            snap.onPhone[entry.id].orEmpty().toMutableSet(),
-            rows.filter { it.entryId == entry.id && it.done }.associateBy { it.itemKey }.toMutableMap(),
+            copies,
+            entryRows.filter { it.done }.associateBy { it.itemKey }.toMutableMap(),
             shuffled,
             art,
+            uncached = stale.toMutableSet(),
         )
     }
 
@@ -565,7 +592,7 @@ class PlaybackService : MediaSessionService() {
         } else {
             plan
         }
-        val a = activeFor(snap, rows, entry, p.keys, shuffled, kind) ?: return null
+        val a = activeFor(snap, rows, entry, p.keys, shuffled, kind, p.startIndex) ?: return null
         return a to p
     }
 
@@ -672,6 +699,7 @@ class PlaybackService : MediaSessionService() {
         val first = playableFrom(a, index, forward = true, wrap = true)
         if (first == null) {
             if (play) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            updateHeld(loaded = true) // the queue's claims end: it never loads
             return
         }
         if (first != index) {
@@ -684,6 +712,7 @@ class PlaybackService : MediaSessionService() {
         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
         // Loaded paused: the wake mode goes between prepare and play, as before step 2.
         renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)
+        updateHeld(loaded = true)
         wakeModeFor(a, index)
         if (play) {
             renderer.play()
@@ -738,8 +767,10 @@ class PlaybackService : MediaSessionService() {
             val hls = download?.hls ?: item.hls
             val cacheKey = itemCacheKey(a.entry.key, item.key)
             b.setUri(url).setCustomCacheKey(cacheKey)
-            // A public entry's audio never comes from a private address (21b §2.7).
-            b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry)))
+            // A public entry's audio never comes from a private address (21b §2.7). What streams is written
+            // as it plays (design 30 §1.4: the sink decides at each open), unless its cached bytes are stale (§1.6).
+            val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS
+            b.setTag(ItemTag(cacheKey, hls, publicOnly(a.entry), through = through, uncached = item.key in a.uncached, ref = ItemRef(a.entry.id, item.key)))
             if (hls) {
                 b.setMimeType(MimeTypes.APPLICATION_M3U8)
                 download?.variant?.let { b.setStreamKeys(listOf(StreamKey(HlsMultivariantPlaylist.GROUP_INDEX_VARIANT, it))) }
@@ -1036,7 +1067,7 @@ class PlaybackService : MediaSessionService() {
                 onIsPlayingChanged(event.playing)
                 if (callPause.inCall) callStep()
             }
-            is RendererEvent.Error -> onError(event.code)
+            is RendererEvent.Error -> onError(event.code, event.gated)
             RendererEvent.Lost -> scope.launch { lost() }
             RendererEvent.StateChanged -> publish()
         }
@@ -1142,16 +1173,29 @@ class PlaybackService : MediaSessionService() {
             val entryId = a.entry.id
             scope.launch(writer) { store.db.deleteItemError(entryId, item.key) }
         }
+        markPlayed(a, item)
     }
 
-    private fun onError(code: String) {
+    /**
+     * The current item failed. Design 30 §1.6: [gated] - the streaming gate refused the network (a copy's
+     * holes, an item that turned not playable) - is "Ikke lastet ned - trenger Wi-Fi" with no item error;
+     * an `http_416` on the phone for an item without a done copy - the length guard's changed source, or
+     * the server's own - drops the row and plays the item on uncached from where it was ([playOnUncached]).
+     */
+    private fun onError(code: String, gated: Boolean = false) {
         val a = active ?: return
         val index = renderer.currentIndex()
         val item = a.items.getOrNull(index) ?: return
         val entryId = a.entry.id
         val copy = a.downloads[item.key]
+        if (code == "http_416" && !gated && copy == null && item.url != null && item.key !in a.uncached &&
+            renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL
+        ) {
+            playOnUncached(a, index, item)
+            return
+        }
         when {
-            item.fileId != null -> Unit
+            item.fileId != null || gated -> Unit
             copy != null -> if (code == "bad_media") {
                 // A copy that isn't playable media: drop it, so the next sync fetches it again.
                 a.copies -= item.key
@@ -1163,7 +1207,7 @@ class PlaybackService : MediaSessionService() {
             }
             item.url != null -> scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }
         }
-        val offline = copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
+        val offline = gated || copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
         val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
@@ -1177,7 +1221,22 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** An item started: it leaves Nytt (21 §4.5). */
+    /**
+     * The source of [item] changed under its partial (design 30 §1.6): its row goes (the bytes become
+     * orphans, swept once the player lets go), and it is replaced in place by a plain http source
+     * (`ItemTag.uncached`) at the position it failed at, the play state as it was; no item error.
+     */
+    private fun playOnUncached(a: Active, index: Int, item: PlayItem) {
+        val pos = renderer.positionMs()
+        val entryId = a.entry.id
+        a.uncached += item.key
+        scope.launch(writer) { store.db.deleteDownload(entryId, item.key) }
+        renderer.replaceItem(index, mediaItem(a, item))
+        renderer.seekTo(index, pos)
+        renderer.prepare()
+    }
+
+    /** An item started: it leaves Nytt (21 §4.5), and on the phone it is played (design 30 §1.5). */
     private fun startedPlaying(a: Active, index: Int) {
         val entryId = a.entry.id
         val key = a.items[index].key
@@ -1186,6 +1245,22 @@ class PlaybackService : MediaSessionService() {
         scope.launch(writer) {
             if (store.db.deleteNews(entryId, key) > 0) NewNotifier.update(this@PlaybackService, store.snapshot())
         }
+        markPlayed(a, a.items[index])
+    }
+
+    /**
+     * The phone's own player started [item] (design 30 §1.5): its row's `playedAt`, so outside the keep
+     * set it stays as a played extra. Only an existing row - the sink made it for a stream, the job for a
+     * copy - and never by the current depth (an item played at depth 0 has its row pruned anyway); never a
+     * Storytel book (never streamed, never an extra) or an own file, never on a Sonos room (nothing passes
+     * through the phone's cache). Also when it really plays ([onIsPlayingChanged]): a stream's sink makes
+     * its row only at its first open, after the start.
+     */
+    private fun markPlayed(a: Active, item: PlayItem) {
+        if (renderer.kind != RendererKind.LOCAL || item.fileId != null || a.entry.source == Source.STORYTEL) return
+        val entryId = a.entry.id
+        val now = System.currentTimeMillis()
+        scope.launch(writer) { store.db.markPlayed(entryId, item.key, now) }
     }
 
     private fun markDone(a: Active, item: PlayItem) {
@@ -1290,6 +1365,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun publish() {
+        updateHeld()
         reportNowPlaying()
         val a = active
         val outputs = outputs()
@@ -1314,6 +1390,33 @@ class PlaybackService : MediaSessionService() {
             rooms = allowedRooms(home.rooms.state.value, roomScope),
             waiting = waitingMoves.get() > 0,
         )
+    }
+
+    /**
+     * The held set from the player's timeline (design 30 §1.6): on the phone the current item and the next
+     * one ExoPlayer would play; nothing on a Sonos room or with nothing loaded. Main thread, at every
+     * [publish] (every item and timeline change goes through it) and after a load ([loaded]: the new queue's
+     * claims end). An item that leaves the set is settled on IO, never on [writer] (§1.5); a settled one
+     * is on the phone at once, in this queue too.
+     */
+    private fun updateHeld(loaded: Boolean = false) {
+        val a = active
+        val held = if (a == null || renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0) {
+            emptySet()
+        } else {
+            heldItems(a.entry.id, a.items.map { it.key }, renderer.currentIndex(), renderer.player.nextMediaItemIndex)
+        }
+        for (ref in PlayerHub.hold(held, loaded)) {
+            scope.launch(Dispatchers.IO) {
+                val done = CacheThrough.settle(this@PlaybackService, ref) ?: return@launch
+                withContext(Dispatchers.Main) {
+                    active?.takeIf { it.entry.id == ref.entryId }?.let { q ->
+                        q.copies += ref.itemKey
+                        q.downloads[ref.itemKey] = done
+                    }
+                }
+            }
+        }
     }
 
     /** [Commands.MOVES] accepted and not yet run (a command's end, a cancel too: invokeOnCompletion). */
@@ -1601,7 +1704,7 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val plan = homePlan(order, item.key, resumeFrom(a0.positions[item.key]))
-        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, RendererKind.LOCAL)
+        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, RendererKind.LOCAL, plan.startIndex)
         if (a == null) {
             publish()
             return

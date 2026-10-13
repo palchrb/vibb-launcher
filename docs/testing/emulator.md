@@ -522,6 +522,38 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   paused, and one tap continues. The report the step-3 bridge will send is
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
+**Mobile data, the stream saved as it plays, the storage limit (design 30 §8)**, with the debug feed's
+`config.json` (above) or the launcher's bridge and the device page's Music card. Tools:
+- network: Wi-Fi is unmetered (through the launcher's VPN on a managed phone); `adb shell svc wifi disable` leaves the
+  emulated LTE (metered); `adb emu gsm data roaming` / `adb emu gsm data home` for roaming;
+- the audio cache: `adb shell run-as me.vibb.music.debug du -s no_backup/media`; the report's `audio_bytes` and
+  `extra_bytes`: `run-as ... cat files/music/report.json`;
+- a fake podcast host: `python3 -I scripts/fake-audio.py [--vary]` (port 8731, episodes `ep1..ep3` of 20 MB) and its
+  listing `python3 -I scripts/fake-audio.py --print-listing 6 > debug-feed/items/6.json`, for a `lan` RSS entry 6 in
+  `debug-feed/library.json` (a public entry may not reach 10.0.2.2, 21b §2.7).
+
+Checks (S = streaming switch, D = downloads switch; depth 5, limit 2 GB unless noted):
+- **S on, D off, Wi-Fi off:** a not-downloaded episode plays and `du` grows while it plays; the report's
+  `downloads[].waiting` is `wifi` and no download runs (`adb logcat -s WM-WorkerWrapper`).
+- **S off, D on, Wi-Fi off:** the episode says "Ikke lastet ned - trenger Wi-Fi" and the queue moves on; downloads
+  (and §6i's fake Storytel books) run. **Roaming, both on:** nothing streams or downloads; copies play.
+- **Offline at once:** play episode 6 (not downloaded) to its end on Wi-Fi, then the next item: in airplane mode it
+  plays, its list shows it on the phone, and after the next sync `extra_bytes` > 0.
+- **Not twice:** S on, D off, on LTE: stream half of a not-downloaded keep-set episode, then play another entry.
+  Wi-Fi on: the job fetches only the second half (`adb shell dumpsys netstats detail`, the app's uid), then
+  `downloads[].have` counts it.
+- **Depth 0:** an entry set to "Ingen", an episode streamed: `du` doesn't grow. Old copies go at the next sync; the
+  one playing and its next once the player lets go.
+- **HLS:** an NRK serie episode streamed to its end plays in airplane mode with the copy's rendition.
+- **The limit and the floor:** with a few extras, set the limit to 1 GB and sync: the least recently played extras
+  go, the keep set and the playing item stay; a depth whose keep set passes 1 GB: the card warns; fill the storage
+  to under 1 GiB free (`adb push` a large file to `/sdcard/Download`) and sync: extras go, a stream stops writing and
+  still plays.
+- **A changed source:** `fake-audio.py --vary`: stream half of `ep1`, pause long enough to drop the connection (or
+  `adb shell svc wifi disable` and back), play on: it plays on uncached (`adb logcat -s ExoPlayerImpl` shows no
+  error dialog; the fake's log a resumed Range against another total), its row is gone, and the next sync's orphan
+  sweep empties its bytes (`du`).
+
 **A new entry is news (design 29 §7)**, with the launcher's bridge (§6i for Storytel). Grant `POST_NOTIFICATIONS`
 and watch `adb shell dumpsys notification --noredact | grep -A3 me.vibb.music` and the launcher's Home badge. Except
 in the first check, play any item for 20 s first: the stored position closes the baseline. **Setting up a real phone:
