@@ -351,7 +351,7 @@ pub struct DeviceStatus {
     /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
     pub relock_blocks_total: Option<i64>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
-    // handlers::calls::call_warnings.
+    // handlers::calls::call_report.
 }
 
 #[derive(sqlx::FromRow, Clone)]

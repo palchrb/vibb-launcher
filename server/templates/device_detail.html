@@ -16,7 +16,7 @@
         <h2 class="group-header" id="attention-title">Attention</h2>
         {% for item in attention %}
         <a class="attention attention-{{ item.level_css() }}" href="{{ item.target }}" data-attention="{{ item.key() }}">
-            <span class="attention-text">{{ item.title }}</span>
+            <span class="attention-text">{{ item.title }}{% if item.at_last_report %}<span class="attention-sub" data-at-last-report>At last report</span>{% endif %}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}

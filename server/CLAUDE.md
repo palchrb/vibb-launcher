@@ -992,19 +992,28 @@ needed to manage the phone, delete on a schedule, never store notification or me
   <= `ONLINE_WINDOW_MINUTES` (60); Away = no stream and <= `AWAY_WINDOW_MINUTES` (45); else Offline; plus
   Disconnected (enrolled, no token), Not seen yet, Not set up. The two windows come from the launcher's backstop
   (`SyncSchedule.kt` 30/15 min, inexact alarms up to 1.75 x): a launcher change to the backstop must revisit them.
-  After a restart a phone shows Away until its stream reconnects (no special case).
-- **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): the end ("until 14:30",
-  "until 07:00 tomorrow") only when the phone's `day` and the day before give the same end for the rule, counted
-  from the report's local time; a report from another day than the server's local today shows no end and no bar
-  ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last report".
-- **Attention** (`src/attention.rs`): `collect(state, device)` -> rows with a level (alarm/action), a typed title
-  (<= 8 words; `calls::CallProblem` types the call report's warnings) and a target (the device page's card
-  anchors until each card has its sub-page). The device page shows them in an "Attention" group at the top; the
-  Devices list shows their count as the badge - same function, so they agree (`tests::devices_list`).
+  Right after a restart a phone shows Away, or Offline if its last report is over 45 min old, until its stream
+  reconnects: seconds after a clean stop, up to 5 min after a crash or power cut (no special case).
+- **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
+  "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
+  (`time_state.zone`) and it is Phone Setup's - no launcher sends one yet, so today no end shows -, the report is
+  fresh, from today and inside one window of the active rule, and at that window's end no effective rule locks
+  (the same rule's next day, an all-day rule, a legacy pair, an adjacent rule) and the screen time isn't used up.
+  A report from another day than the server's local today (in the fallback zone: more than a day from the UTC date)
+  shows no end and no bar ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last
+  report", never with an end. "· calls off" only with calls managed and screened (`attention::Facts::calls_enforced`).
+  In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct").
+- **Attention** (`src/attention.rs`): `facts(state, device, connection)` (or `facts_of` from cards already built,
+  as the device page does) -> `items` = rows with a level (alarm/action), a typed title (<= 8 words;
+  `calls::CallProblem` types the call report's warnings), a target (the device page's card anchors until each card
+  has its sub-page) and `at_last_report`. A phone not set up has none; an Offline or Disconnected phone's
+  report-based rows are marked "At last report" and still count. The device page shows them in an "Attention" group
+  at the top; the Devices list shows their count as the badge - the same `items`, so they agree.
 - **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, "Online · seen 3 min ago" (or
-  the lock part while a rule locks it), the screen-time bar, the badge, Add Phone. The sign-in warnings are orange
-  rows at the top. Tests: `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`,
-  `src/tests/devices_list.rs`.
+  the lock part while a rule locks it), the screen-time bar, the badge, Add Phone. The sign-in warnings are short
+  orange rows at the top (`auth::live_warning_row`/`login_warning_row`); the full sentences stay on Account. Tests:
+  `display_time::tests`, `streams::tests`, `time_state::tests`, `attention::tests`, `src/tests/devices_list.rs`,
+  `src/tests/attention.rs` (a row per fact).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

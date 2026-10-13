@@ -2,19 +2,28 @@
 //! ("Skole until 14:30", "Leggetid until 07:00 tomorrow", "Screen time used up") and today's
 //! screen time ("42 of 90 min today"), for the Devices list now and the summary's header later.
 //!
+//! **The end time is shown only when it is provably right** (the parent's rule, qa-31-s2-code M1).
 //! The report has the rule's name and the phone's local `day`, never the window's end, so the end
-//! comes from the rule's days on this server, and only when it can't be wrong:
-//! - the phone's `day` and the day before must give the same end time for the rule (a rule active
-//!   at 01:00 may be the day before's overnight window);
-//! - the end is the first time of day after the report (in the Phone Setup zone) - "tomorrow" when
-//!   that falls on the server's next local day;
-//! - a report from another day than the server's local today shows no end and no bar, and says
-//!   "at last report (yesterday 21:40)"; so does an end already passed.
+//! comes from the rules' days on this server, and only when every one of these holds:
+//! - the phone says its own time zone (`time_state.zone`) and it is the Phone Setup zone: the
+//!   rules' windows are minutes of the *phone's* local day. Today's launchers don't send a zone,
+//!   so no end shows until one does (a launcher change; an `active_until` field would be better
+//!   still - both are API changes in both directories, left out of design 31);
+//! - the report is fresh (below), from the server's local today, and its local time lies inside
+//!   one window of the active rule;
+//! - at that window's end no rule of the phone has a window running or starting (the same
+//!   rule's next day, an all-day rule, a legacy morning/evening pair, an adjacent rule), and the
+//!   day's screen time isn't used up: the end is a real unlock;
+//! - the end is still ahead (else the report is out of date: "at last report").
 //!
-//! Offline always adds "at last report"; Away once the report is older than 15 minutes (L2).
-//! A launcher `active_until` field would remove the guess (an API change, left out of design 31).
+//! **Stale** ("at last report (yesterday 21:40)", never an end): a report from another day than
+//! the server's local today (in the fallback zone: more than a day from the UTC date, since the
+//! phone's zone is unknown), Offline always, Away once the report is older than 15 minutes (L2).
+//!
+//! "· calls off" only when the phone blocks calls for real: the rule's flag, calls managed, and
+//! no call report saying the launcher doesn't screen them (M3).
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
 use crate::display_time::Zone;
 use crate::streams::ConnectionState;
@@ -36,6 +45,8 @@ pub struct TimeReport {
     pub used_minutes: Option<i64>,
     /// Today's budget including extra time; `None` = no limit.
     pub budget_minutes: Option<i64>,
+    /// The phone's own IANA time zone, when the launcher says it (none does yet).
+    pub zone: Option<String>,
 }
 
 impl TimeReport {
@@ -62,6 +73,10 @@ impl TimeReport {
                 .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()),
             used_minutes: state["used_minutes"].as_i64().filter(|m| *m >= 0),
             budget_minutes: state["budget_minutes"].as_i64().filter(|m| *m >= 0),
+            zone: state["zone"]
+                .as_str()
+                .filter(|z| !z.is_empty() && z.len() <= 64)
+                .map(str::to_string),
         })
     }
 
@@ -76,6 +91,11 @@ impl TimeReport {
     /// Something is locking the phone.
     pub fn locking(&self) -> bool {
         !self.lock_reason.is_empty() && self.lock_reason != "NONE"
+    }
+
+    /// The day's screen time is used up: when a rule ends, the screen-time lock goes on.
+    fn budget_used_up(&self) -> bool {
+        matches!((self.used_minutes, self.budget_minutes), (Some(used), Some(budget)) if used >= budget)
     }
 
     /// The badge's name: the rule's, else the kind of lock.
@@ -103,7 +123,7 @@ impl TimeReport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockBadge {
     pub name: String,
-    /// "14:30" or "07:00 tomorrow", when it can't be wrong.
+    /// "14:30" or "07:00 tomorrow", only when provably right.
     pub until: Option<String>,
     pub calls_off: bool,
     /// "yesterday 21:40", "20 min ago": the report may be out of date.
@@ -144,6 +164,8 @@ impl LockBadge {
 pub struct ScreenTime {
     pub used: i64,
     pub budget: Option<i64>,
+    /// The phone's day ("13 Oct") when "today" can't be known (the fallback zone).
+    pub day: Option<String>,
 }
 
 impl ScreenTime {
@@ -158,19 +180,36 @@ impl ScreenTime {
         })
     }
 
-    /// "42 of 90 min today", "42 min today" without a limit.
+    /// "42 of 90 min today", "42 min today" without a limit, "42 of 90 min on 13 Oct" in the
+    /// fallback zone.
     pub fn text(&self) -> String {
+        let when = match &self.day {
+            Some(day) => format!("on {day}"),
+            None => "today".to_string(),
+        };
         match self.budget {
-            Some(budget) => format!("{} of {budget} min today", self.used),
-            None => format!("{} min today", self.used),
+            Some(budget) => format!("{} of {budget} min {when}", self.used),
+            None => format!("{} min {when}", self.used),
         }
     }
 }
 
-/// Today's screen time, only when the report's `day` is the server's local today (M4); nothing
-/// without a limit and no use.
+/// The report's `day` is the current day: the server's local today, or - in the fallback zone,
+/// where the phone's zone is unknown - within a day of the UTC date.
+fn current_day(day: NaiveDate, zone: &Zone, now: DateTime<Utc>) -> bool {
+    let today = zone.today(now);
+    if zone.is_fallback() {
+        (day - today).num_days().abs() <= 1
+    } else {
+        day == today
+    }
+}
+
+/// Today's screen time, only for a report of the current day (M4); nothing without a limit and
+/// no use. In the fallback zone it names the phone's day instead of "today" (M2).
 pub fn screen_time(report: &TimeReport, zone: &Zone, now: DateTime<Utc>) -> Option<ScreenTime> {
-    if report.day? != zone.today(now) {
+    let day = report.day?;
+    if !current_day(day, zone, now) {
         return None;
     }
     let used = report.used_minutes?;
@@ -180,101 +219,137 @@ pub fn screen_time(report: &TimeReport, zone: &Zone, now: DateTime<Utc>) -> Opti
     Some(ScreenTime {
         used,
         budget: report.budget_minutes,
+        day: zone.is_fallback().then(|| day.format("%-d %b").to_string()),
     })
 }
 
-/// The lock badge from the last report: `rule_days` are the active rule's 7 windows (Monday
-/// first) when the rule is still one of the phone's, `reported_at` the report's time.
+/// What the badge needs besides the report.
+pub struct BadgeContext<'a> {
+    /// The phone's effective rules: id and 7 windows (Monday first).
+    pub rules: &'a [(i64, Vec<Option<DayWindow>>)],
+    /// When the report reached this server.
+    pub reported_at: DateTime<Utc>,
+    pub connection: &'a ConnectionState,
+    /// Calls are managed and the launcher screens them (the call report has no
+    /// `NotEnforced`/`AnyoneCanCall`).
+    pub calls_enforced: bool,
+}
+
+/// The lock badge from the last report.
 pub fn lock_badge(
     report: &TimeReport,
-    rule_days: Option<&[Option<DayWindow>]>,
-    reported_at: DateTime<Utc>,
-    connection: &ConnectionState,
+    ctx: &BadgeContext,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Option<LockBadge> {
     let name = report.lock_name()?;
-    let today = zone.today(now);
-    let fresh_day = report.day == Some(today);
-    let reported_local = zone.local(reported_at).naive_local();
-    let end = match (fresh_day, rule_days, report.lock_reason.as_str()) {
-        (true, Some(days), reason) if reason != "SCREEN_TIME" => {
-            window_end(days, today, reported_local)
-        }
-        _ => None,
-    };
-    let now_local = zone.local(now).naive_local();
-    let (until, ended) = match end {
-        Some(end) if end > now_local => {
-            let clock = zone.clock_of(end);
-            let until = if end.date() == today {
-                Some(clock)
-            } else if end.date() == today.succ_opt()? {
-                Some(format!("{clock} tomorrow"))
-            } else {
-                None
-            };
-            (until, false)
-        }
-        Some(_) => (None, true),
-        None => (None, false),
-    };
     // A report from another day; one without a day (an older launcher) can't be judged by it.
-    let stale = report.day.is_some_and(|day| day != today)
-        || ended
-        || match connection {
+    let mut stale = report.day.is_some_and(|day| !current_day(day, zone, now))
+        || match ctx.connection {
             ConnectionState::Online { .. } => false,
             ConnectionState::Away { .. } => {
-                now - reported_at > Duration::minutes(AWAY_STALE_MINUTES)
+                now - ctx.reported_at > Duration::minutes(AWAY_STALE_MINUTES)
             }
             _ => true,
         };
+    let mut until = None;
+    if !stale && let Some(end) = provable_end(report, ctx.rules, ctx.reported_at, zone) {
+        let now_local = zone.local(now).naive_local();
+        let today = zone.today(now);
+        if end <= now_local {
+            // The rule should have ended since: the report is out of date.
+            stale = true;
+        } else if end.date() == today {
+            until = Some(zone.clock_of(end));
+        } else if Some(end.date()) == today.succ_opt() {
+            until = Some(format!("{} tomorrow", zone.clock_of(end)));
+        }
+    }
     Some(LockBadge {
         name,
         until,
-        calls_off: report.calls_blocked,
-        at_last_report: stale.then(|| zone.relative(reported_at, now)),
+        calls_off: report.calls_blocked && ctx.calls_enforced,
+        at_last_report: stale.then(|| zone.relative(ctx.reported_at, now)),
     })
 }
 
-/// When the window active at `reported` (on `day`, local) ends: `None` when `day`'s window and
-/// the day before's overnight one end at different times, or the report isn't from `day`.
-fn window_end(
-    days: &[Option<DayWindow>],
-    day: NaiveDate,
-    reported: NaiveDateTime,
+/// The local time the active rule's lock ends, when it can't be wrong (the module's list).
+fn provable_end(
+    report: &TimeReport,
+    rules: &[(i64, Vec<Option<DayWindow>>)],
+    reported_at: DateTime<Utc>,
+    zone: &Zone,
 ) -> Option<NaiveDateTime> {
-    if days.len() != 7 || reported.date() != day {
+    // The windows are the phone's wall clock: only with the phone in the Phone Setup zone.
+    if report.zone.as_deref()? != zone.name()? {
         return None;
     }
-    let index = |d: NaiveDate| d.weekday().num_days_from_monday() as usize;
-    // A window's end as a time of day: `start == end` lasts 24 h, so it ends at `start`.
-    let end_of = |w: &DayWindow| if w.start == w.end { w.start } else { w.end };
-    let mut ends = Vec::new();
-    if let Some(w) = days[index(day)] {
-        ends.push(end_of(&w));
+    if report.lock_reason == "SCREEN_TIME" || report.budget_used_up() {
+        return None;
     }
-    // The day before's window reaches into `day` only when it wraps past midnight.
-    if let Some(w) = day.pred_opt().and_then(|d| days[index(d)])
-        && w.start >= w.end
-    {
-        ends.push(end_of(&w));
+    let rule_id = report.active_rule_id?;
+    let (_, days) = rules.iter().find(|(id, _)| *id == rule_id)?;
+    let reported = zone.local(reported_at).naive_local();
+    if Some(reported.date()) != report.day {
+        return None;
     }
+    let ends = covering_ends(days, reported);
     let end = *ends.first()?;
     if ends.iter().any(|e| *e != end) {
         return None;
     }
-    let time = NaiveTime::from_hms_opt(
-        u32::try_from(end / 60).ok()?,
-        u32::try_from(end % 60).ok()?,
-        0,
-    )?;
-    let same_day = day.and_time(time);
-    Some(if same_day > reported {
-        same_day
-    } else {
-        same_day + Duration::days(1)
-    })
+    // A real unlock: nothing locks at the end instant (the same rule's next window included).
+    if rules
+        .iter()
+        .any(|(_, days)| !covering_ends(days, end).is_empty())
+    {
+        return None;
+    }
+    Some(end)
+}
+
+/// The ends of the windows of `days` that cover the local time `at` (to the minute). A window is
+/// `[start, end)` on its day; `start > end` ends the next day, `start == end` lasts 24 h. A rule
+/// whose days aren't 7 entries is always on (the launcher's fail-closed rule): it covers
+/// everything and ends never, which refuses any end.
+fn covering_ends(days: &[Option<DayWindow>], at: NaiveDateTime) -> Vec<NaiveDateTime> {
+    if days.len() != 7 {
+        return vec![NaiveDateTime::MAX];
+    }
+    let index = |d: NaiveDate| d.weekday().num_days_from_monday() as usize;
+    let minute = i64::from(at.hour() * 60 + at.minute());
+    let date = at.date();
+    let clock = |m: i64| {
+        NaiveTime::from_hms_opt(
+            u32::try_from(m / 60).unwrap_or(0),
+            u32::try_from(m % 60).unwrap_or(0),
+            0,
+        )
+        .unwrap_or(NaiveTime::MIN)
+    };
+    let mut ends = Vec::new();
+    if let Some(w) = days[index(date)] {
+        if w.start < w.end {
+            if w.start <= minute && minute < w.end {
+                ends.push(date.and_time(clock(w.end)));
+            }
+        } else if minute >= w.start {
+            // Wraps past midnight (or 24 h, ending at its start).
+            let end = if w.start == w.end { w.start } else { w.end };
+            if let Some(next) = date.succ_opt() {
+                ends.push(next.and_time(clock(end)));
+            }
+        }
+    }
+    if let Some(w) = date.pred_opt().and_then(|d| days[index(d)])
+        && w.start >= w.end
+    {
+        let end = if w.start == w.end { w.start } else { w.end };
+        if minute < end {
+            ends.push(date.and_time(clock(end)));
+        }
+    }
+    ends
 }
 
 #[cfg(test)]
@@ -290,16 +365,22 @@ mod tests {
         Zone::from_setting("Europe/Oslo")
     }
 
-    fn every_day(start: i64, end: i64) -> Vec<Option<DayWindow>> {
-        vec![Some(DayWindow { start, end }); 7]
+    fn window(start: i64, end: i64) -> Option<DayWindow> {
+        Some(DayWindow { start, end })
     }
 
+    fn every_day(start: i64, end: i64) -> Vec<Option<DayWindow>> {
+        vec![window(start, end); 7]
+    }
+
+    /// A report from a phone in Oslo, locked by rule 1.
     fn report(name: &str, reason: &str, day: &str) -> TimeReport {
         TimeReport {
             lock_reason: reason.to_string(),
             active_rule_id: Some(1),
             active_rule_name: Some(name.to_string()),
             day: NaiveDate::parse_from_str(day, "%Y-%m-%d").ok(),
+            zone: Some("Europe/Oslo".to_string()),
             ..Default::default()
         }
     }
@@ -311,12 +392,35 @@ mod tests {
         }
     }
 
+    /// The badge's text for `report` sent at `reported` (Online, calls enforced), at `now`.
+    fn badge_at(
+        report: &TimeReport,
+        rules: &[(i64, Vec<Option<DayWindow>>)],
+        reported: &str,
+        now: &str,
+    ) -> String {
+        let now = utc(now);
+        lock_badge(
+            report,
+            &BadgeContext {
+                rules,
+                reported_at: utc(reported),
+                connection: &online(now),
+                calls_enforced: true,
+            },
+            &oslo(),
+            now,
+        )
+        .unwrap()
+        .text()
+    }
+
     #[test]
     fn the_report_parses_leniently() {
         let report = TimeReport::parse(
             r#"{"day":"2026-10-13","used_minutes":42,"budget_minutes":90,"extra_minutes":30,
                "active_rule_id":4,"active_rule_name":"Skole","calls_blocked":true,
-               "lock_reason":"SCHOOL","lifts_active":[]}"#,
+               "lock_reason":"SCHOOL","lifts_active":[],"zone":"Europe/Oslo"}"#,
         )
         .unwrap();
         assert_eq!(report.active_rule_id, Some(4));
@@ -327,9 +431,10 @@ mod tests {
             (report.used_minutes, report.budget_minutes),
             (Some(42), Some(90))
         );
+        assert_eq!(report.zone.as_deref(), Some("Europe/Oslo"));
         let empty = TimeReport::parse(r#"{"active_rule_name":"  ","day":"13.10.2026"}"#).unwrap();
         assert_eq!(empty.active_rule_name, None);
-        assert_eq!(empty.day, None);
+        assert_eq!((empty.day, empty.zone.as_deref()), (None, None));
         assert!(!empty.locking());
         assert_eq!(TimeReport::parse("[]"), None);
         assert_eq!(TimeReport::parse("not json"), None);
@@ -339,83 +444,254 @@ mod tests {
 
     #[test]
     fn a_school_day_ends_the_same_day() {
-        let now = utc("2026-10-13 08:00:00"); // 10:00 in Oslo, a Tuesday
-        let badge = lock_badge(
-            &TimeReport {
-                calls_blocked: true,
-                ..report("Skole", "SCHOOL", "2026-10-13")
+        let rules = [(1, every_day(8 * 60, 14 * 60 + 30))];
+        // 09:58 on Tuesday 13 Oct in Oslo.
+        let skole = TimeReport {
+            calls_blocked: true,
+            ..report("Skole", "SCHOOL", "2026-10-13")
+        };
+        assert_eq!(
+            badge_at(&skole, &rules, "2026-10-13 07:58:00", "2026-10-13 08:00:00"),
+            "Skole until 14:30 · calls off"
+        );
+        // A minute before the end, still the end.
+        assert_eq!(
+            badge_at(&skole, &rules, "2026-10-13 12:29:00", "2026-10-13 12:29:30"),
+            "Skole until 14:30 · calls off"
+        );
+    }
+
+    #[test]
+    fn a_report_just_after_the_end_never_says_tomorrow() {
+        // M1 (1): the report reaches the server at 14:30:05 - outside the window.
+        let rules = [(1, every_day(8 * 60, 14 * 60 + 30))];
+        let skole = report("Skole", "SCHOOL", "2026-10-13");
+        assert_eq!(
+            badge_at(&skole, &rules, "2026-10-13 12:30:05", "2026-10-13 12:30:10"),
+            "Skole"
+        );
+        // Hours later, offline: no end at all, never "14:30 tomorrow".
+        let now = utc("2026-10-13 20:00:00");
+        let reported = utc("2026-10-13 12:30:05");
+        let text = lock_badge(
+            &skole,
+            &BadgeContext {
+                rules: &rules,
+                reported_at: reported,
+                connection: &ConnectionState::Offline {
+                    last_contact: reported,
+                },
+                calls_enforced: true,
             },
-            Some(&every_day(8 * 60, 14 * 60 + 30)),
-            utc("2026-10-13 07:58:00"),
-            &online(now),
             &oslo(),
             now,
         )
-        .unwrap();
-        assert_eq!(badge.text(), "Skole until 14:30 · calls off");
+        .unwrap()
+        .text();
+        assert_eq!(text, "Skole · at last report (7 h ago)");
+    }
+
+    #[test]
+    fn a_phone_in_another_zone_or_one_that_doesnt_say_gets_no_end() {
+        // M1 (2): a London phone at 14:00 local is 15:00 in Oslo.
+        let rules = [(1, every_day(8 * 60, 14 * 60 + 30))];
+        let london = TimeReport {
+            zone: Some("Europe/London".to_string()),
+            ..report("Skole", "SCHOOL", "2026-10-13")
+        };
+        assert_eq!(
+            badge_at(
+                &london,
+                &rules,
+                "2026-10-13 13:00:00",
+                "2026-10-13 13:00:00"
+            ),
+            "Skole"
+        );
+        // Today's launchers don't say their zone.
+        let silent = TimeReport {
+            zone: None,
+            ..report("Skole", "SCHOOL", "2026-10-13")
+        };
+        assert_eq!(
+            badge_at(
+                &silent,
+                &rules,
+                "2026-10-13 08:00:00",
+                "2026-10-13 08:00:00"
+            ),
+            "Skole"
+        );
+    }
+
+    #[test]
+    fn windows_that_meet_keep_the_phone_locked_so_no_end() {
+        // M1 (3): an all-day rule every day is locked around the clock.
+        let all_day = [(1, every_day(0, 0))];
+        let rule = report("Alltid", "RULE", "2026-10-13");
+        assert_eq!(
+            badge_at(
+                &rule,
+                &all_day,
+                "2026-10-13 08:00:00",
+                "2026-10-13 08:00:00"
+            ),
+            "Alltid"
+        );
+        // The same 24 h window on one day only does end: Tuesday 00:00 to Wednesday 00:00.
+        let mut tuesday = vec![None; 7];
+        tuesday[1] = window(0, 0);
+        assert_eq!(
+            badge_at(
+                &rule,
+                &[(1, tuesday)],
+                "2026-10-13 08:00:00",
+                "2026-10-13 08:00:00"
+            ),
+            "Alltid until 00:00 tomorrow"
+        );
+        // A 24 h window from Monday 12:00 reaches into Tuesday morning (the day before's).
+        let mut monday_noon = vec![None; 7];
+        monday_noon[0] = window(12 * 60, 12 * 60);
+        assert_eq!(
+            badge_at(
+                &rule,
+                &[(1, monday_noon)],
+                "2026-10-13 06:00:00",
+                "2026-10-13 06:00:00"
+            ),
+            "Alltid until 12:00"
+        );
+        // A legacy evening/morning pair: the evening rule hands over to the morning one.
+        let pair = [(1, every_day(21 * 60, 0)), (2, every_day(0, 7 * 60))];
+        let evening = report("Outside allowed hours (evening)", "RULE", "2026-10-13");
+        assert_eq!(
+            badge_at(
+                &evening,
+                &pair,
+                "2026-10-13 19:00:00",
+                "2026-10-13 19:00:00"
+            ),
+            "Outside allowed hours (evening)"
+        );
+        // Two of the parent's rules that overlap: Skole to 14:30, a custom rule 14:00-16:00.
+        let overlap = [
+            (1, every_day(8 * 60, 14 * 60 + 30)),
+            (2, every_day(14 * 60, 16 * 60)),
+        ];
+        let skole = report("Skole", "SCHOOL", "2026-10-13");
+        assert_eq!(
+            badge_at(
+                &skole,
+                &overlap,
+                "2026-10-13 12:15:00",
+                "2026-10-13 12:15:00"
+            ),
+            "Skole"
+        );
+        // An adjacent one starting right at the end.
+        let adjacent = [
+            (1, every_day(8 * 60, 14 * 60 + 30)),
+            (2, every_day(14 * 60 + 30, 15 * 60)),
+        ];
+        assert_eq!(
+            badge_at(
+                &skole,
+                &adjacent,
+                "2026-10-13 10:00:00",
+                "2026-10-13 10:00:00"
+            ),
+            "Skole"
+        );
+        // Screen time used up: the screen-time lock takes over at the end.
+        let used_up = TimeReport {
+            used_minutes: Some(90),
+            budget_minutes: Some(90),
+            ..skole.clone()
+        };
+        assert_eq!(
+            badge_at(
+                &used_up,
+                &[(1, every_day(8 * 60, 14 * 60 + 30))],
+                "2026-10-13 10:00:00",
+                "2026-10-13 10:00:00"
+            ),
+            "Skole"
+        );
     }
 
     #[test]
     fn an_overnight_rule_ends_tomorrow_or_today() {
-        let bedtime = every_day(21 * 60, 7 * 60);
-        let zone = oslo();
+        let bedtime = [(1, every_day(21 * 60, 7 * 60))];
         // 21:40 on the 13th: the window that started tonight ends tomorrow.
-        let evening = utc("2026-10-13 19:40:00");
-        let badge = lock_badge(
-            &report("Leggetid", "BEDTIME", "2026-10-13"),
-            Some(&bedtime),
-            evening,
-            &online(evening),
-            &zone,
-            evening,
-        )
-        .unwrap();
-        assert_eq!(badge.text(), "Leggetid until 07:00 tomorrow");
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-13"),
+                &bedtime,
+                "2026-10-13 19:40:00",
+                "2026-10-13 19:40:00"
+            ),
+            "Leggetid until 07:00 tomorrow"
+        );
         // 01:00 on the 14th: yesterday's window ends this morning.
-        let night = utc("2026-10-13 23:00:00");
-        let badge = lock_badge(
-            &report("Leggetid", "BEDTIME", "2026-10-14"),
-            Some(&bedtime),
-            night,
-            &online(night),
-            &zone,
-            night,
-        )
-        .unwrap();
-        assert_eq!(badge.text(), "Leggetid until 07:00");
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-14"),
+                &bedtime,
+                "2026-10-13 23:00:00",
+                "2026-10-13 23:00:00"
+            ),
+            "Leggetid until 07:00"
+        );
+        // Sent at 23:59 on the 13th, read at 00:00 on the 14th, but the phone's day already says
+        // the 14th: the clocks disagree about the day, so no end (L2: the report's date check).
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-14"),
+                &bedtime,
+                "2026-10-13 21:59:00",
+                "2026-10-13 22:00:30"
+            ),
+            "Leggetid"
+        );
     }
 
     #[test]
-    fn two_possible_ends_show_none() {
-        // Monday 21:00-07:00, Tuesday 21:00-06:30: on Tuesday the rule may end at 07:00 (Monday's)
-        // or 06:30 (Tuesday's) - the report doesn't say which window it is.
+    fn two_possible_windows_or_none_show_no_end() {
+        // Monday 21:00-07:00, Tuesday 21:00-06:30: at 01:00 on Wednesday Tuesday's window
+        // covers; at 05:00 on Tuesday only Monday's does - but at Tuesday 22:00 only Tuesday's.
         let mut days = every_day(21 * 60, 7 * 60);
-        days[1] = Some(DayWindow {
-            start: 21 * 60,
-            end: 6 * 60 + 30,
-        });
-        let now = utc("2026-10-13 20:00:00"); // Tuesday 22:00
-        let badge = lock_badge(
-            &report("Leggetid", "BEDTIME", "2026-10-13"),
-            Some(&days),
-            now,
-            &online(now),
-            &oslo(),
-            now,
-        )
-        .unwrap();
-        assert_eq!(badge.text(), "Leggetid");
+        days[1] = window(21 * 60, 6 * 60 + 30);
+        let rules = [(1, days)];
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-13"),
+                &rules,
+                "2026-10-13 20:00:00",
+                "2026-10-13 20:00:00"
+            ),
+            "Leggetid until 06:30 tomorrow"
+        );
         // A rule no longer on the phone's list: the name alone.
-        let badge = lock_badge(
-            &report("Leggetid", "BEDTIME", "2026-10-13"),
-            None,
-            now,
-            &online(now),
-            &oslo(),
-            now,
-        )
-        .unwrap();
-        assert_eq!(badge.text(), "Leggetid");
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-13"),
+                &[],
+                "2026-10-13 20:00:00",
+                "2026-10-13 20:00:00"
+            ),
+            "Leggetid"
+        );
+        // A report outside every window of the rule (12:00): no end.
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-13"),
+                &rules,
+                "2026-10-13 10:00:00",
+                "2026-10-13 10:00:00"
+            ),
+            "Leggetid"
+        );
     }
 
     #[test]
@@ -427,14 +703,15 @@ mod tests {
             budget_minutes: Some(90),
             ..report("Leggetid", "BEDTIME", "2026-10-13")
         };
-        let offline = ConnectionState::Offline {
-            last_contact: reported,
-        };
+        let rules = [(1, every_day(21 * 60, 7 * 60))];
         let badge = lock_badge(
             &stale,
-            Some(&every_day(21 * 60, 7 * 60)),
-            reported,
-            &offline,
+            &BadgeContext {
+                rules: &rules,
+                reported_at: reported,
+                connection: &online(now),
+                calls_enforced: true,
+            },
             &oslo(),
             now,
         )
@@ -458,69 +735,92 @@ mod tests {
     }
 
     #[test]
-    fn offline_always_and_away_after_15_minutes_say_at_last_report() {
+    fn offline_always_and_away_after_15_minutes_say_at_last_report_without_an_end() {
         let zone = oslo();
-        let school = every_day(8 * 60, 14 * 60 + 30);
+        let rules = [(1, every_day(8 * 60, 14 * 60 + 30))];
         let now = utc("2026-10-13 10:00:00"); // 12:00
-        let badge = |reported: DateTime<Utc>, connection: ConnectionState| {
+        let badge = |minutes_ago: i64, away: bool| {
+            let reported = now - Duration::minutes(minutes_ago);
+            let connection = if away {
+                ConnectionState::Away {
+                    last_contact: reported,
+                }
+            } else {
+                ConnectionState::Offline {
+                    last_contact: reported,
+                }
+            };
             lock_badge(
                 &report("Skole", "SCHOOL", "2026-10-13"),
-                Some(&school),
-                reported,
-                &connection,
+                &BadgeContext {
+                    rules: &rules,
+                    reported_at: reported,
+                    connection: &connection,
+                    calls_enforced: true,
+                },
                 &zone,
                 now,
             )
             .unwrap()
             .text()
         };
-        let ten_ago = utc("2026-10-13 09:50:00");
-        let twenty_ago = utc("2026-10-13 09:40:00");
-        assert_eq!(
-            badge(
-                ten_ago,
-                ConnectionState::Away {
-                    last_contact: ten_ago
-                }
-            ),
-            "Skole until 14:30"
-        );
-        assert_eq!(
-            badge(
-                twenty_ago,
-                ConnectionState::Away {
-                    last_contact: twenty_ago
-                }
-            ),
-            "Skole until 14:30 · at last report (20 min ago)"
-        );
-        assert_eq!(
-            badge(
-                ten_ago,
-                ConnectionState::Offline {
-                    last_contact: ten_ago
-                }
-            ),
-            "Skole until 14:30 · at last report (10 min ago)"
-        );
+        assert_eq!(badge(10, true), "Skole until 14:30");
+        assert_eq!(badge(15, true), "Skole until 14:30");
+        assert_eq!(badge(16, true), "Skole · at last report (16 min ago)");
+        assert_eq!(badge(10, false), "Skole · at last report (10 min ago)");
         // An end already passed: the rule has probably ended since.
         let late = utc("2026-10-13 13:00:00"); // 15:00
-        let badge = lock_badge(
-            &report("Skole", "SCHOOL", "2026-10-13"),
-            Some(&school),
-            ten_ago,
-            &online(late),
-            &zone,
-            late,
-        )
-        .unwrap();
-        assert_eq!(badge.text(), "Skole · at last report (3 h ago)");
+        assert_eq!(
+            badge_at(
+                &report("Skole", "SCHOOL", "2026-10-13"),
+                &rules,
+                "2026-10-13 09:50:00",
+                "2026-10-13 13:00:00"
+            ),
+            format!(
+                "Skole · at last report ({})",
+                zone.relative(utc("2026-10-13 09:50:00"), late)
+            )
+        );
+    }
+
+    #[test]
+    fn calls_off_only_while_calls_are_enforced() {
+        let rules = [(1, every_day(8 * 60, 14 * 60 + 30))];
+        let skole = TimeReport {
+            calls_blocked: true,
+            ..report("Skole", "SCHOOL", "2026-10-13")
+        };
+        let now = utc("2026-10-13 08:00:00");
+        let badge = |calls_enforced: bool| {
+            lock_badge(
+                &skole,
+                &BadgeContext {
+                    rules: &rules,
+                    reported_at: now,
+                    connection: &online(now),
+                    calls_enforced,
+                },
+                &oslo(),
+                now,
+            )
+            .unwrap()
+            .text()
+        };
+        assert_eq!(badge(true), "Skole until 14:30 · calls off");
+        assert_eq!(badge(false), "Skole until 14:30");
     }
 
     #[test]
     fn screen_time_and_plain_locks() {
         let zone = oslo();
         let now = utc("2026-10-13 10:00:00");
+        let ctx = BadgeContext {
+            rules: &[],
+            reported_at: now,
+            connection: &online(now),
+            calls_enforced: true,
+        };
         let used_up = TimeReport {
             lock_reason: "SCREEN_TIME".to_string(),
             day: NaiveDate::from_ymd_opt(2026, 10, 13),
@@ -528,7 +828,7 @@ mod tests {
             budget_minutes: Some(90),
             ..Default::default()
         };
-        let badge = lock_badge(&used_up, None, now, &online(now), &zone, now).unwrap();
+        let badge = lock_badge(&used_up, &ctx, &zone, now).unwrap();
         assert_eq!(badge.text(), "Screen time used up");
         assert_eq!(
             screen_time(&used_up, &zone, now).unwrap().percent(),
@@ -539,7 +839,7 @@ mod tests {
             lock_reason: "NONE".to_string(),
             ..used_up.clone()
         };
-        assert_eq!(lock_badge(&free, None, now, &online(now), &zone, now), None);
+        assert_eq!(lock_badge(&free, &ctx, &zone, now), None);
         // No limit: a number without a bar, nothing at 0.
         let unlimited = TimeReport {
             budget_minutes: None,
@@ -558,23 +858,45 @@ mod tests {
         assert_eq!(screen_time(&idle, &zone, now), None);
         // An older launcher: the reason's word, no end.
         let old = TimeReport::from_lock_reason("BEDTIME");
-        let badge = lock_badge(&old, None, now, &online(now), &zone, now).unwrap();
-        assert_eq!(badge.text(), "Bedtime");
+        assert_eq!(
+            lock_badge(&old, &ctx, &zone, now).unwrap().text(),
+            "Bedtime"
+        );
     }
 
     #[test]
-    fn the_end_is_shown_in_the_fallback_zone_labelled() {
-        let zone = Zone::from_setting("Europe/Olso");
-        let now = utc("2026-10-13 10:00:00");
+    fn the_fallback_zone_shows_no_end_and_names_the_phones_day() {
+        // M2: the Phone Setup zone left empty; phones in New York (UTC-4 in October).
+        let zone = Zone::from_setting("");
+        let rules = [(1, every_day(20 * 60, 7 * 60))];
+        // 20:30 in New York is 00:30 UTC the next day: the phone's day is "yesterday" in UTC.
+        let now = utc("2026-10-14 00:30:00");
+        let bedtime = TimeReport {
+            used_minutes: Some(42),
+            budget_minutes: Some(90),
+            zone: Some("America/New_York".to_string()),
+            ..report("Bedtime", "BEDTIME", "2026-10-13")
+        };
         let badge = lock_badge(
-            &report("Skole", "SCHOOL", "2026-10-13"),
-            Some(&every_day(8 * 60, 14 * 60 + 30)),
-            now,
-            &online(now),
+            &bedtime,
+            &BadgeContext {
+                rules: &rules,
+                reported_at: now,
+                connection: &online(now),
+                calls_enforced: true,
+            },
             &zone,
             now,
         )
         .unwrap();
-        assert_eq!(badge.text(), "Skole until 14:30 UTC");
+        assert_eq!(badge.text(), "Bedtime", "no end, and not stale");
+        let bar = screen_time(&bedtime, &zone, now).unwrap();
+        assert_eq!(bar.text(), "42 of 90 min on 13 Oct");
+        // Two days off is another day.
+        let old = TimeReport {
+            day: NaiveDate::from_ymd_opt(2026, 10, 11),
+            ..bedtime
+        };
+        assert_eq!(screen_time(&old, &zone, now), None);
     }
 }

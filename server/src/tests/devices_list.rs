@@ -152,32 +152,42 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let zone = Zone::from_setting("Europe/Oslo");
-    // A rule that runs all day, every day (start == end: 24 h from 00:00), so its end is the
-    // next midnight whatever the time of the test.
+    let today = zone.today(chrono::Utc::now());
+    // A rule that runs all of today (start == end: 24 h from 00:00) and no other day, so its
+    // lock provably ends at the next midnight whatever the time of the test.
+    let mut days = vec![json!(null); 7];
+    days[chrono::Datelike::weekday(&today).num_days_from_monday() as usize] =
+        json!({"start": 0, "end": 0});
     let rule: i64 = sqlx::query_scalar(
         "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
          days_json) VALUES (NULL, 'Skole', 'school', 0, '[]', ?) RETURNING id",
     )
-    .bind(serde_json::to_string(&vec![json!({"start": 0, "end": 0}); 7]).unwrap())
+    .bind(serde_json::to_string(&days).unwrap())
     .fetch_one(&app.db)
     .await
     .unwrap();
     let (anna, token) = app.enrolled_device("Anna").await;
+    // Calls managed and screened, so the school rule really blocks them.
+    sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
+        .bind(anna)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let _stream = app.state.command_streams.open(anna);
-    let today = zone.today(chrono::Utc::now());
-    let time_state = |day: chrono::NaiveDate| {
+    // `zone`: the phone says it is in the Phone Setup zone (no launcher does yet).
+    let time_state = |day: chrono::NaiveDate, zone: Option<&str>| {
         json!({
-            "capabilities": ["time_rules_v1"],
+            "capabilities": ["time_rules_v1", "call_policy_v1"],
             "lock_reason": "SCHOOL",
             "time_state": {
                 "day": day.format("%Y-%m-%d").to_string(), "used_minutes": 42,
                 "budget_minutes": 90, "extra_minutes": 0, "active_rule_id": rule,
                 "active_rule_name": "Skole", "calls_blocked": true, "lock_reason": "SCHOOL",
-                "lifts_active": []
+                "lifts_active": [], "zone": zone
             }
         })
     };
-    report(&app, &token, time_state(today)).await;
+    report(&app, &token, time_state(today, Some("Europe/Oslo"))).await;
 
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
@@ -187,6 +197,45 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
         ),
         "{anna_row}"
     );
+
+    // The same rule every day: the phone stays locked at midnight, so no end (M1).
+    sqlx::query("UPDATE time_rules SET days_json = ? WHERE id = ?")
+        .bind(serde_json::to_string(&vec![json!({"start": 0, "end": 0}); 7]).unwrap())
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page("/devices", &cookie).await.text();
+    assert!(
+        row(&html, anna).contains("data-lock>Skole · calls off</span>"),
+        "{}",
+        row(&html, anna)
+    );
+    sqlx::query("UPDATE time_rules SET days_json = ? WHERE id = ?")
+        .bind(serde_json::to_string(&days).unwrap())
+        .bind(rule)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // A phone that doesn't say its zone (today's launchers): no end.
+    report(&app, &token, time_state(today, None)).await;
+    let html = app.get_page("/devices", &cookie).await.text();
+    assert!(
+        row(&html, anna).contains("data-lock>Skole · calls off</span>"),
+        "{}",
+        row(&html, anna)
+    );
+
+    // Calls not managed: the rule's flag alone isn't "calls off" (M3).
+    sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
+        .bind(anna)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app.get_page("/devices", &cookie).await.text();
+    let anna_row = row(&html, anna);
+    assert!(anna_row.contains("data-lock>Skole</span>"), "{anna_row}");
     // Online with a lock: the lock replaces "seen just now" (the mockup's row).
     assert!(!anna_row.contains("seen"));
     assert!(
@@ -198,11 +247,16 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     );
 
     // A report from yesterday: no end, no bar, "at last report".
-    report(&app, &token, time_state(today.pred_opt().unwrap())).await;
+    report(
+        &app,
+        &token,
+        time_state(today.pred_opt().unwrap(), Some("Europe/Oslo")),
+    )
+    .await;
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
     assert!(
-        anna_row.contains("data-lock>Skole · calls off · at last report</span>"),
+        anna_row.contains("data-lock>Skole · at last report</span>"),
         "{anna_row}"
     );
     assert!(!anna_row.contains("data-screen-time"));

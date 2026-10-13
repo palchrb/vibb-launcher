@@ -10,7 +10,7 @@
 //!   wrong clock can't make itself "just now". The steps: under a minute "just now", under an hour
 //!   "N min ago", the same local day "N h ago", the day before "yesterday HH:MM", older "12 Oct"
 //!   ("12 Oct 2025" in another year). A time up to 5 minutes ahead (a clock that moved back) is
-//!   "just now"; further ahead it shows its date.
+//!   "just now"; further ahead "today 16:00", or its date on another day.
 //! - **The exact time** ("2026-10-13 10:59:13 CEST") is for a `title=` and the ⓘ panels, never
 //!   the visible value.
 //!
@@ -77,6 +77,11 @@ impl Zone {
         self.fallback
     }
 
+    /// The Phone Setup zone's IANA name; `None` in the fallback (the phones' zone is unknown).
+    pub fn name(&self) -> Option<&'static str> {
+        (!self.fallback).then(|| self.tz.name())
+    }
+
     /// The local date at `now`.
     pub fn today(&self, now: DateTime<Utc>) -> NaiveDate {
         self.local(now).date_naive()
@@ -113,6 +118,10 @@ impl Zone {
         if secs < 0 {
             if -secs <= FUTURE_SLACK_SECS {
                 return "just now".to_string();
+            }
+            // Only a server clock stepped back gets here: say the clock time, not "13 Oct".
+            if self.local(t).date_naive() == self.today(now) {
+                return format!("today {}", self.clock(t));
             }
             return self.date(t, now);
         }
@@ -190,6 +199,8 @@ mod tests {
     fn the_zone_is_phone_setups_or_utc_labelled() {
         let zone = oslo();
         assert!(!zone.is_fallback());
+        assert_eq!(zone.name(), Some("Europe/Oslo"));
+        assert_eq!(Zone::from_setting("").name(), None);
         let t = utc("2026-10-13 08:12:04");
         assert_eq!(zone.clock(t), "10:12");
         assert_eq!(zone.exact(t), "2026-10-13 10:12:04 CEST");
@@ -244,6 +255,10 @@ mod tests {
         let now = utc("2026-10-13 12:00:00");
         assert_eq!(zone.relative(utc("2026-10-13 12:02:00"), now), "just now");
         assert_eq!(zone.relative(utc("2026-10-13 12:05:00"), now), "just now");
+        assert_eq!(
+            zone.relative(utc("2026-10-13 14:00:00"), now),
+            "today 16:00"
+        );
         assert_eq!(zone.relative(utc("2026-10-15 12:00:00"), now), "15 Oct");
     }
 

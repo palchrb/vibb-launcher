@@ -225,7 +225,10 @@ pub struct ConnectionInputs {
 
 /// The state (§3.10's table). Last contact is the newest of the last access, the last report and
 /// an open stream's `since`. Right after a server restart only the last report is known, so a
-/// phone shows Away for the seconds until its stream reconnects - honest, so no special case.
+/// phone shows Away - or Offline if that report is over 45 min old, as an idle phone's often is -
+/// until its stream reconnects: seconds after a clean stop (the streams are closed, the phones
+/// reconnect at once), up to 5 min after a crash or a power cut (no FIN reaches the phones; they
+/// reconnect after 300 s of silence). Honest, so no special case.
 pub fn connection_state(inputs: &ConnectionInputs, now: DateTime<Utc>) -> ConnectionState {
     if !inputs.enrolled {
         return ConnectionState::NotSetUp;

@@ -235,15 +235,6 @@ fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
 }
 
-/// `call_report`'s warnings and hints (the device page).
-pub(crate) async fn call_warnings(
-    state: &AppState,
-    policy: &DevicePolicy,
-) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
-    let report = call_report(state, policy).await?;
-    Ok((report.warnings, report.hints))
-}
-
 /// What the parent should know about this phone's calls, from its latest status report: the
 /// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer,
 /// call-redirection or call-screening role isn't ours (security review L7: without the dialer and

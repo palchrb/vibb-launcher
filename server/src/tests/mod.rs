@@ -4,6 +4,7 @@
 
 mod admin_auth;
 mod app_display;
+mod attention;
 mod backup_secrets;
 mod calls;
 mod catalog_pins;

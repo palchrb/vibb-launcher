@@ -12,14 +12,14 @@
     {% if let Some(warning) = live_warning %}
     <a class="attention attention-action" href="/account" id="live-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span class="attention-text">{{ warning }}<span class="attention-sub">Change the password</span></span>
+        <span class="attention-text">{{ warning.title }}<span class="attention-sub">{{ warning.sub }}</span></span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% endif %}
     {% if let Some(warning) = login_warning %}
     <div class="attention attention-action" id="login-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <a class="attention-text" href="/account">{{ warning }}<span class="attention-sub">Change the password</span></a>
+        <a class="attention-text" href="/account">{{ warning.title }}<span class="attention-sub">{{ warning.sub }}</span></a>
         <form method="post" action="/account/dismiss-warning">
             <input type="hidden" name="back" value="{{ warning_back }}">
             <button type="submit" class="attention-dismiss">Dismiss</button>

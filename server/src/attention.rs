@@ -1,17 +1,26 @@
 //! The Attention list (design 31 §3.2 item 2, §3.8): what about a phone needs the parent, as one
 //! line each with a link to the fix. The device page shows the rows, the Devices list their count
-//! as the red badge - both from [collect], so the two always agree.
+//! as the red badge - both from [items] over the same [Facts], so the two always agree.
 //!
 //! Every title comes from a typed value, never from the first sentence of a card's text (M5):
 //! those run past 8 words and carry package names. Alarms (red) come first, then what needs
 //! action (orange), each in §3.2's order.
 //!
-//! It reads about 10 small things per phone (the policy, the last report, the relock card, the
-//! call report, the rules); fine at 1-5 phones - don't make it one query.
+//! Which rows count (the user's decision on qa-31-s2-code L5):
+//! - a phone not set up has none: its "Not set up" says enough;
+//! - an Offline or Disconnected phone keeps the rows read from its last report, marked "at last
+//!   report" (they may no longer be true); the server's own facts (PINs, access, calls policy)
+//!   are current and unmarked. Both kinds count, on the list and on the page alike.
+//!
+//! [facts] reads about 10 small things per phone (the policy, the last report, the relock card,
+//! the call report, the rules); fine at 1-5 phones - don't make it one query. The device page,
+//! which builds those cards anyway, passes them to [facts_of] instead of reading them twice.
 
 use crate::AppState;
 use crate::handlers::calls::CallProblem;
+use crate::handlers::window_relock::RelockCard;
 use crate::models::{Device, DevicePolicy, DeviceStatus};
+use crate::streams::ConnectionState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -46,6 +55,20 @@ pub enum Kind {
     LauncherWithoutRules,
 }
 
+impl Kind {
+    /// Read from the phone's last report (so possibly out of date), not from this server's own
+    /// settings.
+    fn read_from_report(self) -> bool {
+        !matches!(
+            self,
+            Kind::NoParentPin
+                | Kind::EasyParentPin
+                | Kind::AccessRevoked
+                | Kind::IncomingCallsNotBlocked
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttentionItem {
     pub kind: Kind,
@@ -54,6 +77,8 @@ pub struct AttentionItem {
     pub title: String,
     /// Where it is fixed.
     pub target: String,
+    /// From the last report of a phone that is Offline or Disconnected: "at last report".
+    pub at_last_report: bool,
 }
 
 impl AttentionItem {
@@ -65,7 +90,8 @@ impl AttentionItem {
         }
     }
 
-    /// A stable name for the row (`data-attention`), for tests and the page's hooks.
+    /// A stable name for the row (`data-attention`), for tests and the page's hooks. Every calls
+    /// row shares "calls" (they link to the same page).
     pub fn key(&self) -> &'static str {
         match self.kind {
             Kind::RestrictionsPaused => "restrictions-paused",
@@ -89,9 +115,13 @@ impl AttentionItem {
     }
 }
 
-/// The facts [items] turns into rows, typed. Gathered by [facts]; pure from here on.
+/// The facts [items] turns into rows, typed. Gathered by [facts] or [facts_of]; pure from here.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
+    /// Not enrolled: no rows at all (L5).
+    pub not_set_up: bool,
+    /// Offline or Disconnected: the rows from the last report say "at last report" (L5).
+    pub report_stale: bool,
     pub restrictions_paused: bool,
     pub foreign_access: bool,
     pub do_not_disturb: bool,
@@ -106,14 +136,20 @@ pub struct Facts {
     pub blocked_apps: usize,
     pub restart_once: bool,
     pub no_notification_access: bool,
-    /// From the call report, in its order (`Waiting` left out).
+    /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
     pub launcher_without_rules: bool,
+    /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
+    /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
+    pub calls_enforced: bool,
 }
 
 /// The rows for one phone, alarms first.
 pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
+    if facts.not_set_up {
+        return Vec::new();
+    }
     let mut kinds: Vec<Kind> = Vec::new();
     let mut add = |on: bool, kind: Kind| {
         if on {
@@ -152,6 +188,7 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
             level: level(kind),
             title: title(kind),
             target: target(kind, device_id),
+            at_last_report: facts.report_stale && kind.read_from_report(),
         })
         .collect()
 }
@@ -226,14 +263,28 @@ fn target(kind: Kind, id: i64) -> String {
     format!("/devices/{id}#{anchor}")
 }
 
-/// The Attention rows for `device`.
-pub async fn collect(state: &AppState, device: &Device) -> Vec<AttentionItem> {
-    items(device.id, &facts(state, device).await)
+/// What [facts_of] reads; the device page passes the cards it has built.
+pub struct Sources<'a> {
+    pub device: &'a Device,
+    pub policy: &'a DevicePolicy,
+    pub latest: Option<&'a DeviceStatus>,
+    pub relock: &'a RelockCard,
+    /// The call report's problems.
+    pub call_problems: &'a [CallProblem],
+    /// Calls aren't managed while a no-calls rule is in force (the Time rules card's warning).
+    pub incoming_calls_not_blocked: bool,
+    pub connection: ConnectionState,
 }
 
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
 /// the builder that failed); the card it belongs to shows the error.
-pub async fn facts(state: &AppState, device: &Device) -> Facts {
+pub async fn facts(state: &AppState, device: &Device, connection: ConnectionState) -> Facts {
+    if device.enrolled_at.is_none() {
+        return Facts {
+            not_set_up: true,
+            ..Default::default()
+        };
+    }
     let id = device.id;
     let Some(policy) =
         sqlx::query_as::<_, DevicePolicy>("SELECT * FROM device_policy WHERE device_id = ?")
@@ -259,12 +310,6 @@ pub async fn facts(state: &AppState, device: &Device) -> Facts {
     });
     let latest = latest.as_ref();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let capability = |name: &str| {
-        latest
-            .and_then(|s| s.capabilities_json.as_deref())
-            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
-    };
-
     let allowed: Option<std::collections::HashSet<String>> = policy
         .allowlist_json
         .as_deref()
@@ -273,14 +318,7 @@ pub async fn facts(state: &AppState, device: &Device) -> Facts {
     let relock =
         crate::handlers::window_relock::card(&state.db, id, latest, None, now_ms, allowed.as_ref())
             .await;
-    let blocked_apps = if relock.blocks.items.is_empty() && relock.notes.allow_button {
-        // An older launcher: its last relock's "Blocked:" apps that "Allow these apps" lets out.
-        relock.notes.allow.len().max(1)
-    } else {
-        relock.blocks.items.len()
-    };
-
-    let calls = match crate::handlers::calls::call_report(state, &policy).await {
+    let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
         Ok(report) => report.problems,
         Err(err) => {
             tracing::error!(device_id = id, %err, "attention: can't read the call report");
@@ -293,58 +331,101 @@ pub async fn facts(state: &AppState, device: &Device) -> Facts {
             .unwrap_or_default()
             .iter()
             .any(|rule| !rule.calls_allowed);
+    facts_of(
+        &Sources {
+            device,
+            policy: &policy,
+            latest,
+            relock: &relock,
+            call_problems: &call_problems,
+            incoming_calls_not_blocked,
+            connection,
+        },
+        now_ms,
+    )
+}
 
+/// [Facts] from what is already read.
+pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
+    if s.device.enrolled_at.is_none() {
+        return Facts {
+            not_set_up: true,
+            ..Default::default()
+        };
+    }
+    let (policy, latest) = (s.policy, s.latest);
+    let capability = |name: &str| {
+        latest
+            .and_then(|st| st.capabilities_json.as_deref())
+            .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
+    };
+    let blocked_apps = if s.relock.blocks.items.is_empty() && s.relock.notes.allow_button {
+        // An older launcher: its last relock's "Blocked:" apps that "Allow these apps" lets out.
+        s.relock.notes.allow.len().max(1)
+    } else {
+        s.relock.blocks.items.len()
+    };
     let time = latest
-        .and_then(|s| s.time_state_json.as_deref())
+        .and_then(|st| st.time_state_json.as_deref())
         .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
     let lock_state =
-        crate::kid_lock::parse_lock_state(latest.and_then(|s| s.lock_state_json.as_deref()));
-
+        crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     Facts {
-        restrictions_paused: latest.is_some_and(|s| s.restrictions_paused),
-        foreign_access: relock.foreign.is_some(),
+        not_set_up: false,
+        report_stale: matches!(
+            s.connection,
+            ConnectionState::Offline { .. } | ConnectionState::Disconnected
+        ),
+        restrictions_paused: latest.is_some_and(|st| st.restrictions_paused),
+        foreign_access: s.relock.foreign.is_some(),
         do_not_disturb: matches!(
             crate::sound_mode::sanitize_interruption_filter(
-                latest.and_then(|s| s.interruption_filter.as_deref())
+                latest.and_then(|st| st.interruption_filter.as_deref())
             ),
             Some("priority" | "alarms" | "none")
         ),
-        google_backup: latest.and_then(|s| s.backup_service_enabled) == Some(true),
-        no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
+        google_backup: latest.and_then(|st| st.backup_service_enabled) == Some(true),
+        no_parent_pin: crate::handlers::devices::managed_without_pin(policy),
         easy_parent_pin: policy.override_pin_hash.is_some()
             && policy.override_pin_easy == Some(true),
-        access_revoked: device.enrolled_at.is_some() && device.token_hash.is_none(),
+        access_revoked: s.device.token_hash.is_none(),
         policy_problem: latest
-            .and_then(|s| s.policy_state.as_deref())
+            .and_then(|st| st.policy_state.as_deref())
             .is_some_and(|state| state != "ok"),
-        unseen_restarts: latest.is_some_and(|s| {
+        unseen_restarts: latest.is_some_and(|st| {
             crate::boot_witness::warning(
-                s.unseen_boots_count,
-                s.unseen_boots_last_at_ms,
+                st.unseen_boots_count,
+                st.unseen_boots_last_at_ms,
                 now_ms,
                 policy.hardening.disallow_safe_boot,
                 None,
             )
             .is_some()
         }),
-        incoming_calls_not_blocked,
+        incoming_calls_not_blocked: s.incoming_calls_not_blocked,
         child_lock_off: crate::kid_lock::lock_off(
-            &policy,
+            policy,
             lock_state.as_ref(),
             capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
             latest.is_some(),
         ),
         blocked_apps,
         restart_once: crate::models::admin_policy_notice(
-            latest.and_then(|s| s.admin_policies_pending_json.as_deref()),
+            latest.and_then(|st| st.admin_policies_pending_json.as_deref()),
         )
         .is_some(),
-        no_notification_access: latest.and_then(|s| s.notification_listener_enabled) == Some(false),
-        calls,
+        no_notification_access: latest.and_then(|st| st.notification_listener_enabled)
+            == Some(false),
+        calls: s.call_problems.to_vec(),
         ledger_unreadable: time
             .as_ref()
             .is_some_and(|t| t["ledger_unreadable"].as_bool() == Some(true)),
         launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
+        calls_enforced: policy.calls_managed
+            && !s
+                .call_problems
+                .iter()
+                .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall)),
     }
 }
 
@@ -371,6 +452,7 @@ mod tests {
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
+            ..Default::default()
         }
     }
 
@@ -383,6 +465,45 @@ mod tests {
             ..Default::default()
         };
         assert!(items(3, &waiting).is_empty());
+    }
+
+    #[test]
+    fn a_phone_not_set_up_has_no_rows() {
+        let new = Facts {
+            not_set_up: true,
+            ..everything()
+        };
+        assert!(items(3, &new).is_empty());
+    }
+
+    #[test]
+    fn a_stale_phones_report_rows_say_at_last_report() {
+        let rows = items(3, &everything());
+        assert!(rows.iter().all(|r| !r.at_last_report));
+        let stale = Facts {
+            report_stale: true,
+            ..everything()
+        };
+        let rows = items(3, &stale);
+        assert_eq!(
+            rows.len(),
+            items(3, &everything()).len(),
+            "they still count"
+        );
+        let current: Vec<&str> = rows
+            .iter()
+            .filter(|r| !r.at_last_report)
+            .map(AttentionItem::key)
+            .collect();
+        assert_eq!(
+            current,
+            [
+                "no-parent-pin",
+                "easy-parent-pin",
+                "access-revoked",
+                "incoming-calls"
+            ]
+        );
     }
 
     #[test]
@@ -420,10 +541,13 @@ mod tests {
         );
         assert_eq!(rows[0].level_css(), "alarm");
         assert_eq!(rows[first_action].level_css(), "action");
-        // Each kind has its own key.
-        let mut keys: Vec<&str> = rows.iter().map(AttentionItem::key).collect();
-        keys.dedup();
-        assert_eq!(keys.len(), rows.len());
+        // Each kind has its own key; the calls rows share "calls" (several can show at once).
+        let mut with_calls = everything();
+        with_calls.calls.push(CallProblem::NoRedirection);
+        let rows = items(3, &with_calls);
+        let keys: std::collections::HashSet<&str> = rows.iter().map(AttentionItem::key).collect();
+        assert_eq!(keys.len(), rows.len() - 1);
+        assert_eq!(rows.iter().filter(|r| r.key() == "calls").count(), 2);
     }
 
     #[test]
