@@ -431,6 +431,7 @@ summary.row:active {
 .group-avatars > .cell ~ .row::before,
 .group-avatars > .cell ~ .cell::before {
     left: 72px;
+    left: var(--avatar-inset, 72px);
 }
 
 @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
@@ -1603,5 +1604,199 @@ th {
         transition: none !important;
         animation: none !important;
         scroll-behavior: auto !important;
+    }
+}
+
+/* ---- The Apps tab (design 31 step 11): phone and catalog rows, the app page, Add App ---- */
+
+/* Rows that start with a 36px avatar or app tile: the hairline starts at the label. */
+.group-small {
+    --avatar-inset: 64px;
+}
+
+.avatar-small {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+}
+
+/* A catalog app's tile: its catalog icon on its colour, else its first letter (decorative). */
+.app-row-tile {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: #636366;
+    color: #FFFFFF;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.app-row-tile img {
+    width: 22px;
+    height: 22px;
+}
+
+.row > .badge {
+    flex: none;
+}
+
+.text-alarm {
+    color: var(--red-text);
+    font-weight: 600;
+}
+
+.row-label-quiet {
+    color: var(--label-2);
+    font-size: 0.9375rem;
+}
+
+/* A row of plain text (an empty state, a one-line explanation). */
+.row-note {
+    color: var(--label-2);
+    font-size: 0.9375rem;
+}
+
+details.info > summary.row .info-icon {
+    margin-left: 12px;
+}
+
+/* "Source & Signing", "More Options": a disclosure row on its own, its groups below it. */
+details.section > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+details.section > summary::-webkit-details-marker {
+    display: none;
+}
+
+.section-toggle {
+    background: var(--surface);
+    border-radius: 12px;
+    margin: 0 0 20px;
+}
+
+.section-chev {
+    transition: transform 0.2s;
+}
+
+details.section[open] > summary .section-chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+
+/* A form in a group: stacked fields (label, input, the error under it), then its button. */
+.form-group {
+    padding: 16px;
+}
+
+.field {
+    position: relative;
+}
+
+.field-info > summary:not(.row) {
+    position: absolute;
+    top: -11px;
+    right: -10px;
+}
+
+.field .info-panel {
+    margin: 0 0 10px;
+}
+
+.form-group input[type="file"] {
+    display: block;
+    max-width: 100%;
+    margin-bottom: 16px;
+    font: inherit;
+    font-size: 0.9375rem;
+}
+
+.form-flash {
+    margin: 0 -16px 16px;
+}
+
+.button-wide {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border-radius: 12px;
+    font-size: 1.0625rem;
+}
+
+.container > form > .button-wide {
+    margin-bottom: 20px;
+}
+
+code.key {
+    word-break: break-all;
+    font-size: 0.8125rem;
+}
+
+/* "Show on phones as": the shared app_display_form partial as one row of a group. */
+.group-display > details.app-display {
+    border-top: 0;
+    padding: 0;
+}
+
+.group-display > details.app-display > summary {
+    padding: 11px 16px;
+    min-height: 44px;
+}
+
+.group-display > details.app-display > form {
+    padding: 0 16px 16px;
+}
+
+/* Add App's source: two real radios before the rows, so CSS marks the chosen row and hides the
+   GitHub fields for uploads (no script, no :has()). */
+.choice-radio {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
+.choice-row {
+    cursor: pointer;
+}
+
+.choice-check {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--tint);
+    visibility: hidden;
+}
+
+#source-github:checked ~ .group .check-github,
+#source-manual:checked ~ .group .check-manual {
+    visibility: visible;
+}
+
+#source-manual:checked ~ .github-only {
+    display: none;
+}
+
+#source-github:focus ~ .group label[for="source-github"],
+#source-manual:focus ~ .group label[for="source-manual"] {
+    outline: 2px solid var(--tint);
+    outline-offset: -2px;
+}
+
+#source-github:focus:not(:focus-visible) ~ .group label[for="source-github"],
+#source-manual:focus:not(:focus-visible) ~ .group label[for="source-manual"] {
+    outline: none;
+}
+
+@media (forced-colors: active) {
+    .choice-check {
+        color: CanvasText;
     }
 }

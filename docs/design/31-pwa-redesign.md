@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2118,3 +2118,86 @@ Choices made while building:
     `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md`.
 15. `play_card` moved from `devices.rs` to `device_pages.rs` (with the pure `play_notes`); `DeviceStatus` derives
     `Default` for the pure note tests.
+
+## Step 11 implementation status (2026-10-13)
+
+Built on branch `design-31-s11` (from `4d225da4`, with steps 1 and 2 in), in parallel with step 3; server only, no
+migration, no new crate, `style.css?v=11`.
+- **Apps tab** (`apps_list.html`, `tracked_apps::list_apps`): the large title; **On phones**, one row per phone
+  (36px avatar from step 2's `devices::avatar_class`/`initial`, the name, "14 allowed" or "Not set up" or "List
+  unreadable", a chevron); **Catalog**, one row per app: a 36px tile (the catalog icon on its colour, else the first
+  letter), the name phones show ("Chat"), a sub-line ("Launcher · all phones", "Element X · 1 phone", "No phones"),
+  the version from the tag (`version_of`: "launcher-v0.32.0" -> "0.32.0", "v26.10.1" -> "26.10.1") or a badge
+  instead: **Off** (grey, disabled), **Update failed** (red, the last sync failed), **No release yet** (grey); the
+  launcher first, then by name; the footer and **Add App**.
+- **The app page** (`tracked_app_detail.html`): the sub-page header ("‹ Apps", the large title, no brand bar); the top
+  group (Version, "Last checked 2 h ago" with the exact time in `title`, the running state "Checking now…" or the
+  failure's short title with the raw error and its exact time behind ⓘ, **Check Now**); **Show on phones as** (the
+  `app_display_form` partial unchanged, as one row of a group, with a one-line footer); **On phones** (new: the phones
+  with it ticked - every set-up phone for the launcher - each linking to its row on the phone's page); **Source &
+  Signing**, a `<details>` (closed; open when a refused save or upload is in it) holding Release (GitHub link or
+  "Uploaded by you", the full tag, the file, the package with the confirm-a-candidate forms, the signing key short
+  with the whole key behind ⓘ, **Forget Package and Key…** as a `<details>` confirm - M6), Details (the one form:
+  name, repo, "File name contains", "Tag starts with", their hints behind ⓘ, the error under the field with
+  `aria-invalid`/`aria-describedby`), Updates (Include pre-releases, Enabled, This is the launcher app: switches,
+  one form each as before, now with a `<noscript>` Save) and, for an uploaded app, Upload a new version; **Remove
+  App…** in red behind its confirm.
+- **Add App** (`tracked_app_add.html`): name, the source as two rows (GitHub releases / Upload APKs yourself), the
+  repo; "File name contains", "Tag starts with", the package and Include pre-releases under **More Options**, open
+  when one holds something or was refused. The source's inline `onchange` script is gone (§5.2): the two radios sit
+  before the rows, so CSS marks the chosen row and hides the GitHub fields for an upload.
+- **Rust texts**: a sync failure is typed (`tracked_apps::SyncProblem`, 13 kinds, each with a title of at most 6
+  words; `Failure { problem, detail }`), set where each error happens - GitHub unreachable / 404 / other answers, no
+  matching release, download, unreadable APK, another app, another key, can't check, a package taken, server, removed.
+  `check_pins` and `check_new_package` return it; a refused release keeps its kind ("not downloaded again" keeps
+  the title). Upload and package refusals show the same way in their group (a red title, the reason behind ⓘ).
+  The field errors say "The file name filter is ..." and "The tag prefix may only hold ...".
+- **Every form keeps its POST target and behaviour**; each redirects to the app's page as before (Display to
+  `#display`, Remove to `/apps`, Add to the new app). `tests/tracked_apps.rs`
+  `every_form_on_the_app_pages_returns_to_its_page` is this step's part of §5.1's redirect table: it posts every form
+  the GitHub and the uploaded app's pages render and fails on a form it has no row for.
+- **Tests**: `tests/tracked_apps.rs` (the tab: rows, count equal to the phone page's ticks, order, badges, icon, footer;
+  the app page: no brand, its phones and their links, the switches' forms, the two confirms, the launcher's and an
+  uploaded app's page; Add App's More Options and radios; the redirect table; the existing tests through the step 1
+  helpers, the failure as title + ⓘ and the catalog's "Update failed"), `tests/catalog_pins.rs` (each refused upload's
+  title, the raw reason kept, Source & Signing open), unit tests `a_release_tag_reads_as_a_version`,
+  `sync_problems_have_short_titles` and the typed failures in the sync tests. Checked in headless Chromium at 390 px,
+  light and dark, with and without JS: no horizontal scroll, the source rows switch the GitHub fields with CSS alone.
+
+Choices made while building:
+1. **"On phones" links** (the tab and the app page) go to the phone's page - at the app's own row
+   (`#app-<package>`) from an app page - until step 6 builds `/devices/{id}/apps`; one function,
+   `tracked_apps::phone_apps_href`, to repoint then. `device_detail.html` is untouched (step 3 works on it).
+2. **"N allowed"** counts what the phone's Apps card ticks (`tracked_apps::allowed_count`): reported apps on its
+   allowlist (not Play's core) plus catalog apps chosen for it and not reported installed; the launcher isn't
+   counted. A test checks the two agree.
+3. **The brand bar** leaves the two rebuilt inner pages (§3.0): they set `{% let subpage = true %}` before the tab, and
+   `partials/app_header.html` skips the bar when it is defined (`is defined`, Askama 0.16). Step 3's sub-pages can use
+   the same flag; if it chose another one, the merge picks one. **The merge picked step 3's** (qa-31-s3-code L6): the
+   two pages include `partials/tab_bar.html` alone, the flag is gone, and `style.css` is at `?v=12`.
+4. **The catalog row's name** is the name phones show (the mockup's "Chat") with the admin name in the sub-line;
+   the app page keeps the admin name as its title.
+5. **"Update failed"** reads the in-memory sync status, so it clears on a restart until the next hourly check, like
+   the app page's failure line.
+6. **The shared `app_display_form` partial** is not reworded: the device page uses it too, and step 6 restyles it
+   there. Its summary keeps the native disclosure marker.
+7. **The add form's package field** is kept under More Options as §3.3 says, though the server never stored it; its
+   ⓘ now says so.
+8. **Button and row case**: action rows and confirms in Title Case as the mockups draw them ("Check Now", "Add App",
+   "Remove App…", "Forget Package and Key…").
+9. Not checked here: a real phone (iOS Safari 14, Chrome 80) - owed before merging, as for steps 1 and 2.
+
+**Fix round after the code QA** (`qa-31-s11-code.md`: 1 Medium, 7 Low, nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | The review's option (b), which fits §5.1 item 4 (an anchor where the result is): the Upload form posts to `.../upload#upload` and each package confirm to `.../confirm-package#release`, so a refusal rendered in the POST's answer lands on its group - Source & Signing open, the red title and its reason behind ⓘ in view, where the parent was. A success redirects to `?notice=uploaded#upload` / `?notice=package_confirmed#release`, which opens Source & Signing and shows a green line in that group ("New version uploaded", "Package confirmed"; `tracked_apps::note_of`, any other `notice` ignored). One partial for both groups' results, `partials/flash_note.html`. Tests: `a_form_result_shows_in_its_group_where_the_parent_was`, and the redirect table now asserts each action's fragment and both success redirects. |
+| L1 | `stream_to_file` and `download_asset` return a typed `Failure`: temp-file, write, flush and rename errors are `Server`, an asset over 1 GB is the new `TooBig` ("Release file is over 1 GB"), the rest `Download`. Tests: `a_failed_download_leaves_no_file` checks `Download` for each case, `a_disk_error_is_the_servers_not_the_downloads`, and the over-the-limit test checks `TooBig`. |
+| L2 | `github_problem(StatusCode)` (404 `RepoNotFound`, anything else `GithubError`) and `release_from` (an invalid stored filter `Filter`, no match `NoRelease`), unit-tested in `github_answers_are_classified`. |
+| L3 | The redirect table seeds a candidate (a phone with the uploaded app ticked reports the fixture's package installed by Vibb), so `/confirm-package` is rendered and posted; it also checks that Upload, Confirm, Forget and Check were all seen. The confirm test asserts the redirect. |
+| L4 | Forget and Remove: each form must lie inside its confirm, after `</summary>` and before that `</details>`. |
+| L5 | `outside_text_is_escaped_on_the_apps_pages`: `<b>` in an app name, a display label, a phone name, a sync failure's detail and a refused confirm's package, escaped on `/apps` and the app page. |
+| L6 | The tab test allows and reports `com.google.android.gms`: the phone's page still ticks 3 and the row still says "3 allowed". |
+| L7 | Add App's wrapper has no `role="radiogroup"`/`aria-labelledby` any more: the two radios with one name are the group. |
+| Nits | (1) the header partial says only definition counts ("set it to anything"); (2) `style.css?v=11` kept, `v=12` if step 3's CSS lands first; (3) `DEPLOY.md`'s launcher setup says Add App, "File name contains", "Tag starts with" and that the package is pinned from the APK; (4) "Check Now" in the refused-release detail; (5) `version_of` strips a leading "v" first, then takes the first "-v" before a digit (`v2.1.0-v8a` -> "2.1.0-v8a"); (6) phones sort by name the same way on the tab and the app page (the Devices list's binary order); (7) the launcher's row says "no phones" until one is set up (`the_launcher_is_on_all_phones_only_once_there_are_some`); (8) the two result ⓘ are labelled "More about the refused upload/package"; (9) `.group-tiles` is gone: step 2's `.group-avatars` hairline reads `--avatar-inset` (72px), `.group-small` sets 64px; the unstyled `.flash-line`, `.flash-info` and `.catalog-empty` hooks are gone; (10) the tab's phone rows still open the device page at its top until step 6 (choice 1); `device_detail.html` is step 3's. |
+| Mutations | Each surviving mutation the review lists now fails a test: confirm redirecting to `/apps` (the redirect table, the confirm test), 404 as `GithubError` (`github_answers_are_classified`), download errors re-kinded (`a_failed_download_leaves_no_file`), Forget's form outside its confirm (the app page test), `\|safe` on the failure detail, the catalog label or the shared result partial (the escaping test), Play's core counted (the tab test); and dropping the `#upload` fragment fails three tests. |
