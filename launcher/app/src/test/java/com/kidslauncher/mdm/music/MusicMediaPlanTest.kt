@@ -159,7 +159,10 @@ class MusicMediaPlanTest {
 /**
  * A suspended music app is never played from a launcher surface (qa-21-step4-code M1; the music app
  * refuses it too, `GuardsTest`): the controls look the app up at the tap, the surfaces re-render on
- * suspension events, and `apply()` pauses before it suspends.
+ * suspension events, and `apply()` pauses before it suspends. Also the other source pins of the
+ * music glue that need these helpers: the call rule, the Sonos session, and design 28's feed (the
+ * bridge stamps the end of play, the headset watch's place, baseline and lazy stamps) and surfaces
+ * (Home's card and the lock's tile read one window; Home renders the card at every resume).
  */
 class MusicSuspensionGuardTest {
     private fun file(path: String) = listOf("src/main/java/com/kidslauncher/mdm/$path", "app/src/main/java/com/kidslauncher/mdm/$path")
@@ -232,5 +235,75 @@ class MusicSuspensionGuardTest {
         val room = MusicSession("me.vibb.music", SessionPlay.PLAYING, "Abels tårn", "Episode 12", 120_000, 50_000, 1f, 1_800_000)
         assertEquals(125_000, positionNow(room, nowElapsedMs = 55_000))
         assertEquals(120_000, positionNow(room.copy(play = SessionPlay.PAUSED), nowElapsedMs = 55_000))
+    }
+
+    @Test
+    fun `the end of play is fed by the bridge`() {
+        // Design 28 §2.1/§4: every setNowPlaying and the token's death, stamped before the surfaces re-render.
+        val bridge = file("music/MusicBridgeService.kt")
+        assertTrue(body(bridge, "fun store(context: Context, nowPlaying: Bundle?)").contains("MusicListening.observePlay(context, wasPlaying, playing)\n        changed()"))
+        assertTrue(body(bridge, "fun playerGone(context: Context)").contains("MusicListening.observePlay(context, wasPlaying, playing = false)\n        changed()"))
+        assertEquals(2, Regex("MusicListening\\.observePlay\\(").findAll(bridge).count())
+    }
+
+    @Test
+    fun `the headset watch starts with the process, its baseline read before the callback, the stamps loaded on first use`() {
+        // Design 28 §2.3/§4 (QA L4): after the call rule (the pin above), in its own try; the state never waits for it.
+        assertTrue(file("music/MusicSessions.kt").contains("MusicCalls.init(app)\n            MusicListening.init(app)"))
+        val listening = file("music/MusicListening.kt")
+        val init = body(listening, "fun init(")
+        val baseline = init.indexOf("val baseline = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)")
+        // the baseline reaches the watch (step 2 code QA L1: without it a launcher restart with buds in stamps)
+        val seed = init.indexOf("watch = headsetBaseline(watch, baseline, SystemClock.elapsedRealtime())")
+        val register = init.indexOf("am.registerAudioDeviceCallback(")
+        assertTrue("baseline at $baseline, seed at $seed, register at $register", baseline in 0 until seed && seed < register)
+        assertEquals(1, Regex("headsetBaseline\\(").findAll(listening).count())
+        assertTrue(init.contains("} catch (e: Exception) {"))
+        assertFalse("init loads no stamps", init.contains("load("))
+        for (entry in listOf("fun listening()", "fun observePlay(", "fun devicesAdded(")) {
+            assertTrue(entry, listening.substringAfter(entry).substringBefore("\n\n").contains("load("))
+        }
+    }
+
+    @Test
+    fun `Home's card and the lock tile read the same window`() {
+        // Design 28 §4/§6 (QA L7): the card through the pure musicCard, the lock through one shown().
+        val home = file("music/MusicHomeCard.kt")
+        assertTrue(home.contains("musicCard("))
+        assertTrue(home.contains("listening = MusicListening.listening()"))
+        assertTrue(home.contains("bootCount = MusicListening.bootCount()"))
+        // one recheck at the window's end, posted only after the ticker's branch and removed with it
+        val render = body(home, "private fun render(")
+        assertTrue(render.contains("handler.removeCallbacks(ticker)\n        handler.removeCallbacks(expiry)"))
+        assertTrue(render.contains("musicRecheckInMs(card.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }"))
+        val setActive = body(home, "fun setActive(")
+        for (call in listOf("MusicListening.addListener(changed)", "MusicListening.removeListener(changed)", "handler.removeCallbacks(expiry)")) {
+            assertTrue(call, setActive.contains(call))
+        }
+        // the lock: the pure lockTileSession (MusicWindowTest holds its rule), read once in shown() (step 3 code QA L1)
+        val lock = file("music/MusicLockPanel.kt")
+        assertEquals(1, Regex("lockTileSession\\(").findAll(lock).count())
+        assertTrue(body(lock, "private fun shown(").contains("lockTileSession(reading.access, usable, reading.session, MusicListening.listening(), now)"))
+        for (direct in listOf("windowedSession(", "shownSession(", "musicShownUntil(")) assertFalse(direct, lock.contains(direct))
+        val lookUp = body(lock, "fun lookUp(")
+        assertTrue(lookUp.contains("val tileNow = shown(now)\n        session = tileNow.session"))
+        assertTrue(body(lock, "private fun render(").contains("session = shown().session"))
+        // the post only while started: stop() removes it, a post after stop would outlive the lock
+        assertTrue(lookUp.contains("if (started) musicRecheckInMs(tileNow.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }"))
+        assertEquals(1, Regex("handler\\.postDelayed\\(expiry").findAll(lock).count())
+        assertTrue(lock.contains("private val expiry = Runnable { changed() }"))
+        assertTrue(body(lock, "fun start(").contains("MusicListening.addListener(changed)"))
+        val stop = body(lock, "fun stop(")
+        assertTrue(stop.contains("MusicListening.removeListener(changed)"))
+        assertTrue(stop.contains("handler.removeCallbacks(expiry)"))
+    }
+
+    @Test
+    fun `Home renders the card at every resume`() {
+        // Design 28 §2.4 (QA L5): the recheck's Handler delay stops in deep sleep; a resume renders from the clock.
+        val home = file("ui/HomeActivity.kt")
+        assertTrue(body(home, "private fun resumeContent(").contains("renderMusicCard()"))
+        assertTrue(home.contains("private fun renderMusicCard() = musicCard?.setActive(contentShown && started)"))
+        assertTrue("an active card renders again", body(file("music/MusicHomeCard.kt"), "fun setActive(").contains("if (on) render()"))
     }
 }

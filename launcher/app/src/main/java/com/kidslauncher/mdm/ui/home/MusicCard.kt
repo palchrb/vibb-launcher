@@ -1,7 +1,10 @@
 package com.kidslauncher.mdm.ui.home
 
+import com.kidslauncher.mdm.music.BootStamp
+import com.kidslauncher.mdm.music.Listening
 import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.NowPlayingSnapshot
+import com.kidslauncher.mdm.music.musicShownUntil
 import com.kidslauncher.mdm.music.positionNow
 import com.kidslauncher.mdm.music.shownSession
 
@@ -15,7 +18,7 @@ import com.kidslauncher.mdm.music.shownSession
  * the episode or chapter in the line under it, the times, and whether the button is pause
  * ([playing]). [live]: from the music app's session - transport controls, a tap opens its session
  * activity; otherwise from the last `setNowPlaying` snapshot, shown paused - both open the player
- * with `EXTRA_RESUME`.
+ * with `EXTRA_RESUME`. [hideAtElapsedMs]: the listening window's end (design 28), null while playing.
  */
 data class MusicCardModel(
     val title: String,
@@ -24,14 +27,18 @@ data class MusicCardModel(
     val durationMs: Long,
     val playing: Boolean,
     val live: Boolean,
+    val hideAtElapsedMs: Long?,
 )
 
 /**
  * The card now: never while the PIN lock is [locked] (Home shows the night ground then anyway),
  * without notification-listener [access] (no media surfaces) or while the music app isn't
- * [usable]; the live session while it plays or is paused; else the [snapshot], paused (back at
- * once after a restart); nothing when neither names anything. A live session without a known
- * duration borrows the snapshot's for the same item.
+ * [usable]; only while the session plays or inside the [listening] window (design 28: 10 minutes
+ * after the end of play or a fresh headset, `musicShownUntil` in [bootCount]'s boot) - outside it
+ * nothing, a paused session never falls back to the snapshot. Then the live session while it plays
+ * or is paused; else the [snapshot], paused (back at once after a restart inside the window);
+ * nothing when neither names anything. A live session without a known duration borrows the
+ * snapshot's for the same item.
  */
 fun musicCard(
     locked: Boolean,
@@ -40,9 +47,13 @@ fun musicCard(
     session: MusicSession?,
     snapshot: NowPlayingSnapshot?,
     nowElapsedMs: Long,
+    listening: Listening,
+    bootCount: Int,
 ): MusicCardModel? {
     if (locked || !access || !usable) return null
     val live = shownSession(access, usable, session)
+    val until = musicShownUntil(live?.playing == true, listening, BootStamp(nowElapsedMs, bootCount)) ?: return null
+    val hideAt = until.takeIf { it != Long.MAX_VALUE }
     if (live != null) {
         val title = text(live.entry) ?: text(live.item) ?: text(snapshot?.entry) ?: return null
         val duration = live.durationMs.takeIf { it > 0 } ?: snapshot?.takeIf { it.item == live.item }?.durationMs ?: 0
@@ -53,6 +64,7 @@ fun musicCard(
             durationMs = duration,
             playing = live.playing,
             live = true,
+            hideAtElapsedMs = hideAt,
         )
     }
     snapshot ?: return null
@@ -64,6 +76,7 @@ fun musicCard(
         durationMs = snapshot.durationMs.coerceAtLeast(0),
         playing = false,
         live = false,
+        hideAtElapsedMs = hideAt,
     )
 }
 

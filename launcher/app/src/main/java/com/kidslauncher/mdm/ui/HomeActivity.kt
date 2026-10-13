@@ -465,6 +465,8 @@ class HomeActivity : UIObjectActivity() {
         WallpaperStore.refreshAsync(this)
         renderWallpaper()
         render()
+        // Design 28 (QA L5): the music card from the clock - its window's recheck may have slept.
+        renderMusicCard()
         loadMissedCalls()
         promptForCallRoleIfNeeded()
     }

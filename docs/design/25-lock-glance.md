@@ -61,6 +61,9 @@ The first page shows:
   `session == null` (no listener access, the app suspended or gone) = no tile. Its controls are step 4's:
   play/pause, previous, next. The full tile (with previous/next) is preferred; the compact one (play/pause only,
   §1.2) only when the rows don't fit beside the full one (`glanceFit`'s order, unchanged). Nothing opens the player.
+  **Since design 28** (`28-music-card-session.md`) the session is the windowed one: a paused session shows only
+  within 10 minutes of the end of play or a fresh headset (the same window as Home's card), else no tile - also at a
+  lock-up; never the snapshot.
 - **The keypad stage** always has the back arrow (to the glance page), never the clock or the date (the glance page
   has them; mockup C). **No music** (user decision 2026-10-12, 25b-G: "skal være kjedelig" - everything
   interesting is on the glance page): step 4's compact row (`view_lock_media_row.xml`) is gone. The prompt: the usual

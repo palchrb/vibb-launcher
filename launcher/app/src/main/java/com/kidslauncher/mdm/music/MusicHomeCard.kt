@@ -16,11 +16,14 @@ import com.kidslauncher.mdm.ui.home.musicCardTicks
 
 /**
  * Home's "Spilles nå" card (design 21 §3, mockup HomeCard.dc.html v12; what it shows is the pure
- * [musicCard]). Live (the music app's session plays or is paused): the button is the session's
- * play/pause and a tap opens its session activity. Snapshot (the last `setNowPlaying`, paused - after
- * a restart at once): both open the player with `EXTRA_RESUME`. The clock ticks once a second only
- * while the card shows and plays. [HomeActivity] makes it active between onStart and onStop while
- * its content is shown - never while the PIN lock is LOCKED.
+ * [musicCard]). Only while the music plays or inside the listening window (design 28, [MusicListening]:
+ * 10 minutes after the end of play or a fresh headset). Live (the music app's session plays or is
+ * paused): the button is the session's play/pause and a tap opens its session activity. Snapshot
+ * (the last `setNowPlaying`, paused - after a restart inside the window at once): both open the
+ * player with `EXTRA_RESUME`. The clock ticks once a second only while the card shows and plays;
+ * shown and not playing, one recheck at the window's end hides it. [HomeActivity] makes it active
+ * between onStart and onStop while its content is shown - never while the PIN lock is LOCKED - and
+ * renders it again at every resume (the recheck's delay stops in deep sleep).
  */
 class MusicHomeCard(private val activity: Activity, private val view: ViewHomeMusicCardBinding) {
     private val handler = Handler(Looper.getMainLooper())
@@ -31,6 +34,8 @@ class MusicHomeCard(private val activity: Activity, private val view: ViewHomeMu
     /** Whether the music app can be used, looked up on changes only (not at every tick). */
     private var usable = false
     private val ticker = Runnable { render(lookUp = false) }
+    /** The listening window's end while shown and not playing (design 28 §2.4). */
+    private val expiry = Runnable { render() }
     private val changed: () -> Unit = { render() }
 
     init {
@@ -48,26 +53,33 @@ class MusicHomeCard(private val activity: Activity, private val view: ViewHomeMu
         if (on) {
             MusicSessions.addListener(activity, changed)
             MusicNowPlaying.addListener(changed)
+            MusicListening.addListener(changed)
             render()
         } else {
             handler.removeCallbacks(ticker)
+            handler.removeCallbacks(expiry)
             MusicSessions.removeListener(changed)
             MusicNowPlaying.removeListener(changed)
+            MusicListening.removeListener(changed)
         }
     }
 
     private fun render(lookUp: Boolean = true) {
         handler.removeCallbacks(ticker)
+        handler.removeCallbacks(expiry)
         if (!active) return
         val reading = MusicSessions.reading
         if (lookUp) usable = MusicSessions.usable(activity, reading.session?.packageName ?: MusicStore.installedPackage(activity))
+        val now = SystemClock.elapsedRealtime()
         val card = musicCard(
             locked = PinLockRuntime.mode == LockMode.LOCKED,
             access = reading.access,
             usable = usable,
             session = reading.session,
             snapshot = MusicNowPlaying.snapshot(activity),
-            nowElapsedMs = SystemClock.elapsedRealtime(),
+            nowElapsedMs = now,
+            listening = MusicListening.listening(),
+            bootCount = MusicListening.bootCount(),
         )
         shown = card
         if (card == null) {
@@ -81,7 +93,11 @@ class MusicHomeCard(private val activity: Activity, private val view: ViewHomeMu
         view.musicCardPlay.contentDescription = activity.getString(if (card.playing) R.string.music_pause else R.string.music_play)
         view.root.contentDescription = activity.getString(R.string.music_card_description, card.title, view.musicCardLine.text)
         bindArt(if (card.live) reading.art else MusicSessions.snapshotArt(activity))
-        if (musicCardTicks(card)) handler.postDelayed(ticker, 1_000)
+        if (musicCardTicks(card)) {
+            handler.postDelayed(ticker, 1_000)
+        } else {
+            musicRecheckInMs(card.hideAtElapsedMs, now)?.let { handler.postDelayed(expiry, it) }
+        }
     }
 
     private fun bindArt(art: Bitmap?) {
