@@ -65,6 +65,14 @@
     <string name="renderer_taken_over">Someone else is using the speaker</string>
     <string name="renderer_lost_session">The speaker stopped</string>
     <string name="renderer_unreachable">Can\'t reach the speaker</string>
+    <!-- Spotify's web player on the phone (design 26c §5.8): the player's quiet line. -->
+    <string name="renderer_spotify_needs_wifi">Spotify - needs Wi-Fi</string>
+    <string name="renderer_spotify_needs_internet">Spotify - needs the internet</string>
+    <string name="renderer_spotify_unavailable">Spotify isn\'t available right now</string>
+    <string name="renderer_spotify_ask_adult">Spotify - ask a grown-up</string>
+    <string name="renderer_spotify_not_on_phone">Spotify doesn\'t work on this phone</string>
+    <string name="renderer_spotify_elsewhere">Spotify is playing somewhere else</string>
+    <string name="renderer_spotify_stopped">Spotify stopped - press play</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

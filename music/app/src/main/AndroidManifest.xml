@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Vibb music (design 21 §4): one activity (the kid's screens), the player service, and
-     WorkManager's jobs for the sync and downloads. No settings, links, share or web views. -->
+     WorkManager's jobs for the sync and downloads. No settings, links or share; the one web view is
+     Spotify's player, never shown (design 26c §5.2). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -32,6 +33,15 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.VibbMusic">
+
+        <!-- Spotify's headless web player (design 26c §5.2, §7.2): it loads only Spotify's hosts and our
+             page, so no Safe Browsing lookups to Google, and no WebView metrics. -->
+        <meta-data
+            android:name="android.webkit.WebView.EnableSafeBrowsing"
+            android:value="false" />
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
 
         <activity
             android:name=".ui.MainActivity"

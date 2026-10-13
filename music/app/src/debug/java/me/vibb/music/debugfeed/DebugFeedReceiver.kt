@@ -30,9 +30,11 @@ import java.io.File
  *   debug-feed/items/<entry id>.json  listings (/music/entries/<id>/items)
  *   debug-feed/files/<file id>        own files' audio (size + SHA-256 checked against the library)
  *   debug-feed/covers/<hash>          cover JPEGs and episode pictures (checked against their hash)
- *   debug-feed/config.json            optional: {"mobile_data": true, "storytel_base": "http://10.0.2.2:8730"}
- *                                     (storytel_base: the fake Storytel, design 26b §4.6 - the one debug
- *                                     switch; also read at every process start, DebugStartup)
+ *   debug-feed/config.json            optional: {"mobile_data": true, "storytel_base": "http://10.0.2.2:8730",
+ *                                     "spotify_base": "http://10.0.2.2:8731"} (storytel_base: the fake Storytel,
+ *                                     design 26b §4.6; spotify_base: the fake Spotify, design 26c §9.3 - each
+ *                                     the one debug switch of its source; also read at every process start,
+ *                                     DebugStartup)
  *   debug-feed/storytel.json          optional: {"email": "k@example.invalid", "password": "hemmelig"} - FAKE
  *                                     values only: seeds a Storytel login for a run without a launcher (the
  *                                     next generation, so a re-seed ends a cooldown like a new save), and is
@@ -71,6 +73,7 @@ class DebugFeedReceiver : BroadcastReceiver() {
             config?.get("mobile_data")?.jsonPrimitive?.booleanOrNull?.let { store.mobileData = it }
         }
         DebugStorytel.applyBase(context)
+        DebugSpotify.applyBase(context)
         File(dir, "storytel.json").takeIf { it.isFile }?.let { f -> DebugStorytel.seedLogin(context, f) }
         File(dir, "sonos.json").takeIf { it.isFile }?.let { f -> seedSonos(context, f) }
         val libraryFile = File(dir, "library.json")

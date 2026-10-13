@@ -202,12 +202,19 @@ fun outputIcon(output: Output): ImageVector = when (output.kind) {
     OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
 }
 
-/** The player's one line for a Sonos room that isn't playing what we sent it (design 26a §5.2). */
+/** The player's one line for a renderer that isn't playing what we sent it (design 26a §5.2; Spotify's, 26c §5.8). */
 fun rendererStateText(state: RendererState): Int = when (state) {
     RendererState.GROUPED_AWAY -> R.string.renderer_grouped_away
     RendererState.TAKEN_OVER -> R.string.renderer_taken_over
     RendererState.LOST_SESSION -> R.string.renderer_lost_session
     RendererState.UNREACHABLE -> R.string.renderer_unreachable
+    RendererState.SPOTIFY_NEEDS_WIFI -> R.string.renderer_spotify_needs_wifi
+    RendererState.SPOTIFY_NEEDS_INTERNET -> R.string.renderer_spotify_needs_internet
+    RendererState.SPOTIFY_UNAVAILABLE -> R.string.renderer_spotify_unavailable
+    RendererState.SPOTIFY_ASK_ADULT -> R.string.renderer_spotify_ask_adult
+    RendererState.SPOTIFY_NOT_ON_PHONE -> R.string.renderer_spotify_not_on_phone
+    RendererState.SPOTIFY_ELSEWHERE -> R.string.renderer_spotify_elsewhere
+    RendererState.SPOTIFY_STOPPED -> R.string.renderer_spotify_stopped
 }
 
 @Composable

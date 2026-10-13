@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Musikk</string>
 
     <!-- Biblioteket -->
@@ -63,6 +63,14 @@
     <string name="renderer_taken_over">Noen andre bruker høyttaleren</string>
     <string name="renderer_lost_session">Høyttaleren stoppet</string>
     <string name="renderer_unreachable">Får ikke kontakt med høyttaleren</string>
+    <string name="renderer_spotify_needs_wifi">Spotify - trenger Wi-Fi</string>
+    <!-- "internett" is bokmål's common noun (lint's Typos check wants it capitalized). -->
+    <string name="renderer_spotify_needs_internet" tools:ignore="Typos">Spotify - trenger internett</string>
+    <string name="renderer_spotify_unavailable">Spotify er ikke tilgjengelig nå</string>
+    <string name="renderer_spotify_ask_adult">Spotify - spør en voksen</string>
+    <string name="renderer_spotify_not_on_phone">Spotify virker ikke på denne telefonen</string>
+    <string name="renderer_spotify_elsewhere">Spotify spiller et annet sted</string>
+    <string name="renderer_spotify_stopped">Spotify stoppet - trykk spill</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>

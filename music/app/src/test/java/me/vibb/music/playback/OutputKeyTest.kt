@@ -40,9 +40,17 @@ class OutputKeyTest {
         // A new kind needs its glyph, name and subtitle in PlayerScreen.kt (exhaustive whens there).
         assertEquals(listOf(OutputKind.PHONE, OutputKind.BLUETOOTH, OutputKind.WIRED, OutputKind.SONOS), OutputKind.entries.toList())
         assertEquals(
-            listOf(RendererState.GROUPED_AWAY, RendererState.TAKEN_OVER, RendererState.LOST_SESSION, RendererState.UNREACHABLE),
+            listOf(
+                RendererState.GROUPED_AWAY, RendererState.TAKEN_OVER, RendererState.LOST_SESSION, RendererState.UNREACHABLE,
+                // Spotify's web player (design 26c §5.8): the phone's, not a room's - `callStep` counts them as paused
+                RendererState.SPOTIFY_NEEDS_WIFI, RendererState.SPOTIFY_NEEDS_INTERNET, RendererState.SPOTIFY_UNAVAILABLE,
+                RendererState.SPOTIFY_ASK_ADULT, RendererState.SPOTIFY_NOT_ON_PHONE, RendererState.SPOTIFY_ELSEWHERE,
+                RendererState.SPOTIFY_STOPPED,
+            ),
             RendererState.entries.toList(),
         )
+        assertEquals("remote: the four Sonos lines only", RendererState.entries.take(4), RendererState.entries.filter { it.remote })
+        assertEquals(listOf(RendererKind.LOCAL, RendererKind.SPOTIFY), RendererKind.entries.filter { it.onPhone })
         assertNull(PlayerHub.State().rendererState)
     }
 }

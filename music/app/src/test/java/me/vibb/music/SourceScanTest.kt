@@ -19,6 +19,12 @@ import javax.xml.parsers.DocumentBuilderFactory
  * category glyphs against music_icons.json, and Storytel's secrets (design 26b §0, §6.1, QA L9).
  */
 class SourceScanTest {
+    private companion object {
+        /** The manifest's two WebView meta-data names (design 26c §5.2). */
+        const val WEBVIEW_META_SAFE_BROWSING = "android:name=\"android.webkit.WebView.EnableSafeBrowsing"
+        const val WEBVIEW_META_METRICS = "android:name=\"android.webkit.WebView.MetricsOptOut"
+    }
+
     private fun code(f: File) = f.readText()
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("//[^\\n]*"), "")
@@ -70,9 +76,58 @@ class SourceScanTest {
         val files = sources("src/main/java") + sources("src/main/AndroidManifest.xml")
         assertTrue(files.size > 30)
         for (f in files) {
-            val text = code(f)
+            // design 26c §7.2: the one web view is Spotify's headless player (the next test), and the manifest
+            // names the WebView only in its two meta-data (Safe Browsing and metrics off)
+            if (f.name == "SpotifyWebHost.kt") continue
+            val text = code(f).replace(WEBVIEW_META_SAFE_BROWSING, "").replace(WEBVIEW_META_METRICS, "")
             for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
         }
+    }
+
+    /**
+     * Design 26c §5.2, §7.2: "no web views" became "the one WebView is SpotifyWebHost's, never attached to a
+     * window" - `WebView(` only in that file, no `addView` anywhere, its file and content access off, Safe
+     * Browsing and metrics off, `addJavascriptInterface` only there, navigation and new windows refused, the
+     * protected-media permission only, and every request through WebPolicy (the frames' and the service
+     * workers').
+     */
+    @Test
+    fun `the one web view is SpotifyWebHost's, headless and locked down`() {
+        val main = sources("src/main/java").filter { it.extension == "kt" }
+        for (f in main) {
+            val text = code(f)
+            if (f.name != "SpotifyWebHost.kt") {
+                assertFalse("${f.name} makes a WebView", text.contains("WebView("))
+                assertFalse("${f.name} adds a JavaScript interface", text.contains("addJavascriptInterface"))
+                assertFalse("${f.name} names android.webkit", text.contains("android.webkit"))
+            }
+            assertFalse("${f.name}: the web player is never on screen", text.contains("addView"))
+        }
+        val host = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyWebHost.kt"))
+        assertEquals("one WebView", 1, Regex("""\bWebView\(""").findAll(host).count())
+        for (setting in listOf(
+            "s.setAllowFileAccess(false)", "s.setAllowContentAccess(false)", "s.setGeolocationEnabled(false)",
+            "s.setSupportMultipleWindows(false)", "s.safeBrowsingEnabled = false", "s.mediaPlaybackRequiresUserGesture = false",
+            "v.addJavascriptInterface(PageBridge(gen), SpotifyPage.BRIDGE)",
+            "override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true",
+            "WebPolicy.current().decide(url)", "ServiceWorkerController.getInstance().setServiceWorkerClient(",
+            "PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID", "request.deny()",
+            "v.loadDataWithBaseURL(SpotifyPage.BASE_URL, page, \"text/html\", \"utf-8\", null)",
+        )) {
+            assertTrue("SpotifyWebHost.kt: $setting", host.contains(setting))
+        }
+        assertFalse("never a file or content URL allowed", host.contains("setAllowFileAccess(true)") || host.contains("setAllowContentAccess(true)"))
+        assertFalse("never androidx.webkit (no new dependency, §11)", host.contains("androidx.webkit"))
+        assertFalse("never mixed content", host.contains("mixedContentMode"))
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        assertTrue(manifest.contains(WEBVIEW_META_SAFE_BROWSING) && manifest.contains(WEBVIEW_META_METRICS))
+        assertTrue(manifest.contains("$WEBVIEW_META_SAFE_BROWSING\"\n            android:value=\"false\""))
+        assertTrue(manifest.contains("$WEBVIEW_META_METRICS\"\n            android:value=\"true\""))
+        // the page bridge's methods are the page's (PlayerJsTest holds player.js to the same names)
+        val bridge = host.substringAfter("private inner class PageBridge(").substringBefore("\n    }\n")
+        val methods = Regex("""@JavascriptInterface\s+fun ([a-zA-Z]+)\(""").findAll(bridge).map { it.groupValues[1] }.toList()
+        assertEquals(me.vibb.music.spotify.SpotifyPage.FROM_PAGE, methods)
+        assertEquals("only the bridge is exposed", methods.size, Regex("@JavascriptInterface").findAll(host).count())
     }
 
     /** The episode carousel (design 27) is part of the player: no new screen, nothing it opens. */
@@ -170,6 +225,23 @@ class SourceScanTest {
     }
 
     // Storytel (design 26b §0, §3.5, §6.1; QA L9, M2).
+
+    /** Design 26c §5.8: the player's Spotify lines as the app spells them in bokmål. */
+    @Test
+    fun `nb has Spotify's renderer lines`() {
+        val nb = strings("src/main/res/values-nb/strings.xml")
+        assertEquals("Spotify - trenger Wi-Fi", nb["renderer_spotify_needs_wifi"])
+        assertEquals("Spotify - trenger internett", nb["renderer_spotify_needs_internet"])
+        assertEquals("Spotify er ikke tilgjengelig nå", nb["renderer_spotify_unavailable"])
+        assertEquals("Spotify - spør en voksen", nb["renderer_spotify_ask_adult"])
+        assertEquals("Spotify virker ikke på denne telefonen", nb["renderer_spotify_not_on_phone"])
+        assertEquals("Spotify spiller et annet sted", nb["renderer_spotify_elsewhere"])
+        assertEquals("Spotify stoppet - trykk spill", nb["renderer_spotify_stopped"])
+        val screen = code(moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt"))
+        for (state in me.vibb.music.playback.RendererState.entries) {
+            assertTrue("$state has its line", screen.contains("RendererState.${state.name} -> R.string.renderer_"))
+        }
+    }
 
     @Test
     fun `nb has Storytel's words`() {
@@ -271,7 +343,7 @@ class SourceScanTest {
                 if (code(f).contains("StorytelEndpoints.$reader(")) assertTrue("${f.name} reads $reader", f.name in allowed)
             }
         }
-        val assigning = sources("src/debug").filter { Regex("debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
+        val assigning = sources("src/debug").filter { Regex("StorytelEndpoints\\.debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
         assertEquals("only the debug feed assigns it", listOf("DebugStorytel.kt"), assigning)
     }
 
@@ -306,7 +378,11 @@ class SourceScanTest {
             }
         }
         val assigning = sources("src/debug").filter { Regex("SpotifyEndpoints\\.debugBase\\s*=[^=]").containsMatchIn(code(it)) }.map { it.name }
-        assertTrue("only the debug feed assigns it: $assigning", assigning.all { it == "DebugSpotify.kt" })
+        assertEquals("only the debug feed assigns it", listOf("DebugSpotify.kt"), assigning)
+        // read at every process start too, as Storytel's (DebugStartup)
+        val startup = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt")).substringAfter("class DebugStartup")
+        assertTrue(startup.contains("DebugSpotify.applyBase(it)"))
+        assertTrue(code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")).contains("DebugSpotify.applyBase(context)"))
     }
 
     /** Design 26c §7.1: the Spotify token's holders print it redacted, and the Spotify code logs nothing (the debug log is step 5a's, fixed words only). */
