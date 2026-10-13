@@ -189,6 +189,10 @@ class SpotifyApiTest {
         assertEquals(3, gone.sent.size)
         val refused = Script({ answer("device_unknown") }, { answer("not_premium") })
         assertEquals("the transfer's own answer", StartResult.NotPremium, start(refused, Tokens(ok1)))
+        // qa-26c-step6-code M3: the transfer's own 404 is the device's ("transfer"), never read as a context's refusal
+        val unknown = Script({ answer("device_unknown") }, { answer("device_unknown") })
+        assertEquals(StartResult.Unreachable("transfer"), start(unknown, Tokens(ok1)))
+        assertEquals(SpotifyProblem.UNREACHABLE, StartResult.Unreachable("transfer").problem())
     }
 
     @Test

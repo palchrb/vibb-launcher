@@ -1433,7 +1433,8 @@ class SpotifyRendererTest {
         settle()
         assertTrue("no context of ours on the player: nothing sent", page.calls.isEmpty())
         assertFalse(r.showsPlaying)
-        // played, then paused: a step through the SDK that Spotify plays is shown only while the kid may play
+        // played, then paused: a step through the SDK that Spotify plays is paused at once (qa-26c-step6-code L1), a time
+        // rule or not
         r.play()
         advance(0)
         post(cstate(2, 42_000))
@@ -1443,7 +1444,7 @@ class SpotifyRendererTest {
         r.step(forward = true)
         assertEquals("vibb.next()", page.calls.last())
         post(cstate(3, 0))
-        assertEquals("Spotify played it: paused at once while the app may not play", "vibb.pause()", page.calls.last())
+        assertEquals("Spotify played it: paused at once", "vibb.pause()", page.calls.last())
         assertFalse(r.showsPlaying || ports.focusHeld)
         ports.mayPlay = true
         // the service attaches another renderer: from outside, our context is paused at once
@@ -1478,6 +1479,137 @@ class SpotifyRendererTest {
         assertTrue("no state, no uri in the log", ports.log.none { it.contains("{") || it.contains("spotify:track") })
         assertFalse("never the SDK's text in the recorder", ports.recorded.any { it.contains("own text") })
         assertEquals("the event's text leaves out the JSON", "State(${SdkState.parse(json)})", HostEvent.State(SdkState.parse(json)!!, json).toString())
+        r.release()
+    }
+
+    // --- qa-26c-step6-code's counter-examples (M3, L1), red on 74c4942, and the fix round's renderer cases ----------
+
+    @Test
+    fun `QA M3 - a stored track that left the playlist - the dead offset dropped, the context from the top with one more play`() = runBlocking {
+        ports.contexts["e7"] = SpotifyContextTrack(uri(3), "Fake track 3 — Fake Artist")
+        val r = contextRenderer()
+        api.answer = { req ->
+            if (req.url.encodedPath == "/v1/me/player/play" && req.body!!.contains("offset")) SpotifyResponse(404, null, ByteArray(0)) else SpotifyResponse(204, null, ByteArray(0))
+        }
+        r.load(contextItems(), 0, 42_000, playNow = true); advance(0); advance(5_000)
+        r.play(); advance(0); advance(5_000)
+        assertTrue(api.plays().any { !it.body!!.contains("offset") })
+        assertEquals(
+            "the offset twice (a 404, the transfer, the 404 again), then once from the top - never a loop",
+            listOf(true, true, false), api.plays().map { it.body!!.contains("offset") },
+        )
+        assertEquals("""{"context_uri":"$playlistContext"}""", api.plays().last().body)
+        assertNull("the dead offset is dropped on disk: no later tap repeats it", ports.contexts["e7"])
+        assertTrue("it plays (the start's intent), never trenger internett", r.showsPlaying)
+        assertNull(r.rendererState)
+        post(cstate(1, 0))
+        assertEquals(SpotifyContextTrack(uri(1), "Fake track 1 — Fake Artist"), ports.contexts["e7"])
+        r.pause()
+        r.play() // a later tap: our track, the SDK's resume
+        advance(0)
+        assertEquals(3, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `M3 - a context Spotify won't play for the account (a 404 after the transfer, no offset) asks a grown-up on its tile, no stored word`() = runBlocking {
+        val r = contextRenderer()
+        api.answer = { req -> if (req.url.encodedPath == "/v1/me/player/play") SpotifyResponse(404, null, ByteArray(0)) else SpotifyResponse(204, null, ByteArray(0)) }
+        r.load(contextItems(), 0, 0, playNow = true); advance(0); advance(5_000)
+        assertEquals("the play, the transfer, the play again - nothing more", 2, api.plays().size)
+        assertEquals(RendererState.SPOTIFY_ASK_ADULT, r.rendererState)
+        assertFalse(r.showsPlaying)
+        assertFalse("no account word: one playlist, not the account", ports.outcomes.any { it == "refused" || it == "unreachable" })
+        r.release()
+    }
+
+    @Test
+    fun `QA L1 - a step while a context is paused only moves - Spotify playing it is paused at once`() = runBlocking {
+        val r = contextRenderer()
+        r.load(contextItems(), 0, 0, playNow = true); advance(0)
+        post(cstate(1, 0))
+        r.pause()
+        post(cstate(1, 2_000, paused = true))
+        r.step(forward = true)
+        assertEquals("vibb.next()", page.calls.last())
+        post(cstate(2, 0))
+        assertFalse(r.showsPlaying)
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(ports.focusHeld)
+        assertEquals("the title still moves", "Fake track 2 — Fake Artist", title(r))
+        assertEquals(uri(2), ports.contexts["e7"]!!.uri)
+        // a step while playing goes on playing (Spotify's next), and the kid's play after a paused step plays
+        r.play(); advance(0)
+        post(cstate(2, 0))
+        assertTrue(r.showsPlaying)
+        r.step(forward = true)
+        post(cstate(3, 0))
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `QA M1 - our list's leftover add in a context is skipped once while the kid wants it playing, else paused - never the end`() = runBlocking {
+        // a 60-track list played past its window: Spotify's queue holds item 50 (our add one ahead)
+        val l = playing(count = 60)
+        for (n in 1..49) {
+            advance(4_000)
+            post(state(n, 0, prev = listOf(n - 1)))
+        }
+        assertEquals(listOf(uri(50)), api.all().filter { it.url.encodedPath == "/v1/me/player/queue" }.map { it.url.queryParameter("uri") })
+        val window = api.plays().size
+        // switch the same renderer to a context (the service's load)
+        val entry = Entry(7, "e7", "Fake Artist", null, Source.SPOTIFY, playlistContext, "auto", 0, true, null, "22dd", 7, spotifyMode = "context")
+        val items = listOf(me.vibb.music.logic.contextItem(entry))
+        active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
+        l.load(contextItems(), 0, 0, playNow = true); advance(0)
+        assertEquals(window + 1, api.plays().size)
+        post(cstate(7, 0)); advance(15_000); post(cstate(7, 15_000)); advance(5_000)
+        post(cstate(50, 0)) // Spotify plays its queue first: our add, right after our track ran out
+        assertEquals("skipped: the context goes on", "vibb.next()", page.calls.last())
+        assertTrue("no end, still playing", l.showsPlaying && !events.contains(RendererEvent.Ended))
+        val calls = page.calls.size
+        post(cstate(50, 500))
+        assertEquals("one skip only", calls, page.calls.size)
+        post(cstate(8, 0))
+        assertEquals("Fake track 8 — Fake Artist", title(l))
+        assertTrue(l.showsPlaying)
+        l.release()
+    }
+
+    @Test
+    fun `M1 - our leftover add playing while the kid has the context paused is paused at once - no skip, no end`() = runBlocking {
+        val l = playing(count = 60)
+        for (n in 1..49) {
+            advance(4_000)
+            post(state(n, 0, prev = listOf(n - 1)))
+        }
+        val entry = Entry(7, "e7", "Fake Artist", null, Source.SPOTIFY, playlistContext, "auto", 0, true, null, "22dd", 7, spotifyMode = "context")
+        val items = listOf(me.vibb.music.logic.contextItem(entry))
+        active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
+        l.load(contextItems(), 0, 0, playNow = true); advance(0)
+        post(cstate(7, 0))
+        l.pause()
+        post(cstate(7, 3_000, paused = true))
+        post(cstate(50, 0)) // the account's other controls play on "Vibb": Spotify's queue first, our add
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(page.calls.contains("vibb.next()"))
+        assertFalse(l.showsPlaying || events.contains(RendererEvent.Ended))
+        l.release()
+    }
+
+    @Test
+    fun `step 6 deviation 13 - a playback error on a paused list track only moves the index - no PUT`() = runBlocking {
+        val r = playing()
+        r.pause()
+        post(state(0, 1_000, paused = true))
+        val plays = api.plays().size
+        page.emit(HostEvent.Error("playback", "x"))
+        settle()
+        advance(1_000)
+        assertEquals("the service's move-on moved the index", 1, r.currentIndex())
+        assertEquals("no play call", plays, api.plays().size)
+        assertFalse(r.showsPlaying)
         r.release()
     }
 

@@ -44,11 +44,15 @@ import kotlin.math.abs
  * - **Context mode** (§5.9, step 6; [loadContext], [playedContext]): Spotify plays the entry's context (an artist,
  *   or a playlist no account may list) in its own order, so there is no queue to match. A state is ours when its
  *   `context` is the entry's target: every track Spotify picks there is ours ([Event.TrackChanged] when it moves
- *   on - its own advance, a step of ours through the SDK, the account's other controls); a state of any other
- *   context - or none, or one of our list's adds left in Spotify's queue - is [Event.NotOurs] and paused, as in list
- *   mode. The end: our live track paused at 0 after it ran out is the context's end ([Event.Ended]; a track of
- *   another context playing then is Autoplay after it: not ours, and the end). No unplayable item (Spotify skips
- *   what the account can't play; the context's one synthetic item is no track), no window, no queue add.
+ *   on - its own advance, a step of ours through the SDK, the account's other controls). The SDK reference says a
+ *   state's context "can be null": with none, our own live track and the track our last state named next are still
+ *   ours, any other track is a uri list (qa-26c-step6-code M2). A state of any other context, or a uri list, is
+ *   [Event.NotOurs] and paused, as in list mode; one of our list's adds left in Spotify's queue is
+ *   [Event.LeftoverAdd] (skipped while the kid wants it playing). The end, on evidence only (M1): our live track
+ *   paused at 0 after it ran out, or another of the context's tracks paused then that our last state didn't name next
+ *   ([Event.Ended]; a track of another, non-null context playing then is Autoplay after it: not ours, and the end).
+ *   No unplayable item (Spotify skips what the account can't play; the context's one synthetic item is no track), no
+ *   window, no queue add.
  *
  * Positions are only ever measured: [measured] is the latest state of ours for the current item, as
  * received, never extrapolated (26a: no guess reaches Room). Pure and not thread-safe: the renderer
@@ -109,6 +113,13 @@ class SpotifyTracker {
          * server's listing title built from the state (`"<name> — <artists>"`), null when the state named none.
          */
         data class TrackChanged(val uri: String, val title: String?) : Event
+
+        /**
+         * Context mode (qa-26c-step6-code M1): our list mode's add [uri] left in Spotify's queue plays (or sits, [playing]
+         * false) where the context should go on - never ours and never the end: skip it while the kid wants it playing,
+         * else pause it.
+         */
+        data class LeftoverAdd(val uri: String, val playing: Boolean) : Event
     }
 
     /** The latest state of ours for item [index]: [positionMs] as the SDK measured it at [atMs] (the elapsed clock). */
@@ -155,6 +166,12 @@ class SpotifyTracker {
     /** Context mode: the offset of the last play call (a playlist's live track; none for an artist). */
     private var offsetUri: String? = null
 
+    /** Context mode: the tracks the last state of ours named next (`next_tracks`) - our advance, by evidence (M1, M2). */
+    private var lastNext: List<String> = emptyList()
+
+    /** Context mode: our list's leftover add playing now (its states until another track shows are it, M1). */
+    private var leftoverUri: String? = null
+
     /** The last queue index Spotify knows: the window's end, or the last item added to its queue. */
     private var known = -1
     private var addAsked = -1
@@ -192,6 +209,8 @@ class SpotifyTracker {
         context = null
         liveUri = null
         offsetUri = null
+        lastNext = emptyList()
+        leftoverUri = null
         this.queue = queue
         this.index = index.coerceIn(0, (queue.size - 1).coerceAtLeast(0))
         mode = Mode.IDLE
@@ -229,12 +248,22 @@ class SpotifyTracker {
         pausePending = false
         correcting = false
         offsetUri = offset
+        lastNext = emptyList()
+        leftoverUri = null
         sentPositionMs = if (offset == null) 0 else positionMs.coerceAtLeast(0)
         reported.clear()
         if (fresh) unplayableRun = 0
         resetItem()
         measured = null
         return emptyList()
+    }
+
+    /**
+     * Context mode (qa-26c-step6-code M3): Spotify refused the stored live track as the play's offset (it left the
+     * playlist) - the next play starts from the context's top.
+     */
+    fun dropLive() {
+        if (context != null) liveUri = null
     }
 
     /** A new player device (the host's `ready` with another device id): its Spotify queue is empty. */
@@ -337,17 +366,48 @@ class SpotifyTracker {
 
     // --- context mode (§5.9) ---
 
-    /** [s] plays in our context: its `context` is the entry's target, and it isn't one of our list's adds left in Spotify's queue. */
-    private fun inContext(s: SdkState): Boolean = s.contextUri == context && !isAdd(s)
+    /**
+     * A state that names our context (qa-26c-step6-code M2): its `context` is the entry's target - or the reference's
+     * documented `null` ("the URI of the context (can be null)") on our own live track or on the track our last state named
+     * next (our advance). Any other track with no context is a uri list: another app's play.
+     */
+    private fun namesOurContext(s: SdkState, live: Boolean, named: Boolean): Boolean = when (s.contextUri) {
+        context -> true
+        null -> live || named
+        else -> false
+    }
+
+    /** [s]'s track is the one our last state of the context named next (`next_tracks`), by uri or `linked`. */
+    private fun namedNext(s: SdkState): Boolean =
+        (s.uri != null && s.uri in lastNext) || (s.linkedUri != null && s.linkedUri in lastNext)
+
+    /**
+     * Our list mode's add left in Spotify's queue (qa-26c-step6-code M1): Spotify plays its queue before the context goes
+     * on. Never ours, never the end, never measured: the renderer skips it (`vibb.next()`) while the kid wants it
+     * playing, else pauses it. It is used up once seen ([adds] forgets it), and its later states until another track
+     * shows are still it ([leftoverUri]).
+     */
+    private fun leftoverAdd(s: SdkState): Boolean {
+        val uri = s.uri ?: return false
+        if (uri == leftoverUri) return true
+        if (!isAdd(s)) return false
+        forget(s)
+        leftoverUri = uri
+        return true
+    }
 
     private fun onContextStarting(s: SdkState, nowMs: Long): List<Event> {
         val uri = s.uri ?: return emptyList()
-        if (!inContext(s)) return emptyList() // what played before our play took effect
+        if (isAdd(s)) return emptyList() // our list's add: Spotify plays a new play's context first
+        val sent = offsetUri
+        val near = abs(s.positionMs - sentPositionMs) <= START_NEAR_MS
+        val atOffset = sent != null && (uri == sent || s.linkedUri == sent) && near
+        // what played before our play took effect - unless it names no context and is the offset we sent at its place (M2)
+        if (s.contextUri != context && !(s.contextUri == null && atOffset)) return emptyList()
         if (uri in prePlayUris) {
             // the track of the last state before the play: stale, unless it is the offset we sent near its position
             // (an artist has no offset: Spotify's start, near 0)
-            val sent = offsetUri
-            if (!((sent == null || uri == sent) && abs(s.positionMs - sentPositionMs) <= START_NEAR_MS)) return emptyList()
+            if (!((sent == null || uri == sent) && near)) return emptyList()
         }
         if (s.paused) return emptyList() // loaded, not playing yet
         mode = Mode.OURS
@@ -358,18 +418,25 @@ class SpotifyTracker {
     }
 
     private fun onContextOurs(s: SdkState, nowMs: Long): List<Event> {
-        if (!inContext(s)) {
-            // another context, none, or our own add: not ours - and right after our track ran out, Autoplay after the end
-            val ended = ranOut(nowMs)
+        val uri = s.uri ?: return emptyList()
+        if (leftoverAdd(s)) return listOf(Event.LeftoverAdd(uri, playing = !s.paused))
+        leftoverUri = null
+        val live = uri == liveUri || (s.linkedUri != null && s.linkedUri == liveUri)
+        val named = namedNext(s)
+        if (!namesOurContext(s, live, named)) {
+            // not ours (M1, M2): a track of another, non-null context right after ours ran out is Autoplay after the end;
+            // a uri list (no context) is no evidence of an end - paused, and the place stays
+            val ended = s.contextUri != null && ranOut(nowMs)
             mode = Mode.LOST
             val events = mutableListOf<Event>(Event.NotOurs(playing = !s.paused))
             if (ended) events += contextEnd()
             return events
         }
-        val uri = s.uri ?: return emptyList()
-        // our live track paused at 0 after it ran out - or Spotify back at another of its tracks, paused, then: the end
-        if (s.paused && !pausePending && s.positionMs < END_RESET_MS && ranOut(nowMs)) return contextEnd()
-        if (uri == liveUri || (s.linkedUri != null && s.linkedUri == liveUri)) return ourState(s, nowMs)
+        // the end, on evidence only (M1): our live track paused at 0 after it ran out, or Spotify back at another of the
+        // context's tracks, paused, then - one our last state didn't name next (the next track posted paused while it
+        // loads is not the end)
+        if (s.paused && !pausePending && s.positionMs < END_RESET_MS && ranOut(nowMs) && (live || !named)) return contextEnd()
+        if (live) return ourState(s, nowMs)
         // another track of the context: Spotify moved on (its own advance, a step through the SDK, the other controls)
         val wasPaused = lastPaused
         resetItem()
@@ -594,6 +661,7 @@ class SpotifyTracker {
     /** A state of ours for the current item: measured, and the end rule's and the unplayable rule's marks. */
     private fun observe(s: SdkState, nowMs: Long) {
         measured = Measured(index, s.positionMs, nowMs, playing = !s.paused)
+        if (context != null) lastNext = s.nextUris
         s.durationMs?.let { durationSeen = it }
         if (!s.paused) {
             lastPaused = false

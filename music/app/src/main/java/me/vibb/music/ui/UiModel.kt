@@ -7,6 +7,7 @@ import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.Kind
 import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.contextResumes
 import me.vibb.music.logic.countedOrder
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapStart
@@ -150,6 +151,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
         key = (1..all.size).map { all[(from + it) % all.size].key }.first { it in keys }
         pos = 0
     }
+    // an artist context starts where Spotify starts it (design 26c §12, qa-26c-step6-code L2): its place shows 0
+    if (!contextResumes(entry)) pos = 0
     // Shuffled, the picked item starts a new queue; else the play order, at the item.
     val queue = if (shuffle && key != null) order.filter { it.key == key } + order.filter { it.key != key } else order
     val index = if (key == null) 0 else queue.indexOfFirst { it.key == key }
@@ -212,7 +215,9 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
     val queue = stored.mapNotNull { visible[it] }
     val index = queue.indexOfFirst { it.key == stored.getOrNull(row.index) }
     if (index < 0) return null
-    return NowView(entry, category(snap, entry), queue, index, false, false, row.posMs, row.durationMs ?: queue[index].durationMs, row.shuffled)
+    // an artist context's stored place is shown as 0: its play starts where Spotify starts it (L2)
+    val pos = if (contextResumes(entry)) row.posMs else 0
+    return NowView(entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled)
 }
 
 private fun category(snap: Snapshot, entry: Entry) = snap.library?.categories?.firstOrNull { it.id == entry.category }

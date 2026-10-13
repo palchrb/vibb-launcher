@@ -11,6 +11,8 @@ import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
 import me.vibb.music.spotify.SPOTIFY_MODE_CONTEXT
+import me.vibb.music.spotify.SpotifyKind
+import me.vibb.music.spotify.spotifyTarget
 import me.vibb.music.spotify.cutTitle
 
 /*
@@ -78,6 +80,13 @@ const val SPOTIFY_CONTEXT_KEY = "context"
 
 /** A Spotify entry in context mode (§3.3, §5.9): an artist, or a playlist no account may list - Spotify picks the order. */
 fun isSpotifyContext(entry: Entry): Boolean = entry.source == Source.SPOTIFY && entry.spotifyMode == SPOTIFY_MODE_CONTEXT
+
+/**
+ * Whether a Spotify context goes on where it stopped (§5.9, §12; qa-26c-step6-code L2): a playlist context does - its
+ * play's offset is the live track, at its place - an artist doesn't (no offset is documented for an artist: it starts
+ * where Spotify starts it), so the renderer and the screens show its place as 0. True for every other entry.
+ */
+fun contextResumes(entry: Entry): Boolean = !isSpotifyContext(entry) || spotifyTarget(entry.target)?.kind == SpotifyKind.PLAYLIST
 
 /** [key] is a context-mode entry's synthetic item (§5.9): its row is the live track's place, never done, never a duration. */
 fun isContextItem(entry: Entry, key: String): Boolean = isSpotifyContext(entry) && key == SPOTIFY_CONTEXT_KEY
@@ -248,6 +257,13 @@ enum class SpotifyProblem(val line: SpotifyLine?, val outcome: String?) {
 
     /** The token's `off` (the phone was unbound): the host cleared, the entries leave with the next library. */
     OFF(null, SpotifyWords.NONE),
+
+    /**
+     * A context Spotify won't play for this account (§5.9, qa-26c-step6-code M3): the play call's 404 after the transfer,
+     * without an offset - a playlist the player's account can't open. "Spør en voksen" on its tile only: no stored word
+     * (one playlist, not the account; the other tiles stay as they are).
+     */
+    CONTEXT_REFUSED(SpotifyLine.ASK_ADULT, null),
 }
 
 /**

@@ -14,6 +14,7 @@ import me.vibb.music.Fixtures
 import me.vibb.music.spotify.SpotifyTracker.Event
 import me.vibb.music.spotify.SpotifyTracker.Mode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,6 +46,7 @@ class SpotifyTrackerTest {
         Event.Look -> "Look"
         Event.Elsewhere -> "Elsewhere"
         is Event.TrackChanged -> "TrackChanged ${e.uri}"
+        is Event.LeftoverAdd -> "LeftoverAdd ${e.uri} ${if (e.playing) "playing" else "paused"}"
     }
 
     private fun queueOf(doc: JsonObject) = doc["queue"]!!.jsonArray.map {
@@ -79,6 +81,10 @@ class SpotifyTrackerTest {
                         (p["offset"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content,
                         positionMs = p["position"]?.jsonPrimitive?.long ?: 0, fresh = p["fresh"]?.jsonPrimitive?.boolean ?: true,
                     )
+                }
+                "load_context" in step -> emptyList<Event>().also {
+                    val c = step["load_context"]!!.jsonObject
+                    tracker.loadContext(c["context"]!!.jsonPrimitive.content, (c["live"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content)
                 }
                 "queued" in step -> tracker.queued(step["queued"]!!.jsonPrimitive.int)
                 "pause_sent" in step -> emptyList<Event>().also { tracker.pauseSent() }
@@ -119,7 +125,7 @@ class SpotifyTrackerTest {
             "start", "advance", "end_of_window", "end_of_window_gap", "end_of_queue", "pause", "elsewhere", "elsewhere_not_ready",
             "relinked", "relinked_not_by_name", "relinked_other_artist", "unplayable", "unplayable_reset", "autoplay",
             "autoplay_window", "transfer_in", "queue_leftover", "step_back_stale", "restart_stale", "trackless", "shuffled",
-            "start_old_advance", "context_artist", "context_playlist", "context_foreign", "context_autoplay",
+            "start_old_advance", "context_artist", "context_playlist", "context_foreign", "context_autoplay", "context_leftover_add",
         )
         assertTrue("the sequences §9.2 and the QA fix round name: ${wanted - sequences.toSet()}", sequences.containsAll(wanted))
         for (name in sequences) replay(name)
@@ -408,5 +414,104 @@ class SpotifyTrackerTest {
         a.playedContext(null, positionMs = 50_000)
         assertEquals("no position is sent without an offset", emptyList<String>(), a.onState(inContext(4, 50_100), 100).map(::word))
         assertEquals(listOf("Started 0", "TrackChanged ${uri(4)}"), a.onState(inContext(4, 200), 300).map(::word))
+    }
+
+    // --- qa-26c-step6-code's counter-examples (M1 three times, M2), red on 74c4942, and the fix round's edges -----------
+
+    private val pl = "spotify:playlist:FAKEplaylist0000000001"
+
+    /** A context state of track [n] (20 s), naming [next] next (the SDK's `next_tracks`). */
+    private fun cs(n: Int, pos: Long, ctx: String? = pl, paused: Boolean = false, next: List<Int> = listOf(n + 1), prev: List<Int> = emptyList()) =
+        SdkState(paused, pos, 20_000, uri(n), null, next.map(::uri), prev.map(::uri), "track", "Fake track $n", listOf("Fake Artist"), ctx)
+
+    @Test
+    fun `QA M1 - our list's leftover add right after a context track ran out is no end - it is skipped, the context goes on`() {
+        val t = SpotifyTracker().apply { load((0..2).map { track(it) }, 0) }
+        t.played(0, 0); t.onState(state(0, 0), 0) // QueueAdd 1: uri(1) is in Spotify's queue
+        t.loadContext(pl, null); t.playedContext(null)
+        t.onState(cs(7, 0), 100); t.onState(cs(7, 15_000), 15_100)
+        val events = t.onState(cs(1, 0), 20_200).map(::word)
+        assertEquals(listOf("LeftoverAdd ${uri(1)} playing"), events)
+        assertEquals(Mode.OURS, t.mode)
+        assertEquals("its later states are still it", listOf("LeftoverAdd ${uri(1)} playing"), t.onState(cs(1, 500), 20_700).map(::word))
+        assertEquals("the context goes on past it", listOf("TrackChanged ${uri(8)}"), t.onState(cs(8, 0), 21_000).map(::word))
+        assertEquals("used up: the same track later in a context is the context's", listOf("TrackChanged ${uri(1)}"), t.onState(cs(1, 0), 40_000).map(::word))
+    }
+
+    @Test
+    fun `QA M1 - a null context at the track change after a run out is no end - it is the track our last state named`() {
+        val u = SpotifyTracker().apply { loadContext(pl, null) }; u.playedContext(null)
+        u.onState(cs(1, 0), 0); u.onState(cs(1, 15_000), 15_000)
+        val events = u.onState(cs(2, 0, ctx = null, prev = listOf(1)), 20_100).map(::word)
+        assertFalse(events.toString(), "Ended" in events)
+        assertEquals(listOf("TrackChanged ${uri(2)}"), events)
+        assertEquals(Mode.OURS, u.mode)
+    }
+
+    @Test
+    fun `QA M1 - the next track Spotify named, posted paused at 0, is no end`() {
+        val v = SpotifyTracker().apply { loadContext(pl, null) }; v.playedContext(null)
+        v.onState(cs(1, 0), 0); v.onState(cs(1, 15_000), 15_000) // next = [2]
+        val events = v.onState(cs(2, 0, paused = true, prev = listOf(1)), 20_100).map(::word)
+        assertFalse(events.toString(), "Ended" in events)
+        assertEquals(listOf("TrackChanged ${uri(2)}", "Paused spotify"), events)
+        assertEquals("it plays then: our track again", listOf("Resumed"), v.onState(cs(2, 300, prev = listOf(1)), 20_500).map(::word))
+    }
+
+    @Test
+    fun `QA L4 - Spotify back at another of the context's tracks, paused at 0, not named next, after the last ran out, is the end`() {
+        val t = SpotifyTracker().apply { loadContext(pl, null) }; t.playedContext(null)
+        t.onState(cs(3, 0, next = emptyList()), 0); t.onState(cs(3, 15_000, next = emptyList()), 15_000)
+        assertEquals(listOf("Ended"), t.onState(cs(1, 0, paused = true, next = listOf(2)), 20_100).map(::word))
+        assertEquals(Mode.ENDED, t.mode)
+        // ...and not before the track ran out: Spotify paused at another track mid-way is a track change, paused
+        val u = SpotifyTracker().apply { loadContext(pl, null) }; u.playedContext(null)
+        u.onState(cs(3, 0, next = emptyList()), 0)
+        assertEquals(listOf("TrackChanged ${uri(1)}", "Paused spotify"), u.onState(cs(1, 0, paused = true), 5_000).map(::word))
+    }
+
+    @Test
+    fun `QA M2 - a null context on our own live track never pauses it`() {
+        val t = SpotifyTracker().apply { loadContext(pl, null) }; t.playedContext(null)
+        t.onState(cs(1, 0), 0)
+        assertEquals(emptyList<String>(), t.onState(cs(1, 5_000, ctx = null), 5_000).map(::word))
+        assertEquals(Mode.OURS, t.mode)
+        assertEquals(SpotifyTracker.Measured(0, 5_000, 5_000, true), t.measured)
+        t.pauseSent()
+        assertEquals("our pause, context-less", listOf("Paused ours"), t.onState(cs(1, 6_000, ctx = null, paused = true), 6_100).map(::word))
+    }
+
+    @Test
+    fun `M2 - a context-less track nobody named is a uri list - not ours, and never the end even after a run out`() {
+        val t = SpotifyTracker().apply { loadContext(pl, null) }; t.playedContext(null)
+        t.onState(cs(1, 0, next = listOf(2)), 0); t.onState(cs(1, 15_000, next = listOf(2)), 15_000)
+        assertEquals(listOf("NotOurs playing"), t.onState(cs(9, 0, ctx = null), 20_100).map(::word))
+        assertEquals(Mode.LOST, t.mode)
+        // another, non-null context then is Autoplay after the end
+        val u = SpotifyTracker().apply { loadContext(pl, null) }; u.playedContext(null)
+        u.onState(cs(1, 0), 0); u.onState(cs(1, 15_000), 15_000)
+        assertEquals(listOf("NotOurs playing", "Ended"), u.onState(cs(9, 0, ctx = "spotify:station:FAKEautoplay000000001"), 20_100).map(::word))
+    }
+
+    @Test
+    fun `M2 - a start counts a context-less state of the sent offset at its place`() {
+        val t = SpotifyTracker().apply { loadContext(pl, uri(4)) }
+        t.playedContext(uri(4), positionMs = 30_000)
+        assertEquals("not the offset: what played before", emptyList<String>(), t.onState(cs(5, 0, ctx = null), 100).map(::word))
+        assertEquals("the offset far from its place", emptyList<String>(), t.onState(cs(4, 90_000, ctx = null), 200).map(::word))
+        assertEquals(listOf("Started 0"), t.onState(cs(4, 30_400, ctx = null), 300).map(::word))
+    }
+
+    @Test
+    fun `M1 - the kid's next landing on our leftover add mid-track does not pause the context`() {
+        val t = SpotifyTracker().apply { load((0..2).map { track(it) }, 0) }
+        t.played(0, 0); t.onState(state(0, 0), 0) // QueueAdd 1
+        t.loadContext(pl, null); t.playedContext(null)
+        t.onState(cs(7, 0), 100); t.onState(cs(7, 5_000), 5_100)
+        // vibb.next(): Spotify plays its queue first - our add
+        assertEquals(listOf("LeftoverAdd ${uri(1)} playing"), t.onState(cs(1, 0, prev = listOf(7)), 6_000).map(::word))
+        assertEquals("never NotOurs: the context isn't lost", Mode.OURS, t.mode)
+        assertEquals(SpotifyTracker.Measured(0, 5_000, 5_100, true), t.measured)
+        assertEquals(listOf("TrackChanged ${uri(8)}"), t.onState(cs(8, 0, prev = listOf(7, 1)), 6_500).map(::word))
     }
 }

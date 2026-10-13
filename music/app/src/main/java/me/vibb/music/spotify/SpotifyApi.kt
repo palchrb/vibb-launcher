@@ -216,7 +216,8 @@ class SpotifyApi(
                         if (left <= 0) return StartResult.Unreachable("deadline")
                         when (val moved = runInterruptible(Dispatchers.IO) { transfer(current, deviceId, left) }) {
                             PlayOutcome.Ok -> awaitDevice(minOf(SPOTIFY_TRANSFER_SETTLE_MS, (deadlineMs - elapsedMs()).coerceAtLeast(0)))
-                            PlayOutcome.DeviceUnknown -> return StartResult.Unreachable("device")
+                            // the transfer itself 404: the device is unknown (never read as a context's refusal, M3)
+                            PlayOutcome.DeviceUnknown -> return StartResult.Unreachable("transfer")
                             else -> return finish(moved)
                         }
                     }

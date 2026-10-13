@@ -52,6 +52,7 @@ import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.logic.SpotifyProblem
 import me.vibb.music.logic.SpotifyWords
+import me.vibb.music.logic.contextResumes
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.playWindow
 import me.vibb.music.logic.debugSwitchToken
@@ -396,7 +397,7 @@ internal class SpotifyRenderer(
         val ref = a?.entry?.target?.let { spotifyTarget(it) }
         mediaItems = items
         contextUri = ref?.takeIf { a?.entry?.spotifyMode == SPOTIFY_MODE_CONTEXT }?.target
-        contextOffsets = ref?.kind == SpotifyKind.PLAYLIST
+        contextOffsets = a != null && contextResumes(a.entry)
         contextKey = a?.entry?.key?.takeIf { contextUri != null }
         contextName = a?.entry?.name?.takeIf { contextUri != null }
         val stored = contextKey?.let { ports.contextTrack(it) }
@@ -645,8 +646,16 @@ internal class SpotifyRenderer(
             ports.log("spotify: a step with no context of ours on the player - nothing sent")
             return
         }
+        // paused, a step only moves (L1): if Spotify plays the track it moved to, that play is paused at once
+        stepWhilePausedAt = if (pwr) null else ports.now()
         sdk(if (forward) "next" else "previous")
     }
+
+    /** When the kid stepped a paused context (L1): a resume Spotify makes right after it is paused, not shown. */
+    private var stepWhilePausedAt: Long? = null
+
+    /** Our leftover add already skipped with `vibb.next()` (M1): its states until the skip lands send nothing more. */
+    private var skippedAdd: String? = null
 
     /** Context mode: whether [step] is the way next and previous go (the service asks before its own skip rules). */
     val stepsInContext: Boolean get() = contextUri != null
@@ -750,6 +759,7 @@ internal class SpotifyRenderer(
 
     /** Our paused track plays again through the SDK (§5.4: no Web API call). */
     private fun resume() {
+        stepWhilePausedAt = null
         if (detached || !ports.mayPlay()) return
         ports.networkLine()?.let { return refuse(it) }
         if (!acquireFocus()) return
@@ -781,6 +791,8 @@ internal class SpotifyRenderer(
     }
 
     private fun begin(r: Request) {
+        stepWhilePausedAt = null
+        skippedAdd = null
         if (detached) {
             ports.log("spotify: a start refused (detached)")
             return
@@ -887,9 +899,9 @@ internal class SpotifyRenderer(
         // decided now, not when the play was asked for: a `ready` with a new device may have come since
         s.settings = r.settings || needSettings
         s.calling = true
-        val result = api.start(
+        suspend fun call(b: PlayBody, settings: Boolean) = api.start(
             device,
-            body,
+            b,
             s.deadline,
             tokens = { renew ->
                 if (renew) tokens.invalidate()
@@ -897,11 +909,34 @@ internal class SpotifyRenderer(
             },
             awaitDevice = { awaitDevice(it) },
             sleep = { sleep(it) },
-            settings = s.settings,
+            settings = settings,
         )
+        var result = call(body, s.settings)
+        if (ctx != null && refusesContext(result) && playSentAt != Long.MAX_VALUE) {
+            // qa-26c-step6-code M3: the play call itself was refused (a 404 after the transfer, a 400). With an offset,
+            // the stored live track may have left the playlist: drop it - here and on disk, so no later tap repeats it -
+            // and start the context from the top with ONE more play call, in the same budget
+            if (s.offset != null) {
+                ports.log("spotify: the context's stored track was refused - from the top")
+                contextKey?.let { ports.storeContextTrack(it, null) }
+                tracker.dropLive()
+                s.offset = null
+                s.posMs = 0
+                playSentAt = Long.MAX_VALUE
+                result = call(PlayBody.Context(ctx, null, 0), settings = false)
+            }
+            // without an offset: Spotify won't play this context for the account (§5.9: "spør en voksen", its tile only)
+            if (refusesContext(result) && playSentAt != Long.MAX_VALUE) {
+                s.calling = false
+                return@coroutineScope StartEnd.Failed(SpotifyProblem.CONTEXT_REFUSED)
+            }
+        }
         s.calling = false
         StartEnd.Called(result, window.size)
     }
+
+    /** The context's play call refused (M3): a 404 after the transfer (`device`), or a 400/404 status - not the account's. */
+    private fun refusesContext(r: StartResult): Boolean = r is StartResult.Unreachable && r.reason in CONTEXT_REFUSALS
 
     private fun startDone(s: Start, end: StartEnd) {
         if (start !== s || released) return
@@ -1214,8 +1249,11 @@ internal class SpotifyRenderer(
                     pauseCause = if (e.ours) PauseCause.USER else PauseCause.OTHER
                 }
                 Event.Resumed -> if (!pwr) {
-                    // detached (M1): the session shows another renderer, so nothing of ours may sound
-                    if (!detached && ports.mayPlay() && acquireFocus()) {
+                    // a step the kid sent while paused that Spotify played (qa-26c-step6-code L1): paused, it only moves -
+                    // as on every other player of the app; detached (M1): the session shows another renderer
+                    val pausedStep = stepWhilePausedAt?.let { ports.now() - it <= PAUSED_STEP_MS } == true
+                    stepWhilePausedAt = null
+                    if (!pausedStep && !detached && ports.mayPlay() && acquireFocus()) {
                         // our track plays again by the account's other controls: shown as it is
                         pwr = true
                         lastOursAt = ports.now()
@@ -1265,6 +1303,22 @@ internal class SpotifyRenderer(
                     fail(SpotifyProblem.ELSEWHERE)
                 }
                 is Event.TrackChanged -> contextTrackChanged(e.uri, e.title)
+                is Event.LeftoverAdd -> when {
+                    // qa-26c-step6-code M1: our list's add left in Spotify's queue is never ours and never the end. While
+                    // the kid wants it playing the context goes on past it (one `vibb.next()` - a continuation of the
+                    // kid's play, as list mode's NewWindow); else it is paused
+                    !e.playing -> Unit
+                    wanted && skippedAdd != e.uri -> {
+                        skippedAdd = e.uri
+                        ports.log("spotify: our leftover queue add skipped")
+                        sdk("next")
+                    }
+                    wanted -> Unit // the skip is on its way
+                    else -> {
+                        sdk("pause")
+                        tracker.pauseSent()
+                    }
+                }
             }
         }
     }
@@ -1728,6 +1782,15 @@ internal class SpotifyRenderer(
 
         /** A clear of the web player's stores is awaited at most this long before the next page. */
         const val CLEAR_WAIT_MS = 3_000L
+
+        /**
+         * A context's play call refused, not the account (qa-26c-step6-code M3): its start's reasons - `device` is the play
+         * call's 404 again after a transfer that answered 204 (a 404 of the transfer itself is `transfer`: the device).
+         */
+        val CONTEXT_REFUSALS = setOf("device", "http_400", "http_404")
+
+        /** A resume Spotify makes this soon after a step sent while paused is the step's, and paused (L1). */
+        const val PAUSED_STEP_MS = 10_000L
 
         /** At most this many states held through a start's calls (the page posts every 5 s and on every change). */
         const val HELD_MAX = 32

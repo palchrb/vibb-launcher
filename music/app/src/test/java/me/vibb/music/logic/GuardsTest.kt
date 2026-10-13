@@ -911,6 +911,20 @@ class GuardsTest {
         // the UI: no number and no instant step for a context; the list says Spotify picks the order
         assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)"))
         assertTrue(code("src/main/java/me/vibb/music/ui/ListScreens.kt").contains("if (isSpotifyContext(entry)) stringResource(R.string.hint_spotify_picks, spotify) else spotify"))
+        // the fix round (qa-26c-step6-code): L4 - a parsed library prunes the rows of entries not in context mode, and the
+        // renderer's main-thread read never takes the store's lock once loaded; L2 - one rule for an artist's place
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        assertTrue(onCreate.contains("store.libraries().map { lib -> lib?.entries?.filter { isSpotifyContext(it) }?.map { it.key }?.toSet() }.distinctUntilChanged()"))
+        assertTrue(onCreate.contains("if (keys != null) withContext(writer) { store.pruneSpotifyContexts(keys) }"))
+        assertTrue(store.contains("if (spotifyContextLoaded) spotifyContextState.value else loadSpotifyContexts()"))
+        assertTrue(renderer.contains("contextOffsets = a != null && contextResumes(a.entry)"))
+        val ui = code("src/main/java/me/vibb/music/ui/UiModel.kt")
+        assertTrue(ui.contains("if (!contextResumes(entry)) pos = 0") && ui.contains("val pos = if (contextResumes(entry)) row.posMs else 0"))
+        // M3: one more play, without the offset, only after the play call itself was refused
+        val prepare = renderer.substringAfter("private suspend fun prepareAndCall(s: Start): StartEnd = coroutineScope {").substringBefore("\n    }\n")
+        assertEquals("the first call and one fallback", 2, Regex("""\bcall\(""").findAll(prepare).count() - 1)
+        assertTrue(prepare.contains("if (ctx != null && refusesContext(result) && playSentAt != Long.MAX_VALUE) {"))
+        assertTrue(prepare.contains("contextKey?.let { ports.storeContextTrack(it, null) }"))
     }
 
     /** Design 29 step 4's glue (qa-29-code L2): the pure rules in OwnFilesTest, wired here. */

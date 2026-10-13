@@ -132,7 +132,7 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
 | Shuffle | off for Spotify (decided, not a question) | the phone's rule: `canShuffle` is own files without resume (`logic/Queue.kt:18`), and every Spotify entry is resume on; vibb's `shuffle_context` is a deviation (§12) |
 | Listing source | Web API with a reader token (primary); the SDK's `track_window` while playing (fallback, context mode) | §3.3 |
 | Wake lock | `SpotifyRenderer` holds a partial wake lock and a Wi-Fi lock while it plays or starts, timed and renewed, released on every pause/end/error/detach | ExoPlayer holds `WAKE_MODE_NETWORK` for every stream; the spike's forced-Doze pass was the emulator without OEM battery management; the Jelly Star run is still owed [spike §7b] |
-| DNS hosts | a fixed list (`spotify_hosts.json`, three byte-identical copies; provisional in step 3, the capture's list in step 6 at the latest) exempted by the launcher's filter and dropped from the delivered blocklist **only for a phone with Spotify on** (policy `music.spotify`, and the binding hashed into `dns_filter_version`); the same list is the WebView's host allowlist | FCM's proven pattern (`push/FcmHosts.kt`, `play::is_fcm_protected`); one list, two gates; per phone is the stricter choice (FCM is global because every phone needs it) |
+| DNS hosts | a fixed list (`spotify_hosts.json`, three byte-identical copies; provisional in step 3, the capture's list before any stable tag) exempted by the launcher's filter and dropped from the delivered blocklist **only for a phone with Spotify on** (policy `music.spotify`, and the binding hashed into `dns_filter_version`); the same list is the WebView's host allowlist | FCM's proven pattern (`push/FcmHosts.kt`, `play::is_fcm_protected`); one list, two gates; per phone is the stricter choice (FCM is global because every phone needs it) |
 | SDK script | loaded at run time from `https://sdk.scdn.co/spotify-player.js`, not pinned (no SRI) | the Developer Terms forbid copying it (spike §1); Spotify changes it in place, a pin would break playback at its next release; the WebView admits only Spotify's hosts and our bridge is narrow (§7.2) |
 | Fake Spotify | `scripts/fake-spotify.py`: accounts (authorize, token, refresh rotation), the Web API the server and phone use, **and a stub SDK** (the documented `Spotify.Player` surface, playing a generated tone through an `<audio>` element), which the debug build's WebView reaches through its request interceptor (26b M2's one debug switch, §9.3) | the whole chain runs on the emulator without an account; the real SDK, Widevine and Spotify's refusals remain device checks (§9) |
 | Version | server **0.26.0**, music **`music-v0.4.0`** (RC first), a launcher tag | §Release |
@@ -1057,31 +1057,49 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
 The parent sees the same through `music_state` on the device card (§3.6). Nothing here touches another source.
 
 ### 5.9 Context mode
+(As built in step 6 and its code QA fix round, qa-26c-step6-code.)
 - **The synthetic item is the snapshot's** (QA H3): `Snapshot.listed` gives a `spotifyMode == "context"` entry one
-  `PlayItem` made by `logic/Spotify.kt`'s pure `contextItem(entry)` - key **`context`** (stable, never a track id),
-  title the entry's name, no url, no duration - so `Snapshot.entries` (which keeps only entries with visible items,
-  `data/Snapshot.kt:107`) shows the tile, `playEntry`'s order and `restore()`'s `storedPlan` find the key, and the
-  stored queue (`NowPlayingRow.keys`), `Active.items`, `lastIndex` and the position rows stay valid across tracks.
-  `LibraryView` gives it `hint_spotify_picks` and no "N av M"; the list screen shows one row.
-- **Position and bookmark**: the row `(entry key, "context")` holds the live track's position; the service saves a
-  context item with `durationMs = null`, so it is never marked done (a track's end is not the context's; vibb's
-  bookmark has no done mark). **The live track** - its id and title - is in `noBackupFilesDir/spotify_context.json`
-  (`{entryKey: {"track": "<id>", "title": "<Song — Artist>"}}`, tmp + rename, `data/Store.kt`), written on every track
-  change; the tile's hint and a restart read it.
-- **A start** is `PUT .../play` with `{"context_uri": <target>, "offset": {"uri": "spotify:track:<stored track>"},
+  `PlayItem` made by `logic/Spotify.kt`'s pure `contextItem(entry, live)` - key **`context`** (stable, never a track id),
+  titled by the live track once one has played (the entry's name before), no url, no duration - so `Snapshot.entries`
+  shows the tile, `playEntry`'s order and `restore()`'s `storedPlan` find the key, and the stored queue
+  (`NowPlayingRow.keys`), `Active.items`, `lastIndex` and the position rows stay valid across tracks. `LibraryView`
+  gives it `hint_spotify_picks` and no "N av M" (the player shows no number either); the list screen shows one row.
+- **Position and bookmark**: the row `(entry key, "context")` holds the live track's position; the renderer saves a
+  context item with `durationMs = null` and the service keeps no duration for it (`keepsDuration`), so it is never
+  marked done (a track's end is not the context's; vibb's bookmark has no done mark). **The live track** - its uri and
+  title - is in `noBackupFilesDir/spotify_context.json` (`{entryKey: {"uri": "spotify:track:<id>", "title": "<Song —
+  Artist>"}}` - the uri, since a playlist context also plays episodes; tmp + rename, `data/Store.kt`, the renderer
+  writes it through its ports), written on every track change; the snapshot (the item's title) and the renderer (where a
+  playlist goes on) read it; a parsed library drops the rows of entries no longer in context mode.
+- **A start** is `PUT .../play` with `{"context_uri": <target>, "offset": {"uri": <the live track's uri>},
   "position_ms": <the context row's position>}` for a playlist (Spotify plays its own order from the stored track),
   `{"context_uri": <target>}` for an artist (no offset is documented for artists; the artist plays from Spotify's start -
-  **an artist in context mode has no resume**, §12). A playlist context needs the **player's** account to be able to
-  open the playlist (public, shared by link, or followed) [device check]; if it can't, the call's 403/404 is
-  `SPOTIFY_ASK_ADULT` and the parent's card names the playlist.
-- **Ownership** in context mode: any track of the context is ours (Spotify picks them); a state whose `context` uri
-  isn't the entry's target is foreign and paused, as in list mode.
-- As tracks change, the renderer swaps the item's metadata in place (`replaceItem(0, ...)`: the title "Song — Artist", the
-  entry cover as art - no per-track picture fetch, the phone never loads remote images). Next and previous are the
-  SDK's (`vibb.next()`/`vibb.previous()`; Spotify's rule); seek as in list mode. A playlist context that plays out is
-  `Ended` (`clear_state` drops the context row's position; `spotify_context.json`'s entry goes too).
-- While this entry plays, its list shows "Spotify velger rekkefølgen" and the current track's title ("neste: N spor"
-  from the state's `next` uris; [device check] whether `next_tracks` names are worth showing). No NY for a context entry
+  **an artist in context mode has no resume**, §12: the renderer and the screens show its place as 0,
+  `contextResumes`). **A stored track that left the playlist**: when the play call carrying the offset is refused (a 404
+  after the transfer, a 400), the offset is dropped - in memory and in the file - and the context starts from the top
+  with **one** more play call in the same budget. A playlist context needs the **player's** account to be able to open
+  the playlist (public, shared by link, or followed) [device check]; if it can't, the play call's 403 is `REFUSED`
+  (`SPOTIFY_ASK_ADULT`, the stored word `refused`, as every 403, §5.4) and a 404 after the transfer without an offset is
+  `CONTEXT_REFUSED` (`SPOTIFY_ASK_ADULT` on that tile only, no stored word: one playlist, not the account). The parent's
+  card does not name the playlist (no report field for it; a later contract change).
+- **Ownership** in context mode: any track of the context is ours (Spotify picks them). The SDK reference says a state's
+  `context` uri "can be null": with none, our own live track and the track our last state named next are still ours,
+  any other track is a uri list (another app's play) - foreign and paused, as is a state of another context. **Our list
+  mode's add left in Spotify's queue** (it survives a new play, §5.4) is never ours and never the end: while the kid wants
+  it playing the renderer skips it with one `vibb.next()` (the context goes on), else it is paused.
+- As tracks change, the renderer swaps its session item's title in place ("Song — Artist"; the entry cover as art - no
+  per-track picture fetch, the phone never loads remote images; the service's own `replaceItem` keeps the live title).
+  Next and previous are the SDK's (`vibb.next()`/`vibb.previous()`; Spotify's rule), sent only while a track of our
+  context is on the player; **paused, a step only moves**: if Spotify plays the track it moved to, that play is paused at
+  once. Seek as in list mode. A track change on a network the gate refuses now pauses with the line.
+- **The end, on evidence only**: our live track paused at 0 after it ran out, or another of the context's tracks paused
+  at 0 then that our last state didn't name next (Spotify back at the top) - `Ended` (`clear_state` drops the context
+  row's position; `spotify_context.json`'s entry goes too); a track of another, non-null context right then is Autoplay
+  after the end (paused, `Ended`). A uri list, a `null` context, our leftover add and the named next track posted paused
+  are never the end.
+- No unplayable item in a context (Spotify skips what the account can't play in its own order; the synthetic item is no
+  track). While this entry plays, its list shows "Spotify · Spotify velger rekkefølgen" and its one row, the current
+  track's title (no "neste: N spor": the state's `next` names at most three, usually two). No NY for a context entry
   (nothing is listed).
 
 ### 5.10 The service (`PlaybackService`) and the renderer axis
@@ -1192,8 +1210,8 @@ maps unknowns to `Unreachable`).
   **[unverified]** as a whole: the suffixes are Spotify's known domains (the SDK `sdk.scdn.co`, accounts and the Web
   API under `spotify.com`, `spclient`/`dealer`/`apresolve` under `spotify.com`, images `i.scdn.co`, audio CDNs under
   `scdn.co`/`spotifycdn.com`/`akamaized.net`, podcasts `pscdn.co`). **Step 3 lands with this provisional list** (its
-  comment says so); the capture replaces it in a one-line commit of the three copies whenever the user has run it, **at
-  the latest in step 6**, and the stable tags wait for it (QA M9: the contract doesn't wait on the capture). **How to find
+  comment says so); the capture replaces it in a one-line commit of the three copies whenever the user has run it, **before any
+  stable tag** (step 6 found it not run: the capture is the user's), and the stable tags wait for it (QA M9: the contract doesn't wait on the capture). **How to find
   the real set** (the spike's §7 item 10 step 7): the emulator with `-tcpdump spike.pcap` playing playlists, a skip storm, a
 
   podcast and a 30-minute run; `tshark -r spike.pcap -Y "dns.flags.response == 0" -T fields -e dns.qry.name | sort | uniq
@@ -1455,11 +1473,16 @@ fake's options, each a fake restart.
   log (the page's CSP admits what the real SDK's loader needs; qa-26c-step4-code L6), no token in logcat after a Wi-Fi
   drop while playing (the page's console is never logged, §7.1; qa-26c-step5b-code M2), and the DNS capture of §6.2.
   **Real state sequences** for `sdk_states/` are recorded by step 6's debug-only recorder (qa-26c-step5b-code, "the
-  state-recording gap"), never through the log (§7.1): a port `SpotifyPorts.recordState(json)` called by the page
-  bridge's `state()`, a no-op in the main source set and a writer in `src/debug` (`DebugSpotify.kt`), on only while
-  the debug feed's `config.json` says `"record_spotify_states": true`, one JSON line per state (`{"t", "state"}`) plus
-  the page's events and our own calls by name, appended to `debug-feed/sdk_states/<start time>.jsonl`; part B records
-  the real context sequences with it.
+  state-recording gap"), never through the log (§7.1), as built: the page bridge posts the compact JSON with the parsed
+  state (`HostEvent.State.json`, left out of its `toString`) and the renderer passes it to the port
+  `SpotifyPorts.recordState(json)` (events and our calls by name to `record(event)`); in the main source set the port
+  is the hook `SpotifyRecording.recorder` - null, assigned only in `src/debug` (`DebugSpotify.kt`), so a no-op in a
+  release - on only while the debug feed's `config.json` says `"record_spotify_states": true`: one JSON line per state
+  (`{"t", "state"}`: the page's compact state - the track, `paused`, `position`, `duration`, the track window's `next`
+  and `prev`, up to three uris each, and `context`, null for "no context object" and "uri null" alike; not
+  `disallows`) plus the page's events and our own calls by name (`{"t", "event"}`), appended by one daemon thread to
+  `debug-feed/sdk_states/<UTC switch-on time>.jsonl`, at most 32 MiB a file; part B records the real context sequences
+  with it.
 
 ## 10. Tests
 
@@ -1513,7 +1536,8 @@ took 0073), re-checked at the final rebase.
 
 **Order** (QA M9): 1 -> 2a -> 2b -> 3 -> 4 -> 5a -> 5b -> 6 -> 7, each after the one before (step 4 reads the music copy
 of `spotify_hosts.json`, which step 3 adds). Step 3 lands with the **provisional** host list (§6.2); the spike's DNS
-capture replaces the three copies in a one-line commit whenever the user has run it, **at the latest in step 6**. The
+capture replaces the three copies in a one-line commit whenever the user has run it, **before any stable tag** (not
+run by step 6). The
 Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed before step 5b's acceptance closes.
 
 1. **Server: the app, the accounts, the login, the token cache.** Files: `S/spotify.rs` (new: links - only the grammar,
@@ -1605,8 +1629,11 @@ Jelly Star run of item 10 (Doze with and without the wake lock, §5.7) is owed b
    `contextItem`), `M/logic/LibraryView.kt` (the hint, no "N av M"), `M/ui/{UiModel,ListScreens}.kt` (the one row, the
    live title), `M/spotify/{SpotifyRenderer,SpotifyTracker}.kt` (the context start with its offset, the SDK's
    next/previous, `replaceItem` per track, context ownership), `M/playback/PlaybackService.kt` (the context item's save
-   with no duration, `Ended`), `M/data/Store.kt` (`spotify_context.json`); and, if the user has run the capture and it
-   hasn't landed yet, the three `spotify_hosts.json` copies with their constants. Tests: `SpotifyTrackerTest`'s context
+   with no duration, `Ended`; as built also the steps to the web player, the prune of stale rows and
+   `M/playback/RendererRules.kt`'s `keepsDuration`/`stepsOnWebPlayer`), `M/data/Store.kt` (`spotify_context.json`), the
+   state recorder (`M/spotify/SpotifyRecording.kt`, the renderer's `recordState`/`record`/`contextTrack`/`storeContextTrack`
+   ports, `src/debug/.../DebugSpotify.kt`), the fake's context answers; and, if the user has run the capture and it
+   hasn't landed yet, the three `spotify_hosts.json` copies with their constants (it hadn't: they stay provisional). Tests: `SpotifyTrackerTest`'s context
    sequences, `SpotifyRendererTest`, a snapshot test (a context entry shows as a tile; a restart restores it paused at
    the live track). Acceptance: the suites; §6l's artist and 403-playlist lines. Owed [device check]: a real artist, a
    playlist the parent doesn't own; QA checklist item 18 (the artist option's dev-mode check).
@@ -1683,7 +1710,7 @@ mode), 7 (docs).
    parent to switch Autoplay off on the children's accounts if QA checklist item 17 shows the web player autoplaying -
    the guard in code pauses anything outside our list either way].
 3. **The remaining spike runs** (`spotify-spike.md` §7b "Still to run", the user's to run): the DNS capture (it replaces
-   the provisional host list, step 6 at the latest), and the Jelly Star under real Doze with and without a wake lock,
+   the provisional host list, before any stable tag), and the Jelly Star under real Doze with and without a wake lock,
    now for 2.5 hours so the token refreshes ahead of expiry at least twice (QA checklist item 6, M2).
 
 **Settled (from the docs, the code, the brief's rules; listed so nothing is lost):**
@@ -3612,9 +3639,12 @@ Found in the spec:
 - §9.4's recorder "called by the page bridge's `state()`": the bridge has no ports (deviation 11).
 - Step 5a's `moveOnTo` started a paused queue on a `playback_error` (deviation 13, fixed).
 - §5.9 rests the whole ownership rule on the state's `context` being the entry's target in **every** state, around track
-  changes too - the documented `WebPlaybackState.context` says so, the stub does; only part B's real sequences show it.
+  changes too. ~~The documented `WebPlaybackState.context` says so~~ - **corrected in the fix round** (qa-26c-step6-code
+  M2): the reference says the opposite may happen, `uri: ... // The URI of the context (can be null)`; the rule now
+  reads a `null` context on our live track or the named next track as ours (below).
 - What the Web API answers when a playlist context's offset track has left the playlist is not documented [device
-  check]; the fake plays from the top.
+  check]; ~~the fake plays from the top~~ - the fix round adds the fallback (one play from the top) and the fake's
+  `--offset-404`.
 - Nothing in §11 step 6 was impossible.
 
 Owed: **the DNS capture** (§6.2; the user's: it replaces the three provisional `spotify_hosts.json` copies and the three
@@ -3626,3 +3656,68 @@ after it); [device check]: the SDK's `context` in every state, a paused `nextTra
 playlist, the player's account opening a playlist it doesn't own (public, shared, followed; else "spør en voksen"),
 what the real SDK posts at a context's end. Step 7: `music/CLAUDE.md` (context mode, `spotify_context.json`, the
 recorder and its hook).
+
+### Fix round after QA's code review (qa-26c-step6-code, 2026-10-13)
+
+All eight findings fixed; none disputed. No contract file changed, no new dependency, `server/` and `launcher/` untouched,
+the host list unchanged (still provisional). Every red test the QA quoted is rebuilt in the suite and green.
+- **M1** (`Ended` without evidence): the end in a context needs evidence - our live track paused at 0 after it ran out,
+  or another of the context's tracks paused at 0 then that our last state didn't name next (the tracker keeps the last
+  state's `next`, `lastNext`); a track of another, **non-null** context right then is Autoplay. Our list's leftover add
+  is `Event.LeftoverAdd` - used up once seen (its later states until another track are still it), never ours, never the
+  end, never measured; the renderer skips it with one `vibb.next()` while the kid wants it playing (also when the kid's
+  own next lands on it mid-track: the context isn't lost), else pauses it. Deviation 9 replaced. Tests: the QA's three
+  cases, the "next on a leftover add" case, `sdk_states/context_leftover_add.json` (a list play past its window, a
+  switch, a context; the harness's new `load_context` step), and two renderer cases (skipped once while playing; paused
+  while the kid has the context paused).
+- **M2** (a `null` context paused our track): with no context, our live track and the track our last state named next
+  are ours; any other track is a uri list - not ours, paused, never the end; a start counts a context-less state of the
+  sent offset at its place. Deviation 10 and the spec finding corrected (the reference says `context.uri` "can be
+  null"). Tests: the QA's case and three more (a uri list after a run out, Autoplay's non-null context, the start).
+- **M3** (a stored track that left the playlist): a context start whose play call carrying the offset is refused (a 404
+  after the transfer, a 400 - `CONTEXT_REFUSALS`, only once the play call itself went out) drops the offset - the
+  tracker's (`dropLive`) and the file's row - and plays the context from the top with **one** more call in the same
+  budget (no shuffle/repeat calls again). `SpotifyApi` now names the transfer's own 404 `Unreachable("transfer")`
+  (the device - "trenger internett"), so only the play call's 404 after a 204 transfer reads as the context's refusal
+  (`SpotifyApiTest`). A context play without an offset still refused is
+  `SpotifyProblem.CONTEXT_REFUSED`: "Spotify - spør en voksen" on its tile, **no stored word** (one playlist, not the
+  account); a 403 stays `REFUSED` (§5.4's every 403). **The text was made to match the code**: §5.9 now says 403 ->
+  `REFUSED`, 404 after the transfer without an offset -> `CONTEXT_REFUSED`, and that the parent's card doesn't name the
+  playlist (no report field; a later contract change). The fake's `--offset-404` (+ `--selftest`), §6l A2's line.
+  Deviation 6's "trenger internett" for a context the account can't play is replaced. Tests: the QA's case (offset,
+  offset, then one from the top; the row dropped) and the refused context (two plays, the line, no word).
+- **L1** (a paused step played): a step sent while paused is marked (`stepWhilePausedAt`, 10 s); a `Resumed` Spotify
+  makes right after it is paused at once (`vibb.pause()`, no focus) - the title still moves. Deviation 7's second half
+  replaced. Test: the QA's case (and a playing step goes on playing).
+- **L2** (an artist's place on the screens): one pure rule, `contextResumes(entry)` (a playlist context true, an artist
+  false, every other entry true), read by the renderer (`contextOffsets`) and the UI (`playSwitch`'s start, `nowView`'s
+  stored row): an artist shows 0 everywhere. Deviation 8's "although" gone. Tests: `UiModelTest` (artist 0, playlist its
+  place, a pick of the row, the restored bar).
+- **L3** (the recorder): one daemon writer thread for the process (named `spotify-state-recorder`), a 32 MiB cap per file
+  (one `Log.i` when full); §9.4 and §6l part B say what the compact state records (the track, `paused`, `position`, the
+  track window's `next`/`prev` up to three, `context` - null for no object and a null uri alike - not `disallows`).
+  `SourceScanTest` pins the cap, the single daemon executor, none per file. The page's posted shape is not widened (see
+  below).
+- **L4**: `Store.spotifyContexts()` is a lock-free read once loaded (the service's snapshot, on IO before every start and
+  restore, loads it), so the renderer's `load` on main never waits on the file or the writer; a parsed library prunes the
+  rows of entries no longer in context mode (`pruneSpotifyContexts`, from a service collector on the writer); deviation
+  13 has its own test (a `playback_error` on a paused list track: the index moves, no `PUT`); the end's second clause is
+  pinned (a context's last track ran out, then its first track paused at 0, not named next: `Ended`; mid-track: a
+  change, paused). `GuardsTest` pins the prune, the lock-free read, the rule's two readers and the fallback.
+- **L5**: §5.9 rewritten as built (the uri, the title, the title swap, the ownership with a null context and the
+  leftover add, the end on evidence, the 403/404 lines, the fallback, the paused step, no "neste"); §9.4's recorder
+  plumbing; §11 step 6's file list; §0.4, §6.2, §11's order and §14 item 3 say the capture lands "before any stable tag"
+  (the JSON comment of `spotify_hosts.json`, a contract file, is left to the capture's commit); §6l's part B context line
+  (M2), its real-playlist line (M3), A1's paused next (L1), A2's `--offset-404` and leftover-add lines.
+- **On the coordinator's "the `context` and `track_window` per state"** (L3): the recorded state is the page's compact
+  state, which already carries the context's uri and the track window (`uri`/`linked` of the current track, `next` and
+  `prev` up to three each) - what part B's questions read. Widening the page's post (the context object's presence,
+  `disallows`) would change a pinned shape (`SdkState.KEYS`, `PlayerJsTest`, every `sdk_states` file and the fake's
+  check), so it stays the separate change the QA named; after M2 the tracker reads "no object" and "uri null" alike.
+- **Validation** (from `music/`): `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+  -PwarningsAsErrors=true --rerun-tasks` BUILD SUCCESSFUL, 843 JVM tests (828 before), 0 failures; lint "0 errors, 42
+  warnings" (the same 42). The four fakes' `--selftest` under `python3 -I`: "FAKE SPOTIFY SELFTEST OK", "FAKE STORYTEL
+  SELFTEST OK", "FAKE SONOS SELFTEST OK", "FAKE AUDIO SELFTEST OK". Checked by mutation (three at once, then reverted;
+  eight tests red): a `null` context never ours, the end without the "not named next" evidence, the leftover add not
+  told apart.
+

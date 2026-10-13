@@ -44,7 +44,8 @@ The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switc
                                                      list) plays its tracks - the fixture playlist's listed
                                                      tracks, the fixture artist's album, else FAKEtrack 1..5 -
                                                      from the offset's track (none, or one not in it: the
-                                                     top) at position_ms; the stub's next and previous step
+                                                     top; --offset-404: a 404) at position_ms; the stub's
+                                                     next and previous step
                                                      through it (previous after 3 s restarts the track)
     PUT  /v1/me/player                               transfer; POST /v1/me/player/queue?uri=&device_id=;
     PUT  /v1/me/player/shuffle?state=&device_id=,    shuffle and repeat (the phone turns both off;
@@ -561,6 +562,10 @@ def handler_for(sp):
                     return self.send(400, {"error": {"status": 400, "message": "Non supported context uri"}})
                 start = (body.get("offset") or {}).get("uri")
                 uris = [t.get("linked_from") or t["uri"] for t in tracks]
+                if start and start not in uris and sp.args.offset_404:
+                    # the stored track left the playlist and Spotify refuses the offset (qa-26c-step6-code M3)
+                    log(f"play: 404 (--offset-404: {start} isn't in {body['context_uri']})")
+                    return self.send(404, {"error": {"status": 404, "message": "Not found."}})
                 index = uris.index(start) if start in uris else 0
                 command.update(tracks=tracks, index=index, autoplay_context=AUTOPLAY_CONTEXT if sp.args.autoplay else None,
                                autoplay=sp.meta(AUTOPLAY["uri"]) if sp.args.autoplay else None)
@@ -987,7 +992,7 @@ def serve(sp, bind):
 # --- the selftest ---------------------------------------------------------------------------------
 
 def defaults(**over):
-    ns = argparse.Namespace(port=0, as_user="parent", deny=False, rotate=False, access_ttl=3600.0, expire_refresh=False,
+    ns = argparse.Namespace(port=0, as_user="parent", deny=False, offset_404=False, rotate=False, access_ttl=3600.0, expire_refresh=False,
                             bad_client=False, snapshot=None, rate_limit=0, quota=False, not_premium=False, no_eme=False,
                             slow_ready=0.0, token_ttl=0, track_seconds=None, elsewhere=None, autoplay=False,
                             transfer_in=None, unplayable="", relink="", shuffle=False, repeat="off")
@@ -1179,6 +1184,12 @@ def selftest():
         assert [t["uri"] for t in by_artist["tracks"]] == album and by_artist["index"] == 0 and by_artist["position_ms"] == 0, by_artist
         assert [t["uri"] for t in by_list["tracks"]] == [t["uri"] for t in sp.listed_tracks()] and by_list["index"] == 0, by_list
         assert by_list["context_uri"] == f"spotify:playlist:{sp.playlist_id}" and cmds["seq"] == 8
+        sp.args.offset_404 = True   # --offset-404 (qa-26c-step6-code M3): an offset the context lacks is a 404, the top plays
+        status, _, e = call(sp, "PUT", "/v1/me/player/play?device_id=" + device, listed, put)
+        assert status == 404 and e["error"]["status"] == 404, (status, e)
+        top = json.dumps({"context_uri": f"spotify:playlist:{sp.playlist_id}"})
+        assert call(sp, "PUT", "/v1/me/player/play?device_id=" + device, top, put)[0] == 204
+        sp.args.offset_404 = False
         assert call(sp, "GET", f"/fake/device/{device}/token?token={kid_access}")[2] == {"ok": True}
         assert call(sp, "GET", f"/fake/device/{device}/token?token=FAKE-ACCESS-99")[2] == {"ok": False}
         status, headers, t = call(sp, "GET", "/fake/token?user=kid")
@@ -1187,7 +1198,7 @@ def selftest():
         status, _, me = call(sp, "GET", "/v1/me", headers={"Authorization": "Bearer " + t["access_token"]})
         assert me["id"] == "fakekid", "the phone's token is the kid's"
         print("4. the stub device: connect, the play body of play_request.json (and its context form: the context's tracks "
-              "from the offset - the fixture artist's, the fixture playlist's, generated ones), the long-poll "
+              "from the offset - the fixture artist's, the fixture playlist's, generated ones; --offset-404), the long-poll "
               "(play, transfer, queue, shuffle off, repeat off), 404/400 for a stranger, the phone's token route OK")
 
         # 5. the tone: a WAV of the track's length; Range 206 and 416
@@ -1367,6 +1378,8 @@ def main():
     p.add_argument("--unplayable", default="", metavar="ID,...", help="tracks that answer playback_error and are skipped")
     p.add_argument("--relink", default="", metavar="ID:OTHER,...", help="track ID plays as OTHER with linked_from ID")
     p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone turns it off")
+    p.add_argument("--offset-404", action="store_true",
+                   help="a context play whose offset isn't in the context answers 404 (else it plays from the top)")
     p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone turns it off")
     p.add_argument("--print-listing", type=int, metavar="ENTRY",
                    help="print the fixture playlist's listing for library entry ENTRY (debug-feed/items/ENTRY.json) and exit")

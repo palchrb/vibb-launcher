@@ -374,6 +374,7 @@ class SpotifyRulesTest {
             SpotifyProblem.ELSEWHERE to (SpotifyLine.ELSEWHERE to null),
             SpotifyProblem.STOPPED to (SpotifyLine.STOPPED to null),
             SpotifyProblem.OFF to (null to "none"),
+            SpotifyProblem.CONTEXT_REFUSED to (SpotifyLine.ASK_ADULT to null),
         )
         assertEquals(SpotifyProblem.entries.toSet(), table.keys)
         for ((problem, want) in table) assertEquals(problem.name, want, problem.line to problem.outcome)

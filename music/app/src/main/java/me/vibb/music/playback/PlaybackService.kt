@@ -305,6 +305,12 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         }
+        // Design 26c §5.9 (qa-26c-step6-code L4): a parsed library drops the live-track rows of entries no longer in
+        // context mode (gone, or listed again) - a flip back to context months later starts from Spotify's top
+        scope.launch {
+            store.libraries().map { lib -> lib?.entries?.filter { isSpotifyContext(it) }?.map { it.key }?.toSet() }.distinctUntilChanged()
+                .flowOn(Dispatchers.IO).collect { keys -> if (keys != null) withContext(writer) { store.pruneSpotifyContexts(keys) } }
+        }
         publish()
     }
 

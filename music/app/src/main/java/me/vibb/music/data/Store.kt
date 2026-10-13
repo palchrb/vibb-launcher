@@ -145,14 +145,31 @@ class Store private constructor(context: Context) {
         spotifyOutcomeState.value = next
     }
 
-    /** Every context's live track as stored (read from its file on first use; a tiny file). */
+    /**
+     * Every context's live track as stored: once loaded, a lock-free read of the in-memory copy (the renderer's `load` on
+     * the main thread never waits for the file or the writer - qa-26c-step6-code L4; the service's snapshot, read on IO
+     * before every start and restore, loads it first).
+     */
+    fun spotifyContexts(): Map<String, SpotifyContextTrack> =
+        if (spotifyContextLoaded) spotifyContextState.value else loadSpotifyContexts()
+
     @Synchronized
-    fun spotifyContexts(): Map<String, SpotifyContextTrack> {
+    private fun loadSpotifyContexts(): Map<String, SpotifyContextTrack> {
         if (!spotifyContextLoaded) {
             spotifyContextState.value = SpotifyContexts.decode(runCatching { spotifyContextFile.readText() }.getOrNull())
             spotifyContextLoaded = true
         }
         return spotifyContextState.value
+    }
+
+    /** Only the rows of [contextKeys] (the parsed library's context-mode entries) stay (L4); off the main thread. */
+    @Synchronized
+    fun pruneSpotifyContexts(contextKeys: Set<String>) {
+        val rows = spotifyContexts()
+        val kept = rows.filterKeys { it in contextKeys }
+        if (kept.size == rows.size) return
+        runCatching { writeAtomic(spotifyContextFile, SpotifyContexts.encode(kept).toByteArray()) }.onFailure { return }
+        spotifyContextState.value = kept
     }
 
     /**

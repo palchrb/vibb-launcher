@@ -494,6 +494,12 @@ class SourceScanTest {
         assertTrue(debug.contains("config?.get(\"record_spotify_states\")?.jsonPrimitive?.booleanOrNull"))
         assertTrue("debug-feed/sdk_states/<start>.jsonl", debug.contains("File(File(dir, \"sdk_states\"), \"\${stamp()}.jsonl\")"))
         assertTrue(debug.contains("append(\"{\\\"t\\\":\$atMs,\\\"state\\\":\$compact}\")"))
+        // L3 (qa-26c-step6-code): a cap per file, and one daemon writer thread for the process, never one per switch-on
+        assertTrue(debug.contains("const val MAX_FILE_BYTES = 32L * 1024 * 1024"))
+        assertTrue(debug.contains("if (written + bytes.size > MAX_FILE_BYTES) {"))
+        assertEquals("one executor", 1, Regex("""Executors\.new""").findAll(debug).count())
+        assertTrue(debug.contains("Executors.newSingleThreadExecutor { r -> Thread(r, \"spotify-state-recorder\").apply { isDaemon = true } }"))
+        assertFalse("not per file", debug.substringAfter("private class StateFile").contains("Executors."))
         val logLines = debug.lines().filter { it.contains("Log.") }
         assertTrue("the recorder never logs a state: $logLines", logLines.none { it.contains("json") || it.contains("compact") || it.contains("line") })
         // read at every process start and at the receiver, as the debug base

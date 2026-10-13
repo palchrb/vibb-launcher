@@ -115,10 +115,28 @@ class UiModelTest {
         assertEquals(Hint.Picks(Kind.SPOTIFY), tile.hint)
         assertNull(tile.progress)
         assertEquals(RendererState.SPOTIFY_ASK_ADULT, entryUi(s, artist, null, null, SpotifyWords.REAUTHORIZE).state)
-        // a cover tap shows the context at once, at its place
+        // a cover tap shows the context at once - an artist at 0: its play starts where Spotify starts it (§12, L2)
         val sw = playSwitch(s, 7, null, null, 1_000)!!
         assertEquals("Fake track 4 — Fake Artist", sw.view.itemTitle)
-        assertEquals(40_000L, sw.view.storedPosMs)
+        assertEquals(0L, sw.view.storedPosMs)
         assertNull("a room can't play it", playSwitch(s, 7, null, null, 1_000, onRoom = true))
+    }
+
+    @Test
+    fun `L2 - an artist context shows 0 everywhere (it starts where Spotify starts it), a playlist context its place`() {
+        val artist = entry(7, Source.SPOTIFY, target = "spotify:artist:FAKEartist000000000001", cache = 0).copy(spotifyMode = "context")
+        val playlist = entry(9, Source.SPOTIFY, target = "spotify:playlist:FAKEplaylist0000000001", cache = 0).copy(spotifyMode = "context")
+        val key = me.vibb.music.logic.SPOTIFY_CONTEXT_KEY
+        val s = snapshot(library(listOf(artist, playlist)), bookmarks = mapOf(artist.key to (key to 40_000L), playlist.key to (key to 40_000L)))
+        assertEquals(false, me.vibb.music.logic.contextResumes(artist))
+        assertEquals(true, me.vibb.music.logic.contextResumes(playlist))
+        assertEquals("every other entry resumes as before", true, me.vibb.music.logic.contextResumes(list))
+        assertEquals(0L, playSwitch(s, 7, null, null, 1_000)!!.view.storedPosMs)
+        assertEquals(40_000L, playSwitch(s, 9, null, null, 1_000)!!.view.storedPosMs)
+        // the restored bar (the stored queue's row)
+        val row = { id: Long -> me.vibb.music.data.NowPlayingRow(0, id, key, 0, 40_000, null, false, 0) }
+        assertEquals(0L, nowView(s, PlayerHub.State(), row(7))!!.storedPosMs)
+        assertEquals(40_000L, nowView(s, PlayerHub.State(), row(9))!!.storedPosMs)
+        assertEquals("a pick of its one row as well", 0L, playSwitch(s, 7, key, null, 1_000)!!.view.storedPosMs)
     }
 }

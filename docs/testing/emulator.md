@@ -1173,7 +1173,8 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   under it and **no** "Spor N av M"; "Liste" shows "Spotify · Spotify velger rekkefølgen" and one row, the track
   playing. Next: no `play:` line - the stub's next track plays and the title follows (`vibb.next()`, the SDK's own
   step); previous within 3 s goes back a track, later it restarts the track (Spotify's rule, no `play:` line). Pause
-  and resume: no `play:` line. Home's card and the lock's tile show the playing track's title.
+  and resume: no `play:` line. Next while paused: the title moves and it stays paused (a step only moves; if the stub
+  plays the track the phone pauses it at once). Home's card and the lock's tile show the playing track's title.
 - [ ] **A playlist no account may list (the 403 playlist, context mode)**: on the Spotify page Remove `fakeparent`,
   then "Check now" on the playlist's card: the fake logs `GET /v1/playlists/0FakePlaylistKveld0001/items: 403 (fakekid
   doesn't own the playlist)`; the card says no logged-in account owns it and the phones play it in Spotify's order.
@@ -1276,6 +1277,17 @@ Each check below restarts the fake with its option (`python3 -I scripts/fake-spo
   "Something Spotify picked" in its own context - paused at once (logcat `spotify: a track that isn't ours was paused`),
   the context ended (`clear_state`). `--transfer-in 20`: another app's context on "Vibb" 20 s after the first play is
   paused at once, the live track and its title unchanged. Push the list-mode library back afterwards.
+- [ ] **A stored track that left the playlist** (qa-26c-step6-code M3): with entry 6 flipped to a context (above), the
+  fake restarted with `--offset-404 --track-seconds 20`, and a stored track the fake's context (`FAKEtrack` 1..5)
+  lacks - `adb shell run-as me.vibb.music.debug sh -c 'printf "%s" "{\"<entry 6 key>\":{\"uri\":\"spotify:track:FAKEgone000000000001\",\"title\":\"Gone\"}}" > no_backup/spotify_context.json'`
+  (the key from `--print-library`), with the app force-stopped first: open it, play. The fake logs `play: 404
+  (--offset-404: …)` twice (around the transfer), then `play: context spotify:playlist:FAKEplaylist0000000001 from
+  Spotify's start`; logcat `spotify: the context's stored track was refused - from the top`; the tone, never "trenger
+  internett"; `spotify_context.json` names the first track once it plays, not the gone one.
+- [ ] **Our list's leftover queue add, then a context** (qa-26c-step6-code M1): the 60-track listing (above) played
+  until the fake logs `queue: spotify:track:FAKEtrack0000000000051 …`, then tap entry 6 flipped to a context
+  (`--track-seconds 20`): when its track ends the stub plays Spotify's queue first (track 51): logcat `spotify: our
+  leftover queue add skipped`, no `play:` line, the context goes on with its next track - no end, the place kept.
 - [ ] **The state recorder** (design 26c §9.4, debug builds only): add `"record_spotify_states": true` to
   `config.json`, push and broadcast - logcat `spotify: state recording to sdk_states/<UTC start>.jsonl`; play a little
   (a context and a list), then `adb pull /sdcard/Android/data/me.vibb.music.debug/files/debug-feed/sdk_states/`: one
@@ -1310,16 +1322,23 @@ bound to the kid's account.
   <level> from <host>` lines name a level and a host only.
 - [ ] **Real state sequences** (design 26c §9.4, step 6's recorder): `{"record_spotify_states": true}` in
   `config.json` (no `spotify_base`), push and broadcast; play the real playlist, a pause, next, a pick; then **an artist**
-  and **a playlist the parent doesn't own** (context mode, design 26c §5.9: Spotify's order, the states' `context` the
-  entry's target - check that the real SDK names it in every state, also around a track change; a state without it
-  would read as not ours), next and previous in them, one context played to its end (with the kid's Autoplay on and
-  off: what the real SDK posts at the end); then `adb pull …/debug-feed/sdk_states/`. The debug log names state kinds
+  and **a playlist the parent doesn't own** (context mode, design 26c §5.9: Spotify's order; the SDK reference says a
+  state's `context` uri "can be null" - note every recorded state with `"context":null` and which track it names: our
+  live track and the track the last state named next are read as ours, any other as a uri list, paused), next and
+  previous in them (also while paused: whether the SDK's `nextTrack` plays a paused player - the phone pauses it again),
+  one context played to its end (with the kid's Autoplay on and off: what the real SDK posts at the end - the recording
+  is the page's compact state: the track, `paused`, `position`, `next`/`prev` up to three each, `context`; not
+  `disallows`); then `adb pull …/debug-feed/sdk_states/`. The debug log names state kinds
   only (§7.1: never a state's JSON). The recorded lines become `sdk_states/*.json` sequences for `SpotifyTrackerTest`
   (the main session's follow-up): each `{"t", "state"}` a step, each event a `played`/`played_context`/`pause_sent`.
 - [ ] **A real artist and a playlist the parent doesn't own** (design 26c §11 step 6's device check): each plays as
   Spotify picks, the title follows the track, next and previous are Spotify's, a restart of a playlist context goes on
-  at the live track (the kid's account must be able to open the playlist - public, shared by link or followed; a
-  403/404 is "Spotify - spør en voksen"), an artist starts where Spotify starts it.
+  at the live track (the kid's account must be able to open the playlist - public, shared by link or followed; a 403
+  is "Spotify - spør en voksen" with the report's `"refused"`, a 404 after the transfer "Spotify - spør en voksen" on
+  that tile only, no stored word), an artist starts where Spotify starts it (its bar and its tap show 0:00). Remove the
+  playlist's stored track from the playlist (the parent edits it in Spotify), then play: if Spotify refuses the offset,
+  logcat `spotify: the context's stored track was refused - from the top` and one play from the top - never "trenger
+  internett".
 - [ ] The DNS capture of design 26c §6.2 (the host list), as `docs/testing/spotify-spike.md` describes.
 
 ## 6b. Step 7: Play (optional)
