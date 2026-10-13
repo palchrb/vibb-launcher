@@ -123,13 +123,14 @@
         </div>
     </section>
 
-    {#- The pickers save on change (autosave.js) and return here without a fragment, so
-        scroll-restore.js keeps the place; <noscript> Save without JS. Mode and interval are one
+    {#- The pickers save on change (autosave.js) and return to this group (#location-settings):
+        the last one on a long page, so a <noscript> Save (or a save after a refused erase, whose page
+        is at another path) doesn't land at the top. Mode and interval are one
         form: location-policy needs the mode on every post (§5.6, H1). -#}
     <section id="location-settings" aria-labelledby="location-settings-title">
         <h2 class="group-header" id="location-settings-title">Location Settings</h2>
         <div class="group">
-            <form method="post" action="/devices/{{ view.device.id }}/location-policy" class="cell">
+            <form method="post" action="/devices/{{ view.device.id }}/location-policy#location-settings" class="cell">
                 <label class="row">
                     <span class="row-label">When to locate</span>
                     <select class="pick" name="mode" data-autosave>
@@ -150,7 +151,7 @@
                 {% endif %}
                 <noscript><button type="submit" class="row row-button">Save</button></noscript>
             </form>
-            <form method="post" action="/devices/{{ view.device.id }}/location-retention" class="cell">
+            <form method="post" action="/devices/{{ view.device.id }}/location-retention#location-settings" class="cell">
                 <label class="row">
                     <span class="row-label">Keep history for</span>
                     <select class="pick" name="days" data-autosave>
@@ -245,7 +246,7 @@
             if (tries >= 12) {
                 clearInterval(timer);
                 var el = document.getElementById('fix_wait');
-                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet. The phone may be offline; it gets the request when it is back.';
+                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet. The phone may be offline; it gets the request if it is back within an hour.';
             }
         }, 5000);
     {% endif %}

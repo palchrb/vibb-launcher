@@ -2540,3 +2540,17 @@ Choices made while building:
 10. **The security log keeps its raw lines** ("ring", "wipe (asked … UTC)"): step 14 relabels it.
 11. **Not checked here**: a browser pass (no browser on this VM) - 390 px light and dark, JS on and off, the confirm
     and the ⓘ opened, the map's stacking under the tab bar - is owed before merging, with the real phones.
+
+**Fix round after the code QA** (`qa-31-s13-code.md`: 0 High, 1 Medium, 3 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Both Location Settings pickers redirect to `/devices/locate?device={id}#location-settings`, and their forms post to that fragment: the group is the last on a long page, so a `<noscript>` Save, or a save from a refused erase's page (another path, where scroll-restore can't help), no longer lands at the top. Every other form already redirects with its group's fragment (`#location`, `#actions`, `#recent`), so none lands at the top; the redirect table now asserts that every row has a fragment. |
+| L1 | `time_rules::update_location_now_queues_locate` pins the poll's reload, `location.replace('/devices/locate?device={id}#location')`. Re-run: the mutation without `#location` fails it. |
+| L2 | `locations::the_locate_page_builds_no_html_from_stored_values` stores `<img src=x onerror=alert(1)>` as a locate's, a lock's and a reworded wipe's answer: escaped in the answer row, Recent's line and the `title`, no `<img src=x` on the page, plain text in `locate-result.json`. Re-run: `|safe` on the answer row or Recent's line fails it. |
+| L3 | `answer` treats the server's own placeholders `"ok"`/`"failed"` (`device_api::command_result` without a message) as no answer: the row shows its word and the status line, no "ok". `a_delivered_command_is_not_shown_as_done` asserts the Done row has no sub-line. |
+| N1 | The wait's last line: "No answer yet. The phone may be offline; it gets the request if it is back within an hour." |
+| N2 | A `wipe` with a successful answer ("wiping (…)") is `CommandStatus::Erasing`, worded like a confirmed erase ("Erasing", "An erased phone stops reporting."); tested in `recent_names_each_command_and_cancels_what_waits`. |
+| N3 | `unknown_phones_and_failed_reads` also renames `device_commands` and checks `locate-result.json` is a 500. |
+| Checks | `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+

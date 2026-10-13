@@ -619,6 +619,9 @@ impl DeviceCommand {
             let at = self.acknowledged_at.as_deref().and_then(at);
             return if self.succeeded == Some(false) {
                 CommandStatus::Failed { at }
+            } else if self.command == "wipe" {
+                // The system went down under the call ("wiping ..."): as a confirmed erase.
+                CommandStatus::Erasing { at }
             } else {
                 CommandStatus::Done { at }
             };

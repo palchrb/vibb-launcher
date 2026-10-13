@@ -95,8 +95,9 @@ fn check_forms(html: &str) {
 /// §5.1's redirect table for the Locate tab, built from the rendered forms: each lands back on
 /// the page - Update Location at the map (`#location`, where the wait shows), Ring, Stop Ringing,
 /// Lock and Erase at their group (`#actions`, Recent right under it), Cancel at Recent where its
-/// line is, the two pickers with no fragment (scroll-restore keeps the place). A form the table
-/// has no row for fails the test.
+/// line is, the two pickers at Location Settings (the last group of a long page: a `<noscript>`
+/// Save, or a save from a refused erase's page, must not land at the top - qa-31-s13-code M1).
+/// Every form has a fragment, so none lands at the top. A form the table has no row for fails.
 #[tokio::test]
 async fn every_form_on_the_locate_page_returns_to_its_group() {
     let app = TestApp::new().await;
@@ -146,17 +147,21 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
             (format!("{page}&cancel=done"), Some("recent")),
         ),
         (
-            format!("/devices/{id}/location-policy"),
+            format!("/devices/{id}/location-policy#location-settings"),
             &[("mode", "interval"), ("interval_minutes", "60")],
-            (page.clone(), None),
+            (page.clone(), Some("location-settings")),
         ),
         (
-            format!("/devices/{id}/location-retention"),
+            format!("/devices/{id}/location-retention#location-settings"),
             &[("days", "14")],
-            (page.clone(), None),
+            (page.clone(), Some("location-settings")),
         ),
     ];
     let found = forms(&html);
+    assert!(
+        table.iter().all(|(_, _, (_, fragment))| fragment.is_some()),
+        "every form lands on its group, also without JS"
+    );
     assert_eq!(
         found.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>(),
         table.iter().map(|(a, _, _)| a.as_str()).collect::<Vec<_>>(),
@@ -412,6 +417,21 @@ async fn recent_names_each_command_and_cancels_what_waits() {
     assert!(recent.contains("data-flash=\"recent\">Cancelled. The phone will never get it."));
     let html = locate_page(&app, &cookie, &format!("?device={id}&cancel=bogus")).await;
     assert!(!html.contains("data-flash=\"recent\""));
+
+    // An erase the phone answered while the system went down reads as a confirmed one
+    // (qa-31-s13-code N2).
+    sqlx::query(
+        "UPDATE device_commands SET delivered_at = datetime('now'), received_at = datetime('now'), \
+         acknowledged_at = datetime('now'), succeeded = 1, \
+         result = 'wiping (the system shut down during the call)' WHERE command = 'wipe'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let row = recent_row(&html, "wipe");
+    assert!(row.contains(">Erasing<"), "{row}");
+    assert!(row.contains("An erased phone stops reporting."), "{row}");
 }
 
 /// The two warnings are orange rows above the actions; the mode picker saves its form.
@@ -482,6 +502,14 @@ async fn unknown_phones_and_failed_reads() {
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
     let res = app
         .get_page(&format!("/devices/{id}/locations.json"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    sqlx::query("ALTER TABLE device_commands RENAME TO device_commands_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .get_page(&format!("/devices/{id}/locate-result.json"), &cookie)
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
 }

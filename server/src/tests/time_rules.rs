@@ -551,6 +551,10 @@ async fn update_location_now_queues_locate() {
     let text = page.text();
     assert!(text.contains("Waiting for a fresh fix"));
     assert!(text.contains(">Update Location</button>"));
+    // A newer fix reloads at the map, not the top (qa-31-s13-code L1).
+    assert!(text.contains(&format!(
+        "location.replace('/devices/locate?device={id}#location')"
+    )));
     assert!(!text.contains("couple of minutes"));
 
     app.request(

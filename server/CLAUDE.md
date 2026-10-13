@@ -1173,7 +1173,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Where the forms return** (§5.1, `tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`, built
   from the rendered forms): Update Location → `?device={id}&requested=1#location` (the map and the wait in view; the
   poll's reload goes to `#location` too), Ring / Stop Ringing / Lock / Erase → `#actions` (Recent right under it),
-  Cancel → `&cancel=done|too_late#recent` (its line in Recent), the two pickers → no fragment (scroll-restore). Erase
+  Cancel → `&cancel=done|too_late#recent` (its line in Recent), the two pickers → `#location-settings` (the last
+  group of a long page: a `<noscript>` Save or a save after a refused erase must not land at the top). Erase
   Phone…'s form posts to `.../command/wipe#erase`: a wrong name renders the page there with the confirm open.
 - **Robust**: the actions queue only for an existing phone (`queue_command` checks it inside its transaction - the
   replace, the used-up mark and the insert are one transaction; an unknown phone is a 404, a DB error a 500 "nothing

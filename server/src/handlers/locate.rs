@@ -211,7 +211,9 @@ fn reword(raw: &str) -> Option<String> {
 
 fn answer(raw: &str) -> Option<Answer> {
     let raw = raw.trim();
-    if raw.is_empty() {
+    // "ok"/"failed" are this server's own words for an answer without a message
+    // (`device_api::command_result`): the row's word says it already.
+    if raw.is_empty() || raw == "ok" || raw == "failed" {
         return None;
     }
     Some(match reword(raw) {
@@ -334,7 +336,13 @@ fn command_row(
     let status = command.status(naive_now, receipts);
     let (word, tone, line) = status_words(&status, zone, now);
     // A result is the row's line: what the phone did, in its own words reworded.
-    let (detail, detail_title) = match command.result.as_deref().and_then(answer) {
+    // A result is the row's line: what the phone did, reworded. An erase the phone reported as
+    // going through reads as one it confirmed (one wording for both).
+    let answered = match status {
+        CommandStatus::Erasing { .. } => None,
+        _ => command.result.as_deref().and_then(answer),
+    };
+    let (detail, detail_title) = match answered {
         Some(Answer { text, raw }) => (Some(text), raw),
         None => (line, None),
     };
@@ -895,8 +903,9 @@ pub async fn locate(
 /// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
 /// `days` = one of `retention::LOCATION_RETENTION_DAYS`; cleanup 2026-10-06). Older fixes are
 /// deleted at once - the newest one always stays - and by the hourly pruning from then on.
-/// 400 for another value, 404 for an unknown device; nothing is sent to the phone. Back to the
-/// page with no fragment: an auto-save, so `scroll-restore.js` keeps the place (§5.1.4).
+/// 400 for another value, 404 for an unknown device; nothing is sent to the phone. Back to
+/// Location Settings (`#location-settings`): the last group of a long page, so a `<noscript>` Save
+/// or a save after a refused erase doesn't land at the top (qa-31-s13-code M1).
 pub async fn update_location_retention(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -934,7 +943,7 @@ pub async fn update_location_retention(
             if let Err(err) = crate::retention::prune(&state.db).await {
                 tracing::error!(%err, "pruning after a retention change failed");
             }
-            Redirect::to(&format!("/devices/locate?device={id}")).into_response()
+            Redirect::to(&format!("/devices/locate?device={id}#location-settings")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location retention");
@@ -949,8 +958,8 @@ pub async fn update_location_retention(
 
 /// The location policy: `mode` off / on_request / interval, `interval_minutes` from
 /// `time_rules::LOCATION_INTERVALS` (kept as is when absent: the page sends it only in
-/// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Back to the
-/// page with no fragment (an auto-save, §5.1.4).
+/// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Back to
+/// `#location-settings`, as the history.
 pub async fn update_location_policy(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -995,7 +1004,7 @@ pub async fn update_location_policy(
             )
             .await;
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/locate?device={id}")).into_response()
+            Redirect::to(&format!("/devices/locate?device={id}#location-settings")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location policy");
