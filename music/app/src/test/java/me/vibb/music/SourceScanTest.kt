@@ -116,6 +116,22 @@ class SourceScanTest {
         }
     }
 
+    /**
+     * Android's regex is ICU, not the JVM's: `(?U)` (UNICODE_CHARACTER_CLASS) compiles in these JVM tests and throws
+     * PatternSyntaxException on the phone - in Report.kt it failed every sync's report (2026-10-13). Spell the class out.
+     */
+    @Test
+    fun `no regex uses flags Android's ICU rejects`() {
+        val banned = listOf("(?U)", "UNICODE_CHARACTER_CLASS")
+        val files = moduleFile("src").listFiles()!!.filter { it.isDirectory && it.name != "test" && !it.name.startsWith("androidTest") }
+            .flatMap { set -> set.walk().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
+        assertTrue(files.size > 30)
+        for (f in files) {
+            val text = code(f)
+            for (token in banned) if (text.contains(token)) fail("${f.name} uses $token")
+        }
+    }
+
     // The debug feed (like the launcher's DebugHookAbsentTest); the built APKs are checked too
     // (checkReleaseHasNoDebugFeed, a dependency of assembleRelease).
 

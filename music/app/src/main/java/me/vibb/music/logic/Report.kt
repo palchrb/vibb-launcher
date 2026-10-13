@@ -21,7 +21,9 @@ const val SONOS_ROOM_NAME_MAX = 40
 
 /** A Sonos speaker's uid as the server accepts it (design 26a §5.5). */
 private val SONOS_UID = Regex("RINCON_[A-Z0-9]{12,20}")
-private val SPACES = Regex("(?U)\\s+")
+/** Unicode White_Space, spelled out: Android's ICU regex rejects `(?U)` (a PatternSyntaxException that killed every
+ * sync's report on the phone, while the JVM tests passed). */
+private val SPACES = Regex("[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]+")
 
 /** One Sonos room the speaker cache knows: what the parent can scope the phone to (design 26a §5.5). */
 data class ReportedRoom(val uid: String, val name: String)

@@ -143,6 +143,11 @@ class ReportTest {
         assertEquals(SONOS_ROOM_NAME_MAX, emoji.codePointCount(0, emoji.length))
         // the server's cleaning, in its order (qa-26a-step3c-code L6; music_state_keeps_sonos_rooms_checked)
         assertEquals(" Stua  x", reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "\u001C Stua \u0007 x\u2003")).single().name)
+        // every White_Space character splits (Rust's split_whitespace); U+001C-U+001F (Java's isWhitespace) and U+200B don't
+        val white = "\u0009\u000A\u000B\u000C\u000D\u0020\u0085\u00A0\u1680\u2000\u2005\u200A\u2028\u2029\u202F\u205F\u3000"
+        for (c in white) assertEquals("U+%04X".format(c.code), "a b", reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "a${c}b")).single().name)
+        assertEquals("ab", reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "a\u001Fb")).single().name)
+        assertEquals("a\u200Bb", reportedRooms(mapOf("RINCON_000E58A0B1C201400" to "a\u200Bb")).single().name)
         val many = reportedRooms((0 until 50).associate { "RINCON_000E58A0B1C2%02d400".format(it) to "Rom %02d".format(it) })
         assertEquals(SONOS_ROOMS_MAX, many.size)
         assertEquals("Rom 00", many.first().name)
