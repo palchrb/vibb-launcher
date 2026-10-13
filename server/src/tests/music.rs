@@ -1282,14 +1282,14 @@ async fn the_card_shows_two_switches_and_the_limit_and_saves_back_to_music_setti
     for name in ["stream_mobile_data", "download_mobile_data"] {
         assert!(
             form.contains(&format!(
-                "<input type=\"checkbox\" name=\"{name}\" value=\"on\"  onchange=\"this.form.submit()\">"
+                "<input type=\"checkbox\" name=\"{name}\" value=\"on\"  data-autosave>"
             )),
             "{name} unchecked, auto-saving: {form}"
         );
     }
-    assert!(form.contains(
-        "<select id=\"music_storage_limit\" name=\"storage_limit\" onchange=\"this.form.submit()\">"
-    ));
+    assert!(
+        form.contains("<select id=\"music_storage_limit\" name=\"storage_limit\" data-autosave>")
+    );
     assert!(
         form.contains("<option value=\"2\" selected>2 GB</option>"),
         "{form}"
@@ -1332,10 +1332,8 @@ async fn the_card_shows_two_switches_and_the_limit_and_saves_back_to_music_setti
         .await
         .text();
     let form = page.split("id=\"music-settings\"").nth(1).unwrap();
-    assert!(form.contains(
-        "name=\"download_mobile_data\" value=\"on\" checked onchange=\"this.form.submit()\""
-    ));
-    assert!(form.contains("name=\"stream_mobile_data\" value=\"on\"  onchange"));
+    assert!(form.contains("name=\"download_mobile_data\" value=\"on\" checked data-autosave"));
+    assert!(form.contains("name=\"stream_mobile_data\" value=\"on\"  data-autosave"));
     assert!(form.contains("<option value=\"none\" selected>No limit</option>"));
     assert!(form.contains("<option value=\"2\" >2 GB</option>"));
 }
