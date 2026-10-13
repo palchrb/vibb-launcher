@@ -14,8 +14,10 @@ import com.kidslauncher.mdm.server.timedWindowActive
  *   Suspension, not only kiosk, because Play opened with an explicit intent from inside an
  *   allowed app's task (rate-us buttons, ad SDKs) would otherwise give the kid the whole store
  *   (QA #1); a suspended package's activities don't start anywhere.
- * - None of them is ever launchable from Home or pinned in kiosk - except the Play Store during
- *   install mode.
+ * - None of them is ever pinned in kiosk - except the Play Store during install mode - or shown:
+ *   the Play Store is never on Home except in install mode; in the drawer also while the override
+ *   or the pause is open (design 28: they lift every app restriction, Play included, so the store
+ *   must be reachable then). Never Play services or GSF.
  * - Anything Play installs is caught by the usual new-package path: hidden and suspended until
  *   the parent allowlists it.
  */
@@ -27,7 +29,8 @@ const val PLAY_STORE = "com.android.vending"
 const val PLAY_SERVICES = "com.google.android.gms"
 const val GOOGLE_SERVICES_FRAMEWORK = "com.google.android.gsf"
 
-/** Never shown, never pinned (outside install mode), never hidden. */
+/** Never shown (except the store: install mode, and a window in the drawer), never pinned (outside
+ * install mode), never hidden. */
 val PLAY_CORE = setOf(PLAY_STORE, PLAY_SERVICES, GOOGLE_SERVICES_FRAMEWORK)
 
 /** Never suspended or hidden, managed or not, locked or not: other apps' FCM (Element X). */
@@ -87,10 +90,20 @@ fun playStoreSuspended(appsManaged: Boolean, locked: Boolean, play: PlayState): 
     return true
 }
 
+/** Whether the Play Store may be listed (design 28): in install mode, or while a parent-PIN
+ * window (the override or the pause) is open - in the drawer only, see [playPackageOnHome]. */
+fun playStoreListable(installMode: Boolean, windowOpen: Boolean): Boolean = installMode || windowOpen
+
 /** Whether [packageName] may be shown on Home and in the drawer: never for [PLAY_CORE], except
- * the Play Store during install mode. */
+ * the Play Store while it may be listed ([installModeActive] now means [playStoreListable]:
+ * install mode or a window - the name is kept for the pinned tests, design 28 QA L6). */
 fun playPackageLaunchable(packageName: String, installModeActive: Boolean): Boolean =
     packageName !in PLAY_CORE || (packageName == PLAY_STORE && installModeActive)
+
+/** Whether [packageName] may be on Home's grid on top of the drawer's filter: the Play Store only
+ * in install mode, so in a window it is in the drawer only (design 28 QA L8). */
+fun playPackageOnHome(packageName: String?, installMode: Boolean): Boolean =
+    packageName != PLAY_STORE || installMode
 
 // ---------------------------------------------------------------------------------------------
 // Install mode: the parent opens Play for a bounded time with the override PIN.

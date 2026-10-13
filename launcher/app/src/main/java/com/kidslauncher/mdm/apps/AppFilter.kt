@@ -33,9 +33,10 @@ class AppFilter(
         // never on the kid's list either.
         val emergencySos = emergencySosPackage(context)
         // Play services/GSF/the Play Store are never on Home or in the drawer - the store only
-        // during the parent's install mode (handy step 7).
+        // while it is listable (handy step 7; design 28: install mode, the override or the pause).
+        // The name stays: this is the store's listability now.
         val installMode = try {
-            PlayRuntime.installModeActive(context)
+            PlayRuntime.storeListable(context)
         } catch (e: Exception) {
             false
         }
@@ -92,7 +93,7 @@ class AppFilter(
          * blocked ([blockedDialer]); never the system's recents provider ([recentsProvider],
          * design 16d - enforcement never hides or suspends it, so its launcher icon, if the stock
          * launcher has one, must not show); Play core only as [playPackageLaunchable] allows (the
-         * Play Store in install mode).
+         * Play Store while [installMode], i.e. listable: install mode or a window - design 28).
          */
         fun kidListable(packageName: String?, blockedDialer: String?, recentsProvider: String?, installMode: Boolean, emergencySos: String? = null): Boolean =
             packageName != blockedDialer &&

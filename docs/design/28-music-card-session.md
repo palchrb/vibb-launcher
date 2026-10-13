@@ -538,6 +538,23 @@ lists by accident; note the device page's `play_store_suspendable`: false on thi
   - The whole-store and LE Audio hearing-aid notes are user-facing notes in §9, and the 60 s rejoin is listed.
   - The boot count is read once per process.
 
+## Step 1 implementation status (2026-10-13, branch `design-28-s1`)
+
+Part B as §5 says; nothing of Part A.
+- `play/PlayPolicy.kt`: `playStoreListable`, `playPackageOnHome`; `playPackageLaunchable` keeps its parameter name
+  (its doc says what it means now), the header and `PLAY_CORE`'s comment name the drawer in a window.
+- `play/PlayRuntime.kt`: `storeListable(context)` = install mode or `overrideActive()` (the file's existing
+  `OfflineOverride.isActive() || RestrictionsPause.isActive()`).
+- `apps/AppFilter.kt` (MIT): the one call and its comment; the local stays `installMode`.
+- `ui/HomeActivity.kt` `refreshApps`: `installMode` read in the background block (an exception counts as off, as in
+  `AppFilter`), then `.filter { playPackageOnHome(pkg, installMode) }` after our own package is dropped.
+- `Application.initRest`: `WindowRelock.addListener { loadApps() }` right after the first `loadApps()`.
+- Tests: `PlayPolicyTest` (3 new), `PlayInvariantsTest` (3 new source scans; the filter scan also checks that
+  `AppFilter` no longer asks `installModeActive(` itself). `AppFilterTest` unchanged and green.
+- Docs: launcher `CLAUDE.md` ("Push, battery and Play"), design 07's status. `docs/testing/emulator.md` waits for
+  step 3 (§6j has both parts).
+- Not device-tested: §8 B1-B6.
+
 ## Step 2 implementation status (2026-10-13)
 
 Branch `design-28-s2` on `84e29547`. Not pushed. Nothing was run on a device or the emulator. **No surface reads the
