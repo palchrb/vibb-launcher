@@ -3,6 +3,7 @@ package me.vibb.music.logic
 import me.vibb.music.Fixtures
 import me.vibb.music.Fixtures.entry
 import me.vibb.music.Fixtures.file
+import me.vibb.music.Fixtures.moduleFile
 import me.vibb.music.model.Entry
 import me.vibb.music.model.LibraryParser
 import me.vibb.music.model.ListingItem
@@ -454,5 +455,19 @@ class NewItemsTest {
         assertNull(lib.entry(9))
         assertEquals(mapOf(9L to "sp9", 1L to "abels_taarn", 2L to "40201d4c16fc", 3L to "own-5c0ffee1d0e5", 5L to "7ac843e9f5d4"), lib.keyById)
         assertEquals(lib.entryIds, lib.keyById.keys)
+    }
+
+    @Test
+    fun `d29 28 the schema is exported - version 3 adds known_entries and news_baseline by an auto migration`() {
+        val v3 = moduleFile("schemas/me.vibb.music.data.MusicDb/3.json").readText()
+        assertTrue(v3.contains("\"version\": 3"))
+        val table = "CREATE TABLE IF NOT EXISTS `\${TABLE_NAME}`"
+        assertTrue(v3.contains("\"tableName\": \"known_entries\",\n        \"createSql\": \"$table (`entryKey` TEXT NOT NULL, `entryId` INTEGER, `pending` INTEGER NOT NULL, `item` TEXT, `newAt` INTEGER, PRIMARY KEY(`entryKey`))\""))
+        assertTrue(v3.contains("\"tableName\": \"news_baseline\",\n        \"createSql\": \"$table (`id` INTEGER NOT NULL, `closed` INTEGER NOT NULL, PRIMARY KEY(`id`))\""))
+        val v2 = moduleFile("schemas/me.vibb.music.data.MusicDb/2.json").readText()
+        assertFalse("new tables only", v2.contains("known_entries"))
+        val db = moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
+        assertTrue(db.contains("AutoMigration(from = 2, to = 3),"))
+        assertTrue(db.contains("version = 3,"))
     }
 }

@@ -585,7 +585,8 @@ class GuardsTest {
     @Test
     fun `the workers wire Storytel's news, report and cooldown, and the download job refreshes the Nytt notification`() {
         val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
-        assertTrue("a new book is news though url-less", sync.contains("markSeen(store, entry.id, listing.items.map { it.key }, newsEligible(entry, listing.items))"))
+        // A new book is news though url-less: listedOf's eligible set (NewItemsTest d29 12), built per entry here.
+        assertTrue(sync.contains("e.id to listedOf(e, snap.listed[e.id].orEmpty(), snap.onPhone[e.id].orEmpty(), missing, errors[e.id].orEmpty())"))
         assertTrue(sync.contains("val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()"))
         assertTrue(sync.contains("val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))"))
         assertTrue(sync.contains("val storytel = StorytelAccount.get(context).state()"))
@@ -595,5 +596,28 @@ class GuardsTest {
         val reports = Regex("""Sync\.writeReport\(applicationContext\)""").findAll(work).count()
         assertEquals(2, reports)
         assertEquals("a new book's notification right after its download, beside each report", reports, Regex("""NewNotifier\.update\(applicationContext, store\.snapshot\(\)\)\n\s*Sync\.writeReport\(applicationContext\)""").findAll(work).count())
+    }
+
+    /** Design 29 §1.6 and §4 (QA M2-M4): the order the pure rules assume, and the tray's writers serialised. */
+    @Test
+    fun `design 29's wiring - phase A before the listings, phase B before the prune, one sync at a time, one-statement tray writes`() {
+        val sync = code("src/main/java/me/vibb/music/sync/Sync.kt")
+        assertTrue(sync.contains("suspend fun run(context: Context) = withContext(Dispatchers.IO) { runLock.withLock { runLocked(context) } }"))
+        val order = listOf(
+            "val reset = dao.newsBeforeTx(lib.keyById)",
+            "for (file in store.inboxDir.listFiles().orEmpty())",
+            "dao.newsAfterTx(applied, current, System.currentTimeMillis())",
+            "for ((file, text) in read) if (runCatching { file.readText() }.getOrNull() == text) file.delete()",
+            "dao.pruneNews(ids)",
+        ).map { sync.indexOf(it) }
+        assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
+        assertFalse("no tray write outside the DAO's transactions", sync.contains("replaceNews"))
+        assertTrue(service.contains("if (store.db.deleteNews(entryId, key) > 0) NewNotifier.update(this@PlaybackService, store.snapshot())"))
+        assertFalse(service.contains("replaceNews"))
+        val fetched = code("src/main/java/me/vibb/music/sync/Downloads.kt").substringAfter("run.fetchOne(w)").trimStart()
+        assertTrue(
+            "each Nytt item's copy updates the notification",
+            fetched.startsWith("if (dao.news().any { it.entryId == w.entry.id && it.key == w.item.key }) {\n                    NewNotifier.update(applicationContext, store.snapshot())"),
+        )
     }
 }

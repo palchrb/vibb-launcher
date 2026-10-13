@@ -56,7 +56,7 @@ fun addToTray(tray: List<NewsItem>, entryId: Long, fresh: List<String>): List<Ne
     return (tray + added).sortedByDescending { it.seq }.take(NEWS_MAX)
 }
 
-/** An item started playing, by any path: it leaves the tray. */
+/** An item started playing, by any path: it leaves the tray (PlaybackService runs it as one `deleteNews`, design 29 §1.6). */
 fun playedFromTray(tray: List<NewsItem>, entryId: Long, key: String): List<NewsItem> =
     tray.filterNot { it.entryId == entryId && it.key == key }
 

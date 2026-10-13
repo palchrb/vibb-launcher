@@ -15,13 +15,19 @@ import androidx.room.Transaction
 import androidx.room.migration.AutoMigrationSpec
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
+import me.vibb.music.logic.KnownEntry
+import me.vibb.music.logic.Listed
+import me.vibb.music.logic.NewsItem
+import me.vibb.music.logic.newsAfter
+import me.vibb.music.logic.newsBefore
+import me.vibb.music.logic.pruneTray
 
 /*
  * The app's own state (design 21 §4.3-§4.5): listings (filled from the bridge; step 2 from the
  * debug feed), positions and bookmarks, the Nytt tray and the keys already seen, downloads, item
  * errors, shuffle and the last now-playing queue. The library itself is a file (Store).
  * Keyed by entry id, except positions, bookmarks and shuffle, which follow vibb's `state_key`
- * (the library's entry `key`).
+ * (the library's entry `key`), and design 29's known entries (keys, with the id each last had).
  */
 
 @Entity(tableName = "listings")
@@ -46,6 +52,18 @@ data class SeenRow(val entryId: Long, val key: String)
 
 @Entity(tableName = "news", primaryKeys = ["entryId", "key"])
 data class NewsRow(val entryId: Long, val key: String, val seq: Long)
+
+/**
+ * An entry key the phone has known (design 29 §1.3; grow-only, never pruned: a few hundred short keys
+ * at most). [entryId]: the id the library last gave it (null = none now). [pending]: added after the
+ * baseline, its one item not given yet; [item] the item given, [newAt] when it joined the tray.
+ */
+@Entity(tableName = "known_entries")
+data class KnownEntryRow(@PrimaryKey val entryKey: String, val entryId: Long?, val pending: Boolean, val item: String?, val newAt: Long?)
+
+/** Design 29's baseline (one row): [closed] once a play has been stored, for good. No row = open. */
+@Entity(tableName = "news_baseline")
+data class NewsBaselineRow(@PrimaryKey val id: Int = 1, val closed: Boolean)
 
 @Entity(tableName = "positions", primaryKeys = ["entryKey", "itemKey"])
 data class PositionRow(val entryKey: String, val itemKey: String, val posMs: Long, val done: Boolean, val updatedAt: Long)
@@ -167,6 +185,80 @@ interface MusicDao {
     @Query("DELETE FROM news WHERE entryId = :entryId AND key = :key")
     suspend fun deleteNews(entryId: Long, key: String): Int
 
+    @Query("DELETE FROM news WHERE entryId = :entryId")
+    suspend fun deleteNewsOf(entryId: Long)
+
+    /** Entries the library no longer names take their tray items with them, read and written in one transaction. */
+    @Transaction
+    suspend fun pruneNews(entryIds: Set<Long>) {
+        val tray = news().map { NewsItem(it.entryId, it.key, it.seq) }
+        val pruned = pruneTray(tray, entryIds)
+        if (pruned != tray) replaceNews(pruned.map { NewsRow(it.entryId, it.key, it.seq) })
+    }
+
+    // --- Design 29: a new entry is news too ---
+
+    @Query("SELECT * FROM known_entries")
+    suspend fun knownEntries(): List<KnownEntryRow>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertKnownEntries(rows: List<KnownEntryRow>)
+
+    @Query("SELECT closed FROM news_baseline WHERE id = 1")
+    suspend fun newsBaselineClosed(): Boolean?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNewsBaseline(row: NewsBaselineRow)
+
+    /** Has a play ever been stored (a position or a bookmark; every renderer's save writes one)? */
+    @Query("SELECT EXISTS(SELECT 1 FROM positions) OR EXISTS(SELECT 1 FROM bookmarks)")
+    suspend fun anyPlayed(): Boolean
+
+    @Query("SELECT * FROM seen WHERE entryId IN (:entryIds)")
+    suspend fun seenOf(entryIds: List<Long>): List<SeenRow>
+
+    /**
+     * Sync phase A (design 29 §1.3-§1.4), before any listing is applied: the known keys and the
+     * baseline after this library ([named]: `Library.keyById`), and every id that now carries another
+     * key reset like a removed entry (its listing, items, seen rows, tray items and item errors; its
+     * download rows stay for the plan). Returns the reset ids.
+     */
+    @Transaction
+    suspend fun newsBeforeTx(named: Map<Long, String>): Set<Long> {
+        val known = knownEntries().map { it.known() }
+        val closed = newsBaselineClosed() == true
+        val r = newsBefore(known, closed, named, anyPlayed())
+        val changed = r.known - known.toSet()
+        if (changed.isNotEmpty()) upsertKnownEntries(changed.map { it.row() })
+        if (r.closed != closed) upsertNewsBaseline(NewsBaselineRow(closed = r.closed))
+        for (id in r.reset) {
+            deleteItems(id)
+            deleteListing(id)
+            deleteSeen(id)
+            deleteNewsOf(id)
+            deleteItemErrors(id)
+        }
+        return r.reset
+    }
+
+    /**
+     * Sync phase B (design 29 §1.6), after the listings are applied: the seen rows, the tray, the
+     * pending marks and the chosen items in one transaction, the tray read inside it (QA M3).
+     * [applied]: this run's listings plus every own entry; [current]: every entry with a parsed listing.
+     */
+    @Transaction
+    suspend fun newsAfterTx(applied: List<Listed>, current: Map<Long, Listed>, now: Long) {
+        val known = knownEntries().map { it.known() }
+        val tray = news().map { NewsItem(it.entryId, it.key, it.seq) }
+        val seen = seenOf(applied.map { it.entry.id }.distinct()).groupBy({ it.entryId }, { it.key }).mapValues { it.value.toSet() }
+        val r = newsAfter(known, tray, seen, applied, current, now)
+        val changed = r.known - known.toSet()
+        if (changed.isNotEmpty()) upsertKnownEntries(changed.map { it.row() })
+        if (r.tray != tray) replaceNews(r.tray.map { NewsRow(it.entryId, it.key, it.seq) })
+        val seenRows = r.seenAdded.flatMap { (id, keys) -> keys.map { SeenRow(id, it) } }
+        if (seenRows.isNotEmpty()) insertSeen(seenRows)
+    }
+
     @Query("SELECT * FROM positions")
     suspend fun allPositions(): List<PositionRow>
 
@@ -249,17 +341,27 @@ interface MusicDao {
     suspend fun clearNowPlaying()
 }
 
+private fun KnownEntryRow.known() = KnownEntry(entryKey, entryId, pending, item, newAt)
+
+private fun KnownEntry.row() = KnownEntryRow(key, entryId, pending, item, newAt)
+
 /** What [MusicDb.ReapplyListings] runs after adding the column. */
 const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
 
 @Database(
     entities = [
         ListingRow::class, ItemRow::class, SeenRow::class, NewsRow::class, PositionRow::class, BookmarkRow::class,
-        DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class,
+        DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
+        NewsBaselineRow::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class)],
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
+        // Design 29: known_entries and news_baseline, new tables only. Empty = no baseline yet; an
+        // upgraded phone has positions, so its first sync takes the baseline from its library.
+        AutoMigration(from = 2, to = 3),
+    ],
 )
 abstract class MusicDb : RoomDatabase() {
     abstract fun dao(): MusicDao

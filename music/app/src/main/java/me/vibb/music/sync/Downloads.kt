@@ -153,6 +153,11 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                     return@withContext Result.success()
                 }
                 run.fetchOne(w)
+                // A Nytt item counts once its copy is here, not when the whole job ends (design 29
+                // §1.2, QA M2: a series of large books, or a job stopped at 10 minutes, would wait).
+                if (dao.news().any { it.entryId == w.entry.id && it.key == w.item.key }) {
+                    NewNotifier.update(applicationContext, store.snapshot())
+                }
             }
         }
         // A refused Storytel login: back when its cooldown is over (one login an hour at most).
