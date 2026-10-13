@@ -419,16 +419,16 @@ An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and
 
 ### The launcher's own self-update
 
-The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add**:
+The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add App**:
 
-- source: GitHub, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes the
-  newest `launcher-v*` release that carries the APK)
-- asset filename filter: `kids-launcher-mdm.apk`
-- "include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
+- source: GitHub releases, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes
+  the newest `launcher-v*` release that carries the APK)
+- under More Options, "File name contains": `kids-launcher-mdm.apk`, and "Tag starts with": `launcher-v`
+- "Include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
   - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
     turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
-- package name: `me.vibb.launcher` (a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration
-  0037)
+- the package needs nothing typed: the first release's APK pins `me.vibb.launcher` (the add form's package field isn't
+  saved; a row that still says `com.kidslauncher.mdm` or `.debug` is renamed by migration 0037)
 
 #### Rollout of the package rename (`com.kidslauncher.mdm` -> `me.vibb.launcher`, 2026-10-06)
 

@@ -20,9 +20,10 @@
         </div>
 
         {#- The source: two radios before the groups, so CSS can mark the chosen row and hide the
-            GitHub fields for uploads - no script. -#}
-        <h2 class="group-header" id="source-header">Source</h2>
-        <div class="source-choice" role="radiogroup" aria-labelledby="source-header">
+            GitHub fields for uploads - no script. The wrapper holds the fields too, so it has no
+            radiogroup role: the two radios with one name are the group (qa-31-s11-code L7). -#}
+        <h2 class="group-header">Source</h2>
+        <div class="source-choice">
             <input type="radio" class="choice-radio" id="source-github" name="source_type" value="github"{% if !manual %} checked{% endif %}>
             <input type="radio" class="choice-radio" id="source-manual" name="source_type" value="manual"{% if manual %} checked{% endif %}>
             <div class="group">

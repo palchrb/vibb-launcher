@@ -162,8 +162,8 @@ async fn fetch_latest_release(
     tag_prefix: Option<&str>,
 ) -> Result<(GithubRelease, GithubAsset), Failure> {
     use SyncProblem::*;
-    let filter = AssetFilter::parse(asset_pattern)
-        .map_err(|reason| Failure::new(Filter, format!("the file name filter is {reason}")))?;
+    // An invalid stored filter fails before any request.
+    AssetFilter::parse(asset_pattern).map_err(filter_failure)?;
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .timeout(Duration::from_secs(15))
@@ -177,13 +177,8 @@ async fn fetch_latest_release(
         .await
         .map_err(|e| Failure::new(GithubUnreachable, e.to_string()))?;
     if !response.status().is_success() {
-        let problem = if response.status() == reqwest::StatusCode::NOT_FOUND {
-            RepoNotFound
-        } else {
-            GithubError
-        };
         return Err(Failure::new(
-            problem,
+            github_problem(response.status()),
             format!("GitHub API returned {}", response.status()),
         ));
     }
@@ -191,8 +186,38 @@ async fn fetch_latest_release(
         .json()
         .await
         .map_err(|e| Failure::new(GithubError, e.to_string()))?;
+    release_from(releases, include_prereleases, asset_pattern, tag_prefix)
+}
+
+/// What a non-success answer from GitHub's API means for the parent: 404 is a wrong (or private)
+/// repo, anything else (a rate limit's 403 or 429, a 5xx) an error on GitHub's side.
+fn github_problem(status: reqwest::StatusCode) -> SyncProblem {
+    if status == reqwest::StatusCode::NOT_FOUND {
+        SyncProblem::RepoNotFound
+    } else {
+        SyncProblem::GithubError
+    }
+}
+
+/// An invalid stored file name filter as a sync failure.
+fn filter_failure(reason: String) -> Failure {
+    Failure::new(
+        SyncProblem::Filter,
+        format!("the file name filter is {reason}"),
+    )
+}
+
+/// The newest release of `releases` (GitHub's list) the row takes: an invalid filter is `Filter`,
+/// none matching `NoRelease`.
+fn release_from(
+    releases: Vec<GithubRelease>,
+    include_prereleases: bool,
+    asset_pattern: Option<&str>,
+    tag_prefix: Option<&str>,
+) -> Result<(GithubRelease, GithubAsset), Failure> {
+    let filter = AssetFilter::parse(asset_pattern).map_err(filter_failure)?;
     newest_matching_release(releases, include_prereleases, &filter, tag_prefix)
-        .map_err(|e| Failure::new(NoRelease, e))
+        .map_err(|e| Failure::new(SyncProblem::NoRelease, e))
 }
 
 /// Whether a catalog row may take a release with this tag: never a `server-v*` one (the server's
@@ -312,54 +337,66 @@ async fn stream_to_file(
     final_path: &str,
     expected_size: u64,
     stall: Duration,
-) -> Result<Downloaded, String> {
+) -> Result<Downloaded, Failure> {
+    use SyncProblem::{Download, Server, TooBig};
     let temp = TempDownload {
         path: format!("{final_path}.{}.part", random_label()),
         keep: false,
     };
     let mut file = tokio::fs::File::create(&temp.path)
         .await
-        .map_err(|e| format!("can't create {}: {e}", temp.path))?;
+        .map_err(|e| Failure::new(Server, format!("can't create {}: {e}", temp.path)))?;
     let mut head: Vec<u8> = Vec::with_capacity(4);
     let mut written: u64 = 0;
     let mut digest = Sha256::new();
     loop {
         let chunk = tokio::time::timeout(stall, source.next_chunk())
             .await
-            .map_err(|_| format!("download stalled: no data for {} s", stall.as_secs()))??;
+            .map_err(|_| {
+                Failure::new(
+                    Download,
+                    format!("download stalled: no data for {} s", stall.as_secs()),
+                )
+            })?
+            .map_err(|e| Failure::new(Download, e))?;
         let Some(chunk) = chunk else { break };
         written += chunk.len() as u64;
         if written > MAX_ASSET_BYTES {
-            return Err(format!(
-                "download stopped at {} MB, over the {} limit",
-                written / 1_000_000,
-                size_limit_text()
+            return Err(Failure::new(
+                TooBig,
+                format!(
+                    "download stopped at {} MB, over the {} limit",
+                    written / 1_000_000,
+                    size_limit_text()
+                ),
             ));
         }
         if expected_size != 0 && written > expected_size {
-            return Err(format!(
-                "download is longer than the {expected_size} bytes GitHub lists"
+            return Err(Failure::new(
+                Download,
+                format!("download is longer than the {expected_size} bytes GitHub lists"),
             ));
         }
         if head.len() < 4 {
             let take = (4 - head.len()).min(chunk.len());
             head.extend_from_slice(&chunk[..take]);
             if head.len() == 4 {
-                check_apk_download(&head, written, 0)?;
+                check_apk_download(&head, written, 0).map_err(|e| Failure::new(Download, e))?;
             }
         }
         file.write_all(&chunk)
             .await
-            .map_err(|e| format!("can't write {}: {e}", temp.path))?;
+            .map_err(|e| Failure::new(Server, format!("can't write {}: {e}", temp.path)))?;
         digest.update(&chunk);
     }
-    check_apk_download(&head, written, expected_size)?;
-    file.flush().await.map_err(|e| e.to_string())?;
-    file.sync_all().await.map_err(|e| e.to_string())?;
+    check_apk_download(&head, written, expected_size).map_err(|e| Failure::new(Download, e))?;
+    let server = |e: std::io::Error| Failure::new(Server, e.to_string());
+    file.flush().await.map_err(server)?;
+    file.sync_all().await.map_err(server)?;
     drop(file);
     tokio::fs::rename(&temp.path, final_path)
         .await
-        .map_err(|e| format!("can't move the download into place: {e}"))?;
+        .map_err(|e| Failure::new(Server, format!("can't move the download into place: {e}")))?;
     temp.keep();
     Ok(Downloaded {
         size: written,
@@ -375,43 +412,48 @@ fn size_limit_text() -> String {
 /// Downloads `asset` to `final_path` (see [stream_to_file]): refused up front when GitHub lists it
 /// over [MAX_ASSET_BYTES]; fails when the server sends no data for [DOWNLOAD_STALL_TIMEOUT]. The
 /// overall cap ([DOWNLOAD_TOTAL_TIMEOUT]) is the caller's.
-async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloaded, String> {
+async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloaded, Failure> {
+    use SyncProblem::{Download, Server};
+    let too_big = |bytes: u64| {
+        Failure::new(
+            SyncProblem::TooBig,
+            format!(
+                "{} is {} MB, over the {} limit - not downloaded",
+                asset.name,
+                bytes / 1_000_000,
+                size_limit_text()
+            ),
+        )
+    };
     if asset.size > MAX_ASSET_BYTES {
-        return Err(format!(
-            "{} is {} MB, over the {} limit - not downloaded",
-            asset.name,
-            asset.size / 1_000_000,
-            size_limit_text()
-        ));
+        return Err(too_big(asset.size));
     }
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .connect_timeout(Duration::from_secs(15))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Failure::new(Server, e.to_string()))?;
     let mut response = tokio::time::timeout(
         DOWNLOAD_STALL_TIMEOUT,
         client.get(&asset.browser_download_url).send(),
     )
     .await
     .map_err(|_| {
-        format!(
-            "no answer from the download server for {} s",
-            DOWNLOAD_STALL_TIMEOUT.as_secs()
+        Failure::new(
+            Download,
+            format!(
+                "no answer from the download server for {} s",
+                DOWNLOAD_STALL_TIMEOUT.as_secs()
+            ),
         )
     })?
-    .map_err(|e| e.to_string())?
+    .map_err(|e| Failure::new(Download, e.to_string()))?
     .error_for_status()
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| Failure::new(Download, e.to_string()))?;
     if let Some(length) = response.content_length()
         && length > MAX_ASSET_BYTES
     {
-        return Err(format!(
-            "{} is {} MB, over the {} limit - not downloaded",
-            asset.name,
-            length / 1_000_000,
-            size_limit_text()
-        ));
+        return Err(too_big(length));
     }
     stream_to_file(
         &mut response,
@@ -763,8 +805,10 @@ pub enum SyncProblem {
     GithubError,
     /// No release (of the allowed tags) has a matching .apk.
     NoRelease,
-    /// The download failed, stalled, took too long, was too big or wasn't a whole APK.
+    /// The download failed, stalled, took too long or wasn't a whole APK.
     Download,
+    /// The release's file is over the 1 GB limit: refused until the release changes.
+    TooBig,
     /// The APK's manifest or signature can't be read.
     Unreadable,
     /// The release is another package than the app's pinned one.
@@ -775,7 +819,7 @@ pub enum SyncProblem {
     CantCheck,
     /// The release's package is the system's, or one a phone has from elsewhere.
     Taken,
-    /// This server couldn't store or check something (disk, database).
+    /// This server couldn't store or check something (a full disk, the database).
     Server,
     /// The app was removed while it synced.
     Removed,
@@ -791,6 +835,7 @@ impl SyncProblem {
             SyncProblem::GithubError => "GitHub returned an error",
             SyncProblem::NoRelease => "No matching release found",
             SyncProblem::Download => "Download failed",
+            SyncProblem::TooBig => "Release file is over 1 GB",
             SyncProblem::Unreadable => "Couldn't read the APK",
             SyncProblem::OtherApp => "Release is a different app",
             SyncProblem::OtherKey => "Signed with a different key",
@@ -958,7 +1003,7 @@ async fn sync_release(
         return Err(Failure::new(
             why.problem,
             format!(
-                "{} (not downloaded again until the release changes; \"Check now\" tries again)",
+                "{} (not downloaded again until the release changes; \"Check Now\" tries again)",
                 why.detail
             ),
         ));
@@ -995,8 +1040,7 @@ async fn sync_release(
                         DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
                     ),
                 )
-            })?
-            .map_err(|e| Failure::new(Download, e))?;
+            })??;
     let checked = match apk_identity(&file_path)
         .await
         .map_err(|e| Failure::new(Unreadable, e))
@@ -1164,14 +1208,20 @@ fn version_of(tag: &str, prefix: Option<&str>) -> String {
         .filter(|rest| !rest.is_empty())
         .unwrap_or(tag);
     let starts_with_digit = |s: &str| s.starts_with(|c: char| c.is_ascii_digit());
-    let rest = match rest.rfind("-v") {
-        Some(at) if starts_with_digit(&rest[at + 2..]) => &rest[at + 2..],
-        _ => rest,
-    };
-    match rest.strip_prefix(['v', 'V']) {
-        Some(version) if starts_with_digit(version) => version.to_string(),
-        _ => rest.to_string(),
+    if let Some(version) = rest.strip_prefix(['v', 'V'])
+        && starts_with_digit(version)
+    {
+        return version.to_string();
     }
+    if starts_with_digit(rest) {
+        return rest.to_string();
+    }
+    // "launcher-v0.32.0" without its row's prefix: from the first "-v" before a digit.
+    rest.match_indices("-v")
+        .map(|(at, _)| &rest[at + 2..])
+        .find(|version| starts_with_digit(version))
+        .unwrap_or(rest)
+        .to_string()
 }
 
 /// "1 phone", "2 phones", "no phones".
@@ -1210,8 +1260,9 @@ fn app_tile(app: &TrackedApp, label: &str) -> AppTile {
     }
 }
 
-/// The catalog row of `app`, which `phones` phones have ticked.
-fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64) -> CatalogRow {
+/// The catalog row of `app`, which `phones` phones have ticked; the launcher is on every one of
+/// the `set_up` phones.
+fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64, set_up: i64) -> CatalogRow {
     let label = app
         .display_label
         .clone()
@@ -1223,10 +1274,10 @@ fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64) -> CatalogRow {
     } else if label != app.name {
         sub.push(app.name.clone());
     }
-    sub.push(if app.is_launcher {
-        "all phones".to_string()
-    } else {
-        phones_text(phones)
+    sub.push(match (app.is_launcher, set_up) {
+        (true, 0) => phones_text(0),
+        (true, _) => "all phones".to_string(),
+        (false, _) => phones_text(phones),
     });
     let badge = if !app.enabled {
         Some(("Off", "badge"))
@@ -1348,6 +1399,7 @@ pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
             phone_apps_href(device.id, None),
         ));
     }
+    let set_up = devices.iter().filter(|d| d.enrolled_at.is_some()).count() as i64;
     let counts: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
         "SELECT tracked_app_id, COUNT(*) FROM device_tracked_apps GROUP BY tracked_app_id",
     )
@@ -1358,7 +1410,14 @@ pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
     .collect();
     let mut apps: Vec<CatalogRow> = tracked
         .iter()
-        .map(|app| catalog_row(&state, app, counts.get(&app.id).copied().unwrap_or(0)))
+        .map(|app| {
+            catalog_row(
+                &state,
+                app,
+                counts.get(&app.id).copied().unwrap_or(0),
+                set_up,
+            )
+        })
         .collect();
     // The launcher first (the mockup's "Vibb"), then by the name the parent sees.
     let launcher: Option<i64> = tracked.iter().find(|t| t.is_launcher).map(|t| t.id);
@@ -1533,10 +1592,10 @@ pub async fn create_tracked_app(
 struct TrackedAppDetailTemplate {
     title: String,
     app: TrackedApp,
-    /// A refused upload, shown in the Upload group (§3.0's flash).
-    upload_error: Option<Flash>,
-    /// A refused package confirmation, shown under the package row.
-    package_error: Option<Flash>,
+    /// The upload's result (refused, or done), shown in the Upload group (§3.0's flash).
+    upload_note: Option<Flash>,
+    /// The package confirmation's result, shown under the package row.
+    package_note: Option<Flash>,
     details: DetailsForm,
     /// "0.32.0", from the cached release's tag.
     version: Option<String>,
@@ -1586,10 +1645,12 @@ struct FailureView {
     when: Option<When>,
 }
 
-/// A refused form's result, in the group of that form: a short title, the reason behind ⓘ.
+/// A form's result, in the group of that form (§3.0's flash): a short title, the reason behind
+/// ⓘ; green when `ok`.
 struct Flash {
     title: String,
     detail: Option<String>,
+    ok: bool,
 }
 
 impl Flash {
@@ -1597,6 +1658,14 @@ impl Flash {
         Flash {
             title: title.to_string(),
             detail: None,
+            ok: false,
+        }
+    }
+
+    fn done(title: &str) -> Self {
+        Flash {
+            ok: true,
+            ..Flash::title(title)
         }
     }
 }
@@ -1606,14 +1675,27 @@ impl From<Failure> for Flash {
         Flash {
             title: failure.problem.title().to_string(),
             detail: Some(failure.detail),
+            ok: false,
         }
     }
 }
 
-/// Which group a refused form's [Flash] belongs to.
-enum Refused {
+/// Which group a form's [Flash] belongs to. Both groups are in Source & Signing, so it opens, and
+/// both forms post to an action with the group's fragment (`#upload`, `#release`): a refusal
+/// rendered in the POST's answer and the redirect after a success land on the group, where the
+/// parent was, with the result in view (qa-31-s11-code M1; §5.1 item 4).
+enum Note {
     Upload(Flash),
     Package(Flash),
+}
+
+/// The success notes the redirects name (`?notice=`), in their groups.
+fn note_of(notice: Option<&str>) -> Option<Note> {
+    match notice? {
+        "uploaded" => Some(Note::Upload(Flash::done("New version uploaded"))),
+        "package_confirmed" => Some(Note::Package(Flash::done("Package confirmed"))),
+        _ => None,
+    }
 }
 
 /// What the Details form shows: the saved values, or - when a save was refused - what was
@@ -1632,11 +1714,12 @@ struct DetailsForm {
 pub async fn view_tracked_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_detail(&state, id, None).await
+    render_detail(&state, id, note_of(query.get("notice").map(String::as_str))).await
 }
 
-async fn render_detail(state: &AppState, id: i64, refused: Option<Refused>) -> Response {
+async fn render_detail(state: &AppState, id: i64, refused: Option<Note>) -> Response {
     render_detail_full(state, id, refused, None, None).await
 }
 
@@ -1648,7 +1731,7 @@ async fn render_detail_page(state: &AppState, id: i64, details: Option<DetailsFo
 async fn render_detail_full(
     state: &AppState,
     id: i64,
-    refused: Option<Refused>,
+    refused: Option<Note>,
     details: Option<DetailsForm>,
     display: Option<crate::app_display::Entered>,
 ) -> Response {
@@ -1694,16 +1777,14 @@ async fn render_detail_full(
     );
     // The phones with the app ticked; the launcher is on every phone that is set up.
     let devices: Vec<crate::models::Device> = if app.is_launcher {
-        sqlx::query_as(
-            "SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name COLLATE NOCASE",
-        )
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default()
+        sqlx::query_as("SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name")
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
     } else {
         sqlx::query_as(
             "SELECT d.* FROM devices d JOIN device_tracked_apps dta ON dta.device_id = d.id \
-             WHERE dta.tracked_app_id = ? ORDER BY d.name COLLATE NOCASE",
+             WHERE dta.tracked_app_id = ? ORDER BY d.name",
         )
         .bind(id)
         .fetch_all(&state.db)
@@ -1722,12 +1803,12 @@ async fn render_detail_full(
             )
         })
         .collect();
-    let (upload_error, package_error) = match refused {
-        Some(Refused::Upload(flash)) => (Some(flash), None),
-        Some(Refused::Package(flash)) => (None, Some(flash)),
+    let (upload_note, package_note) = match refused {
+        Some(Note::Upload(flash)) => (Some(flash), None),
+        Some(Note::Package(flash)) => (None, Some(flash)),
         None => (None, None),
     };
-    let source_open = upload_error.is_some() || package_error.is_some() || details.error.is_some();
+    let source_open = upload_note.is_some() || package_note.is_some() || details.error.is_some();
     Html(
         TrackedAppDetailTemplate {
             title: app.name.clone(),
@@ -1757,8 +1838,8 @@ async fn render_detail_full(
             }),
             form,
             app,
-            upload_error,
-            package_error,
+            upload_note,
+            package_note,
             details,
             package_candidates,
             phones,
@@ -1844,7 +1925,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Refused::Upload(Flash::title("Add a version and a file"))),
+            Some(Note::Upload(Flash::title("Add a version and a file"))),
         )
         .await;
     };
@@ -1853,7 +1934,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Refused::Upload(Flash::title("Add a version and a file"))),
+            Some(Note::Upload(Flash::title("Add a version and a file"))),
         )
         .await;
     }
@@ -1863,7 +1944,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
@@ -1875,7 +1956,7 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
@@ -1888,12 +1969,12 @@ pub async fn upload_tracked_app_release(
         Ok(identity) => identity,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
-            return render_detail(&state, id, Some(Refused::Upload(err.into()))).await;
+            return render_detail(&state, id, Some(Note::Upload(err.into()))).await;
         }
     };
     if let Err(err) = check_new_package(&state, &app, &identity).await {
         tokio::fs::remove_file(&file_path).await.ok();
-        return render_detail(&state, id, Some(Refused::Upload(err.into()))).await;
+        return render_detail(&state, id, Some(Note::Upload(err.into()))).await;
     }
 
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
@@ -1917,15 +1998,15 @@ pub async fn upload_tracked_app_release(
         return render_detail(
             &state,
             id,
-            Some(Refused::Upload(Flash::title("Couldn't save the file"))),
+            Some(Note::Upload(Flash::title("Couldn't save the file"))),
         )
         .await;
     }
     store_pins(&state, &app, &identity).await;
 
-    // Back to the app's page (its own path, so the scroll position is kept and a reload doesn't
-    // post the file again).
-    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
+    // Back to the app's page at the Upload group, with the result there (a reload doesn't post
+    // the file again; [Note]).
+    Redirect::to(&format!("/apps/tracked/{id}?notice=uploaded#upload")).into_response()
 }
 
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
@@ -2183,13 +2264,14 @@ pub async fn confirm_package(
             render_detail(
                 &state,
                 id,
-                Some(Refused::Package(Flash {
+                Some(Note::Package(Flash {
                     title: "Vibb didn't install that app".to_string(),
                     detail: Some(format!(
                         "{} isn't an app Vibb installed on a phone that has this app. Nothing \
                          was changed.",
                         form.package
                     )),
+                    ok: false,
                 })),
             )
             .await,
@@ -2207,7 +2289,7 @@ pub async fn confirm_package(
         return render_detail(
             &state,
             id,
-            Some(Refused::Package(Flash::title(
+            Some(Note::Package(Flash::title(
                 "Couldn't save. Nothing was changed.",
             ))),
         )
@@ -2231,7 +2313,10 @@ pub async fn confirm_package(
         crate::handlers::device_api::allow_installed_catalog_apps(&state, device_id, &installed)
             .await;
     }
-    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
+    Redirect::to(&format!(
+        "/apps/tracked/{id}?notice=package_confirmed#release"
+    ))
+    .into_response()
 }
 
 /// Forgets the app's pins - its package name and signing key (security review M10) - so the next
@@ -2665,13 +2750,28 @@ mod tests {
             let err = stream_to_file(&mut source, target, expected_size, STALL)
                 .await
                 .unwrap_err();
-            assert!(err.contains(error), "{err}");
+            assert!(err.detail.contains(error), "{err}");
+            assert_eq!(err.problem, SyncProblem::Download, "{err}");
             assert!(
                 files_in(dir.path()).is_empty(),
                 "{error}: {:?}",
                 files_in(dir.path())
             );
         }
+    }
+
+    /// A temp file this server can't write (a full SD card, a missing directory) is its own
+    /// problem, not a failed download (qa-31-s11-code L1).
+    #[tokio::test]
+    async fn a_disk_error_is_the_servers_not_the_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("missing").join("v1-14.apk");
+        let mut source = Canned::new([Step::Data(b"PK\x03\x04abc")]);
+        let err = stream_to_file(&mut source, target.to_str().unwrap(), 0, STALL)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::Server, "{err}");
+        assert!(err.detail.starts_with("can't create"), "{err}");
     }
 
     /// The overall cap (or a request that went away) drops the download mid-way: the temp file
@@ -2709,10 +2809,13 @@ mod tests {
         let err = download_asset(&asset, target.to_str().unwrap())
             .await
             .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::TooBig);
         assert_eq!(
-            err,
+            err.detail,
             "big.apk is 1000 MB, over the 1 GB limit - not downloaded"
         );
+        // The title names the limit the check uses.
+        assert!(SyncProblem::TooBig.title().contains(&size_limit_text()));
         assert!(files_in(dir.path()).is_empty());
     }
 
@@ -2748,6 +2851,8 @@ mod tests {
         assert_eq!(version_of("pre-release", None), "pre-release");
         assert_eq!(version_of("vibb", None), "vibb");
         assert_eq!(version_of("launcher-v", Some("launcher-v")), "launcher-v");
+        assert_eq!(version_of("v2.1.0-v8a", None), "2.1.0-v8a");
+        assert_eq!(version_of("app-v1.0-v2", None), "1.0-v2");
         assert_eq!(capitalised(&phones_text(0)), "No phones");
         assert_eq!(phones_text(1), "1 phone");
         assert_eq!(phones_text(2), "2 phones");
@@ -2764,6 +2869,7 @@ mod tests {
             GithubError,
             NoRelease,
             Download,
+            TooBig,
             Unreadable,
             OtherApp,
             OtherKey,
@@ -2782,6 +2888,41 @@ mod tests {
         assert_eq!(
             failure.to_string(),
             "Repo not found on GitHub: GitHub API returned 404 Not Found"
+        );
+    }
+
+    /// GitHub's answers as the parent reads them (qa-31-s11-code L2): 404 a wrong repo, anything
+    /// else GitHub's error; an invalid stored filter and no matching release are their own kinds.
+    #[test]
+    fn github_answers_are_classified() {
+        use reqwest::StatusCode;
+        assert_eq!(
+            github_problem(StatusCode::NOT_FOUND),
+            SyncProblem::RepoNotFound
+        );
+        for status in [
+            StatusCode::FORBIDDEN,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::UNAUTHORIZED,
+        ] {
+            assert_eq!(github_problem(status), SyncProblem::GithubError, "{status}");
+        }
+        let none = release_from(monorepo(), false, Some("other.apk"), None)
+            .err()
+            .unwrap();
+        assert_eq!(none.problem, SyncProblem::NoRelease);
+        assert_eq!(none.detail, "no release with a matching asset found");
+        let bad = release_from(monorepo(), false, Some("^["), None)
+            .err()
+            .unwrap();
+        assert_eq!(bad.problem, SyncProblem::Filter);
+        assert!(bad.detail.starts_with("the file name filter is"), "{bad}");
+        let (release, asset) = release_from(monorepo(), false, None, Some("launcher-v")).unwrap();
+        assert_eq!(
+            (release.tag_name.as_str(), asset.name.as_str()),
+            ("launcher-v0.30.0", "kids-launcher-mdm.apk")
         );
     }
 

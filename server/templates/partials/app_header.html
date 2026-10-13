@@ -2,7 +2,8 @@
     {% let tab = "devices" %} - one of devices, apps, locate, music, settings - and the server marks
     that tab aria-current="page", so no script is needed. A rebuilt inner page with its own
     sub-page header (a back link and the large title, §3.0) sets {% let subpage = true %} first and
-    gets no brand bar. -#}
+    gets no brand bar. Only whether it is defined counts: set it to anything (false hides the bar
+    too), or leave it out. -#}
 {% if subpage is not defined -%}
 <header class="app-header">
     <a href="/" class="brand">Vibb Phone</a>

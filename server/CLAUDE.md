@@ -1034,8 +1034,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` posts each rendered form).
 - **Sync failures are typed** (`SyncProblem` + `Failure { problem, detail }`), set where the error happens
   (`fetch_latest_release`, `sync_release`, `check_pins`, `check_new_package`); the page shows `title()` (at most 6
-  words) and keeps the raw reqwest/sqlx/file error behind ⓘ and in the log. Upload and package-confirm refusals use
-  the same title + ⓘ in their own group (`Refused::Upload`/`Package`).
+  words) and keeps the raw reqwest/sqlx/file error behind ⓘ and in the log; a temp-file or rename error is `Server`,
+  an asset over 1 GB `TooBig` (`stream_to_file`/`download_asset` type their own errors), a 404 `RepoNotFound`
+  (`github_problem`), no match `NoRelease` (`release_from`). Upload and package-confirm results use the same title +
+  ⓘ (green when done) in their own group (`Note::Upload`/`Package`): both forms post to an action with the group's
+  fragment (`.../upload#upload`, `.../confirm-package#release`) and a success redirects to
+  `?notice=uploaded#upload` / `?notice=package_confirmed#release`, so the result is in view where the parent was
+  (qa-31-s11-code M1).
 - **Add App** (`tracked_app_add.html`): name, source (two radios before the rows, so CSS - no script - hides the
   GitHub fields for an upload), repo; filter, tag prefix, package and pre-releases under More Options
   (`TrackedAppAddTemplate::more_open`).

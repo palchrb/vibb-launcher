@@ -431,6 +431,7 @@ summary.row:active {
 .group-avatars > .cell ~ .row::before,
 .group-avatars > .cell ~ .cell::before {
     left: 72px;
+    left: var(--avatar-inset, 72px);
 }
 
 @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
@@ -1576,11 +1577,8 @@ th {
 /* ---- The Apps tab (design 31 step 11): phone and catalog rows, the app page, Add App ---- */
 
 /* Rows that start with a 36px avatar or app tile: the hairline starts at the label. */
-.group-tiles > .row ~ .row::before,
-.group-tiles > .row ~ .cell::before,
-.group-tiles > .cell ~ .row::before,
-.group-tiles > .cell ~ .cell::before {
-    left: 64px;
+.group-small {
+    --avatar-inset: 64px;
 }
 
 .avatar-small {

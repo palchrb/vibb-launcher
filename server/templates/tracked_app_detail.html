@@ -54,7 +54,7 @@
     <div class="group"><p class="row row-note" data-row="no-phones">No phone has it yet.</p></div>
     <p class="group-footer">Turn it on in a phone's apps to install it.</p>
     {% else %}
-    <div class="group group-tiles" data-group="phones">
+    <div class="group group-avatars group-small" data-group="phones">
         {% for p in phones %}
         <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
@@ -93,14 +93,15 @@
             {% if app.package_name.is_empty() && !package_candidates.is_empty() %}
             <p class="row row-note">The release didn't say which app it is. Vibb installed these on a phone that has it - pick the one that is this app.</p>
             {% for candidate in package_candidates %}
-            <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package" class="cell">
+            <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package#release" class="cell">
                 <input type="hidden" name="package" value="{{ candidate }}">
                 <div class="row"><span class="row-label">{{ candidate }}</span><button type="submit" class="button-small">Use This</button></div>
             </form>
             {% endfor %}
             {% endif %}
-            {% if let Some(flash) = package_error %}
-            {% if let Some(detail) = flash.detail %}<details class="info cell flash-info" data-flash="package"><summary class="row"><span class="row-label text-alarm">{{ flash.title }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More about this"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ detail }}</p></div></details>{% else %}<p class="row text-alarm flash-line" data-flash="package">{{ flash.title }}</p>{% endif %}
+            {% if let Some(flash) = package_note %}
+            {% let flash_at = "package" %}{% let flash_class = "" %}{% let flash_about = "More about the refused package" %}
+            {% include "partials/flash_note.html" %}
             {% endif %}
             <details class="info cell" data-row="signer">
                 <summary class="row"><span class="row-label">Signing key</span><span class="row-value">{% if let Some(short) = signer_short %}{{ short }}{% else %}From the next release{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About the signing key"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
@@ -184,7 +185,7 @@
 
         {% if app.source_type != "github" %}
         <h2 class="group-header">Upload a new version</h2>
-        <form method="post" action="/apps/tracked/{{ app.id }}/upload" enctype="multipart/form-data" class="group form-group" id="upload">
+        <form method="post" action="/apps/tracked/{{ app.id }}/upload#upload" enctype="multipart/form-data" class="group form-group" id="upload">
             <div class="field">
                 <label class="field-label" for="release_label">Version</label>
                 <input type="text" id="release_label" name="release_label" placeholder="e.g. 1.2.0" required>
@@ -193,8 +194,9 @@
                 <label class="field-label" for="apk">APK file</label>
                 <input type="file" id="apk" name="apk" accept=".apk" required>
             </div>
-            {% if let Some(flash) = upload_error %}
-            {% if let Some(detail) = flash.detail %}<details class="info cell flash-info form-flash" data-flash="upload"><summary class="row"><span class="row-label text-alarm">{{ flash.title }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More about this"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ detail }}</p></div></details>{% else %}<p class="row text-alarm flash-line form-flash" data-flash="upload">{{ flash.title }}</p>{% endif %}
+            {% if let Some(flash) = upload_note %}
+            {% let flash_at = "upload" %}{% let flash_class = "form-flash" %}{% let flash_about = "More about the refused upload" %}
+            {% include "partials/flash_note.html" %}
             {% endif %}
             <button type="submit" class="button-wide">Upload</button>
         </form>

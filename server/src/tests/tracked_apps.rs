@@ -407,14 +407,24 @@ async fn only_the_parent_confirms_a_package_a_phone_reports() {
             .await
         }
     };
-    assert_eq!(
-        confirm("com.android.settings").await.status,
-        StatusCode::BAD_REQUEST
+    let refused = confirm("com.android.settings").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    // The refusal is in the Release group, which the form's #release brings into view.
+    let refused = refused.text().replace("&#39;", "'");
+    let release = &refused[refused.find(r#"id="release""#).unwrap()..];
+    assert!(
+        release.contains(r#"data-flash="package""#)
+            && release.contains("Vibb didn't install that app"),
+        "{release}"
     );
     assert_eq!(catalog_package().await, "");
 
     let confirmed = confirm("io.element.android.x").await;
-    assert!(confirmed.status.is_redirection(), "{}", confirmed.text());
+    assert_redirect(
+        &confirmed,
+        &format!("/apps/tracked/{tracked}?notice=package_confirmed"),
+        Some("release"),
+    );
     assert_eq!(catalog_package().await, "io.element.android.x");
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let policy = app
@@ -527,11 +537,10 @@ async fn upload_replaces_the_file_after_the_update_and_delete_removes_the_dir() 
     let first_apk = std::fs::read("testdata/apk/fixture-key1.apk").unwrap();
     let second_apk = std::fs::read("testdata/apk/fixture-key1-v2.apk").unwrap();
     let first = app.send(upload("1.0", &first_apk)).await;
-    assert_eq!(
-        first.location(),
-        Some(format!("/apps/tracked/{id}").as_str()),
-        "{}",
-        first.text()
+    assert_redirect(
+        &first,
+        &format!("/apps/tracked/{id}?notice=uploaded"),
+        Some("upload"),
     );
     let first_path: String =
         sqlx::query_scalar("SELECT latest_release_file_path FROM tracked_apps WHERE id = ?")
@@ -1189,6 +1198,35 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
         )
         .await;
     assert!(res.status.is_success());
+    // Play's core, allowed and reported, is never an app row (qa-31-s11-code L6).
+    sqlx::query(
+        "UPDATE device_policy SET allowlist_json = '[\"com.google.android.deskclock\", \
+         \"com.google.android.calculator\", \"com.google.android.gms\"]' WHERE device_id = ?",
+    )
+    .bind(anna)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let installed: Vec<serde_json::Value> = [
+        "com.google.android.deskclock",
+        "com.google.android.calculator",
+        "org.mozilla.firefox",
+        "com.google.android.gms",
+    ]
+    .iter()
+    .map(|p| serde_json::json!({ "package_name": p, "label": p }))
+    .collect();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "none", "kiosk_engaged": true, "installed_apps": installed,
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
 
     let html = app.get_page("/apps", &cookie).await.text();
     assert_eq!(nav_current(&html), "apps");
@@ -1290,18 +1328,25 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
         assert_eq!(form_action_of(&html, name), Some(action.as_str()));
     }
     assert_eq!(input_checked(&html, "enabled", "on"), Some(true));
-    // Forget and Remove sit behind <details> confirms (M6), so nothing happens in one tap.
-    let forget = &html[html.find(r#"id="forget""#).unwrap()..];
-    assert!(forget.contains(&format!(
-        r#"action="/apps/tracked/{element}/forget-package-name""#
-    )));
-    let confirm_open = html[..html.find(r#"id="forget""#).unwrap()]
-        .rfind("<details")
-        .unwrap();
-    assert!(html[confirm_open..].starts_with(r#"<details class="confirm"#));
-    let remove = &html[html.find(r#"id="remove""#).unwrap()..];
-    assert!(remove.contains(&format!(r#"action="/apps/tracked/{element}/delete""#)));
-    assert!(remove.contains("Remove App"));
+    // Forget and Remove sit behind <details> confirms (M6), so nothing happens in one tap: each
+    // form is inside its confirm, before the confirm's </details> (qa-31-s11-code L4).
+    for (id, route, button) in [
+        ("forget", "forget-package-name", "Forget Package and Key"),
+        ("remove", "delete", "Remove App"),
+    ] {
+        let at = html.find(&format!(r#"id="{id}""#)).unwrap();
+        let opened = html[..at].rfind("<details").unwrap();
+        assert!(
+            html[opened..].starts_with(r#"<details class="confirm"#),
+            "{id}"
+        );
+        let confirm = &html[at..at + html[at..].find("</details>").unwrap()];
+        let form = confirm
+            .find(&format!(r#"action="/apps/tracked/{element}/{route}""#))
+            .unwrap_or_else(|| panic!("{id}: the form is outside its confirm"));
+        assert!(confirm.find("</summary>").unwrap() < form, "{id}");
+        assert!(confirm.contains(button), "{id}");
+    }
 
     // Nobody has it: says so. The launcher: every phone set up, and no Remove.
     let none = catalog_row(&app, "Notes", "", None, None).await;
@@ -1346,7 +1391,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
         .text();
     assert_eq!(
         form_action_of(&html, "release_label"),
-        Some(format!("/apps/tracked/{manual}/upload").as_str())
+        Some(format!("/apps/tracked/{manual}/upload#upload").as_str())
     );
     assert!(!html.contains("/check\""));
     assert!(!html.contains(r#"name="include_prereleases""#));
@@ -1409,6 +1454,28 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
     // A check that is already running answers at once (no GitHub in tests).
     let _running = app.state.app_syncs.start(github).unwrap();
     let apk = std::fs::read("testdata/apk/fixture-key1.apk").unwrap();
+    // A phone has the manual app ticked and Vibb installed its package: the page offers it to
+    // confirm (the fixture's own package, so the upload after it still passes the pins).
+    let (phone, token) = app.enrolled_device("phone").await;
+    select_app(&app, phone, manual).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "none",
+                "kiosk_engaged": true,
+                "installed_apps": [{
+                    "package_name": "me.vibb.testfixture",
+                    "label": "Fixture",
+                    "installer": "me.vibb.launcher",
+                }],
+            })),
+        )
+        .await;
+    assert!(res.status.is_success());
+    let mut seen = std::collections::HashSet::new();
 
     for id in [github, manual] {
         let page = format!("/apps/tracked/{id}");
@@ -1420,14 +1487,28 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
             .collect();
         assert!(actions.len() >= 6, "{actions:?}");
         for action in actions {
-            let route = action
+            // A browser posts without the fragment and keeps it for the answer: Upload and the
+            // package confirmation land on their group, with the result in it (M1).
+            let (target, fragment) = match action.split_once('#') {
+                Some((target, fragment)) => (target.to_string(), Some(fragment)),
+                None => (action.clone(), None),
+            };
+            let route = target
                 .strip_prefix(&page)
                 .unwrap_or_else(|| panic!("{action}"));
+            seen.insert(route.to_string());
+            let expected_fragment = match route {
+                "/upload" => Some("upload"),
+                "/confirm-package" => Some("release"),
+                _ => None,
+            };
+            assert_eq!(fragment, expected_fragment, "{action}");
             let fields: &[(&str, &str)] = match route {
                 "" => &[("name", "Renamed"), ("github_repo", "owner/repo")],
                 "/display" => &[("label", "Chat"), ("icon", "chat"), ("color", "peach")],
                 "/enabled" => &[("enabled", "on")],
                 "/include-prereleases" => &[("include_prereleases", "on")],
+                "/confirm-package" => &[("package", "me.vibb.testfixture")],
                 "/is-launcher" | "/check" | "/forget-package-name" | "/delete" | "/upload" => &[],
                 other => panic!("a form without a row in the redirect table: {other}"),
             };
@@ -1444,7 +1525,7 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 app.send(
                     Request::builder()
                         .method(Method::POST)
-                        .uri(&action)
+                        .uri(&target)
                         .header(header::COOKIE, &cookie)
                         .header(
                             header::CONTENT_TYPE,
@@ -1455,15 +1536,31 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 )
                 .await
             } else {
-                app.request_form(Method::POST, &action, Some(&cookie), fields)
+                app.request_form(Method::POST, &target, Some(&cookie), fields)
                     .await
             };
             match route {
                 "/delete" => assert_redirect(&res, "/apps", None),
                 "/display" => assert_redirect(&res, &page, Some("display")),
+                "/upload" => {
+                    assert_redirect(&res, &format!("{page}?notice=uploaded"), Some("upload"))
+                }
+                "/confirm-package" => assert_redirect(
+                    &res,
+                    &format!("{page}?notice=package_confirmed"),
+                    Some("release"),
+                ),
                 _ => assert_redirect(&res, &page, None),
             }
         }
+    }
+    for route in [
+        "/upload",
+        "/confirm-package",
+        "/forget-package-name",
+        "/check",
+    ] {
+        assert!(seen.contains(route), "{route} was never rendered");
     }
 
     let add = app.get_page("/apps/tracked/new", &cookie).await.text();
@@ -1481,4 +1578,169 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
         .await
         .unwrap();
     assert_redirect(&res, &format!("/apps/tracked/{id}"), None);
+}
+
+/// qa-31-s11-code M1: a refused or done upload and package confirmation show their result in
+/// their own group, in an open Source & Signing, and the forms' fragments bring that group into
+/// view (the redirect table pins the actions and the success redirects).
+#[tokio::test]
+async fn a_form_result_shows_in_its_group_where_the_parent_was() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
+         VALUES ('Notater', '', '', 'manual') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let page = format!("/apps/tracked/{id}");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(
+        form_action_of(&html, "release_label"),
+        Some(format!("{page}/upload#upload").as_str())
+    );
+    assert!(!html.contains(r#"id="source" open"#));
+    assert!(!html.contains("data-flash"));
+
+    // A refused upload: the red title and its reason in the Upload group, Source & Signing open.
+    let boundary = "XBOUNDARYX";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"release_label\"\r\n\r\n1.0\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"apk\"; filename=\"a.apk\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(b"PK\x03\x04not a zip");
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let refused = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("{page}/upload"))
+                .header(header::COOKIE, &cookie)
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(refused.contains(r#"id="source" open"#));
+    let upload = &refused[refused.find(r#"id="upload""#).unwrap()..];
+    let upload = &upload[..upload.find("</form>").unwrap()];
+    assert!(upload.contains(r#"data-flash="upload""#), "{upload}");
+    assert!(upload.contains("Couldn't read the APK") && upload.contains("text-alarm"));
+    assert!(upload.contains(r#"aria-label="More about the refused upload""#));
+
+    // Done: the redirect's page says so, green, in the same group.
+    for (notice, group, text) in [
+        ("uploaded", r#"id="upload""#, "New version uploaded"),
+        ("package_confirmed", r#"id="release""#, "Package confirmed"),
+    ] {
+        let html = app
+            .get_page(&format!("{page}?notice={notice}"), &cookie)
+            .await
+            .text();
+        assert!(html.contains(r#"id="source" open"#), "{notice}");
+        let group = &html[html.find(group).unwrap()..];
+        let flash = &group[group.find("data-flash").unwrap() - 30..];
+        assert!(
+            flash.contains(r#"class="flash"#) && flash.contains(text),
+            "{notice}: {flash}"
+        );
+    }
+    // Anything else in `notice` is ignored.
+    let html = app
+        .get_page(&format!("{page}?notice=bogus"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("data-flash") && !html.contains(r#"id="source" open"#));
+}
+
+/// qa-31-s11-code L5: outside text - an app's name and display label, a phone's name, a sync
+/// failure's raw error - is escaped on the Apps tab and the app page.
+#[tokio::test]
+async fn outside_text_is_escaped_on_the_apps_pages() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (phone, _) = app.enrolled_device("<b>Anna</b>").await;
+    let id = catalog_row(
+        &app,
+        "Element <b>X</b>",
+        "io.element.android.x",
+        Some("v1"),
+        None,
+    )
+    .await;
+    select_app(&app, phone, id).await;
+    let other = catalog_row(&app, "Notes", "org.notes", Some("v1"), None).await;
+    sqlx::query("UPDATE tracked_apps SET display_label = '<b>C</b>' WHERE id = ?")
+        .bind(other)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let running = app.state.app_syncs.start(id).unwrap();
+    running.finish(&Err(crate::handlers::tracked_apps::Failure::new(
+        crate::handlers::tracked_apps::SyncProblem::Download,
+        "<b>boom</b>",
+    )));
+    for page in ["/apps".to_string(), format!("/apps/tracked/{id}")] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(!html.contains("<b>"), "{page}: {html}");
+        assert!(html.contains("&#60;b&#62;"), "{page}");
+    }
+    let html = app
+        .get_page(&format!("/apps/tracked/{id}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains("&#60;b&#62;boom&#60;/b&#62;"));
+    let list = app.get_page("/apps", &cookie).await.text();
+    assert!(
+        list.contains("&#60;b&#62;C&#60;/b&#62;") && list.contains("&#60;b&#62;Anna&#60;/b&#62;")
+    );
+    // A refused form's reason (the shared flash partial, the Upload group's too) names what was
+    // posted: escaped.
+    let empty = catalog_row(&app, "Blank", "", None, None).await;
+    let refused = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{empty}/confirm-package"),
+            Some(&cookie),
+            &[("package", "<b>pkg</b>")],
+        )
+        .await
+        .text();
+    assert!(!refused.contains("<b>"), "{refused}");
+    assert!(refused.contains("&#60;b&#62;pkg&#60;/b&#62;"));
+}
+
+/// The launcher's row says "all phones" only once a phone is set up (nit 7).
+#[tokio::test]
+async fn the_launcher_is_on_all_phones_only_once_there_are_some() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let launcher = catalog_row(
+        &app,
+        "Vibb",
+        "me.vibb.launcher",
+        Some("launcher-v1.0.0"),
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE tracked_apps SET is_launcher = 1 WHERE id = ?")
+        .bind(launcher)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let _ = app.create_device("Not yet").await;
+    let row_text = |html: &str| row_of(html, &format!(r#"data-app="{launcher}""#)).to_string();
+    let html = app.get_page("/apps", &cookie).await.text();
+    assert!(row_text(&html).contains("Launcher · no phones"), "{html}");
+    let _ = app.enrolled_device("Anna").await;
+    let html = app.get_page("/apps", &cookie).await.text();
+    assert!(row_text(&html).contains("Launcher · all phones"), "{html}");
 }

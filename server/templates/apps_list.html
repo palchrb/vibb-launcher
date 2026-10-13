@@ -11,7 +11,7 @@
 
     {% if !phones.is_empty() %}
     <h2 class="group-header">On phones</h2>
-    <div class="group group-tiles" data-group="phones">
+    <div class="group group-avatars group-small" data-group="phones">
         {% for p in phones %}
         <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
@@ -25,9 +25,9 @@
 
     <h2 class="group-header">Catalog</h2>
     {% if apps.is_empty() %}
-    <p class="empty-state catalog-empty">No apps yet.</p>
+    <p class="empty-state">No apps yet.</p>
     {% else %}
-    <div class="group group-tiles" data-group="catalog">
+    <div class="group group-avatars group-small" data-group="catalog">
         {% for a in apps %}
         <a class="row app-row" href="/apps/tracked/{{ a.id }}" data-app="{{ a.id }}">
             {% if let Some((icon, colour)) = a.tile.icon %}
