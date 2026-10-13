@@ -34,56 +34,55 @@ async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>) {
     .unwrap()
 }
 
-/// The device page's "Quick Controls" box for the sound row: saved with the card, reaches the
-/// phone as bit 8, and the policy shape stays the same (the mask is still one integer).
+/// Home Screen's "Sound or silent" quick control: saved with the quick controls
+/// (`section=quick`), reaches the phone as bit 8, and the policy shape stays the same (the mask is
+/// still one integer).
 #[tokio::test]
 async fn the_sound_bit_saves_and_reaches_the_phone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
+    let home = device_page(id, Section::Home);
 
     let res = app
         .request_form(
             Method::POST,
             &format!("/devices/{id}/policy"),
             Some(&cookie),
-            &[("quick_control_wifi", "on"), ("quick_control_sound", "on")],
+            &[
+                ("section", "quick"),
+                ("quick_control_wifi", "on"),
+                ("quick_control_sound", "on"),
+            ],
         )
         .await;
-    assert!(res.status.is_redirection());
-    // Back to the page; scroll-restore keeps the place (no jump to the top).
-    assert_eq!(
-        res.headers.get("location").unwrap(),
-        &format!("/devices/{id}")
-    );
+    // Back to the page without a fragment; scroll-restore keeps the place (no jump to the top).
+    super::assert_redirect(&res, &home, None);
     assert_eq!(
         policy(&app, &token).await["quick_controls_mask"],
         json!(1 | 8)
     );
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(
-        html.contains(r#"name="quick_control_sound" value="on" checked"#),
-        "{html}"
+    let html = app.get_page(&home, &cookie).await.text();
+    assert_eq!(
+        super::input_checked(&html, "quick_control_sound", "on"),
+        Some(true)
     );
-    assert!(html.contains("This box only shows the choice"));
+    assert!(html.contains("<span class=\"row-label\">Sound or silent</span>"));
     assert!(html.contains("/static/scroll-restore.js"));
 
     app.request_form(
         Method::POST,
         &format!("/devices/{id}/policy"),
         Some(&cookie),
-        &[("quick_control_wifi", "on")],
+        &[("section", "quick"), ("quick_control_wifi", "on")],
     )
     .await;
     assert_eq!(policy(&app, &token).await["quick_controls_mask"], json!(1));
-    let html = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!html.contains(r#"name="quick_control_sound" value="on" checked"#));
+    let html = app.get_page(&home, &cookie).await.text();
+    assert_eq!(
+        super::input_checked(&html, "quick_control_sound", "on"),
+        Some(false)
+    );
 }
 
 /// The phone's ringer mode and Do Not Disturb at the last sync: stored when known, NULL from an

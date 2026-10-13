@@ -343,6 +343,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         ("advanced", "connection"),
         ("lock", "parent-pin"),
         ("lock", "child-pin"),
+        ("home", "layout"),
     ] {
         let html = app
             .get_page(&format!("/devices/{anna}/{page}"), &cookie)

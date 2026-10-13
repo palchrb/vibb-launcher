@@ -9,7 +9,10 @@
 use axum::http::{Method, StatusCode};
 use serde_json::json;
 
-use super::{Section, TestApp, assert_redirect, autosaves, device_page, nav_current, tags};
+use super::{
+    Section, TestApp, assert_redirect, autosaves, device_page, form_action_of, input_checked,
+    nav_current, tags,
+};
 
 async fn report(app: &TestApp, token: &str, extra: serde_json::Value) {
     let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
@@ -785,7 +788,13 @@ async fn an_unreadable_policy_is_an_error_not_off() {
         .execute(&app.db)
         .await
         .unwrap();
-    for section in [Section::Lock, Section::About, Section::Advanced] {
+    for section in [
+        Section::Lock,
+        Section::About,
+        Section::Advanced,
+        Section::Home,
+        Section::Filter,
+    ] {
         let res = app.get_page(&device_page(id, section), &cookie).await;
         assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{section:?}");
         assert!(
@@ -793,5 +802,841 @@ async fn an_unreadable_policy_is_an_error_not_off() {
             "{section:?}"
         );
         assert!(!res.text().contains("Not set"), "{section:?}");
+    }
+}
+
+// ---- Step 5: Home Screen and Web Filter --------------------------------------------------------
+
+async fn policy_row(app: &TestApp, id: i64) -> (i64, bool, String, i64, bool) {
+    sqlx::query_as(
+        "SELECT quick_controls_mask, vpn_filter_enabled, launcher_language, home_columns, \
+         dns_log_enabled FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// Every quick control on, as `create_device` makes a phone (the test helper inserts a bare row).
+async fn all_quick_controls(app: &TestApp, id: i64) {
+    sqlx::query("UPDATE device_policy SET quick_controls_mask = 15 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+/// The sub-page header and the groups in order; the tab is Devices, no brand bar.
+#[track_caller]
+fn assert_subpage(html: &str, id: i64, title: &str, groups: &[&str]) {
+    assert_eq!(nav_current(html), "devices");
+    assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
+    assert!(html.contains(&format!("<h1 class=\"page-title\">{title}</h1>")));
+    assert!(!html.contains("class=\"app-header\""));
+    let order: Vec<usize> = groups
+        .iter()
+        .map(|g| html.find(&format!("<section id=\"{g}\"")).expect(g))
+        .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+}
+
+/// Every auto-saving control has a `<noscript>` Save in its own form (§5.2).
+#[track_caller]
+fn assert_saves_without_js(html: &str, names: &[&str]) {
+    for name in names {
+        assert!(autosaves(html, name), "{name}");
+        let control = html.find(&format!("name=\"{name}\"")).unwrap();
+        let end = html[control..].find("</form>").unwrap() + control;
+        assert!(html[control..end].contains("<noscript>"), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn home_screen_holds_the_moved_forms() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    // The device page: two rows with their values, none of the forms.
+    all_quick_controls(&app, id).await;
+    for (key, href, value) in [("home", "home", "3 per row"), ("filter", "filter", "On")] {
+        let row = &summary[summary.find(&format!("data-row=\"{key}\"")).expect(key)..];
+        let row = &row[..row.find("</a>").unwrap()];
+        assert!(
+            row.contains(&format!("<span class=\"row-value\">{value}</span>")),
+            "{row}"
+        );
+        assert!(summary.contains(&format!("href=\"/devices/{id}/{href}\" data-row=\"{key}\"")));
+    }
+    // In the group of rows, after Lock Screen & PINs and before About This Phone.
+    let at = |key: &str| summary.find(&format!("data-row=\"{key}\"")).unwrap();
+    assert!(at("lock") < at("home") && at("home") < at("filter") && at("filter") < at("about"));
+    for gone in [
+        "/launcher\"",
+        "/wallpapers\"",
+        "/policy\"",
+        "quick_control_",
+        "vpn_filter_enabled",
+        "id=\"launcher\"",
+        "id=\"wallpapers\"",
+        "allow_listener",
+    ] {
+        assert!(!summary.contains(gone), "{gone}");
+    }
+
+    let res = app.get_page(&device_page(id, Section::Home), &cookie).await;
+    assert_eq!(res.status, StatusCode::OK);
+    let html = res.text();
+    assert_subpage(
+        &html,
+        id,
+        "Home Screen",
+        &["layout", "wallpapers", "quick-controls"],
+    );
+    let launcher = format!("/devices/{id}/launcher");
+    assert_eq!(form_action_of(&html, "language"), Some(launcher.as_str()));
+    assert_eq!(
+        form_action_of(&html, "home_columns"),
+        Some(launcher.as_str())
+    );
+    assert_eq!(
+        form_action_of(&html, "wallpaper"),
+        Some(format!("/devices/{id}/wallpapers").as_str())
+    );
+    // The four quick controls are one form with its section marker (H1); a new phone has all on.
+    let policy = format!("/devices/{id}/policy");
+    for name in [
+        "quick_control_wifi",
+        "quick_control_bluetooth",
+        "quick_control_brightness",
+        "quick_control_sound",
+    ] {
+        assert_eq!(form_action_of(&html, name), Some(policy.as_str()), "{name}");
+        assert_eq!(input_checked(&html, name, "on"), Some(true), "{name}");
+    }
+    let quick = &html[html.find("<section id=\"quick-controls\"").unwrap()..];
+    assert!(quick.contains("<input type=\"hidden\" name=\"section\" value=\"quick\">"));
+    assert!(!html.contains("vpn_filter_enabled"));
+    assert_eq!(input_checked(&html, "wallpaper", "1"), Some(true));
+    assert_saves_without_js(
+        &html,
+        &[
+            "language",
+            "home_columns",
+            "wallpaper",
+            "quick_control_wifi",
+        ],
+    );
+    // No warning while the phone can read notifications (or hasn't said).
+    assert!(!html.contains("Notification access off"));
+}
+
+#[tokio::test]
+async fn web_filter_holds_the_phones_parts() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let (other, _) = app.enrolled_device("Emil").await;
+    for (domain, list_type, device) in [
+        ("only-anna.example", "block", Some(id)),
+        ("allowed-anna.example", "allow", Some(id)),
+        ("only-emil.example", "block", Some(other)),
+        ("everyone.example", "block", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES (?, ?, ?)",
+        )
+        .bind(domain)
+        .bind(list_type)
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    // "Ads & tracking" on for everyone, off for Anna.
+    sqlx::query("UPDATE dns_blocklists SET enabled = 1 WHERE id = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_blocklist_overrides (device_id, blocklist_id, enabled) VALUES (?, 1, 0)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let res = app
+        .get_page(&device_page(id, Section::Filter), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let html = res.text();
+    assert_subpage(
+        &html,
+        id,
+        "Web Filter",
+        &["filter", "lists", "blocked", "allowed", "log"],
+    );
+    assert_eq!(
+        form_action_of(&html, "vpn_filter_enabled"),
+        Some(format!("/devices/{id}/policy").as_str())
+    );
+    assert_eq!(input_checked(&html, "vpn_filter_enabled", "on"), Some(true));
+    let filter = &html[html.find("<section id=\"filter\"").unwrap()..];
+    assert!(filter.contains("<input type=\"hidden\" name=\"section\" value=\"filter\">"));
+    assert!(!html.contains("quick_control_"));
+    // Each list: as everyone has it, or on/off for this phone.
+    let list = |list_id: i64| {
+        let at = html.find(&format!("data-list=\"{list_id}\"")).unwrap();
+        &html[at..at + html[at..].find("</form>").unwrap()]
+    };
+    assert!(list(1).contains("<option value=\"off\" selected>Off</option>"));
+    assert!(list(1).contains("<option value=\"default\">Default (On)</option>"));
+    assert!(list(2).contains("<option value=\"default\" selected>Default (Off)</option>"));
+    assert!(list(1).contains("<input type=\"hidden\" name=\"back\" value=\"filter\">"));
+    // Only this phone's domains, each with Remove; the add rows carry the phone and `back`.
+    let group = |id: &str| {
+        let at = html.find(&format!("<section id=\"{id}\"")).unwrap();
+        &html[at..at + html[at..].find("</section>").unwrap()]
+    };
+    assert!(group("blocked").contains("only-anna.example"));
+    assert!(group("allowed").contains("allowed-anna.example"));
+    assert!(!html.contains("only-emil.example") && !html.contains("everyone.example"));
+    for g in ["blocked", "allowed"] {
+        let g = group(g);
+        assert!(g.contains("action=\"/dns/domains/new\""));
+        assert!(g.contains(&format!(
+            "<input type=\"hidden\" name=\"device_id\" value=\"{id}\">"
+        )));
+        assert_eq!(
+            g.matches("name=\"back\" value=\"filter\"").count(),
+            2,
+            "{g}"
+        );
+        let field = tags(g, "input")
+            .into_iter()
+            .find(|t| t.attr("name") == Some("domain"))
+            .unwrap();
+        assert!(field.has("required") && field.has("pattern"));
+    }
+    // The log: off by default, no list; the switch saves itself.
+    assert_eq!(input_checked(&html, "dns_log_enabled", "on"), Some(false));
+    assert!(!html.contains("data-group=\"log-events\""));
+    assert_saves_without_js(&html, &["vpn_filter_enabled", "setting", "dns_log_enabled"]);
+    assert!(!autosaves(&html, "domain"));
+
+    // With the log on: the phone's entries, newest first, in local time (the exact one in
+    // `title`), a time the phone sent garbled as "Time unknown", its text escaped.
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    // On a whole minute, so the clock and the exact time can be checked (Phone Setup's zone is
+    // Europe/Oslo; qa-31-s5-code L3).
+    let ads_at = chrono::DurationRound::duration_trunc(
+        now - chrono::Duration::minutes(5),
+        chrono::Duration::minutes(1),
+    )
+    .unwrap();
+    let local = ads_at.with_timezone(&chrono_tz::Europe::Oslo);
+    // In the order the phone queued them: a garbled time last, as it arrived.
+    let events = json!([
+        { "domain": "ads.example", "category": "Ads & tracking",
+          "blocked_at": ads_at.to_rfc3339() },
+        { "domain": "<b>bold</b>.example", "category": "<i>Custom</i>",
+          "blocked_at": (now - chrono::Duration::minutes(10)).to_rfc3339() },
+        { "domain": "odd.example", "category": "Custom", "blocked_at": "yesterday-ish" },
+    ]);
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/dns-events",
+            Some(&token),
+            Some(events),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let html = app
+        .get_page(&device_page(id, Section::Filter), &cookie)
+        .await
+        .text();
+    let log = &html[html.find("data-group=\"log-events\"").expect("the log")..];
+    let log = &log[..log.find("</section>").unwrap()];
+    let ads = log.find("ads.example").unwrap();
+    // Newest first by the phone's time, the unreadable one last (qa-31-s5-code N5).
+    assert!(ads < log.find("bold").unwrap());
+    assert!(log.find("bold").unwrap() < log.find("odd.example").unwrap());
+    assert!(log.contains("&#60;b&#62;bold&#60;/b&#62;.example") && !log.contains("<b>"));
+    assert!(log.contains("&#60;i&#62;Custom&#60;/i&#62;") && !log.contains("<i>"));
+    assert!(log.contains(">Time unknown</span>") && !log.contains("yesterday-ish"));
+    let row = &log[ads..];
+    let row = &row[..row.find("</div>").unwrap()];
+    assert!(
+        row.contains("<span class=\"row-sub\">Ads &#38; tracking</span>"),
+        "{row}"
+    );
+    // The local clock time, the exact local time in `title`.
+    assert!(
+        row.contains(&format!(" title=\"{}", local.format("%Y-%m-%d %H:%M:%S"))),
+        "{row}"
+    );
+    assert!(
+        row.contains(&format!("{}</span>", local.format("%H:%M"))),
+        "{row}"
+    );
+    assert!(!log.contains("UTC") && !log.contains("+00:00"), "{log}");
+}
+
+/// §5.1's redirect table for Home Screen and Web Filter: every form on both pages, posted with
+/// valid values, returns to its page with **no fragment** (scroll-restore keeps the exact place,
+/// §5.1.4) - the shared domain and list routes through `back=filter`. Built from the rendered
+/// forms, so a form that moves can't keep a stale target; then each did what it says.
+#[tokio::test]
+async fn home_and_filter_forms_return_to_their_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    for (domain, list_type) in [
+        ("old-block.example", "block"),
+        ("old-allow.example", "allow"),
+    ] {
+        sqlx::query(
+            "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES (?, ?, ?)",
+        )
+        .bind(domain)
+        .bind(list_type)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let lists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dns_blocklists")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(lists, 4, "the seeded lists");
+
+    type Row<'a> = (String, &'a [(&'a str, &'a str)]);
+    let check = |page: Section, table: Vec<Row<'static>>| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            let back = device_page(id, page);
+            let html = app.get_page(&back, cookie).await.text();
+            let found = forms(&html);
+            let actions: Vec<&str> = found.iter().map(|(a, _)| a.as_str()).collect();
+            assert_eq!(
+                actions,
+                table.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>(),
+                "every form on {back} is in the table, in page order"
+            );
+            for ((action, hidden), (_, fields)) in found.iter().zip(table.iter()) {
+                let mut sent: Vec<(&str, &str)> = hidden
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                sent.extend_from_slice(fields);
+                let res = app
+                    .request_form(Method::POST, action, Some(cookie), &sent)
+                    .await;
+                assert_redirect(&res, &back, None);
+            }
+        }
+    };
+    let d = |route: &str| format!("/devices/{id}/{route}");
+    check(
+        Section::Home,
+        vec![
+            (d("launcher"), &[("language", "en"), ("home_columns", "4")]),
+            // Navy only.
+            (d("wallpapers"), &[("wallpaper", "1")]),
+            (d("policy"), &[("quick_control_wifi", "on")]),
+        ],
+    )
+    .await;
+    let (block_id, allow_id): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT id FROM dns_custom_domains WHERE domain = 'old-block.example'), \
+                (SELECT id FROM dns_custom_domains WHERE domain = 'old-allow.example')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let list_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM dns_blocklists ORDER BY name")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    let mut filter: Vec<Row> = vec![(d("policy"), &[])];
+    filter.extend(list_ids.iter().map(|list| {
+        (
+            format!("/dns/devices/{id}/blocklists/{list}/override"),
+            &[("setting", "off")] as &[_],
+        )
+    }));
+    filter.extend([
+        (format!("/dns/domains/{block_id}/delete"), &[] as &[_]),
+        (
+            "/dns/domains/new".to_string(),
+            &[("domain", "new-block.example")],
+        ),
+        (format!("/dns/domains/{allow_id}/delete"), &[]),
+        (
+            "/dns/domains/new".to_string(),
+            &[("domain", "New-Allow.Example.")],
+        ),
+        (format!("/dns/log/{id}"), &[("dns_log_enabled", "on")]),
+    ]);
+    check(Section::Filter, filter).await;
+
+    // Each did what it says: Home's three, then the filter off, every list off for Anna, the
+    // domains swapped, the log on.
+    assert_eq!(
+        policy_row(&app, id).await,
+        (1, false, "en".to_string(), 4, true)
+    );
+    let ticked: Vec<i64> =
+        sqlx::query_scalar("SELECT wallpaper_id FROM device_wallpapers WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(ticked, [1]);
+    let off: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM device_blocklist_overrides WHERE device_id = ? AND enabled = 0",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(off, 4);
+    let domains: Vec<(String, String)> = sqlx::query_as(
+        "SELECT domain, list_type FROM dns_custom_domains WHERE device_id = ? ORDER BY domain",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        domains,
+        [
+            ("new-allow.example".to_string(), "allow".to_string()),
+            ("new-block.example".to_string(), "block".to_string()),
+        ]
+    );
+}
+
+/// H1 (§5.6): the quick controls (Home Screen) and the filter switch (Web Filter) share
+/// `/devices/{id}/policy`; a post with a section writes only that section, so saving one page
+/// never turns off what the other page set. A post without one (an older tab) writes both.
+#[tokio::test]
+async fn a_policy_section_leaves_the_other_section_alone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let post = |fields: Vec<(&'static str, &'static str)>| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{id}/policy"),
+                Some(cookie),
+                &fields,
+            )
+            .await
+        }
+    };
+    let state = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (i64, bool, i64)>(
+                "SELECT quick_controls_mask, vpn_filter_enabled, kiosk_desired FROM device_policy \
+                 WHERE device_id = ?",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    all_quick_controls(&app, id).await;
+    assert_eq!(state(&app).await, (15, true, 1));
+
+    // Quick controls: only Wi-Fi; the filter (absent from the form) stays on.
+    let res = post(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
+    assert_redirect(&res, &device_page(id, Section::Home), None);
+    assert_eq!(state(&app).await, (1, true, 1));
+    // The filter off; the quick controls (absent) stay.
+    let res = post(vec![("section", "filter")]).await;
+    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    assert_eq!(state(&app).await, (1, false, 1));
+    let res = post(vec![("section", "filter"), ("vpn_filter_enabled", "on")]).await;
+    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    assert_eq!(state(&app).await, (1, true, 1));
+    // No section: both, as before, back to the device page.
+    let res = post(vec![("quick_control_sound", "on")]).await;
+    assert_redirect(&res, &device_page(id, Section::Summary), None);
+    assert_eq!(state(&app).await, (8, false, 1));
+    // An unknown section writes nothing; an unknown phone is a 404.
+    let res = post(vec![("section", "all"), ("quick_control_wifi", "on")]).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert_eq!(state(&app).await, (8, false, 1));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/999/policy",
+            Some(&cookie),
+            &[("section", "filter")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}
+
+/// Old bookmarks and links (§3.1, L5): `/dns?device=` and `/dns/log?device=` open the phone's
+/// Web Filter page (the log at its group); the global pages link each phone there.
+#[tokio::test]
+async fn old_per_phone_filter_urls_redirect_to_the_filter_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let res = app.get_page(&format!("/dns?device={id}"), &cookie).await;
+    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    let res = app
+        .get_page(&format!("/dns/log?device={id}"), &cookie)
+        .await;
+    assert_redirect(&res, &device_page(id, Section::Filter), Some("log"));
+    for page in ["/dns", "/dns?device=", "/dns/log"] {
+        let res = app.get_page(page, &cookie).await;
+        assert_eq!(res.status, StatusCode::OK, "{page}");
+        let html = res.text();
+        assert!(
+            html.contains(&format!("href=\"/devices/{id}/filter")),
+            "{page}"
+        );
+        // No per-phone form is left on the global pages.
+        assert!(!html.contains("/override\""), "{page}");
+        assert!(!html.contains("name=\"device_id\""), "{page}");
+        assert!(
+            !html.contains(&format!("action=\"/dns/log/{id}\"")),
+            "{page}"
+        );
+    }
+    let log = app.get_page("/dns/log", &cookie).await.text();
+    assert!(log.contains("<span class=\"row-value\">Log off</span>"));
+    // The global page's domain fields check the shape before posting too (qa-31-s5-code L1).
+    let global = app.get_page("/dns", &cookie).await.text();
+    let fields: Vec<_> = tags(&global, "input")
+        .into_iter()
+        .filter(|t| t.attr("name") == Some("domain"))
+        .collect();
+    assert_eq!(fields.len(), 2);
+    assert!(fields.iter().all(|t| t.has("pattern") && t.has("title")));
+}
+
+/// The shared routes refuse what they can't save, and the phone comes from the path or the row,
+/// never from `back`.
+#[tokio::test]
+async fn the_filter_routes_refuse_bad_input() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let count = || {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM dns_custom_domains")
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let add = |fields: Vec<(&'static str, String)>| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            let fields: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            app.request_form(Method::POST, "/dns/domains/new", Some(cookie), &fields)
+                .await
+        }
+    };
+    let phone = id.to_string();
+    for (fields, status) in [
+        // Not a domain.
+        (
+            vec![
+                ("domain", "not a domain".to_string()),
+                ("device_id", phone.clone()),
+            ],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            vec![("domain", "https://x.example/".to_string())],
+            StatusCode::BAD_REQUEST,
+        ),
+        // A phone id that isn't a number never becomes "every phone".
+        (
+            vec![
+                ("domain", "x.example".to_string()),
+                ("device_id", "anna".to_string()),
+            ],
+            StatusCode::BAD_REQUEST,
+        ),
+        // An unknown phone.
+        (
+            vec![
+                ("domain", "x.example".to_string()),
+                ("device_id", "999".to_string()),
+            ],
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let res = add(fields.clone()).await;
+        assert_eq!(res.status, status, "{fields:?}");
+    }
+    assert_eq!(count().await, 0);
+    // From the phone's page (qa-31-s5-code L1): back to the group with the refusal under its add
+    // row, nothing added.
+    for (list_type, group) in [("block", "blocked"), ("allow", "allowed")] {
+        let res = add(vec![
+            ("domain", "https://www.example.com/watch?v=1".to_string()),
+            ("list_type", list_type.to_string()),
+            ("device_id", phone.clone()),
+            ("back", "filter".to_string()),
+        ])
+        .await;
+        let page = format!(
+            "{}?notice=not_a_domain_{list_type}",
+            device_page(id, Section::Filter)
+        );
+        assert_redirect(&res, &page, Some(group));
+        let html = app.get_page(&page, &cookie).await.text();
+        let at = html.find(&format!("<section id=\"{group}\"")).unwrap();
+        let section = &html[at..at + html[at..].find("</section>").unwrap()];
+        let flash = section
+            .find(&format!("data-flash=\"{group}\""))
+            .expect("the refusal in its group");
+        assert!(section[..flash].contains("action=\"/dns/domains/new\""));
+        assert!(section[flash..].contains("isn't a domain name"));
+        assert_eq!(html.matches("data-flash=").count(), 1);
+    }
+    let html = app
+        .get_page(
+            &format!("{}?notice=bogus", device_page(id, Section::Filter)),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(!html.contains("data-flash="));
+    assert_eq!(count().await, 0);
+    // Without `back` a phone's domain returns to /dns, with it to the phone's page; `back` names
+    // no phone of its own.
+    let res = add(vec![
+        ("domain", "x.example".to_string()),
+        ("device_id", phone.clone()),
+    ])
+    .await;
+    assert_redirect(&res, "/dns", None);
+    let res = add(vec![
+        ("domain", "y.example".to_string()),
+        ("back", "filter".to_string()),
+    ])
+    .await;
+    assert_redirect(&res, "/dns", None);
+    let everyone: Option<i64> =
+        sqlx::query_scalar("SELECT device_id FROM dns_custom_domains WHERE domain = 'y.example'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(everyone, None);
+    // Delete: the phone from the row; a second tap changes nothing.
+    let x: i64 = sqlx::query_scalar("SELECT id FROM dns_custom_domains WHERE domain = 'x.example'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // A double tap (qa-31-s5-code M1): the second post deletes nothing and still lands on the
+    // phone's page, from the form's `device_id`.
+    for _ in 0..2 {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/dns/domains/{x}/delete"),
+                Some(&cookie),
+                &[("back", "filter"), ("device_id", &phone)],
+            )
+            .await;
+        assert_redirect(&res, &device_page(id, Section::Filter), None);
+    }
+    assert_eq!(count().await, 1);
+    // A form `device_id` naming another phone never chooses the row (the path does) nor, when a
+    // row is deleted, the page (the row's phone does).
+    let (emil, _) = app.enrolled_device("Emil").await;
+    sqlx::query(
+        "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES \
+         ('emil.example', 'block', ?), ('anna.example', 'block', ?)",
+    )
+    .bind(emil)
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let anna_row: i64 =
+        sqlx::query_scalar("SELECT id FROM dns_custom_domains WHERE domain = 'anna.example'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let emil_text = emil.to_string();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/dns/domains/{anna_row}/delete"),
+            Some(&cookie),
+            &[("back", "filter"), ("device_id", &emil_text)],
+        )
+        .await;
+    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT domain FROM dns_custom_domains WHERE device_id IS NOT NULL ORDER BY domain",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, ["emil.example"]);
+    sqlx::query("DELETE FROM dns_custom_domains WHERE domain = 'emil.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The same domain twice in one list is kept once (qa-31-s5-code N4).
+    for _ in 0..2 {
+        let res = add(vec![
+            ("domain", "twice.example".to_string()),
+            ("device_id", phone.clone()),
+            ("back", "filter".to_string()),
+        ])
+        .await;
+        assert_redirect(&res, &device_page(id, Section::Filter), None);
+    }
+    let twice: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM dns_custom_domains WHERE domain = 'twice.example'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(twice, 1);
+    sqlx::query("DELETE FROM dns_custom_domains WHERE domain = 'twice.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count().await, 1);
+
+    // The list setting: default / on / off, anything else a 400; an unknown list or phone a 404.
+    let set = |path: String, setting: &'static str| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            app.request_form(
+                Method::POST,
+                &path,
+                Some(cookie),
+                &[("setting", setting), ("back", "filter")],
+            )
+            .await
+        }
+    };
+    let own = || {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT enabled FROM device_blocklist_overrides WHERE device_id = ? \
+                 AND blocklist_id = 2",
+            )
+            .bind(id)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let list = format!("/dns/devices/{id}/blocklists/2/override");
+    for (setting, stored) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
+        let res = set(list.clone(), setting).await;
+        assert_redirect(&res, &device_page(id, Section::Filter), None);
+        assert_eq!(own().await, stored, "{setting}");
+    }
+    assert_eq!(
+        set(list.clone(), "maybe").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    // `default` too (qa-31-s5-code L4: a DELETE that matches nothing is no foreign key).
+    for setting in ["on", "default"] {
+        assert_eq!(
+            set(format!("/dns/devices/{id}/blocklists/99/override"), setting)
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "{setting}"
+        );
+        assert_eq!(
+            set(
+                "/dns/devices/999/blocklists/2/override".to_string(),
+                setting
+            )
+            .await
+            .status,
+            StatusCode::NOT_FOUND,
+            "{setting}"
+        );
+    }
+    assert_eq!(own().await, None);
+}
+
+/// A failed read is an error page, never an empty grid or list: a Save from an empty wallpaper
+/// grid would untick every wallpaper, an empty domain list reads as "nothing blocked".
+#[tokio::test]
+async fn home_and_filter_fail_on_an_unreadable_part() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // The log is read only while it is on (qa-31-s5-code L2: an empty log reads "all clear").
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for (table, section) in [
+        ("device_wallpapers", Section::Home),
+        ("dns_blocklists", Section::Filter),
+        ("dns_custom_domains", Section::Filter),
+        ("device_dns_events", Section::Filter),
+    ] {
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let res = app.get_page(&device_page(id, section), &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{table}");
+        assert!(res.text().contains("Couldn't read this phone"), "{table}");
+        sqlx::query(&format!("ALTER TABLE {table}_gone RENAME TO {table}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+}
+
+/// A phone not set up yet has both pages: what is saved reaches it with its first settings.
+#[tokio::test]
+async fn a_phone_not_set_up_has_home_and_filter() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Mia").await;
+    for section in [Section::Home, Section::Filter] {
+        let res = app.get_page(&device_page(id, section), &cookie).await;
+        assert_eq!(res.status, StatusCode::OK, "{section:?}");
+    }
+    for section in [Section::Home, Section::Filter] {
+        let res = app.get_page(&device_page(999, section), &cookie).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{section:?}");
     }
 }

@@ -584,6 +584,12 @@ pub enum Section {
     /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
     /// the screen timeout, the lock's background and notifications.
     Lock,
+    /// `/devices/{id}/home`: Home Screen (design 31 step 5) - language and apps per row, the
+    /// wallpapers, the quick controls.
+    Home,
+    /// `/devices/{id}/filter`: Web Filter (step 5) - the filter switch, this phone's lists and
+    /// domains, the blocked-domain log.
+    Filter,
     /// `/devices/{id}/about`: About This Phone (design 31 step 3) - the connection, sound,
     /// software, crash reports, starts without Vibb and the time lock.
     About,
@@ -597,6 +603,8 @@ pub fn device_page(id: i64, section: Section) -> String {
         Section::Summary => format!("/devices/{id}"),
         Section::Calls => format!("/devices/{id}/calls"),
         Section::Lock => format!("/devices/{id}/lock"),
+        Section::Home => format!("/devices/{id}/home"),
+        Section::Filter => format!("/devices/{id}/filter"),
         Section::About => format!("/devices/{id}/about"),
         Section::Advanced => format!("/devices/{id}/advanced"),
     }

@@ -1,5 +1,5 @@
-//! A phone's About This Phone, Lock Screen & PINs and Advanced pages (design 31 §3.2, §8 steps 3
-//! and 4).
+//! A phone's About This Phone, Lock Screen & PINs, Home Screen, Web Filter and Advanced pages
+//! (design 31 §3.2, §8 steps 3-5).
 //!
 //! - **About This Phone** (`GET /devices/{id}/about`, `device_about.html`) is read-only, like iOS
 //!   Settings › General › About: the connection (§3.10), the sound, the software, the crash
@@ -8,6 +8,9 @@
 //!   with the exact one in a `title`.
 //! - **Lock Screen & PINs** (`GET /devices/{id}/lock`, `device_lock.html`, step 4): the Child and
 //!   Parent PINs, the screen timeout, the lock's background and what shows on it ([view_lock]).
+//! - **Home Screen** (`GET /devices/{id}/home`, step 5): language and apps per row, the
+//!   wallpapers, the quick controls ([view_home]). **Web Filter** (`GET /devices/{id}/filter`):
+//!   the filter switch, this phone's lists and domains, the blocked-domain log ([view_filter]).
 //! - **Advanced** (`GET /devices/{id}/advanced`, `device_advanced.html`) holds what a parent sets
 //!   once or never: Restrictions (`/hardening`, one form), App screens (`/kiosk-block` and the Play
 //!   state), Updates & notifications (`/kiosk-escapes`, one form), Connection (`/regenerate-code`,
@@ -860,6 +863,259 @@ pub async fn view_lock(
             lock_screen,
             child,
             parent,
+            device,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+/// A read a sub-page can't do without: logged, and the page is a 500 - never an empty list that
+/// reads as "nothing set" (qa-31-s4-code L4).
+fn read_failed(id: i64, what: &str, err: sqlx::Error) -> Response {
+    tracing::error!(device_id = id, %err, "can't read {what}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Couldn't read this phone - check the server log.",
+    )
+        .into_response()
+}
+
+/// The last report says Vibb can't read notifications (`notification_listener_enabled` false):
+/// Home Screen's warning, and the Attention row that links to it.
+pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<Note> {
+    latest
+        .is_some_and(|s| s.notification_listener_enabled == Some(false))
+        .then(|| Note {
+            warning: true,
+            title: "Notification access off".to_string(),
+            value: None,
+            detail: Some(
+                "Unread counts and the music card are off, and the lock screen shows only missed \
+                 calls."
+                    .to_string(),
+            ),
+            // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
+            // qa-31-s5-code N2).
+            fix: Some(
+                "Android can't turn this on for Vibb. With USB debugging allowed, run: adb shell cmd notification allow_listener \
+                 me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService (a debug build: \
+                 me.vibb.launcher.debug; a launcher from before 2026-10-06: com.kidslauncher.mdm)."
+                    .to_string(),
+            ),
+        })
+}
+
+#[derive(Template)]
+#[template(path = "device_home.html")]
+struct HomeTemplate {
+    title: String,
+    device: Device,
+    /// Above the first group: Vibb can't read notifications.
+    notification_warning: Option<Note>,
+    launcher_language: String,
+    home_columns: i64,
+    /// Every wallpaper, ticked when this phone may use it.
+    wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
+    /// The quick controls (`quick_controls_mask`).
+    quick_wifi: bool,
+    quick_bluetooth: bool,
+    quick_brightness: bool,
+    quick_sound: bool,
+}
+
+/// GET `/devices/{id}/home`: Home Screen (design 31 §3.2, step 5). Language and apps per row (one
+/// form, `/launcher`), the wallpapers this phone may use (one form, `/wallpapers`) and the quick
+/// controls (`/policy` with `section=quick`). Every form auto-saves and returns here without a
+/// fragment. A phone not set up has the page too: what is saved reaches it with its first
+/// settings.
+pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    use crate::handlers::devices::{
+        QUICK_CONTROL_BLUETOOTH, QUICK_CONTROL_BRIGHTNESS, QUICK_CONTROL_SOUND, QUICK_CONTROL_WIFI,
+    };
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
+    // A failed read must not render an empty grid: its Save would untick every wallpaper.
+    let wallpapers = match crate::handlers::wallpapers::device_choices(&state, id).await {
+        Ok(wallpapers) => wallpapers,
+        Err(err) => return read_failed(id, "the wallpapers", err),
+    };
+    let latest = load_latest(&state, id).await;
+    let mask = policy.quick_controls_mask;
+    Html(
+        HomeTemplate {
+            title: format!("Home Screen · {}", device.name),
+            notification_warning: notification_access_note(latest.as_ref()),
+            launcher_language: policy.launcher_language.clone(),
+            home_columns: policy.home_columns,
+            wallpapers,
+            quick_wifi: mask & QUICK_CONTROL_WIFI != 0,
+            quick_bluetooth: mask & QUICK_CONTROL_BLUETOOTH != 0,
+            quick_brightness: mask & QUICK_CONTROL_BRIGHTNESS != 0,
+            quick_sound: mask & QUICK_CONTROL_SOUND != 0,
+            device,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+/// One blocklist on a phone's Web Filter page.
+pub struct FilterList {
+    pub id: i64,
+    pub name: String,
+    /// The picker's value: "default" (as for everyone), "on" or "off".
+    pub setting: &'static str,
+    /// Whether the list is on for everyone (the "Default (On)" option).
+    pub everyone_on: bool,
+    /// The list's download problem, at most 4 words (`dns_filter::FeedState::problem`).
+    pub problem: Option<&'static str>,
+}
+
+/// One blocked domain in the phone's log: the time local and relative, the exact one for
+/// `title=`.
+pub struct LogRow {
+    pub domain: String,
+    pub category: String,
+    pub when: String,
+    pub exact: String,
+}
+
+#[derive(Template)]
+#[template(path = "device_filter.html")]
+struct FilterTemplate {
+    title: String,
+    device: Device,
+    filter_on: bool,
+    lists: Vec<FilterList>,
+    blocked: Vec<crate::models::DnsCustomDomain>,
+    allowed: Vec<crate::models::DnsCustomDomain>,
+    log_on: bool,
+    retention_days: i64,
+    events: Vec<LogRow>,
+    /// The group whose add row was refused ("blocked", "allowed"), else "".
+    refused: &'static str,
+}
+
+/// GET `/devices/{id}/filter`: Web Filter (design 31 §3.2, step 5). The filter switch (`/policy`
+/// with `section=filter`), each blocklist as everyone has it or on/off for this phone (`/dns/
+/// devices/{id}/blocklists/{list}/override`), the domains blocked and allowed on this phone only
+/// (`/dns/domains/new`, `/dns/domains/{id}/delete`, with `back=filter`) and the blocked-domain log
+/// (`/dns/log/{id}` and its newest 200 entries, local times). Every form returns here without a
+/// fragment, except a refused domain: `?notice=not_a_domain_block|allow#blocked|allowed`, the
+/// refusal under its group's add row (qa-31-s5-code L1). `/dns?device=` and `/dns/log?device=`
+/// redirect here.
+pub async fn view_filter(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
+    let lists = match sqlx::query_as::<_, (i64, String, bool, Option<bool>)>(
+        "SELECT b.id, b.name, b.enabled, o.enabled FROM dns_blocklists b \
+         LEFT JOIN device_blocklist_overrides o ON o.blocklist_id = b.id AND o.device_id = ? \
+         ORDER BY b.name",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(err) => return read_failed(id, "the blocklists", err),
+    };
+    let lists = {
+        let compiled = state.dns_compiled.read().await;
+        lists
+            .into_iter()
+            .map(|(list_id, name, everyone_on, own)| FilterList {
+                setting: match own {
+                    None => "default",
+                    Some(true) => "on",
+                    Some(false) => "off",
+                },
+                everyone_on,
+                problem: crate::handlers::dns_filter::FeedState::of(&compiled, list_id).problem(),
+                id: list_id,
+                name,
+            })
+            .collect()
+    };
+    let domains = match sqlx::query_as::<_, crate::models::DnsCustomDomain>(
+        "SELECT * FROM dns_custom_domains WHERE device_id = ? ORDER BY domain",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(domains) => domains,
+        Err(err) => return read_failed(id, "the phone's domains", err),
+    };
+    let (blocked, allowed): (Vec<_>, Vec<_>) =
+        domains.into_iter().partition(|d| d.list_type == "block");
+    let events = if policy.dns_log_enabled {
+        match sqlx::query_as::<_, crate::models::DeviceDnsEvent>(
+            "SELECT * FROM device_dns_events WHERE device_id = ? \
+             ORDER BY id DESC LIMIT 200",
+        )
+        .bind(id)
+        .fetch_all(&state.db)
+        .await
+        {
+            Ok(events) => events,
+            Err(err) => return read_failed(id, "the blocked-domain log", err),
+        }
+    } else {
+        Vec::new()
+    };
+    let zone = Zone::load(&state.db).await;
+    let now = Utc::now();
+    // The phone's own time (RFC 3339); newest first, one it sent unreadable last ("Time unknown",
+    // never the raw text) - not first, as the text's order put it (qa-31-s5-code N5).
+    let mut events: Vec<_> = events
+        .into_iter()
+        .map(|e| (crate::display_time::parse_db_utc(&e.blocked_at), e))
+        .collect();
+    events.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let events = events
+        .into_iter()
+        .map(|(at, e)| LogRow {
+            when: at.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+            exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+            domain: e.domain,
+            category: e.category,
+        })
+        .collect();
+    let refused = match query.get("notice").map(String::as_str) {
+        Some("not_a_domain_block") => "blocked",
+        Some("not_a_domain_allow") => "allowed",
+        _ => "",
+    };
+    Html(
+        FilterTemplate {
+            title: format!("Web Filter · {}", device.name),
+            refused,
+            filter_on: policy.vpn_filter_enabled,
+            lists,
+            blocked,
+            allowed,
+            log_on: policy.dns_log_enabled,
+            retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
+            events,
             device,
         }
         .render()

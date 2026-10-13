@@ -22,6 +22,8 @@ async fn every_page_marks_its_own_tab() {
         (device_page(id, Section::Calls), "devices"),
         (device_page(id, Section::About), "devices"),
         (device_page(id, Section::Advanced), "devices"),
+        (device_page(id, Section::Home), "devices"),
+        (device_page(id, Section::Filter), "devices"),
         ("/devices/new".to_string(), "devices"),
         (format!("/devices/{id}/provision"), "devices"),
         ("/apps".to_string(), "apps"),

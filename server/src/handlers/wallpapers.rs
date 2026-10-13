@@ -277,7 +277,7 @@ pub async fn view_image(State(state): State<AppState>, Path(hash): Path<String>)
     }
 }
 
-/// One choice on the device page's wallpaper card.
+/// One choice in Home Screen's Wallpapers group (and Lock Screen & PINs' Background).
 pub struct DeviceWallpaperChoice {
     pub id: i64,
     pub label: String,
@@ -288,7 +288,7 @@ pub struct DeviceWallpaperChoice {
     pub lock: bool,
 }
 
-/// The device page's card: every wallpaper, ticked when this phone may use it.
+/// Every wallpaper, ticked when this phone may use it (Home Screen, Lock Screen & PINs).
 pub async fn device_choices(
     state: &AppState,
     device_id: i64,
@@ -316,7 +316,9 @@ pub async fn device_choices(
 /// Saves which wallpapers a phone may use (`wallpaper=<id>`, repeated). An unknown id is a 400
 /// and nothing changes; the phone is nudged and, if its current one was unticked, replaces it.
 /// Only the unticked rows are deleted: the lock's own wallpaper (`device_lock_wallpaper`, keyed on
-/// these rows) stays unless it was unticked - then the lock falls back to Home's.
+/// these rows) stays unless it was unticked - then the lock falls back to Home's. Back to Home
+/// Screen (`/devices/{id}/home`, design 31 step 5) without a fragment (scroll-restore keeps the
+/// place).
 pub async fn save_device_wallpapers(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -374,7 +376,7 @@ pub async fn save_device_wallpapers(
     match result {
         Ok(Ok(())) => {
             nudge(&state, &[id]);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            Redirect::to(&format!("/devices/{id}/home")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
             (StatusCode::NOT_FOUND, "Device not found").into_response()

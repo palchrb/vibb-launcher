@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2342,6 +2342,101 @@ Deferred, with the reason:
 | N3 | `device_pages::has_capability`, used by Lock Screen & PINs and `escapes_card`. |
 | N4 | An unknown `inactive` code: "Vibb reported a reason this server doesn't know.", the code behind the ⓘ. |
 | Checks | `cargo test` 759 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+
+## Step 5 implementation status (2026-10-13)
+
+Built on branch `design-31-s5` (from `main` at `58e97c1f`, steps 1-4 and 11 merged); server only, no migration, no
+new crate, no API change (the policy JSON, its snapshot and the launcher are untouched).
+- **Routes:** `GET /devices/{id}/home` (`device_pages::view_home`, `device_home.html`) and `GET /devices/{id}/filter`
+  (`device_pages::view_filter`, `device_filter.html`). Unknown phone 404, a DB error 500 (`load_device`,
+  `load_policy`, and every read the page needs). Every POST route is unchanged.
+- **Home Screen:** Language and Apps per row as two inline selects in **one** form (`/launcher`, §5.6); the
+  "Notification access off" warning above that group (§4.5 #3: the sentence visible, the adb command behind its ⓘ);
+  **Wallpapers**, the thumbnail grid as one form (`/wallpapers`), the upload page and the lock's background behind the
+  footer's ⓘ; **Quick controls**, the four switches as one form posting `/policy` with `section=quick` (Wi-Fi,
+  Bluetooth, Screen brightness, Sound or silent; §4.5 #12/#13 footer and ⓘ).
+- **Web Filter:** the **Web filter** switch (`/policy` with `section=filter`; §4.5 #11's footer, the rest behind its
+  ⓘ with a link to Settings › Web Filter); **Blocklists**, one inline select per list - "Default (On)" / On / Off
+  (`/dns/devices/{id}/blocklists/{list}/override`, `back=filter`) - with a list's download problem under its name
+  ("Not loaded yet", "Last download failed"); **Blocked on this phone** and **Allowed on this phone**, each domain a row
+  with Remove (one tap, §5.6) and an add row (`/dns/domains/new` with `device_id` and `back=filter`; the field has
+  `pattern`, the server checks again); **Blocked Activity**, the "Keep a log" switch (`/dns/log/{id}`) and, while on,
+  the newest 200 entries (domain, list, local time with the exact one in `title`).
+- **Forms (§5.1, §5.6):** `policy` takes `section` (H1): `quick` writes only `quick_controls_mask`, `filter` only
+  `vpn_filter_enabled` (`COALESCE` of a NULL bind keeps the other), no section writes both as before, another value is
+  a 400; `kiosk_desired = 1` and the lock-task features in every case. The domain and list routes take `back`
+  (`dns_filter::back_to`): `filter` → the phone's page, the phone from the path or the deleted row, never from the
+  form; anything else → `/dns`. Every form on both pages returns to its page with **no fragment**, so
+  `scroll-restore.js` keeps the exact place; each auto-save has a `<noscript>` Save.
+- **Redirects (L5):** `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`.
+- **The device page:** the Launcher, Wallpapers and "Quick Controls + Ad/content filtering" cards are gone; two rows,
+  **Home Screen · 3 per row** and **Web Filter · On/Off**, follow Lock Screen & PINs. The notification-access
+  Attention row targets `/home#layout`, from the same `device_pages::notification_access_note` the page shows.
+- **Rust texts (M5):** the notification-access warning is a typed `Note` (it was template text); a feed's state is
+  `dns_filter::FeedState` (`problem()` for a phone's row, `sentence()` for the global page until step 14); the log's
+  times go through `display_time` (a time the phone sent garbled reads "Time unknown", never the raw text).
+- **The global pages** (step 14 rebuilds them): `/dns` lost its per-device card for an "Each phone" group linking each
+  phone's Web Filter page; `/dns/log` is a list of phones, "Log on/off" ›, linking to `#log`.
+- **CSS** `?v=15` (step 12 takes `v=14`): `.row-action` (a text button at a row's end), `input.row-input` (a field that
+  is the row), `.wallpaper-grid`/`.wallpaper-choice`/`.wallpaper-thumb`.
+- **Docs (L8):** `server/CLAUDE.md` (launcher_ui, the listener warning, wallpapers, the VPN switch, the DNS log, sound
+  mode, Parent PIN, the lock's glance page, and a "Home Screen and Web Filter" section), `server/DEPLOY.md` (a feed's
+  state on a phone's page). `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md` and
+  `PLAN.md` name none of the moved cards.
+- **Tests:** `tests/device_pages.rs` (both pages, the device page's two rows and their values, the moved forms gone
+  from it, the section test `a_policy_section_leaves_the_other_section_alone`, the redirect table built from the
+  rendered forms of both pages `home_and_filter_forms_return_to_their_page`, the old URLs, bad input on the shared
+  routes, unreadable parts as 500, a phone not set up, the log's local times and escaping); repointed through
+  `device_page(id, Section::Home | Filter)` (new): `launcher_ui.rs` (the form, the warning with its fix behind ⓘ and
+  the Attention link), `wallpapers.rs`, `sound_mode.rs` (`section=quick`), `cleanup.rs` (the log switch),
+  `dns_blocklist.rs` (a list's problem on the phone's page, no raw error), `lock_glance.rs`, `devices_list.rs`
+  (`home#layout` exists), `shell.rs`; `attention`'s unit test. `cargo test` 768 passed; `node --test
+  jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **A list's setting is an inline select** (Default / On / Off), not today's switch plus "Use default" button: one
+   control per row, the picker pattern of §3.0. The route takes `setting`; an older page's `clear`/`enabled` still
+   works.
+2. **The domain routes check the input:** a name that isn't a domain (`dns_engine::looks_like_a_domain`, made
+   `pub(crate)`) is a 400 and nothing is added (before, anything was stored); a `device_id` that isn't a number is a
+   400 instead of silently "every phone"; an unknown phone or list is a 404 (a foreign key); a DB error is a 500
+   (before: logged nowhere, redirected as if saved). The same for `update_policy` (it logged and redirected).
+3. **A second tap on Remove** (the row already gone) changes nothing and returns to `/dns`, since the phone comes only
+   from the row.
+4. **Home Screen and Web Filter answer for a phone not set up** (as About and Advanced): what is saved reaches the phone
+   with its first settings. Whether step 10 greys their rows "After setup" is its call.
+5. **A failed wallpaper read is a 500**, not an empty grid: the grid's `<noscript>` Save would untick every wallpaper.
+6. **The first group on Home Screen has no header** (the page title says it); its section is `#layout`, the Attention
+   row's anchor. The footers: "The language of Vibb's own screens on the phone.", "Your child picks from these on the
+   phone.", §4.5 #12 for Quick controls.
+7. **The notification-access sentence** keeps the old card's facts: unread counts and the music card off, the lock
+   screen shows only missed calls (`lock_glance::the_home_screen_warning_and_the_lock_page_name_the_lock_screen`).
+8. **The log** shows only while it is on (off: the switch and its footer only), at the bottom, so 200 rows push no form
+   away.
+9. **The global `/dns` and `/dns/log`** got the smallest change that removes their per-phone parts (a phone list each);
+   their restyle stays step 14's.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. New CSS is the few small
+  rules above; the pages otherwise use step 1-4 components.
+
+**Fix round after the code QA** (`qa-31-s5-code.md`: 0 High, 1 Medium, 4 Low, 5 nits; all fixed, with `main` merged
+first - step 12 at `474a6015`):
+
+| # | Fix |
+|---|---|
+| Merge | `style.css?v=15` (step 12 took `v=14`); step 12's CSS first, then step 5's section; both status sections kept. Step 5's `.row > form` rule is now `.row > form.row-end`, so it can't touch a form another page puts in a row. |
+| M1 | The two Remove forms carry a hidden `device_id`. When the row is already gone (a double tap, a second tab) nothing is written and the redirect is `back_to(form, that number)`, the phone's page; the path's id alone picks the row and a deleted row's own phone picks the page. Tests: the second tap lands on the phone's page; a `device_id` naming Emil deletes Anna's row (the path's) and returns to Anna's page. |
+| L1 | From a phone's page a refused domain redirects to `/devices/{id}/filter?notice=not_a_domain_block|allow#blocked|allowed`, the refusal under its group's add row (`refused`, an unknown notice shows nothing); the global page keeps its 400 until step 14, and its two fields now have the `pattern` and `title`. Tests in `the_filter_routes_refuse_bad_input` and `old_per_phone_filter_urls_redirect_to_the_filter_page`. |
+| L2 | `home_and_filter_fail_on_an_unreadable_part` turns the log on and renames `device_dns_events`: mutation 10 (an empty log) now fails it. |
+| L3 | `web_filter_holds_the_phones_parts` posts an entry on a whole minute and checks the Oslo clock time and the exact local time in `title`: mutation 15 (the UTC clock) now fails it. |
+| L4 | `setting=default` checks the phone and the list first: an unknown one is a 404, as documented. Both 404 cases run for `on` and `default`. |
+| N1 | Kept "Blocks the lists and domains below on this phone." over §4.5 #11's "Blocks ads and adult sites": the lists are off until a parent turns them on, so the spec's sentence isn't always true. |
+| N2 | The warning's sentence is one ("Unread counts and the music card are off, and the lock screen shows only missed calls."); "Android can't turn this on for Vibb." opens the ⓘ, before the adb command. |
+| N3 | Both pages' domain `pattern` allows leading and trailing spaces (the server trims them). |
+| N4 | A domain already in that list (same phone or every phone) is stored once (`INSERT … SELECT … WHERE NOT EXISTS`). Test: two adds, one row. |
+| N5 | `launcher/CLAUDE.md` names the phone's Web Filter page for the VPN switch. The log reads the 200 newest arrivals (`ORDER BY id DESC`) and sorts them by the phone's time, a garbled time last (it sorted first as text). Test: the garbled row after the others. |
+| Checks | `cargo test` 773 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. Mutations 10 and 15 re-run: both now fail a test. |
 
 ## Step 12 implementation status (2026-10-13)
 

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Web Filter</h1>
+
+    {#- Every form returns here without a fragment, so scroll-restore.js keeps the place; the
+        switches and pickers save on change (autosave.js), with a <noscript> Save. -#}
+    <section id="filter" aria-label="Web filter">
+        {#- `section=filter` writes only the filter switch (§5.6, H1), not the quick controls. -#}
+        <form method="post" action="/devices/{{ device.id }}/policy" class="group">
+            <input type="hidden" name="section" value="filter">
+            <label class="row">
+                <span class="row-label">Web filter</span>
+                <input type="checkbox" role="switch" class="sw" name="vpn_filter_enabled" value="on"{% if filter_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Blocks the lists and domains below on this phone.
+            <details class="info">
+                <summary aria-label="About the web filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>The phone filters by itself, on any network. Your child can't turn it off on the phone. Off, nothing is blocked; everything else works as before.</p>
+                    <p>The lists and domains for every phone are in <a href="/dns">Settings › Web Filter</a>.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="lists" aria-labelledby="lists-title">
+        <h2 class="group-header" id="lists-title">Blocklists</h2>
+        <div class="group">
+            {% for list in lists %}
+            <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ list.id }}/override" class="cell" data-list="{{ list.id }}">
+                <input type="hidden" name="back" value="filter">
+                <label class="row">
+                    <span class="row-label">{{ list.name }}{% if let Some(problem) = list.problem %}<span class="row-sub text-alarm">{{ problem }}</span>{% endif %}</span>
+                    <select class="pick" name="setting" data-autosave>
+                        <option value="default"{% if list.setting == "default" %} selected{% endif %}>Default ({% if list.everyone_on %}On{% else %}Off{% endif %})</option>
+                        <option value="on"{% if list.setting == "on" %} selected{% endif %}>On</option>
+                        <option value="off"{% if list.setting == "off" %} selected{% endif %}>Off</option>
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% else %}
+            <p class="row row-note">No lists yet.</p>
+            {% endfor %}
+        </div>
+        <p class="group-footer">Default is the setting in Settings › Web Filter.</p>
+    </section>
+
+    {#- Remove is one tap: a domain can be added again (§5.6). -#}
+    <section id="blocked" aria-labelledby="blocked-title">
+        <h2 class="group-header" id="blocked-title">Blocked on this phone</h2>
+        <div class="group">
+            {% for d in blocked %}
+            <div class="row" data-domain="{{ d.id }}">
+                <span class="row-label">{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
+                    <input type="hidden" name="back" value="filter">
+                    <input type="hidden" name="device_id" value="{{ device.id }}">
+                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/dns/domains/new" class="cell">
+                <input type="hidden" name="list_type" value="block">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="hidden" name="back" value="filter">
+                <div class="row">
+                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to block on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <button type="submit" class="row-action">Block</button>
+                </div>
+            </form>
+            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+        </div>
+    </section>
+
+    <section id="allowed" aria-labelledby="allowed-title">
+        <h2 class="group-header" id="allowed-title">Allowed on this phone</h2>
+        <div class="group">
+            {% for d in allowed %}
+            <div class="row" data-domain="{{ d.id }}">
+                <span class="row-label">{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
+                    <input type="hidden" name="back" value="filter">
+                    <input type="hidden" name="device_id" value="{{ device.id }}">
+                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/dns/domains/new" class="cell">
+                <input type="hidden" name="list_type" value="allow">
+                <input type="hidden" name="device_id" value="{{ device.id }}">
+                <input type="hidden" name="back" value="filter">
+                <div class="row">
+                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to allow on this phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <button type="submit" class="row-action">Allow</button>
+                </div>
+            </form>
+            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+        </div>
+        <p class="group-footer">Let through even when a list blocks it.</p>
+    </section>
+
+    <section id="log" aria-labelledby="log-title">
+        <h2 class="group-header" id="log-title">Blocked Activity</h2>
+        <form method="post" action="/dns/log/{{ device.id }}" class="group">
+            <label class="row">
+                <span class="row-label">Keep a log</span>
+                <input type="checkbox" role="switch" class="sw" name="dns_log_enabled" value="on"{% if log_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Kept {{ retention_days }} days. Turning it off deletes this phone's log.
+            <details class="info">
+                <summary aria-label="About the log"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>While it is on, the phone reports each blocked domain, at most once per 10 minutes per domain. Filtering works the same either way.</p>
+                </div>
+            </details>
+        </div>
+        {% if log_on %}
+        <div class="group" data-group="log-events">
+            {% for e in events %}
+            <div class="row" data-event>
+                <span class="row-label">{{ e.domain }}<span class="row-sub">{{ e.category }}</span></span>
+                <span class="row-value"{% if !e.exact.is_empty() %} title="{{ e.exact }}"{% endif %}>{{ e.when }}</span>
+            </div>
+            {% else %}
+            <p class="row row-note">Nothing blocked yet.</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>

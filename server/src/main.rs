@@ -744,6 +744,12 @@ pub fn build_admin_router(
         )
         // Step 4: Lock Screen & PINs.
         .route("/devices/{id}/lock", get(handlers::device_pages::view_lock))
+        // Step 5: Home Screen and Web Filter.
+        .route("/devices/{id}/home", get(handlers::device_pages::view_home))
+        .route(
+            "/devices/{id}/filter",
+            get(handlers::device_pages::view_filter),
+        )
         .route(
             "/devices/{id}/policy",
             post(handlers::devices::update_policy),

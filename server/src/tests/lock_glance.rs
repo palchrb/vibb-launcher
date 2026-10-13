@@ -644,10 +644,10 @@ async fn the_page_shows_each_note() {
     assert!(!html.contains("data-warning"), "{html}");
 }
 
-/// The device page's Launcher card names the lock screen; Lock Screen & PINs says what its first
-/// page shows.
+/// Home Screen's notification-access warning names the lock screen (design 31 step 5; the device
+/// page's Launcher card before); Lock Screen & PINs says what its first page shows.
 #[tokio::test]
-async fn the_launcher_card_and_the_lock_page_name_the_lock_screen() {
+async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -659,10 +659,10 @@ async fn the_launcher_card_and_the_lock_page_name_the_lock_screen() {
     )
     .await;
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains("the notifications on the lock screen are missed calls only"));
+    assert!(page.contains("the lock screen shows only missed calls"));
     let lock = app.get_page(&lock_page(id), &cookie).await.text();
     assert!(lock.contains(
         "The lock's first page shows the clock, what's playing and the newest notifications."
