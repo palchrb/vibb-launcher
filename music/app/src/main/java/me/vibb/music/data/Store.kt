@@ -136,13 +136,15 @@ class Store private constructor(context: Context) {
 
     /**
      * The renderer's outcome [word] at [nowMs] (wall clock): written only when the word changes
-     * (`SpotifyOutcome.next`; an unknown word never), atomically. Off the main thread (the service's writer).
+     * (`SpotifyOutcome.next`; an unknown word never), atomically. Off the main thread (the service's writer). True when
+     * the stored word changed: the report then has news for the parent (the service asks for a sync, §6l A F7).
      */
     @Synchronized
-    fun recordSpotifyOutcome(word: String, nowMs: Long) {
-        val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return
-        runCatching { writeAtomic(spotifyStateFile, next.encode().toByteArray()) }.onFailure { return }
+    fun recordSpotifyOutcome(word: String, nowMs: Long): Boolean {
+        val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return false
+        runCatching { writeAtomic(spotifyStateFile, next.encode().toByteArray()) }.onFailure { return false }
         spotifyOutcomeState.value = next
+        return true
     }
 
     /**
