@@ -819,7 +819,7 @@ fn the_release_tag_header_is_plain_ascii() {
 }
 
 /// Design 13 §2: "App updates only on Wi-Fi" - on for a new phone, sent in the policy, switched
-/// by its own auto-saving form, which nudges the phone and comes back to the page.
+/// by its own auto-saving form on Device › Apps, which nudges the phone and comes back to its group.
 #[tokio::test]
 async fn the_app_update_switch_saves_and_reaches_the_phone() {
     let app = TestApp::new().await;
@@ -835,7 +835,7 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
         true
     );
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
     assert!(page.contains(&format!(r#"action="/devices/{id}/app-updates""#)));
@@ -850,15 +850,16 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
             &[],
         )
         .await;
-    // Back to its own page: scroll-restore keeps the place (no jump to the top).
-    assert_eq!(off.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to its group at the bottom of the page: never the top, with or without JS.
+    assert_redirect(&off, &device_page(id, Section::Apps), Some("downloads"));
+    assert!(page.contains(r#"<section id="downloads""#));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, token.clone()).await["app_updates_wifi_only"],
         false
     );
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
     assert!(page.contains(r#"name="app_updates_wifi_only""#));
@@ -886,9 +887,9 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
-/// Design 13 §8: the phone's `app_downloads` snapshot is stored (known fields only) and the
-/// device page shows it per app - waiting for Wi-Fi since when and how far, the launcher's grace -
-/// while a fresh progress report still wins for the live percentage.
+/// Design 13 §8: the phone's `app_downloads` snapshot is stored (known fields only) and Device ›
+/// Apps shows it per app - waiting for Wi-Fi since when (local time) and how far, the launcher's
+/// grace - while a fresh progress report still wins for the live percentage.
 #[tokio::test]
 async fn app_downloads_are_stored_and_shown() {
     let app = TestApp::new().await;
@@ -950,22 +951,65 @@ async fn app_downloads_are_stored_and_shown() {
         Some(progress),
     )
     .await;
+    // The report is from yesterday 10:00 UTC, read in Phone Setup's zone (qa-31-s6-code L2).
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-1 day', 'start of day', \
+         '+10 hours') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let reported_at = (chrono::Utc::now() - chrono::Duration::days(1))
+        .date_naive()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_utc();
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
     assert!(
-        page.contains("Waiting for Wi-Fi since 6 Oct · 120 of 326 MB"),
+        page.contains("Waiting for Wi-Fi · since 6 Oct · 120 of 326 MB"),
         "{page}"
     );
     assert!(page.contains("Installing 50%"));
-    assert!(page.contains("Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct"));
-    assert!(page.contains("Last report: the phone was on mobile data."));
+    assert!(
+        page.contains(
+            "Installed · update 0.32.0 waiting for Wi-Fi · since 6 Oct · any network from 9 Oct"
+        ),
+        "{page}"
+    );
+    // The phone's network at its last report, with when: Oslo's clock (never the UTC 10:00), the
+    // exact local time in `title`.
+    let network = &page[page.find(r#"data-row="network""#).expect("the network row")..];
+    let network = &network[..network.find("</details>").unwrap()];
+    let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
+    let when = oslo.when(reported_at, chrono::Utc::now());
+    assert!(!when.contains("10:00"), "{when}");
+    assert!(
+        network.contains(&format!("Mobile data · {when}</span>")),
+        "{network}"
+    );
+    assert!(
+        network.contains(&format!("title=\"{}\"", oslo.exact(reported_at))),
+        "{network}"
+    );
+    assert!(
+        network.contains("At the phone&#39;s last report."),
+        "{network}"
+    );
+    // Notes installs: the page reloads itself for the percentage.
+    assert!(page.contains("/static/installing-reload.js"));
 }
 
 /// Security review M10 (the phone side): a release the launcher refused to install - another
 /// package, another key, unreadable, or no pins on the server - comes back in `app_downloads` with
-/// the reason, and the device page says why, styled as failed, also over a fresh "Install failed".
+/// the reason, and Device › Apps says why, styled as failed, also over a fresh "Install failed".
 #[tokio::test]
 async fn a_refused_release_says_why_on_the_device_page() {
     let app = TestApp::new().await;
@@ -1015,10 +1059,10 @@ async fn a_refused_release_says_why_on_the_device_page() {
     )
     .await;
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    let refused = "Refused - signed with another key than this app&#39;s";
+    let refused = "Refused: signed with another key";
     let at = page.find(refused).unwrap_or_else(|| panic!("{page}"));
     assert!(
         page[..at].ends_with("data-failed=\"true\">"),
@@ -1026,7 +1070,7 @@ async fn a_refused_release_says_why_on_the_device_page() {
         &page[at.saturating_sub(80)..at]
     );
     assert!(!page.contains("Install failed"), "the reason wins: {page}");
-    let update = "Installed · update refused - another Android package than this app&#39;s";
+    let update = "Installed · update refused: it is another app";
     let at = page.find(update).unwrap_or_else(|| panic!("{page}"));
     assert!(page[..at].ends_with("data-failed=\"true\">"));
 }
@@ -1231,9 +1275,9 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
     let html = app.get_page("/apps", &cookie).await.text();
     assert_eq!(nav_current(&html), "apps");
     // Anna allows the clock and the calculator, and Element X waits to be installed: as many as
-    // her page ticks.
+    // her Apps page switches on, and her device page's Apps row says the same.
     let device = app
-        .get_page(&device_page(anna, Section::Summary), &cookie)
+        .get_page(&device_page(anna, Section::Apps), &cookie)
         .await
         .text();
     let ticked = tags(&device, "input")
@@ -1241,9 +1285,17 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
         .filter(|tag| tag.attr("name") == Some("selected") && tag.has("checked"))
         .count();
     assert_eq!(ticked, 3);
+    let summary = app
+        .get_page(&device_page(anna, Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(
+        row_of(&summary, r#"data-row="apps""#).contains(">3 allowed<"),
+        "{summary}"
+    );
     let anna_row = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
-        anna_row.contains(&format!(r#"href="/devices/{anna}""#)),
+        anna_row.contains(&format!(r#"href="/devices/{anna}/apps""#)),
         "{anna_row}"
     );
     assert!(anna_row.contains(">3 allowed<"), "{anna_row}");
@@ -1313,7 +1365,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
     let phone = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
         phone.contains(&format!(
-            r#"href="/devices/{anna}#app-io.element.android.x""#
+            r#"href="/devices/{anna}/apps#app-io.element.android.x""#
         )),
         "{phone}"
     );
@@ -1371,7 +1423,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
     for phone in [anna, emil] {
         let row = row_of(&html, &format!(r#"data-phone="{phone}""#));
         assert!(
-            row.contains(&format!(r#"href="/devices/{phone}""#)),
+            row.contains(&format!(r#"href="/devices/{phone}/apps""#)),
             "{row}"
         );
     }

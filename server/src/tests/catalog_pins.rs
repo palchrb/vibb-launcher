@@ -514,12 +514,23 @@ async fn a_new_phone_keeps_its_phone_and_sms_apps() {
         ]
     );
 
-    // The parent unchecks both: the device page says what that costs.
-    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
-        .bind(first)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    // The parent turns both off on Device › Apps (each back at its row): the device page says
+    // what that costs.
+    for package in ["com.maker.dialer", "com.maker.sms"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{first}/apps/toggle"),
+                Some(&cookie),
+                &[("package_name", package), ("back", "apps")],
+            )
+            .await;
+        super::assert_redirect(
+            &res,
+            &super::device_page(first, super::Section::Apps),
+            Some(&format!("app-{package}")),
+        );
+    }
     let page = app
         .get_page(&format!("/devices/{first}"), &cookie)
         .await

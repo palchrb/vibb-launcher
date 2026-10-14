@@ -2649,3 +2649,105 @@ Choices made while building:
 | N3 | `unknown_phones_and_failed_reads` also renames `device_commands` and checks `locate-result.json` is a 500. |
 | Checks | `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
 
+
+## Step 6 implementation status (2026-10-13)
+
+Built on branch `design-31-s6` (from `main` at `c8d0ad44`, steps 1-5, 11, 12 and 13 merged); server only, no
+migration, no new crate, no API change (the policy JSON, its snapshot and the launcher are untouched), `style.css?v=18`.
+- **Route:** `GET /devices/{id}/apps` (`device_pages::view_apps` → `render_apps`, `device_apps.html` with
+  `partials/device_app_row.html`). Unknown phone 404; every read the page needs is a 500 on a DB error ("Couldn't read
+  this phone"): the phone, its settings, its last report (`load_latest` is a `Result` now, for the other sub-pages
+  too), `devices::app_rows` (a `Result` now: the catalog, the phone's choices and the install progress used to read
+  as empty), the names and icons. The POST routes are unchanged; where they return moved here.
+- **The page**, in the AnnaApps mockup's order:
+  - **Allowed**: Vibb first ("Always on", no switch, its update state as the sub-line), then every app switched on;
+    **Not allowed**: the rest - the phone's reported apps and the catalog apps not chosen for it. Each row: a tile
+    (the icon the phone shows for the app - its own Name and icon, else the catalog's - on its colour, else the
+    first letter), the name, the state as a sub-line ("Installing 40%", "Not installed · No release yet", "Installed
+    from Play", a refusal in red) and a switch, its own form (`/apps/toggle`, `back=apps`, `<noscript>` Save).
+    `#app-{pkg}` is the row (`#catalog-{id}` for a catalog app without a package, `devices::app_anchor`).
+  - **Name and icon**: under each allowed app with a package (not Vibb), `app_display_form` in its `<details>`, the
+    summary "Name and icon: Chat, with the chat icon on peach (from the catalog)".
+  - The footer "Turning an app off hides it, and uninstalls it where possible." (§4.5 #4) with the catalog install,
+    the keyboard and accessibility note and "your child can rename only the apps you haven't named" behind its ⓘ.
+  - **Downloads**: "Download apps on Wi-Fi only" (`/app-updates`, §4.5 #10, the 3-day grace and roaming behind the
+    footer's ⓘ) and a "Network · Mobile data · 10:58" row (at the phone's last report, the exact time in `title`).
+  - A corrupt allowlist is a warning above the groups ("App list unreadable", the server-log hint behind its ⓘ).
+  - No search field (§6.0). The installing reload moved here (every 3 s while an app installs, not while a Name and
+    icon form is open - a reload would lose what was typed); it never runs on the device page.
+- **Redirects** (§5.1, pinned by `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
+  forms, each fragment checked against the page's ids): a switch → `/devices/{id}/apps#app-{pkg}` (the row moves to
+  the other group; the fragment finds it again with and without JS); `back=music` (and an older page's
+  `anchor=music`) → `/devices/{id}#music` until step 7; Name and icon → `/devices/{id}/apps#app-{pkg}`, its form posts
+  to `…/apps/display#app-{pkg}` so a refusal (400, this page re-rendered with the form open and the field focused)
+  lands on the row; `/app-updates` → `#downloads` (the last group of a long page).
+- **`toggle_app`**: the package must be a package name (the status intake's
+  rule, `device_api::is_package_name`; before, any string went into the allowlist and the `Location`), a post needs a
+  package or a catalog id, Vibb's own row is a 400, an unknown phone a 404 (it was a 500 or a silent no-op), a catalog
+  app deleted since the page loaded returns to the page with nothing written; the writes it used to `.ok()` away
+  (`device_tracked_apps`, cancelling or queuing an uninstall) are 500s. A Play copy of a catalog app is no longer a
+  plain-text 409 page: back to its row with the reason under it (`?notice=from_play&app=<row>`). The last report is
+  read once (`latest_installed`, replacing two helpers).
+- **The device page:** the Apps card and its reload are gone; a row **Apps · 14 allowed** (the Apps tab's count;
+  "List unreadable" for a corrupt list) heads the bottom group. The Status card's blocked apps link "tick it" to
+  `/devices/{id}/apps#app-{pkg}`; the Music card's app switch sends `back=music`. Home Screen's row got the mockup's
+  house tile (it shared the Apps grid).
+- **Rust texts (M5):** `app_downloads` labels rewritten (§4.2, M4): "Waiting for Wi-Fi · since 10:58 · 120 of 326 MB",
+  "Paused while roaming" (was "Waiting - the phone is roaming since 6 Oct"), "Refused: signed with another key" (was
+  "Refused - signed with another key than this app's"), the launcher's "Installed · update 0.32.0 waiting for Wi-Fi ·
+  any network from Mon 14:30"; times in Phone Setup's zone via `display_time` (were UTC dates). `network_line`'s
+  sentence became `network()`, a row value.
+- **The Apps tab**: `phone_apps_href` points at `/devices/{id}/apps` (`#app-{pkg}` from an app page).
+- **CSS** `?v=18` (one section at the end): the Name and icon line under its row, a refusal's flash indented to the
+  name.
+- **Docs (L8):** `server/CLAUDE.md` (the catalog bullets, Play, App downloads, App names and icons, the blocked apps'
+  link, the Apps tab, and a "Device › Apps" section), `docs/setup/google-account.md` (the Wi-Fi switch's place),
+  `docs/testing/emulator.md` (the lock runbook's allowlist), `launcher/CLAUDE.md` (the uninstall bullet).
+  `server/DEPLOY.md` and `PLAN.md` name none of the moved parts.
+- **Tests:** `tests/device_pages.rs` (`apps_holds_the_moved_forms`: the device page's row and count, the groups and
+  their order, Vibb's row, the escaped name, the switches' states, Name and icon only for allowed apps, unique row ids,
+  no search, the ⓘ, `<noscript>` Saves; `apps_forms_return_to_their_rows`; the refusals and failed reads in
+  `the_apps_switch_refuses_bad_input_and_the_page_fails_loudly`; `a_phone_not_set_up_has_its_apps_page`), repointed through `device_page(id, Section::Apps)`
+  (new): `app_display.rs` (the forms under their rows, the action's fragment, the tile, the 400 on this page),
+  `tracked_apps.rs` (downloads in local time, the network row, the reload, the refused release, the Wi-Fi switch's
+  `#downloads`, the tab's links and the device page's equal count), `catalog_pins.rs` (the parent turns the dialer
+  and SMS app off through the switches), `play.rs` (the Play copy's refusal under its row), `hardening.rs` (the
+  corrupt list), `window_relock.rs` (the "tick it" link lands on the row under Not allowed), `device_api.rs` (real
+  package names), `music.rs` (`back=music` and the old `anchor=music`); `app_downloads::tests` in Oslo time.
+
+Choices made while building:
+1. **A switch's redirect keeps `#app-{pkg}`** (§5.1.4 lists it), with JS too: the switch moves its row to the other
+   group, so restoring the old scroll offset would show another app; the fragment shows the app just switched.
+2. **The row's name is the app's own**, not the name the phone shows: the Name and icon line under it says what the
+   phone shows. The tile does use the phone's icon, as the mockup draws it.
+3. **Vibb's row has no switch** ("Always on"), not a disabled one: a disabled switch reads as broken.
+4. **Downloads is the last group**, with a fragment (`#downloads`), not the first: the daily task is the app list; the
+   Wi-Fi switch is set once.
+5. **The shared Name and icon partial** got a neutral summary ("Name and icon: …", the row above names the app) and a
+   shorter hint; the catalog page shows the same.
+6. **"Network"** is a value row with the report's time, not the old sentence; an unknown network value shows no row.
+7. **A phone not set up has the page** (as Home Screen and Web Filter): a catalog app turned on installs with the
+   first settings; "The phone hasn't reported its apps yet." heads Not allowed.
+8. **Toggle validation uses the status intake's package rule**, not Name and icon's stricter grammar, so every app a
+   phone can report can still be switched.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses step 1-5 and 11
+  components plus the small section above.
+- **Step 7** builds Device › Music: `back=music` returns to the device page's `#music` until then.
+
+**Fix round after the code QA** (`qa-31-s6-code.md`: 0 High, 1 Medium, 4 Low, 5 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | The installing reload is `static/installing-reload.js` (loaded only while an app installs). It stops for good once a save has started - a capturing `submit`, a `change` on a `data-autosave` control (autosave.js's `form.submit()` fires no `submit`), `pagehide` - so it never cancels a POST on its way; it still waits while a Name and icon form is open. `jstest/installing-reload.test.js` pins the reload, the stop on a switch, a submit and `pagehide`, and that a change on a control that doesn't save keeps reloading. |
+| L1 | The same test pins the pause (open form: no reload; closed: one). A refused Name and icon save renders without the reload (`installing && entered.is_none()`): `device_pages::a_refused_name_save_never_reloads` checks the GET page has the script while an app installs and the 400 page doesn't. Mutation 9 now fails the jstest. |
+| L2 | `tracked_apps::app_downloads_are_stored_and_shown` sets Phone Setup to Europe/Oslo and the report to yesterday 10:00 UTC, and asserts the Network row's Oslo clock (never "10:00") and the exact local time in its `title`. Mutation 13 now fails it. |
+| L3 | `toggle_app` refuses Vibb by its catalog id or its package (one query, `is_launcher = 1 AND (id = ? OR package_name = ?)`); the package-only post is in the refusal table. |
+| L4 | A package is a package name or exactly what the posted catalog row stores, so an older catalog's free text (`"Element X"`) stays switchable on and off at `#catalog-<id>`; another free text with that row lands on the row with "This app changed in the catalog since the page loaded. Try again." (`?notice=not_an_app`, `devices::toggle_refusal`, which now words both refusals); free text without a catalog row stays a 400 (no page sends one). Test: `a_legacy_catalog_package_stays_switchable`. |
+| N1 | A catalog app deleted since the page loaded returns to the group the tap came from (`#not-allowed` for a turn-on, `#allowed` for a turn-off). |
+| N2 | The device page's Apps row says "Couldn't read" on a failed read, "List unreadable" only for the corrupt list (`the_apps_row_says_when_the_list_couldnt_be_read`). |
+| N3 | `app_anchor`'s unreachable fallback is `apps`, no group's id. |
+| N4 | The reload script drops `?notice=…` from the address once the page shows it (`history.replaceState`, the row's fragment kept), so a reload doesn't show the refusal again; jstest-pinned. |
+| N5 | The Status card's blocked apps say "Allowed under Apps" / "Not allowed under Apps … until you turn it on there too", and `window_relock`'s lines "hidden even when allowed under Apps", "turn it on under Apps", "the ones allowed under Apps". |
+| Checks | `cargo test` 791 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |

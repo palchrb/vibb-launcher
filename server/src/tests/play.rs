@@ -50,6 +50,22 @@ async fn about_page(app: &TestApp, id: i64) -> String {
 }
 
 /// Advanced (design 31 step 3): App screens has the Play state.
+/// Device › Apps (design 31 step 6), with its query.
+async fn apps_page(app: &TestApp, id: i64, query: &[(&str, &str)]) -> String {
+    let response = crate::handlers::device_pages::view_apps(
+        axum::extract::State(app.state.clone()),
+        axum::extract::Path(id),
+        axum::extract::Query(
+            query
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        ),
+    )
+    .await;
+    super::read_response(response).await.text()
+}
+
 async fn advanced_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::device_pages::view_advanced(
         axum::extract::State(app.state.clone()),
@@ -293,7 +309,7 @@ async fn status_stores_install_mode_installer_and_logs() {
     let page = advanced_page(&app, id).await;
     assert!(page.contains("Play Store open until"), "{page}");
     assert!(page.contains("Install mode is on"), "{page}");
-    let page = device_page(&app, id).await;
+    let page = apps_page(&app, id, &[]).await;
     assert!(page.contains("Installed from Play"), "{page}");
 
     // The same window again isn't logged twice.
@@ -335,7 +351,7 @@ async fn play_core_is_never_in_the_allowlist_ui() {
             .unwrap();
     assert_eq!(allowlist.as_deref(), Some(r#"["com.android.deskclock"]"#));
 
-    let page = device_page(&app, id).await;
+    let page = apps_page(&app, id, &[]).await;
     assert!(page.contains("org.example.app"));
     for pkg in crate::play::PLAY_CORE {
         assert!(!page.contains(&format!("value=\"{pkg}\"")), "{pkg} listed");
@@ -401,9 +417,25 @@ async fn catalog_app_installed_from_play_is_refused() {
             axum::Form(form),
         )
     };
+    // Back to the app's row on Device › Apps, the reason under it (design 31 step 6).
     let res = super::read_response(select(&app).await).await;
-    assert_eq!(res.status, StatusCode::CONFLICT);
-    assert!(res.text().contains("Play Store"));
+    let row = "app-com.example.game";
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/apps?notice=from_play&app={row}"),
+        Some(row),
+    );
+    let page = apps_page(&app, id, &[("notice", "from_play"), ("app", row)]).await;
+    let at = &page[page.find(&format!("id=\"{row}\"")).unwrap()..];
+    assert!(
+        at[..at.find("</div>").unwrap()]
+            .contains("Installed from the Play Store, so it can&#39;t also come from the catalog"),
+        "{at}"
+    );
+    // Only on that row, and only for that notice.
+    assert_eq!(page.matches("data-flash=").count(), 1);
+    let page = apps_page(&app, id, &[("notice", "other"), ("app", row)]).await;
+    assert!(!page.contains("data-flash="));
     let selected: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM device_tracked_apps WHERE device_id = ?")
             .bind(id)

@@ -292,8 +292,8 @@ the lock comes up on its glance page (clock, date, the music tile, missed calls 
 while the glance page covers it.
 
 1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
-   back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: device page
-   allowlist cleared or kiosk unpinned on a test server).
+   back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: the phone's
+   Apps page with every app off or kiosk unpinned on a test server).
 2. **Nothing reachable while locked** (kiosk on and off): pull the shade, Home, Recents
    (`adb shell input keyevent KEYCODE_HOME`, `KEYCODE_APP_SWITCH`), `adb shell input keyevent
    KEYCODE_ASSIST`, the power-button camera gesture, `adb shell am start -a

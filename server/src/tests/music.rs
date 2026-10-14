@@ -2987,24 +2987,35 @@ async fn the_device_card_ticks_entries_and_switches_the_app() {
         .unwrap();
     assert_eq!(rows, 1, "only once");
 
-    // The app switch is the catalog toggle (installs and allowlists), back to the card.
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{device}/apps/toggle"),
-            Some(&cookie),
-            &[
-                ("tracked_app_id", &app_id.to_string()),
-                ("package_name", "me.vibb.music"),
-                ("anchor", "music"),
-                ("selected", "on"),
-            ],
-        )
-        .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{device}#music").as_str())
-    );
+    // The app switch is the catalog toggle (installs and allowlists), back to the card with
+    // `back=music` (design 31 §5.1; a page from before step 6 sent `anchor=music`, which still
+    // works).
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
+    let card = page.split("id=\"music\"").nth(1).unwrap();
+    assert!(card.contains(r#"<input type="hidden" name="back" value="music">"#));
+    for back in ["back", "anchor"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/apps/toggle"),
+                Some(&cookie),
+                &[
+                    ("tracked_app_id", &app_id.to_string()),
+                    ("package_name", "me.vibb.music"),
+                    (back, "music"),
+                    ("selected", "on"),
+                ],
+            )
+            .await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/devices/{device}#music").as_str()),
+            "{back}"
+        );
+    }
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await

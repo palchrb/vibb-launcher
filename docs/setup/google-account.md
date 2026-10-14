@@ -76,7 +76,7 @@ Open before enrolling.
   handy's PINs; keep it with the credentials, section 6).
 - Network preferences -> **Auto-update apps** on, **over Wi-Fi only** (handy un-suspends the Play
   Store from 02:00 to 04:00 while the screen is off, so Play can update in that window). This is
-  Play's own setting - handy's "App updates only on Wi-Fi" on the device page covers only the apps
+  Play's own setting - handy's "Download apps on Wi-Fi only" on the phone's Apps page covers only the apps
   from handy's catalog and the launcher. Before launcher design 13 handy's VPN made the whole phone
   "metered", so Play's Wi-Fi-only updates (and other apps' unmetered jobs) never ran behind it; the
   VPN now takes its meteredness from the network below (section 10).

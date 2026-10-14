@@ -417,7 +417,8 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     post_status(
         &app,
         &token,
-        json!({ "relock_blocks": [music.clone()], "relock_blocks_total": 18 }),
+        json!({ "relock_blocks": [music.clone()], "relock_blocks_total": 18,
+                "installed_apps": [{ "package_name": "me.vibb.music.debug", "label": "Music" }] }),
     )
     .await;
     let html = app
@@ -432,12 +433,12 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     for (allowlist, says) in [
         (
             "[]",
-            "Not ticked under Apps: after \"Allow these apps\" it stays hidden until \
-             you <a href=\"#app-me.vibb.music.debug\">tick it</a> too.",
+            "Not allowed under Apps: after \"Allow these apps\" it stays hidden until \
+             you <a href=\"/devices/{id}/apps#app-me.vibb.music.debug\">turn it on</a> there too.",
         ),
         (
             "[\"me.vibb.music.debug\"]",
-            "Ticked under Apps: it shows again after \"Allow these apps\".",
+            "Allowed under Apps: it shows again after \"Allow these apps\".",
         ),
     ] {
         sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
@@ -450,8 +451,23 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
             .get_page(&format!("/devices/{id}"), &cookie)
             .await
             .text();
-        assert!(status_card(&html).contains(says), "{html}");
+        let says = says.replace("{id}", &id.to_string());
+        assert!(status_card(&html).contains(&says), "{html}");
     }
+    // "tick it" lands on the app's switch on Device › Apps (design 31 step 6), under Not allowed.
+    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let apps = app
+        .get_page(&super::device_page(id, super::Section::Apps), &cookie)
+        .await
+        .text();
+    let row = apps
+        .find("id=\"app-me.vibb.music.debug\"")
+        .expect("the app's row");
+    assert!(apps.find("<section id=\"not-allowed\"").unwrap() < row);
     // Logged once.
     post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
     let logged = events(&app, "phone_app_blocked").await;

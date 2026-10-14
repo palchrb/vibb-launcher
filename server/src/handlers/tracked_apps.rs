@@ -1191,12 +1191,12 @@ struct CatalogRow {
     tile: AppTile,
 }
 
-/// Where a phone's allowed apps are listed: until design 31 step 6 builds `/devices/{id}/apps`,
-/// the device page, at the app's row (`#app-<package>`) when there is one.
+/// Where a phone's apps are listed: Device › Apps (design 31 step 6), at the app's row
+/// (`#app-<package>`) when there is one.
 fn phone_apps_href(device_id: i64, package: Option<&str>) -> String {
     match package.filter(|p| crate::app_display::valid_package_name(p)) {
-        Some(package) => format!("/devices/{device_id}#app-{package}"),
-        None => format!("/devices/{device_id}"),
+        Some(package) => format!("/devices/{device_id}/apps#app-{package}"),
+        None => format!("/devices/{device_id}/apps"),
     }
 }
 
@@ -1301,7 +1301,7 @@ fn catalog_row(state: &AppState, app: &TrackedApp, phones: i64, set_up: i64) -> 
     }
 }
 
-/// How many apps a phone allows, as the device page's Apps card ticks them (design 31 §3.3,
+/// How many apps a phone allows, as Device › Apps switches them on (design 31 §3.3,
 /// "14 allowed"): the apps it reported that its allowlist has (not Play's core), and the catalog
 /// apps chosen for it that it hasn't reported installed; not the launcher. `None` when the stored
 /// allowlist can't be read.

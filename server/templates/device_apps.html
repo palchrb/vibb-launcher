@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Apps</h1>
+
+    {#- Where the forms return (§5.1): a switch and a Name and icon save to the app's row
+        (#app-<package>) - a switch moves the row to the other group, and the fragment finds it
+        again with or without JS -, "Download apps on Wi-Fi only" to its group at the bottom
+        (#downloads), so no save lands at the top of the list. No search field (§6.0). -#}
+    {% if let Some(note) = corrupt %}
+    {% include "partials/note_warning.html" %}
+    {% endif %}
+
+    <section id="allowed" aria-labelledby="allowed-title">
+        <h2 class="group-header" id="allowed-title">Allowed</h2>
+        <div class="group group-avatars group-small group-apps">
+            {% for app in allowed %}
+            {% include "partials/device_app_row.html" %}
+            {% else %}
+            <p class="row row-note">Nothing yet.</p>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section id="not-allowed" aria-labelledby="not-allowed-title">
+        <h2 class="group-header" id="not-allowed-title">Not allowed</h2>
+        <div class="group group-avatars group-small group-apps">
+            {% if !reported %}
+            <p class="row row-note" data-row="not-reported">The phone hasn't reported its apps yet.</p>
+            {% endif %}
+            {% for app in not_allowed %}
+            {% include "partials/device_app_row.html" %}
+            {% else %}
+            {% if reported %}<p class="row row-note">Nothing else on this phone.</p>{% endif %}
+            {% endfor %}
+        </div>
+        <div class="group-footer">Turning an app off hides it, and uninstalls it where possible.
+            <details class="info">
+                <summary aria-label="About allowing apps"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>An app from the <a href="/apps">Apps</a> catalog installs when you turn it on.</p>
+                    <p>Only an allowed app's keyboard or accessibility service can be turned on in the phone's settings; an accessibility service not even during a pause, since it could read the Parent PIN.</p>
+                    <p>Name and icon changes how an allowed app shows on this phone. Your child can rename only the apps you haven't named.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="downloads" aria-labelledby="downloads-title">
+        <h2 class="group-header" id="downloads-title">Downloads</h2>
+        <div class="group">
+            <form method="post" action="/devices/{{ device.id }}/app-updates" class="cell">
+                <label class="row">
+                    <span class="row-label">Download apps on Wi-Fi only</span>
+                    <input type="checkbox" role="switch" class="sw" name="app_updates_wifi_only" value="on"{% if wifi_only %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% if let Some(row) = network %}
+            {% include "partials/info_row.html" %}
+            {% endif %}
+        </div>
+        <div class="group-footer">Turn it off when an app is needed now.
+            <details class="info">
+                <summary aria-label="About downloads"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Vibb's own updates wait up to 3 days for Wi-Fi, then take any network. Nothing downloads while the phone is roaming. Unlocking or pausing on the phone doesn't change this.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+    <script src="/static/app-display.js?v=2" defer></script>
+
+    {% if installing %}
+    <script src="/static/installing-reload.js?v=1" defer></script>
+    {% endif %}
+</main>
+</body>
+</html>

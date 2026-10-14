@@ -1,5 +1,5 @@
-//! A phone's About This Phone, Lock Screen & PINs, Home Screen, Web Filter and Advanced pages
-//! (design 31 §3.2, §8 steps 3-5).
+//! A phone's Apps, About This Phone, Lock Screen & PINs, Home Screen, Web Filter and Advanced
+//! pages (design 31 §3.2, §8 steps 3-6).
 //!
 //! - **About This Phone** (`GET /devices/{id}/about`, `device_about.html`) is read-only, like iOS
 //!   Settings › General › About: the connection (§3.10), the sound, the software, the crash
@@ -11,6 +11,9 @@
 //! - **Home Screen** (`GET /devices/{id}/home`, step 5): language and apps per row, the
 //!   wallpapers, the quick controls ([view_home]). **Web Filter** (`GET /devices/{id}/filter`):
 //!   the filter switch, this phone's lists and domains, the blocked-domain log ([view_filter]).
+//! - **Apps** (`GET /devices/{id}/apps`, `device_apps.html`, step 6): Allowed and Not allowed,
+//!   each app a switch with its name and icon under it, and the Wi-Fi-only download switch
+//!   ([view_apps]).
 //! - **Advanced** (`GET /devices/{id}/advanced`, `device_advanced.html`) holds what a parent sets
 //!   once or never: Restrictions (`/hardening`, one form), App screens (`/kiosk-block` and the Play
 //!   state), Updates & notifications (`/kiosk-escapes`, one form), Connection (`/regenerate-code`,
@@ -392,15 +395,15 @@ fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
         .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
 }
 
-async fn load_latest(state: &AppState, id: i64) -> Option<DeviceStatus> {
+/// The phone's last report (`None` before the first one); a DB error is the page's 500 - never
+/// "no report yet", which would hide every reported app and state (design 31 step 6).
+async fn load_latest(state: &AppState, id: i64) -> Result<Option<DeviceStatus>, sqlx::Error> {
     sqlx::query_as::<_, DeviceStatus>(
         "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
-    .ok()
-    .flatten()
 }
 
 /// The Connection group's rows (§3.10): the state, the last contact, the last full report and the
@@ -472,7 +475,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
         Ok(policy) => policy,
         Err(answer) => return answer.into_response(),
     };
-    let latest = load_latest(&state, id).await;
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
@@ -690,7 +696,10 @@ pub async fn view_advanced(
         Ok(policy) => policy,
         Err(answer) => return answer.into_response(),
     };
-    let latest = load_latest(&state, id).await;
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
     let now_ms = now.timestamp_millis();
@@ -786,7 +795,10 @@ pub async fn view_lock(
         Ok(policy) => policy,
         Err(answer) => return answer.into_response(),
     };
-    let latest = load_latest(&state, id).await;
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
     let notice = query.get("notice").map(String::as_str);
@@ -831,7 +843,11 @@ pub async fn view_lock(
         .into_iter()
         .filter(|w| w.checked)
         .collect();
-    let rows = crate::handlers::devices::app_rows(&state, id, &policy, latest.as_ref()).await;
+    let rows = match crate::handlers::devices::app_rows(&state, id, &policy, latest.as_ref()).await
+    {
+        Ok(rows) => rows,
+        Err(err) => return read_failed(id, "the phone's apps", err),
+    };
     let lock_screen =
         crate::handlers::devices::lock_screen_card(&state, &policy, latest.as_ref(), &rows).await;
     let screen_timeout_seconds =
@@ -947,7 +963,10 @@ pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Re
         Ok(wallpapers) => wallpapers,
         Err(err) => return read_failed(id, "the wallpapers", err),
     };
-    let latest = load_latest(&state, id).await;
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
     let mask = policy.quick_controls_mask;
     Html(
         HomeTemplate {
@@ -1116,6 +1135,203 @@ pub async fn view_filter(
             log_on: policy.dns_log_enabled,
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,
             events,
+            device,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+/// One app on Device › Apps: the row `devices::app_rows` built, where it is (`devices::app_anchor`),
+/// its tile, its name-and-icon form and why a switch was refused.
+pub struct AppView {
+    pub row: crate::handlers::devices::UnifiedAppRow,
+    pub anchor: String,
+    /// The tile: the icon this phone shows for it (its own choice, else the catalog's) on that
+    /// colour, else the name's first letter.
+    pub icon: Option<(String, &'static str)>,
+    pub letter: String,
+    /// Name and icon: every allowed app with a package name but Vibb (design 14).
+    pub display: Option<crate::app_display::AppDisplayForm>,
+    /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
+    /// `devices::toggle_refusal`).
+    pub refused: Option<&'static str>,
+}
+
+#[derive(Template)]
+#[template(path = "device_apps.html")]
+struct AppsTemplate {
+    title: String,
+    device: Device,
+    /// The stored allowlist can't be read (the phone gets a 500 for its settings): above the list.
+    corrupt: Option<Note>,
+    /// Vibb first, then the apps switched on; then the rest.
+    allowed: Vec<AppView>,
+    not_allowed: Vec<AppView>,
+    /// The phone has reported its apps at least once.
+    reported: bool,
+    /// Something installs now: the page reloads every 3 s for the percentage
+    /// (`static/installing-reload.js`) - never on a refused save's page, the answer to a POST.
+    installing: bool,
+    wifi_only: bool,
+    /// The phone's network at its last report, with its time (`app_downloads::network`).
+    network: Option<Row>,
+}
+
+/// GET `/devices/{id}/apps`: Device › Apps (design 31 §3.2, step 6). The phone's apps and the
+/// catalog's in two groups, Allowed and Not allowed, each a switch (`/apps/toggle`, `back=apps`);
+/// an allowed app's Name and icon (`/apps/display`) in a `<details>` under its row; Download apps
+/// on Wi-Fi only (`/app-updates`) and the phone's network at the bottom. A switch and a name save
+/// return to the app's row (`#app-<package>`), the Wi-Fi switch to `#downloads`. While an app
+/// installs, the page reloads itself every 3 s. A phone not set up has the page too: a catalog app
+/// turned on installs with its first settings.
+pub async fn view_apps(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let refused = query.get("app").and_then(|row| {
+        query
+            .get("notice")
+            .and_then(|code| crate::handlers::devices::toggle_refusal(code))
+            .map(|text| (row.as_str(), text))
+    });
+    render_apps(&state, id, refused, None).await
+}
+
+/// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
+/// and icon save (that app's form open with the entered values and the error).
+pub(crate) async fn render_apps(
+    state: &AppState,
+    id: i64,
+    refused: Option<(&str, &'static str)>,
+    entered: Option<(String, crate::app_display::Entered)>,
+) -> Response {
+    use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
+    let device = match load_device(state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
+    let latest = match load_latest(state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
+    let rows = match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref()).await {
+        Ok(rows) => rows,
+        Err(err) => return read_failed(id, "the phone's apps", err),
+    };
+    // Names and icons: a failed read must not show every app as "its own".
+    let defaults = match display::catalog_defaults(&state.db).await {
+        Ok(defaults) => defaults,
+        Err(err) => return read_failed(id, "the catalog's app names", err),
+    };
+    let own = match display::device_rows(&state.db, id).await {
+        Ok(own) => own,
+        Err(err) => return read_failed(id, "the phone's app names", err),
+    };
+    let zone = Zone::load(&state.db).await;
+    let now = Utc::now();
+
+    let network = rows
+        .downloads
+        .as_ref()
+        .and_then(crate::app_downloads::network)
+        .map(|value| {
+            let at = latest
+                .as_ref()
+                .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
+            Row::new(
+                "network",
+                "Network",
+                match at {
+                    Some(at) => format!("{value} · {}", zone.when(at, now)),
+                    None => value.to_string(),
+                },
+            )
+            .title(at.map(|t| zone.exact(t)))
+            .detail(Some("At the phone's last report."))
+        });
+    // A refused save is the answer to a POST: a reload would ask to send it again (L1).
+    let installing = entered.is_none() && rows.apps.iter().any(|a| a.is_installing);
+    let (mut allowed, mut not_allowed) = (Vec::new(), Vec::new());
+    for row in rows.apps {
+        let package = row.package_name.clone();
+        let anchor = crate::handlers::devices::app_anchor(&package, row.tracked_app_id);
+        let phone_row = own.get(&package);
+        let default = defaults.get(&package);
+        let current = phone_row.or(default);
+        let icon = current.and_then(|values| {
+            values
+                .icon
+                .as_deref()
+                .filter(|key| display::icon_known(key))
+                .map(|key| (key.to_string(), display::tile_of(&values.color)))
+        });
+        let display = (row.checked && !row.is_launcher && display::valid_package_name(&package))
+            .then(|| {
+                let mut form = AppDisplayForm::new(
+                    format!("/devices/{id}/apps/display#{anchor}"),
+                    format!("display-{package}"),
+                    package.clone(),
+                    row.label.clone(),
+                    &current.cloned().unwrap_or_else(DisplayValues::own),
+                    entered
+                        .as_ref()
+                        .filter(|(entered, _)| *entered == package)
+                        .map(|(_, e)| e),
+                );
+                form.catalog_default = default.map(DisplayValues::describe);
+                form.own_row = phone_row.is_some();
+                if phone_row.is_none() && default.is_some() {
+                    form.summary = format!("{} (from the catalog)", form.summary);
+                }
+                form
+            });
+        let view = AppView {
+            letter: crate::handlers::devices::initial(&row.label),
+            refused: refused
+                .filter(|(row, _)| *row == anchor)
+                .map(|(_, text)| text),
+            icon,
+            display,
+            anchor,
+            row,
+        };
+        if view.row.checked {
+            allowed.push(view);
+        } else {
+            not_allowed.push(view);
+        }
+    }
+    Html(
+        AppsTemplate {
+            title: format!("Apps · {}", device.name),
+            corrupt: rows.allowlist_corrupt.then(|| Note {
+                warning: true,
+                title: "App list unreadable".to_string(),
+                value: None,
+                detail: Some(
+                    "The phone keeps the last list it had, and switching apps here fails until \
+                     it is fixed."
+                        .to_string(),
+                ),
+                fix: Some(
+                    "The stored allowlist isn't valid JSON. Check the server log (\"failed to \
+                     build device policy\"), or restore a backup."
+                        .to_string(),
+                ),
+            }),
+            allowed,
+            not_allowed,
+            reported: latest.is_some(),
+            installing,
+            wifi_only: policy.app_updates_wifi_only,
+            network,
             device,
         }
         .render()
