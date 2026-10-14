@@ -619,13 +619,15 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **What users see**: `app_name` "Vibb One" (`res/values/donottranslate.xml`; debug "Vibb One (debug)" in
   `src/debug`) - Settings › Apps, permission dialogs, the Home-app picker, notification headers, Recents;
   `notification_listener_title` "Vibb One" (en and nb, the anchor's ongoing notification); the VPN session
-  `VPN_SESSION` = "Vibb One filter" (`KidVpnService`, Android's VPN settings and its key dialog).
+  `vpn_session` = "Vibb One filter" / nb "Vibb One-filter" (`KidVpnService.setSession(getString(..))`, Android's VPN
+  settings and its key dialog; qa-34-s12-code N1).
 - **What stays**: the packages `me.vibb.launcher`(`.debug`), the Kotlin namespace `com.kidslauncher.mdm`, the admin
   component, the `kids-launcher-mdm.apk` asset (the QR's URL and checksum), CI names - nothing in provisioning,
   updates or the music app reads the label (the music app names the launcher by package). The PWA and the catalog row
   (server migration 0077) follow on the server's side.
-- Test: `ui/VibbOneNameTest` (the label, the debug label, the notification title in en and nb, the VPN session, and
-  no "Kids Launcher", "Kids Device MDM" or "Kid Phone Filter" left in `src/main`/`src/debug`).
+- Test: `ui/VibbOneNameTest` (the label, the debug label, the notification title and the VPN session in en and nb,
+  and no "Kids Launcher", "Kids Device MDM" or "Kid Phone Filter" left in `src/main`'s res, java and manifest or
+  anywhere in `src/debug`).
 
 ## Building without tsnet.aar
 

@@ -58,6 +58,16 @@ async fn provision_page_with_checksum_shows_qr() {
     let page = provision_page(app.state.clone(), id).await;
     assert!(page.contains("data-row=\"qr\""), "no QR code rendered");
     assert!(!page.contains("data-missing=\"checksum\""));
+    // The launcher's name (design 34 P11, qa-34-s12-code L1).
+    assert!(
+        page.contains("You type it in Vibb One's settings on the phone."),
+        "{page}"
+    );
+    assert!(page.contains("make Vibb One the device owner"), "{page}");
+    assert!(
+        !page.contains("Vibb&#39;s") && !page.contains("Vibb's"),
+        "{page}"
+    );
 }
 
 #[test]

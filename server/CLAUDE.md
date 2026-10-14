@@ -1777,7 +1777,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Every PWA text that names the launcher says "Vibb One"** (About This Phone's "Vibb One" row and the device page's
   "About This Phone · Vibb One 0.23.6", "Vibb One's Settings", Attention titles such as "Vibb One isn't the Home app",
   `provision_qr.html`'s setup text, "Vibb One didn't install that app", the clock warning's Settings path "›
-  Vibb One ›", ...). **Not renamed**: "Vibb Phone" (the PWA), "Vibb style" (the icon state), "Vibb music"/"Vibb
+  Vibb One ›" - pinned by `provisioning` and `launcher_ui` tests -, the security log's details "Vibb One's Settings
+  opened." and "start(s) without Vibb One running", ...). **Not renamed**: "Vibb Phone" (the PWA), "Vibb style" (the icon state), "Vibb music"/"Vibb
   Musikk" (the music app and its catalog row), "Import from Vibb", "(from Vibb)", the Vibb box/Pi (the vibb music
   project), "Vibb night" (a wallpaper), the Vibb logo/mark, the manifest's "Vibb phones", the 2FA issuer "Kids
   Device MDM" (it only labels new authenticator entries; a change would make a second entry look like another

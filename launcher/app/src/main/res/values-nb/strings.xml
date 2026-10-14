@@ -223,6 +223,7 @@
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_listener_text">Klar for kommandoer fra forelderen (ringe, låse, finne).</string>
     <string name="notification_channel_vpn_filter">Innholdsfilter</string>
+    <string name="vpn_session">Vibb One-filter</string>
     <string name="notification_vpn_filter_title">Innholdsfilteret er på</string>
     <string name="notification_vpn_filter_text">Blokkerer reklame og upassende innhold.</string>
     <string name="notification_channel_app_install">Installering og oppdatering av apper</string>

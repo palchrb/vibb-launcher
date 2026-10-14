@@ -676,6 +676,11 @@ async fn clock_format_not_applied_is_a_warning() {
             let command = html.find("WRITE_SETTINGS allow").expect("the fix");
             let panel = html[..command].rfind("<details class=\"info\">").unwrap();
             assert!(at < panel && !html[panel..command].contains("</details>"));
+            // The Settings path names the launcher's label (design 34 P11, qa-34-s12-code L1).
+            assert!(
+                html[panel..].contains("Modify system settings › Vibb One › Allow."),
+                "{html}"
+            );
         }
     }
     // The last report still says false, but "Follow the phone" asks for nothing.

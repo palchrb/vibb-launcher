@@ -409,7 +409,7 @@ fn line(event: &PinEvent) -> String {
             }
             (Entry::Override, None) => "Restrictions lifted on the time-lock screen.".to_string(),
             (Entry::PinLock, _) => "Lock screen opened with the parent code.".to_string(),
-            (Entry::Settings, _) => "The launcher's Settings opened.".to_string(),
+            (Entry::Settings, _) => "Vibb One's Settings opened.".to_string(),
             (Entry::Pause, Some(until)) => {
                 format!("All restrictions paused from Settings, until {until}.")
             }
@@ -815,7 +815,7 @@ mod tests {
             ),
             (
                 unlocked(Entry::Settings, None),
-                "The launcher's Settings opened.",
+                "Vibb One's Settings opened.",
             ),
             (
                 unlocked(Entry::Pause, until),
@@ -851,7 +851,7 @@ mod tests {
                     clock_off: true,
                     ..ev(Kind::Unlocked, Entry::Settings, NOW)
                 },
-                "The launcher's Settings opened (the phone's clock was off; time of arrival \
+                "Vibb One's Settings opened (the phone's clock was off; time of arrival \
                  shown).",
             ),
         ];

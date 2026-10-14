@@ -1090,3 +1090,14 @@ launcher and docs in one commit.
   name). Old design docs stay.
 - **Check on the emulator** (not done here): the permission dialog, a notification header, the VPN dialog, the
   PWA's About row and the Apps list (a row named "Vibb" before the update reads "Vibb One").
+
+### Step 12 fix round (qa-34-s12-code, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| L1 two renamed PWA texts unpinned (S3, S4 survived) | `provisioning::provision_page_with_checksum_shows_qr` asserts "You type it in Vibb One's settings on the phone.", "make Vibb One the device owner" and no "Vibb's"; `launcher_ui::clock_format_not_applied_is_a_warning` asserts the ⓘ's "Modify system settings › Vibb One › Allow." (the phone's label). Re-run: S3 (provision_qr back to "Vibb's settings") and S4 (the path's label changed) both fail now. |
+| L2 `VibbOneNameTest` skipped `src/debug/java` and the debug manifest (L1b survived) | The old-name scan takes `src/main/res`, `src/main/java`, `src/main/AndroidManifest.xml` and all of `src/debug` (and checks the debug manifest and java dir exist). Re-run: "Kids Launcher [debug]" in `src/debug/java/.../LockTaskDebug.kt` fails it. |
+| N1 the VPN session name not localized | The constant went; `KidVpnService` sets `getString(R.string.vpn_session)`: en "Vibb One filter", nb "Vibb One-filter" (`TranslationsTest` keeps the pair). `VibbOneNameTest` reads both resources and pins the one `setSession` call. |
+| N2 two security-log details said "the launcher" | `parent_pin::log_line`: "Vibb One's Settings opened." (and its clock-off variant); `boot_witness::log_line`: "N start(s) without Vibb One running noticed". Their unit tests and `hardening::unseen_boots_*` follow. |
+
+Counts: server `cargo test` 956 passed, node 30 passed (no new test functions; the asserts went into existing ones); launcher `assembleDebug testDebugUnitTest --rerun -PwarningsAsErrors=true` 1281 tests, 0 failures.

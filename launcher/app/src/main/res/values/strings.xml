@@ -279,6 +279,8 @@
     <string name="notification_listener_title">Vibb One</string>
     <string name="notification_listener_text">Ready for parent commands (ring, lock, locate).</string>
     <string name="notification_channel_vpn_filter">Content filter</string>
+    <!-- The VPN's name in Android's VPN settings and its key dialog (design 34 P11). -->
+    <string name="vpn_session">Vibb One filter</string>
     <string name="notification_vpn_filter_title">Content filter active</string>
     <string name="notification_vpn_filter_text">Blocking ads and inappropriate content.</string>
     <string name="notification_channel_app_install">App installs and updates</string>
