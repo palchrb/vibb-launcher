@@ -65,11 +65,34 @@ pub(crate) fn encloses(html: &str, id: &str, at: usize) -> bool {
     }
 }
 
+/// The forms that leave their page, so no fragment of it: signing in and out, Dismiss (the warning
+/// is at the top), the add flows' first steps, New Setup Code (the code page) and the deletes that
+/// go back to a list.
+fn leaves_the_page(action: &str) -> bool {
+    let path: Vec<&str> = action.split('/').skip(1).collect();
+    let number = |segment: &str| segment.parse::<i64>().is_ok();
+    matches!(
+        path.as_slice(),
+        ["login" | "logout"]
+            | ["auth", _]
+            | ["account", "sign-out-everywhere" | "dismiss-warning"]
+            | ["devices" | "apps", "new"]
+            | ["apps", "tracked", "new"]
+            | ["devices", _, "regenerate-code"]
+    ) || matches!(
+        path.as_slice(),
+        ["devices", n, "delete"]
+            | ["apps", "tracked", n, "delete"]
+            | ["music", "entries", n, "delete"]
+            | ["schedules", "rules", n, "delete"] if number(n)
+    )
+}
+
 /// Every action's fragment names **the form's own group** - the element holding it (qa-31-s14-code
-/// L4) - and every action has one (a form far down a long page must not land at the top without
-/// JS - §5.1.4); every auto-saving form has a `<noscript>` Save, and nothing asks with
-/// `confirm()`. Sign Out Everywhere (to the sign-in page) and Dismiss (the warning is at the top)
-/// are the two that leave without one.
+/// L4) - and every action has one, as its redirect (a form far down a long page must not land at
+/// the top without JS, and with JS `scroll-restore.js` keeps the place over it - §5.1.4, the
+/// browser pass of 2026-10-14); every auto-saving form has a `<noscript>` Save, and nothing asks
+/// with `confirm()`. Only the forms that leave the page ([leaves_the_page]) have none.
 #[track_caller]
 pub(crate) fn check_forms(page: &str, html: &str) {
     assert!(!html.contains("confirm("), "{page} uses confirm()");
@@ -77,7 +100,12 @@ pub(crate) fn check_forms(page: &str, html: &str) {
         let body = &html[form.start..];
         let body = &body[..body.find("</form>").unwrap_or(body.len())];
         let action = form.attr("action").unwrap_or("");
-        if ["/account/sign-out-everywhere", "/account/dismiss-warning"].contains(&action) {
+        if leaves_the_page(action) {
+            assert!(!action.contains('#'), "{page}: {action} leaves the page");
+            continue;
+        }
+        // The Vibb import's upload answers with its preview, a group the form page doesn't have.
+        if action == "/music/import#import-preview" {
             continue;
         }
         let (_, fragment) = action
@@ -194,6 +222,7 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
                     .request_form(Method::POST, action, Some(cookie), &sent)
                     .await;
                 assert_redirect(&res, path, Some(fragment.as_str()));
+                app.assert_lands(&res, cookie).await;
             }
         }
     };

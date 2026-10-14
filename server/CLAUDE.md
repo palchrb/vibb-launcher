@@ -126,7 +126,7 @@ No prior programming experience - build features directly rather than explaining
 ## Hardening (handy step 4, design `docs/design/04-hardening.md`, at the monorepo root)
 
 - **`device_policy` has nine switches** (migrations `0023`/`0024`, `models::Hardening`, flattened into `DevicePolicy`): `disallow_factory_reset`, `disallow_add_user`, `disallow_modify_accounts`, `disallow_config_vpn`, `disallow_usb_file_transfer`, `disallow_debugging_features`, `disallow_safe_boot`, `lock_location`, `disallow_airplane_mode`. All default on except `disallow_safe_boot` and `disallow_airplane_mode` (`Hardening::default()` mirrors the column defaults). `PolicyResponse.hardening` always carries all of them explicitly; the launcher sets the matching Android user restrictions while the phone is managed and its override/pause never lift them.
-- **Advanced › Restrictions** (`/devices/{id}/advanced`; the device page's "Phone hardening" card until design 31 step 3): one auto-submitting form to `POST /devices/{id}/hardening` (`devices::update_hardening`; a missing checkbox is off, 404 for an unknown device, 500 and no nudge on a DB error; back to `/devices/{id}/advanced` without a fragment). Its footers and ⓘ explain that blocking USB debugging (the default) removes adb as the repair path, that safe mode repairs nothing, and the real recovery paths. A managed device (allowlist or managed calls) without an override PIN gets a warning (`managed_without_pin`). Deploy order: this server first (migration 0023 defaults existing rows to "debugging blocked"), set the switches and a PIN, then the launcher. Switch debugging off before enrolling a phone that still needs adb work (e.g. granting the call-redirection and call-screening roles).
+- **Advanced › Restrictions** (`/devices/{id}/advanced`; the device page's "Phone hardening" card until design 31 step 3): one auto-submitting form to `POST /devices/{id}/hardening` (`devices::update_hardening`; a missing checkbox is off, 404 for an unknown device, 500 and no nudge on a DB error; back to `/devices/{id}/advanced#restrictions`). Its footers and ⓘ explain that blocking USB debugging (the default) removes adb as the repair path, that safe mode repairs nothing, and the real recovery paths. A managed device (allowlist or managed calls) without an override PIN gets a warning (`managed_without_pin`). Deploy order: this server first (migration 0023 defaults existing rows to "debugging blocked"), set the switches and a PIN, then the launcher. Switch debugging off before enrolling a phone that still needs adb work (e.g. granting the call-redirection and call-screening roles).
 - **A corrupt stored allowlist is a warning on the device page** (`allowlist_corrupt`), not silently "nothing allowed" (QA step 1 #11).
 - **Backup to Google** (Google account on the phone, runbook `docs/setup/google-account.md` at the monorepo root; migration `0041_backup_service.sql`): status `backup_service_enabled` -> `device_status.backup_service_enabled` (missing from an older launcher, or `null` = NULL). Advanced › Restrictions shows the latest report: `false` a quiet "Backup to Google · Off" row, `true` "On" plus a warning above the group (and an Attention alarm), NULL nothing. No switch: the launcher always keeps Android's backup service off while managed (override and pause included). Tests: `src/tests/hardening.rs` `backup_service_*`.
 
@@ -198,7 +198,7 @@ No prior programming experience - build features directly rather than explaining
 - **The lock's background** (design 25, "Lock background", migration `0069`): `device_lock_wallpaper` (one row per
   device at most, composite key onto `device_wallpapers`, so unticking or deleting it falls back by itself) -> the policy's
   `launcher_ui.lock_wallpaper` (id or null = the lock shows Home's wallpaper, always sent). `POST /devices/{id}/lock-wallpaper`
-  (`wallpaper` = "" or a ticked id, else 400; security event `lock_wallpaper_changed`; back to `/devices/{id}/lock`, no fragment). The tick save
+  (`wallpaper` = "" or a ticked id, else 400; security event `lock_wallpaper_changed`; back to `/devices/{id}/lock#lock-wallpaper`). The tick save
   deletes only the unticked `device_wallpapers` rows (a delete-all would clear the lock choice by the cascade). Tests:
   `the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen`.
 - **Fix round (qa-08-code.md #8)**: a failing wallpaper query is logged and the policy goes out with `wallpapers: []` (never a 500 for time rules/calls); `Store::add_to_zip` skips a file that vanished between `read_dir` and the read (a prune during a backup).
@@ -209,7 +209,7 @@ No prior programming experience - build features directly rather than explaining
 Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays the on/off switch.
 - **Migration `0029_step9_fixes.sql`**: `device_policy.roles_changed_at` (stamped by `calls::save_settings` only when `calls_managed` changes), `device_policy.block_activity_start` (default 1), `device_status.play_store_suspendable`.
 - **Pending rule** (B1, QA 09 #5, pure `calls::role_report`): a latest report older than `roles_changed_at` shows "Waiting for the phone to confirm" (the last report's local time and age behind its ⓘ) instead of the role/call-log/fail-closed warnings **only while the change is < 5 minutes old** (the calls page reloads every 3 s for 2 minutes, `static/auto-reload.js`); later the real warnings plus "Calls change not confirmed yet"; a report newer than the change is always taken as is (a disagreeing one is a warning, never "waiting"). `call_report` returns the findings + `auto_refresh`.
-- **Kiosk app block** (B4): `PolicyResponse.block_activity_start` (always sent) - the launcher ORs `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in itself together with the system helpers it pins; `lock_task_features` is always sent with bit 64 masked out, so a launcher without the helpers never gets it. Switch "Block other apps' screens" on Advanced › App screens (the device page's "Play and kiosk" card until design 31 step 3; `POST /devices/{id}/kiosk-block`, missing checkbox = off, 404 unknown device, nudges, back to `/devices/{id}/advanced` without a fragment so the position is kept). The group warns when the phone reports `play_store_suspendable: false` (Play is then blocked only in kiosk, or not at all with the block off).
+- **Kiosk app block** (B4): `PolicyResponse.block_activity_start` (always sent) - the launcher ORs `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in itself together with the system helpers it pins; `lock_task_features` is always sent with bit 64 masked out, so a launcher without the helpers never gets it. Switch "Block other apps' screens" on Advanced › App screens (the device page's "Play and kiosk" card until design 31 step 3; `POST /devices/{id}/kiosk-block`, missing checkbox = off, 404 unknown device, nudges, back to `/devices/{id}/advanced#app-screens`, where scroll-restore keeps the position). The group warns when the phone reports `play_store_suspendable: false` (Play is then blocked only in kiosk, or not at all with the block off).
 - Fix round (qa-09-code.md): the calls page never auto-refreshes a refusal's render (it would lose the typed contact); `valid_matrix_id` follows the Matrix grammar (localpart `a-z0-9._=-/+`, server host/IPv4/`[IPv6]` + optional port) like the launcher's `isMatrixId`, which percent-encodes the id into Element X's URIs. A launcher on a server without this key treats the kiosk app block as off.
 - Tests: `src/tests/step9.rs`, `calls::tests::role_report_pending_expires`; `policy_json_keys_snapshot` has `block_activity_start`.
 
@@ -229,12 +229,23 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   position when any form leaves the page (submit event, and a wrapped
   `HTMLFormElement.prototype.submit` for the auto-saving controls - marked `data-autosave` and
   saved by `static/autosave.js` since design 31, which on a `<select>` changed from the keyboard
-  waits for Enter or blur) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
-  redirect with a `#fragment` (e.g. `/lock?notice=…#child-pin` with a flash) keeps its anchor instead. A new
+  waits for Enter or blur) per path in sessionStorage for 20 s, with where on the screen the form and its ancestors
+  with an id were, and restores it on the page that comes back. **Since the PWA browser pass's fix round
+  (2026-10-14, `docs/testing/2026-10-14-pwa-browser-pass.md`, design 31 §5.1.4) every form that stays on its page
+  posts to and redirects to its own group's `#fragment`** (its row in a long list): without JS the answer lands on
+  the form; with JS the script keeps the place over it - no fragment: the exact position; a fragment inside the
+  form's elements (its group, a new row in it, a deleted file's neighbour): that element back where it was on the
+  screen (an app switched to the other group stays under the finger); a fragment elsewhere (another group): the
+  browser's anchor. At `load` the script gives the history entry back to the browser (`scrollRestoration` "auto"),
+  so Back to that page later finds the browser's place, not the top (qa-browser-fixes-code M1). A fragment must name
+  an element the answer still has (a group that is always rendered; a row that goes with the save lands on its
+  group - `#notifications`, the always-rendered `#orphans`): the redirect tables follow each redirect with
+  `TestApp::assert_lands`. A form in a closed `<details>` returns with it open (`?open=`). A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
-  installed - CI always runs them); a new form needs nothing else as long as it redirects back to
-  its own page. External file, so a future CSP needs no inline-script exception.
+  installed - CI always runs them); a new form needs its group's fragment in its action and its redirect
+  (`tests::shell::every_form_on_every_page_lands_on_its_own_group` checks every page's forms with
+  `settings_pages::check_forms`). External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
   Lock Screen & PINs › Screen › "Turn off after" (design 31 step 4; `POST /devices/{id}/screen-timeout`, 400 for
@@ -263,7 +274,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 ## Kiosk escapes (handy step 11, design `docs/design/11-kiosk-escapes.md`, at the monorepo root)
 
 - **Migration `0036_kiosk_escapes.sql`**: `device_policy.update_fence` and `notification_auto_cancel` (both **default 0**: the fence stays off until the A3 device check passes on the Jelly Star, the notification filter until B5), `device_status.update_fence_json`, `notification_cancels_json`.
-- **Migration `0045_boot_cover.sql`** (design 16b): `device_policy.boot_cover`, **default 0** - the launcher's boot cover, a third checkbox on the same card ("Test it on this phone first"); `PolicyResponse.boot_cover` always sent, missing = off on the launcher. The form returns to `/devices/{id}/advanced` without a fragment (Advanced › Updates & notifications since design 31 step 3). **Migration `0046_boot_cover_state.sql`**: `device_status.boot_cover_json` - the phone's `boot_cover` report (`kiosk_escapes::BootCoverState`, known fields only, hand-over "cover"/"launcher"), capability `boot_cover_v1`; the card warns about an older launcher, a tripped crash guard (switch off and on to retry) or an arm not shown at the next start.
+- **Migration `0045_boot_cover.sql`** (design 16b): `device_policy.boot_cover`, **default 0** - the launcher's boot cover, a third checkbox on the same card ("Test it on this phone first"); `PolicyResponse.boot_cover` always sent, missing = off on the launcher. The form returns to `/devices/{id}/advanced#updates` (Advanced › Updates & notifications since design 31 step 3). **Migration `0046_boot_cover_state.sql`**: `device_status.boot_cover_json` - the phone's `boot_cover` report (`kiosk_escapes::BootCoverState`, known fields only, hand-over "cover"/"launcher"), capability `boot_cover_v1`; the card warns about an older launcher, a tripped crash guard (switch off and on to retry) or an arm not shown at the next start.
 - **Wire**: `PolicyResponse.update_fence` and `notification_auto_cancel`, always sent (`policy_json_keys_snapshot`); a launcher on an older server treats both as off. Advanced › Updates & notifications (the device page's "Launcher updates and notifications" card until design 31 step 3; `POST /devices/{id}/kiosk-escapes`, one auto-saving form: a missing checkbox is off, 404 unknown device, nudges) with the privacy text behind its footer's ⓘ (the filter uses the launcher's "App badges" notification listener, reads only app, channel and type, reports only names and counts).
 - **Status** (`src/kiosk_escapes.rs`, pure + unit tests): `update_fence` (`enabled, state, unsuspendable, last_release, home_role_held, pending_tag, pending_since_ms, waiting_for, last_fenced_at_ms, last_released_at_ms`) and `notification_cancels` (`active, entries[{package_name, channel, cancelled, snoozed}], dropped`) are stored **re-serialized through the known fields** like `lock_state`: lists <= 20 entries (extra counted in `dropped`), ids cut to 64 chars, counts never negative - never notification text. `escapes_card` and `boot_cover_notes` return typed `EscapeNote`s (design 31 M5; `EscapeNote::note` words them as a warning above the group or a row in it) for a fence that is up, packages Android refused to pause, a partial fence (no ROLE_HOME), the last release (a failed install is a warning), a downloaded update waiting for the night window (and why), missing notification access, and what the filter removed. Capability `kiosk_escapes_v1` (a reporting launcher without it gets "update the launcher").
 - **Fix round (qa-11-code.md #5, #8)**: `update_fence` also keeps `last_fenced_at_ms`/`last_released_at_ms` (the phone's last-fence summary, since the live record never reaches a report); a fence reported more than 15 min ago reads "started at ... and the phone hasn't reported since", never "right now"; `last_release` "orphan" (a lost record swept on the phone) and "commit_failed" are warnings like "install_failed". Phone-supplied times are clamped to 1970..2100 and counts to 0..1e6 when sanitizing, and the card uses saturating arithmetic (tested with `i64::MIN`/`MAX`).
@@ -277,7 +288,7 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
 
 - **`security::REQUIRED_WATCHER_SCHEMA` must be bumped in the exact same commit as any `deploy/install.sh` change to `WATCHER_SCHEMA_VERSION`, and it's easy to forget since they're two separate files with no compile-time link between them.** The DNS/Filters commit bumped `install.sh`'s `WATCHER_SCHEMA_VERSION` from `1` to `2` (adding the `dns_filter_enable`/`disable` root actions), but `REQUIRED_WATCHER_SCHEMA` was left at `1` - so `security::watcher_needs_update()` never actually flagged a Pi whose watcher predates that commit as needing a re-run of `install.sh`, even though its watcher script genuinely doesn't recognize `dns_filter_enable` as a valid action (falls through to `install.sh`'s "Unknown or empty update-request action" case, and the iptables redirect silently never gets applied - confirmed live: "Enable DNS filtering" showed 0 queries handled and ads still loaded on a device that otherwise had this Pi correctly configured as its Tailscale exit node). Fixed by bumping `REQUIRED_WATCHER_SCHEMA` to `2` to match (now `3`, bumped again in the same commit as the DNS-over-TLS iptables/cert-renewal actions, precisely to not repeat this; `5` in this fork, where `actions.sh` gets the release repo substituted in). If a future privileged root action is ever silently not taking effect, check this pairing first - specifically whether the Updates page's "watcher needs update" banner should have fired but didn't.
 - **axum's built-in `Form` extractor cannot deserialize repeated same-named form fields** (e.g. multiple checked checkboxes named `allowed_packages`) into a `Vec<String>` - errors with `invalid type: string "...", expected a sequence`. Fixed in `handlers::devices::update_policy` by taking raw `axum::body::Bytes` and parsing manually with `form_urlencoded` instead of `Form<T>`. Reuse this pattern for any future repeated-checkbox-group field.
-- **Browsers cache `/static/*` assets aggressively with no revalidation** - editing `style.css` and reloading can silently keep serving the old cached copy even after a hard navigate. `partials/head.html` links it with a `?v=N` cache-busting query param (bump `N` when the stylesheet changes) - the same pattern `board-game-tracker` already uses.
+- **Browsers cache `/static/*` assets aggressively with no revalidation** - editing `style.css` and reloading can silently keep serving the old cached copy even after a hard navigate. `partials/head.html` links it with a `?v=N` cache-busting query param (bump `N` when the stylesheet changes) - the same pattern `board-game-tracker` already uses. A lost `}` in `style.css` doesn't fail anything by itself - the browser nests everything after it and silently drops ~160 lines (the PWA browser pass of 2026-10-14, High 1) - so `tests::shell::style_css_has_the_shape_browsers_read` tokenizes the file (comments, strings, braces) and fails on a rule opened inside a declaration block, an unbalanced brace, or an unclosed comment or string.
 - **The dev server is a plain `cargo run`, not `cargo watch`** - it will not pick up template or static-file changes on its own. Kill the running `cargo`/`kid_phone_server` processes and restart after any such edit, or you'll be testing against stale HTML/CSS while genuinely-fresh files sit on disk (this has caused real confusion mid-session more than once).
 - **(Since handy step 10 phones have no Android screen lock - the launcher's own PIN lock replaces it, see above - but the keyguard bit below stays forced.)** **`LOCK_TASK_FEATURE_KEYGUARD` is disabled by default in Android's lock-task mode, and that suppression is enforced at the `DevicePolicyManager`/`system_server` level - it keeps applying even before a device is decrypted (Before First Unlock), when the client app's own process can't run at all.** A real device got stuck at boot after GrapheneOS's auto-reboot-after-inactivity feature re-locked storage while this bit was off for that device: no keyguard to enter a PIN into (suppressed by policy) *and* no launcher available either (this app was the exclusive enforced Home app, and its components aren't resolvable pre-unlock) - a total deadlock, recoverable only via hardware-level recovery mode. Fixed by forcing `LOCK_FEATURE_KEYGUARD` on unconditionally in `update_policy`, same as the other always-on features - it's no longer admin-configurable. The tradeoff this accepts: every kiosk-mode device now also requires a PIN to resume from sleep, not just after a reboot, since Android doesn't expose those as separate bits.
 - **`rustls` 0.23+ needs an explicit process-wide default `CryptoProvider` installed before *any* TLS connection works, and there's no error at the call site that says so.** Without `rustls::crypto::ring::default_provider().install_default()` early in `main()`, TLS just silently fails - first discovered via the (now-deleted, see Phase E above) DNS filter's DoT upstream forwarding, which failed every query with `NetError(NoConnections)`, no panic, no obvious log line pointing at the real cause, only found by turning on `hickory_resolver=debug` tracing and noticing the connection attempt simply never got anywhere. **Still just as real after Phase E removed that code** - `reqwest`'s own `rustls` feature (used for blocklist downloads and every GitHub Releases API call in `tracked_apps.rs`) depends on this exact same process-wide install; that's the only reason `main.rs` still calls it and `rustls` is still a direct dependency at all (see Cargo.toml's comment on it). Install exactly one provider once, at startup, before anything that might open a TLS connection runs - and don't ever remove this call while `reqwest`'s `rustls` feature is still in use, even if the original DoT code that motivated adding it is long gone.
@@ -514,7 +525,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `auto`, entries with nothing left dropped; a failing query sends `[]` and logs (cosmetic, like wallpapers).
 - **Forms** (`partials/app_display_form.html`, `AppDisplayForm`): every allowed app with a valid package (not the
   launcher) under its row on the phone's Apps page (`POST /devices/{id}/apps/display#app-<package>`, `action`
-  save/own/catalog, back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `#display`, nudges every
+  save/own/catalog, back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `?open=display#display`, open, nudges every
   phone). Validation (`app_display::validate`): label trimmed, 1-20 chars (`chars().count()`), no control chars;
   icon empty or known; colour `auto` or known; package per Android's grammar, never Play core. Refused: 400 with the
   phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
@@ -858,7 +869,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
   that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
   `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
-  the lock screen: on"); nudges; redirect to `/devices/{id}/lock` without a fragment (scroll-restore keeps the place). The
+  the lock screen: on"); nudges; redirect to the form's row, `/devices/{id}/lock#lock-screen-text` /
+  `#lock-screen-app-<package>` (scroll-restore keeps the place). The
   Home Screen's notification-access warning and the Lock screen group's ⓘ name the lock's first page.
 - Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (the migration on an old database, the trigger, the
   cascade, the policy incl. a dropped table, both routes, refusals, the page and its notes), `policy_json_keys_snapshot`
@@ -1044,9 +1056,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`regenerate-code`, the QR link, Disconnect Phone… behind a `<details>` confirm), Remove Phone… (`delete`,
   `<details>` confirm). App screens, Updates and Connection only for an enrolled phone. Warnings sit above their
   group (`partials/note_warning.html`), states are rows (`partials/note_row.html`).
-- **Where the forms return** (§5.1): the three auto-saves (`hardening`, `kiosk-block`, `kiosk-escapes`) →
-  `/devices/{id}/advanced` with **no fragment**, so `scroll-restore.js` keeps the exact position (a save never jumps;
-  qa-31-s3-code M3, pinned by the redirect table); `revoke` → `?notice=…#connection` (the flash in the group),
+- **Where the forms return** (§5.1): the three auto-saves → their groups, `/devices/{id}/advanced#restrictions`,
+  `#app-screens`, `#updates` (the browser pass's fix round: without JS on the switch, with JS `scroll-restore.js`
+  keeps the exact position; pinned by the redirect table); `revoke` → `?notice=…#connection` (the flash in the group),
   `delete` → `/devices`. `enroll_code.html`'s Back goes to `/advanced#connection` for an enrolled phone, `#access`
   (the not-enrolled card) otherwise.
 - **Attention targets** moved: Do Not Disturb → `/about#sound`, policy problem → `/about#software`, unseen restarts →
@@ -1079,9 +1091,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "Background" are inline `select.pick`s, "Show message text" and each app a switch - all `data-autosave` with a
   `<noscript>` Save.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
-  `/lock?notice=…#child-pin`, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`,
-  `lock-wallpaper`, `lock-screen`, `lock-screen/apps` → `/devices/{id}/lock` with **no fragment** (scroll-restore
-  keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off →
+  `/lock?notice=…#child-pin`, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
+  → `#screen`, `lock-wallpaper`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`,
+  `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off →
   `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
   `lock_glance::Note` the notes' sentences; `parent_pin::event_row` the PWA's event lines (`event_line`, `until_text`'s
@@ -1123,8 +1135,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   500 on a DB error (it used to log and redirect).
 - **`back`** (§5.1) on the domain and list routes (`dns_filter::back_to`): `back=filter` returns to the phone's Web
   Filter page - the phone from the path or the deleted row, never from the form -, anything else to the form's group on
-  `/dns` (step 14). Every form on the two phone pages returns to its page with **no fragment** (scroll-restore keeps
-  the place), pinned by
+  `/dns` (step 14). Every form on the two phone pages returns to its group (`#layout`, `#wallpapers`,
+  `#quick-controls`; `#filter`, `#lists`, `#blocked`, `#allowed`, `#log`; scroll-restore keeps the place), pinned by
   `tests::device_pages::home_and_filter_forms_return_to_their_page`.
 - **Old URLs** (L5): `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`. `/dns`
   and `/dns/log` are in "The rest of Settings" below.
@@ -1186,8 +1198,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "Update Vibb and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
-  rendered forms, each fragment checked to hold its form): the app switch to the page **without a fragment** (its
-  first group), refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
+  rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
   deleted since the page loaded to `#music-app`; an entry's switch to `#music-entry-<id>` (refused
   `?music_notice=too_big&music_entry=<id>#music-entry-<id>`; an entry deleted since to `#library`); the settings form
   to `#music-settings`, Sonos to `#music-sonos` (refused `?music_notice=sonos_*#music-sonos`). The policy JSON and
@@ -1209,7 +1220,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   On the home screen, Message button, Matrix ID, one form (§5.6); New photo / Remove Photo; **Remove Contact…** as a
   `<details>` confirm, M6), Add Contact as a disclosure at the end. No country code here.
 - **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
-  rendered forms): `/calls/settings` → the page, no fragment (the page's first group; scroll-restore keeps the place);
+  rendered forms): `/calls/settings` → `#settings` (scroll-restore keeps the place);
   a contact's save, photo and photo removal → `?open=<id>#contact-<id>` (its row, open again, with or without JS);
   Add Contact → `#contact-<new>`; Remove Contact… → `#contacts`, also for a second tap. A contact that isn't on the
   phone (another tab removed it) → `?notice=contact_gone#contacts` ("nothing was saved", at the top of the group); an
@@ -1265,8 +1276,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   form, and while off a row to everyone's rules), **Own Rules** (rows to the editor, Add Rule), **Own Daily Limit**. A
   phone not set up has the page. Every read is a 500 on a DB error, never an empty list.
 - **Where forms return** (§5.1, `tests::time_pages::every_form_on_the_time_pages_returns_to_its_group`, built from the
-  rendered forms): a rule's save → `/schedules/rules/{id}?saved=1` (no fragment: Save is at the top), a new rule → its
-  page `?saved=added`, a delete → the list it was in (`/schedules?notice=deleted#rules`,
+  rendered forms): a rule's save → `/schedules/rules/{id}?saved=1#rule` (the form: Save is at the top), a new rule →
+  its page `?saved=added#rule`, a delete → the list it was in (`/schedules?notice=deleted#rules`,
   `/devices/{id}/time?notice=deleted#own-rules`); a save or delete of a rule deleted in another tab lands on that list
   (`notice=gone_unsaved|gone`), nothing written. Daily Limit → `/schedules/screen-time?saved=1#screen-time`. On Device
   › Time each form carries its group's fragment: the lifts (`back=time`) → `?done=extra|pause|gone#extra|pause`, End
@@ -1344,8 +1355,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `app_display_form` partial); On phones (the phones with it ticked, every set-up phone for the launcher); Source &
   Signing (a `<details>`, open when a refused save/upload is in it): the release, file, package (+ candidates), key
   (short, whole in ⓘ), Forget Package and Key… (a `<details>` confirm), the Details form, the three switches (one
-  form each, `<noscript>` Save), Upload for manual apps; Remove App…. Every POST target and redirect is as before
-  (`tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` posts each rendered form).
+  form each, `<noscript>` Save), Upload for manual apps; Remove App…. Since the browser pass's fix round every form
+  returns to its group (`#check`, `#display`, `#details`, `#updates`, `#release`, `#upload`), and one in a closed
+  `<details>` with it open (`?open=display`, `?open=source`: the "Show on phones as" save no longer folds up under
+  the parent, 6f) (`tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` posts each rendered form).
 - **Sync failures are typed** (`SyncProblem` + `Failure { problem, detail }`), set where the error happens
   (`fetch_latest_release`, `sync_release`, `check_pins`, `check_new_package`); the page shows `title()` (at most 6
   words) and keeps the raw reqwest/sqlx/file error behind ⓘ and in the log; a temp-file or rename error is `Server`,
@@ -1375,12 +1388,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
   category), `/music/import` (GET the form; `POST /music/import` renders this page with the preview). GETs chained
   with their POSTs on one route (L5).
 - **Where forms return** (§5.1, `tests::music::every_form_on_the_music_pages_returns_to_its_page` posts every rendered
-  form): sweep and orphans → `/music/settings` (no fragment), the Storytel login and its removal →
+  form): sweep and orphans → `/music/settings#sweep` / `#orphans`, the Storytel login and its removal →
   `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories?open=<id>#category-<id>` (the editor stays open; delete:
-  no fragment), the import → `/music/import#import`; an entry's save → `/music/entries/<id>#settings`, Check now from
+  `#categories`), the import → `/music/import#import`; an entry's save → `/music/entries/<id>#settings`, Check now from
   there `#status`, cover `#cover`, files `#files`/`#file-<id>`; the row's Check now and Offline → `/music#entry-<id>`;
-  delete → `/music#entries`. A form whose redirect has no fragment has none in its action either (a browser keeps the
-  action's over such a redirect). Every delete is a `<details>` confirm, no `confirm()` left
+  delete → `/music#entries`. Each action carries its redirect's fragment (§5.1.4). Every delete is a `<details>` confirm, no `confirm()` left
   (`the_music_deletes_are_behind_a_confirm`).
 - **The entry page** (`music_entry.html`): Cover (with the kind and link) → Episodes/Books (`#status`) → Settings (one
   form, the resume switch in it) → Files (each file's row opens its Delete File… confirm) → On phones (each phone's

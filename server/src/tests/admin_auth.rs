@@ -1026,9 +1026,16 @@ async fn the_sign_in_pages_use_the_new_components() {
         page.contains("<h1 class=\"auth-title\">Two-Factor Login</h1>"),
         "{page}"
     );
-    assert_eq!(page.matches(secret.as_str()).count(), 1, "the key once");
+    // Once, in blocks of 4 so it wraps between blocks (the browser pass of 2026-10-14, 6g).
+    let blocks: Vec<String> = secret
+        .as_bytes()
+        .chunks(4)
+        .map(|block| String::from_utf8(block.to_vec()).unwrap())
+        .collect();
+    let blocks = blocks.join(" ");
+    assert_eq!(page.matches(blocks.as_str()).count(), 1, "the key once");
     let panel = &page[page.find("Can't scan it?").unwrap()..];
-    assert!(panel[..panel.find("</details>").unwrap()].contains(&secret));
+    assert!(panel[..panel.find("</details>").unwrap()].contains(&blocks));
     let res = app
         .request_form(
             Method::POST,

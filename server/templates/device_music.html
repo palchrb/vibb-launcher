@@ -10,8 +10,8 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">Music</h1>
 
-    {#- Where the forms return (§5.1): the music app's switch to this page without a fragment (the
-        first group: scroll-restore keeps the place) or, refused, to #music-app with the reason;
+    {#- Where the forms return (§5.1): the music app's switch to its group, #music-app (with the
+        reason when refused);
         an entry's switch to its row (#music-entry-<id>, a long list); the settings form to
         #music-settings and Sonos to #music-sonos (lower on the page: without JS a save must not
         land at the top). Every auto-saving form has a <noscript> Save. -#}
@@ -21,7 +21,7 @@
 
     <section id="music-app" aria-label="Music app">
         {% if let Some(app) = music.app %}
-        <form method="post" action="/devices/{{ device.id }}/apps/toggle" class="group">
+        <form method="post" action="/devices/{{ device.id }}/apps/toggle#music-app" class="group">
             <input type="hidden" name="tracked_app_id" value="{{ app.tracked_app_id }}">
             <input type="hidden" name="package_name" value="{{ app.package_name }}">
             <input type="hidden" name="back" value="music">
@@ -52,7 +52,7 @@
         <div class="group">
             {% for tick in music.ticks %}
             <div class="cell" id="music-entry-{{ tick.id }}">
-                <form method="post" action="/devices/{{ device.id }}/music/entries/{{ tick.id }}">
+                <form method="post" action="/devices/{{ device.id }}/music/entries/{{ tick.id }}#music-entry-{{ tick.id }}">
                     <label class="row">
                         <span class="row-label">{{ tick.name }}<span class="row-sub">{{ tick.detail }}</span>{% if let Some(error) = tick.error %}<span class="row-sub text-alarm" data-entry-error>On the phone: {{ error }}</span>{% endif %}</span>
                         <input type="checkbox" role="switch" class="sw" name="selected"{% if tick.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

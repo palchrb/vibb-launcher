@@ -469,6 +469,19 @@ struct Setup2faTemplate {
     error: Option<String>,
 }
 
+impl Setup2faTemplate {
+    /// The key in blocks of 4 ("343I I2AD …"), so it wraps between blocks, never a lone character
+    /// on a line (the browser pass of 2026-10-14, 6g); authenticator apps ignore the spaces.
+    fn secret_blocks(&self) -> String {
+        let chars: Vec<char> = self.secret_base32.chars().collect();
+        chars
+            .chunks(4)
+            .map(|block| block.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 pub async fn setup_2fa_form(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,

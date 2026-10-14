@@ -176,8 +176,12 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
             &[],
         )
         .await;
-    // Back to Advanced with no fragment: scroll-restore.js keeps the position (qa-31-s3-code M3).
-    super::assert_redirect(&res, &format!("/devices/{id}/advanced"), None);
+    // Back to its group on Advanced (§5.1.4): scroll-restore.js keeps the position.
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/advanced"),
+        Some("app-screens"),
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, &token).await["block_activity_start"],

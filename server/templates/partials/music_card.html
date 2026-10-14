@@ -16,10 +16,10 @@
     {% if edit %}
     <div class="music-actions" data-actions="move">
         {% if !entry.first %}
-        <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} up">&uarr;</button></form>
+        <form method="post" action="/music/entries/{{ entry.id }}/move#entry-{{ entry.id }}"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} up">&uarr;</button></form>
         {% endif %}
         {% if !entry.last %}
-        <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} down">&darr;</button></form>
+        <form method="post" action="/music/entries/{{ entry.id }}/move#entry-{{ entry.id }}"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} down">&darr;</button></form>
         {% endif %}
     </div>
     {% else if let Some(sweep) = entry.sweep %}
@@ -27,9 +27,9 @@
         {% if let Some(after) = sweep.check_after %}
         <span class="music-after">Check again after {{ after }}</span>
         {% else %}
-        <form method="post" action="/music/entries/{{ entry.id }}/check"><button type="submit" class="button-small button-secondary">Check now</button></form>
+        <form method="post" action="/music/entries/{{ entry.id }}/check#entry-{{ entry.id }}"><button type="submit" class="button-small button-secondary">Check now</button></form>
         {% endif %}
-        <form method="post" action="/music/entries/{{ entry.id }}/offline">
+        <form method="post" action="/music/entries/{{ entry.id }}/offline#entry-{{ entry.id }}">
             <label for="offline-{{ entry.id }}">Offline</label>
             <select id="offline-{{ entry.id }}" name="cache" class="pick" data-autosave>
                 {% for (value, label) in sweep.caches %}

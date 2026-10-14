@@ -14,7 +14,7 @@ async fn app_display(app: &TestApp, token: &str) -> serde_json::Value {
 /// A status report saying these packages are installed (so the device page lists them).
 /// The phone reports `packages` installed, and the parent allows them all (a new phone starts
 /// with only the safe defaults, security review M10).
-async fn report_installed(app: &TestApp, token: &str, packages: &[&str]) {
+pub(super) async fn report_installed(app: &TestApp, token: &str, packages: &[&str]) {
     let installed: Vec<serde_json::Value> = packages
         .iter()
         .map(|p| serde_json::json!({ "package_name": p, "label": format!("Label of {p}") }))
@@ -86,7 +86,7 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         .await;
     assert_eq!(
         saved.location(),
-        Some(format!("/apps/tracked/{element}#display").as_str())
+        Some(format!("/apps/tracked/{element}?open=display#display").as_str())
     );
     assert!(nudges.try_recv().is_ok());
     let chat = serde_json::json!([

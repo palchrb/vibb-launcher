@@ -33,7 +33,7 @@
     --red: #D70015;
     --red-text: #B0001A;
     --red-bg: #FDECEE;
-    --orange: #B35A00;
+    --orange: #A85400; /* 4.8:1 on --bg, 5.3:1 on --surface (the browser pass of 2026-10-14, 6a) */
     --orange-text: #7A3D00;
     --orange-bg: #FFF4E5;
     --green: #1E7A35;
@@ -877,13 +877,6 @@ details.confirm > summary.row {
     padding: 24px 16px;
 }
 
-/* A card that blocks the task (the provisioning page's missing setup). */
-
-.subtitle {
-    color: var(--label-2);
-    font-size: 0.9375rem;
-}
-
 label {
     display: block;
     font-weight: 600;
@@ -935,7 +928,7 @@ textarea {
     border: 1px solid var(--sep-light);
     border-radius: 10px;
     padding: 10px 12px;
-    word-break: break-all;
+    overflow-wrap: break-word;
     font-size: 0.9rem;
     margin-bottom: 16px;
 }
@@ -1239,30 +1232,68 @@ th {
     margin-bottom: 6px;
 }
 
+/* The radio itself is hidden (still focusable and announced): the chosen tile, swatch or text
+   choice gets a ring, the focused one an outline (the browser pass of 2026-10-14, 6b). */
 .glyph-choice,
 .color-choice {
+    position: relative;
     display: inline-flex;
     align-items: center;
+    min-height: 44px;
     font-weight: normal;
-    margin: 0 8px 8px 0;
-}
-
-.glyph-choice > * + *,
-.color-choice > * + * {
-    margin-left: 4px;
+    margin: 0 10px 4px 0;
+    cursor: pointer;
 }
 
 .glyph-choice input,
 .color-choice input {
-    width: auto;
+    position: absolute;
+    width: 1px;
+    height: 1px;
     margin: 0;
+    opacity: 0;
+}
+
+.color-choice > .swatch {
+    margin-right: 6px;
 }
 
 .swatch {
     display: inline-block;
-    width: 20px;
-    height: 20px;
+    flex: none;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
+}
+
+.choice-text {
+    padding: 6px 12px;
+    border: 1px solid var(--sep);
+    border-radius: 16px;
+    font-size: 0.9375rem;
+}
+
+.glyph-choice input:checked + *,
+.color-choice input:checked + * {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--tint);
+}
+
+.glyph-choice input:checked + .choice-text,
+.color-choice input:checked + .choice-text {
+    border-color: var(--tint);
+    box-shadow: inset 0 0 0 1px var(--tint);
+    color: var(--tint);
+}
+
+.glyph-choice input:focus + *,
+.color-choice input:focus + * {
+    outline: 2px solid var(--tint);
+    outline-offset: 5px;
+}
+
+.glyph-choice input:focus:not(:focus-visible) + *,
+.color-choice input:focus:not(:focus-visible) + * {
+    outline: none;
 }
 
 /* ---- Accessibility media ---- */
@@ -1283,6 +1314,18 @@ th {
     .sw + .knob,
     .row > .sw + .knob {
         margin: 0;
+    }
+
+    input[type="checkbox"]:not(.sw),
+    .glyph-choice input,
+    .color-choice input {
+        -webkit-appearance: auto;
+        appearance: auto;
+        position: static;
+        width: auto;
+        height: auto;
+        margin-right: 6px;
+        opacity: 1;
     }
 }
 
@@ -1431,11 +1474,6 @@ code.key {
 .group-display > details.app-display {
     border-top: 0;
     padding: 0;
-}
-
-.group-display > details.app-display > summary {
-    padding: 11px 16px;
-    min-height: 44px;
 }
 
 .group-display > details.app-display > form {
@@ -1687,7 +1725,7 @@ input.row-input {
     font-size: 1.0625rem;
 }
 
-/* The wallpapers a phone may use: a thumbnail and a checkbox each (no flex gap: Safari 14.0). */
+/* The wallpapers a phone may use: a thumbnail and a switch each (no flex gap: Safari 14.0). */
 .wallpaper-grid {
     display: flex;
     flex-wrap: wrap;
@@ -1716,9 +1754,8 @@ input.row-input {
     object-fit: cover;
 }
 
-.wallpaper-choice input {
-    width: 22px;
-    height: 22px;
+.wallpaper-switch {
+    display: flex;
     margin: 0 0 4px;
 }
 
@@ -1732,9 +1769,11 @@ input.row-input {
 }
 
 .group-apps > .cell > details.app-display > summary {
-    min-height: 44px;
-    padding: 2px 0 12px 48px;
-    font-size: 0.8125rem;
+    padding: 0 0 10px 48px;
+    font-size: 0.9375rem;
+}
+
+.group-apps > .cell > details.app-display > summary > .row-label {
     color: var(--tint);
 }
 
@@ -1744,6 +1783,7 @@ input.row-input {
 
 .group-apps > .cell > .flash {
     padding-left: 64px;
+}
 
 /* ---- Design 31 step 14: the rest of Settings ---- */
 
@@ -1904,3 +1944,87 @@ a.act, a.act:hover { text-decoration: none; }
 .auth-title { margin: 0 4px 8px; font-size: 2.125rem; font-weight: 700; line-height: 1.15; }
 .auth-sub { margin: 0 4px 20px; font-size: 1rem; line-height: 1.35; color: var(--label-2); }
 .auth-error { margin: 0 0 20px; border-radius: 12px; }
+
+/* ---- The PWA browser pass's fix round (2026-10-14): no native-looking controls left ---- */
+
+/* A tick that isn't an on/off setting (a confirm's "Yes, disconnect it", the rows an import or the
+   Storytel shelf adds, "Remove it instead"): a round check, as iOS marks a chosen row. The check is
+   a background image, never a pseudo-element on the input (§5.7). */
+input[type="checkbox"]:not(.sw) {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    border: 1.5px solid var(--switch-off-border);
+    border-radius: 50%;
+    background: var(--surface) center / 14px 14px no-repeat;
+    vertical-align: middle;
+    cursor: pointer;
+}
+
+input[type="checkbox"]:not(.sw):checked {
+    border-color: var(--tint);
+    background-color: var(--tint);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3 7.4l2.7 2.6L11 4.4' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+input[type="checkbox"]:not(.sw):disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* A file field: the browser's own button drawn as the app's secondary button (two rules: a
+   browser drops a whole rule with a pseudo-element it doesn't know). */
+input[type="file"] {
+    max-width: 100%;
+    font: inherit;
+    font-size: 0.9375rem;
+    color: var(--label-2);
+}
+
+input[type="file"]::-webkit-file-upload-button {
+    -webkit-appearance: none;
+    margin: 0 12px 0 0;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--field-bg);
+    color: var(--tint);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+input[type="file"]::file-selector-button {
+    appearance: none;
+    margin: 0 12px 0 0;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--field-bg);
+    color: var(--tint);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* "Name and icon" (partials/app_display_form.html): a disclosure row with the chevron, as
+   Source & Signing, not the browser's triangle. */
+details.app-display > summary {
+    list-style: none;
+}
+
+details.app-display > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.app-display > summary .row-sub::first-letter {
+    text-transform: uppercase;
+}
+
+details.app-display[open] > summary .section-chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}

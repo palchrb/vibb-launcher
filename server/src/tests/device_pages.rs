@@ -189,7 +189,7 @@ async fn a_phone_not_set_up_has_little_to_say_and_can_still_be_removed() {
         .await
         .text();
     // Restrictions can be set before setup; the rest needs a phone.
-    assert!(advanced.contains(&format!("action=\"/devices/{id}/hardening\"")));
+    assert!(advanced.contains(&format!("action=\"/devices/{id}/hardening#restrictions\"")));
     assert!(advanced.contains(&format!("action=\"/devices/{id}/delete\"")));
     for missing in [
         "/kiosk-block",
@@ -247,8 +247,9 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 /// §5.1's redirect table for Advanced: every form on the page, posted with valid values, returns
-/// to Advanced. The three auto-saves have **no fragment**, so `scroll-restore.js` keeps the exact
-/// position and a save never jumps (§5.1.4, qa-31-s3-code M3); Disconnect Phone lands on its
+/// to Advanced. The three auto-saves return to their groups, the fragment their actions carry too
+/// (§5.1.4: without JS the answer lands on the switch, with JS `scroll-restore.js` keeps the exact
+/// position - the browser pass of 2026-10-14); Disconnect Phone lands on its
 /// group, where its flash is; "New Setup Code" shows the code page, Remove Phone goes to the list.
 /// Built from the rendered forms, so a form that moves can't keep a stale target.
 #[tokio::test]
@@ -270,23 +271,23 @@ async fn advanced_forms_return_to_their_groups() {
     );
     let table: [Row; 6] = [
         (
-            "hardening",
+            "hardening#restrictions",
             &[("disallow_factory_reset", "on")],
-            Some((advanced.clone(), None)),
+            Some((advanced.clone(), Some("restrictions"))),
         ),
         (
-            "kiosk-block",
+            "kiosk-block#app-screens",
             &[("block_activity_start", "on")],
-            Some((advanced.clone(), None)),
+            Some((advanced.clone(), Some("app-screens"))),
         ),
         (
-            "kiosk-escapes",
+            "kiosk-escapes#updates",
             &[("update_fence", "on")],
-            Some((advanced.clone(), None)),
+            Some((advanced.clone(), Some("updates"))),
         ),
         ("regenerate-code", &[], None),
         (
-            "revoke",
+            "revoke#connection",
             &[("confirm", "yes")],
             Some((
                 format!("{advanced}?notice=access_revoked"),
@@ -315,7 +316,10 @@ async fn advanced_forms_return_to_their_groups() {
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
         match expected {
-            Some((path, fragment)) => assert_redirect(&res, path, *fragment),
+            Some((path, fragment)) => {
+                assert_redirect(&res, path, *fragment);
+                app.assert_lands(&res, &cookie).await;
+            }
             None => {
                 assert_eq!(res.status, StatusCode::OK, "{route}");
                 assert!(res.text().contains("class=\"enrollment-code\""), "{route}");
@@ -357,7 +361,7 @@ async fn destructive_actions_confirm_with_details() {
         ("delete", "Remove Phone&hellip;", "Remove Phone</button>"),
     ] {
         let form_at = html
-            .find(&format!("action=\"/devices/{id}/{action}\""))
+            .find(&format!("action=\"/devices/{id}/{action}"))
             .unwrap();
         let details_at = html[..form_at]
             .rfind("<details class=\"confirm cell\">")
@@ -373,7 +377,7 @@ async fn destructive_actions_confirm_with_details() {
         assert!(form.contains("class=\"button-destructive\""), "{action}");
     }
     let revoke = &html[html
-        .find(&format!("action=\"/devices/{id}/revoke\""))
+        .find(&format!("action=\"/devices/{id}/revoke#connection\""))
         .unwrap()..];
     assert!(
         revoke[..revoke.find("</form>").unwrap()]
@@ -622,16 +626,16 @@ async fn removing_the_child_pin_confirms_with_details() {
     let inside = &html[details..hidden];
     assert!(!inside.contains("</details>"), "{inside}");
     assert!(inside.contains("<summary class=\"row\">Remove Child PIN&hellip;</summary>"));
-    assert!(inside.contains(&format!("action=\"/devices/{id}/kid-lock\"")));
+    assert!(inside.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
     let form = &html[hidden..hidden + html[hidden..].find("</form>").unwrap()];
     assert!(form.contains("Remove Anna's Child PIN?"), "{form}");
     assert!(form.contains("class=\"button-destructive\">Remove Child PIN</button>"));
 }
 
 /// §5.1's redirect table for Lock Screen & PINs: every form on the page, posted with valid values,
-/// returns to it. The auto-saves have **no fragment** (scroll-restore keeps the exact place); the
-/// two PIN forms land on their group, where the flash is. Built from the rendered forms, so a form
-/// that moves can't keep a stale target.
+/// returns to it, at its group or row - the fragment its action carries too (§5.1.4: without JS on
+/// the form, with JS scroll-restore keeps the exact place); the two PIN forms' flash is in their
+/// group. Built from the rendered forms, so a form that moves can't keep a stale target.
 #[tokio::test]
 async fn lock_forms_return_to_the_page() {
     let app = TestApp::new().await;
@@ -647,18 +651,18 @@ async fn lock_forms_return_to_the_page() {
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
     let table: [Row; 7] = [
         (
-            "kid-lock",
+            "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
             (format!("{lock}?notice=saved"), Some("child-pin")),
         ),
         // Remove Child PIN… (its hidden `clear_kid_pin`).
         (
-            "kid-lock",
+            "kid-lock#child-pin",
             &[],
             (format!("{lock}?notice=cleared"), Some("child-pin")),
         ),
         (
-            "parent-pin",
+            "parent-pin#parent-pin",
             &[("new_pin", "6150482")],
             (
                 format!("{lock}?notice=parent_pin_saved"),
@@ -666,14 +670,27 @@ async fn lock_forms_return_to_the_page() {
             ),
         ),
         (
-            "screen-timeout",
+            "screen-timeout#screen",
             &[("screen_timeout_seconds", "120")],
-            (lock.clone(), None),
+            (lock.clone(), Some("screen")),
         ),
-        ("lock-wallpaper", &[("wallpaper", "")], (lock.clone(), None)),
-        ("lock-screen", &[("show_text", "on")], (lock.clone(), None)),
-        // Element X, ticked for every new phone (its hidden `package_name`).
-        ("lock-screen/apps", &[], (lock.clone(), None)),
+        (
+            "lock-wallpaper#lock-wallpaper",
+            &[("wallpaper", "")],
+            (lock.clone(), Some("lock-wallpaper")),
+        ),
+        (
+            "lock-screen#lock-screen-text",
+            &[("show_text", "on")],
+            (lock.clone(), Some("lock-screen-text")),
+        ),
+        // Element X, ticked for every new phone (its hidden `package_name`); listed only for its
+        // tick (no report yet), so the untick lands on the group (qa-browser-fixes-code L1).
+        (
+            "lock-screen/apps#notifications",
+            &[],
+            (lock.clone(), Some("notifications")),
+        ),
     ];
     let found = forms(&html);
     let actions: Vec<&str> = found.iter().map(|(a, _)| a.as_str()).collect();
@@ -695,6 +712,7 @@ async fn lock_forms_return_to_the_page() {
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
         assert_redirect(&res, path, *fragment);
+        app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says.
     let (kid, timeout, text): (Option<String>, i64, bool) = sqlx::query_as(
@@ -739,8 +757,8 @@ async fn a_phone_not_set_up_can_get_its_pins_first() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    assert!(html.contains(&format!("action=\"/devices/{id}/kid-lock\"")));
-    assert!(html.contains(&format!("action=\"/devices/{id}/parent-pin\"")));
+    assert!(html.contains(&format!("action=\"/devices/{id}/kid-lock#child-pin\"")));
+    assert!(html.contains(&format!("action=\"/devices/{id}/parent-pin#parent-pin\"")));
     assert!(html.contains("None reported yet."));
 }
 
@@ -903,7 +921,7 @@ async fn home_screen_holds_the_moved_forms() {
         "Home Screen",
         &["layout", "wallpapers", "quick-controls"],
     );
-    let launcher = format!("/devices/{id}/launcher");
+    let launcher = format!("/devices/{id}/launcher#layout");
     assert_eq!(form_action_of(&html, "language"), Some(launcher.as_str()));
     assert_eq!(
         form_action_of(&html, "home_columns"),
@@ -911,10 +929,10 @@ async fn home_screen_holds_the_moved_forms() {
     );
     assert_eq!(
         form_action_of(&html, "wallpaper"),
-        Some(format!("/devices/{id}/wallpapers").as_str())
+        Some(format!("/devices/{id}/wallpapers#wallpapers").as_str())
     );
     // The four quick controls are one form with its section marker (H1); a new phone has all on.
-    let policy = format!("/devices/{id}/policy");
+    let policy = format!("/devices/{id}/policy#quick-controls");
     for name in [
         "quick_control_wifi",
         "quick_control_bluetooth",
@@ -989,7 +1007,7 @@ async fn web_filter_holds_the_phones_parts() {
     );
     assert_eq!(
         form_action_of(&html, "vpn_filter_enabled"),
-        Some(format!("/devices/{id}/policy").as_str())
+        Some(format!("/devices/{id}/policy#filter").as_str())
     );
     assert_eq!(input_checked(&html, "vpn_filter_enabled", "on"), Some(true));
     let filter = &html[html.find("<section id=\"filter\"").unwrap()..];
@@ -1012,9 +1030,9 @@ async fn web_filter_holds_the_phones_parts() {
     assert!(group("blocked").contains("only-anna.example"));
     assert!(group("allowed").contains("allowed-anna.example"));
     assert!(!html.contains("only-emil.example") && !html.contains("everyone.example"));
-    for g in ["blocked", "allowed"] {
-        let g = group(g);
-        assert!(g.contains("action=\"/dns/domains/new\""));
+    for name in ["blocked", "allowed"] {
+        let g = group(name);
+        assert!(g.contains(&format!("action=\"/dns/domains/new#{name}\"")));
         assert!(g.contains(&format!(
             "<input type=\"hidden\" name=\"device_id\" value=\"{id}\">"
         )));
@@ -1100,9 +1118,10 @@ async fn web_filter_holds_the_phones_parts() {
 }
 
 /// §5.1's redirect table for Home Screen and Web Filter: every form on both pages, posted with
-/// valid values, returns to its page with **no fragment** (scroll-restore keeps the exact place,
-/// §5.1.4) - the shared domain and list routes through `back=filter`. Built from the rendered
-/// forms, so a form that moves can't keep a stale target; then each did what it says.
+/// valid values, returns to its page at its group - the fragment its action carries (§5.1.4:
+/// without JS on the form, with JS scroll-restore keeps the exact place) - the shared domain and
+/// list routes through `back=filter`. Built from the rendered forms, so a form that moves can't
+/// keep a stale target; then each did what it says.
 #[tokio::test]
 async fn home_and_filter_forms_return_to_their_page() {
     let app = TestApp::new().await;
@@ -1151,7 +1170,8 @@ async fn home_and_filter_forms_return_to_their_page() {
                 let res = app
                     .request_form(Method::POST, action, Some(cookie), &sent)
                     .await;
-                assert_redirect(&res, &back, None);
+                assert_redirect(&res, &back, action.split_once('#').map(|(_, group)| group));
+                app.assert_lands(&res, cookie).await;
             }
         }
     };
@@ -1159,10 +1179,13 @@ async fn home_and_filter_forms_return_to_their_page() {
     check(
         Section::Home,
         vec![
-            (d("launcher"), &[("language", "en"), ("home_columns", "4")]),
+            (
+                d("launcher#layout"),
+                &[("language", "en"), ("home_columns", "4")],
+            ),
             // Navy only.
-            (d("wallpapers"), &[("wallpaper", "1")]),
-            (d("policy"), &[("quick_control_wifi", "on")]),
+            (d("wallpapers#wallpapers"), &[("wallpaper", "1")]),
+            (d("policy#quick-controls"), &[("quick_control_wifi", "on")]),
         ],
     )
     .await;
@@ -1177,25 +1200,28 @@ async fn home_and_filter_forms_return_to_their_page() {
         .fetch_all(&app.db)
         .await
         .unwrap();
-    let mut filter: Vec<Row> = vec![(d("policy"), &[])];
+    let mut filter: Vec<Row> = vec![(d("policy#filter"), &[])];
     filter.extend(list_ids.iter().map(|list| {
         (
-            format!("/dns/devices/{id}/blocklists/{list}/override"),
+            format!("/dns/devices/{id}/blocklists/{list}/override#lists"),
             &[("setting", "off")] as &[_],
         )
     }));
     filter.extend([
-        (format!("/dns/domains/{block_id}/delete"), &[] as &[_]),
         (
-            "/dns/domains/new".to_string(),
+            format!("/dns/domains/{block_id}/delete#blocked"),
+            &[] as &[_],
+        ),
+        (
+            "/dns/domains/new#blocked".to_string(),
             &[("domain", "new-block.example")],
         ),
-        (format!("/dns/domains/{allow_id}/delete"), &[]),
+        (format!("/dns/domains/{allow_id}/delete#allowed"), &[]),
         (
-            "/dns/domains/new".to_string(),
+            "/dns/domains/new#allowed".to_string(),
             &[("domain", "New-Allow.Example.")],
         ),
-        (format!("/dns/log/{id}"), &[("dns_log_enabled", "on")]),
+        (format!("/dns/log/{id}#log"), &[("dns_log_enabled", "on")]),
     ]);
     check(Section::Filter, filter).await;
 
@@ -1275,14 +1301,18 @@ async fn a_policy_section_leaves_the_other_section_alone() {
 
     // Quick controls: only Wi-Fi; the filter (absent from the form) stays on.
     let res = post(vec![("section", "quick"), ("quick_control_wifi", "on")]).await;
-    assert_redirect(&res, &device_page(id, Section::Home), None);
+    assert_redirect(
+        &res,
+        &device_page(id, Section::Home),
+        Some("quick-controls"),
+    );
     assert_eq!(state(&app).await, (1, true, 1));
     // The filter off; the quick controls (absent) stay.
     let res = post(vec![("section", "filter")]).await;
-    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    assert_redirect(&res, &device_page(id, Section::Filter), Some("filter"));
     assert_eq!(state(&app).await, (1, false, 1));
     let res = post(vec![("section", "filter"), ("vpn_filter_enabled", "on")]).await;
-    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    assert_redirect(&res, &device_page(id, Section::Filter), Some("filter"));
     assert_eq!(state(&app).await, (1, true, 1));
     // No section: both, as before, back to the device page.
     let res = post(vec![("quick_control_sound", "on")]).await;
@@ -1425,7 +1455,7 @@ async fn the_filter_routes_refuse_bad_input() {
         let flash = section
             .find(&format!("data-flash=\"{group}\""))
             .expect("the refusal in its group");
-        assert!(section[..flash].contains("action=\"/dns/domains/new\""));
+        assert!(section[..flash].contains(&format!("action=\"/dns/domains/new#{group}\"")));
         assert!(section[flash..].contains("isn't a domain name"));
         assert_eq!(html.matches("data-flash=").count(), 1);
     }
@@ -1474,7 +1504,7 @@ async fn the_filter_routes_refuse_bad_input() {
                 &[("back", "filter"), ("device_id", &phone)],
             )
             .await;
-        assert_redirect(&res, &device_page(id, Section::Filter), None);
+        assert_redirect(&res, &device_page(id, Section::Filter), Some("blocked"));
     }
     assert_eq!(count().await, 1);
     // A form `device_id` naming another phone never chooses the row (the path does) nor, when a
@@ -1503,7 +1533,7 @@ async fn the_filter_routes_refuse_bad_input() {
             &[("back", "filter"), ("device_id", &emil_text)],
         )
         .await;
-    assert_redirect(&res, &device_page(id, Section::Filter), None);
+    assert_redirect(&res, &device_page(id, Section::Filter), Some("blocked"));
     let left: Vec<String> = sqlx::query_scalar(
         "SELECT domain FROM dns_custom_domains WHERE device_id IS NOT NULL ORDER BY domain",
     )
@@ -1523,7 +1553,7 @@ async fn the_filter_routes_refuse_bad_input() {
             ("back", "filter".to_string()),
         ])
         .await;
-        assert_redirect(&res, &device_page(id, Section::Filter), None);
+        assert_redirect(&res, &device_page(id, Section::Filter), Some("blocked"));
     }
     let twice: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM dns_custom_domains WHERE domain = 'twice.example'",
@@ -1568,7 +1598,7 @@ async fn the_filter_routes_refuse_bad_input() {
     let list = format!("/dns/devices/{id}/blocklists/2/override");
     for (setting, stored) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
         let res = set(list.clone(), setting).await;
-        assert_redirect(&res, &device_page(id, Section::Filter), None);
+        assert_redirect(&res, &device_page(id, Section::Filter), Some("lists"));
         assert_eq!(own().await, stored, "{setting}");
     }
     assert_eq!(
@@ -1810,7 +1840,7 @@ async fn apps_holds_the_moved_forms() {
     // The Wi-Fi switch, on for a new phone; nothing installs, so no reload.
     assert_eq!(
         form_action_of(&html, "app_updates_wifi_only"),
-        Some(format!("/devices/{id}/app-updates").as_str())
+        Some(format!("/devices/{id}/app-updates#downloads").as_str())
     );
     assert_eq!(
         input_checked(&html, "app_updates_wifi_only", "on"),
@@ -1856,13 +1886,13 @@ async fn apps_forms_return_to_their_rows() {
         let expected = if target == format!("/devices/{id}/apps/toggle") {
             toggles += 1;
             assert_eq!(field("back"), Some("apps"));
-            assert_eq!(action_fragment, None);
             // Flip it: on what was off.
             let package = field("package_name").unwrap();
             let row = match package {
                 "" => format!("catalog-{}", field("tracked_app_id").unwrap()),
                 package => format!("app-{package}"),
             };
+            assert_eq!(action_fragment.as_deref(), Some(row.as_str()));
             let was_on = html[html.find(&format!("id=\"{row}\"")).unwrap()..]
                 .split("</label>")
                 .next()
@@ -1880,6 +1910,7 @@ async fn apps_forms_return_to_their_rows() {
             row
         } else if target == format!("/devices/{id}/app-updates") {
             updates += 1;
+            assert_eq!(action_fragment.as_deref(), Some("downloads"));
             "downloads".to_string()
         } else {
             panic!("a form the table doesn't know: {action}");
@@ -1892,6 +1923,7 @@ async fn apps_forms_return_to_their_rows() {
             .request_form(Method::POST, &target, Some(&cookie), &sent)
             .await;
         assert_redirect(&res, &page, Some(&expected));
+        app.assert_lands(&res, &cookie).await;
     }
     assert_eq!((toggles, names, updates), (4, 2, 1));
 
@@ -2107,7 +2139,7 @@ async fn a_phone_not_set_up_has_its_apps_page() {
         .text();
     assert!(html.contains("data-row=\"not-reported\""));
     assert!(!html.contains("Nothing else on this phone."));
-    assert!(html.contains(&format!("action=\"/devices/{id}/app-updates\"")));
+    assert!(html.contains(&format!("action=\"/devices/{id}/app-updates#downloads\"")));
 }
 
 /// A refused Name and icon save is the answer to a POST: it never carries the installing reload,
@@ -2397,11 +2429,11 @@ async fn music_holds_the_moved_card() {
 }
 
 /// §5.1's redirect table for Device › Music, built from the rendered forms: the music app's switch
-/// returns to the page without a fragment (its first group: scroll-restore keeps the place), an
-/// entry's switch to its row (`#music-entry-<id>`, a long list), the settings form and Sonos to
-/// their groups lower on the page - without JS a save never lands at the top. Each fragment names
-/// the element that holds the form (§5.1.4, qa-31-s14-code L4), and an action's own fragment is
-/// the same; then each did what it says, on Anna only (the phone from the path).
+/// returns to its group (`#music-app`), an entry's switch to its row (`#music-entry-<id>`, a long
+/// list), the settings form and Sonos to their groups lower on the page - without JS a save never
+/// lands at the top, with JS scroll-restore keeps the place. Each fragment names the element that
+/// holds the form (§5.1.4, qa-31-s14-code L4), and an action's own fragment is the same; then each
+/// did what it says, on Anna only (the phone from the path).
 #[tokio::test]
 async fn music_forms_return_to_their_groups() {
     let app = TestApp::new().await;
@@ -2433,7 +2465,7 @@ async fn music_forms_return_to_their_groups() {
         let expected: Option<String> = if target == format!("/devices/{id}/apps/toggle") {
             assert!(hidden.contains(&("back".to_string(), "music".to_string())));
             sent.push(on("selected"));
-            None
+            Some("music-app".to_string())
         } else if let Some(entry) = target
             .strip_prefix(&format!("/devices/{id}/music/entries/"))
             .and_then(|e| e.parse::<i64>().ok())
@@ -2473,8 +2505,8 @@ async fn music_forms_return_to_their_groups() {
                 "{fragment} closes before its form ({action})"
             );
         }
-        assert!(
-            action_fragment.is_none() || action_fragment == expected,
+        assert_eq!(
+            action_fragment, expected,
             "{action}: the action's fragment is the redirect's"
         );
         let fields: Vec<(&str, &str)> =
@@ -2483,6 +2515,7 @@ async fn music_forms_return_to_their_groups() {
             .request_form(Method::POST, &target, Some(&cookie), &fields)
             .await;
         assert_redirect(&res, &page, expected.as_deref());
+        app.assert_lands(&res, &cookie).await;
         seen.push(target);
     }
     assert_eq!(

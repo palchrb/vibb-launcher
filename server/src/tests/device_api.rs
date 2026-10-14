@@ -786,8 +786,12 @@ async fn screen_timeout_policy_form_and_report() {
             &[("screen_timeout_seconds", "300")],
         )
         .await;
-    // Back to the page, no fragment: scroll-restore.js keeps the place.
-    super::assert_redirect(&res, &super::device_page(id, super::Section::Lock), None);
+    // Back to its group (§5.1.4): scroll-restore.js keeps the place over it.
+    super::assert_redirect(
+        &res,
+        &super::device_page(id, super::Section::Lock),
+        Some("screen"),
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(timeout(&app, token.clone()).await, json!(300));
 
@@ -829,7 +833,7 @@ async fn screen_timeout_policy_form_and_report() {
     let page = lock().await;
     assert_eq!(
         super::form_action_of(&page, "screen_timeout_seconds"),
-        Some(format!("/devices/{id}/screen-timeout").as_str())
+        Some(format!("/devices/{id}/screen-timeout#screen").as_str())
     );
     assert!(super::autosaves(&page, "screen_timeout_seconds"));
     assert!(page.contains("<option value=\"60\" selected>1 minute</option>"));

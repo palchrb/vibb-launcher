@@ -92,8 +92,12 @@ async fn form_saves_every_switch_and_missing_means_off() {
         &["disallow_safe_boot", "lock_location", "disallow_add_user"],
     )
     .await;
-    // Back to Advanced, no fragment: Restrictions is its first group (design 31 §5.1).
-    assert_redirect(&res, &device_page(id, Section::Advanced), None);
+    // Back to its group on Advanced (design 31 §5.1.4).
+    assert_redirect(
+        &res,
+        &device_page(id, Section::Advanced),
+        Some("restrictions"),
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let value = hardening(&app, &token).await;
     for key in SWITCHES {
@@ -174,7 +178,7 @@ async fn advanced_shows_the_switches_as_one_form() {
         .await;
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
-    let action = format!("/devices/{id}/hardening");
+    let action = format!("/devices/{id}/hardening#restrictions");
     // All ten in one form (H1: a missing box is off), each a switch that saves itself.
     for (name, on) in [
         ("disallow_factory_reset", true),

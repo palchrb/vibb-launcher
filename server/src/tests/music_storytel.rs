@@ -1260,7 +1260,9 @@ async fn the_sweep_lists_a_series_like_a_feed() {
     assert!(page.contains("Storytel book · "));
     assert!(!page.contains("Storytel book · 1 book"));
     assert!(!page.contains("newest: Kokosbananas"));
-    assert!(page.contains(&format!("action=\"/music/entries/{series}/check\"")));
+    assert!(page.contains(&format!(
+        "action=\"/music/entries/{series}/check#entry-{series}\""
+    )));
     assert!(page.contains("Storytel series"));
     assert!(page.contains("Storytel book"));
     assert!(page.contains("<option value=\"-1\" selected>All books</option>"));

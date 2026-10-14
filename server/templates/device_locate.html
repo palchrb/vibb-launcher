@@ -45,7 +45,7 @@
             {% if view.waiting_for_fix %}
             <p id="fix_wait" class="row row-note" role="status">Waiting for a fresh fix&hellip;</p>
             {% endif %}
-            <form method="post" action="/devices/{{ view.device.id }}/command/locate" class="cell">
+            <form method="post" action="/devices/{{ view.device.id }}/command/locate#location" class="cell">
                 <button type="submit" class="row row-button">Update Location</button>
             </form>
         </div>
@@ -66,13 +66,13 @@
         right under it. Erase Phone… is the type-the-name confirm. -#}
     <section id="actions" aria-label="Actions">
         <div class="act-grid">
-            <form method="post" action="/devices/{{ view.device.id }}/command/ring">
+            <form method="post" action="/devices/{{ view.device.id }}/command/ring#actions">
                 <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Ring</button>
             </form>
-            <form method="post" action="/devices/{{ view.device.id }}/command/stop-ring">
+            <form method="post" action="/devices/{{ view.device.id }}/command/stop-ring#actions">
                 <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 17V11a6 6 0 0 1 9.2-5.1M18 11v6l1.5 2H8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Stop Ringing</button>
             </form>
-            <form method="post" action="/devices/{{ view.device.id }}/command/lock">
+            <form method="post" action="/devices/{{ view.device.id }}/command/lock#actions">
                 <button type="submit" class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Lock</button>
             </form>
         </div>
@@ -109,7 +109,7 @@
                 <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>
                 <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
                 {% if let Some(cancel_id) = c.cancel_id %}
-                <form method="post" action="/devices/{{ view.device.id }}/commands/{{ cancel_id }}/cancel" class="row-form">
+                <form method="post" action="/devices/{{ view.device.id }}/commands/{{ cancel_id }}/cancel#recent" class="row-form">
                     <button type="submit" class="row-action" aria-label="Cancel {{ c.label }} asked for at {{ c.asked }}">Cancel</button>
                 </form>
                 {% endif %}

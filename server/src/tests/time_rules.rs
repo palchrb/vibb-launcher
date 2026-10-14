@@ -58,7 +58,7 @@ async fn global_rule_reaches_every_device_and_nudges_them() {
     assert_redirect(
         &res,
         &format!("/schedules/rules/{rule_id}?saved=added"),
-        None,
+        Some("rule"),
     );
     let mut nudged = vec![nudges.try_recv().unwrap(), nudges.try_recv().unwrap()];
     nudged.sort_unstable();
@@ -123,7 +123,7 @@ async fn device_override_uses_its_own_rules_and_budget() {
     assert_redirect(
         &res,
         &format!("/schedules/rules/{own_rule}?saved=added"),
-        None,
+        Some("rule"),
     );
 
     // Not in force until the override is on.
@@ -226,7 +226,11 @@ async fn rule_edit_and_delete_are_scoped() {
             &edit,
         )
         .await;
-    assert_redirect(&res, &format!("/schedules/rules/{rule_id}?saved=1"), None);
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{rule_id}?saved=1"),
+        Some("rule"),
+    );
     let rule = policy(&app, &token).await["time_policy"]["rules"][0].clone();
     assert_eq!(rule["name"], "School");
     assert_eq!(rule["calls_allowed"], true);

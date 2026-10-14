@@ -17,8 +17,8 @@
 //!   time, Pause a rule, the recent lifts (`handlers::lifts`, `back=time`), the own-rules switch, the
 //!   phone's own rules and its own daily limits.
 //!
-//! Where the forms return (§5.1): a rule's save to its own page (no fragment: Save sits at the top,
-//! and scroll-restore keeps the place), a new rule to its new page, a delete to the list it was in
+//! Where the forms return (§5.1): a rule's save to its own page's form (`#rule`: Save sits at the
+//! top, and scroll-restore keeps the place), a new rule to its new page, a delete to the list it was in
 //! (`/schedules#rules`, a phone's own `/devices/{id}/time#own-rules`) with the flash there; a save or
 //! delete of a rule deleted in another tab lands on that list with nothing written. The daily limit
 //! to `/schedules/screen-time?saved=1#screen-time`. `/schedules/device/{id}` takes `section` (§5.6,
@@ -1001,7 +1001,7 @@ pub async fn create_rule(
     };
     log_change(&state, &admin, "time_rule_created", device, &input.name).await;
     nudge(&state, device).await;
-    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=added")).into_response()
+    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=added#rule")).into_response()
 }
 
 /// The rule, if it still exists and belongs to `scope` (a device's own rule can't be edited
@@ -1077,8 +1077,8 @@ pub async fn update_rule(
     }
     log_change(&state, &admin, "time_rule_updated", scope.id(), &input.name).await;
     nudge(&state, scope.id()).await;
-    // No fragment: Save is at the top, and scroll-restore keeps the exact place (§5.1.4).
-    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=1")).into_response()
+    // Its form (§5.1.4): Save is at the top, and scroll-restore keeps the exact place.
+    Redirect::to(&format!("/schedules/rules/{rule_id}?saved=1#rule")).into_response()
 }
 
 /// POST `/schedules/rules/{id}/delete`: then the list it was in.
