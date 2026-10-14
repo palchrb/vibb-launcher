@@ -66,10 +66,13 @@ pub(crate) fn encloses(html: &str, id: &str, at: usize) -> bool {
 }
 
 /// The forms that leave their page, so no fragment of it: signing in and out, Dismiss (the warning
-/// is at the top), the add flows' first steps, New Setup Code (the code page) and the deletes that
-/// go back to a list.
+/// is at the top), the add flows' first steps, New Setup Code (the code page), the deletes that
+/// go back to a list, and Spotify's login (a 303 off this server, design 26c §2.3). Matched on the
+/// path without its fragment, so a leaving form that carries one fails `check_forms`
+/// (qa-26c-merge3-code L1).
 fn leaves_the_page(action: &str) -> bool {
-    let path: Vec<&str> = action.split('/').skip(1).collect();
+    let target = action.split('#').next().unwrap_or_default();
+    let path: Vec<&str> = target.split('/').skip(1).collect();
     let number = |segment: &str| segment.parse::<i64>().is_ok();
     matches!(
         path.as_slice(),

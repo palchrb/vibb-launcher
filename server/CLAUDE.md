@@ -245,7 +245,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs its group's fragment in its action and its redirect
   (`tests::shell::every_form_on_every_page_lands_on_its_own_group` checks every page's forms with
-  `settings_pages::check_forms`). External file, so a future CSP needs no inline-script exception.
+  `settings_pages::check_forms`), except the forms that leave the page, which carry none
+  (`settings_pages::leaves_the_page`: sign-in and out, the add flows' first steps, New Setup Code, the deletes back to
+  a list, Spotify's login; matched without the fragment, so one that has a fragment fails). Every class a template
+  uses has a rule in `style.css` (`tests::shell::every_class_a_template_uses_is_in_style_css`, with an allowlist of
+  dynamic prefixes and hooks, each with its reason). External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
   Lock Screen & PINs › Screen › "Turn off after" (design 31 step 4; `POST /devices/{id}/screen-timeout`, 400 for
@@ -814,7 +818,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   S256 challenge and a 32-hex `state` kept **in memory only** (at most 8, 10 minutes, with the admin who started it; a
   restart loses an unfinished login), the `spotify_login` cookie (hex SHA-256 of the state; `HttpOnly`, `Secure`
   unless `INSECURE_COOKIES`, `SameSite=Lax`, `Path=/music/spotify/callback`, 10 minutes), then a 303 to Spotify's
-  authorize URL with `show_dialog=true`. The page carries its own CSP (`ADMIN_CSP` with `form-action 'self' https://accounts.spotify.com`, the
+  authorize URL with `show_dialog=true`. Its form is the one form on `/music/spotify` without a `#fragment` (a
+  fragment would follow the 303 to Spotify; a refusal renders the page with the button `autofocus`ed;
+  `settings_pages::leaves_the_page`). The page carries its own CSP (`ADMIN_CSP` with `form-action 'self' https://accounts.spotify.com`, the
   loopback fake's origin with the override; `admin_headers` keeps a CSP a handler set - only this page sets one), else
   the browser would block the form's 303. **With an https redirect URI a login is started only from that address** (the cookie is that
   host's; `request_host`/`redirect_host`): another address of the server is refused by the button with a link to the
@@ -829,7 +835,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   use) and a matching `spotify_login` cookie (cleared); the exchange and `/v1/me` share `LOGIN_BUDGET` (45 s, the
   gate's wait included); `/me` 403 = the account isn't in the app's User Management (nothing stored). It answers a 303
   to `/music/spotify/done?login=<outcome>` - a public page with no secret that moves on to
-  `/music/spotify?login=<outcome>#accounts` with a meta refresh (same-site, so the session cookie goes), so the
+  `/music/spotify?login=<outcome>#accounts` with a meta refresh (same-site, so the session cookie goes;
+  `music_spotify_done.html`, with the head partial's stylesheet and title like every page), so the
   spent code never sits on a page's URL or in a `Referer`. Outcomes: `ok`, `cancelled`, `not_registered`, `refused`,
   `unreachable`, `expired` (also another browser, a changed app), `off`, `error`. Events `spotify_account_added`,
   `spotify_login_failed` (a code).

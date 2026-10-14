@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{#- The callback's step back to the Spotify page (design 26c §2.3): public, no session, nothing
+    secret; the head partial gives it the stylesheet and title every page has (qa-26c-merge3-code L4). -#}
+<meta http-equiv="refresh" content="0;url={{ target }}">
+{% include "partials/head.html" %}
+</head>
+<body>
+<main class="container">
+    <p>Back to <a href="{{ target }}">the Spotify page</a>.</p>
+</main>
+</body>
+</html>

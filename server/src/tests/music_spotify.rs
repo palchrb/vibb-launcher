@@ -166,6 +166,29 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
         .unwrap()
 }
 
+/// The migrations end with design 30's 0073, then Spotify's 0074 (qa-26c-merge3-code L3).
+/// `startup::pre_migration_backup` compares only `MAX(version)`: a 0073 reaching a server that has
+/// run 0074 would be applied out of order with no backup first, so neither side may renumber past
+/// the other. Relax this to "74 is Spotify's" once `main` has released 0074.
+#[test]
+fn the_migrations_end_with_design_30_then_spotify() {
+    let tail: Vec<(i64, String)> = crate::MIGRATOR
+        .iter()
+        .rev()
+        .take(2)
+        .map(|m| (m.version, m.description.to_string()))
+        .collect();
+    assert_eq!(
+        tail,
+        [
+            (74, "music spotify".to_string()),
+            (73, "music data and storage".to_string())
+        ],
+        "0073 (design 30) must stay just below 0074 (Spotify): the backup before migrating \
+         compares only the highest version"
+    );
+}
+
 #[tokio::test]
 async fn routes_need_a_session() {
     let app = TestApp::new().await;
@@ -219,6 +242,21 @@ async fn routes_need_a_session() {
             .contains("content=\"0;url=/music/spotify?login=ok#accounts\""),
         "{}",
         res.text().replace("&#39;", "'")
+    );
+    // The head partial's stylesheet and name, like every page (qa-26c-merge3-code L4).
+    let head = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/templates/partials/head.html"
+    ))
+    .unwrap();
+    let stylesheet = head
+        .lines()
+        .find(|line| line.contains("style.css?v="))
+        .unwrap();
+    assert!(res.text().contains(stylesheet), "{}", res.text());
+    assert!(
+        res.text()
+            .contains("<title>Spotify Login · Vibb Phone</title>")
     );
     // Anything but a known outcome is "expired" (code QA L5): no reflection.
     let res = app

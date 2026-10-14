@@ -614,6 +614,10 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
             "/music/spotify".to_string(),
             "action=\"/music/spotify/add#add\"".to_string(),
         ),
+        (
+            format!("/music/entries/{spotify_entry}"),
+            "data-hint=\"spotify-streams\"".to_string(),
+        ),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
         assert!(html.contains(&part), "{page} has no {part}");
@@ -750,4 +754,142 @@ fn style_css_has_the_shape_browsers_read() {
     ] {
         assert_eq!(css_shape_error(css).as_deref(), Some(error), "{css}");
     }
+}
+
+/// The class names a template's `class="..."` attributes use, with `{{ }}` and `{% %}` taken out:
+/// `dot-{{ x }}` gives `dot-`, a dynamic prefix.
+fn template_classes(html: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = html;
+    while let Some(at) = rest.find("class=\"") {
+        rest = &rest[at + "class=\"".len()..];
+        let Some(end) = rest.find('"') else { break };
+        let mut value = rest[..end].to_string();
+        for (open, close) in [("{{", "}}"), ("{%", "%}")] {
+            while let Some(start) = value.find(open) {
+                let stop = value[start..]
+                    .find(close)
+                    .map_or(value.len(), |e| start + e + close.len());
+                value.replace_range(start..stop, " ");
+            }
+        }
+        found.extend(value.split_whitespace().map(str::to_string));
+        rest = &rest[end..];
+    }
+    found
+}
+
+/// Every `.class` named anywhere in `css` outside comments (a declaration's `url(a.svg)` adds
+/// `svg`, which no template uses as a class - harmless).
+fn css_classes(css: &str) -> std::collections::HashSet<String> {
+    let mut text = String::new();
+    let mut rest = css;
+    while let Some(start) = rest.find("/*") {
+        text.push_str(&rest[..start]);
+        rest = rest[start..]
+            .find("*/")
+            .map_or("", |end| &rest[start + end + 2..]);
+    }
+    text.push_str(rest);
+    text.match_indices('.')
+        .filter(|(at, _)| {
+            text.as_bytes()
+                .get(at + 1)
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        })
+        .map(|(at, _)| {
+            text[at + 1..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect()
+        })
+        .collect()
+}
+
+/// Every class a template uses is defined in `style.css` (qa-26c-merge3-code L2): design 31's
+/// clean-up deleted 36 classes, and a template keeping one would silently lose its style. The
+/// allowlist holds the names that have no rule on purpose.
+#[test]
+fn every_class_a_template_uses_is_in_style_css() {
+    const NO_RULE: [(&str, &str); 11] = [
+        (
+            "attention-",
+            "a dynamic prefix (attention-{{ level }}): the levels have the rules",
+        ),
+        (
+            "dot-",
+            "a dynamic prefix (dot-{{ state }}): dot-online, dot-away ... have the rules",
+        ),
+        (
+            "music-status-",
+            "a dynamic prefix (music-status-{{ kind }}): the kinds have the rules",
+        ),
+        (
+            "state-",
+            "a dynamic prefix (state-{{ state }}): state-online ... have the rules",
+        ),
+        (
+            "tone-",
+            "a dynamic prefix (tone-{{ tone }}): the tones have the rules",
+        ),
+        (
+            "app-display-form",
+            "a hook for static/app-display.js; styled as any form",
+        ),
+        (
+            "app-row",
+            "names the Apps tab's catalog rows; styled by .row",
+        ),
+        (
+            "day-row",
+            "names the rule editor's day rows; styled by .row",
+        ),
+        (
+            "lock-part",
+            "a hook for tests::devices_list (the lock part of a phone's line)",
+        ),
+        (
+            "source-choice",
+            "names the Add App source radios' wrapper; no style of its own",
+        ),
+        (
+            "summary-more",
+            "names the summary's group of Settings rows; styled by .group",
+        ),
+    ];
+    let css = css_classes(&std::fs::read_to_string("static/style.css").unwrap());
+    let mut missing = std::collections::BTreeSet::new();
+    let mut dirs = vec![std::path::PathBuf::from("templates")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "html") {
+                let html = std::fs::read_to_string(&path).unwrap();
+                for class in template_classes(&html) {
+                    if !css.contains(&class) && !NO_RULE.iter().any(|(name, _)| *name == class) {
+                        missing.insert(format!("{class} ({})", path.display()));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "classes style.css doesn't define: {missing:?}"
+    );
+    // The allowlist holds only names that still have no rule.
+    for (name, _) in NO_RULE {
+        assert!(
+            !css.contains(name),
+            "{name} has a rule now: take it off the list"
+        );
+    }
+    // The guard catches what it is for: .card went in the clean-up.
+    assert_eq!(
+        template_classes("<p class=\"row {% if x %}card{% endif %} dot-{{ s }}\">"),
+        ["row", "card", "dot-"]
+    );
+    assert!(!css.contains("card"));
 }

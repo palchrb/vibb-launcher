@@ -855,17 +855,24 @@ pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
         .filter(|code| LoginOutcome::text(code, None).is_some())
         .map(String::as_str)
         .unwrap_or("expired");
-    let target = format!("/music/spotify?login={code}#accounts");
-    let page = format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n\
-         <meta http-equiv=\"refresh\" content=\"0;url={target}\">\n\
-         <title>Spotify login · Kids Device MDM</title>\n\
-         <link rel=\"stylesheet\" href=\"/static/style.css?v=7\">\n</head>\n<body>\n\
-         <main class=\"container\">\n<p>Back to <a href=\"{target}\">the Spotify page</a>.</p>\n\
-         </main>\n</body>\n</html>\n"
-    );
-    ([(header::CACHE_CONTROL, "no-store")], Html(page)).into_response()
+    let page = DoneTemplate {
+        title: "Spotify Login".to_string(),
+        target: format!("/music/spotify?login={code}#accounts"),
+    };
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Html(page.render().unwrap()),
+    )
+        .into_response()
+}
+
+/// `/music/spotify/done`'s page: the head partial (the stylesheet, "· Vibb Phone") and a link on.
+#[derive(Template)]
+#[template(path = "music_spotify_done.html")]
+struct DoneTemplate {
+    title: String,
+    /// `/music/spotify?login=<outcome>#accounts`; the outcome is one of the known codes.
+    target: String,
 }
 
 /// The pasted address (§2.3, the loopback redirect): exactly `http://127.0.0.1:43117/callback`
