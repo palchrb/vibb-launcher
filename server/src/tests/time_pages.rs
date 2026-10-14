@@ -918,8 +918,8 @@ async fn device_time_fails_loudly_and_works_before_setup() {
     }
 }
 
-/// The device page: the Time card is a row now ("Time · Everyone's rules" / "Own rules"), and
-/// none of its forms are left there.
+/// The summary: the Time card is a row now ("Time · Everyone's rules" / "Own rules"); its lifts
+/// are the quick actions (design 31 step 10), never the rules' own forms.
 #[tokio::test]
 async fn the_device_page_has_a_time_row() {
     let app = TestApp::new().await;
@@ -935,7 +935,7 @@ async fn the_device_page_has_a_time_row() {
     assert!(html.contains(&format!("href=\"/devices/{id}/time\" data-row=\"time\"")));
     assert!(row.contains(">Everyone&#39;s rules<"), "{row}");
     assert!(!html.contains("id=\"time\""));
-    assert!(!html.contains("/lifts"));
+    assert!(!html.contains("/schedules/device/"));
     assert!(!html.contains("/schedules?device="));
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(id)

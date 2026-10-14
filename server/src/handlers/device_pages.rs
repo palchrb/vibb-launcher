@@ -366,7 +366,10 @@ struct AboutTemplate {
 
 /// The phone, or the page's answer: 404 for an unknown one, 500 when the database fails
 /// (qa-31-s3-code N4: not "Device not found" for a DB error).
-async fn load_device(state: &AppState, id: i64) -> Result<Device, (StatusCode, &'static str)> {
+pub(crate) async fn load_device(
+    state: &AppState,
+    id: i64,
+) -> Result<Device, (StatusCode, &'static str)> {
     match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -386,7 +389,7 @@ async fn load_device(state: &AppState, id: i64) -> Result<Device, (StatusCode, &
 
 /// The phone's settings: a missing row reads as the defaults, a DB error is a 500 (qa-31-s4-code
 /// L4: never "Child PIN · Off" because a read failed).
-async fn load_policy(
+pub(crate) async fn load_policy(
     state: &AppState,
     id: i64,
 ) -> Result<DevicePolicy, (StatusCode, &'static str)> {
@@ -419,7 +422,10 @@ fn has_capability(latest: Option<&DeviceStatus>, name: &str) -> bool {
 
 /// The phone's last report (`None` before the first one); a DB error is the page's 500 - never
 /// "no report yet", which would hide every reported app and state (design 31 step 6).
-async fn load_latest(state: &AppState, id: i64) -> Result<Option<DeviceStatus>, sqlx::Error> {
+pub(crate) async fn load_latest(
+    state: &AppState,
+    id: i64,
+) -> Result<Option<DeviceStatus>, sqlx::Error> {
     sqlx::query_as::<_, DeviceStatus>(
         "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )

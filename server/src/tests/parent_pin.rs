@@ -105,14 +105,14 @@ async fn an_easy_pin_is_saved_with_a_warning() {
     let html = app.get_page(&lock, &cookie).await.text();
     assert!(html.contains("data-warning=\"easy-parent-pin\""), "{html}");
     assert!(html.contains("Parent PIN easy to guess"), "{html}");
-    // The device page's Status card links to it.
+    // The summary's Attention row links to it (design 31 step 10).
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
     assert!(
         summary.contains(&format!(
-            "The Parent PIN is easy to guess. <a href=\"{lock}#parent-pin\">"
+            "href=\"{lock}#parent-pin\" data-attention=\"easy-parent-pin\""
         )),
         "{summary}"
     );
@@ -632,24 +632,27 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     assert_eq!(group.matches("data-event").count(), 3);
     assert!(!group.contains("UTC"), "{group}");
 
-    // The Status card: the latest use with the watched-typing tail, and the wrong try.
+    // The summary's Today: the latest use with the watched-typing tail, and the wrong try, each a
+    // row to the Parent PIN.
     let summary = page(device_page(id, Section::Summary)).await;
+    let today = &summary[summary.find("<section id=\"today\"").expect("Today")..];
     assert!(
-        summary.contains(
-            "The Parent PIN was used on the phone 10 min ago: Lock screen opened. 1 more in the \
-             last 24 hours."
-        ),
-        "{summary}"
+        today.contains("Parent PIN used<span class=\"row-sub\">Lock screen opened · 10 min ago · 1 more in 24 h"),
+        "{today}"
     );
     assert!(
-        summary.contains(&format!(
-            "Typed where your child could see? <a href=\"{lock}#parent-pin\">"
+        today.contains("Typed where your child could see? Change it."),
+        "{today}"
+    );
+    assert!(
+        today.contains(&format!(
+            "<a class=\"row\" href=\"{lock}#parent-pin\" data-pin-notice>"
         )),
-        "{summary}"
+        "{today}"
     );
     assert!(
-        summary.contains("1 wrong Parent PIN was typed on the phone in the last 24 hours."),
-        "{summary}"
+        today.contains("<span class=\"row-label text-alarm\">1 wrong Parent PIN<span"),
+        "{today}"
     );
 
     // A lockout replaces the wrong-try notice, and is red in the list.
@@ -660,10 +663,11 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     post_events(&app, &token, &body).await;
     let summary = page(device_page(id, Section::Summary)).await;
     assert!(
-        summary.contains("The Parent PIN was locked on the phone after repeated wrong tries"),
+        summary
+            .contains("Parent PIN locked<span class=\"row-sub\">After repeated wrong tries until "),
         "{summary}"
     );
-    assert!(!summary.contains("wrong Parent PIN was typed"), "{summary}");
+    assert!(!summary.contains("1 wrong Parent PIN"), "{summary}");
     let group = events_group(&page(lock).await);
     assert!(
         group.contains("<span class=\"text-alarm\">Parent PIN locked</span>"),
@@ -709,7 +713,7 @@ async fn old_events_are_pruned_after_90_days() {
     assert_eq!(stored_events(&app, id).await.len(), 1);
 }
 
-/// qa-24-code Low 4: once the parent saved a new PIN, the Status card stops telling them to - the
+/// qa-24-code Low 4: once the parent saved a new PIN, the summary stops telling them to - the
 /// list on Lock Screen & PINs keeps every event.
 #[tokio::test]
 async fn a_new_pin_ends_the_notices_but_not_the_list() {
@@ -732,7 +736,7 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
         let (app, cookie) = (&app, &cookie);
         async move { app.get_page(&device_page(id, section), cookie).await.text() }
     };
-    let notice = "The Parent PIN was locked on the phone after repeated wrong tries";
+    let notice = "After repeated wrong tries";
     assert!(page(Section::Summary).await.contains(notice));
 
     save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
@@ -751,6 +755,6 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
     assert!(
         page(Section::Summary)
             .await
-            .contains("1 wrong Parent PIN was typed on the phone")
+            .contains(">1 wrong Parent PIN<")
     );
 }

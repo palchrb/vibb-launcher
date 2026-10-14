@@ -39,6 +39,7 @@ mod sound_mode;
 mod step10;
 mod step11;
 mod step9;
+mod summary;
 mod time_pages;
 mod time_rules;
 mod tracked_apps;

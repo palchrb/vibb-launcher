@@ -14,11 +14,10 @@
 //! - **The exact time** ("2026-10-13 10:59:13 CEST") is for a `title=` and the ⓘ panels, never
 //!   the visible value.
 //!
-//! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its last
-//! callers, the relock notes, move here in design 31 §8 step 10 (step 3 moved the boot notes,
-//! step 4 the Parent PIN's notices and events).
+//! Every page time goes through here since design 31 step 10 (the relock findings were the last;
+//! `parent_pin::when_text` is gone). The security log keeps its UTC lines.
 
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
@@ -85,6 +84,24 @@ impl Zone {
     /// The local date at `now`.
     pub fn today(&self, now: DateTime<Utc>) -> NaiveDate {
         self.local(now).date_naive()
+    }
+
+    /// The local day of `t` is the local today.
+    pub fn is_today(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        self.local(t).date_naive() == self.today(now)
+    }
+
+    /// When the local today began, in UTC (the earliest midnight on a DST day; a day whose
+    /// midnight doesn't exist starts at the first hour that does).
+    pub fn start_of_today(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        let today = self.today(now);
+        (0..24)
+            .find_map(|hour| {
+                self.tz
+                    .from_local_datetime(&today.and_hms_opt(hour, 0, 0)?)
+                    .earliest()
+            })
+            .map_or(now, |t| t.with_timezone(&Utc))
     }
 
     pub fn local(&self, t: DateTime<Utc>) -> DateTime<Tz> {

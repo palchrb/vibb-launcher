@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 10 (the summary) on `design-31-s10`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -817,8 +817,9 @@ value.
   with QR code ›**, and today's notices, `access.typed_paused` included (L6);
 - Remove.
 
-The sub-page rows show greyed out with "After setup", except Lock Screen & PINs: the PINs can be set first (step 4,
-choice 11), so the phone's first policy already has its Parent PIN. Step 10 keeps that row live.
+The sub-page rows stay live, as built in step 10 (the user can overrule): every sub-page answers for a phone not set up
+(steps 3-9) and what is saved there reaches the phone with its first settings - the PINs can be set first (step 4,
+choice 11), so the first policy already has its Parent PIN, and Advanced holds Restrictions and Remove Phone.
 
 ### 3.3 Apps
 
@@ -1323,7 +1324,7 @@ The rules for the redesign (H3):
    | Route | Posted from | `back` values | Default |
    |---|---|---|---|
    | `/devices/{id}/lifts`, `/lifts/{lift}/end` (`lifts.rs:123,154`) | summary, Device › Time | `summary`, `time` | summary |
-   | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (`window_relock.rs:244`) | summary, the blocked-apps target page | `summary`, `apps` | summary |
+   | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (as built in step 10: only the summary posts here - its Quick actions and its Blocked Apps group -, so rule 2 applies and there is no `back` field) | summary | - | the summary group the form is in (`#quick`, `#blocked-apps`) |
    | `/devices/{id}/apps/toggle` (today `anchor=music`, `devices.rs:1797`) | Device › Apps, Device › Music | `apps`, `music` | apps |
    | `/dns/domains/new`, `/dns/domains/{id}/delete`, the blocklist override (`dns_filter.rs:292-311,505`) | Settings › Web Filter, Device › Web Filter | `dns`, `filter` (with the device id) | `/dns` |
    | `/settings/calls` (as built in step 8: one page posts here, so rule 2 applies and there is no `back` field) | Settings › Phone Setup | - | `/settings/provisioning#country-code` |
@@ -3206,3 +3207,130 @@ cards gone, and `style.css?v=22` after step 8's section):
 | N4 | A refused pause from an older tab (no `back`) lands on Device › Time with its reason too (`lifts::back_to` sends every `gone` there). |
 | N5 | The Time row says "Needs attention" also while a rule in force or the own limit in force doesn't read. |
 | Checks | `cargo test` 837 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 10 implementation status (2026-10-14)
+
+Built on branch `design-31-s10` (from `main` at `83294eda`: steps 1-9 and 11-14 in), in parallel with step 15; server
+only, no migration, no new crate, no API change (the policy JSON, `policy_json_keys_snapshot`, the device routes and
+the 24b commands' payloads are untouched; the launcher is untouched), `style.css?v=23` (main is at 22, step 15 takes
+24; one section at the end).
+- **Route:** `GET /devices/{id}` (`devices::view_device` → `render_device`, `device_detail.html` rewritten). The phone,
+  its settings, its last report and its lifts are a 500 on a DB error ("Couldn't read this phone", the sub-pages'
+  `device_pages::load_*`, now `pub(crate)`); an unknown phone is a 404 (a DB error used to read as a 404 and the
+  policy as the defaults). A Sections row whose read fails still says "Couldn't read".
+- **The summary**, top to bottom (the DeviceSummary mockup, §3.2): the sub-page header "‹ Devices" with the tab bar
+  alone; the **header** (the 76 px avatar with its dot, the name, "Online · seen 3 min ago" - the exact time in
+  `title` -, "· changes may be delayed" while Away, "· changes wait until it's back" while Offline, "Disconnected ·
+  access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet", "Not set up"; the lock badge only
+  while a rule locks, `text_beside` the seen time as on the Devices list; today's bar and "42 of 90 min today");
+  **Attention** (`attention::items`, unchanged rows - the list's count); the **foreign-app warning** (`#foreign-access`,
+  red, with its steps); **Quick Actions** (`#quick`: +15 min, +30 min, +1 h; Pause a rule… as a `<details>` sheet with
+  the rules that apply; Lock again (strong) while a pause or Play install mode runs; Unlock for 2 h… behind a
+  `<details>` confirm while no pause is on - both only for a `window_relock_v1` launcher, as before; Locate, a link to
+  `/devices/locate?device={id}`; an open sheet spans the grid; the quick actions' flash under the tiles); **Today**
+  (`#today`: the lifts made on the local today and the pauses still running, with End now; the newest answer to each 24b
+  command for a week; the Parent PIN notices of the last 24 h, each a row to `/lock#parent-pin`; shown only when it has
+  something or its flash); **Blocked Apps** (`#blocked-apps`: one row per app with why and when, its package, key and
+  "allowed under Apps" behind the row's ⓘ, "Allowed" / "Not allowed" as the value; **Allow these apps…** a `<details>`
+  confirm naming the apps; the "N more" footer); **Locked Again** (`#relock`, the last relock's findings for a week);
+  **Settings** (Calls & Contacts, Apps, Music, Time, Lock Screen & PINs, Home Screen, Web Filter; then About This Phone
+  and Advanced in their own group, as the mockup has them).
+- **A phone not set up**: the header ("Not set up"), **Connect This Phone** (`#access`, the id `enroll_code.html`'s Back
+  uses: the live code's kind and end, the typed-code pause, New Setup Code - a POST -, Set Up with QR Code ›) and every
+  Settings row live; no Attention, Quick actions or Today.
+- **Where the forms return** (§5.1, `tests::summary::every_form_on_the_summary_returns_to_its_group`, built from the
+  rendered forms; each action carries its group's fragment, each Location's fragment is checked, and the group it names
+  holds the flash): the tiles and Pause a rule… (`lifts`, `back=summary`) → `/devices/{id}?done=extra|pause|gone#quick`;
+  End now → `?done=ended|over#today` (`lifts::summary_group` maps Device › Time's groups); Lock again and Unlock →
+  `?notice=end_windows_sent|start_pause_sent#quick`; Allow these apps… → `?notice=allow_blocked_sent#blocked-apps` (the
+  group shows for its flash even when the list is already gone). A lift without `back` (an older tab) lands on the
+  summary too, a refused pause with its reason there (qa-31-s9-code N4 sent it to Device › Time while the summary had no
+  word for it). No auto-saving form on the page (so no `<noscript>` Save needed); every answer is a redirect (PRG).
+- **Rust (M5):** the sentence builders the Status card used are deleted with their unit tests -
+  `window_relock::{blocks_note, more_blocks_line, foreign_note, relock_notes, answer_line, flash_text}` and the
+  `BlocksNote`/`ForeignNote`/`RelockNotes` structs, `parent_pin::{when_text, ago}` (the last UTC page times), the
+  `parent_pin::Notice` sentences - and replaced by typed values the template words: `window_relock::Blocks`
+  (`BlockItem`, `BlockWhy`, `allow`, `more`, `waiting` = the Attention count), `relock_blocked` (an older launcher's
+  relock `blocked`, now listed the same way), `ForeignView`, `Findings` (trigger and failed steps as words, never
+  codes), `Answer`/`AnswerState`, `flash` (group + text), `app_names` (the phone's label for an app, else its package),
+  `parent_pin::Notice { title, sub, error, child_tail }`. Times in the Phone Setup zone, a phone time with its age
+  ("14:40 · 3 h ago"). The security log's lines stay UTC (`log_line`, `blocks_log_line`, `foreign_log_line`).
+  `handlers::window_relock::RelockCard` is the typed card (`flash_in(group)`); `capable` folded into `lock_again` /
+  `pause_button`. `devices::time_glance` is split into `time_report` + `badge_and_screen`, which the summary and Device
+  › Time share (Device › Time's own copy of the badge maths is gone). The card builders the old page used and nothing
+  else (the Status card's fields: `restrictions_paused`, `managed_without_pin`, `hardening`, `latest_status`) are gone;
+  the compiler finds no other unused builder (`cargo clippy` stays at 13 warnings, all older).
+- **Tests:** `tests/summary.rs` (new: the header states incl. Online with a stream and Offline after a restart, the
+  name escaped, the badge and bar, the quick actions per phone, the redirect table, Today in Oslo time with the exact
+  time in `title`, the not-set-up variant, the 500s and the 404); `window_relock.rs` rewritten on the summary's groups
+  (the relock findings with the phone's names escaped and no step codes, a relock time in Oslo time, the imposter, Lock
+  again and the Attention target, the commands' Locations and flashes, the install-time block with its confirm, Allowed
+  / Not allowed, the answers in Today, the Unlock confirm, the foreign warning with its steps and target); repointed
+  `command_expiry.rs` (the answers' Expired / Cancelled), `device_api.rs`, `device_pages.rs` (Connect This Phone, the
+  summary's 404), `devices_list.rs` (the `#quick` target), `enrollment.rs` (the live code row, the typed-code pause, the
+  Disconnected header), `hardening.rs` (no Parent PIN: the Attention row and Lock Screen & PINs' warning),
+  `parent_pin.rs` (the notices in Today, the easy-PIN row), `time_pages.rs`, `time_rules.rs` (the lifts' summary
+  redirects and the refused pause's flash); unit tests `window_relock::tests` (every typed view in Oslo time, the
+  UTC fallback), `parent_pin::tests` (the notices), `lifts::tests` (`summary_group`), `attention::tests` (the targets).
+  `command_receipts.rs` (the restart once) and `step9.rs` pass unchanged. Checks: `cargo test` 845 passed; `node
+  --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+**Security-relevant warnings, old condition vs new** (nothing dropped; the Attention rows are unchanged, so the list's
+badge equals the summary's rows - `devices_list::the_badge_counts_the_device_pages_attention_rows`):
+
+| Warning | Before (the Status card) | Now |
+|---|---|---|
+| Foreign access (a device admin / accessibility service outside the allowlist) | Red block with the sentence and 3 steps while the latest report has `foreign_access`; Attention alarm → `#status` | Same condition (`parse_foreign_access` of the latest report): red block `#foreign-access` with the apps by name, the packages behind ⓘ, the same 3 steps + change the Parent PIN; the Attention alarm now lands on it |
+| Relock findings (proxies, certificates, screen lock removed; still on; turned off; Vibb's notifications off; failed steps) | Red lines for 7 days after a relock that found something (`relock_notes`: `now - at <= WARN_MS && found_anything`) | Same condition (`findings`): the Locked Again group, still-on, turned-off and failed steps in red; no Attention row before or now |
+| Blocked apps (outside Play, replaced with another key, an imposter of a catalog app) | The list while `relock_blocks` is reported, else an older launcher's relock `blocked` for 7 days; Allow while one may be let out (older launcher: until an Allow pressed after the relock was answered); imposters "stay blocked: uninstall it"; Attention "N blocked apps wait" | Same lists and rules (`blocks`, `relock_blocked`, `allowed_since_relock`); imposters red "Not the catalog's app: uninstall it" with the catalog's key behind ⓘ; the same count (`Blocks::waiting`) → `#blocked-apps` |
+| Restrictions paused | Red sentence + Attention alarm while `restrictions_paused` | Attention alarm, same condition, → `#quick` (Lock again is there) |
+| No Parent PIN (managed) | Red card + Attention alarm (`managed_without_pin`) | Attention alarm, same condition, → Lock Screen & PINs, whose warning (same condition) says only a reset gets the phone back |
+| Easy Parent PIN | Red line + Attention alarm | Attention alarm, same condition, → Lock Screen & PINs' warning |
+| Parent PIN used / locked / wrong tries (24 h, since the last save) | Lines (red for a lockout or wrong tries) | Today rows, same `parent_pin::notices` rules, red title for a lockout or wrong tries, each to `/lock#parent-pin` |
+| Unseen boots | Attention alarm → About › Diagnostics (step 3) | Unchanged |
+
+Choices made while building:
+1. **The command flashes sit in the group the form is in** (the Quick actions under the tiles, Allow under the Blocked
+   Apps list), not in Today as §3.2 item 4 sketches: that is where the redirect lands (§3.0's flash rule), and Today,
+   right under the tiles, shows the command's answer as it comes.
+2. **Blocked Apps, Locked Again and the foreign-app warning are groups of the summary**, the Attention rows' targets:
+   §3.2 puts Allow these apps "on the Attention row's target", and these were Status card warnings with no sub-page of
+   their own. The foreign warning sits above the Quick actions its steps name ("Unlock for 2 h below", "Lock again
+   below"); the other two after Today.
+3. **Apps are named by the phone's label**, else the package (the server knows no other name, step 4 choice 10); the
+   package and key are always behind the row's ⓘ, so a parent can still compare keys before allowing.
+4. **Every Settings row stays live for a phone not set up** (not greyed "After setup"): each sub-page answers before
+   setup (steps 3-9) and Advanced holds Remove Phone; §3.2 amended. The user can overrule.
+5. **"Restrictions paused" and "No Parent PIN" lost their summary sentences**: the Attention row is the signal, and the
+   page it links to explains (Lock again in the Quick actions; Lock Screen & PINs' warning). The no-PIN card's "with USB
+   debugging blocked" nuance is Lock Screen & PINs' plainer "only a reset gets the phone back".
+6. **`allow-blocked` without a valid list stays a 400** (no page sends one: the confirm only shows with something to
+   allow), like step 9's unknown kind.
+7. **Today's answers are a week's** (the 24b rule), though the group is called Today; the lifts are the local today's
+   plus the pauses still running.
+8. **The header's exact time is a `title`**, not an ⓘ (About This Phone has the full times).
+9. **The Settings header** over the first rows group, as the mockup draws it.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened, the open sheet spanning the grid) is
+  owed: no browser on this VM.
+- **CSS made unused here, for step 15's clean-up:** `.success` (the Status card's green notice; nothing else uses it).
+  `.enrollment-card`, `.page-header`, `.admin-actions`, `.subtitle`, `.card`, `.error`, `.button-small` and
+  `.button-secondary` are still used by other templates.
+- **The lock badge's end** still needs the launcher's `time_state.zone` (step 9's deferred item); the summary header
+  shows it the day it comes, through `badge_and_screen`.
+
+**Fix round after the code QA** (`qa-31-s10-code.md`: 0 High, 1 Medium, 4 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | While the last report has the restrictions paused, Quick Actions (where the Attention row lands) opens with a red "Unlocked on the phone": paused from here or with the Parent PIN, apps, Settings and Play open, "It ends by itself, or tap Lock again to end it now." - for an older launcher (no Lock again) "It ends by itself; this version of Vibb can't be locked again from here." No launcher reports the pause's end, so no time. Pinned for both in `window_relock::lock_again_follows_the_status_and_the_capability`. |
+| L1 | A phone not set up that is managed without a Parent PIN shows an orange "Set a Parent PIN before setup ›" (to `/lock#parent-pin`) above Connect This Phone; gone once a PIN is set (`summary::a_phone_not_set_up_shows_connect_this_phone`). |
+| L2 | The Locked Again group's "Removed" row is red, as Still on and the failed steps (24b §1.7); pinned in `the_last_relock_shows_on_the_summary_for_a_week`. |
+| L3 | `an_install_time_block_is_listed_allowed_and_cleared` reports the label `Mus<i>ic` and finds it escaped in the row and in the Allow confirm, no `<i>`. Mutations 9 and 13 (`|safe`) re-run: both fail it now. |
+| L4 | `handlers::window_relock::card` returns a `Result`: a failed read of the catalog's pins or of the commands' answers is the summary's 500 (never an imposter in the Allow list, never an answered Allow offered again); the Devices list's badge keeps the lenient read (`attention::facts`, logged, `RelockCard::default()`). Pinned in `summary::the_summary_fails_loudly_on_a_db_error` (`tracked_apps`, `device_commands`). |
+| N1 | `reported_when` decides by the local day (`Zone::is_today`, new), not by comparing strings; the header passes the relative time and the template adds "seen ". |
+| N2 | Today keeps the answers from the local today and any still waiting; older ones are on the Locate tab's Recent (choice 7 changed). `window_relock::Answer` carries its time (`at`). Test: `summary::today_is_today_and_keeps_running_pauses`; `command_expiry`'s expired pause picks a zone where two hours ago is today. |
+| N3 | Today's lifts come from their own query (`lifts::today`: made since the local midnight - `Zone::start_of_today`, new - or a pause still running, at most 50), not the newest 10 filtered; the same test has a running pause behind 11 newer lifts. |
+| N4 | One case for the actions: "Allow these apps…" (as "Lock again", "Unlock for 2 h…", "Pause a rule…"); the answers' labels match. |
+| Checks | `cargo test` 846 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. Mutations 9 and 13 re-run: both fail a test. |

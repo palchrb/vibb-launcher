@@ -4,12 +4,12 @@
 //! rule pause can be ended early ("End now"); added screen time can't be taken back once the
 //! phone has counted it.
 //!
-//! The forms live on Device › Time (design 31 §3.5, step 9) and, from step 10, the summary's quick
-//! actions. Where they return is §5.1's `back` table: `back=time` → `/devices/{id}/time`, at the
-//! group that posted (`#extra`, `#pause`, `#lifts`) with a `done` code for its flash; anything
-//! else (the summary, an older page) → `/devices/{id}`. A second tap on a pause that is already
-//! over, or a pause of a rule deleted or switched off in another tab, lands back there with
-//! nothing written.
+//! The forms live on Device › Time (design 31 §3.5, step 9) and the summary's Quick actions and
+//! Today (step 10). Where they return is §5.1's `back` table, always with a `done` code for the
+//! flash of the group that posted: `back=time` → `/devices/{id}/time` (`#extra`, `#pause`,
+//! `#lifts`); anything else (`summary`, an older page) → the summary (`#quick`, `#today`). A second
+//! tap on a pause that is already over, or a pause of a rule deleted or switched off in another
+//! tab, lands back there with nothing written and says why.
 
 use std::collections::HashMap;
 
@@ -34,15 +34,27 @@ fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
         .into_response()
 }
 
-/// Where a lift form returns (§5.1): Device › Time's `group` with `done` for its flash, or the
-/// device page. `back` is checked against the one value it may have; the phone is the path's. A
-/// refusal (`gone`) always goes to Device › Time, which says why - the device page has no word for
-/// it yet (qa-31-s9-code N4).
+/// Where a lift form returns (§5.1): Device › Time's `group`, or the summary's group for it
+/// ([summary_group]), with `done` for its flash. `back` is checked against the one value that
+/// leaves the default; the phone is the path's.
 fn back_to(id: i64, form: &HashMap<String, String>, group: &str, done: &str) -> Response {
-    if done == "gone" || form.get("back").map(String::as_str) == Some("time") {
+    if form.get("back").map(String::as_str) == Some("time") {
         Redirect::to(&format!("/devices/{id}/time?done={done}#{group}")).into_response()
     } else {
-        Redirect::to(&format!("/devices/{id}")).into_response()
+        Redirect::to(&format!(
+            "/devices/{id}?done={done}#{}",
+            summary_group(group)
+        ))
+        .into_response()
+    }
+}
+
+/// The summary's group for one of Device › Time's: the tiles and Pause a rule… are Quick actions,
+/// the lifts with End now are Today.
+pub(crate) fn summary_group(time_group: &str) -> &'static str {
+    match time_group {
+        "lifts" => "today",
+        _ => "quick",
     }
 }
 
@@ -194,8 +206,8 @@ pub async fn end_lift(
     }
 }
 
-/// A flash on Device › Time after a lift form (`?done=`): the group it belongs to, its text, and
-/// whether it is a refusal. `None` for a code this page doesn't know.
+/// A flash after a lift form (`?done=`): Device › Time's group it belongs to ([summary_group]
+/// maps it on the summary), its text, and whether it is a refusal. `None` for an unknown code.
 pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool)> {
     Some(match code {
         "extra" => (
@@ -316,19 +328,61 @@ pub(crate) async fn recent(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<Vec<LiftView>, sqlx::Error> {
+    views(db, device_id, None, latest, zone, now).await
+}
+
+/// The summary's Today (qa-31-s10-code N3): the lifts made since the local midnight, and every
+/// pause still running however many lifts came after it (at most 50).
+pub(crate) async fn today(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Vec<LiftView>, sqlx::Error> {
+    let since = zone.start_of_today(now);
+    views(db, device_id, Some(since), latest, zone, now).await
+}
+
+/// [since]: `None` the newest 10, else the lifts made since then and the running pauses.
+async fn views(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    since: Option<DateTime<Utc>>,
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Vec<LiftView>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct LiftWithState {
         #[sqlx(flatten)]
         lift: TimeLiftRow,
         active: bool,
     }
-    let lifts = sqlx::query_as::<_, LiftWithState>(
-        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
-         FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
-    )
-    .bind(device_id)
-    .fetch_all(db)
-    .await?;
+    let lifts = match since {
+        None => {
+            sqlx::query_as::<_, LiftWithState>(
+                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+                 FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
+            )
+            .bind(device_id)
+            .fetch_all(db)
+            .await?
+        }
+        // `created_at` is `datetime('now')` text, so it compares as text.
+        Some(since) => {
+            sqlx::query_as::<_, LiftWithState>(
+                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+                 FROM time_lifts WHERE device_id = ? AND (created_at >= ? OR (target = 'rule' \
+                 AND ended_early_at IS NULL AND expires_at > datetime('now'))) \
+                 ORDER BY id DESC LIMIT 50",
+            )
+            .bind(device_id)
+            .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
+            .fetch_all(db)
+            .await?
+        }
+    };
     // What the phone last said it runs, and when.
     let reported: Option<(DateTime<Utc>, Vec<i64>)> = latest.and_then(|s| {
         let at = parse_db_utc(&s.reported_at)?;
@@ -459,6 +513,7 @@ mod tests {
         for code in ["extra", "pause", "gone", "ended", "over"] {
             let (group, text, _) = done_flash(code).unwrap();
             assert!(["extra", "pause", "lifts"].contains(&group), "{code}");
+            assert!(["quick", "today"].contains(&summary_group(group)), "{code}");
             assert!(!text.is_empty());
         }
         assert_eq!(done_flash("<script>"), None);

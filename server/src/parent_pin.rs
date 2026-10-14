@@ -390,17 +390,6 @@ fn lockout_text(level: i64) -> String {
     }
 }
 
-/// "just now", "5 min ago", "3 h ago", "2 days ago".
-fn ago(ms: i64, now_ms: i64) -> String {
-    let minutes = ((now_ms - ms) / 60_000).max(0);
-    match minutes {
-        0 => "just now".to_string(),
-        1..=59 => format!("{minutes} min ago"),
-        60..=2879 => format!("{} h ago", minutes / 60),
-        _ => format!("{} days ago", minutes / 1440),
-    }
-}
-
 /// The security log's detail for a use or lockout (qa-24-code Low 2): its row's own time is when
 /// it arrived, so the line says when it happened on the phone and dates the window's end -
 /// `device 3, 2026-10-09 14:02 UTC: ...`. Built only from the checked enums and numbers.
@@ -458,15 +447,6 @@ fn line(event: &PinEvent) -> String {
         out.push_str(" (the phone's clock was off; time of arrival shown).");
     }
     out
-}
-
-/// "2026-10-09 14:02 UTC (3 h ago)": the relock notes' older form, until design 31 step 10 moves
-/// them to `display_time`.
-pub fn when_text(ms: i64, now_ms: i64) -> String {
-    let at = utc(ms)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    format!("{at} ({})", ago(ms, now_ms))
 }
 
 /// One reported event as a row of Lock Screen & PINs' "Recent use" (design 31 step 4): a short
@@ -568,17 +548,19 @@ pub fn event_row(event: &PinEvent, zone: &Zone, now: DateTime<Utc>) -> EventRow 
     }
 }
 
-/// A Status card notice on the device page: `child_tail` ends it with "Typed where your child
-/// could see? Change the Parent PIN." (a link to Lock Screen & PINs).
+/// A Parent PIN notice in the summary's Today group (design 24 §5, design 31 step 10): a short
+/// title, the line under it, red for a lockout or wrong tries; `child_tail` adds "Typed where your
+/// child could see?" (each row links to Lock Screen & PINs).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notice {
-    pub text: String,
+    pub title: String,
+    pub sub: String,
     pub error: bool,
     pub child_tail: bool,
 }
 
-/// The Status card's notices from the last 24 hours (design 24 §5), at most two: the latest use,
-/// then a lockout or else the wrong tries. `events` newest first. Times are local.
+/// The notices from the last 24 hours (design 24 §5), at most two: the latest use, then a lockout
+/// or else the wrong tries. `events` newest first. Times are local.
 pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Notice> {
     let now_ms = now.timestamp_millis();
     let recent: Vec<&PinEvent> = events
@@ -588,18 +570,19 @@ pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Noti
     let mut out = Vec::new();
     let uses: Vec<&&PinEvent> = recent.iter().filter(|e| e.kind == Kind::Unlocked).collect();
     if let Some(latest) = uses.first() {
-        let mut text = format!(
-            "The Parent PIN was used on the phone {}: {}.",
+        let mut sub = format!(
+            "{} · {}",
+            event_row(latest, zone, now).title,
             utc(latest.occurred_at_ms)
                 .map(|t| zone.relative(t, now))
-                .unwrap_or_default(),
-            event_row(latest, zone, now).title
+                .unwrap_or_default()
         );
         if uses.len() > 1 {
-            text.push_str(&format!(" {} more in the last 24 hours.", uses.len() - 1));
+            sub.push_str(&format!(" · {} more in 24 h", uses.len() - 1));
         }
         out.push(Notice {
-            text,
+            title: "Parent PIN used".to_string(),
+            sub,
             error: false,
             child_tail: latest.entry.kid_screen(),
         });
@@ -608,12 +591,12 @@ pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Noti
         let until = lockout
             .until_ms
             .and_then(utc)
-            .map(|until| format!(" (until {})", zone.until(until, now)))
+            .map(|until| format!(" until {}", zone.until(until, now)))
             .unwrap_or_default();
         out.push(Notice {
-            text: format!(
-                "The Parent PIN was locked on the phone after repeated wrong tries{until}. If \
-                 that wasn't you, your child may be guessing it: save a new Parent PIN to stop it."
+            title: "Parent PIN locked".to_string(),
+            sub: format!(
+                "After repeated wrong tries{until}. If that wasn't you, save a new Parent PIN."
             ),
             error: true,
             child_tail: false,
@@ -621,18 +604,13 @@ pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Noti
     } else {
         let wrong = recent.iter().filter(|e| e.kind == Kind::Wrong).count();
         if wrong > 0 {
-            let text = if wrong == 1 {
-                "1 wrong Parent PIN was typed on the phone in the last 24 hours. If that wasn't \
-                 you, consider changing the PIN."
-                    .to_string()
-            } else {
-                format!(
-                    "{wrong} wrong Parent PINs were typed on the phone in the last 24 hours. If \
-                     that wasn't you, consider changing the PIN."
-                )
-            };
             out.push(Notice {
-                text,
+                title: if wrong == 1 {
+                    "1 wrong Parent PIN".to_string()
+                } else {
+                    format!("{wrong} wrong Parent PINs")
+                },
+                sub: "In the last 24 hours. If that wasn't you, change it.".to_string(),
                 error: true,
                 child_tail: false,
             });
@@ -887,15 +865,6 @@ mod tests {
         assert_eq!(lockout_text(3), "1 hour");
         assert_eq!(lockout_text(5), "4 hours");
         assert_eq!(lockout_text(2), "30 minutes");
-        assert_eq!(
-            when_text(NOW - 3 * H, NOW),
-            "2025-10-09 05:53 UTC (3 h ago)"
-        );
-        assert_eq!(when_text(NOW, NOW), "2025-10-09 08:53 UTC (just now)");
-        assert_eq!(
-            when_text(NOW - 50 * H, NOW),
-            "2025-10-07 06:53 UTC (2 days ago)"
-        );
     }
 
     /// Oslo, as Phone Setup has it: 08:53 UTC is 10:53 local (CEST).
@@ -1028,17 +997,16 @@ mod tests {
         assert_eq!(
             out[0],
             Notice {
-                text: "The Parent PIN was used on the phone 5 min ago: Time lock lifted. 1 more \
-                       in the last 24 hours."
-                    .to_string(),
+                title: "Parent PIN used".to_string(),
+                sub: "Time lock lifted · 5 min ago · 1 more in 24 h".to_string(),
                 error: false,
                 child_tail: true,
             }
         );
+        assert_eq!(out[1].title, "2 wrong Parent PINs");
         assert_eq!(
-            out[1].text,
-            "2 wrong Parent PINs were typed on the phone in the last 24 hours. If that wasn't \
-             you, consider changing the PIN."
+            out[1].sub,
+            "In the last 24 hours. If that wasn't you, change it."
         );
         assert!(out[1].error);
 
@@ -1055,13 +1023,14 @@ mod tests {
         let out = notices(&events, &zone, now);
         assert_eq!(out.len(), 2);
         assert!(!out[0].child_tail);
-        assert!(out[0].text.ends_with("1 h ago: Vibb's Settings opened."));
+        assert_eq!(out[0].sub, "Vibb's Settings opened · 1 h ago");
+        // 09:03 UTC is 11:03 in Oslo: never the UTC clock.
         assert_eq!(
             out[1],
             Notice {
-                text: "The Parent PIN was locked on the phone after repeated wrong tries (until \
-                       11:03). If that wasn't you, your child may be guessing it: save a new \
-                       Parent PIN to stop it."
+                title: "Parent PIN locked".to_string(),
+                sub: "After repeated wrong tries until 11:03. If that wasn't you, save a new \
+                      Parent PIN."
                     .to_string(),
                 error: true,
                 child_tail: false,
@@ -1070,6 +1039,6 @@ mod tests {
         // One wrong try, no use.
         let out = notices(&[ev(Kind::Wrong, Entry::Pause, NOW - H)], &zone, now);
         assert_eq!(out.len(), 1);
-        assert!(out[0].text.starts_with("1 wrong Parent PIN was typed"));
+        assert_eq!(out[0].title, "1 wrong Parent PIN");
     }
 }
