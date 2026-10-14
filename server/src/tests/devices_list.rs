@@ -174,7 +174,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
         .await
         .unwrap();
     let _stream = app.state.command_streams.open(anna);
-    // `zone`: the phone says it is in the Phone Setup zone (no launcher does yet).
+    // `zone`: the phone says it is in the Phone Setup zone (the launcher since design 34 P13).
     let time_state = |day: chrono::NaiveDate, zone: Option<&str>| {
         json!({
             "capabilities": ["time_rules_v1", "call_policy_v1"],
@@ -218,7 +218,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
         .await
         .unwrap();
 
-    // A phone that doesn't say its zone (today's launchers): no end.
+    // A phone that doesn't say its zone (a launcher from before design 34 P13): no end.
     report(&app, &token, time_state(today, None)).await;
     let html = app.get_page("/devices", &cookie).await.text();
     assert!(
@@ -419,4 +419,133 @@ async fn no_phones_yet() {
     assert!(!html.contains("provision it by QR code or adb"));
     let add = app.get_page("/devices/new", &cookie).await.text();
     assert!(add.contains("a QR code or a setup code"), "{add}");
+}
+
+/// The launcher test's body (`TimeStateZoneTest.the_zone_is_in_the_encoded_json`: snake_case,
+/// defaults left out, `zone` last) - keep the two equal.
+const LAUNCHER_TIME_REPORT: &str = r#"{"lock_reason":"BEDTIME","kiosk_engaged":true,"capabilities":["call_policy_v1","time_rules_v1"],"time_state":{"day":"2026-10-14","used_minutes":42,"budget_minutes":90,"extra_minutes":0,"active_rule_id":7,"active_rule_name":"Leggetid","calls_blocked":false,"lock_reason":"BEDTIME","lifts_active":[],"zone":"Europe/Oslo"}}"#;
+
+/// The lock as the Devices list's row, the summary's header and Device › Time show it.
+async fn locks_shown(app: &TestApp, cookie: &str, id: i64) -> [String; 3] {
+    fn lock_of(html: &str, open: &str) -> String {
+        let at = html
+            .find(open)
+            .unwrap_or_else(|| panic!("no {open}: {html}"))
+            + open.len();
+        html[at..at + html[at..].find("</span>").unwrap()].to_string()
+    }
+    let list = app.get_page("/devices", cookie).await.text();
+    let summary = app.get_page(&format!("/devices/{id}"), cookie).await.text();
+    let time = app
+        .get_page(&format!("/devices/{id}/time"), cookie)
+        .await
+        .text();
+    [
+        lock_of(row(&list, id), "<span class=\"lock-part\" data-lock>"),
+        lock_of(
+            &summary,
+            "<span class=\"badge badge-lock summary-lock\" data-lock>",
+        ),
+        lock_of(&time, "<span class=\"badge badge-lock\">"),
+    ]
+}
+
+/// Design 34 P13: the launcher sends `time_state.zone` (its `ZoneId.systemDefault().id`). A report
+/// in the launcher's own shape from a phone in the Phone Setup zone shows the rule's end on the
+/// Devices list, the summary's header and Device › Time; a phone in another zone, one that sends
+/// no zone or one whose zone the server can't keep shows the rule's name alone.
+#[tokio::test]
+async fn a_launcher_report_with_its_zone_shows_the_rules_end() {
+    use chrono::Timelike;
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    // A Phone Setup zone where it is 03:xx now, so a 01:00-07:00 window on today's weekday
+    // covers the report and ends at 07:00 today - "until 07:00" whatever the time of the test
+    // (Etc/GMT-3 is UTC+3: the sign is POSIX's).
+    let utc_hour = i32::try_from(chrono::Utc::now().hour()).unwrap();
+    let offset = match 3 - utc_hour {
+        o if o < -12 => o + 24,
+        o => o,
+    };
+    let setup_zone = format!("Etc/GMT{:+}", -offset);
+    sqlx::query("UPDATE provisioning_settings SET time_zone = ? WHERE id = 1")
+        .bind(&setup_zone)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let zone = Zone::from_setting(&setup_zone);
+    assert_eq!(zone.name(), Some(setup_zone.as_str()));
+    let today = zone.today(chrono::Utc::now());
+    let mut days = vec![json!(null); 7];
+    days[chrono::Datelike::weekday(&today).num_days_from_monday() as usize] =
+        json!({"start": 60, "end": 420});
+    let rule: i64 = sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
+         days_json) VALUES (NULL, 'Leggetid', 'bedtime', 1, '[]', ?) RETURNING id",
+    )
+    .bind(serde_json::to_string(&days).unwrap())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let (anna, token) = app.enrolled_device("Anna").await;
+    let _stream = app.state.command_streams.open(anna);
+
+    // The launcher's body with today's day, this rule and the zone under test (`None` = left out).
+    let body = |zone: Option<Value>| {
+        let mut body: Value = serde_json::from_str(LAUNCHER_TIME_REPORT).unwrap();
+        let state = body["time_state"].as_object_mut().unwrap();
+        state.insert("day".into(), json!(today.format("%Y-%m-%d").to_string()));
+        state.insert("active_rule_id".into(), json!(rule));
+        match zone {
+            Some(zone) => state.insert("zone".into(), zone),
+            None => state.remove("zone"),
+        };
+        body
+    };
+    let send = |zone: Option<Value>| {
+        let body = body(zone);
+        let app = &app;
+        let token = token.as_str();
+        async move {
+            let res = app
+                .request(Method::POST, "/api/devices/status", Some(token), Some(body))
+                .await;
+            assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+        }
+    };
+
+    // The phone in the Phone Setup zone: the end everywhere.
+    send(Some(json!(setup_zone))).await;
+    assert_eq!(
+        locks_shown(&app, &cookie, anna).await,
+        ["Leggetid until 07:00"; 3]
+    );
+
+    // Another zone - a real one, the same offset spelled otherwise, the name in another case -,
+    // no zone, and zones the server doesn't keep: the rule's name alone, never an end.
+    for other in [
+        Some(json!("Europe/Oslo")),
+        Some(json!(format!("UTC{offset:+}"))),
+        Some(json!(setup_zone.to_lowercase())),
+        None,
+        Some(Value::Null),
+        Some(json!("")),
+        Some(json!(42)),
+        Some(json!("Not/A_Zone")),
+        Some(json!(format!("{setup_zone}{}", " ".repeat(64)))),
+    ] {
+        send(other.clone()).await;
+        assert_eq!(
+            locks_shown(&app, &cookie, anna).await,
+            ["Leggetid"; 3],
+            "zone {other:?}"
+        );
+    }
+
+    // Back in the Phone Setup zone: the end again.
+    send(Some(json!(setup_zone))).await;
+    assert_eq!(
+        locks_shown(&app, &cookie, anna).await,
+        ["Leggetid until 07:00"; 3]
+    );
 }

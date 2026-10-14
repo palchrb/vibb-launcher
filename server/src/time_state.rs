@@ -6,9 +6,10 @@
 //! The report has the rule's name and the phone's local `day`, never the window's end, so the end
 //! comes from the rules' days on this server, and only when every one of these holds:
 //! - the phone says its own time zone (`time_state.zone`) and it is the Phone Setup zone: the
-//!   rules' windows are minutes of the *phone's* local day. Today's launchers don't send a zone,
-//!   so no end shows until one does (a launcher change; an `active_until` field would be better
-//!   still - both are API changes in both directories, left out of design 31);
+//!   rules' windows are minutes of the *phone's* local day. The launcher sends its
+//!   `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none, and then no end
+//!   shows. A zone that isn't exactly Phone Setup's IANA name (another zone, an offset id, garbage,
+//!   another case) shows none either;
 //! - the report is fresh (below), from the server's local today, and its local time lies inside
 //!   one window of the active rule;
 //! - at that window's end no rule of the phone has a window running or starting (the same
@@ -49,7 +50,8 @@ pub struct TimeReport {
     pub extra_minutes: Option<i64>,
     /// The phone couldn't read its screen-time record and counts today as used up.
     pub ledger_unreadable: bool,
-    /// The phone's own IANA time zone, when the launcher says it (none does yet).
+    /// The phone's own IANA time zone (design 34 P13; `None` from an older launcher, or a value
+    /// that isn't a non-empty string of at most 64 bytes). Only compared with Phone Setup's name.
     pub zone: Option<String>,
 }
 
@@ -533,7 +535,7 @@ mod tests {
             ),
             "Skole"
         );
-        // Today's launchers don't say their zone.
+        // A launcher from before design 34 P13 doesn't say its zone.
         let silent = TimeReport {
             zone: None,
             ..report("Skole", "SCHOOL", "2026-10-13")

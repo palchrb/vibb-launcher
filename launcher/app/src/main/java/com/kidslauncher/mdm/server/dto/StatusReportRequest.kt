@@ -222,7 +222,8 @@ data class InstallModeReport(val untilMs: Long)
  * `StatusReportRequest.timeState`, shown on the server's device page. [day] is the local date
  * being counted, [budgetMinutes] today's budget including [extraMinutes] from the parent's
  * "+ screen time" (`null` = unlimited), [activeRuleId]/[activeRuleName] the strongest active rule,
- * [liftsActive] the lift ids in force, [lockReason] a [com.kidslauncher.mdm.server.LockReason] name.
+ * [liftsActive] the lift ids in force, [lockReason] a [com.kidslauncher.mdm.server.LockReason] name,
+ * [zone] the zone [day] and the rules' windows are counted in.
  */
 @Serializable
 data class TimeState(
@@ -237,6 +238,11 @@ data class TimeState(
     val liftsActive: List<Long>,
     /** The screen-time record couldn't be read today, so it counts as used up (QA step 6 #6). */
     val ledgerUnreadable: Boolean = false,
+    /** The phone's IANA time zone (design 34 P13; `ZoneId.systemDefault().id` through
+     * [com.kidslauncher.mdm.timerules.reportedZone]): the server shows a rule's end ("until 07:00")
+     * only when it is Phone Setup's zone. `null` = left out of the JSON (an id the server wouldn't
+     * keep). */
+    val zone: String? = null,
 )
 
 /**

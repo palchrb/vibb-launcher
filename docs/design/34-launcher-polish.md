@@ -929,3 +929,46 @@ P9 built (launcher only, no server or contract change), on branch `design-34-s10
 | N3 `soundSegments` restated `soundRowState` | Dropped with `SoundSegment`; `renderSound` reads `state.selected`/`state.enabled` as before step 10. The test keeps the halves' order and design 18's taps. |
 
 Tests: `SoundSegmentsTest` 12 (was 9), `WallpaperInkTest` +5.
+
+## Step 13 implementation status (2026-10-14)
+
+P13: the launcher reports its time zone, so the lock badge can say until when. One commit, server and launcher; no
+policy change, no migration, no capability.
+
+- **Launcher**: `TimeState.zone: String? = null` (`server/dto/StatusReportRequest.kt`). `TimeRulesRuntime.report`
+  reads `zone()` (`ZoneId.systemDefault()`) once and sends `reportedZone(zone)` - the zone the report's `day` and the
+  rules' windows are counted in. The pure `reportedZone` (`timerules/TimeRules.kt`) is the id as it is, left out
+  (`null`, so not in the JSON) when blank, over 64 characters (`MAX_REPORTED_ZONE_LENGTH`, the server's limit) or not
+  printable ASCII - never on a real `ZoneId`, a guard only. An offset id ("Z", "+01:00") is sent as it is; the server
+  never shows an end for it.
+- **`TimeStateZoneTest`** (4, QA L8): the **encoded** `StatusReportRequest` equals an exact string with
+  `"time_state":{...,"zone":"Europe/Oslo"}` (and parses back with the zone); `zone = null` leaves the key out and an
+  older report without it decodes; `reportedZone` of real ids, of the machine's own zone (non-null and `ZoneId.of`
+  reads it back as the same zone) and of offsets; a source check that `report` passes `reportedZone(zone)` of the
+  runtime's own `zone()`. `PolicyResponseCompatTest`'s key-set assertion is unchanged (it builds a `TimeState` without
+  a zone - a default is left out).
+- **Server**: nothing to build. `TimeReport::parse` already keeps `zone` as a non-empty string of at most 64 bytes
+  (anything else - a number, `null`, `""`, a longer string - is `None`), and `provable_end` compares it for exact
+  equality with Phone Setup's IANA name (`Zone::name`, `None` in the UTC fallback), so an unknown or garbage zone, an
+  offset id or another case is ignored safely: no end, never an error. The status intake stores `time_state` as an
+  opaque capped object (`time_state_json`, <= 4096). Comments and docs that said no launcher sends a zone are
+  updated (`time_state.rs`, the two older tests).
+- **End-to-end test** `tests::devices_list::a_launcher_report_with_its_zone_shows_the_rules_end`: the launcher test's
+  exact body (`LAUNCHER_TIME_REPORT`, with today's day, the rule's id and the zone under test put in) posted to
+  `/api/devices/status`; a bedtime rule "Leggetid" 01:00-07:00 on today's weekday only; Phone Setup's zone chosen per
+  run as the `Etc/GMT±N` where it is 03:xx now (so the end is "until 07:00" today whatever the time of the test - a
+  real IANA name like "Europe/Oslo" would need the test to run at night). The zone equal: "Leggetid until 07:00" on
+  the Devices list's row, the summary's header and Device › Time. "Europe/Oslo", the same offset spelled `UTC+N`, the
+  name lower-cased, no `zone`, `null`, `""`, `42`, "Not/A_Zone" and the zone padded past 64 bytes: "Leggetid" alone on all three.
+  Back to the equal zone: the end again.
+- **Contract files**: `server/testdata/` pins no status shape (checked: `phone_vectors.json`, `app_icons.json`, the
+  music files); the two tests' literal is the contract - kept equal by hand, said in both tests' docs.
+- **Docs**: `server/CLAUDE.md` (the lock badge bullet, Device › Time, the summary's header), `launcher/CLAUDE.md`
+  ("Time rules" › Status). The emulator recipe (`adb shell getprop persist.sys.timezone` into Phone Setup) was step 0's
+  (`docs/testing/emulator.md`).
+- **Counts**: server `cargo test` 951 passed (was 950), `cargo fmt --check` clean, `cargo clippy --all-targets
+  --locked` 13 warnings, none in the touched files; node jstests 30/30. Launcher `assembleDebug testDebugUnitTest
+  --rerun -PwarningsAsErrors=true` 1259 tests, 0 failures (`TimeStateZoneTest` +4).
+- **Check on the emulator** (not done here - no emulator): Phone Setup's zone = the emulator's
+  `persist.sys.timezone`, a bedtime rule running now; the phone's summary, the Devices list and Device › Time say
+  "Leggetid until …"; Phone Setup set to another zone - the rule's name alone.

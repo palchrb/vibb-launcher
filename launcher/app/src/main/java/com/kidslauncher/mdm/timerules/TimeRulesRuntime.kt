@@ -166,6 +166,7 @@ object TimeRulesRuntime {
 
     /** The status report's `time_state`. */
     fun report(context: Context, policy: PolicyResponse?, lockReason: LockReason): TimeState {
+        val zone = zone()
         val snap = snapshot(context, policy)
         val top = snap.lock.rules.firstOrNull()
         return TimeState(
@@ -179,6 +180,7 @@ object TimeRulesRuntime {
             lockReason = lockReason.name,
             liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) }.orEmpty(),
             ledgerUnreadable = snap.ledger?.unreadable == true,
+            zone = reportedZone(zone),
         )
     }
 
