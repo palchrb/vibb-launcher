@@ -67,7 +67,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 ## Home, phone book, photos, badges, language (handy step 5, design `docs/design/05-ui-photos-i18n.md`, at the monorepo root)
 
 - **Home** (`HomeActivity`, `activity_home.xml`, mockup "handy launcher skisse"; since step 8 without the clock, with a Settings tile last - see below): the Home contacts as big round contact buttons (tap and long-press open the contact sheet - since the 2026-10-06 fix round; before, a tap called at once), then `HomeGridAdapter`: the phone book first, then every app the drawer's `AppFilter` shows (minus our own package), round icons (`KidAvatars.roundAppIcon`: adaptive-icon layers clipped to a circle) with unread badges; 3 columns, 4 when `launcher_ui.home_columns` says so (read from the cached policy). `AppFilter` runs off the main thread (`refreshApps`); badge changes are debounced and only rebuild the grid. What is shown is the pure `ui/home/HomeModel.kt` (`homeGrid`, `gridColumns`, `avatarStyle`, `badgeText`; `HomeModelTest`). The drawer stays on swipe-up (only when the grid can't scroll further) - same filter, so it shows nothing more, and it holds the PIN-gated Settings button. The old minimalist list (`ContactsHomeAdapter`/`MinimalistHomeAdapter`) and the "add to home screen" menu entry are gone. `onResume`'s lock-screen/kiosk/role order is unchanged.
-- **Phone book** (`PhoneBookActivity`, `PhoneBookAdapter`): 3-column avatar grid with missed-call badges, a red 112 tile when no rules can be read, calls-off/empty text; tapping opens `ContactSheet` (a bottom `Dialog`, not Material's BottomSheetDialog - our themes are AppCompat): photo with a ring, missed text, Call, Message (`resolveMessageButton`, "Message opens in <app label>"), Close. `tel:` handling is unchanged.
+- **Phone book** (`PhoneBookActivity`, `PhoneBookAdapter`): 3-column avatar grid with missed-call badges, a 112 tile in the tonal emergency red when no rules can be read, calls-off/empty text; tapping opens `ContactSheet` (a bottom `Dialog`, not Material's BottomSheetDialog - our themes are AppCompat): photo with a ring, missed text, Call, Message (`resolveMessageButton`, "Message opens in <app label>"), Close. `tel:` handling is unchanged.
 - **Missed calls**: `MissedCallsRepo` reads 14 days of call log (needs `READ_CALL_LOG`, self-granted while calls are managed) and CE prefs `missed_calls_seen`; pure `missedCallSummaries` (`MissedCallsTest`): a missed call counts after the latest seen mark and the latest outgoing/answered call with that number; rejected/blocked never count. Opening the sheet or tapping Call marks the contact seen.
 - **App badges**: `badges/BadgeListenerService` (NotificationListenerService, reads package/flags/`number` only - plus, for Element X only, the reader of design 15 below, and since design 25 `GlanceReader`, the one reader of names and texts, only of the apps the parent ticked for the lock's glance page) -> pure `badgeCounts` -> `BadgeStore` (memory). **Access can't be granted by the device owner** (no DPM API; `setNotificationListenerAccessGranted` needs a system permission; sideloaded apps get "restricted setting" in Settings): `adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService` before enrolling (adb is blocked afterwards by default). Status reports carry `notificationListenerEnabled`; the server warns.
 - **Contact photos**: `call_policy` contacts carry `photo` (SHA-256 hex), kept in `RuleContact`/`last_call_rules` (CE). `ContactPhotos.sync` runs after every accepted sync (after the status report): pure `photoCachePlan`/`isValidPhotoHash`/`photoMatches` (`PhotoCacheTest`) decide; downloads via `GET api/devices/contact-photos/{hash}` (≤ 1 MB, hash checked, temp file + rename) into `filesDir/contact_photos`, deletes the rest (not while the rules are unknown); a hash that 404s is remembered and not fetched again while the policy names it (`rememberNotFound`). `cached()` never reads the disk: one background thread checks the header (`photoBoundsOk`, ≤ 1024 px) and decodes with `Throwable` caught, then the listeners rebind - nothing before the first unlock. **Nothing photo-related goes to DE storage** (`BootCallPolicy` still carries numbers only); `InCallActivity` shows a photo only after the first unlock (step 10).
@@ -274,6 +274,30 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks `tileColor(seed) == tile`). The
   Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
 - **Not device-tested**: the checks in the 14 doc ("Implementation status").
+
+## Soft avatars and the night contact sheet (design 34 P3, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Avatars** (pure `ui/home/HomeModel.kt`, `HomeModelTest`): a contact without a photo is a soft, light disc with a
+  dark initial - `AVATAR_PALETTE` peach `#E8B49A`, sky `#9FC3E3`, sand `#E3CF9A`, sage `#A9CDB0`, lilac `#C9B3DE`, rose
+  `#E6AFB4`, all with `AVATAR_INK` `#1B1B28` (>= 8.9:1), picked by contact id (`floorMod`; append, never reorder - a
+  contact keeps its colour). Photos are unchanged. Every surface that binds a contact (`KidAvatars.bindContact`: Home,
+  the phone book, the sheet, the glance rows, the call screen and Home's call card) gets them. The 112 avatar
+  (`EMERGENCY_AVATAR` = `kid_emergency_tonal` + `kid_emergency_text`, kept equal by `KidPaletteTest`, the pair P7's pill
+  uses) is `#FF8A8A` on `#3A1E24` (6.6:1), whatever the id, with a 3 dp `#FF8A8A` ring drawn by `bindContact`
+  (`EMERGENCY_RING_DP`) - the disc alone is ~1.1-1.3:1 on the night; every other branch restores `bg_kid_circle` (the
+  phone book recycles views). It shows only on Home's contacts row, in the phone book (its no-rules tile included) and
+  on the sheet: the call screens and Home's call card show the silhouette for emergency calls (`callAvatar`), and the
+  glance rows never pass `isEmergency`. The sheet's ring (`avatarRingColour`) is the contact's colour, but the red ink
+  for an emergency number (in the disc's colour it would cover the disc's red ring).
+- **The sheet at night** (`sheet_contact.xml`, `bg_kid_sheet.xml` 26 dp top radius): `kid_sheet` is `kid_ground_lift`
+  (also the missed badge's ring, `bg_kid_badge_sheet`), the name `kid_core`, the hint and Close `kid_sheet_muted` =
+  `kid_core_dim`, missed calls `kid_missed_text` `#FF8A8A` (7.5:1), the handle white 22 %, Message the tonal
+  `kid_sheet_button` (white 8 %) with `kid_core` text and a peach glyph; Call stays `kid_call_button` - the one call
+  green `#29833B` (white 4.77:1), also the answer button (`bg_call_green`) and Home's call card (`bg_home_call_card`).
+  `kid_sheet_ink` is only Home's window banner now, `kid_message_button` only the time-rule screen's app buttons.
+  `KidPaletteTest` parses `sheet_contact.xml` and checks every text colour and glyph tint against its composited
+  ground (`contrast` composites a translucent ink and refuses a translucent ground). Buttons, order, behaviour and
+  `ContactSheet` unchanged.
 
 ## VoIP calls over the PIN lock (design 17, `docs/design/17-voip-calls-over-lock.md`, at the monorepo root)
 

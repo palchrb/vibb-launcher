@@ -18,12 +18,20 @@
     <color name="kid_call_badge">#2F9E44</color>
     <color name="kid_phone_book">#37B24D</color>
     <color name="kid_back_button">#1FFFFFFF</color>
-    <color name="kid_sheet">#FFFFFF</color>
+    <!-- The contact sheet at night (design 34 P3, QA M4): the lifted night, no white surface. Its
+         name is kid_core, its hint and Close kid_sheet_muted (= kid_core_dim), Message a tonal
+         white with a peach glyph; every pair is in KidPaletteTest. -->
+    <color name="kid_sheet">@color/kid_ground_lift</color>
+    <!-- Only Home's window banner (activity_home.xml, bg_home_window_lock_again.xml) since design
+         34: the sheet's name is kid_core now. -->
     <color name="kid_sheet_ink">#1B1B1F</color>
-    <color name="kid_sheet_muted">#495057</color>
-    <color name="kid_sheet_handle">#CED4DA</color>
-    <color name="kid_missed_text">#C92A2A</color>
-    <color name="kid_call_button">#2B8A3E</color>
+    <color name="kid_sheet_muted">@color/kid_core_dim</color>
+    <color name="kid_sheet_handle">#38FFFFFF</color>
+    <color name="kid_sheet_button">#14FFFFFF</color>
+    <color name="kid_missed_text">#FF8A8A</color>
+    <!-- The call green: Ring, the answer button, Home's call card (white 4.77:1, design 34 QA L1). -->
+    <color name="kid_call_button">#29833B</color>
+    <!-- The time-rule screen's app buttons (item_lock_app.xml); the sheet's Message no longer. -->
     <color name="kid_message_button">#1864AB</color>
     <color name="kid_emergency">#E03131</color>
     <color name="kid_icon_fallback">#F1F3F5</color>
@@ -39,4 +47,7 @@
     <color name="kid_music_control">#2A2A3A</color>
     <color name="kid_core_dim">#C7FBE4DC</color>
     <color name="kid_emergency_text">#FF8A8A</color>
+    <!-- The tonal emergency red's ground (design 34): the 112 avatar (EMERGENCY_AVATAR, which
+         KidPaletteTest keeps equal to this pair) and P7's emergency pill. -->
+    <color name="kid_emergency_tonal">#3A1E24</color>
 </resources>

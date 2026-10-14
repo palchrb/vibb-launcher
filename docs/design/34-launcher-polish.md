@@ -358,3 +358,44 @@ Nothing is open.
 - **N3** always dark, said once - "Look and motion".
 - **N4** `wm density reset` / `font_scale 1.0` in step 0; the pill's 1.3:1 noted - P7.
 - **N5** no open questions left; the numbering is gone with them - §6.
+
+## Step 3 implementation status (2026-10-14)
+
+P3 built (launcher only, no server or contract change), on branch `design-34-s3`:
+- **Avatars** (`HomeModel.kt`): `AVATAR_PALETTE` is the six soft discs with `AVATAR_INK` `#1B1B28` (8.9-11.1:1),
+  picked by contact id as before (a contact keeps its index, so its colour moves only from the old to the new hue at
+  that index); photos unchanged. Every `KidAvatars.bindContact` surface gets them - Home, the phone book, the sheet, the
+  glance rows, the call screen and Home's call card.
+- **The 112 avatar** (QA M3): `EMERGENCY_AVATAR` is the tonal pair `#FF8A8A` on `#3A1E24` (6.65:1), built here
+  because it is an avatar; step 1 needs only the Phone book and Settings tiles. Decision: the sheet's ring
+  (`avatarRingColour`) is the red ink for an emergency number - the dark disc alone is 1.13:1 on the lift (1.29:1 on the ground), so the ring
+  keeps 112 recognisable on the sheet; other contacts keep the ring in their colour.
+- **The sheet** (QA M4, the table in P3): `kid_sheet` = `@color/kid_ground_lift` (sheet and the missed badge's ring),
+  the name `kid_core` (14:1), hint and Close `kid_sheet_muted` = `@color/kid_core_dim` (9.0:1 composited), missed calls
+  `kid_missed_text` `#FF8A8A` (7.5:1), handle `#38FFFFFF`, Message the new `kid_sheet_button` `#14FFFFFF` with
+  `kid_core` text (11.2:1) and a peach glyph (`app:drawableTint`, 6.9:1); 26 dp top radius. `kid_sheet_ink` stays
+  `#1B1B1F` for Home's window banner, `kid_message_button` for `item_lock_app.xml`. Call stays call green; the sheet's
+  buttons, order, size and `ContactSheet` are untouched. The mockup's 112 dp avatar without a ring was not taken
+  (P3 doesn't ask for it; the 132 dp frame and the ring stay).
+- **TalkBack** (L7): nothing new to announce - the avatar views stay `importantForAccessibility="no"`, the glyph is a
+  compound drawable, the texts and their order are unchanged.
+- **Tests**: `HomeModelTest` (the six colours, ink >= 8.9:1 on each and the discs >= 10:1 on the ground, a colour
+  per contact id that name/number don't move, the 112 pair >= 6.6:1 for any id, the ring colour), `KidPaletteTest`
+  (the sheet is the lift, the banner keeps its ink, every sheet text >= 4.5:1 with alpha composited, Message's text and
+  glyph >= 4.5:1 on the tonal button).
+- **Noted** (changed in the fix round, L1): white on `kid_call_button` `#2B8A3E` (Ring) was 4.37:1 - 17 sp
+  extra-bold, close to but under AA's large-text size. The unread badge's colour is step 2's.
+- **Check on the emulator** (not done here - shared emulator, screenshots later): Home, the phone book (incl. the 112
+  tile with no rules), the sheet with and without missed calls, with a photo, with Message, the call screens.
+
+### Step 3 code QA fix round (`qa-34-s3-code.md`, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| L1 Ring's white 4.37:1 | `kid_call_button` `#29833B` (white 4.77:1). `bg_call_green.xml` (answer) and `bg_home_call_card.xml` (Home's call card) use the resource instead of the `#2B8A3E` literal, so there is one green. The card hint's `alpha="0.9"` is gone (white 4.77:1). New `KidPaletteTest` `the call green carries white` |
+| L2 the 112 disc has no edge | Coordinator's decision: `KidAvatars.bindContact` draws an emergency number's disc as an oval `#3A1E24` with a 3 dp `#FF8A8A` ring (`EMERGENCY_RING_DP`) on every surface that shows it (Home's row, the phone book's grid and no-rules tile, the sheet). Every other branch restores `bg_kid_circle`, since the phone book recycles views. The sheet's `ring()` keeps `avatarRingColour`: it is not redundant, because a 4 dp ring in the disc's colour would cover the disc's red ring, so for 112 it draws the same red |
+| L3 the layout's colours are unpinned | `KidPaletteTest` parses `sheet_contact.xml` (plus `styles.xml` for `KidSheetButton`'s text, and the vectors for an untinted glyph's colour). Every text colour and glyph tint must reach 4.5:1 over its composited ground (`backgroundTint`, or the background's solid, over `kid_sheet`). That is 8 checks: name, missed, Call text and glyph, Message text and glyph, hint, Close. The badge pill is step 2's. Mutation 7 (`sheet_name` on `kid_sheet_ink`) now fails at 1.01:1 |
+| N1 "~1.3:1 on the lift" | Corrected to 1.13:1 on the lift, 1.29:1 on the ground |
+| N2 `contrast()` dropped alpha | `contrast(top, under)` composites `top` over `under` and asserts that `under` is opaque |
+| N3 two homes for the 112 colours | New `kid_emergency_tonal` `#3A1E24` next to `kid_emergency_text`. `KidPaletteTest` keeps `EMERGENCY_AVATAR` equal to that pair, so P7's pill can take the resources |
+| N4 where the 112 avatar shows | `launcher/CLAUDE.md` now says: only on Home's contacts row, in the phone book and on the sheet. The call screens show the silhouette for emergency calls, and the glance rows never pass `isEmergency` |

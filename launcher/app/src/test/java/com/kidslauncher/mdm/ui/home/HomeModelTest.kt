@@ -172,9 +172,51 @@ class HomeModelTest {
     }
 
     @Test
-    fun `emergency numbers are red with the number`() {
+    fun `emergency numbers are the tonal red with the number`() {
         val style = avatarStyle(RuleContact(id = 1, name = "Nødnummer", number = "112"), isEmergency = true)
         assertEquals("112", style.text)
         assertEquals(EMERGENCY_AVATAR, style.colors)
+        // Design 34 P1/QA M3: the lock pill's tonal pair, #FF8A8A on #3A1E24 (6.6:1), whatever the id.
+        assertEquals(AvatarColors(0xFF3A1E24, 0xFFFF8A8A), EMERGENCY_AVATAR)
+        val ratio = contrastRatio(lum(EMERGENCY_AVATAR.ink), lum(EMERGENCY_AVATAR.background))
+        assertTrue("112 ink: $ratio", ratio >= 6.6)
+        for (id in listOf(0L, 3L, 7L, -1L)) {
+            assertEquals(EMERGENCY_AVATAR, avatarStyle(RuleContact(id = id, name = "Mamma", number = "112"), true).colors)
+        }
+        // The sheet's ring is the red ink (its dark disc alone would vanish), a contact's its colour.
+        assertEquals(0xFFFF8A8A, avatarRingColour(EMERGENCY_AVATAR, isEmergency = true))
+        assertEquals(AVATAR_PALETTE[2].background, avatarRingColour(AVATAR_PALETTE[2], isEmergency = false))
     }
+
+    @Test
+    fun `contact avatars are soft discs with a dark initial`() {
+        // Design 34 P3: six light pastels, one ink, the initial >= 8.9:1 on each (WCAG AA is 4.5).
+        assertEquals(
+            listOf(0xFFE8B49A, 0xFF9FC3E3, 0xFFE3CF9A, 0xFFA9CDB0, 0xFFC9B3DE, 0xFFE6AFB4),
+            AVATAR_PALETTE.map { it.background },
+        )
+        val ground = lum(0xFF0C0C14)
+        for (colors in AVATAR_PALETTE) {
+            assertEquals(AVATAR_INK, colors.ink)
+            val ink = contrastRatio(lum(colors.ink), lum(colors.background))
+            assertTrue("ink on ${colors.background.toString(16)}: $ink", ink >= 8.9)
+            // Light discs: never a dark field, clearly apart from the night ground.
+            assertTrue(contrastRatio(lum(colors.background), ground) >= 10.0)
+        }
+        assertEquals(6, AVATAR_PALETTE.toSet().size)
+    }
+
+    @Test
+    fun `a contact keeps its colour`() {
+        val contacts = (-6L..12L).map { RuleContact(id = it, name = "N$it", number = "+479000000$it") }
+        for (contact in contacts) {
+            val colors = avatarStyle(contact, false).colors
+            assertEquals(AVATAR_PALETTE[Math.floorMod(contact.id, AVATAR_PALETTE.size.toLong()).toInt()], colors)
+            // Name, number and photo don't move it; only the id does.
+            assertEquals(colors, avatarStyle(contact.copy(name = "Other", number = "+4791111111"), false).colors)
+            assertTrue(colors in AVATAR_PALETTE)
+        }
+    }
+
+    private fun lum(argb: Long): Double = relativeLuminance(argb.toInt())
 }

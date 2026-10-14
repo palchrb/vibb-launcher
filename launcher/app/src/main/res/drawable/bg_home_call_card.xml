@@ -9,7 +9,7 @@
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#2B8A3E" />
+            <solid android:color="@color/kid_call_button" />
             <corners android:radius="20dp" />
         </shape>
     </item>
