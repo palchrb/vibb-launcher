@@ -126,7 +126,13 @@ object PlayerHub {
      * ROOM_NOT_ALLOWED: the parent's room scope doesn't (any longer) allow the room or a room grouped
      * with it - the session came home, or the pick was refused (§5.5).
      */
-    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED }
+    /**
+     * A word to the screens: each ends the instant switch's hold (`logic/Switch.kt`); all but [STAYED] show their line
+     * for 3 s. [STAYED]: the player refused a step and stayed where it was - the player's own line says why (a Spotify
+     * entry the network gate refuses: "Trenger internett"), so nothing more is shown (emulator check §6l A, F3: the
+     * hold showed the next track for 3 s although nothing moved).
+     */
+    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

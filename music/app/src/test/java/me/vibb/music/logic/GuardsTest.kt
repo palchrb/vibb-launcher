@@ -713,7 +713,10 @@ class GuardsTest {
         assertEquals(1, Regex("""SpotifyRenderer\.create\(""").findAll(service).count())
         assertTrue(service.contains("private fun spotifyRenderer(): SpotifyRenderer = spotify ?: SpotifyRenderer.create("))
         assertTrue(service.contains("queue = { active.takeIf { renderer === spotify } },"))
-        assertTrue(service.contains("outcome = { word -> scope.launch(writer) { store.recordSpotifyOutcome(word, System.currentTimeMillis()) } },"))
+        assertTrue(
+            "the word written on the writer; a change asks for a sync, which hands the report to the launcher (§6l A, F7)",
+            service.contains("scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) Sync.nudge(this@PlaybackService) }"),
+        )
         assertTrue(service.contains("log = ::spotifyLog,"))
         assertEquals("the service's one log line: the web player's, debug builds only (qa-26c-step5a-code L8)", 1, Regex("""\bLog\.""").findAll(service).count())
         assertTrue(serviceBody("private fun spotifyLog(message: String) {").contains("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"))
@@ -767,7 +770,10 @@ class GuardsTest {
         assertTrue(refuse.contains("(renderer as? SpotifyRenderer)?.refused(line)"))
         for (move in listOf("seekTo(", ".play()", "NOT_DOWNLOADED", "saveBookmark(")) assertFalse(move, refuse.contains(move))
         val goTo = serviceBody("private fun goTo(a: Active, index: Int, forward: Boolean) {")
-        assertTrue(goTo.contains("if (isSpotify(a.entry)) refuseSpotify() else PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"))
+        assertTrue(
+            "Spotify refused: its line, no jump, and the screens drop the step they showed (§6l A, F3)",
+            goTo.contains("if (isSpotify(a.entry)) {\n                refuseSpotify()\n                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.STAYED)\n            } else {\n                PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"),
+        )
         val changed = serviceBody("private fun onItemChanged(index: Int, auto: Boolean) {")
         assertTrue(changed.contains("if (isSpotify(a.entry)) {\n            "))
         assertTrue("only Spotify's own advance is refused; never moved on", changed.contains("if (auto && !playable(a, index)) refuseSpotify()\n        } else if (!playable(a, index)) {"))
@@ -890,7 +896,13 @@ class GuardsTest {
         assertTrue(serviceBody("private fun skipNext() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = true)"))
         assertTrue(serviceBody("private fun skipPrevious() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = false)"))
         val step = serviceBody("private fun stepOnWebPlayer(forward: Boolean) {")
-        assertTrue("gated as every step", step.contains("if (refuseSpotify()) return") && step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"))
+        assertTrue(
+            "gated as every step, the screens told it stayed (F3)",
+            step.contains("if (refuseSpotify()) {\n            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.STAYED)\n            return\n        }") &&
+                step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"),
+        )
+        val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
+        assertTrue("every message ends the hold; STAYED shows nothing more", root.substringAfter("PlayerHub.messages.collect {").substringBefore("message = it").let { it.contains("vm.switching = null") && it.contains("if (it == PlayerHub.Message.STAYED) return@collect") })
         val now = serviceBody("private fun reportNowPlaying(")
         assertTrue(now.contains("putString(NowPlayingKeys.ITEM, title)"))
         assertTrue("a track change is a new report", now.contains("val key = Triple(a?.entry?.id, item?.key?.let { \"\$it\\n\$title\" }, playing)"))

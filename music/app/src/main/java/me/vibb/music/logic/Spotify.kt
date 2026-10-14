@@ -10,6 +10,7 @@ import me.vibb.music.bridge.TokenResult
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.playback.PauseCause
 import me.vibb.music.spotify.SPOTIFY_MODE_CONTEXT
 import me.vibb.music.spotify.SpotifyKind
 import me.vibb.music.spotify.spotifyTarget
@@ -196,6 +197,26 @@ const val SPOTIFY_STEP_COALESCE_MS = 300L
 
 /** The host is destroyed this long after the last Spotify renderer detached or paused. */
 const val SPOTIFY_HOST_IDLE_MS = 5 * 60_000L
+
+// --- the audio focus (§5.6, answered by the emulator check §6l A, F2) ---------------------------------
+
+/*
+ * The audio focus is the WebView's own: Chromium's media session (`AudioFocusDelegate`) requests AUDIOFOCUS_GAIN when
+ * the page's audio starts, so a request of the renderer's would be taken by its own WebView at every play (F2). The
+ * renderer therefore requests none, and every later focus change goes to Chromium, which pauses the page's audio on a
+ * loss (another app's playback, a call), ducks it for a notification, and plays it again after a transient loss. The
+ * renderer reads those pauses and resumes from the page's states (`SpotifyTracker`'s `Paused` and `Resumed`).
+ */
+
+/** A pause of our track: one we sent is the kid's ([PauseCause.USER]); any other is a fault - a focus loss of the WebView or the account's other controls (vibb's resume overlap when it plays again). */
+fun spotifyPauseCause(ours: Boolean): PauseCause = if (ours) PauseCause.USER else PauseCause.FAULT
+
+/**
+ * Our paused track playing again by itself (the WebView's media session after a transient focus loss, or the account's
+ * other controls) is shown playing - unless the kid stepped while paused just before ([pausedStep]: a step only moves),
+ * another renderer plays ([detached]) or the launcher's time rule says no ([mayPlay] false): then it is paused at once.
+ */
+fun spotifySelfResumeShown(pausedStep: Boolean, detached: Boolean, mayPlay: Boolean): Boolean = !pausedStep && !detached && mayPlay
 
 /** The deadline of a start that begins at [nowMs] (the elapsed clock). */
 fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS

@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioDeviceInfo
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +16,7 @@ import androidx.media3.common.DeviceInfo
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
+import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -59,6 +59,8 @@ import me.vibb.music.logic.debugSwitchToken
 import me.vibb.music.logic.sdkErrorProblem
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.spotifyNetworkLine
+import me.vibb.music.logic.spotifyPauseCause
+import me.vibb.music.logic.spotifySelfResumeShown
 import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
@@ -97,9 +99,11 @@ import kotlin.coroutines.resume
  *   ours is paused at once and never saved; a state gap up to 30 s is held as playing, past it the player
  *   pauses with "trenger internett"; a confirmed `null` is "elsewhere" (the bookmark kept); an unplayable
  *   track is the item error and the queue moves on, the third in a row stops.
- * - The phone's own audio rules (§5.6): audio focus (a loss pauses, a transient loss interrupts and plays
- *   again on the gain, a duck lowers the SDK's volume), becoming noisy pauses, the sleep fade steps the
- *   SDK's volume over 10 s; the wake and Wi-Fi locks (§5.7) while a start runs or it shows playing; the
+ * - The phone's own audio rules (§5.6): the audio focus is the WebView's own - Chromium's media session takes
+ *   it when the page's audio starts, pauses on a loss, ducks, and plays again after a transient loss - so the
+ *   renderer requests none and reads those pauses and resumes from the page's states (§5.6 answered by the
+ *   emulator check §6l A, F2); becoming noisy pauses, the sleep fade steps the SDK's volume over 10 s; the
+ *   wake and Wi-Fi locks (§5.7) while a start runs or it shows playing; the
  *   token refreshed ahead of expiry while playing (§5.5, QA M2) under them.
  * - Positions: [saveNow] writes only the tracker's measurement (as the SDK measured it, never
  *   extrapolated - 26a: no guess reaches Room); [positionMs] is for display.
@@ -120,9 +124,6 @@ import kotlin.coroutines.resume
  * service's sites are step 5b's (`create`, `refused`, `suspended`, `forget`, the outcome's store).
  */
 
-/** A change of the audio focus as the renderer reads it. */
-enum class FocusChange { GAIN, LOSS, LOSS_TRANSIENT, DUCK }
-
 /** What the renderer needs from Android ([AndroidSpotifyPorts]; SpotifyRendererTest scripts them). Main thread. */
 internal interface SpotifyPorts {
     /** The elapsed clock (ms): the tracker's, the token cache's and every deadline's. */
@@ -130,11 +131,6 @@ internal interface SpotifyPorts {
 
     /** [block] on the main thread [delayMs] from now; the answer cancels it. */
     fun after(delayMs: Long, block: () -> Unit): () -> Unit
-
-    /** AUDIOFOCUS_GAIN for media (speech for a show); false when refused (a call). [onChange] on the main thread. */
-    fun requestFocus(speech: Boolean, onChange: (FocusChange) -> Unit): Boolean
-
-    fun abandonFocus()
 
     /** Watch `ACTION_AUDIO_BECOMING_NOISY` ([on]) or stop; [onNoisy] on the main thread. */
     fun watchNoisy(on: Boolean, onNoisy: () -> Unit)
@@ -192,8 +188,6 @@ data class SpotifySpec(
     val playWhenReady: Boolean,
     val showsPlaying: Boolean,
     val index: Int,
-    /** A transient focus loss holds it (play-when-ready stays, nothing sounds). */
-    val suppressed: Boolean,
     val line: RendererState?,
 )
 
@@ -220,8 +214,10 @@ internal class SpotifyRenderer(
     dispatcher: CoroutineDispatcher,
     /** The service's queue (`Active`): the items given to [load] are its items. */
     private val queue: () -> Active?,
-    /** The session player's looper (the main one); null in the JVM tests, which read [spec]. */
+    /** The session player's looper (the main one); null in the JVM tests that read [spec]. */
     private val looper: Looper?,
+    /** The session player's clock: Media3's own; a JVM test's drives the player through the `Player` API (6l A F1). */
+    private val playerClock: Clock = Clock.DEFAULT,
 ) : Renderer {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
@@ -244,7 +240,7 @@ internal class SpotifyRenderer(
 
     /**
      * Another renderer plays (the service's `attach`, qa-26c-step5b-code M1): the web player owns nothing until its next
-     * [load] - every playing state is paused at once, never focus, locks or a play.
+     * [load] - every playing state is paused at once, never locks or a play.
      */
     private var detached = false
 
@@ -281,8 +277,6 @@ internal class SpotifyRenderer(
     /** An error that stopped the renderer (the page destroyed): Media3's IDLE. */
     private var stopped = false
     private var line: SpotifyLine? = null
-    private var suppressed = false
-    private var ducked = false
     private var fadeLevel = 1.0
     private var pauseCause = PauseCause.OTHER
 
@@ -299,7 +293,6 @@ internal class SpotifyRenderer(
 
     /** Shuffle and repeat go off before the next play: a new device's first play, or the tracker saw either on. */
     private var needSettings = true
-    private var focusHeld = false
     private var noisyWatched = false
     private var locksHeld = false
 
@@ -383,7 +376,7 @@ internal class SpotifyRenderer(
     private var sbp: SpotifyPlayer? = null
 
     override val player: Player
-        get() = sbp ?: SpotifyPlayer(looper ?: error("the session's player needs the main looper")).also { sbp = it }
+        get() = sbp ?: SpotifyPlayer(looper ?: error("the session's player needs the main looper"), playerClock).also { sbp = it }
     override val kind: RendererKind get() = RendererKind.SPOTIFY
     override var onEvent: ((RendererEvent) -> Unit)? = null
 
@@ -441,7 +434,7 @@ internal class SpotifyRenderer(
         val p = place
         if (p.index != index) return 0
         val now = ports.now()
-        val pos = if (p.moving && pwr && !suppressed && !ended) p.posMs + (now - p.atMs).coerceIn(0, SPOTIFY_STATE_GAP_MS) else p.posMs
+        val pos = if (p.moving && pwr && !ended) p.posMs + (now - p.atMs).coerceIn(0, SPOTIFY_STATE_GAP_MS) else p.posMs
         return durationMs()?.let { pos.coerceAtMost(it) } ?: pos
     }
 
@@ -507,6 +500,9 @@ internal class SpotifyRenderer(
             return
         }
         if (index == this.index && stepTimer == null) return seekTo(ms)
+        // the network gate first (§6l A, F3): refused, the step says the line and the item stays - the service's gate
+        // refuses the same before it asks; this is the renderer's belt, as before every start
+        ports.networkLine()?.let { return refuse(it) }
         moveIndex(index, auto = false)
         place = Place(index, ms.coerceAtLeast(0), ports.now(), moving = false)
         ended = false
@@ -620,8 +616,6 @@ internal class SpotifyRenderer(
         destroyHost()
         pwr = false
         released = true
-        if (focusHeld) ports.abandonFocus()
-        focusHeld = false
         if (noisyWatched) ports.watchNoisy(false) {}
         noisyWatched = false
         if (locksHeld) ports.holdLocks(false)
@@ -663,8 +657,8 @@ internal class SpotifyRenderer(
     /**
      * Another renderer took over (§5.10's `attach`: the phone's own player, a room; qa-26c-step5b-code M1). The page
      * lives on up to 5 idle minutes, and the account's other Spotify app can still resume "Vibb" or transfer to it: from
-     * now until the next [load] every playing state is not ours - paused at once (`vibb.pause()`), never the audio focus,
-     * the locks or a play the session can't show or stop.
+     * now until the next [load] every playing state is not ours - paused at once (`vibb.pause()`), never the locks or a
+     * play the session can't show or stop.
      */
     fun detached() {
         if (released) return
@@ -742,7 +736,7 @@ internal class SpotifyRenderer(
             pwr && (start != null || stepTimer != null || tracker.mode == Mode.STARTING) -> Player.STATE_BUFFERING
             else -> Player.STATE_READY
         }
-        return SpotifySpec(state, pwr && !ended, showsPlaying, index, suppressed, rendererState)
+        return SpotifySpec(state, pwr && !ended, showsPlaying, index, rendererState)
     }
 
     // --- starts ---
@@ -762,7 +756,6 @@ internal class SpotifyRenderer(
         stepWhilePausedAt = null
         if (detached || !ports.mayPlay()) return
         ports.networkLine()?.let { return refuse(it) }
-        if (!acquireFocus()) return
         sdk("resume")
         tracker.resumeSent()
         pwr = true
@@ -803,11 +796,6 @@ internal class SpotifyRenderer(
             return
         }
         ports.networkLine()?.let { return refuse(it) }
-        if (!acquireFocus()) {
-            ports.log("spotify: no audio focus - not started")
-            if (pwr) pause(PauseCause.OTHER)
-            return
-        }
         cancelFirstState()
         cancelGap()
         cancelIdle()
@@ -974,8 +962,8 @@ internal class SpotifyRenderer(
                 }
                 when {
                     problem != null -> fail(problem)
-                    s.cancelled || suppressed -> {
-                        // the kid paused, or a transient focus loss holds it (M2): it never sounds over that
+                    s.cancelled -> {
+                        // the kid paused while the calls ran: it never sounds over that
                         sdk("pause")
                         tracker.pauseSent()
                     }
@@ -1085,7 +1073,6 @@ internal class SpotifyRenderer(
             sdk("pause")
             tracker.pauseSent()
         }
-        suppressed = false
         if (pwr) {
             pwr = false
             pauseCause = cause
@@ -1234,9 +1221,9 @@ internal class SpotifyRenderer(
 
     /** What the tracker's events do (step 4's mapping; §5.4). */
     private fun apply(events: List<Event>) {
-        // a play the renderer starts by itself only goes on with a play the kid wants now: never while paused,
-        // never under a transient focus loss (qa-26c-step5a-code H1, M2) - "nothing starts by itself"
-        val wanted = pwr && !suppressed
+        // a play the renderer starts by itself only goes on with a play the kid wants now: never while paused
+        // (qa-26c-step5a-code H1) - "nothing starts by itself"
+        val wanted = pwr
         for (e in events) {
             // while a start or a step replaces the old play, only a foreign track still needs its pause
             if ((start != null || stepTimer != null) && e !is Event.NotOurs) continue
@@ -1244,17 +1231,21 @@ internal class SpotifyRenderer(
                 is Event.Started -> onStarted(e.index)
                 is Event.ItemChanged -> moveIndex(e.index, e.auto)
                 is Event.Unplayable -> unplayable(e.index, e.stop)
-                is Event.Paused -> if (!suppressed && pwr) {
+                is Event.Paused -> if (pwr) {
+                    // not ours: the WebView's media session lost the audio focus (another app, a call, a notification's
+                    // transient loss - §5.6, F2), or the account's other controls paused it - a fault, as the phone's
+                    // own player's focus loss (vibb's resume overlap when it plays again)
                     pwr = false
-                    pauseCause = if (e.ours) PauseCause.USER else PauseCause.OTHER
+                    pauseCause = spotifyPauseCause(e.ours)
                 }
                 Event.Resumed -> if (!pwr) {
                     // a step the kid sent while paused that Spotify played (qa-26c-step6-code L1): paused, it only moves -
                     // as on every other player of the app; detached (M1): the session shows another renderer
                     val pausedStep = stepWhilePausedAt?.let { ports.now() - it <= PAUSED_STEP_MS } == true
                     stepWhilePausedAt = null
-                    if (!pausedStep && !detached && ports.mayPlay() && acquireFocus()) {
-                        // our track plays again by the account's other controls: shown as it is
+                    if (spotifySelfResumeShown(pausedStep, detached, ports.mayPlay())) {
+                        // our track plays again by itself - the WebView's media session after a transient focus loss
+                        // (§5.6, F2), or the account's other controls: shown as it is
                         pwr = true
                         lastOursAt = ports.now()
                     } else {
@@ -1434,61 +1425,7 @@ internal class SpotifyRenderer(
         if (place.index != i) place = Place(i, 0, ports.now(), moving = false)
     }
 
-    // --- focus, noisy, volume ---
-
-    private fun acquireFocus(): Boolean {
-        if (focusHeld) return true
-        focusHeld = ports.requestFocus(speech) { onFocus(it) }
-        return focusHeld
-    }
-
-    private fun onFocus(change: FocusChange) {
-        if (released) return
-        ports.log("spotify: audio focus ${change.name}")
-        when (change) {
-            FocusChange.LOSS -> {
-                focusHeld = false
-                if (pwr) pause(PauseCause.FAULT)
-            }
-            FocusChange.LOSS_TRANSIENT -> if (pwr && !suppressed) {
-                suppressed = true
-                cancelGap()
-                if (host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
-                    sdk("pause")
-                    tracker.pauseSent()
-                }
-                explicit += Pending(RendererEvent.Interrupted, null)
-                changed()
-            }
-            FocusChange.DUCK -> {
-                ducked = true
-                applyVolume()
-            }
-            FocusChange.GAIN -> {
-                if (ducked) {
-                    ducked = false
-                    applyVolume()
-                }
-                if (suppressed) {
-                    suppressed = false
-                    val live = host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)
-                    when {
-                        !pwr || start != null -> Unit // a start still on its way goes on as it is
-                        live -> {
-                            // our track, or the play sent under the loss and paused (M2): it plays again
-                            sdk("resume")
-                            tracker.resumeSent()
-                            lastOursAt = ports.now()
-                            if (tracker.mode == Mode.STARTING) armFirstState(ports.now() + SPOTIFY_FIRST_STATE_MS) else armGap()
-                        }
-                        ports.mayPlay() -> request(Request(index, startPosition(), fresh = false, settings = needSettings))
-                    }
-                    explicit += Pending(RendererEvent.InterruptionEnded, null)
-                    changed()
-                }
-            }
-        }
-    }
+    // --- noisy, volume ---
 
     /** A headset unplugged or Bluetooth gone (§5.6): paused, as the phone's own player does. */
     private fun onNoisy() {
@@ -1497,11 +1434,10 @@ internal class SpotifyRenderer(
         pause(PauseCause.FAULT)
     }
 
-    /** The SDK's volume: 1, the fade's step, or 0.3 while ducked (the system volume and the cap stay Android's). */
+    /** The SDK's volume: 1 or the fade's step (a duck is the WebView's own; the system volume and the cap stay Android's). */
     private fun applyVolume() {
         if (!host.alive) return
-        val v = minOf(fadeLevel, if (ducked) DUCK_VOLUME else 1.0)
-        host.call("volume", v)
+        host.call("volume", fadeLevel)
     }
 
     // --- timers ---
@@ -1517,7 +1453,7 @@ internal class SpotifyRenderer(
         val wait = minOf(SPOTIFY_FIRST_STATE_MS, deadline - ports.now()).coerceAtLeast(0)
         firstStateTimer = ports.after(wait) {
             firstStateTimer = null
-            if (pwr && !suppressed && tracker.mode == Mode.STARTING && start == null) {
+            if (pwr && tracker.mode == Mode.STARTING && start == null) {
                 ports.log("spotify: no state of ours after the play call")
                 fail(SpotifyProblem.UNREACHABLE)
             }
@@ -1532,11 +1468,11 @@ internal class SpotifyRenderer(
     /** No state of ours for 30 s while we play (§5.4's table): paused, "trenger internett". */
     private fun armGap() {
         cancelGap()
-        if (!pwr || suppressed || tracker.mode != Mode.OURS) return
+        if (!pwr || tracker.mode != Mode.OURS) return
         val at = lastOursAt + SPOTIFY_STATE_GAP_MS
         gapTimer = ports.after((at - ports.now()).coerceAtLeast(0)) {
             gapTimer = null
-            if (pwr && !suppressed && tracker.mode == Mode.OURS && start == null) {
+            if (pwr && tracker.mode == Mode.OURS && start == null) {
                 if (ports.now() - lastOursAt >= SPOTIFY_STATE_GAP_MS) {
                     ports.log("spotify: no state for ${SPOTIFY_STATE_GAP_MS / 1000} s")
                     fail(SpotifyProblem.UNREACHABLE)
@@ -1623,7 +1559,7 @@ internal class SpotifyRenderer(
         if (inHandler > 0) postFlush() else flush()
     }
 
-    /** The locks, the noisy receiver, the focus and the timers follow what the player shows. */
+    /** The locks, the noisy receiver and the timers follow what the player shows. */
     private fun syncHolds() {
         val playing = pwr && !ended
         if (playing != locksHeld) {
@@ -1633,10 +1569,6 @@ internal class SpotifyRenderer(
         if (playing != noisyWatched) {
             noisyWatched = playing
             ports.watchNoisy(playing) { onNoisy() }
-        }
-        if (!playing && focusHeld) {
-            focusHeld = false
-            ports.abandonFocus()
         }
         if (playing || start != null) cancelIdle() else armIdle()
         if (!playing) {
@@ -1710,18 +1642,25 @@ internal class SpotifyRenderer(
         return Futures.immediateVoidFuture()
     }
 
-    /** The session's player: its State is [spec]'s; every handler only sets intent (as SonosRenderer's). */
-    private inner class SpotifyPlayer(looper: Looper) : SimpleBasePlayer(looper) {
+    /**
+     * The session's player: its State is [spec]'s; every handler only sets intent (as SonosRenderer's). **Every call
+     * from here to the renderer is qualified** (`this@SpotifyRenderer.`): inside this inner class an unqualified
+     * `play()`, `pause()` or `seekTo(..)` is the SimpleBasePlayer's own - `BasePlayer.play()` ->
+     * `setPlayWhenReady(true)` -> [handleSetPlayWhenReady] again, a StackOverflowError on every play, pause, seek or
+     * stop through the session (emulator check §6l A, F1; `SpotifyPlayerApiTest`, and the scan in `GuardsTest`).
+     */
+    private inner class SpotifyPlayer(looper: Looper, clock: Clock) : SimpleBasePlayer(looper, clock) {
         fun refresh() = invalidateState()
 
         override fun getState(): State {
-            val sp = spec()
+            val r = this@SpotifyRenderer
+            val sp = r.spec()
             val b = State.Builder()
                 .setAvailableCommands(COMMANDS)
                 .setDeviceInfo(DEVICE_INFO)
-                .setAudioAttributes(audioAttributes(speech))
+                .setAudioAttributes(audioAttributes(r.speech))
                 .setPlayWhenReady(sp.playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
-            val items = mediaItems
+            val items = r.mediaItems
             if (items.isEmpty()) {
                 return b.setPlaybackState(if (sp.playbackState == Player.STATE_ENDED) Player.STATE_ENDED else Player.STATE_IDLE).build()
             }
@@ -1729,7 +1668,7 @@ internal class SpotifyRenderer(
             val playlist = items.mapIndexed { i, mi ->
                 val base = mi.mediaId.ifEmpty { "item$i" }
                 val uid = if (seen.add(base)) base else "$base#$i".also { seen.add(it) }
-                val durationMs = if (i == index) durationMs() else mi.mediaMetadata.durationMs
+                val durationMs = if (i == sp.index) r.durationMs() else mi.mediaMetadata.durationMs
                 MediaItemData.Builder(uid)
                     .setMediaItem(mi)
                     .setMediaMetadata(mi.mediaMetadata)
@@ -1740,21 +1679,20 @@ internal class SpotifyRenderer(
             return b.setPlaylist(playlist)
                 .setCurrentMediaItemIndex(sp.index.coerceIn(playlist.indices))
                 .setPlaybackState(sp.playbackState)
-                .setPlaybackSuppressionReason(
-                    if (sp.suppressed) Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS else Player.PLAYBACK_SUPPRESSION_REASON_NONE,
-                )
-                .setContentPositionMs { positionMs() }
+                .setContentPositionMs { r.positionMs() }
                 .build()
         }
 
-        override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> =
-            handling { if (playWhenReady) play() else pause() }
-
-        override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> = handling {
-            if (mediaItemIndex == C.INDEX_UNSET || mediaItemIndex == index) seekTo(positionMs.coerceAtLeast(0)) else seekTo(mediaItemIndex, 0)
+        override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> = handling {
+            if (playWhenReady) this@SpotifyRenderer.play() else this@SpotifyRenderer.pause()
         }
 
-        override fun handleStop(): ListenableFuture<*> = handling { pause() }
+        override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> = handling {
+            val r = this@SpotifyRenderer
+            if (mediaItemIndex == C.INDEX_UNSET || mediaItemIndex == r.index) r.seekTo(positionMs.coerceAtLeast(0)) else r.seekTo(mediaItemIndex, 0)
+        }
+
+        override fun handleStop(): ListenableFuture<*> = handling { this@SpotifyRenderer.pause() }
 
         override fun handlePrepare(): ListenableFuture<*> = Futures.immediateVoidFuture()
 
@@ -1764,9 +1702,6 @@ internal class SpotifyRenderer(
     companion object {
         /** The item error of a track the account can't play (§5.8). */
         const val UNPLAYABLE = "unplayable"
-
-        /** The SDK's volume while another app ducks us (§5.6). */
-        const val DUCK_VOLUME = 0.3
 
         /** The fade's step (the phone's 250 ms, LocalRenderer). */
         const val FADE_STEP_MS = 250L
@@ -1823,7 +1758,7 @@ internal class SpotifyRenderer(
         /**
          * The Android renderer (step 5b's service makes one, kept for the service's life): the page, the
          * Web API over the guarded public-only client (the LAN client with the debug switch, §9.3), the
-         * token from the launcher's bridge (or the fake's route with the switch), the locks, focus and
+         * token from the launcher's bridge (or the fake's route with the switch), the locks and the
          * noisy receiver, `persistPlace` for the bookmark, [outcome] for `spotify_state.json` and [log]
          * the debug log (fixed words only).
          */
@@ -1863,7 +1798,7 @@ internal class SpotifyRenderer(
     }
 }
 
-/** The renderer's Android edges (§5.6, §5.7): the main thread's timers, focus, noisy, locks, the gate, the bookmark's write. */
+/** The renderer's Android edges (§5.6, §5.7): the main thread's timers, noisy, locks, the gate, the bookmark's write. */
 private class AndroidSpotifyPorts(
     private val app: Context,
     private val store: Store,
@@ -1874,8 +1809,6 @@ private class AndroidSpotifyPorts(
     private val logSink: (String) -> Unit,
 ) : SpotifyPorts {
     private val handler = Handler(Looper.getMainLooper())
-    private val audio: AudioManager? = app.getSystemService(AudioManager::class.java)
-    private var focus: AudioFocusRequest? = null
     private var noisy: BroadcastReceiver? = null
 
     override fun now(): Long = SystemClock.elapsedRealtime()
@@ -1884,38 +1817,6 @@ private class AndroidSpotifyPorts(
         val r = Runnable(block)
         handler.postDelayed(r, delayMs.coerceAtLeast(0))
         return { handler.removeCallbacks(r) }
-    }
-
-    override fun requestFocus(speech: Boolean, onChange: (FocusChange) -> Unit): Boolean {
-        val am = audio ?: return true
-        abandonFocus()
-        val attributes = android.media.AudioAttributes.Builder()
-            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-            .setContentType(if (speech) android.media.AudioAttributes.CONTENT_TYPE_SPEECH else android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(attributes)
-            .setWillPauseWhenDucked(true) // the renderer ducks the SDK's volume itself (§5.6)
-            .setOnAudioFocusChangeListener({ change ->
-                val c = when (change) {
-                    AudioManager.AUDIOFOCUS_GAIN -> FocusChange.GAIN
-                    AudioManager.AUDIOFOCUS_LOSS -> FocusChange.LOSS
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> FocusChange.LOSS_TRANSIENT
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> FocusChange.DUCK
-                    else -> null
-                }
-                if (c != null) onChange(c)
-            }, handler)
-            .build()
-        val granted = am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        if (granted) focus = request
-        return granted
-    }
-
-    override fun abandonFocus() {
-        val request = focus ?: return
-        focus = null
-        audio?.abandonAudioFocusRequest(request)
     }
 
     override fun watchNoisy(on: Boolean, onNoisy: () -> Unit) {

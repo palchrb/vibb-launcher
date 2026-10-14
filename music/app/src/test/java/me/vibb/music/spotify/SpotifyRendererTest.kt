@@ -1,8 +1,14 @@
 package me.vibb.music.spotify
 
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.Clock
+import androidx.media3.common.util.HandlerWrapper
+import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -85,9 +91,6 @@ class SpotifyRendererTest {
 
     private inner class Ports : SpotifyPorts {
         val log = mutableListOf<String>()
-        var focusGranted = true
-        var focusHeld = false
-        var focus: ((FocusChange) -> Unit)? = null
         var noisy: (() -> Unit)? = null
         var locks = false
         var renewals = 0
@@ -104,16 +107,6 @@ class SpotifyRendererTest {
 
         override fun now(): Long = this@SpotifyRendererTest.now
         override fun after(delayMs: Long, block: () -> Unit): () -> Unit = this@SpotifyRendererTest.after(delayMs, block)
-        override fun requestFocus(speech: Boolean, onChange: (FocusChange) -> Unit): Boolean {
-            focus = onChange
-            focusHeld = focusGranted
-            return focusGranted
-        }
-
-        override fun abandonFocus() {
-            focusHeld = false
-        }
-
         override fun watchNoisy(on: Boolean, onNoisy: () -> Unit) {
             noisy = if (on) onNoisy else null
         }
@@ -269,7 +262,7 @@ class SpotifyRendererTest {
         settle()
     }
 
-    private fun CoroutineScope.renderer(count: Int = 5, duration: Long = DURATION): SpotifyRenderer {
+    private fun CoroutineScope.renderer(count: Int = 5, duration: Long = DURATION, session: Boolean = false): SpotifyRenderer {
         val entry = Entry(6, "e6", "Kveldsliste", null, Source.SPOTIFY, "spotify:playlist:FAKEplaylist0000000001", "auto", 0, true, null, "11ee", 6, spotifyMode = "list")
         val items = (0 until count).map { PlayItem(6, key(it), "Fake track $it — Fake Artist", null, false, duration) }
         active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
@@ -278,7 +271,12 @@ class SpotifyRendererTest {
             asks++
             refused ?: TokenResult.Ok(if (sameToken) "FAKE-ACCESS-1" else "FAKE-ACCESS-$asks", now + tokenLife, account)
         }
-        val r = SpotifyRenderer(page, api, "https://api.spotify.com".toHttpUrl(), ask, ports, dispatcher, { active }, null)
+        // session: a player Media3 can drive on this thread (the test's Looper and TestClock, §6l A F1); else none
+        val r = if (session) {
+            SpotifyRenderer(page, api, "https://api.spotify.com".toHttpUrl(), ask, ports, dispatcher, { active }, Looper.forCurrentThread(), TestClock)
+        } else {
+            SpotifyRenderer(page, api, "https://api.spotify.com".toHttpUrl(), ask, ports, dispatcher, { active }, null)
+        }
         r.onEvent = { e ->
             events += e
             if (e is RendererEvent.Error && serviceMovesOn) {
@@ -324,7 +322,6 @@ class SpotifyRendererTest {
         assertTrue(spec.playWhenReady)
         assertTrue("the intent: the button shows pause, design 28 sees playing", r.showsPlaying)
         assertTrue("the wake and Wi-Fi locks while a start runs", ports.locks)
-        assertTrue(ports.focusHeld)
         assertTrue(events.contains(RendererEvent.IsPlaying(true)))
         assertEquals(1, page.opens)
         advance(15_000)
@@ -569,12 +566,11 @@ class SpotifyRendererTest {
         post(state(0, 12_000, paused = true))
         assertFalse(r.showsPlaying)
         assertFalse("the locks go on every pause", ports.locks)
-        assertFalse(ports.focusHeld)
         r.seekTo(30_000)
         assertEquals("vibb.seek(30000)", page.calls.last())
         r.play()
         assertEquals("vibb.resume()", page.calls.last())
-        assertTrue(r.showsPlaying && ports.locks && ports.focusHeld)
+        assertTrue(r.showsPlaying && ports.locks)
         assertEquals(calls, api.all().size)
         r.release()
     }
@@ -595,35 +591,76 @@ class SpotifyRendererTest {
         r.release()
     }
 
-    // --- §5.6: focus, noisy, the fade ---
+    // --- §5.6: focus (the WebView's own, §6l A F2), noisy, the fade ---
 
     @Test
-    fun `focus - a loss pauses, a transient loss interrupts and the gain plays again, a duck lowers the volume`() = runBlocking {
+    fun `focus is the WebView's - the renderer requests none, and the page's pause is a fault`() = runBlocking {
         val r = playing()
-        ports.focus!!(FocusChange.LOSS_TRANSIENT)
-        settle()
-        assertEquals("vibb.pause()", page.calls.last())
-        assertTrue("play-when-ready holds through a transient loss", r.spec().playWhenReady)
-        assertTrue(r.spec().suppressed)
-        assertTrue(events.contains(RendererEvent.Interrupted))
-        post(state(0, 3_000, paused = true))
-        assertTrue("our own pause doesn't end the intent", r.spec().playWhenReady)
-        ports.focus!!(FocusChange.GAIN)
-        settle()
-        assertEquals("vibb.resume()", page.calls.last())
-        assertFalse(r.spec().suppressed)
-        assertTrue(events.contains(RendererEvent.InterruptionEnded))
-        ports.focus!!(FocusChange.DUCK)
-        assertEquals("vibb.volume(0.3)", page.calls.last())
-        ports.focus!!(FocusChange.GAIN)
-        assertEquals("vibb.volume(1.0)", page.calls.last())
+        val text = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").readText()
+        for (gone in listOf("requestAudioFocus", "AudioFocusRequest", "abandonAudioFocus", "FocusChange")) {
+            assertFalse("no focus request of the renderer's own (F2): $gone", text.contains(gone))
+        }
         events.clear()
-        ports.focus!!(FocusChange.LOSS)
-        settle()
-        assertEquals("vibb.pause()", page.calls.last())
+        // Chromium's media session lost the focus to another app (or a call): the page's audio paused, not by us
+        post(state(0, 3_000, paused = true))
+        assertFalse(r.showsPlaying)
+        assertFalse(r.spec().playWhenReady)
+        assertTrue("a fault, as the phone's player's focus loss", events.contains(RendererEvent.Paused(PauseCause.FAULT)))
+        assertFalse("the locks go with it", ports.locks)
+        assertFalse("no pause of ours sent over it", page.calls.contains("vibb.pause()"))
+        assertEquals(1, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `a transient focus loss - Chromium pauses the page and plays it again, the player follows both`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        events.clear()
+        post(state(0, 6_000, paused = true)) // a notification's transient loss: Chromium suspends the page's audio
         assertFalse(r.showsPlaying)
         assertTrue(events.contains(RendererEvent.Paused(PauseCause.FAULT)))
-        assertFalse(ports.locks)
+        events.clear()
+        advance(3_000)
+        post(state(0, 6_000)) // the gain: Chromium resumes it by itself
+        assertTrue("shown playing again", r.showsPlaying)
+        assertTrue("the service's overlap and listening window hear it", events.contains(RendererEvent.Resumed))
+        assertTrue(ports.locks)
+        assertEquals("nothing sent: the page plays by itself", 1, api.plays().size)
+        assertFalse(page.calls.contains("vibb.resume()"))
+        r.release()
+    }
+
+    @Test
+    fun `a resume by itself is paused at once while the app is suspended or another renderer plays`() = runBlocking {
+        val r = playing()
+        post(state(0, 6_000, paused = true))
+        ports.mayPlay = false
+        post(state(0, 6_000))
+        assertFalse("the launcher's time rule: nothing plays", r.showsPlaying)
+        assertEquals("vibb.pause()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `the focus decision - a pause not sent is a fault, a resume by itself shows only when allowed`() {
+        assertEquals(PauseCause.USER, me.vibb.music.logic.spotifyPauseCause(ours = true))
+        assertEquals(PauseCause.FAULT, me.vibb.music.logic.spotifyPauseCause(ours = false))
+        assertTrue(me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = true))
+        assertFalse("a step while paused only moves", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = true, detached = false, mayPlay = true))
+        assertFalse("another renderer plays", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = true, mayPlay = true))
+        assertFalse("the app is suspended", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = false))
+    }
+
+    @Test
+    fun `the volume is the fade's only - a duck is the WebView's`() = runBlocking {
+        val r = playing()
+        r.fadeOutAndPause {}
+        advance(5_000)
+        assertTrue(page.calls.last(), page.calls.last().startsWith("vibb.volume(") && page.calls.last() != "vibb.volume(1.0)")
+        r.cancelFade()
+        assertEquals("vibb.volume(1.0)", page.calls.last())
+        assertFalse(page.calls.contains("vibb.volume(0.3)"))
         r.release()
     }
 
@@ -928,7 +965,6 @@ class SpotifyRendererTest {
         r.release()
         assertFalse(page.alive)
         assertFalse(ports.locks)
-        assertFalse(ports.focusHeld)
         assertNull(ports.noisy)
     }
 
@@ -945,7 +981,7 @@ class SpotifyRendererTest {
         advance(2_000)
         assertFalse("nothing starts by itself", r.showsPlaying)
         assertEquals("no call", 1, api.plays().size)
-        assertFalse(ports.locks || ports.focusHeld)
+        assertFalse(ports.locks)
         r.play()
         advance(0)
         assertEquals("the kid's play turns them off first", 2, api.paths().count { it.contains("/shuffle") })
@@ -981,7 +1017,7 @@ class SpotifyRendererTest {
     fun `H1 - every play the renderer starts from a tracker event needs the kid's intent`() {
         val text = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").readText()
         val apply = text.substringAfter("private fun apply(events: List<Event>) {").substringBefore("\n    }\n")
-        assertTrue(apply.contains("val wanted = pwr && !suppressed"))
+        assertTrue(apply.contains("val wanted = pwr\n"))
         val requests = apply.lines().filter { it.contains("request(") }
         assertEquals(2, requests.size)
         assertTrue(requests.joinToString("\n"), requests.all { it.contains("if (wanted && ports.mayPlay()) request(") })
@@ -1016,44 +1052,6 @@ class SpotifyRendererTest {
         assertEquals("an upgrade or a crash before the write: cleared", listOf("clear", "open"), page.log)
         assertEquals("2:1", ports.marker)
         again.release()
-    }
-
-    @Test
-    fun `M2 - a transient focus loss while the play call is on its way - the sent play is paused, played again at the gain`() = runBlocking {
-        api.gate = CountDownLatch(1)
-        val r = renderer()
-        r.load(mediaItems(5), 0, 0, playNow = true)
-        advance(0)
-        ports.focus!!(FocusChange.LOSS_TRANSIENT)
-        api.gate!!.countDown()
-        settle()
-        assertEquals(1, api.plays().size)
-        assertEquals("never over the call", "vibb.pause()", page.calls.last())
-        assertTrue(r.spec().playWhenReady && r.spec().suppressed)
-        advance(11_000)
-        assertNull("no first-state failure while suppressed", r.rendererState)
-        ports.focus!!(FocusChange.GAIN)
-        settle()
-        assertEquals("vibb.resume()", page.calls.last())
-        post(state(0, 0))
-        assertEquals(Player.STATE_READY, r.spec().playbackState)
-        assertTrue(r.showsPlaying)
-        r.release()
-    }
-
-    @Test
-    fun `M2 - a transient focus loss while the page loads - nothing sounds when the play goes out`() = runBlocking {
-        page.autoReady = null
-        val r = renderer()
-        r.load(mediaItems(5), 0, 0, playNow = true)
-        settle()
-        ports.focus!!(FocusChange.LOSS_TRANSIENT)
-        page.emit(HostEvent.Ready(DEVICE))
-        advance(0)
-        assertEquals(1, api.plays().size)
-        assertEquals("vibb.pause()", page.calls.last())
-        assertTrue(r.spec().suppressed)
-        r.release()
     }
 
     @Test
@@ -1229,16 +1227,15 @@ class SpotifyRendererTest {
     }
 
     @Test
-    fun `M1 - a detached web player resumed by the account's other app is paused at once - no focus, no locks, no play`() = runBlocking {
+    fun `M1 - a detached web player resumed by the account's other app is paused at once - no locks, no play`() = runBlocking {
         // the QA's counter-example (qa-26c-step5b-code M1), with the service's detach
         val r = playing()
         post(state(0, 20_000))
         detach(r)
         post(state(0, 20_000, paused = true))
         advance(60_000)
-        ports.focusHeld = false
         post(state(0, 20_500)) // the other app's play on "Vibb"
-        assertEquals(listOf(false, false, false, "vibb.pause()"), listOf(ports.focusHeld, ports.locks, r.showsPlaying, page.calls.last()))
+        assertEquals(listOf(false, false, "vibb.pause()"), listOf(ports.locks, r.showsPlaying, page.calls.last()))
         r.release()
     }
 
@@ -1250,13 +1247,13 @@ class SpotifyRendererTest {
         val saves = ports.saves.size
         val plays = api.plays().size
         detach(r)
-        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        assertFalse(r.showsPlaying || ports.locks)
         // a foreign transfer, then our own track resumed from outside: each paused at once
         val pausesBefore = page.calls.count { it == "vibb.pause()" }
         post(SdkState(false, 1_000, 30_000, "spotify:track:FAKEforeign0000000001", null, emptyList(), emptyList(), "track", "Another", listOf("Someone"), null))
         post(state(0, 5_000))
         assertEquals(2, page.calls.count { it == "vibb.pause()" } - pausesBefore)
-        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        assertFalse(r.showsPlaying || ports.locks)
         r.play() // nothing the service would do - a belt: no start while detached
         settle()
         assertEquals("no play call while detached", plays, api.plays().size)
@@ -1267,7 +1264,7 @@ class SpotifyRendererTest {
         r.load(mediaItems(5), 2, 0, playNow = true)
         advance(0)
         post(state(2, 0))
-        assertTrue(r.showsPlaying && ports.locks && ports.focusHeld)
+        assertTrue(r.showsPlaying && ports.locks)
         assertEquals(plays + 1, api.plays().size)
         r.release()
     }
@@ -1445,13 +1442,13 @@ class SpotifyRendererTest {
         assertEquals("vibb.next()", page.calls.last())
         post(cstate(3, 0))
         assertEquals("Spotify played it: paused at once", "vibb.pause()", page.calls.last())
-        assertFalse(r.showsPlaying || ports.focusHeld)
+        assertFalse(r.showsPlaying)
         ports.mayPlay = true
         // the service attaches another renderer: from outside, our context is paused at once
         detach(r)
         post(cstate(3, 1_000))
         assertEquals("vibb.pause()", page.calls.last())
-        assertFalse(r.showsPlaying || ports.locks || ports.focusHeld)
+        assertFalse(r.showsPlaying || ports.locks)
         r.step(forward = true)
         assertEquals("a detached player takes no step", "vibb.pause()", page.calls.last())
         r.release()
@@ -1535,7 +1532,6 @@ class SpotifyRendererTest {
         post(cstate(2, 0))
         assertFalse(r.showsPlaying)
         assertEquals("vibb.pause()", page.calls.last())
-        assertFalse(ports.focusHeld)
         assertEquals("the title still moves", "Fake track 2 — Fake Artist", title(r))
         assertEquals(uri(2), ports.contexts["e7"]!!.uri)
         // a step while playing goes on playing (Spotify's next), and the kid's play after a paused step plays
@@ -1613,8 +1609,146 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- the emulator check §6l A's fixes (2026-10-14) ---
+
+    @Test
+    fun `F1 - the session's player through Media3's Player API - play, pause, seek, a pick and stop reach the renderer`() = runBlocking {
+        val r = renderer(session = true)
+        r.load(mediaItems(5), 0, 0, playNow = false)
+        val player = r.player
+        assertFalse(player.playWhenReady)
+        player.play() // the play/pause button, a headset's MEDIA_PLAY through the session (once a StackOverflowError)
+        advance(0)
+        post(state(0, 0))
+        assertEquals(1, api.plays().size)
+        assertTrue(player.playWhenReady)
+        assertTrue(r.showsPlaying)
+        player.seekTo(30_000) // the seek bar: the SDK's seek, no Web API call
+        settle()
+        assertEquals("vibb.seek(30000)", page.calls.last())
+        player.pause()
+        settle()
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(player.playWhenReady)
+        post(state(0, 30_000, paused = true))
+        player.play()
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        player.seekTo(2, 0) // a pick: the renderer's step
+        advance(300)
+        assertEquals(2, r.currentIndex())
+        assertEquals(2, player.currentMediaItemIndex)
+        assertEquals(2, api.plays().size)
+        player.stop() // the session's stop is a pause
+        settle()
+        assertFalse(r.showsPlaying)
+        assertEquals("vibb.pause()", page.calls.last())
+        assertEquals(2, api.plays().size)
+        r.release()
+    }
+
+    @Test
+    fun `F1 - a headset's play after a restart - a stored queue loaded paused starts through the session's player`() = runBlocking {
+        val r = renderer(session = true)
+        r.load(mediaItems(5), 3, 42_000, playNow = false) // restoreThen: no page, no network
+        assertEquals(0, page.opens)
+        r.player.play() // MediaSession's MEDIA_PLAY -> KidPlayer -> this player
+        advance(0)
+        assertEquals(1, page.opens)
+        assertEquals(42_000L, body(api.plays().single())["position_ms"]!!.jsonPrimitive.long)
+        assertEquals(uri(3), windowOf(api.plays().single()).first())
+        r.release()
+    }
+
+    @Test
+    fun `F1 - the session's player calls the renderer, never its own SimpleBasePlayer members`() {
+        val text = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").readText()
+        val inner = text.substringAfter("private inner class SpotifyPlayer(").substringBefore("\n    }\n")
+        // every call by name is qualified: the renderer's (`this@SpotifyRenderer.`, or `r.`, which is it)
+        for (name in listOf("play", "pause", "seekTo", "stop", "prepare", "release", "durationMs", "positionMs", "spec")) {
+            val bare = Regex("""(?<![.\w@])$name\(""").findAll(inner).map { it.value }.toList()
+            assertTrue("unqualified $name( in SpotifyPlayer: $bare", bare.isEmpty())
+        }
+        assertTrue(inner.contains("this@SpotifyRenderer.play() else this@SpotifyRenderer.pause()"))
+        assertTrue(inner.contains("handling { this@SpotifyRenderer.pause() }"))
+    }
+
+    @Test
+    fun `F3 - offline, a step says the line and stays - paused or playing, the gate before the move`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 1, 0, playNow = false)
+        ports.network = SpotifyLine.NEEDS_INTERNET
+        r.seekTo(2, 0)
+        advance(1_000)
+        assertEquals("the item stays", 1, r.currentIndex())
+        assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, r.rendererState)
+        assertTrue("the fake hears nothing", api.all().isEmpty())
+        r.seekTo(0, 0)
+        advance(1_000)
+        assertEquals("previous neither", 1, r.currentIndex())
+        // playing, then the network goes: the step pauses with the line, the item stays
+        ports.network = null
+        r.play()
+        advance(0)
+        post(state(1, 0))
+        assertTrue(r.showsPlaying)
+        ports.network = SpotifyLine.NEEDS_WIFI
+        r.seekTo(2, 0)
+        advance(1_000)
+        assertEquals(1, r.currentIndex())
+        assertFalse(r.showsPlaying)
+        assertEquals(RendererState.SPOTIFY_NEEDS_WIFI, r.rendererState)
+        assertEquals(1, api.plays().size)
+        // the network back: a step moves again
+        ports.network = null
+        r.seekTo(2, 0)
+        advance(0)
+        assertEquals(2, r.currentIndex())
+        r.release()
+    }
+
     private companion object {
         const val DEVICE = "FAKEdevice1"
         const val DURATION = 200_000L
     }
+}
+
+/** Media3's clock for the session's player in a JVM test (§6l A, F1): handlers on the test's [Looper], a post runs at once. */
+@OptIn(UnstableApi::class)
+private object TestClock : Clock {
+    override fun currentTimeMillis(): Long = System.currentTimeMillis()
+    override fun elapsedRealtime(): Long = System.nanoTime() / 1_000_000
+    override fun uptimeMillis(): Long = elapsedRealtime()
+    override fun nanoTime(): Long = System.nanoTime()
+    override fun createHandler(looper: Looper, callback: Handler.Callback?): HandlerWrapper = TestHandler(looper)
+    override fun onThreadBlocked() = Unit
+}
+
+/** Answers Media3's `ListenerSet` and `SimpleBasePlayer` (their thread checks read [getLooper]); messages go nowhere. */
+@OptIn(UnstableApi::class)
+private class TestHandler(private val looper: Looper) : HandlerWrapper {
+    private val message = object : HandlerWrapper.Message {
+        override fun sendToTarget() = Unit
+        override fun getTarget(): HandlerWrapper = this@TestHandler
+    }
+
+    override fun getLooper(): Looper = looper
+    override fun hasMessages(what: Int): Boolean = false
+    override fun obtainMessage(what: Int): HandlerWrapper.Message = message
+    override fun obtainMessage(what: Int, obj: Any?): HandlerWrapper.Message = message
+    override fun obtainMessage(what: Int, arg1: Int, arg2: Int): HandlerWrapper.Message = message
+    override fun obtainMessage(what: Int, arg1: Int, arg2: Int, obj: Any?): HandlerWrapper.Message = message
+    override fun sendMessageAtFrontOfQueue(message: HandlerWrapper.Message): Boolean = true
+    override fun sendEmptyMessage(what: Int): Boolean = true
+    override fun sendEmptyMessageDelayed(what: Int, delayMs: Int): Boolean = true
+    override fun sendEmptyMessageAtTime(what: Int, uptimeMs: Long): Boolean = true
+    override fun removeMessages(what: Int) = Unit
+    override fun removeCallbacksAndMessages(token: Any?) = Unit
+    override fun post(runnable: Runnable): Boolean {
+        runnable.run()
+        return true
+    }
+
+    override fun postDelayed(runnable: Runnable, delayMs: Long): Boolean = true
+    override fun postAtFrontOfQueue(runnable: Runnable): Boolean = post(runnable)
 }

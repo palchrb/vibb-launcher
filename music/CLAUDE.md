@@ -255,8 +255,15 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `SpotifyRenderer` (`phoneRendererFor`; made once per service and kept; `local.standDown()` when it attaches), every
   other entry the `LocalRenderer`, a room its `SonosRenderer` - a room's queue drops Spotify (`speakerDropReason`
   `spotify`, "Kan ikke spilles på Sonos"; Spotify on Sonos is 26c's later step 9). `RendererKind.onPhone` (LOCAL,
-  SPOTIFY) replaces `=== local` at every site `GuardsTest` lists. The sound is local audio (focus, noisy, the volume
-  cap, the 10 s sleep fade through `vibb.volume`; no hush). **List mode plays our list**: `PUT /me/player/play` with
+  SPOTIFY) replaces `=== local` at every site `GuardsTest` lists. The sound is local audio (noisy, the volume cap,
+  the 10 s sleep fade through `vibb.volume`; no hush). **The audio focus is the WebView's own** (26c §5.6 as the
+  emulator check §6l A answered it, F2): Chromium's media session takes it when the page's audio starts, pauses on a
+  loss, ducks, and plays again after a transient loss - the renderer requests none (a request of its own was taken by
+  its own WebView at every play) and reads those pauses (`spotifyPauseCause`: not ours is `FAULT`) and resumes
+  (`spotifySelfResumeShown`) from the page's states. **The session's `SpotifyPlayer` calls the renderer only qualified**
+  (`this@SpotifyRenderer.play()`): unqualified, `play()` is the SimpleBasePlayer's own and recursed (F1;
+  `SpotifyRendererTest` drives it through Media3's `Player` API with the test-only `android.os.Looper`,
+  `android.util.Pair` and `SparseBooleanArray` in `src/test/java/android/`). **List mode plays our list**: `PUT /me/player/play` with
   the track uris of a window of at most 50 from the current item and `position_ms` (the resume place, so nothing
   sounds from 0:00), past the window the next item added with `POST /me/player/queue` one track ahead, shuffle and
   repeat turned off first (a device session's first play, and whenever a state says either is on). Pause, resume and
@@ -273,9 +280,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   of the current item, as received).
 - **Nothing starts by itself on Spotify either**: the page - and with it the Connect device "Vibb" - exists only from
   the first Spotify play, never at a restore (a stored Spotify queue loads paused: no page, no network); a play the
-  renderer would start on its own (`NewWindow`, `ShuffleOrRepeat`, the move-on after an unplayable, the gain after a
-  transient focus loss, a step Spotify plays while paused) goes on only with a play the kid wants now
-  (`playWhenReady`, not suppressed, `playAllowed`). The page is destroyed at every suspension (`suspended()`: the
+  renderer would start on its own (`NewWindow`, `ShuffleOrRepeat`, the move-on after an unplayable, a step Spotify plays
+  while paused) goes on only with a play the kid wants now (`playWhenReady`, `playAllowed`); a step the network gate
+  refuses says the line and stays (`seekTo(index, ms)`'s belt; the service tells the screens `PlayerHub.Message.STAYED`,
+  which ends the instant switch's hold with no toast - F3). The page is destroyed at every suspension (`suspended()`: the
   bookmark with force, the pause - no Connect device while suspended), 5 minutes after the last pause (the SDK's
   `disconnect()` first), when the renderer process dies, on the token's `off` and when the token's account changes.
   **A detached web player owns nothing**: its queue is null while another renderer plays (`queue = {
@@ -364,12 +372,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   player: `WebPolicy` refuses every http URL. The emulator loop is docs/testing/emulator.md §6l: A1 the whole chain
   (the PWA, the server with its loopback bases, the debug launcher, the managed music app), A2 the phone alone on the
   debug feed, B the real SDK with the user's account (the recorder, the DNS capture).
-- **Owed for Spotify** (26c "Release"): §6l A1 and A2 have never run (no emulator where it was built) - steps 5b and
-  6's acceptance; part B, its recorded real `sdk_states/` and the DNS capture that replaces the provisional host list
+- **Owed for Spotify** (26c "Release"): §6l A ran once (2026-10-14, `docs/testing/2026-10-14-spotify-6l-a.md`; its
+  fixes are 26c's "Fixes after the emulator check §6l A") - its re-run is steps 5b and 6's acceptance; part B, its recorded real `sdk_states/` and the DNS capture that replaces the provisional host list
   (one commit of the list, the constants and the comment: the three `spotify_hosts.json` copies, the six constants -
   this app's two in `SpotifyHosts.kt` among them - as 26c's "Release" names it); the Jelly Star checks of 26c's QA
-  checklist (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus, the
-  protected-media origin, episodes in a `uris` list - no switch is built: if the SDK refuses them, the server's parser
+  checklist (real Doze for 2.5 hours with the token refreshed ahead of expiry, the WebView's own audio focus with the real SDK
+  (the fake's stub answered it, §5.6), the protected-media origin, episodes in a `uris` list - no switch is built: if the SDK refuses them, the server's parser
   must refuse shows and episodes -, the `context` field around track changes,
   Autoplay after a list and after a context, the leftover queue add, shuffle and repeat).
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
