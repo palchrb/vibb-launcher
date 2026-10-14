@@ -696,6 +696,10 @@ pub fn build_admin_router(
         .route("/devices", get(handlers::devices::list_devices))
         .route("/schedules", get(handlers::schedules::show_schedules))
         .route(
+            "/schedules/screen-time",
+            get(handlers::schedules::show_budget),
+        )
+        .route(
             "/schedules/global",
             post(handlers::schedules::save_global_schedule),
         )
@@ -704,13 +708,18 @@ pub fn build_admin_router(
             post(handlers::schedules::save_device_schedule),
         )
         .route("/schedules/rules", post(handlers::schedules::create_rule))
+        .route("/schedules/rules/new", get(handlers::schedules::new_rule))
         .route(
             "/schedules/rules/{rule_id}",
-            post(handlers::schedules::update_rule),
+            get(handlers::schedules::show_rule).post(handlers::schedules::update_rule),
         )
         .route(
             "/schedules/rules/{rule_id}/delete",
             post(handlers::schedules::delete_rule),
+        )
+        .route(
+            "/devices/{id}/time",
+            get(handlers::schedules::view_device_time),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(

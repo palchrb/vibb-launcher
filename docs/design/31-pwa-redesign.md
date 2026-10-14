@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2957,3 +2957,129 @@ Checks: `cargo test` 796 passed; `node --test jstest/*.test.js` 23 passed; fmt c
 | N3 | An entry's reported error shows under its row only while the entry is on for the phone, and only those count for the Attention row. |
 | N4 | "device card" → "the phone's Music page" in `server/CLAUDE.md` (the library cache) and `music.rs`'s doc comments. |
 | Checks | `cargo test` 813 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 9 implementation status (2026-10-14)
+
+Built on branch `design-31-s9` (from `main` at `e8a21506`: steps 1-7 and 11-14 merged), in parallel with step 8's fix
+round; server only, no migration, no new crate, no API change (the policy JSON and `policy_json_keys_snapshot` are
+untouched; the launcher is untouched), `style.css?v=22` (main is at 20, step 8 takes 21; one section at the end).
+- **Routes** (`handlers::schedules`): `GET /schedules/screen-time` (`show_budget`), `GET /schedules/rules/new`
+  (`new_rule`, `?device=X` for a phone's own rule; an unknown phone 404, a non-number 400), `GET /schedules/rules/{id}`
+  chained with its POST (`show_rule`, L5; unknown 404), `GET /devices/{id}/time` (`view_device_time`). `/schedules?device=X`
+  redirects to `/devices/X/time` (L5); a `device` that isn't a number is ignored. Every POST route is unchanged.
+- **Settings › Time Rules** (`schedules.html`, §3.5): "‹ Settings", **Everyone · Rules** (one row per rule, "Skole" over
+  "Mon-Fri 08:15-14:30 · calls off"; a rule that doesn't read says "Can't be read" in red and still opens), Add Rule;
+  **Everyone · Screen Time** (Daily Limit over "Mon-Fri 90 min · Sat-Sun 2 h", or "Can't be read"); **Phones** (avatar,
+  name, "Everyone's rules" / "Own rules" › `/devices/{id}/time`), the footer "Emergency calls always work." Links only:
+  no form on the page. The device picker is gone.
+- **Daily Limit** (`schedule_budget.html`): the 7 days as rows (`partials/budget_rows.html`, shared with Device › Time;
+  a number field and "min" at the row's end, "No limit" placeholder), Save, the flash under it; the calls/music facts
+  behind the footer's ⓘ; a stored limit that doesn't read is a red warning above the group.
+- **The rule editor** (`schedule_rule.html`, the RuleEditor mockup): one form (§5.6) - the top bar "‹ Time Rules" (a
+  phone's own: "‹ Time", its Time page) with **Save** (Add for a new rule), the rule's name as the title, Name, **Type**
+  as an inline select (School / Bedtime / Other; its inline `onchange` still pre-sets the calls switch, §5.2's one
+  allowed script), "Calls with contacts", **When** (7 day rows, two time fields each; the overnight and 24-h rules behind
+  the footer's ⓘ), **Exceptions** ("Apps that still work · Kalender ›" as a `<details>` *inside* the form, H1, a switch
+  per reported app). **Delete Rule…** is a `<details>` confirm after the form ("Delete Skole? The phones that follow
+  everyone's rules are no longer locked by it." / "Anna's phone is …"); no `confirm()` left.
+- **Device › Time** (`device_time.html`, §3.5; no mockup, built from the components): warnings at the top (**Vibb too old
+  for time rules**, **Screen-time record unreadable**, **Incoming calls aren't blocked**); **Now** (Time lock as §3.10's
+  badge or "None" / "No report yet"; Screen time "42 of 90 min today" with "Includes 30 min extra"; the footer "From the
+  phone's last report, 3 min ago" with the exact local time in `title`); **Extra Time Today** (+15 min / +30 min / +1 h,
+  Locate's tiles); **Pause a Rule** (Rule and For pickers, Pause; only while a rule applies); **Recent** (the 10 newest
+  lifts: "Skole paused for 30 min" over "10:12 · parent", the status as the value, End now; only when there are any);
+  **Rules** (the Own rules switch, its own form with a `<noscript>` Save; while off "Everyone's Rules · 2 rules ›");
+  **Own Rules** (rows to the editor, Add Rule; "Used once Own rules is on." while off); **Own Daily Limit** (the 7
+  rows, Save). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read the time rules"):
+  the phone, its settings, its last report, both rule lists, the call report, the lifts.
+- **Forms** (§5.1, §5.6): `schedules/device` takes `section` (H1): `switch` writes only `custom_schedule_enabled` →
+  `/devices/{id}/time#rules`, `budget` only `daily_budget_json` → `?saved=budget#screen-time` (a NULL bind keeps the
+  other column), none both (an older tab) → `/devices/{id}/time`, another value 400. The rule editor: Save →
+  `/schedules/rules/{id}?saved=1` **without a fragment** (Save is at the top, and scroll-restore keeps the place), Add →
+  the new rule's page `?saved=added`, Delete → the list it was in (`/schedules?notice=deleted#rules` /
+  `/devices/{id}/time?notice=deleted#own-rules`), the flash in that group. Daily Limit →
+  `/schedules/screen-time?saved=1#screen-time`. `lifts` takes `back` (§5.1's table): `time` → Device › Time at the
+  posting group with a `done` code (`?done=extra#extra`, `pause#pause`, `ended#lifts`; `lifts::done_flash`), anything
+  else → `/devices/{id}` (the summary's quick actions come in step 10). On Device › Time and Daily Limit every action
+  carries its group's fragment, so a refusal rendered in the POST's answer lands where the redirect would.
+- **Double submits and stale tabs** land back with nothing written: a save of a rule deleted since →
+  `?notice=gone_unsaved#rules` ("That rule was deleted in the meantime, so nothing was saved."), a second Delete →
+  `?notice=gone` ("already deleted"), a pause of a rule that no longer applies (deleted, or the switch flipped) →
+  `?done=gone#pause` (red), a second End now → `?done=over#lifts`; a lift id this phone never had stays a 404, another
+  phone's rule through a scope stays a 404.
+- **Refusals in place** (step 14's rule): a rule without a name, a day with one time (or one that isn't `HH:MM`), more
+  than 50 apps or an app that isn't a package name renders the editor again (400) as typed (escaped, cut short; an
+  invalid package dropped), the reason under its field, which is `autofocus`ed and `aria-invalid` (the exceptions open
+  for theirs); a limit outside 0-1440 renders Daily Limit or Device › Time again (400) the same way. An unknown kind
+  (no page sends one) stays a plain 400.
+- **Rust texts (M5)**: `devices::time_state_lines`, `TimeCard`, `time_card` and `rule_lift_status` are gone (their test
+  with them); Device › Time reads the typed `time_state::TimeReport` (now with `extra_minutes` and
+  `ledger_unreadable`) through `lock_badge`/`screen_time` (§3.10: the end only when provably right, "at last report"
+  when stale, "· calls off" only when calls are managed and screened); `time_state::rule_days` feeds the badge here and
+  on the Devices list. Lift statuses are `lifts::LiftState` (Waiting / OnPhone / EndedOnPhone / EndedEarly / Over /
+  Sent / Done), worded in the Phone Setup zone: "Until 12:30", "Until 00:30 tomorrow", "Ended early 11:50", "Ended
+  yesterday 21:30", "Waiting for the phone" (was "… - server expiry 2026-10-05 10:30:00 (UTC)"); created times local
+  with the exact one in `title`. `days_summary` says "Every day" and "Never" and drops "(next day)"; `budget_summary`
+  is new.
+- **The device page**: the Time rules card is gone; a row **Time · Everyone's rules / Own rules** (the mockup's indigo
+  clock tile) follows Music, "Needs attention" (orange) while Device › Time shows the record or Vibb-too-old warning,
+  "Couldn't read" on a failed read. The moved warnings keep their signal there as Attention rows: the screen-time record
+  and Vibb too old now target `/devices/{id}/time` (no fragment: the warnings sit at its top), incoming calls not
+  blocked stays → Calls & Contacts.
+- **CSS** `?v=22`: the editor's split top bar and its Save button, the right-aligned name field, the day and minute
+  fields at a row's end, the footer under the tiles.
+- **Docs (L8)**: `server/CLAUDE.md` (the step-6 Admin UI, Lifts and fix-round bullets, and a "Time Rules and Device ›
+  Time" section), `launcher/CLAUDE.md` (the status bullet: the server shows `time_state`, and waits for its `zone`).
+  `server/DEPLOY.md`, `docs/testing/emulator.md`, `docs/setup/google-account.md` and `PLAN.md` name none of the moved
+  parts.
+- **Tests**: `tests/time_pages.rs` (new: Time Rules' rows and phones, the old URLs, Daily Limit's save and refusal,
+  the editor's one form and confirm, a refused rule as typed, **the redirect table built from the rendered forms of
+  all six pages** - each fragment checked to hold its form, the action's fragment to be the redirect's, every
+  auto-save to have a `<noscript>` Save -, **the section test** `a_switch_only_post_keeps_the_limits`, Device › Time's
+  groups and flashes, its local times and the zone-less badge, its failed reads, the device page's row), repointed
+  `time_rules.rs` (redirects, the double submits, lift statuses in local time on Device › Time, the warnings there and
+  as Attention rows, the rule name escaped on all four pages), `devices_list.rs` (the Attention target), `shell.rs`
+  (the new pages' tabs); unit tests `lifts::tests`, `schedules::tests`, `time_state::tests`, `attention::tests`.
+  `admin::tests`' non-event list takes the `gone_unsaved` notice code.
+- **Checks**: `cargo test` 829 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
+  warnings, none in the step's files.
+
+Choices made while building:
+1. **Save only at the top** of the rule editor, as the mockup draws it (and Enter in a field submits through it): the
+   save returns to the same place it was pressed, with and without JS. No second Save at the bottom - its answer would
+   land at the top without JS.
+2. **A phone's own rule opens in the Settings tab** (the template sets its tab, §3.1's table puts `schedule_rule` in
+   Settings); its back link goes to the phone's Time page.
+3. **Own rules and the own daily limit show while the switch is off**, marked "Used once Own rules is on.", so a parent
+   can prepare them before switching (switching on with no own rules would leave the phone unrestricted).
+4. **Everyone's rules are a row on Device › Time while the switch is off** (to Settings › Time Rules), not repeated as
+   rows; Pause a Rule lists the rules that apply.
+5. **The lock row uses the badge's wording** with "at last report" but not the time (the group's footer says when the
+   report came, `text_beside`).
+6. **Times must be `HH:MM`** (what `<input type="time">` sends); "8:00" is refused under its day.
+7. **A stored rule that doesn't read opens in the editor** with what does and a red warning, so it can be saved again
+   (fixing the phones' 500) or deleted - the old page listed it by name with no way to delete it.
+8. **Without a `back`** a lift still returns to the device page (an older tab), until step 10 puts the quick actions
+   there.
+9. **The exceptions offer only reported apps with a package name** (`reported_apps` drops anything else and is now a
+   500 on a DB error, not an empty list).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: this VM has no browser.
+- **The lock badge's end on a real phone** ("Skole until 14:30") needs the launcher to report its time zone. The server
+  side is done and degrades cleanly without it (`time_state::provable_end` returns no end while `TimeReport::zone` is
+  absent - pinned by `device_time_shows_the_phones_state_in_local_time` and `time_state::tests`). A later
+  `time_state.zone` step needs only:
+  - **launcher**: add `zone` = `ZoneId.systemDefault().id` (an IANA id, at most 64 characters) to the status
+    `timeState` (its DTO in `server/dto/StatusReportRequest.kt`, the builder in `timerules/TimeRulesRuntime.kt`), with a unit test of the serialised key; no capability
+    and no policy change (an older server ignores the key);
+  - **server**: nothing to build - `TimeReport::parse` already keeps a non-empty `zone` of at most 64 characters and
+    `provable_end` compares it with the Phone Setup zone (`Zone::name`); the stored `time_state_json` cap (4096) has room.
+    Worth adding then: one end-to-end test posting a real launcher report with `zone`, and a line in `server/CLAUDE.md`'s
+    time-state bullet;
+  - **behaviour to expect**: the end then shows on the Devices list, Device › Time and (step 10) the summary header at
+    once, only for a phone whose zone equals Phone Setup's; a phone travelling in another zone shows no end (by
+    design: the rules are the phone's wall clock). An `active_until` field from the launcher would be simpler still
+    (no rule maths on the server), but it is a bigger contract change.
+- **The summary's quick actions** (+15/+30/+1 h, Pause a rule…, Today with End now) are step 10's; `back=summary` is
+  already the lifts' default.

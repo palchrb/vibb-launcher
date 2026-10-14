@@ -2090,3 +2090,29 @@ input.row-input {
 
 /* The Music row on the phone page (the DeviceSummary mockup tile). */
 .tile-pink { background: #FF375F; }
+
+/* ---- Design 31 step 9: Time Rules and Device › Time ---- */
+
+/* The rule editor's top bar: the back link on the left, Save on the right (the RuleEditor mockup). */
+.title-bar-split { justify-content: space-between; align-items: center; }
+button.title-action { margin: 0; border: 0; background: none; font: inherit; font-size: 1.0625rem; font-weight: 600; color: var(--tint); cursor: pointer; }
+/* A field that is the row's value (the rule's name), right-aligned like a value. */
+input.row-input-end { text-align: right; }
+/* A day's from and until, and a day's limit in minutes: small fields at the row's end. */
+input.row-time,
+input.row-num {
+    flex: none;
+    width: auto;
+    margin: 0;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--field-bg);
+    font-size: 1rem;
+}
+input.row-num { width: 6.5em; text-align: right; }
+.row > .day-dash { margin-left: 6px; color: var(--label-2); }
+.row > .day-dash + input.row-time { margin-left: 6px; }
+.row-unit { flex: none; color: var(--label-2); font-size: 1rem; }
+/* A footer under the extra-time tiles (no group above it to tuck under). */
+.group-footer-after { margin-top: 0; }

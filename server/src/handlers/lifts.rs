@@ -1,8 +1,15 @@
-//! A parent lifting a time rule for a while ("end school mode for 30 min") or adding screen time
-//! for today ("+30 min") from the device page (handy step 6). Recorded in `time_lifts` and the
-//! security log, delivered in `PolicyResponse.time_policy.lifts` after a nudge; the phone expires a
-//! rule lift by itself. A rule lift can be ended early ("End now"); added screen time can't be
-//! taken back once the phone has counted it.
+//! A parent pausing a time rule for a while ("Skole paused for 30 min") or adding screen time for
+//! today ("+30 min") (handy step 6). Recorded in `time_lifts` and the security log, delivered in
+//! `PolicyResponse.time_policy.lifts` after a nudge; the phone expires a rule pause by itself. A
+//! rule pause can be ended early ("End now"); added screen time can't be taken back once the
+//! phone has counted it.
+//!
+//! The forms live on Device › Time (design 31 §3.5, step 9) and, from step 10, the summary's quick
+//! actions. Where they return is §5.1's `back` table: `back=time` → `/devices/{id}/time`, at the
+//! group that posted (`#extra`, `#pause`, `#lifts`) with a `done` code for its flash; anything
+//! else (the summary, an older page) → `/devices/{id}`. A second tap on a pause that is already
+//! over, or a pause of a rule deleted or switched off in another tab, lands back there with
+//! nothing written.
 
 use std::collections::HashMap;
 
@@ -10,10 +17,13 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
+use chrono::{DateTime, Utc};
 
 use crate::AppState;
+use crate::display_time::{Zone, parse_db_utc};
+use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
-use crate::time_rules::{self, BUDGET_LIFT_DELIVERY_HOURS};
+use crate::time_rules::{self, BUDGET_LIFT_DELIVERY_HOURS, TimeLiftRow};
 
 fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
@@ -24,9 +34,19 @@ fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
         .into_response()
 }
 
+/// Where a lift form returns (§5.1): Device › Time's `group` with `done` for its flash, or the
+/// device page. `back` is checked against the one value it may have; the phone is the path's.
+fn back_to(id: i64, form: &HashMap<String, String>, group: &str, done: &str) -> Response {
+    if form.get("back").map(String::as_str) == Some("time") {
+        Redirect::to(&format!("/devices/{id}/time?done={done}#{group}")).into_response()
+    } else {
+        Redirect::to(&format!("/devices/{id}")).into_response()
+    }
+}
+
 /// Form: `target` ("rule" or "budget"), `rule` ("all" or a rule id - only for "rule"), `minutes`
-/// (15/30/60/120 for a rule, 15/30/60 for screen time). The rule must be one of the device's
-/// effective rules (its own with the override on, else the global ones).
+/// (15/30/60/120 for a rule, 15/30/60 for screen time), `back`. The rule must be one of the
+/// device's effective rules (its own with the override on, else the global ones).
 pub async fn create_lift(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -68,11 +88,8 @@ pub async fn create_lift(
                     Err(err) => return server_error(err, "failed to read time rules"),
                 };
                 let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) else {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        "That rule doesn't apply to this phone",
-                    )
-                        .into_response();
+                    // Deleted, or the own-rules switch flipped, since the page loaded.
+                    return back_to(id, &form, "pause", "gone");
                 };
                 (Some(rule.id), Some(rule.name))
             }
@@ -120,14 +137,21 @@ pub async fn create_lift(
     )
     .await;
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}")).into_response()
+    if target == "rule" {
+        back_to(id, &form, "pause", "pause")
+    } else {
+        back_to(id, &form, "extra", "extra")
+    }
 }
 
-/// "End now": an active rule lift stops being sent, and the phone drops it on its next sync.
+/// "End now": an active rule pause stops being sent, and the phone drops it on its next sync. A
+/// pause that is already over (a second tap, another tab) changes nothing and lands back; a lift
+/// this phone never had is a 404.
 pub async fn end_lift(
     State(state): State<AppState>,
     Path((id, lift_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     match sqlx::query(
         "UPDATE time_lifts SET ended_early_at = datetime('now') WHERE id = ? AND device_id = ? \
@@ -139,7 +163,18 @@ pub async fn end_lift(
     .await
     {
         Ok(done) if done.rows_affected() == 0 => {
-            (StatusCode::NOT_FOUND, "No active lift with that id").into_response()
+            match sqlx::query_scalar::<_, i64>(
+                "SELECT id FROM time_lifts WHERE id = ? AND device_id = ? AND target = 'rule'",
+            )
+            .bind(lift_id)
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            {
+                Ok(Some(_)) => back_to(id, &form, "lifts", "over"),
+                Ok(None) => (StatusCode::NOT_FOUND, "No such pause").into_response(),
+                Err(err) => server_error(err, "failed to read a lift"),
+            }
         }
         Ok(_) => {
             security::record_security_event(
@@ -151,8 +186,279 @@ pub async fn end_lift(
             )
             .await;
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}")).into_response()
+            back_to(id, &form, "lifts", "ended")
         }
         Err(err) => server_error(err, "failed to end a lift"),
+    }
+}
+
+/// A flash on Device › Time after a lift form (`?done=`): the group it belongs to, its text, and
+/// whether it is a refusal. `None` for a code this page doesn't know.
+pub(crate) fn done_flash(code: &str) -> Option<(&'static str, &'static str, bool)> {
+    Some(match code {
+        "extra" => (
+            "extra",
+            "Added. The phone gets it within seconds when online.",
+            false,
+        ),
+        "pause" => ("pause", "Paused. The rule comes back by itself.", false),
+        "gone" => (
+            "pause",
+            "That rule no longer applies to this phone. Nothing was paused.",
+            true,
+        ),
+        "ended" => (
+            "lifts",
+            "Ended. The rule is back once the phone syncs.",
+            false,
+        ),
+        "over" => ("lifts", "That pause was already over.", false),
+        _ => return None,
+    })
+}
+
+/// "15 min", "1 h", "1 h 30 min".
+pub(crate) fn minutes_text(minutes: i64) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+/// Where a lift stands, typed (design 31 M5). A rule pause the server still sends follows the
+/// phone's last `time_state.lifts_active` once that report is newer than the pause: the phone's
+/// view wins - a reboot or late delivery can end a pause there before the server's expiry (QA
+/// step 6 #8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LiftState {
+    /// Sent, and the phone hasn't reported since.
+    Waiting,
+    /// The phone runs it, until the server's expiry.
+    OnPhone,
+    /// The phone reported after it and no longer runs it.
+    EndedOnPhone,
+    /// "End now" at this time.
+    EndedEarly(DateTime<Utc>),
+    /// Past its end.
+    Over,
+    /// Extra screen time, still offered to the phone.
+    Sent,
+    /// Extra screen time, no longer offered.
+    Done,
+}
+
+impl LiftState {
+    /// A running rule pause, from the phone's last report (`reported_at`, its `lifts_active`).
+    pub(crate) fn of_running_pause(
+        lift_id: i64,
+        created_at: DateTime<Utc>,
+        report: Option<(DateTime<Utc>, &[i64])>,
+    ) -> LiftState {
+        match report {
+            Some((reported_at, active)) if reported_at >= created_at => {
+                if active.contains(&lift_id) {
+                    LiftState::OnPhone
+                } else {
+                    LiftState::EndedOnPhone
+                }
+            }
+            _ => LiftState::Waiting,
+        }
+    }
+
+    /// The row's value, in the Phone Setup zone: "Until 10:42", "Ended early 10:20".
+    pub(crate) fn text(
+        &self,
+        expires_at: Option<DateTime<Utc>>,
+        zone: &Zone,
+        now: DateTime<Utc>,
+    ) -> String {
+        match self {
+            LiftState::Waiting => "Waiting for the phone".to_string(),
+            LiftState::OnPhone => match expires_at {
+                Some(end) => format!("Until {}", zone.until(end, now)),
+                None => "On the phone".to_string(),
+            },
+            LiftState::EndedOnPhone => "Ended on the phone".to_string(),
+            LiftState::EndedEarly(at) => format!("Ended early {}", zone.when(*at, now)),
+            LiftState::Over => match expires_at {
+                Some(end) => format!("Ended {}", zone.when(end, now)),
+                None => "Ended".to_string(),
+            },
+            LiftState::Sent => "Sent".to_string(),
+            LiftState::Done => "Done".to_string(),
+        }
+    }
+}
+
+/// One row of Device › Time's Recent group.
+pub(crate) struct LiftView {
+    pub id: i64,
+    /// "Skole paused for 30 min", "All rules paused for 1 h", "+15 min screen time".
+    pub what: String,
+    /// When it was made, local ("10:12", "yesterday 21:40"), the exact time for `title=`, by whom.
+    pub when: String,
+    pub exact: String,
+    pub by: String,
+    pub status: String,
+    /// A rule pause the server still sends: "End now".
+    pub can_end: bool,
+}
+
+/// The newest 10 lifts of the phone, with their state (a DB error is the caller's 500).
+pub(crate) async fn recent(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Vec<LiftView>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct LiftWithState {
+        #[sqlx(flatten)]
+        lift: TimeLiftRow,
+        active: bool,
+    }
+    let lifts = sqlx::query_as::<_, LiftWithState>(
+        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+         FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
+    // What the phone last said it runs, and when.
+    let reported: Option<(DateTime<Utc>, Vec<i64>)> = latest.and_then(|s| {
+        let at = parse_db_utc(&s.reported_at)?;
+        let state: serde_json::Value = serde_json::from_str(s.time_state_json.as_deref()?).ok()?;
+        let active = state["lifts_active"]
+            .as_array()
+            .map(|ids| ids.iter().filter_map(serde_json::Value::as_i64).collect())
+            .unwrap_or_default();
+        Some((at, active))
+    });
+    Ok(lifts
+        .into_iter()
+        .map(|LiftWithState { lift, active }| {
+            let created = parse_db_utc(&lift.created_at);
+            let expires = parse_db_utc(&lift.expires_at);
+            let (what, state) = if lift.target == "rule" {
+                let rule = lift.rule_name.as_deref().unwrap_or("All rules");
+                let state = match (
+                    lift.ended_early_at.as_deref().and_then(parse_db_utc),
+                    active,
+                ) {
+                    (Some(at), _) => LiftState::EndedEarly(at),
+                    (None, true) => LiftState::of_running_pause(
+                        lift.id,
+                        created.unwrap_or(now),
+                        reported.as_ref().map(|(at, ids)| (*at, ids.as_slice())),
+                    ),
+                    (None, false) => LiftState::Over,
+                };
+                (
+                    format!("{rule} paused for {}", minutes_text(lift.minutes)),
+                    state,
+                )
+            } else {
+                (
+                    format!("+{} screen time", minutes_text(lift.minutes)),
+                    if active {
+                        LiftState::Sent
+                    } else {
+                        LiftState::Done
+                    },
+                )
+            };
+            LiftView {
+                id: lift.id,
+                what,
+                when: created.map(|t| zone.when(t, now)).unwrap_or_default(),
+                exact: created.map(|t| zone.exact(t)).unwrap_or_default(),
+                by: lift.created_by.unwrap_or_default(),
+                status: state.text(expires, zone, now),
+                can_end: lift.target == "rule" && active,
+            }
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        parse_db_utc(s).unwrap()
+    }
+
+    #[test]
+    fn a_running_pause_follows_the_phone_once_it_reported_after_it() {
+        let created = utc("2026-10-05 10:00:00");
+        assert_eq!(
+            LiftState::of_running_pause(7, created, None),
+            LiftState::Waiting
+        );
+        // A report from before the pause says nothing about it.
+        assert_eq!(
+            LiftState::of_running_pause(7, created, Some((utc("2026-10-05 09:59:00"), &[]))),
+            LiftState::Waiting
+        );
+        assert_eq!(
+            LiftState::of_running_pause(7, created, Some((utc("2026-10-05 10:01:00"), &[7]))),
+            LiftState::OnPhone
+        );
+        assert_eq!(
+            LiftState::of_running_pause(7, created, Some((utc("2026-10-05 10:01:00"), &[8]))),
+            LiftState::EndedOnPhone
+        );
+    }
+
+    #[test]
+    fn lift_states_read_in_local_time() {
+        let oslo = Zone::from_setting("Europe/Oslo");
+        let now = utc("2026-10-05 10:00:00");
+        let end = Some(utc("2026-10-05 10:30:00"));
+        // 10:30 UTC is 12:30 in Oslo (CEST): never the UTC clock.
+        assert_eq!(LiftState::OnPhone.text(end, &oslo, now), "Until 12:30");
+        assert_eq!(
+            LiftState::EndedEarly(utc("2026-10-05 09:50:00")).text(end, &oslo, now),
+            "Ended early 11:50"
+        );
+        assert_eq!(
+            LiftState::Over.text(Some(utc("2026-10-04 19:30:00")), &oslo, now),
+            "Ended yesterday 21:30"
+        );
+        // Past midnight in Oslo.
+        assert_eq!(
+            LiftState::OnPhone.text(Some(utc("2026-10-05 22:30:00")), &oslo, now),
+            "Until 00:30 tomorrow"
+        );
+        // An empty Phone Setup zone says so.
+        assert_eq!(
+            LiftState::OnPhone.text(end, &Zone::utc_fallback(), now),
+            "Until 10:30 UTC"
+        );
+        assert_eq!(
+            LiftState::Waiting.text(end, &oslo, now),
+            "Waiting for the phone"
+        );
+    }
+
+    #[test]
+    fn durations_read_short() {
+        assert_eq!(minutes_text(15), "15 min");
+        assert_eq!(minutes_text(60), "1 h");
+        assert_eq!(minutes_text(120), "2 h");
+        assert_eq!(minutes_text(90), "1 h 30 min");
+    }
+
+    #[test]
+    fn every_done_code_names_a_group_of_the_page() {
+        for code in ["extra", "pause", "gone", "ended", "over"] {
+            let (group, text, _) = done_flash(code).unwrap();
+            assert!(["extra", "pause", "lifts"].contains(&group), "{code}");
+            assert!(!text.is_empty());
+        }
+        assert_eq!(done_flash("<script>"), None);
     }
 }

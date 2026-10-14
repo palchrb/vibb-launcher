@@ -243,15 +243,11 @@ pub(crate) async fn time_glance(
         .ok()
         .flatten()
         .unwrap_or(false);
-        rules = crate::time_rules::effective_rule_rows(&state.db, device_id, custom)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|rule| {
-                let days = crate::time_rules::parse_days(&rule.days_json).unwrap_or_default();
-                (rule.id, days)
-            })
-            .collect();
+        rules = crate::time_state::rule_days(
+            &crate::time_rules::effective_rule_rows(&state.db, device_id, custom)
+                .await
+                .unwrap_or_default(),
+        );
     }
     (
         lock_badge(
@@ -652,7 +648,9 @@ struct DeviceDetailTemplate {
     /// blocked a lost server means a reset (QA step 4 #4).
     managed_without_pin: bool,
     /// "Time rules" card (handy step 6).
-    time: TimeCard,
+    /// The Time row: "Everyone's rules", "Own rules", "Needs attention".
+    time_value: &'static str,
+    time_attention: bool,
     /// The Lock Screen & PINs row's value (design 31 step 4): "PIN on" with a Child PIN set.
     lock_value: &'static str,
     /// The Home Screen row's value (design 31 step 5): "3 per row".
@@ -1002,203 +1000,6 @@ pub async fn update_kiosk_escapes(
     }
 }
 
-struct RuleOption {
-    id: i64,
-    name: String,
-}
-
-struct LiftView {
-    id: i64,
-    what: String,
-    created_at: String,
-    created_by: String,
-    status: String,
-    can_end: bool,
-}
-
-/// The device page's "Time rules" card: what the phone last reported, the lift forms and history.
-struct TimeCard {
-    /// Following its own rules (the override switch) rather than the global ones.
-    custom: bool,
-    /// "Skole is active - calls blocked", "No rule active", or none before the first report.
-    now_line: Option<String>,
-    /// "Screen time 2026-10-05: 42 of 90 min (incl. 30 extra)".
-    screen_line: Option<String>,
-    rules: Vec<RuleOption>,
-    lifts: Vec<LiftView>,
-    /// The launcher reported capabilities without `time_rules_v1`: it still runs the old schedule.
-    launcher_without_rules: bool,
-    rules_error: bool,
-    /// A calls-off rule (school) applies but calls are unmanaged: incoming calls still ring.
-    incoming_calls_unblocked: bool,
-    /// The phone couldn't read its screen-time record and counts today's budget as used up.
-    ledger_unreadable: bool,
-}
-
-/// Status of a rule lift that the server still considers running, from what the phone last
-/// reported (`time_state.lifts_active`): the phone's view wins - a reboot or late delivery can
-/// end a lift there before the server's expiry (QA step 6 #8).
-pub(crate) fn rule_lift_status(
-    lift_id: i64,
-    created_at: &str,
-    expires_at: &str,
-    report: Option<(&str, &serde_json::Value)>,
-) -> String {
-    let expiry = format!("server expiry {expires_at} (UTC)");
-    match report {
-        Some((reported_at, state)) if reported_at >= created_at => {
-            let active = state["lifts_active"]
-                .as_array()
-                .is_some_and(|ids| ids.iter().any(|id| id.as_i64() == Some(lift_id)));
-            if active {
-                format!("Active on the phone - {expiry}")
-            } else {
-                format!("Ended on the phone - {expiry}")
-            }
-        }
-        _ => format!("Waiting for the phone - {expiry}"),
-    }
-}
-
-/// The two summary lines from the launcher's `time_state` JSON (design 06 "Wire").
-fn time_state_lines(json: &str) -> (Option<String>, Option<String>) {
-    let Ok(state) = serde_json::from_str::<serde_json::Value>(json) else {
-        return (None, None);
-    };
-    let reason = state["lock_reason"].as_str().unwrap_or("NONE");
-    let calls = if state["calls_blocked"].as_bool() == Some(true) {
-        " - calls blocked (emergency calls work)"
-    } else {
-        ""
-    };
-    let now_line = match state["active_rule_name"].as_str() {
-        Some(name) if !name.is_empty() => format!("{name} is active{calls}"),
-        _ if reason == "SCREEN_TIME" => {
-            "Screen time is used up - calls and messages only".to_string()
-        }
-        _ if reason != "NONE" => format!("Locked ({reason}){calls}"),
-        _ => "No rule active".to_string(),
-    };
-    let day = state["day"].as_str().unwrap_or("today");
-    let used = state["used_minutes"].as_i64();
-    let screen_line = used.map(|used| match state["budget_minutes"].as_i64() {
-        Some(budget) => {
-            let extra = state["extra_minutes"].as_i64().unwrap_or(0);
-            let extra = if extra > 0 {
-                format!(" (incl. {extra} extra)")
-            } else {
-                String::new()
-            };
-            format!("Screen time {day}: {used} of {budget} min{extra}")
-        }
-        None => format!("Screen time {day}: {used} min, no limit"),
-    });
-    (Some(now_line), screen_line)
-}
-
-async fn time_card(
-    state: &AppState,
-    policy: &DevicePolicy,
-    latest: Option<&DeviceStatus>,
-) -> TimeCard {
-    let (now_line, screen_line) = latest
-        .and_then(|s| s.time_state_json.as_deref())
-        .map(time_state_lines)
-        .unwrap_or((None, None));
-    let reported_state: Option<(String, serde_json::Value)> = latest.and_then(|s| {
-        s.time_state_json
-            .as_deref()
-            .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
-            .map(|v| (s.reported_at.clone(), v))
-    });
-    let ledger_unreadable = reported_state
-        .as_ref()
-        .is_some_and(|(_, v)| v["ledger_unreadable"].as_bool() == Some(true));
-    let launcher_without_rules = launcher_without_rules(latest);
-    let rules = crate::time_rules::effective_rule_rows(
-        &state.db,
-        policy.device_id,
-        policy.custom_schedule_enabled,
-    )
-    .await;
-    let rules_error = rules.is_err();
-    let rules = rules.unwrap_or_default();
-    let incoming_calls_unblocked = !policy.calls_managed && rules.iter().any(|r| !r.calls_allowed);
-    let rules = rules
-        .into_iter()
-        .map(|r| RuleOption {
-            id: r.id,
-            name: r.name,
-        })
-        .collect();
-    #[derive(sqlx::FromRow)]
-    struct LiftWithState {
-        #[sqlx(flatten)]
-        lift: crate::time_rules::TimeLiftRow,
-        active: bool,
-    }
-    let lifts = sqlx::query_as::<_, LiftWithState>(
-        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
-         FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
-    )
-    .bind(policy.device_id)
-    .fetch_all(&state.db)
-    .await;
-    let lifts = lifts
-        .unwrap_or_default()
-        .into_iter()
-        .map(|LiftWithState { lift, active }| {
-            let (what, status, can_end) = if lift.target == "rule" {
-                let rule = lift
-                    .rule_name
-                    .clone()
-                    .unwrap_or_else(|| "All rules".to_string());
-                let status = match (&lift.ended_early_at, active) {
-                    (Some(at), _) => format!("Ended early {at}"),
-                    (None, true) => rule_lift_status(
-                        lift.id,
-                        &lift.created_at,
-                        &lift.expires_at,
-                        reported_state.as_ref().map(|(at, v)| (at.as_str(), v)),
-                    ),
-                    (None, false) => "Over".to_string(),
-                };
-                (
-                    format!("{rule} lifted for {} min", lift.minutes),
-                    status,
-                    active,
-                )
-            } else {
-                let status = if active {
-                    "Sent - counts for the day the phone receives it".to_string()
-                } else {
-                    "Done".to_string()
-                };
-                (format!("+{} min screen time", lift.minutes), status, false)
-            };
-            LiftView {
-                id: lift.id,
-                what,
-                created_at: lift.created_at,
-                created_by: lift.created_by.unwrap_or_default(),
-                status,
-                can_end,
-            }
-        })
-        .collect();
-    TimeCard {
-        custom: policy.custom_schedule_enabled,
-        now_line,
-        screen_line,
-        rules,
-        lifts,
-        launcher_without_rules,
-        rules_error,
-        incoming_calls_unblocked,
-        ledger_unreadable,
-    }
-}
-
 pub async fn view_device(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1510,7 +1311,16 @@ async fn render_device(
             }
         };
 
-    let time = time_card(&state, &policy, latest_status.as_ref()).await;
+    // The Time row (design 31 step 9): which rules the phone follows; whether a calls-off rule
+    // applies while calls aren't managed (an Attention row).
+    let time_rules =
+        crate::time_rules::effective_rule_rows(&state.db, id, policy.custom_schedule_enabled)
+            .await
+            .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's rules"));
+    let incoming_calls_unblocked = !policy.calls_managed
+        && time_rules
+            .as_ref()
+            .is_ok_and(|rules| rules.iter().any(|r| !r.calls_allowed));
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
     let notice = query.get("notice").map(String::as_str);
     let zone = crate::display_time::Zone::load(&state.db).await;
@@ -1550,7 +1360,7 @@ async fn render_device(
             latest: latest_status.as_ref(),
             relock: &relock,
             call_problems: &call_problems,
-            incoming_calls_not_blocked: time.incoming_calls_unblocked,
+            incoming_calls_not_blocked: incoming_calls_unblocked,
             connection: connection_of(&state, &device, chrono::Utc::now()),
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),
         },
@@ -1564,6 +1374,16 @@ async fn render_device(
         Ok(_) if facts.music.any() => ("Needs attention".to_string(), true),
         Ok(ticked) if ticked.is_empty() => ("None".to_string(), false),
         Ok(ticked) => (format!("{} in library", ticked.len()), false),
+    };
+
+    // "Needs attention" while Device › Time shows a warning, as the Music row does.
+    let (time_value, time_attention) = match &time_rules {
+        Err(_) => ("Couldn't read", false),
+        Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
+            ("Needs attention", true)
+        }
+        Ok(_) if policy.custom_schedule_enabled => ("Own rules", false),
+        Ok(_) => ("Everyone's rules", false),
     };
 
     Html(
@@ -1584,7 +1404,8 @@ async fn render_device(
             music_value,
             music_attention,
             apps_value,
-            time,
+            time_value,
+            time_attention,
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_some() {
                 "PIN on"
             } else {

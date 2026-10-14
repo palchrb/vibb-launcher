@@ -316,7 +316,8 @@ fn title(kind: Kind) -> String {
 /// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
 /// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
 /// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs; step 5
-/// notification access to Home Screen.
+/// notification access to Home Screen; step 9 the screen-time record and Vibb too old for time
+/// rules to Device › Time.
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
         Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
@@ -332,9 +333,12 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
-        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => ("", "time"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
+        }
+        // Device › Time's warnings at the top of the page (step 9): no fragment needed.
+        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => {
+            return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
         Kind::MusicCantDeliver | Kind::MusicUnreachable => {
@@ -746,7 +750,9 @@ mod tests {
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
         // Step 5: Home Screen.
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
-        assert_eq!(target("screen-time-record"), "/devices/7#time");
+        // Step 9: Device › Time, its warnings at the top.
+        assert_eq!(target("screen-time-record"), "/devices/7/time");
+        assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at

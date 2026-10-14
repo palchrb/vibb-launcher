@@ -33,7 +33,7 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
 
 /// Whether the element with `id` holds the position `at` (from its start tag to its matching end
 /// tag, nested tags of the same name counted).
-fn encloses(html: &str, id: &str, at: usize) -> bool {
+pub(crate) fn encloses(html: &str, id: &str, at: usize) -> bool {
     let Some(attr) = html.find(&format!("id=\"{id}\"")) else {
         return false;
     };

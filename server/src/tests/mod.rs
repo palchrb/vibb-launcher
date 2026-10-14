@@ -39,6 +39,7 @@ mod sound_mode;
 mod step10;
 mod step11;
 mod step9;
+mod time_pages;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
@@ -590,6 +591,9 @@ pub enum Section {
     /// the settings form (mobile data, storage limit, volume cap, Storytel), Sonos, what the phone
     /// reported.
     Music,
+    /// `/devices/{id}/time`: Time (design 31 step 9) - what the phone last said, extra time, Pause
+    /// a rule, the recent lifts, the own-rules switch, the phone's own rules and daily limits.
+    Time,
     /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
     /// the screen timeout, the lock's background and notifications.
     Lock,
@@ -613,6 +617,7 @@ pub fn device_page(id: i64, section: Section) -> String {
         Section::Calls => format!("/devices/{id}/calls"),
         Section::Apps => format!("/devices/{id}/apps"),
         Section::Music => format!("/devices/{id}/music"),
+        Section::Time => format!("/devices/{id}/time"),
         Section::Lock => format!("/devices/{id}/lock"),
         Section::Home => format!("/devices/{id}/home"),
         Section::Filter => format!("/devices/{id}/filter"),

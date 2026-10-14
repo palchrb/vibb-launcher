@@ -311,10 +311,11 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 21] = [
+    const NOT_EVENTS: [&str; 22] = [
         "admin_id",
         "clear_kid_pin",
         "clear_pin",
+        "gone_unsaved",
         "music_entries",
         "music_note",
         "new_kid_pin",
