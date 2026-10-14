@@ -211,6 +211,9 @@
         <item name="android:layout_height">24dp</item>
         <item name="android:minWidth">24dp</item>
         <item name="android:background">@drawable/bg_kid_badge</item>
+        <!-- Above the elevated icon/avatar (design 34 P2), without a shadow of its own. -->
+        <item name="android:elevation">2dp</item>
+        <item name="android:outlineProvider">none</item>
         <item name="android:fontFamily">@font/nunito_extrabold</item>
         <item name="android:gravity">center</item>
         <item name="android:includeFontPadding">false</item>

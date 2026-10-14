@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.ui.home.KidAvatars
+import com.kidslauncher.mdm.ui.home.PressFeedback
 
 /** One phone-book tile: a contact, or the "Emergency call" tile when no rules can be read. */
 sealed interface PhoneBookTile {
@@ -67,6 +68,7 @@ class PhoneBookAdapter(
         }
         view.findViewById<TextView>(R.id.contact_name).textSize = 14f
         view.setPadding(0, KidAvatars.dp(context, 4f), 0, KidAvatars.dp(context, 12f))
+        PressFeedback.contact(view, KidAvatars.dp(context, 64f))
         return ViewHolder(view)
     }
 

@@ -65,6 +65,10 @@ class HomeGridAdapter(
         val label: TextView = view.findViewById(R.id.tile_label)
 
         init {
+            // Design 34 P2: depth on the icon, the press and an oval ripple (applyMetrics); the
+            // listener never consumes, so the click, long-press and Home's swipes are unchanged.
+            PressFeedback.depth(icon)
+            PressFeedback.attach(view, icon, scrolling = true)
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
@@ -99,6 +103,7 @@ class HomeGridAdapter(
                 height = iconPx
             }
             label.setTextSize(TypedValue.COMPLEX_UNIT_SP, m.labelSp)
+            PressFeedback.ovalRipple(itemView, iconPx, KidAvatars.dp(context, PressFeedback.TILE_ICON_TOP_DP))
         }
     }
 

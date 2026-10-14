@@ -358,3 +358,25 @@ Nothing is open.
 - **N3** always dark, said once - "Look and motion".
 - **N4** `wm density reset` / `font_scale 1.0` in step 0; the pill's 1.3:1 noted - P7.
 - **N5** no open questions left; the numbering is gone with them - §6.
+
+## Step 2 implementation status (2026-10-14)
+
+P2 is built (launcher only, no server change).
+
+**What was built**
+- **Depth** (`ui/home/PressFeedback.depth`): Home's `tile_icon` and the contact avatar (`contact_avatar`, on Home and in the phone book) get an oval `ViewOutlineProvider`, `elevation` 2 dp, and black spot and ambient shadow colours. The bitmap cache, its sizes and the glance/time-rule renders are unchanged. There is no top light. `tile_frame` no longer clips the shadow (`clipChildren=false`). Elevation changes the drawing order among siblings, so the unread/missed badge (the `KidBadge` style) and the green call badge are lifted to the same 2 dp with no outline (no shadow of their own), and they still draw above the icon.
+- **Press** (pure `PressMotion`; the view side is `PressFeedback.attach`): scale 0.94 and a 10 % black oval foreground in 90 ms, back in 140 ms, `DecelerateInterpolator`, no overshoot. It runs from the cell's `setOnTouchListener`, which always returns false and restores on UP and CANCEL. There is no animation when `ValueAnimator.areAnimatorsEnabled()` is false.
+- **Ripple** (`PressFeedback.ovalRipple`): the cell's background is a `RippleDrawable` (`colorControlHighlight`) whose mask is an oval of the icon's size where the icon sits: 4 dp below the grid cell's top, 10 dp below the contact item's. The click stays on the whole cell.
+- **Badge**: `kid_badge` `#B4532C` (white 5.0:1), never animated.
+- **Tests** (`PressFeedbackTest`, plain JUnit): `onAction` returns false for 13 actions in every pair order, with animators on and off and with and without the delay; a source check that the one touch listener returns `onAction`'s answer; the 90/140 ms animations; no `animate` call with animators off; the delayed press (a scroll's CANCEL never presses, a quick tap still presses and releases); the constants; the badge colour and its >= 4.5:1 contrast with white.
+
+**Decisions**
+- **Plain JUnit, not Robolectric**: the launcher has no Robolectric and adding it means new verified dependencies (trust on first use). Instead the press logic is pure (`PressMotion` with a `Host`) and tested directly: it reads `animatorsEnabled` from the host, and the view side reads `ValueAnimator.areAnimatorsEnabled()`. A `MotionEvent` can't be built in a JVM test, so the listener's "always false" is tested on `onAction` plus a source check that the listener returns exactly its answer.
+- **The press waits the tap timeout in scrolling parents** (the grid, the contacts row, the phone book: all of them): this is Android's own pressed-state delay. Without it, every scroll would shrink the icon for a moment before the CANCEL. A tap shorter than the timeout still shows the full press and release on UP. Tap, long-press and swipes are not affected because nothing is consumed.
+- **With animations off** the state jumps instead of animating. A quick tap then shows no scale at all, because it ends at rest; the system ripple follows the animator scale itself.
+- **The ripple sits under the elevated, opaque icon**, as the design says (the cell's background with an oval mask). What shows is a thin ring while the icon is scaled down, and the focus highlight; the 10 % darkening is the main visible press.
+- **The contact sheet's avatar** (`sheet_contact.xml`) gets neither depth nor press: P2 names Home's tiles and the contact avatar, and the sheet is P3's (built in parallel).
+
+**Deferred / not checked**
+- The emulator pass (`wm density 240`, nb and en): screenshots of Home and the phone book, and the gesture check: tap, the long-press menu, swipe-up to the drawer, swipe-left to kid Settings, the contacts row's scroll, the grid's scroll, "Remove animations" on. Frame times with the elevated tiles have not been measured.
+- P10 (c) (the music app's covers and bar get P2's elevation) is the music app's step 11.

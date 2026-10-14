@@ -72,6 +72,7 @@ import com.kidslauncher.mdm.ui.home.gridMetrics
 import com.kidslauncher.mdm.ui.home.HomeGridAdapter
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.NightGround
+import com.kidslauncher.mdm.ui.home.PressFeedback
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
@@ -824,6 +825,7 @@ class HomeActivity : UIObjectActivity() {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
             val emergency = CallSystem.isEmergencyOutgoing(this, contact.number)
             KidAvatars.sizeContact(item, layout.avatarDp)
+            PressFeedback.contact(item, KidAvatars.dp(this, layout.avatarDp.toFloat()))
             KidAvatars.bindContact(
                 item.findViewById<ImageView>(R.id.contact_photo),
                 item.findViewById<TextView>(R.id.contact_initial),
