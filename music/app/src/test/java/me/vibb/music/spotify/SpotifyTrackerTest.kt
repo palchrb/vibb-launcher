@@ -264,7 +264,7 @@ class SpotifyTrackerTest {
         t.played(0, 2)
         assertEquals(listOf("Started 0"), t.onState(state(1, 0), 0).map(::word))
         t.onState(state(1, 15_000), 15_000)
-        assertEquals("the end, held for the next state", emptyList<String>(), t.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+        assertEquals("the end, held for the next state: the page asked again", listOf("Look"), t.onState(state(1, 20_000, paused = true), 20_000).map(::word))
         assertEquals(Mode.OURS, t.mode)
         assertEquals("measured stays the last playing state", 15_000L, t.measured!!.positionMs)
         assertEquals(listOf("ItemChanged 1 auto"), t.onState(state(2, 0, prev = listOf(1)), 20_100).map(::word))
@@ -318,6 +318,32 @@ class SpotifyTrackerTest {
         assertEquals(listOf("Started 0", "QueueAdd 1"), w.onState(state(1, 0), 0).map(::word))
         w.onState(state(1, 15_000), 15_000)
         assertEquals(listOf("NewWindow 1"), w.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+    }
+
+    @Test
+    fun `L2 - a pause at the end Spotify never follows is the end after a second look, never a stall`() {
+        val t = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        t.played(0, 2)
+        t.onState(state(1, 0), 0)
+        t.onState(state(1, 15_000), 15_000)
+        assertEquals(listOf("Look"), t.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+        assertEquals("a repeat before the look is nothing new", emptyList<String>(), t.onState(state(1, 20_000, paused = true), 21_000).map(::word))
+        assertEquals("the page's answer: still there, the end - the next window", listOf("NewWindow 1"), t.onState(state(1, 20_000, paused = true), 22_100).map(::word))
+        // a context whose last track paused at its end: the context's end
+        val c = SpotifyTracker().apply { loadContext("spotify:playlist:FAKEplaylist0000000001", null) }
+        c.playedContext(null)
+        fun cs(pos: Long, paused: Boolean = false) = SdkState(paused, pos, 20_000, uri(1), null, emptyList(), emptyList(), "track", "Fake track 1", listOf("Fake Artist"), "spotify:playlist:FAKEplaylist0000000001")
+        c.onState(cs(0), 0)
+        c.onState(cs(15_000), 15_000)
+        assertEquals(listOf("Look"), c.onState(cs(20_000, paused = true), 20_000).map(::word))
+        assertEquals(listOf("Ended"), c.onState(cs(20_000, paused = true), 22_000).map(::word))
+        // a playing state in between starts the wait again
+        val p = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        p.played(0, 2)
+        p.onState(state(1, 0), 0)
+        p.onState(state(1, 15_000), 15_000)
+        p.onState(state(1, 20_000, paused = true), 20_000)
+        assertEquals(listOf("ItemChanged 1 auto"), p.onState(state(2, 0, prev = listOf(1)), 20_500).map(::word))
     }
 
     @Test

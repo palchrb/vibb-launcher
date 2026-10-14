@@ -29,8 +29,15 @@ class GuardsTest {
     @Test
     fun `every way to start playing asks first - controllers, the app's commands, playback resumption`() {
         val kid = service.substringAfter("private inner class KidPlayer").substringBefore("private val callback")
-        assertTrue(kid.contains("override fun play() {\n            if (playAllowed(suspendedNow())) super.play()"))
+        assertTrue(kid.contains("override fun play() {\n            if (playAllowed(suspendedNow()) && !restartIfStale()) super.play()"))
+        assertTrue(kid.contains("if (playWhenReady && playAllowed(suspendedNow()) && restartIfStale()) return"))
         assertTrue(kid.contains("if (!playWhenReady || playAllowed(suspendedNow())) super.setPlayWhenReady(playWhenReady)"))
+        // qa-26c-emu-music-code N1: the session's play (bar, notification, headset, lock) of a flipped Spotify entry starts
+        // its new queue through playEntry under the switch lock, as a cover tap does; RESUME goes through playEntry too
+        val stale = service.substringAfter("private fun restartIfStale(): Boolean {").substringBefore("\n    }\n")
+        assertTrue(stale.contains("loadedPlayStale(a.entry, spotifyEntriesNow[a.entry.id])"))
+        assertTrue(stale.contains("switching.withLock { playEntry(a.entry.id) }"))
+        assertTrue(service.substringAfter("private suspend fun resumeLast() {").substringBefore("\n    }\n").contains("if (isSpotify(current.entry)) return playEntry(current.entry.id)"))
         val command = service.substringAfter("override fun onCustomCommand(").substringBefore("when (customCommand.customAction)")
         // OUTPUT to a Sonos room starts the speaker (design 26a §3.3): the synchronous prefix reads its argument
         assertTrue(command.contains("val toRoom = customCommand.customAction == Commands.OUTPUT && Output.sonosUid(args.getString(Commands.ARG_OUTPUT)) != null"))
@@ -905,7 +912,7 @@ class GuardsTest {
                 step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"),
         )
         val call = serviceBody("private fun callStep() {")
-        assertTrue("a web player the WebView paused is the call rule's (QA M1)", call.contains("val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldByPage == true"))
+        assertTrue("a web player the WebView paused is the call rule's (QA M1)", call.contains("val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldRecently() == true"))
         // the web player hears the launcher's call (QA L2) and the audio mode's (emulator round 2026-10-14 N3), set wherever
         // either changes and when the renderer is made
         val hears = "spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)"

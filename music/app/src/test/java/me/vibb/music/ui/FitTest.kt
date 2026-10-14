@@ -381,7 +381,8 @@ class FitTest {
         assertEquals("never wider than the row", room, categoryTileWidthFor(room, 1_000f), 0.001f)
         // the screen measures each label at the font scale and gives its tile that width
         val tiles = library.substringAfter("private fun CategoryTiles(").substringBefore("private fun CategoryTile(")
-        assertTrue(tiles.contains("categoryTileWidthFor(room, px / density.density)"))
+        assertTrue(tiles.contains("categoryTileWidthFor(room, labelDp[name] ?: 0f)"))
+        assertTrue("measured once per names and font scale (N2)", tiles.contains("remember(measurer, density.density, density.fontScale, names)"))
         assertTrue(tiles.contains("measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1)"))
         assertTrue(library.contains("Line(label, CATEGORY_LABEL_SP, 800,"))
     }

@@ -369,13 +369,15 @@ private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (L
     val all = stringResource(R.string.category_all)
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
+    // each label as the tile draws it (11 sp ExtraBold, one line), its natural width (dp) at this font scale - measured
+    // once per set of names and font scale, not at every composition of the row (qa-26c-emu-music-code N2)
+    val names = listOf(all) + tiles.map { it.name }
+    val labelDp = remember(measurer, density.density, density.fontScale, names) {
+        names.associateWith { name -> measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1).size.width / density.density }
+    }
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
         val room = maxWidth.value
-        // the label as the tile draws it (11 sp ExtraBold, one line), its natural width at this font scale
-        val widthOf = { name: String ->
-            val px = measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1).size.width
-            categoryTileWidthFor(room, px / density.density).dp
-        }
+        val widthOf = { name: String -> categoryTileWidthFor(room, labelDp[name] ?: 0f).dp }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             item { CategoryTile(null, selected == null, widthOf(all)) { onCategory(null) } }
             items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, widthOf(c.name)) { onCategory(c.id) } }

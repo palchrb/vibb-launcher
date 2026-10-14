@@ -43,7 +43,6 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.SPOTIFY_CALL_MS
 import me.vibb.music.logic.SPOTIFY_FIRST_STATE_MS
-import me.vibb.music.logic.SPOTIFY_HELD_SHOWN_MS
 import me.vibb.music.logic.SPOTIFY_HOST_IDLE_MS
 import me.vibb.music.logic.SPOTIFY_READY_MS
 import me.vibb.music.logic.SPOTIFY_START_BUDGET_MS
@@ -62,7 +61,7 @@ import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.spotifyPauseCause
 import me.vibb.music.logic.spotifySelfResumeShown
-import me.vibb.music.logic.spotifySessionPlays
+import me.vibb.music.logic.spotifyHeldRecently
 import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
@@ -282,21 +281,23 @@ internal class SpotifyRenderer(
      * to an alarm, a ring or another app (§5.6; qa-26c-6l-fixes-code M1). The intent is kept: the page isn't closed
      * after 5 idle minutes, and the service's call rule counts it as playing, so `CALL_RELEASE` (or Chromium's own
      * resume) brings the music back after a long call. Cleared by any play or pause of ours, a resume, a load, a
-     * detach, a suspension. For its first [SPOTIFY_HELD_SHOWN_MS] the session still says playing (emulator round
-     * 2026-10-14 N3: the ring's pause reaches the page before the launcher looks at the session for `CALL_HOLD`).
+     * detach, a suspension. The call rule counts it as playing only while fresh ([heldRecently]).
      */
     var heldByPage = false
         private set(value) {
-            if (value && !field) {
-                heldAt = ports.now()
-                // the session's play-when-ready drops when the window ends ([spec])
-                ports.after(SPOTIFY_HELD_SHOWN_MS) { changed() }
-            }
+            if (value && !field) heldAt = ports.now()
             field = value
         }
 
     /** When the WebView last began holding our track paused ([heldByPage]). */
     private var heldAt = 0L
+
+    /**
+     * A hold the call rule counts as playing (`callStep`; qa-26c-emu-music-code M1): the WebView paused our track less than
+     * `SPOTIFY_HELD_RECENT_MS` ago - a ring's focus loss, which comes just before the call's own word. Another app that
+     * took the audio for good minutes ago is no play of ours a call's end would start again.
+     */
+    fun heldRecently(): Boolean = spotifyHeldRecently(heldByPage, ports.now() - heldAt)
 
     /**
      * A pause asked while the WebView held our track paused (the kid's pause, the sleep timer's end, the call rule;
@@ -784,9 +785,7 @@ internal class SpotifyRenderer(
             pwr && (start != null || stepTimer != null || tracker.mode == Mode.STARTING) -> Player.STATE_BUFFERING
             else -> Player.STATE_READY
         }
-        // the kid's intent; a play the WebView paused by itself only for its first seconds (N3: the launcher's look for CALL_HOLD)
-        val wants = spotifySessionPlays(pwr, heldByPage, ports.now() - heldAt, ended)
-        return SpotifySpec(state, wants, showsPlaying, index, rendererState)
+        return SpotifySpec(state, pwr && !ended, showsPlaying, index, rendererState)
     }
 
     // --- starts ---

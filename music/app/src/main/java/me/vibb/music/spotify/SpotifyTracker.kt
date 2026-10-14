@@ -350,7 +350,8 @@ class SpotifyTracker {
         if (mode == Mode.OURS && next <= known && next in queue.indices && ranOut(nowMs)) {
             moveTo(next)
             lastPaused = false // the play goes on past it: Spotify's next state is no resume
-            return unplayable(next)
+            // the advance first, so the track that played out is marked done (qa-26c-emu-music-code L1)
+            return listOf(Event.ItemChanged(next, auto = true)) + unplayable(next)
         }
         return unplayable(index)
     }
@@ -580,7 +581,7 @@ class SpotifyTracker {
             if (!pausePending && ranOut(nowMs)) {
                 if (s.positionMs < END_RESET_MS) return end()
                 // N1: paused at its duration - the track ended (the element's `pause` before `ended`), never a pause
-                if (atDuration(s)) return playedOut()
+                if (atDuration(s)) return playedOut(nowMs)
             }
             val ours = pausePending
             pausePending = false
@@ -607,10 +608,25 @@ class SpotifyTracker {
     /**
      * Our current track ended with a paused state at its duration (N1): while Spotify knows our next item (the window,
      * or our add one ahead) - or in a context, where Spotify picks the next - its own advance follows, and the state
-     * after this one says where it went (nothing now: still playing, the locks kept, nothing measured); with nothing of
-     * ours left on Spotify's side it is the end, as the reset to 0 is.
+     * after this one says where it went (still playing, the locks kept, nothing measured); with nothing of ours left on
+     * Spotify's side it is the end, as the reset to 0 is. Spotify not following (the end of a context, a dropped add):
+     * the page is asked again ([Event.Look]) and the same paused state [LOOK_MS] later is the end - a new window from
+     * the next item, or the context's end - never the 30 s state gap's "trenger internett" (qa-26c-emu-music-code L2).
      */
-    private fun playedOut(): List<Event> = if (context != null || index + 1 <= known) emptyList() else end()
+    private fun playedOut(nowMs: Long): List<Event> {
+        if (context == null && index + 1 > known) return end()
+        val first = endHeldAt
+        if (first == null) {
+            endHeldAt = nowMs
+            return listOf(Event.Look)
+        }
+        if (nowMs - first < LOOK_MS) return emptyList()
+        endHeldAt = null
+        return if (context != null) contextEnd() else end()
+    }
+
+    /** When our current track's paused-at-its-end state was first seen while Spotify should go on ([playedOut]). */
+    private var endHeldAt: Long? = null
 
     /** Spotify moved on to [to] (the expected next, or a later uri of ours past [skipped] ones it proved it skipped). */
     private fun advance(to: Int, skipped: List<Int>, s: SdkState, nowMs: Long): List<Event> {
@@ -700,6 +716,7 @@ class SpotifyTracker {
         durationSeen = null
         lastPaused = true
         nullAt = null
+        endHeldAt = null
     }
 
     /** A state of ours for the current item: measured, and the end rule's and the unplayable rule's marks. */
@@ -708,6 +725,7 @@ class SpotifyTracker {
         if (context != null) lastNext = s.nextUris
         s.durationMs?.let { durationSeen = it }
         if (!s.paused) {
+            endHeldAt = null
             lastPaused = false
             if (firstPlaying == null) firstPlaying = s.positionMs
             if (s.positionMs > furthest) furthest = s.positionMs
