@@ -93,11 +93,15 @@ class AppFilter(
          * blocked ([blockedDialer]); never the system's recents provider ([recentsProvider],
          * design 16d - enforcement never hides or suspends it, so its launcher icon, if the stock
          * launcher has one, must not show); Play core only as [playPackageLaunchable] allows (the
-         * Play Store while [installMode], i.e. listable: install mode or a window - design 28).
+         * Play Store while [installMode], i.e. listable: install mode or a window - design 28);
+         * never Vibb One itself ([OWN_PACKAGES], design 34 P5).
          */
         fun kidListable(packageName: String?, blockedDialer: String?, recentsProvider: String?, installMode: Boolean, emergencySos: String? = null): Boolean =
             packageName != blockedDialer &&
-                (packageName == null || (packageName != recentsProvider && packageName != emergencySos && playPackageLaunchable(packageName, installMode)))
+                (packageName == null || (packageName != recentsProvider && packageName != emergencySos && packageName !in OWN_PACKAGES && playPackageLaunchable(packageName, installMode)))
+
+        /** This launcher's own application ids, release and debug: it is never on its own list. */
+        val OWN_PACKAGES = setOf("me.vibb.launcher", "me.vibb.launcher.debug")
 
         enum class AppSetVisibility(
             val predicate: (set: Set<AbstractAppInfo>, AbstractDetailedAppInfo) -> Boolean

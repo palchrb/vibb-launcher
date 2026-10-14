@@ -7,6 +7,34 @@
         <!--<item name="colorButtonNormal">?colorAccent</item>-->
     </style>
 
+    <!-- A plain Button on the accent (design 34 P5): night ink on peach (9.9:1) - the theme's
+         white text was readable on the old #5555ff, not on peach (1.9:1). -->
+    <style name="accentButton" parent="@style/Widget.AppCompat.Button.Colored">
+        <item name="android:textColor">@color/kid_ground</item>
+    </style>
+
+    <!-- The default AlertDialog at night (qa-34-s5-code M1): the lifted night panel (its own
+         window background - AppCompat's is a white shape), white title and message, peach
+         buttons; an EditText in it takes the accent for its cursor and underline (8.6:1). Without
+         it the panel followed the system's dark mode, and in light mode the peach buttons were
+         1.97:1 and the white text invisible. -->
+    <style name="KidAlertDialog" parent="ThemeOverlay.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bg_kid_dialog</item>
+        <item name="android:colorBackground">@color/kid_ground_lift</item>
+        <item name="colorBackgroundFloating">@color/kid_ground_lift</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textColorPrimary">@color/kid_ink</item>
+        <item name="android:textColorSecondary">@color/kid_ink</item>
+        <item name="colorAccent">@color/kid_accent</item>
+        <item name="colorControlActivated">@color/kid_accent</item>
+        <item name="buttonBarButtonStyle">@style/KidDialogButton</item>
+    </style>
+
+    <!-- The dialog's buttons: peach text, set on the style so the theme's white can't win. -->
+    <style name="KidDialogButton" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">@color/kid_accent</item>
+    </style>
+
     <!-- Base theme for Launcher -->
     <style name="launcherBaseTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="colorPrimary">@color/finnmglasTheme_background_color</item>
@@ -19,8 +47,15 @@
         <item name="android:textColorPrimary">?android:textColor</item>
         <item name="android:textColorHint">?android:textColor</item>
 
-        <item name="android:buttonStyle">@style/Widget.AppCompat.Button.Colored</item>
+        <item name="android:buttonStyle">@style/accentButton</item>
+        <!-- An XML <Button> inflates as AppCompatButton, which takes AppCompat's own attribute
+             (qa-34-s5-code L1). -->
+        <item name="buttonStyle">@style/accentButton</item>
         <item name="colorButtonNormal">?colorAccent</item>
+        <!-- The default AlertDialogs (the phone book's call and 112 confirms, the Wi-Fi password)
+             are night in both system modes (qa-34-s5-code M1). The parent's dialogs keep their
+             explicit AlertDialogCustom. -->
+        <item name="alertDialogTheme">@style/KidAlertDialog</item>
         <item name="cardBackgroundColor">@color/cardview_dark_background</item>
 
         <!--<item name="android:popupMenuStyle">@style/PopupMenuCustom</item>-->

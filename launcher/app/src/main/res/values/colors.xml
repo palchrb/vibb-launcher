@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="finnmglasTheme_background_color">#252827</color>
-    <color name="finnmglasTheme_accent_color">#5555ff</color>
-    <color name="finnmglasTheme_text_color">#fff</color>
+    <!-- The default colour theme - the drawer and the parent Settings - in Vibb night with the
+         peach accent (design 34 P5; it was the upstream grey #252827 and #5555ff). Contrast in
+         KidPaletteTest: white 19:1, peach 9.9:1 on the ground. -->
+    <color name="finnmglasTheme_background_color">@color/kid_ground</color>
+    <color name="finnmglasTheme_accent_color">@color/kid_accent</color>
+    <color name="finnmglasTheme_text_color">@color/kid_ink</color>
 
     <color name="darkTheme_background_color">#000</color>
     <color name="darkTheme_accent_color">#444</color>

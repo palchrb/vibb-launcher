@@ -66,7 +66,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 
 ## Home, phone book, photos, badges, language (handy step 5, design `docs/design/05-ui-photos-i18n.md`, at the monorepo root)
 
-- **Home** (`HomeActivity`, `activity_home.xml`, mockup "handy launcher skisse"; since step 8 without the clock, with a Settings tile last - see below): the Home contacts as big round contact buttons (tap and long-press open the contact sheet - since the 2026-10-06 fix round; before, a tap called at once), then `HomeGridAdapter`: the phone book first, then every app the drawer's `AppFilter` shows (minus our own package), round icons (`KidAvatars.roundAppIcon`: adaptive-icon layers clipped to a circle) with unread badges; 3 columns, 4 when `launcher_ui.home_columns` says so (read from the cached policy). `AppFilter` runs off the main thread (`refreshApps`); badge changes are debounced and only rebuild the grid. What is shown is the pure `ui/home/HomeModel.kt` (`homeGrid`, `gridColumns`, `avatarStyle`, `badgeText`; `HomeModelTest`). The drawer stays on swipe-up (only when the grid can't scroll further) - same filter, so it shows nothing more, and it holds the PIN-gated Settings button. The old minimalist list (`ContactsHomeAdapter`/`MinimalistHomeAdapter`) and the "add to home screen" menu entry are gone. `onResume`'s lock-screen/kiosk/role order is unchanged.
+- **Home** (`HomeActivity`, `activity_home.xml`, mockup "handy launcher skisse"; since step 8 without the clock, with a Settings tile last - see below): the Home contacts as big round contact buttons (tap and long-press open the contact sheet - since the 2026-10-06 fix round; before, a tap called at once), then `HomeGridAdapter`: the phone book first, then every app the drawer's `AppFilter` shows (minus our own package - since design 34 P5 `AppFilter.kidListable` drops it for both), round icons (`KidAvatars.roundAppIcon`: adaptive-icon layers clipped to a circle) with unread badges; 3 columns, 4 when `launcher_ui.home_columns` says so (read from the cached policy). `AppFilter` runs off the main thread (`refreshApps`); badge changes are debounced and only rebuild the grid. What is shown is the pure `ui/home/HomeModel.kt` (`homeGrid`, `gridColumns`, `avatarStyle`, `badgeText`; `HomeModelTest`). The drawer stays on swipe-up (only when the grid can't scroll further) - same filter, so it shows nothing more, and it holds the PIN-gated Settings button. The old minimalist list (`ContactsHomeAdapter`/`MinimalistHomeAdapter`) and the "add to home screen" menu entry are gone. `onResume`'s lock-screen/kiosk/role order is unchanged.
 - **Phone book** (`PhoneBookActivity`, `PhoneBookAdapter`): 3-column avatar grid with missed-call badges, a 112 tile in the tonal emergency red when no rules can be read, calls-off/empty text; tapping opens `ContactSheet` (a bottom `Dialog`, not Material's BottomSheetDialog - our themes are AppCompat): photo with a ring, missed text, Call, Message (`resolveMessageButton`, "Message opens in <app label>"), Close. `tel:` handling is unchanged.
 - **Missed calls**: `MissedCallsRepo` reads 14 days of call log (needs `READ_CALL_LOG`, self-granted while calls are managed) and CE prefs `missed_calls_seen`; pure `missedCallSummaries` (`MissedCallsTest`): a missed call counts after the latest seen mark and the latest outgoing/answered call with that number; rejected/blocked never count. Opening the sheet or tapping Call marks the contact seen.
 - **App badges**: `badges/BadgeListenerService` (NotificationListenerService, reads package/flags/`number` only - plus, for Element X only, the reader of design 15 below, and since design 25 `GlanceReader`, the one reader of names and texts, only of the apps the parent ticked for the lock's glance page) -> pure `badgeCounts` -> `BadgeStore` (memory). **Access can't be granted by the device owner** (no DPM API; `setNotificationListenerAccessGranted` needs a system permission; sideloaded apps get "restricted setting" in Settings): `adb shell cmd notification allow_listener me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService` before enrolling (adb is blocked afterwards by default). Status reports carry `notificationListenerEnabled`; the server warns.
@@ -428,6 +428,41 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **Badge**: `kid_badge` is `#B4532C` (white 5.0:1; it was `#D9480F`, 4.3:1). It also colours the contact sheet's badge (`bg_kid_badge_sheet.xml`, on the sheet) - one badge colour everywhere. Badges are never animated (`bindBadge` only sets text and visibility).
 - **Translucent icon backgrounds**: an adaptive icon without a monochrome layer is drawn from its own background layer; if that layer is translucent, the oval shadow shows through as a faint grey disc. Rare and accepted; look for it in the emulator pass.
 - GPL code in `ui/home/` (not the MIT `ui/list/`, `apps/`). Not emulator-checked yet: the screenshots and the gesture checks (tap, long-press menu, swipe-up to the drawer, swipe-left to kid Settings, the contacts row's scroll, animations off).
+
+## The drawer in Vibb night, text only, without Vibb itself (design 34 step 5, P5, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Colours through `res/` only** (QA L2: the drawer is the MIT `ui/list/`, so no new code there): `res/values/colors.xml`'s
+  default colour theme now points at the kid palette - `finnmglasTheme_background_color` = `@color/kid_ground`,
+  `finnmglasTheme_accent_color` = `@color/kid_accent`, `finnmglasTheme_text_color` = `@color/kid_ink` (was µLauncher's
+  `#252827`/`#5555ff`/`#fff`). Both `launcherBaseTheme` and `colorThemeDefault` (applied over it in `UIObject`) read
+  them, so the drawer and the PIN-gated parent Settings (its switches and category titles, the status bar via
+  `colorPrimaryDark`) are night with the peach accent: white 19:1, peach 9.9:1. The parent's dialogs (`ParentPinDialog`,
+  Settings' edit-text dialog, the drawer's rename/uninstall, `EmergencyCall`, the PIN lock's) keep their explicit light
+  `AlertDialogCustom` (qa-34-s5-code N1).
+- **`KidAlertDialog`** (qa-34-s5-code M1): the base theme's `alertDialogTheme`, so every `AlertDialog.Builder(this)`
+  without a theme - the phone book's call, not-allowed and 112 confirms, the Wi-Fi password dialog - is night in both
+  system modes (before, AppCompat's panel followed the phone's dark mode: in light mode the peach buttons were 1.97:1 and
+  the white text invisible). The panel is `kid_ground_lift` (its own `bg_kid_dialog` window background - AppCompat's is
+  a white shape), title, message and text `kid_ink` (17:1), the buttons `KidDialogButton` in `kid_accent` (8.6:1, set on
+  the style so the theme's white can't win), an EditText's cursor and underline the accent. The drawer stays a text list (the user's answer; the row's
+  icon view is `gone`, no per-row icons), its header and its buttons, the swipe-up that opens it, the long-press menu and launching are unchanged
+  (the drawer has no search).
+- **`accentButton`** (`styles.xml`): the base theme's `android:buttonStyle` and, since qa-34-s5-code L1, AppCompat's
+  `buttonStyle` (an XML `<Button>` inflates as `AppCompatButton`, which reads that one) - `Widget.AppCompat.Button.Colored`
+  with `kid_ground` text. A button sits on `colorButtonNormal` = the accent, and the theme's white text was 1.9:1 on
+  peach (fine on the old blue). Today's only user is `PlayLinkBlockedActivity`'s framework OK.
+- **Vibb One is never on its own list**: one condition in `AppFilter.kidListable` (`apps/AppFilter.kt`, MIT like the
+  file - the existing palchrb-modified precedent): `packageName !in OWN_PACKAGES` (`me.vibb.launcher`,
+  `me.vibb.launcher.debug` - both, so a debug build next to a release one lists neither). Home's own
+  `packageName` filter in `refreshApps` stays (now redundant). The music app is listed as before.
+- Tests: `AppFilterTest` (both own ids refused in and out of install mode; the music app, a near-miss id and the old
+  `com.kidslauncher.mdm` still listed; `OWN_PACKAGES` equals `app/build.gradle.kts`'s `applicationId` and
+  `applicationId + applicationIdSuffix`), `KidPaletteTest` (the three theme colours are the kid palette's, text and
+  accent >= 4.5:1 on the ground (by the equalities - the palette's own test pins the pairs), both styles read them,
+  both button styles are `accentButton`, its text on the accent >= 4.5:1, `KidAlertDialog` as `alertDialogTheme` with its
+  panel, window background and every ink >= 4.5:1 on the panel, the drawer's row sets no text colour of its own).
+- Not emulator-checked yet: the drawer and parent Settings (with a switch) at `wm density 240`, nb and en; a phone-book
+  call confirm and the Wi-Fi password dialog in the system's light and dark mode.
 
 ## Home's edges and labels (design 34 step 4, P4, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
