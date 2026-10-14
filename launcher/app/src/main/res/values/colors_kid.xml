@@ -16,7 +16,7 @@
     <color name="kid_ink_dim">#BFFFFFFF</color>
     <color name="kid_badge">#B4532C</color>
     <color name="kid_call_badge">#2F9E44</color>
-    <!-- The Phone book tile (and the time-rule screen's phone book button): a muted call green,
+    <!-- The Phone book tile (and the time-rule screen's phone book row): a muted call green,
          white 5.5:1, ground 3.6:1 (design 34 P1, QA M3; it was #37B24D, white 2.75:1). -->
     <color name="kid_phone_book">#3A7552</color>
     <color name="kid_back_button">#1FFFFFFF</color>
@@ -33,8 +33,11 @@
     <color name="kid_missed_text">#FF8A8A</color>
     <!-- The call green: Ring, the answer button, Home's call card (white 4.77:1, design 34 QA L1). -->
     <color name="kid_call_button">#29833B</color>
-    <!-- The time-rule screen's app buttons (item_lock_app.xml); the sheet's Message no longer. -->
-    <color name="kid_message_button">#1864AB</color>
+    <!-- The time-rule screen (design 34 P6): the kind's icon sits in a disc of the accent at 14 %,
+         the card's rows (kid_ground_lift, as the contact sheet) end in a chevron of the light at 50 %.
+         kid_message_button (the old saturated app buttons) is gone with them. -->
+    <color name="kid_lock_kind_disc">#24F0A884</color>
+    <color name="kid_lock_chevron">#80FBE4DC</color>
     <color name="kid_emergency">#E03131</color>
     <!-- The light neutral disc under a legacy (non-adaptive) icon drawn as itself (design 34 P1). -->
     <color name="kid_icon_fallback">#F1F3F5</color>

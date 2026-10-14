@@ -19,7 +19,11 @@
     <string name="lock_until">Until %1$s</string>
     <string name="lock_calls_emergency_only">Only emergency calls work now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>
-    <string name="lock_budget_used">%1$d of %2$d minutes used today.</string>
+    <!-- %1$s: today's allowance, budget + extra minutes, by durationText ("1 h 30 min"). -->
+    <string name="lock_budget_allowance">You\'ve used today\'s %1$s.</string>
+    <string name="lock_budget_none">There\'s no screen time today.</string>
+    <string name="duration_unit_hours">h</string>
+    <string name="duration_unit_minutes">min</string>
     <string name="lock_budget_also_used">Today\'s screen time is used up too.</string>
     <string name="lock_enter_unlock_code">Enter unlock code</string>
     <string name="lock_unlock_code_dialog_title">Unlock code</string>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The time-rule screen's icon for a custom rule (design 34 P6): a plain dot, drawn by hand (no
+     converted symbol). Same 24 dp frame as the converted lock_glyph_* icons; white, tinted in the layout. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,7a5,5 0,1 1,0 10a5,5 0,1 1,0 -10z" />
+</vector>

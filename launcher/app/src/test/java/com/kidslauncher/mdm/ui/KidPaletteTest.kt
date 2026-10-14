@@ -182,4 +182,43 @@ class KidPaletteTest {
         assertEquals(resolve("kid_emergency_text").uppercase(), "#%06X".format(EMERGENCY_AVATAR.ink and 0xFFFFFF))
         assertTrue(contrast("kid_emergency_text", "kid_emergency_tonal") >= 6.6)
     }
+
+    /** Design 34 P6: the time-rule screen's inks on its grounds, read from its layouts. */
+    @Test
+    fun `the time-rule screen reads calmly - every ink against its ground`() {
+        val ns = "http://schemas.android.com/apk/res/android"
+        fun views(name: String): List<Element> {
+            val nodes = parse("layout/$name.xml").getElementsByTagName("*")
+            return (0 until nodes.length).map { nodes.item(it) as Element }
+        }
+        fun colourOf(views: List<Element>, id: String, attr: String) =
+            views.single { it.getAttributeNS(ns, "id") == "@+id/$id" }.getAttributeNS(ns, attr)
+        val screen = views("activity_lock")
+        assertEquals("@color/kid_ground", screen.first().getAttributeNS(ns, "background"))
+        // On the night: the clock, title, message, the red emergency text and the code button.
+        for ((id, minimum) in listOf(
+            "lock_clock" to 4.5, "lock_title" to 4.5, "lock_message" to 4.5,
+            "lock_emergency_button" to 4.5, "lock_unlock_code_button" to 4.5,
+        )) {
+            val ink = colourOf(screen, id, "textColor")
+            val ratio = contrast(ink, "kid_ground")
+            assertTrue("$id $ink: $ratio", ratio >= minimum)
+        }
+        assertTrue(contrast("kid_emergency_text", "kid_ground") >= 7.0)
+        // The kind's icon: the accent on its peach disc (14 % over the night), a graphic >= 3:1 - and well above.
+        val disc = over("kid_lock_kind_disc", "kid_ground")
+        assertTrue(contrast(colourOf(screen, "lock_kind_icon", "tint"), disc) >= 4.5)
+        assertEquals("#24F0A884", resolve("kid_lock_kind_disc").uppercase())
+        // The card is the contact sheet's lifted night (QA M4: one set of colours), its rows' name and chevron on it.
+        val card = parse("drawable/bg_lock_card.xml").getElementsByTagName("solid").item(0) as Element
+        assertEquals("@color/kid_ground_lift", card.getAttributeNS(ns, "color"))
+        val row = views("item_lock_row")
+        assertTrue(contrast(colourOf(row, "lock_row_label", "textColor"), "kid_ground_lift") >= 4.5)
+        val chevron = row.last().getAttributeNS(ns, "tint")
+        assertTrue(contrast(chevron, "kid_ground_lift") >= 3.0)
+        // The phone book row's tile carries its white glyph (the Home tile's colour).
+        assertTrue(contrast("kid_ink", "kid_phone_book") >= 4.5)
+        // The old saturated app-button blue is gone with the buttons.
+        assertTrue("kid_message_button" !in colours)
+    }
 }

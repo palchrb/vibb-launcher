@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The time-rule screen's peach-tinted disc behind the kind's icon (design 34 P6): the accent at
+     14 % on the night. The icon is kid_accent (KidPaletteTest). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/kid_lock_kind_disc" />
+</shape>
