@@ -2,22 +2,29 @@
 
 For the agent that merges this branch into `main` and releases it. Self-contained; the details live in
 `docs/design/26c-spotify.md` (the design, its §14 open points, its **Release** section and one status section per step).
-Written 2026-10-14 at branch head `102745b`, plus this document's own commit.
+Written 2026-10-14 at branch head `102745b`, plus this document's own commit; brought up to date at the docs commit
+after `cffd63c5` (the fix round of the merge of main `7936e6d`, then the merge of main `59c7fbe`).
 
 ## 1. What the branch is
 
 `music-3-spotify` is design 26c, Vibb music phase 3: Spotify links added in the parent's PWA, listed by the server like
 an RSS feed, played on the kid's phone by Spotify's Web Playback SDK in a headless WebView inside the music app. Steps
-1-8 are built, each with a code QA and a fix round. **`origin/main` (`5584772`) is an ancestor**
-(`git merge-base --is-ancestor origin/main music-3-spotify`), and the branch is 40 commits ahead of it
-(`git rev-list --count origin/main..music-3-spotify`) - 41 with this document.
+1-8 are built, each with a code QA and a fix round. **`origin/main` (`59c7fbe`) is an ancestor**
+(`git merge-base --is-ancestor origin/main music-3-spotify`); count how far the branch is ahead with
+`git rev-list --count origin/main..music-3-spotify` (if `main` moved again, merge it first, §4.1).
 
-Three merges of `main` were made into the branch, each followed by the full suites (the last two by a code QA):
+Five merges of `main` were made into the branch, each followed by the full suites (the second to fourth by a code QA):
 - `5d6bd5b` - main at `a5d30b9`: designs 29, 31 step 1 (the PWA shell), 32 step 1.
 - `e4d4feb` - main at `571f86f`: designs 30 (mobile-data switches, migration 0073), 31 steps 2/3/11, 32 step 2, 33. QA
   `c630b87`, fix round `665ea7b`. Spotify's migration was renumbered 0073 -> 0074 here.
 - `a023e4d` - main at `5584772`: design 31 steps 4-10 and 12-15 (Device › Music, Web Filter per phone, the Music tab,
   the summary, add-phone/sign-in). QA `8ba881b`, fix round `102745b` (the Spotify page rebuilt in design 31's layout).
+- `5d7de47` - main at `7936e6d`: design 31's CSS clean-up and the PWA browser pass's fix round (every form posts and
+  redirects to its group, `assert_lands`, the CSS guard); follow-up `d42df69` (the Spotify login in `leaves_the_page`,
+  the Spotify pages in the shell test). QA `bfe3b5a` (`0211d6b` on `qa-26c-merge3`), fix round `cffd63c` (the
+  leaving-form guard, a class-coverage test, the 0073/0074 order pinned, `/music/spotify/done` on the head partial).
+- `444deaa` - main at `59c7fbe`: design 34's docs, mockups and QA, and the stray `server.pid` removed (`*.pid`
+  ignored). Docs only; no conflict, no code QA needed.
 
 | Step | What | Build | QA | Fix round |
 |---|---|---|---|---|
@@ -82,25 +89,25 @@ DNS capture replaces it before any tag (§4 below).
 stub SDK; `music.yml` runs its selftest and watches the Spotify fixtures; `launcher.yml`, `music.yml` and
 `server-ci.yml` watch the three `spotify_hosts.json` copies. Root `CLAUDE.md` names the paths.
 
-**Docs.** `docs/design/26c-spotify.md` (spec, deviations, open points, QA checklist, Release, statuses), 13 QA files
+**Docs.** `docs/design/26c-spotify.md` (spec, deviations, open points, QA checklist, Release, statuses), 14 QA files
 `docs/design/qa-26c-*.md`, `docs/testing/emulator.md` §6l, the Spotify sections of `server/CLAUDE.md`,
 `music/CLAUDE.md`, `launcher/CLAUDE.md`, `NOTICE.md` (vibb's ported link grammar, MIT), design 26's status, `PLAN.md`.
 
 ## 3. How it was verified, and what was not
 
-Last local runs (the worktree; the server at `102745b`, the launcher and music at `a023e4d` - `8ba881b` and `102745b`
-changed only `server/` and docs):
-- Server: `cargo fmt --check` clean; `cargo clippy --all-targets` 12 warnings, the same 12 as `main`; `cargo test`
-  **934 passed**; `node --test jstest/*.test.js` 25 passed.
+Last local runs (the worktree; the server at `cffd63c`, the launcher and music at `d42df69` - nothing since reached
+`launcher/` or `music/`):
+- Server: `cargo fmt --check` clean; `cargo clippy --all-targets --locked` 13 warnings, `main`'s 13; `cargo test`
+  **939 passed**; `node --test jstest/*.test.js` 30 passed.
 - Launcher: `./gradlew assembleDebug testDebugUnitTest` **1146 tests** (on the tsnet stub; `assembleRelease` needs
   `app/libs/tsnet.aar`, which only CI builds).
 - Music: `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` **845 tests**,
   lint 0 errors.
 - `python3 -I scripts/fake-{sonos,storytel,spotify,audio}.py --selftest`: all four OK.
 
-GitHub CI: every pushed head of the branch ran **Server CI**, **Launcher** and **Music** green (19 runs, the newest on
-`a023e4d`). **`8ba881b`, `102745b` and this document's commit were not pushed when this was written**: push the branch
-and wait for the three workflows before merging.
+GitHub CI: every pushed head of the branch up to `a023e4d` ran **Server CI**, **Launcher** and **Music** green (19
+runs). The branch is pushed (to the docs commit after `cffd63c`, 2026-10-14); CI for `8ba881b..` (the heads pushed
+since) is to be checked: wait for the three workflows green on the branch's head before merging.
 
 **Not verified anywhere** (no emulator, no browser, no Spotify account, no Jelly Star in the sessions that built it):
 - `docs/testing/emulator.md` §6l **part A** (A1 the whole chain against the fake, A2 the phone alone) - the acceptance
@@ -118,10 +125,10 @@ and wait for the three workflows before merging.
 1. `git fetch origin` and confirm `git merge-base --is-ancestor origin/main origin/music-3-spotify` still holds.
    If `main` moved, merge it **into the branch first** (`git merge --no-ff origin/main` on `music-3-spotify`, message
    `Merge main (<what it brought>) into music-3-spotify` with the trailers), fix what breaks inside that merge commit,
-   run all three suites, have it code-QA'd as the three earlier merges were, and add a "Merge of main" status section
+   run all three suites, have it code-QA'd as the earlier merges were, and add a "Merge of main" status section
    to 26c. The files that conflicted most: `server/src/handlers/music.rs`, the device pages
-   (`templates/device_*.html`, `handlers/device_pages.rs`, `handlers/dns_filter.rs`), `templates/music.html` and the
-   music partials, `server/src/tests/music.rs`, `server/CLAUDE.md`, `docs/testing/emulator.md`, `PLAN.md`; the
+   (`templates/device_*.html` - `device_filter.html` again at `7936e6d`, `handlers/device_pages.rs`, `handlers/dns_filter.rs`), `templates/music.html` and the
+   music partials (`partials/music_card.html` again at `7936e6d`), `server/src/tests/music.rs`, `server/CLAUDE.md`, `docs/testing/emulator.md`, `PLAN.md`; the
    contract JSONs if `main` touched them (regenerate with `MUSIC_LIBRARY_SNAPSHOT_WRITE=1` and copy byte for byte).
    Re-check that 0074 stays the highest migration.
 2. **Before any tag** (26c Release, "Before any tag of this release"): the DNS capture as **one commit** - the three
@@ -197,10 +204,10 @@ and wait for the three workflows before merging.
   security and the Developer Policy table, §8 the contract commit, §9 the fake, §11 steps, §12 deviations from vibb,
   §13 non-goals, §14 open points, the QA checklist, **the Release** (with the DEPLOY.md block), then the status
   sections in order: design QA fix round, steps 1, 2a, merge `a5d30b9`, 2b, 3, 4, 5a, 5b, merge `571f86f`, 6, 7, 8,
-  merge `5584772` - each with its fix round.
+  merge `5584772`, merge `7936e6d` (and `59c7fbe`) - each with its fix round.
 - The QA files, in order: `qa-26c-design.md`, `qa-26c-step1-code.md`, `-step2a-code`, `-step2b-code`,
   `-step3-code`, `-step4-code`, `-step5a-code`, `-step5b-code`, `qa-26c-merge-code.md`, `-step6-code`,
-  `-step7-docs`, `-step8-code`, `qa-26c-merge2-code.md`.
+  `-step7-docs`, `-step8-code`, `qa-26c-merge2-code.md`, `qa-26c-merge3-code.md`.
 - `server/CLAUDE.md` "Vibb music: Spotify on the server"; `music/CLAUDE.md` (the `spotify/` package, the renderer
   rules, "No source on the kid's screens"); `launcher/CLAUDE.md` (the Spotify bullet in the music section).
 - `docs/testing/emulator.md` §6l (parts A1, A2, B) - the emulator loop with `scripts/fake-spotify.py`.

@@ -1896,22 +1896,22 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 Final (step 7, 2026-10-13; it replaces the drafts written with the design and at the merge of main `571f86f`).
 
 **The branch**: `music-3-spotify` holds §11 steps 1-7, each code step with QA's code review and its fix round, step 8
-(2026-10-14, "Step 8 implementation status" below, with its QA and fix round `038822a`), and three merges of `main` -
+(2026-10-14, "Step 8 implementation status" below, with its QA and fix round `038822a`), and five merges of `main` -
 at `a5d30b9` (merge commit `5d6bd5b`), at `571f86f` (merge commit `e4d4feb`, with its own code QA and fix round) and at
 `5584772` (merge commit `a023e4d`, design 31 steps 4-15, 2026-10-14, "Merge of main (5584772)" below, with its code QA
-`8ba881b` and fix round `102745b`, which rebuilt `/music/spotify` in design 31's layout). The final head is the
-handover commit on top of `102745b`. `origin/main` is `5584772`, an ancestor: nothing on `main` is missing here.
-A fourth merge, of `main` at `7936e6d` (design 31's CSS clean-up and the PWA browser pass's fix round), is merge commit
-`5d7de47` with its follow-up `d42df69` ("Merge of main (7936e6d)" at the end; server `cargo test` 937 passed, launcher
-1146, music 845); its code QA is owed.
+`8ba881b` and fix round `102745b`, which rebuilt `/music/spotify` in design 31's layout), then the handover
+commit. A fourth merge, of `main` at `7936e6d` (design 31's CSS clean-up and the PWA browser pass's fix round), is merge
+commit `5d7de47` with its follow-up `d42df69` ("Merge of main (7936e6d)" at the end), its code QA `bfe3b5a`
+(`qa-26c-merge3-code.md`) and fix round `cffd63c`; a fifth, of `main` at `59c7fbe` (design 34's docs, the stray
+`server.pid` removed), is `444deaa`. `origin/main` `59c7fbe` is an ancestor: nothing on `main` is missing here.
 **The merge into `main` and the releases follow `docs/design/26c-handover.md`**, a self-contained handover for the
 agent doing them (what the branch is and changes, how it was verified, the exact procedure, the decisions taken and
-the open points). Last full runs (the server on `102745b`; the launcher and music on `a023e4d`, untouched since): server `cargo test` 934
-passed, `cargo fmt --check` clean, clippy's
-12 known warnings, `node --test jstest/*.test.js` 25 passed; launcher `assembleDebug testDebugUnitTest` 1146 tests (its
+the open points). Last full runs (the server on `cffd63c`; the launcher and music on `d42df69`, untouched since): server `cargo test` 939
+passed, `cargo fmt --check` clean, clippy `main`'s 13 warnings, `node --test jstest/*.test.js` 30 passed; launcher `assembleDebug testDebugUnitTest` 1146 tests (its
 `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
-testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests; the four fakes' `--selftest`s OK. CI last ran on
-`a023e4d` (all green); `8ba881b`, `102745b` and the handover were not pushed. Step 7 changed docs only; step 8 changed
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests; the four fakes' `--selftest`s OK. CI ran green on
+every pushed head up to `a023e4d`; the branch is pushed again since (2026-10-14, through this fix round), and CI on its
+head is to be checked before the merge. Step 7 changed docs only; step 8 changed
 the music app's strings and words, the server's copy and one fallback name, and their tests (`launcher/` untouched);
 the merges moved the Spotify controls onto design 31's pages.
 
@@ -4507,5 +4507,27 @@ Validation (this worktree, `d42df69`): server `cargo fmt --check` clean, `cargo 
 warnings - `main`'s 13 (the 12 known plus `storytel.rs:97`'s `chunks_exact`, a file the branch doesn't change),
 `cargo test` **937 passed**, 0 failed, `node --test server/jstest/*.test.js` 30 passed; launcher `assembleDebug
 testDebugUnitTest` BUILD SUCCESSFUL, 1146 tests, 0 failures; music `assembleDebug testDebugUnitTest
--PwarningsAsErrors=true` BUILD SUCCESSFUL, 845 tests, 0 failures. Owed: a code QA of this merge
-(`qa-26c-merge3-code.md`).
+-PwarningsAsErrors=true` BUILD SUCCESSFUL, 845 tests, 0 failures.
+
+### Fix round after QA's code review (qa-26c-merge3-code, 2026-10-14)
+
+QA `bfe3b5a` (`0211d6b` on `qa-26c-merge3`): 0 High, 0 Medium, 4 Low, 3 Nits; all fixed, none disputed. First `main`
+at `59c7fbe` was merged (`444deaa`: design 34's docs, mockups and QA; `server.pid` deleted as on `main`, `*.pid`
+ignored; no conflict). The fixes are `cffd63c`; `launcher/` and `music/` untouched, no contract file, no migration.
+
+| Finding | What changed | Check |
+|---|---|---|
+| L1 | `settings_pages::leaves_the_page` matches the action without its `#fragment`, so a leaving form with one (main's `/login`, `/logout`, the add flows; Spotify's login) fails `check_forms` "leaves the page". | `/music/spotify/login#accounts` turns `every_form_on_every_page_lands_on_its_own_group` red; nothing else failed. |
+| L2 | `tests::shell::every_class_a_template_uses_is_in_style_css`: every class in a template's `class="..."` (expressions out) has a rule in `style.css`, with the 11 known names allowlisted, each with its reason (`attention-`, `dot-`, `music-status-`, `state-`, `tone-` dynamic prefixes; `app-display-form`, `app-row`, `day-row`, `lock-part`, `source-choice`, `summary-more` hooks); an allowlisted name that gets a rule fails too. | `.card` on the Spotify login form turns it red. |
+| L3 | `tests::music_spotify::the_migrations_end_with_design_30_then_spotify`: `MIGRATOR`'s last two are 74 "music spotify", 73 "music data and storage"; the message names the backup hazard. Relax to "74 is Spotify's" once `main` has released 0074. | 0073 renamed 0075 turns it red. |
+| L4 | `/music/spotify/done` renders `music_spotify_done.html` with the head partial: the current stylesheet, "Spotify Login · Vibb Phone" (was inline HTML, `style.css?v=7`, "Kids Device MDM"); route, no session, `no-store` and the meta refresh unchanged. | Its test compares the stylesheet line with `partials/head.html`'s and pins the title. |
+| N1 | The shell test also asserts the Spotify entry page's streaming hint (`data-hint="spotify-streams"`). | - |
+| N2 | The login's exception named in `leaves_the_page`'s doc comment and in `server/CLAUDE.md` (the scroll-restore rule, which now names `leaves_the_page` and the class test, and the Spotify login bullet; the `/done` page's template). | - |
+| N3 | `server.pid` gone with the merge of `59c7fbe`. | `git ls-files server.pid` empty. |
+
+Also brought up to date: `docs/design/26c-handover.md` (§1 the merges, §2 14 QA files, §3 runs and CI, §4.1, §7) and
+this Release's branch paragraph.
+
+Validation (from `server/`, on `cffd63c`): `cargo fmt --check` clean; `cargo clippy --all-targets --locked` 13 warnings,
+`main`'s 13; `cargo test` **939 passed**, 0 failed (937 + the class test + the migration pin); `node --test
+jstest/*.test.js` 30 passed. Migrations end `0073_music_data_and_storage.sql`, `0074_music_spotify.sql`.
