@@ -2161,3 +2161,8 @@ input.row-num { width: 6.5em; text-align: right; }
 .row-unit { flex: none; color: var(--label-2); font-size: 1rem; }
 /* A footer under the extra-time tiles (no group above it to tuck under). */
 .group-footer-after { margin-top: 0; }
+
+/* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
+   reach after editing a lower field, and a save's flash or a refusal's reason under it. */
+.editor-bar { position: -webkit-sticky; position: sticky; top: 0; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
+.editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }

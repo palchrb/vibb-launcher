@@ -353,6 +353,15 @@ fn target(kind: Kind, id: i64) -> String {
     format!("/devices/{id}{page}#{anchor}")
 }
 
+/// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
+/// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
+pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
+    policy.calls_managed
+        && !problems
+            .iter()
+            .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
+}
+
 /// What [facts_of] reads; the device page passes the cards it has built.
 pub struct Sources<'a> {
     pub device: &'a Device,
@@ -464,9 +473,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     } else {
         s.relock.blocks.items.len()
     };
-    let time = latest
-        .and_then(|st| st.time_state_json.as_deref())
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let play =
@@ -529,15 +535,13 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
             .is_some(),
         calls: s.call_problems.to_vec(),
-        ledger_unreadable: time
-            .as_ref()
-            .is_some_and(|t| t["ledger_unreadable"].as_bool() == Some(true)),
+        // Device › Time reads the same typed report.
+        ledger_unreadable: latest
+            .and_then(|st| st.time_state_json.as_deref())
+            .and_then(crate::time_state::TimeReport::parse)
+            .is_some_and(|report| report.ledger_unreadable),
         launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
-        calls_enforced: policy.calls_managed
-            && !s
-                .call_problems
-                .iter()
-                .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall)),
+        calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: crate::handlers::music::music_warnings(policy, latest, s.music_ticked),
     }

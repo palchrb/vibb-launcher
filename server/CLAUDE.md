@@ -1274,9 +1274,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **`section` on `/schedules/device/{id}`** (§5.6, H1): `switch` writes only `custom_schedule_enabled`, `budget` only
   `daily_budget_json` (`COALESCE` of a NULL bind keeps the other), none both (an older tab), another value 400. Pinned
   by `tests::time_pages::a_switch_only_post_keeps_the_limits`.
-- **Refusals in place**: a rule (no name, a day with one time, more than 50 apps) or a limit (outside 0-1440) renders
-  its page again (400) as typed (escaped, cut short), the reason under the field, which is `autofocus`ed and
-  `aria-invalid`; an unknown kind or another phone's rule stays a plain 400 / 404 (no page sends one). Times must be
+- **Refusals in place**: a rule (no name, a day with one time or a time that isn't `HH:MM`, more than 50 apps) or a
+  limit (outside 0-1440) renders its page again (400) as typed (escaped, cut short), the reason under the field, which
+  is `autofocus`ed and `aria-invalid`; the editor also shows it in its sticky top bar beside Save, where a save's flash
+  shows too (qa-31-s9-code M2, L1); an unreadable stored rule's warning names the parts that will be saved empty;
+  a refused pause (the rule no longer applies) always lands on Device › Time's Pause a Rule, which then shows even
+  with no rule left; an unknown kind or another phone's rule stays a plain 400 / 404 (no page sends one). Times must be
   `HH:MM` (what `<input type="time">` sends).
 - **Attention**: the screen-time record and Vibb too old for time rules → `/devices/{id}/time` (the warnings at its
   top); incoming calls not blocked → Calls & Contacts. `TimeReport` now also reads `extra_minutes` and

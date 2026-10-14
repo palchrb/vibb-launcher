@@ -50,7 +50,17 @@
         <p class="group-footer group-footer-after">Adds to today's screen time on the phone.</p>
     </section>
 
-    {% if !pause_rules.is_empty() %}
+    {#- Shown for its flash too, so a refused pause of the last rule that applied lands here and
+        says why (qa-31-s9-code M1). -#}
+    {% if pause_rules.is_empty() && pause_done %}
+    <section id="pause" aria-labelledby="pause-title">
+        <h2 class="group-header" id="pause-title">Pause a Rule</h2>
+        <div class="group">
+            <p class="row row-note">No rules apply to this phone right now.</p>
+            {% if let Some((_, text, refused)) = done %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="pause">{{ text }}</p>{% endif %}
+        </div>
+    </section>
+    {% else if !pause_rules.is_empty() %}
     <section id="pause" aria-labelledby="pause-title">
         <h2 class="group-header" id="pause-title">Pause a Rule</h2>
         <form method="post" action="/devices/{{ device.id }}/lifts#pause" class="group">

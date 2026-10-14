@@ -35,9 +35,11 @@ fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
 }
 
 /// Where a lift form returns (§5.1): Device › Time's `group` with `done` for its flash, or the
-/// device page. `back` is checked against the one value it may have; the phone is the path's.
+/// device page. `back` is checked against the one value it may have; the phone is the path's. A
+/// refusal (`gone`) always goes to Device › Time, which says why - the device page has no word for
+/// it yet (qa-31-s9-code N4).
 fn back_to(id: i64, form: &HashMap<String, String>, group: &str, done: &str) -> Response {
-    if form.get("back").map(String::as_str) == Some("time") {
+    if done == "gone" || form.get("back").map(String::as_str) == Some("time") {
         Redirect::to(&format!("/devices/{id}/time?done={done}#{group}")).into_response()
     } else {
         Redirect::to(&format!("/devices/{id}")).into_response()

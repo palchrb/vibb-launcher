@@ -68,7 +68,8 @@ pub(crate) fn minutes_to_time_input(minutes: i64) -> String {
 /// Strict "HH:MM" (00:00-23:59) to minutes since midnight.
 fn time_input_to_minutes(value: &str) -> Option<i64> {
     let (h, m) = value.trim().split_once(':')?;
-    if h.len() != 2 || m.len() != 2 {
+    let digits = |t: &str| t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit());
+    if !digits(h) || !digits(m) {
         return None;
     }
     let (h, m) = (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?);
@@ -517,6 +518,8 @@ async fn reported_apps(
 /// Where a rule belongs: everyone's (`None`) or one phone's own, with the phone's name.
 struct RuleScope {
     device: Option<(i64, String)>,
+    /// The phone follows its own rules (always true for everyone's).
+    in_force: bool,
 }
 
 impl RuleScope {
@@ -562,10 +565,12 @@ struct RuleTemplate {
     back_label: String,
     /// "Anna" for a phone's own rule, for the delete's sentence.
     device_name: Option<String>,
-    /// The flash under the first group after a save: "Saved.", "Rule added.".
-    saved: Option<&'static str>,
-    /// The stored rule doesn't read; saving it again fixes it.
-    corrupt: bool,
+    /// The flash in the top bar after a save: "Saved. The phones get it …".
+    saved: Option<String>,
+    /// A refusal's reason, in the top bar beside Save (in view wherever the page opens).
+    refusal: Option<String>,
+    /// The stored rule doesn't read: which parts (they open empty and are saved as shown).
+    corrupt: Option<String>,
     /// The kind select's options: value and label.
     kinds: [(&'static str, &'static str); 3],
 }
@@ -574,9 +579,22 @@ fn render_rule(
     scope: &RuleScope,
     rule: RuleForm,
     saved: Option<&'static str>,
-    corrupt: bool,
+    corrupt: Option<String>,
     status: StatusCode,
 ) -> Response {
+    let refusal = rule
+        .name_error
+        .clone()
+        .or_else(|| rule.days.iter().find_map(|d| d.error.clone()))
+        .or_else(|| rule.apps_error.clone());
+    // A phone's own rule while it follows everyone's: saved, but not in force yet (qa N2).
+    let saved = saved.map(|text| {
+        if scope.in_force {
+            format!("{text} The phones get it within seconds when online.")
+        } else {
+            format!("{text} Used once Own rules is on.")
+        }
+    });
     let (back_href, back_label) = match &scope.device {
         Some((id, _)) => (format!("/devices/{id}/time"), "Time".to_string()),
         None => ("/schedules".to_string(), "Time Rules".to_string()),
@@ -596,6 +614,7 @@ fn render_rule(
             back_label,
             device_name: scope.device.as_ref().map(|(_, name)| name.clone()),
             saved,
+            refusal,
             corrupt,
             kinds: [
                 ("school", "School"),
@@ -611,17 +630,22 @@ fn render_rule(
 /// The rule's scope from its row or the form: a device that must exist (404 otherwise).
 async fn scope_of(state: &AppState, device: Option<i64>) -> Result<RuleScope, Box<Response>> {
     let Some(id) = device else {
-        return Ok(RuleScope { device: None });
+        return Ok(RuleScope {
+            device: None,
+            in_force: true,
+        });
     };
-    match sqlx::query_scalar::<_, String>(
-        "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
+    match sqlx::query_as::<_, (String, bool)>(
+        "SELECT d.name, p.custom_schedule_enabled FROM devices d \
+         JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
     )
     .bind(id)
     .fetch_optional(&state.db)
     .await
     {
-        Ok(Some(name)) => Ok(RuleScope {
+        Ok(Some((name, in_force))) => Ok(RuleScope {
             device: Some((id, name)),
+            in_force,
         }),
         Ok(None) => Err(Box::new(
             (StatusCode::NOT_FOUND, "Device not found").into_response(),
@@ -640,6 +664,29 @@ async fn parse_scope(state: &AppState, raw: &str) -> Result<RuleScope, Box<Respo
         return Err(Box::new(bad_request("Unknown scope")));
     };
     scope_of(state, Some(id)).await
+}
+
+/// The parts of a stored rule that don't read, for the editor's warning: they open empty (or as
+/// Other) and a save writes them as shown (qa-31-s9-code L3). `None` for a readable rule.
+fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
+    let mut parts = Vec::new();
+    if !RULE_KINDS.contains(&row.kind.as_str()) {
+        parts.push("type");
+    }
+    if time_rules::parse_days(&row.days_json).is_err() {
+        parts.push("days");
+    }
+    if time_rules::parse_exempt_apps(&row.exempt_apps_json).is_err() {
+        parts.push("apps");
+    }
+    match parts.as_slice() {
+        [] => None,
+        [one] => Some(format!("Its {one} couldn't be read")),
+        [first @ .., last] => Some(format!(
+            "Its {} and {last} couldn't be read",
+            first.join(", ")
+        )),
+    }
 }
 
 /// GET `/schedules/rules/{id}`: the editor. A rule whose stored data doesn't read opens with what
@@ -666,7 +713,7 @@ pub async fn show_rule(
         Ok(apps) => apps,
         Err(err) => return read_failed(err, "the reported apps"),
     };
-    let corrupt = row.to_policy().is_err();
+    let corrupt = unreadable_parts(&row);
     let days = time_rules::parse_days(&row.days_json).unwrap_or_else(|_| vec![None; 7]);
     let exempt = time_rules::parse_exempt_apps(&row.exempt_apps_json).unwrap_or_default();
     let rule = RuleForm {
@@ -714,7 +761,7 @@ pub async fn new_rule(
         name_error: None,
         apps_error: None,
     };
-    render_rule(&scope, rule, None, false, StatusCode::OK)
+    render_rule(&scope, rule, None, None, StatusCode::OK)
 }
 
 /// A validated rule form.
@@ -765,11 +812,14 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
         }
         match (time_input_to_minutes(start), time_input_to_minutes(end)) {
             (Some(start), Some(end)) => days.push(Some(DayWindow { start, end })),
-            _ => {
+            _ if start.is_empty() || end.is_empty() => {
                 return Err(RuleError::Day(
                     i,
                     format!("{day}: give both times, or leave both empty."),
                 ));
+            }
+            _ => {
+                return Err(RuleError::Day(i, format!("{day}: use times like 08:15.")));
             }
         }
     }
@@ -892,10 +942,11 @@ fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
 async fn refuse_rule(
     state: &AppState,
     scope: &RuleScope,
-    id: i64,
+    stored: Option<&TimeRuleRow>,
     fields: &[(String, String)],
     error: RuleError,
 ) -> Response {
+    let id = stored.map_or(0, |row| row.id);
     if error == RuleError::Kind {
         return bad_request("Unknown kind of rule.");
     }
@@ -904,7 +955,13 @@ async fn refuse_rule(
         Err(err) => return read_failed(err, "the reported apps"),
     };
     let form = rule_entered(id, fields, &available, error);
-    render_rule(scope, form, None, false, StatusCode::BAD_REQUEST)
+    render_rule(
+        scope,
+        form,
+        None,
+        stored.and_then(unreadable_parts),
+        StatusCode::BAD_REQUEST,
+    )
 }
 
 /// POST `/schedules/rules`: a new rule, then its page.
@@ -920,7 +977,7 @@ pub async fn create_rule(
     };
     let input = match parse_rule_form(&fields) {
         Ok(input) => input,
-        Err(error) => return refuse_rule(&state, &scope, 0, &fields, error).await,
+        Err(error) => return refuse_rule(&state, &scope, None, &fields, error).await,
     };
     let device = scope.id();
     let result = sqlx::query_scalar::<_, i64>(
@@ -990,14 +1047,14 @@ pub async fn update_rule(
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    match rule_in_scope(&state, rule_id, scope.id()).await {
-        Ok(Some(_)) => {}
+    let stored = match rule_in_scope(&state, rule_id, scope.id()).await {
+        Ok(Some(row)) => row,
         Ok(None) => return to_list(&scope, "gone_unsaved"),
         Err(response) => return *response,
-    }
+    };
     let input = match parse_rule_form(&fields) {
         Ok(input) => input,
-        Err(error) => return refuse_rule(&state, &scope, rule_id, &fields, error).await,
+        Err(error) => return refuse_rule(&state, &scope, Some(&stored), &fields, error).await,
     };
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
@@ -1197,6 +1254,8 @@ struct DeviceTimeTemplate {
     lifts: Vec<crate::handlers::lifts::LiftView>,
     /// A lift form's flash: its group, text, refused.
     done: Option<(&'static str, &'static str, bool)>,
+    /// Pause a Rule shows for its flash even with no rule left to pause (qa-31-s9-code M1).
+    pause_done: bool,
     custom: bool,
     /// Everyone's rules: how many (the row to Settings › Time Rules).
     everyone_rules: String,
@@ -1299,14 +1358,7 @@ async fn render_device_time(
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
     let reported = reported_at.map(|t| (zone.relative(t, now), zone.exact(t)));
     let connection = crate::handlers::devices::connection_of(state, &device, now);
-    let calls_enforced = policy.calls_managed
-        && !call_problems.iter().any(|p| {
-            matches!(
-                p,
-                crate::handlers::calls::CallProblem::NotEnforced
-                    | crate::handlers::calls::CallProblem::AnyoneCanCall
-            )
-        });
+    let calls_enforced = crate::attention::calls_enforced(&policy, &call_problems);
     let rule_days = crate::time_state::rule_days(&effective);
     let (lock, locking, screen) = match (&report, reported_at) {
         (Some(report), Some(reported_at)) => {
@@ -1377,6 +1429,9 @@ async fn render_device_time(
     }
 
     let refused = entered.is_some();
+    let done = query
+        .get("done")
+        .and_then(|code| crate::handlers::lifts::done_flash(code));
     render(
         DeviceTimeTemplate {
             title: format!("Time · {}", device.name),
@@ -1387,9 +1442,8 @@ async fn render_device_time(
             reported,
             pause_rules: effective.iter().map(|r| (r.id, r.name.clone())).collect(),
             lifts,
-            done: query
-                .get("done")
-                .and_then(|code| crate::handlers::lifts::done_flash(code)),
+            done,
+            pause_done: done.is_some_and(|(group, _, _)| group == "pause"),
             custom: policy.custom_schedule_enabled,
             everyone_rules: match everyone_count {
                 0 => "None".to_string(),
@@ -1508,15 +1562,36 @@ mod tests {
             ]),
             RuleError::Day(3, _)
         ));
-        assert!(matches!(
+        assert_eq!(
             refused(&[
                 ("name", "x"),
                 ("kind", "custom"),
                 ("d4_start", "8:00"),
                 ("d4_end", "09:00")
             ]),
-            RuleError::Day(4, _)
-        ));
+            RuleError::Day(4, "Friday: use times like 08:15.".to_string())
+        );
+        assert_eq!(
+            refused(&[
+                ("name", "x"),
+                ("kind", "custom"),
+                ("d4_start", "+8:00"),
+                ("d4_end", "09:00")
+            ]),
+            RuleError::Day(4, "Friday: use times like 08:15.".to_string())
+        );
+        assert_eq!(
+            refused(&[
+                ("name", "x"),
+                ("kind", "custom"),
+                ("d4_start", ""),
+                ("d4_end", "09:00")
+            ]),
+            RuleError::Day(
+                4,
+                "Friday: give both times, or leave both empty.".to_string()
+            )
+        );
         assert!(matches!(
             refused(&[("name", "x"), ("kind", "custom"), ("exempt_apps", "nope")]),
             RuleError::Apps(_)

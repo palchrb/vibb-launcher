@@ -3187,3 +3187,22 @@ Deferred, with the reason:
     (no rule maths on the server), but it is a bigger contract change.
 - **The summary's quick actions** (+15/+30/+1 h, Pause a rule…, Today with End now) are step 10's; `back=summary` is
   already the lifts' default.
+
+**Fix round after the code QA** (`qa-31-s9-code.md`: 0 High, 2 Medium, 4 Low, 5 Nits; all fixed; on `main` at
+`ac826538` merged in - steps 7 and 8 - with the device page's Calls & Contacts, Music and Time rows, all three old
+cards gone, and `style.css?v=22` after step 8's section):
+
+| # | Fix |
+|---|---|
+| M1 | Pause a Rule shows for its flash even when no rule applies any more ("No rules apply to this phone right now." and the red reason), so `?done=gone#pause` always lands on it. Pinned in `time_rules::invalid_lifts_are_rejected` (the redirect followed, the group and its flash). |
+| M2 | Every refusal's reason is also in the editor's top bar beside Save ("Not saved. Pick at most 50 apps."), in view wherever the answer opens - with JS (scroll-restore back to the top for a saved rule), without JS, and for a new rule (another path); the apps' reason moved under the Exceptions summary, above the list. Pinned in `time_pages::a_refused_rule_renders_in_place_as_typed` (the bar, and the reason before the first app row). |
+| L1 | The top bar (`.editor-bar`) is sticky, so Save is in reach after editing any field, and the save's flash ("Saved." / "Rule added." …) sits in it, in view where scroll-restore returns. `time_pages::the_editor_bar_holds_save_and_its_flash`. |
+| L2 | Two messages: a day with one time "Friday: give both times, or leave both empty.", a time that isn't `HH:MM` "Friday: use times like 08:15." (`schedules::tests::rule_form_validation`). |
+| L3 | The unreadable rule's warning names what didn't read ("Its days and apps couldn't be read, so they show empty here and are saved as you see them: set them again, then Save - or delete the rule.", `schedules::unreadable_parts`), and a refused save of it keeps the warning (`refuse_rule` takes the stored row). `time_pages::an_unreadable_rule_says_what_will_be_reset`. |
+| L4 | End now through another phone's URL is a 404 and the pause keeps running (`time_rules::lifts_are_recorded_delivered_and_end`); the Time row's "Couldn't read" (`time_pages::the_time_row_says_when_the_rules_cant_be_read`). Mutations 3 and 12 re-run: both now fail a test. |
+| N1 | One `attention::calls_enforced(policy, problems)` for the badge's "· calls off" (Attention and Device › Time); the ledger flag is read through `TimeReport` in both. |
+| N2 | A phone's own rule saved while the phone follows everyone's says "Saved. Used once Own rules is on." (`RuleScope::in_force`). |
+| N3 | `time_input_to_minutes` takes digits only ("+8:00" is refused). |
+| N4 | A refused pause from an older tab (no `back`) lands on Device › Time with its reason too (`lifts::back_to` sends every `gone` there). |
+| N5 | The Time row says "Needs attention" also while a rule in force or the own limit in force doesn't read. |
+| Checks | `cargo test` 837 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |

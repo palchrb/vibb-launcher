@@ -12,6 +12,13 @@ use super::{
     nav_current, tags,
 };
 
+/// The rule editor's sticky top bar (Save, and the save's flash or a refusal's reason).
+fn bar(html: &str) -> &str {
+    let at = html.find("data-bar=\"rule\"").expect("the top bar");
+    let end = html[at..].find("<h1").unwrap();
+    &html[at..at + end]
+}
+
 /// A form on a page: its action, where it starts, and its hidden fields.
 type Form = (String, usize, Vec<(String, String)>);
 
@@ -379,6 +386,12 @@ async fn a_refused_rule_renders_in_place_as_typed() {
     assert_eq!(d3.attr("value"), Some("09:00"));
     assert!(d3.has("autofocus") && d3.attr("aria-invalid") == Some("true"));
     assert!(html.contains("Thursday: give both times, or leave both empty."));
+    // The reason is also in the top bar beside Save, so it is in view wherever the page opens.
+    assert!(
+        bar(&html).contains("Not saved. Thursday: give both times"),
+        "{}",
+        bar(&html)
+    );
     let name: String = sqlx::query_scalar("SELECT name FROM time_rules WHERE id = ?")
         .bind(rule)
         .fetch_one(&app.db)
@@ -411,8 +424,13 @@ async fn a_refused_rule_renders_in_place_as_typed() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    assert!(section(&html, "exceptions").contains("<details class=\"cell disclosure\" open>"));
-    assert!(html.contains("Pick at most 50 apps."));
+    let exceptions = section(&html, "exceptions");
+    assert!(exceptions.contains("<details class=\"cell disclosure\" open>"));
+    // In view: in the top bar, and right under the summary, above the 51 app rows (qa M2).
+    assert!(bar(&html).contains("Not saved. Pick at most 50 apps."));
+    let reason = exceptions.find("id=\"apps-error\"").unwrap();
+    assert!(reason > exceptions.find("</summary>").unwrap());
+    assert!(reason < exceptions.find("name=\"exempt_apps\"").unwrap());
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_rules")
         .fetch_one(&app.db)
         .await
@@ -930,4 +948,136 @@ async fn the_device_page_has_a_time_row() {
         .text();
     let row = &html[html.find("data-row=\"time\"").unwrap()..];
     assert!(row[..row.find("</a>").unwrap()].contains(">Own rules<"));
+}
+
+/// The editor's Save stays in reach (a sticky top bar) and a save's flash shows in that bar, so it
+/// is in view wherever the page returns (qa-31-s9-code L1); a phone's own rule saved while the
+/// phone follows everyone's says it isn't in force yet (N2).
+#[tokio::test]
+async fn the_editor_bar_holds_save_and_its_flash() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let css = std::fs::read_to_string("static/style.css").unwrap();
+    let rule_css = &css[css.find(".editor-bar {").expect("the bar's rule")..];
+    assert!(rule_css[..rule_css.find('}').unwrap()].contains("position: sticky"));
+    let global = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
+    let html = app
+        .get_page(&format!("/schedules/rules/{global}?saved=1"), &cookie)
+        .await
+        .text();
+    let top = bar(&html);
+    assert!(top.contains("data-save=\"rule\""));
+    assert!(top.contains("data-flash=\"rule\""));
+    assert!(top.contains("The phones get it within seconds when online."));
+    assert_eq!(
+        html.matches("data-flash=").count(),
+        1,
+        "the flash only in the bar"
+    );
+    let own = add_rule(&app, Some(id), "Leggetid", SCHOOL_DAYS).await;
+    let html = app
+        .get_page(&format!("/schedules/rules/{own}?saved=1"), &cookie)
+        .await
+        .text();
+    assert!(bar(&html).contains("Saved. Used once Own rules is on."));
+    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app
+        .get_page(&format!("/schedules/rules/{own}?saved=added"), &cookie)
+        .await
+        .text();
+    assert!(bar(&html).contains("Rule added. The phones get it within seconds when online."));
+}
+
+/// An unreadable stored rule names what didn't read - it shows empty and a save writes it as
+/// shown - also on a refused save of it (qa-31-s9-code L3); the device page's Time row says
+/// "Needs attention" while a rule in force doesn't read (N5).
+#[tokio::test]
+async fn an_unreadable_rule_says_what_will_be_reset() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let rule: i64 = sqlx::query_scalar(
+        "INSERT INTO time_rules (name, kind, calls_allowed, exempt_apps_json, days_json) \
+         VALUES ('Skole', 'school', 0, 'nope', '[1,2]') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains("data-warning=\"rule-corrupt\""));
+    assert!(
+        html.contains("Its days and apps couldn&#39;t be read"),
+        "{html}"
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}"),
+            Some(&cookie),
+            &[("scope", ""), ("name", ""), ("kind", "school")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(
+        res.text()
+            .contains("Its days and apps couldn&#39;t be read")
+    );
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"time\"").unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains(">Needs attention<"));
+    // Saved again, it reads; the warning and the row's alarm go.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule}"),
+            Some(&cookie),
+            &[("scope", ""), ("name", "Skole"), ("kind", "school")],
+        )
+        .await;
+    assert_redirect(&res, &format!("/schedules/rules/{rule}?saved=1"), None);
+    let html = app
+        .get_page(&format!("/schedules/rules/{rule}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("data-warning=\"rule-corrupt\""));
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"time\"").unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains(">Everyone&#39;s rules<"));
+}
+
+/// The Time row says "Couldn't read" when the rules can't be read - the summary's only sign of it
+/// (qa-31-s9-code L4).
+#[tokio::test]
+async fn the_time_row_says_when_the_rules_cant_be_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("ALTER TABLE time_rules RENAME TO gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let html = res.text();
+    let row = &html[html.find("data-row=\"time\"").unwrap()..];
+    assert!(
+        row[..row.find("</a>").unwrap()].contains(">Couldn&#39;t read<"),
+        "{row}"
+    );
 }

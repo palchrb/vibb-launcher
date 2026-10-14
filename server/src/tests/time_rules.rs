@@ -429,6 +429,32 @@ async fn lifts_are_recorded_delivered_and_end() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+    // Another phone's running pause can't be ended through this phone's URL (qa-31-s9-code L4).
+    let (other, _) = app.enrolled_device("other").await;
+    let theirs: i64 = sqlx::query_scalar(
+        "INSERT INTO time_lifts (device_id, target, minutes, expires_at) \
+         VALUES (?, 'rule', 30, datetime('now', '+30 minutes')) RETURNING id",
+    )
+    .bind(other)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts/{theirs}/end"),
+            Some(&cookie),
+            &[("back", "time")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended_early_at FROM time_lifts WHERE id = ?")
+            .bind(theirs)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(ended, None, "the other phone's pause keeps running");
 
     // An expired lift isn't delivered.
     sqlx::query("UPDATE time_lifts SET expires_at = datetime('now', '-1 minute')")
@@ -496,6 +522,37 @@ async fn invalid_lifts_are_rejected() {
         &format!("/devices/{id}/time?done=gone"),
         Some("pause"),
     );
+    // No rule applies to this phone at all: Pause a Rule still shows, with the reason, so the
+    // fragment lands on it (qa-31-s9-code M1).
+    let html = app
+        .get_page(&format!("/devices/{id}/time?done=gone"), &cookie)
+        .await
+        .text();
+    let pause = &html[html.find("<section id=\"pause\"").expect("the pause group")..];
+    let pause = &pause[..pause.find("</section>").unwrap()];
+    assert!(pause.contains("data-flash=\"pause\""), "{pause}");
+    assert!(pause.contains("No rules apply to this phone right now."));
+    assert!(pause.contains("flash-error"));
+    // An older tab (no `back`) gets the reason too, on Device › Time (qa-31-s9-code N4).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts"),
+            Some(&cookie),
+            &[("target", "rule"), ("rule", &foreign), ("minutes", "30")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/time?done=gone"),
+        Some("pause"),
+    );
+    // Without a refusal and without rules, there is no Pause group.
+    let html = app
+        .get_page(&device_page(id, Section::Time), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("<section id=\"pause\""));
     let res = app
         .request_form(
             Method::POST,

@@ -1366,6 +1366,15 @@ async fn render_device(
         Ok(_) if facts.ledger_unreadable || facts.launcher_without_rules => {
             ("Needs attention", true)
         }
+        // A rule or the own limit in force that doesn't read: the phone gets a 500 for its
+        // settings until it is saved again (qa-31-s9-code N5).
+        Ok(rules)
+            if rules.iter().any(|r| r.to_policy().is_err())
+                || (policy.custom_schedule_enabled
+                    && crate::time_rules::parse_budget(&policy.daily_budget_json).is_err()) =>
+        {
+            ("Needs attention", true)
+        }
         Ok(_) if policy.custom_schedule_enabled => ("Own rules", false),
         Ok(_) => ("Everyone's rules", false),
     };
