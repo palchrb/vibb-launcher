@@ -8,6 +8,8 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
 import androidx.appcompat.widget.AppCompatTextView
+import java.text.BreakIterator
+import java.util.Locale
 import kotlin.math.min
 
 /**
@@ -39,6 +41,64 @@ object WholeWords {
     /** A line ending at [lineEnd] cuts a word: letters on both sides and no hyphen drawn. */
     fun cutsWord(text: CharSequence, lineEnd: Int, hyphenated: Boolean): Boolean =
         !hyphenated && lineEnd in 1 until text.length && isWordChar(text[lineEnd - 1]) && isWordChar(text[lineEnd])
+
+    /** The line-break opportunities of [text] in [locale] (ICU's rules on Android: between ideographs,
+     * between Thai words by dictionary, after a space or a hyphen). A break there is never a cut
+     * (qa-34-emu-launcher-code L1: a two-line Chinese label is a normal wrap, not a cut word). */
+    fun breakOpportunities(text: String, locale: Locale): (Int) -> Boolean {
+        val lines = BreakIterator.getLineInstance(locale).apply { setText(text) }
+        return { at -> at in 0..text.length && lines.isBoundary(at) }
+    }
+
+    /** The lines shown: all of them, or [maxLines] when the text has more (the last one ellipsized). */
+    fun shownLines(maxLines: Int, lineCount: Int): Int = if (maxLines in 1 until lineCount) maxLines else lineCount
+
+    /**
+     * Whether a layout cuts a word within the [shown] lines: a line (not the last shown, whose end
+     * the ellipsis takes) that ends inside a word, with no hyphen drawn (the line is no wider than
+     * its own text by more than [hyphenPx] - no public API names a drawn hyphen) and not at a
+     * line-break opportunity ([isBreak]). [ends], [lineWidths] and [textWidths] are per line.
+     */
+    fun cutLines(
+        text: CharSequence, ends: IntArray, lineWidths: FloatArray, textWidths: FloatArray,
+        hyphenPx: Float, shown: Int, isBreak: (Int) -> Boolean,
+    ): Boolean = (0 until shown - 1).any {
+        val hyphenated = lineWidths[it] - textWidths[it] > hyphenPx
+        cutsWord(text, ends[it], hyphenated) && !isBreak(ends[it])
+    }
+
+    /** What a fit was made for: a new text, line width or base size needs a new one. */
+    fun fitKey(text: String, widthPx: Int, basePx: Float): Triple<String, Int, Float> = Triple(text, widthPx, basePx)
+
+    /**
+     * The view's fit bookkeeping, pure: the base size (the XML's or a caller's `setTextSize` - never
+     * the rule's own), and when a fit is due. A new text is always fitted again (qa-34-emu-launcher-code
+     * M1: a recycled Home tile kept the old label's fit and showed "Chro/me").
+     */
+    class FitState(basePx: Float) {
+        var basePx = basePx
+            private set
+        private var fittedFor: Triple<String, Int, Float>? = null
+
+        /** A size was set; only a caller's (not [adjusting], the rule's own) moves the base. */
+        fun sizeSet(adjusting: Boolean, sizePx: Float) {
+            if (adjusting) return
+            basePx = sizePx
+            fittedFor = null
+        }
+
+        /** The text changed; true when the view must ask for a layout (not for the rule's own change).
+         * The key holds the text, so the next measure fits the new one ([due]). */
+        fun textChanged(adjusting: Boolean): Boolean = !adjusting
+
+        /** Whether [text] at [widthPx] needs a fit now (and marks it made). */
+        fun due(text: String, widthPx: Int): Boolean {
+            val key = fitKey(text, widthPx, basePx)
+            if (key == fittedFor) return false
+            fittedFor = key
+            return true
+        }
+    }
 
     /** The sizes tried, from [basePx] down to [FLOOR_SHARE] of it. */
     fun sizes(basePx: Float): List<Float> = (0..STEPS).map { basePx * (1f - (1f - FLOOR_SHARE) * it / STEPS) }
@@ -83,8 +143,10 @@ object WholeWords {
 /**
  * A TextView that follows [WholeWords] (Home's tile labels and the contact names on Home and in the
  * phone book). Measures with an offline [StaticLayout] in the view's own break settings and applies
- * a size or an ellipsis only when it changes, so a layout pass settles. The text itself is never
- * changed: an ellipsis is a [TransformationMethod] (`text` and the accessibility text stay whole).
+ * a size or an ellipsis only when it changes, so a layout pass settles. `text` is never changed: an
+ * ellipsis is a [TransformationMethod]. The label's own accessibility text is the shown one
+ * ("Melding…", `getTextForAccessibility` reads the transformed text); TalkBack reads the full name
+ * from the clickable tile or contact, whose content description carries it (qa-34-emu-launcher-code N1).
  */
 class WholeWordTextView @JvmOverloads constructor(
     context: Context,
@@ -92,17 +154,22 @@ class WholeWordTextView @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.textViewStyle,
 ) : AppCompatTextView(context, attrs, defStyleAttr) {
 
-    /** The label's own size (XML or a caller's setTextSize), which the rule shrinks from. */
-    private var basePx = textSize
+    /** The fit's bookkeeping; null only while TextView's constructor runs (it sets text and size). */
+    private var state: WholeWords.FitState? = null
     private var adjusting = false
-    private var fittedFor: Triple<String, Int, Float>? = null
+
+    init {
+        state = WholeWords.FitState(textSize)
+    }
 
     override fun setTextSize(unit: Int, size: Float) {
         super.setTextSize(unit, size)
-        if (!adjusting) {
-            basePx = textSize
-            fittedFor = null
-        }
+        state?.sizeSet(adjusting, textSize)
+    }
+
+    override fun onTextChanged(text: CharSequence?, start: Int, lengthBefore: Int, lengthAfter: Int) {
+        super.onTextChanged(text, start, lengthBefore, lengthAfter)
+        if (state?.textChanged(adjusting) == true) requestLayout()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -119,11 +186,10 @@ class WholeWordTextView @JvmOverloads constructor(
     }
 
     private fun fitWords(width: Int) {
+        val fitState = state ?: return
         val source = text?.toString().orEmpty()
-        val key = Triple(source, width, basePx)
-        if (key == fittedFor) return
-        fittedFor = key
-        val fit = WholeWords.fit(basePx) { cutsAt(source, it, width) }
+        if (!fitState.due(source, width)) return
+        val fit = WholeWords.fit(fitState.basePx) { cutsAt(source, it, width) }
         val method = if (fit.ellipsized) {
             val atFloor = TextPaint(paint).apply { textSize = fit.sizePx }
             WordEllipsis(source, WholeWords.ellipsizeWords(source) { StaticLayout.getDesiredWidth(it, atFloor) <= width })
@@ -149,14 +215,16 @@ class WholeWordTextView @JvmOverloads constructor(
             .setIncludePad(includeFontPadding)
             .setLineSpacing(lineSpacingExtra, lineSpacingMultiplier)
             .build()
-        val shown = if (maxLines in 1 until layout.lineCount) maxLines else layout.lineCount
-        // A drawn hyphen (no public API names it) makes the line wider than its own text.
-        val hyphen = atSize.measureText("-") / 2f
-        return (0 until shown - 1).any {
-            val end = layout.getLineEnd(it)
-            val hyphenated = layout.getLineWidth(it) - StaticLayout.getDesiredWidth(source, layout.getLineStart(it), end, atSize) > hyphen
-            WholeWords.cutsWord(source, end, hyphenated)
-        }
+        val lines = layout.lineCount
+        return WholeWords.cutLines(
+            source,
+            IntArray(lines) { layout.getLineEnd(it) },
+            FloatArray(lines) { layout.getLineWidth(it) },
+            FloatArray(lines) { StaticLayout.getDesiredWidth(source, layout.getLineStart(it), layout.getLineEnd(it), atSize) },
+            atSize.measureText("-") / 2f,
+            WholeWords.shownLines(maxLines, lines),
+            WholeWords.breakOpportunities(source, textLocale),
+        )
     }
 
     /** Shows [display] for exactly [source]; any other text as it is. */

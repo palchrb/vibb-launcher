@@ -36,7 +36,8 @@ import java.util.Locale
  *   status bar on an en_US system shows "11:30" with no marker, so it has no word to match, and the
  *   marker is text in a sentence that is Vibb's ("Til 11:30 p.m.", CLDR's bokmål marker, not
  *   "Til 11:30 PM"). The hour cycle, the separator and the order stay the system's pattern
- *   ([textLocale]; java.time's `ofPattern(pattern, locale)` takes only text fields from the locale).
+ *   ([textLocale], the context's own locale; java.time's `ofPattern(pattern, locale)` takes only text
+ *   fields from the locale).
  *
  * A parent's "24 h"/"12 h" on the PWA's Home Screen page writes `TIME_12_24`
  * ([com.kidslauncher.mdm.server.ClockFormatSetting]), so the status bar and Vibb change together.
@@ -75,9 +76,8 @@ object ClockFormat {
     fun chooseSystemLocale(fromLocaleManager: Locale?, fromSystemResources: Locale?, default: Locale): Locale =
         fromLocaleManager ?: fromSystemResources ?: default
 
-    /** The language of the marker's word (N9): Vibb's own (`LocaleManager.applicationLocales`),
-     * else - Vibb following the phone - the system locale. */
-    fun chooseTextLocale(fromApplicationLocales: Locale?, system: Locale): Locale = fromApplicationLocales ?: system
+    /** The language of the marker's word (N9): the context's locale (Vibb's language), else the system's. */
+    fun chooseTextLocale(contextLocale: Locale?, system: Locale): Locale = contextLocale ?: system
 
     /** The skeleton that asks the locale for its own time pattern with the hour field forced. */
     fun skeleton(is24: Boolean): String = if (is24) "Hm" else "hm"
@@ -122,15 +122,12 @@ object ClockFormat {
         return chooseSystemLocale(fromManager, fromResources, Locale.getDefault())
     }
 
-    /** Vibb's language for the marker's word (N9) - the per-app locale, else [system]. */
-    private fun textLocale(context: Context, system: Locale): Locale {
-        val fromApp = try {
-            context.getSystemService(LocaleManager::class.java)?.applicationLocales?.takeIf { !it.isEmpty }?.get(0)
-        } catch (e: Exception) {
-            null
-        }
-        return chooseTextLocale(fromApp, system)
-    }
+    /** Vibb's language for the marker's word (N9): the context's own locale - since Android 13 the
+     * per-app language, or the system's when Vibb follows the phone; the very locale the sentence
+     * around the time ("Til ...") was resolved in, so the two never differ (qa-34-emu-launcher-code N2).
+     * The only read of the context's configuration here: the format itself stays the system's. */
+    private fun textLocale(context: Context, system: Locale): Locale =
+        chooseTextLocale(context.resources.configuration.locales[0], system)
 
     /** The phone's format now: `TIME_12_24`, else the system locale's default. */
     fun systemIs24(context: Context): Boolean = systemIs24(context, systemLocale(context))

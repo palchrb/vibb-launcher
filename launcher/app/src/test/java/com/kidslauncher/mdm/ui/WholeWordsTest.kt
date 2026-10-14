@@ -4,6 +4,7 @@ import com.kidslauncher.mdm.ui.home.contactItemDp
 import com.kidslauncher.mdm.ui.home.contactRow
 import com.kidslauncher.mdm.ui.home.gridMetrics
 import java.io.File
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -189,14 +190,94 @@ class WholeWordsTest {
         val name = label("res/layout/item_kid_contact.xml", "contact_name")
         assertEquals("com.kidslauncher.mdm.ui.WholeWordTextView", name.tagName)
         assertEquals("2", name.getAttributeNS(ns, "maxLines"))
-        // The view checks Android's own layout (break strategy, hyphenation, the shown lines) and
-        // never changes the text itself.
+        // The view feeds Android's own layout (break strategy, hyphenation, the shown lines, the
+        // locale's break opportunities) to the pure parts below, keeps its state in FitState and
+        // re-fits on a text change; it never changes the text itself.
         val code = File(main, "java/com/kidslauncher/mdm/ui/WholeWordText.kt").readText()
         for (needed in listOf(
             ".setBreakStrategy(breakStrategy)", ".setHyphenationFrequency(hyphenationFrequency)",
-            "layout.getLineWidth(it) - StaticLayout.getDesiredWidth(source, layout.getLineStart(it), end, atSize) > hyphen", "transformationMethod = method",
-            "if (textSize != fit.sizePx)", "if (key == fittedFor) return",
+            "WholeWords.cutLines(", "WholeWords.shownLines(maxLines, lines)", "WholeWords.breakOpportunities(source, textLocale)",
+            "transformationMethod = method", "if (textSize != fit.sizePx)", "if (!fitState.due(source, width)) return",
+            "state?.sizeSet(adjusting, textSize)", "if (state?.textChanged(adjusting) == true) requestLayout()",
         )) assertTrue(needed, needed in code)
-        assertFalse(Regex("""\bsetText\(""").containsMatchIn(code))
+        // The view never sets its own text (only the BreakIterator gets one).
+        assertEquals(1, Regex("""\bsetText\(""").findAll(code).count())
+        assertTrue("BreakIterator.getLineInstance(locale).apply { setText(text) }" in code)
+    }
+
+    // ---- qa-34-emu-launcher-code M1, L1, L2: the view's own logic, pure ---------------------
+
+    @Test
+    fun `a recycled tile's new label is fitted again (M1)`() {
+        val state = WholeWords.FitState(26f)
+        assertTrue(state.due("Phone book", 60))
+        assertFalse("same text, width and size: no new fit", state.due("Phone book", 60))
+        // The holder is rebound to another app: the text changes, the view asks for a layout ...
+        assertTrue(state.textChanged(adjusting = false))
+        // ... and the new label is fitted, though width and size are the same.
+        assertTrue(state.due("Chrome", 60))
+        // Back to the first label: fitted again too (the key is the text).
+        assertTrue(WholeWords.FitState(26f).run { due("Phone book", 60); due("Chrome", 60); due("Phone book", 60) })
+        assertTrue(state.due("Chrome", 61))
+        // The rule's own text change (the ellipsis' setText) asks for nothing and keeps the fit.
+        assertFalse(state.textChanged(adjusting = true))
+        assertFalse(state.due("Chrome", 61))
+        assertEquals(WholeWords.fitKey("a", 1, 2f), WholeWords.fitKey("a", 1, 2f))
+        assertFalse(WholeWords.fitKey("a", 1, 2f) == WholeWords.fitKey("b", 1, 2f))
+    }
+
+    @Test
+    fun `only a caller's size moves the base, the rule's own shrink does not (L2)`() {
+        val state = WholeWords.FitState(26f)
+        state.due("Chrome", 60)
+        state.sizeSet(adjusting = true, sizePx = 19.5f) // the rule shrinking
+        assertEquals(26f, state.basePx, 0f)
+        assertFalse(state.due("Chrome", 60))
+        state.sizeSet(adjusting = false, sizePx = 24f) // the adapter's bind (labelSp)
+        assertEquals(24f, state.basePx, 0f)
+        assertTrue("a new base is fitted again", state.due("Chrome", 60))
+    }
+
+    @Test
+    fun `the layout check - cut, hyphen, space, past the shown lines, a break opportunity (L1, L2)`() {
+        val none: (Int) -> Boolean = { false }
+        // "Chro|me": a cut.
+        assertTrue(WholeWords.cutLines("Chrome", intArrayOf(4, 6), floatArrayOf(40f, 20f), floatArrayOf(40f, 20f), 3f, 2, none))
+        // A drawn hyphen makes the line wider than its text: "Innstillin-|ger" is no cut.
+        assertFalse(WholeWords.cutLines("Innstillinger", intArrayOf(10, 13), floatArrayOf(66f, 20f), floatArrayOf(60f, 20f), 3f, 2, none))
+        // A width difference below the threshold is no hyphen.
+        assertTrue(WholeWords.cutLines("Innstillinger", intArrayOf(10, 13), floatArrayOf(61f, 20f), floatArrayOf(60f, 20f), 3f, 2, none))
+        // After a space: no cut (the text width includes the trailing space).
+        assertFalse(WholeWords.cutLines("Phone book", intArrayOf(6, 10), floatArrayOf(40f, 30f), floatArrayOf(44f, 30f), 3f, 2, none))
+        // A cut at the end of the last shown line is the ellipsis' (maxLines 2, three lines).
+        assertFalse(WholeWords.cutLines("Ab Kalkulator", intArrayOf(3, 8, 13), floatArrayOf(20f, 50f, 20f), floatArrayOf(20f, 50f, 20f), 3f, 2, none))
+        assertTrue(WholeWords.cutLines("Ab Kalkulator", intArrayOf(3, 8, 13), floatArrayOf(20f, 50f, 20f), floatArrayOf(20f, 50f, 20f), 3f, 3, none))
+        // A line-break opportunity is never a cut (CJK, Thai).
+        assertFalse(WholeWords.cutLines("Chrome", intArrayOf(4, 6), floatArrayOf(40f, 20f), floatArrayOf(40f, 20f), 3f, 2) { it == 4 })
+        // shownLines: all, or maxLines when there are more.
+        assertEquals(2, WholeWords.shownLines(2, 3))
+        assertEquals(2, WholeWords.shownLines(2, 2))
+        assertEquals(1, WholeWords.shownLines(2, 1))
+        assertEquals(3, WholeWords.shownLines(-1, 3))
+    }
+
+    @Test
+    fun `break opportunities - ideographs wrap, a Latin word does not (L1)`() {
+        val zh = WholeWords.breakOpportunities("微信支付", Locale.CHINESE)
+        assertTrue("between two ideographs", zh(2))
+        assertTrue(zh(1) && zh(3))
+        val ja = WholeWords.breakOpportunities("カレンダー", Locale.JAPANESE)
+        assertTrue(ja(2))
+        val en = WholeWords.breakOpportunities("Mamma", Locale.ENGLISH)
+        assertFalse("inside a Latin word", en(4))
+        val nb = WholeWords.breakOpportunities("Phone book", Locale.forLanguageTag("nb"))
+        assertTrue("after the space", nb(6))
+        assertFalse(nb(3))
+        assertTrue(WholeWords.breakOpportunities("Anne-Marie", Locale.ENGLISH)(5))
+        // So a two-line Chinese label is a wrap, never a cut that shrinks it.
+        val text = "微信支付"
+        assertFalse(WholeWords.cutLines(text, intArrayOf(2, 4), floatArrayOf(30f, 30f), floatArrayOf(30f, 30f), 3f, 2,
+            WholeWords.breakOpportunities(text, Locale.CHINESE)))
+        assertTrue(WholeWords.cutLines(text, intArrayOf(2, 4), floatArrayOf(30f, 30f), floatArrayOf(30f, 30f), 3f, 2) { false })
     }
 }

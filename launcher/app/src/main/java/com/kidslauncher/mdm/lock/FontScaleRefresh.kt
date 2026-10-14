@@ -28,11 +28,18 @@ object FontScaleRefresh {
 
     /** Every [TextView] under [root] but [skip] (the keypad's digits, sized by `sizeKeys`) back to its
      * sp at [old], set again at the current metrics. */
-    fun rescale(root: View, old: DisplayMetrics, skip: Collection<View>) {
-        if (root is TextView && root !in skip) {
-            val sp = roundSp(TypedValue.deriveDimension(TypedValue.COMPLEX_UNIT_SP, root.textSize, old))
-            if (sp > 0f) root.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+    fun rescale(root: View, old: DisplayMetrics, skip: Collection<View>) =
+        walk(root, { v -> if (v is ViewGroup) List(v.childCount) { v.getChildAt(it) } else emptyList() }) { view ->
+            if (view is TextView && view !in skip) {
+                val sp = roundSp(TypedValue.deriveDimension(TypedValue.COMPLEX_UNIT_SP, view.textSize, old))
+                if (sp > 0f) view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+            }
         }
-        if (root is ViewGroup) for (i in 0 until root.childCount) rescale(root.getChildAt(i), old, skip)
+
+    /** Visits [root] and everything below it, depth first (pure, so the recursion is tested on a
+     * fake tree - qa-34-emu-launcher-code L2). */
+    fun <T> walk(root: T, children: (T) -> List<T>, visit: (T) -> Unit) {
+        visit(root)
+        for (child in children(root)) walk(child, children, visit)
     }
 }

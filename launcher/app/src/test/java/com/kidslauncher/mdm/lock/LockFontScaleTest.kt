@@ -70,13 +70,32 @@ class LockFontScaleTest {
         // The rescale reads each text's sp at the old metrics (non-linear scale included) and skips the
         // keys, whose digits sizeKeys caps.
         val refresh = src("lock/FontScaleRefresh.kt")
-        assertTrue("TypedValue.deriveDimension(TypedValue.COMPLEX_UNIT_SP, root.textSize, old)" in refresh)
-        assertTrue("root.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)" in refresh)
-        assertTrue("root !in skip" in refresh)
+        assertTrue("TypedValue.deriveDimension(TypedValue.COMPLEX_UNIT_SP, view.textSize, old)" in refresh)
+        assertTrue("view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)" in refresh)
+        assertTrue("view !in skip" in refresh)
+        // Every view under the root is visited through walk, with a ViewGroup's children.
+        assertTrue("walk(root, { v -> if (v is ViewGroup) List(v.childCount) { v.getChildAt(it) } else emptyList() })" in refresh)
         // The glance fit starts again at the same height.
         val glance = src("lock/GlancePanel.kt")
         val refit = glance.substringAfter("fun refit() = guarded(\"refit\") {").substringBefore("}")
         assertTrue("fitFor = 0" in refit && "fitNow()" in refit)
+    }
+
+    /** qa-34-emu-launcher-code L2: the walk reaches every text, however deep (a fake tree). */
+    @Test
+    fun `the rescale walk visits every view, depth first`() {
+        data class Node(val name: String, val kids: List<Node> = emptyList())
+        val tree = Node("frame", listOf(
+            Node("keypad", listOf(Node("prompt"), Node("row", listOf(Node("1"), Node("2"))))),
+            Node("glance", listOf(Node("clock"), Node("date"))),
+            Node("ring"),
+        ))
+        val seen = mutableListOf<String>()
+        FontScaleRefresh.walk(tree, { it.kids }) { seen += it.name }
+        assertEquals(listOf("frame", "keypad", "prompt", "row", "1", "2", "glance", "clock", "date", "ring"), seen)
+        val leaf = mutableListOf<String>()
+        FontScaleRefresh.walk(Node("only"), { it.kids }) { leaf += it.name }
+        assertEquals(listOf("only"), leaf)
     }
 
     @Test

@@ -55,7 +55,11 @@ class ClockFormatTest {
         val code = src("ui/ClockFormat.kt")
         assertTrue("getSystemService(LocaleManager::class.java)?.systemLocales" in code)
         assertTrue("chooseSystemLocale(fromManager, fromResources, Locale.getDefault())" in code)
-        assertFalse("context.resources" in code)
+        // The one read of the context's configuration is the marker's language (emulator round N9,
+        // qa-34-emu-launcher-code N2) - never the format's locale.
+        assertEquals(1, Regex("""context\.resources""").findAll(code).count())
+        assertTrue("chooseTextLocale(context.resources.configuration.locales[0], system)" in
+            code.substringAfter("private fun textLocale(").substringBefore("fun "))
         assertFalse(".resources.configuration" in code.substringAfter("fun systemIs24("))
         // Every format decision goes through systemLocale(context).
         assertEquals(3, Regex("""val locale = systemLocale\(context\)""").findAll(code).count() +
@@ -102,17 +106,19 @@ class ClockFormatTest {
     fun `the AM PM marker is Vibb's language, the pattern the system's`() {
         val us = Locale.US
         val nb = Locale.forLanguageTag("nb-NO")
+        // The context's locale (Vibb's language) wins; none falls back to the system's.
         assertEquals(nb, ClockFormat.chooseTextLocale(nb, us))
         assertEquals(us, ClockFormat.chooseTextLocale(null, us))
+        assertEquals(us, ClockFormat.chooseTextLocale(us, nb))
         // en_US's 12 h pattern with nb's marker: "Til 11:30 p.m.", not "Til 11:30 PM".
         assertEquals("11:30 p.m.", ClockFormat.format("h:mm a", 23, 30, false, nb, amPm = true))
         assertEquals("9:30 a.m.", ClockFormat.format("h:mm a", 9, 30, false, nb, amPm = true))
         // Only text fields come from the text locale: the face and a 24 h system stay as the status bar.
         assertEquals("11:30", ClockFormat.format(ClockFormat.facePattern("h:mm a"), 23, 30, false, nb, amPm = false))
         assertEquals("21.30", ClockFormat.format("H.mm", 21, 30, true, nb, amPm = true))
-        // The wiring: render formats with textLocale(context, locale), read from applicationLocales.
+        // The wiring: render formats with textLocale(context, locale) - the context's own locale.
         val code = src("ui/ClockFormat.kt")
-        assertTrue("getSystemService(LocaleManager::class.java)?.applicationLocales" in code)
+        assertFalse("applicationLocales" in code)
         assertTrue("format(pattern, t.hour, t.minute, is24, textLocale(context, locale), amPm)" in code)
     }
 
