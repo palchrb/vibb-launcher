@@ -739,6 +739,10 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
     let notice = "After repeated wrong tries";
     assert!(page(Section::Summary).await.contains(notice));
 
+    // The events are stamped up to 2 s ahead; the new PIN must be saved after them, also on a
+    // fast machine (CI saved it within the 2 s and the notice stayed).
+    let wait = (now + 2_100 - chrono::Utc::now().timestamp_millis()).max(0) as u64;
+    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
     save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
     let html = page(Section::Summary).await;
     assert!(!html.contains(notice), "{html}");

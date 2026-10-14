@@ -630,7 +630,9 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         super::settings_pages::check_forms(&page, &html);
         forms += html.matches("<form").count();
     }
-    assert!(forms > 150, "{forms} forms checked");
+    // A floor, not a count: some forms show only at certain times of day (a rule in force, a
+    // pause), so the number moves (149 in CI one morning). Every form found is checked above.
+    assert!(forms > 120, "{forms} forms checked");
 }
 
 /// Where `style.css` breaks the shape every browser on the floor reads the same way (§5.7: no CSS
