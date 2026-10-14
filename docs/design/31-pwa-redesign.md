@@ -3455,3 +3455,35 @@ Deferred, with the reason:
 | The brand bar | Step 10's summary already includes `partials/tab_bar.html` alone with its back link ("‹ Devices") and the phone's large header, as §3.0 and the DeviceSummary mockup draw it. Nothing includes `partials/app_header.html` any more, so it is deleted; `shell::every_template_with_the_bar_sets_its_tab` now asserts no template names it and every non-landing page has its back link. The `.app-header` / `.brand` CSS goes with the clean-up. |
 | Back links into the summary | Choice 3 changed: step 10's not-set-up variant has its Connect This Phone group at `#access`, so Back from the code page and from Connect for a phone not set up now goes to `/devices/{id}#access`; Done still goes to the summary's top. Pinned in `enrollment::new_code_is_shown_once_and_replaces_the_last` and `provisioning::every_form_in_the_add_flow_lands_where_it_should`. |
 | Checks | `cargo test` 856 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## CSS clean-up (2026-10-14)
+
+Step 15's "the old CSS classes nothing uses are deleted", done after all 15 steps merged. Every class selector in
+`server/static/style.css` (246) was searched for in the Askama templates (`class="..."` values), `server/src/**/*.rs`,
+`server/static/*.js` and `templates/sw.js`, whole-word, and for the dynamic patterns (`dot-{{ connection.css() }}`,
+`tone-{{ c.tone }}`, `music-status-{{ status.tone }}`, `attention-{{ item.level_css() }}`, `state-{{ css }}`, the
+`AVATAR_COLOURS`) against every value the Rust side can produce. `style.css?v=24` became `?v=25`.
+
+**Deleted (36 classes):** `.app-header`, `.brand`, `.page-header`, `.card`, `.card-alarm`, `.success`, `.button`,
+`.button-danger`, `.button-link`, `.badge-green`, `.badge-orange`, `.attention-state`, `.attention-result`,
+`.dot-green`, `.dot-orange`, `.dot-red`, `.contact-row`, `.contact-photo-row`, `.contact-avatar`, `.contact-initial`,
+`.device-card`, `.device-list`, `.device-name`, `.device-status`, `.enrollment-card`, `.app-checkbox-list`,
+`.app-status`, `.schedule-grid`, `.drive-card`, `.release-row`, `.section-title`, `.stat-tile`, `.stat-tiles`,
+`.stat-label`, `.stat-value`, `.table-wrap` - with their `:hover`/`:focus`/descendant/`@media` variants, the
+`.auth-page .card` and `.button-small.button-danger` compounds, the comments that only described them, and the
+`@media` blocks left empty. Selector lists lost only their dead members (`.device-card:focus` out of the focus list).
+
+**Kept on purpose (no plain whole-word hit, but reachable):**
+
+| Class | Why |
+|---|---|
+| `.dot-online`, `.dot-away`, `.dot-offline` | built as `dot-{{ connection.css() }}` (`ConnectionState::css`: online/away/offline) |
+| `.tone-green`, `.tone-orange`, `.tone-red`, `.tone-grey` | `tone-{{ c.tone }}` from `locate::status_words` (red/grey/orange/green) |
+| `.music-status-busy`, `.music-status-error` | `music-status-{{ status.tone }}` (ok/busy/error, `handlers::music`) |
+| `.avatar-indigo/-orange/-teal/-green/-pink/-purple/-grey`, `.badge-red` | set from Rust (`AVATAR_COLOURS`, `"badge badge-red"`) |
+| `.subtitle`, `.hint`, `.error` | still in `partials/app_display_form.html` |
+
+`static/music-cards.js` still queries `".music-card, .card"`; no element carries `.card` any more, so the second
+selector matches nothing (harmless, left alone: the task was CSS only).
+
+Size: `style.css` 2217 -> 1906 lines.
