@@ -16,3 +16,4 @@ smoke-*/
 
 # Python bytecode (scripts/fake-sonos.py run without -B).
 __pycache__/
+*.pid
