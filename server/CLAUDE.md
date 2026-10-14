@@ -777,29 +777,28 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `spotify_app_cleared`.
 - **Accounts** (`music_spotify_accounts`, `spotify::Accounts` = `AppState.spotify`): one row per Spotify user
   (`spotify_user` unique; a new login of the same account replaces its token, bumps `generation` and keeps the row id
-  and the phones bound to it), the refresh token sealed with the music key under AAD
-  `spotify-v1:<fingerprint>:<spotify user>` (`music_secret::seal_with`/`open_with`; Storytel's `storytel-v1` path is
-  unchanged), `scopes`, `authorized_at` (the 6-month clock Spotify doesn't expose: "log in again before" =
-  `+ 180 days`, a warning from 14 days before on the Spotify page and on each bound phone's card), `refresh_ok_at`,
-  `refresh_error` (a code), `needs_login`. Remove (a confirm box) unbinds its phones first, then deletes the row and
-  forgets its cached token (`spotify_account_removed`).
+  and the phones bound to it), the refresh token sealed with the music key under AAD `spotify-v1:<fingerprint>:<spotify
+  user>` (`music_secret::seal_with`/`open_with`; Storytel's `storytel-v1` path is unchanged), `scopes`, `authorized_at`
+  (the 6-month clock Spotify doesn't expose: "log in again before" = `+ 180 days`, a warning from 14 days before on the
+  Spotify page and on each bound phone's Music page, with an Attention row), `refresh_ok_at`, `refresh_error` (a code),
+  `needs_login`. Remove (a confirm box) unbinds its phones first, then deletes the row and forgets its cached token
+  (`spotify_account_removed`).
 - **The account model** (26c step 8, the user's answer of 2026-10-14): **one account per phone, the child's own; the
   parent's own Spotify account is never logged in** - the parent pastes links. Nothing in the code enforces it (the
   table holds any accounts, a phone binds one, any account is a reader); the copy says it, and tests pin the copy: the
   Spotify page's intro ("your children's Spotify accounts: one account per phone, the child's own. Your own Spotify
   account is never logged in here - you paste the links."), its setup steps (User Management: "each child's Spotify
   account - one per phone, the child's own, never yours"; a sixth step on playlists: a playlist lists only when a
-  child's account owns it or collaborates on it - made in the child's account, or the parent's with the child invited to collaborate and joined from the child's
-  account (the invite link opened as the child) -,
-  else it plays in Spotify's order without a track list), the login hint ("Log in each child's own account - one per
-  phone, never yours ..."), the context notice ("... For the track list, make the playlist in your child's Spotify
-  account, or invite your child to collaborate on yours and join from your child's account.", card and add), and the device card's binding hint
-  ("One account per phone: this child's own Premium account, never yours."). A Spotify entry without a name from
+  child's account owns it or collaborates on it - made in the child's account, or the parent's with the child invited to
+  collaborate and joined from the child's account (the invite link opened as the child) -, else it plays in Spotify's
+  order without a track list), the login hint ("Log in each child's own account - one per phone, never yours ..."), the
+  context notice ("... For the track list, make the playlist in your child's Spotify account, or invite your child to
+  collaborate on yours and join from your child's account.", the entry page and the add), and Device › Music's binding
+  footer ("One account per phone: the child's own Premium account, never yours."). A Spotify entry without a name from
   Spotify (a playlist's is optional) is named `LinkKind::plain_name` ("Playlist" ...), never `kind_label`'s "Spotify
-  playlist": the name is the kid's tile and lock screen. The two-phones-one-account warning and
-  the card's "read as <name>" (which child's account listed it) stay. The PWA is also where Spotify's attribution lives:
-  the music app shows no Spotify word at all (step 8, 26c §7.3) - keep "Spotify" in the PWA's labels and "Open in
-  Spotify".
+  playlist": the name is the kid's tile and lock screen. The two-phones-one-account warning and the entry page's "read
+  as <name>" (which child's account listed it) stay. The PWA is also where Spotify's attribution lives: the music app
+  shows no Spotify word at all (step 8, 26c §7.3) - keep "Spotify" in the PWA's labels and "Open in Spotify".
 - **The login is PKCE in the parent's browser** (`POST /music/spotify/login`): a 64-character verifier (`OsRng`), its
   S256 challenge and a 32-hex `state` kept **in memory only** (at most 8, 10 minutes, with the admin who started it; a
   restart loses an unfinished login), the `spotify_login` cookie (hex SHA-256 of the state; `HttpOnly`, `Secure`
@@ -849,19 +848,21 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `open.spotify.com/[intl-xx/]<kind>/<id>` (query and fragment dropped) and short links (`spotify.link`,
   `spotify.app.link`), which `resolve_short_link` follows **one hop at a time** (`SourceRequest.follow = false`,
   `SourceResponse.location`, at most 3 hops, each on those hosts or `open.spotify.com`) at add time only. Playlist,
-  album, track, artist, show, episode; audiobooks, Liked Songs and profiles are refused with a sentence; the generic
-  add form points Spotify links to `/music/spotify` (`SPOTIFY_ON_ITS_PAGE`). The add check (`ADD_BUDGET` 45 s, the
-  short link included) reads the kind's metadata and, for a playlist, its first items page; the entry is source
-  `spotify`, the canonical target, `key` = `state_key(target)`, order `auto`, **cache 0 always** (nothing is ever
-  downloaded: no offline select anywhere, a posted value saved as 0), resume on, the category by
-  `default_kind_for(source, target)` (a show or episode to Podkast). The phones picked on the form are ticked in the
-  insert's own `BEGIN IMMEDIATE` only when they play as an account (`PLAYS_SPOTIFY`, the gate's own `EXISTS`); the
-  others are named. The PWA's Music page has a "From Spotify ›" row (No app / No login / Signed in). **For design 31
-  step 12** (which doesn't name Spotify; 26c "Release", open point 8): the row stays, as a fifth Add row; the app and
-  account cards may move to `/music/settings` behind a redirect from `/music/spotify`, but **`/music/spotify/callback`
-  and `/music/spotify/done` never move** - the callback is the redirect URI every family registered at Spotify
-  (`CALLBACK_PATH`, the only https path `valid_redirect_uri` takes, the login cookie's `Path`), and a new path breaks
-  every family's next login.
+  album, track, artist, show, episode; audiobooks, Liked Songs and profiles are refused with a sentence; the generic add
+  form points Spotify links to `/music/spotify` (`SPOTIFY_ON_ITS_PAGE`). The add check (`ADD_BUDGET` 45 s, the short
+  link included) reads the kind's metadata and, for a playlist, its first items page; the entry is source `spotify`, the
+  canonical target, `key` = `state_key(target)`, order `auto`, **cache 0 always** (nothing is ever downloaded: no
+  offline select anywhere, a posted value saved as 0), resume on, the category by `default_kind_for(source, target)` (a
+  show or episode to Podkast). The phones picked on the form are ticked in the insert's own `BEGIN IMMEDIATE` only when
+  they play as an account (`PLAYS_SPOTIFY`, the gate's own `EXISTS`); the others are named. The Music tab has a "From
+  Spotify ›" row (No app / No login / Signed in), its fifth Add row - design 31 step 12's open point, settled at the
+  merge of main `5584772`. The Spotify page (`/music/spotify`) is in design 31's layout since that merge's code QA fix
+  round (groups: Your Spotify App with the Client ID and the exact Redirect URI as rows, How to Set It Up, Remove the
+  App… as a confirm; Children's Accounts, one row per account with Remove … as a confirm, Log in with Spotify, the
+  paste; Add a Spotify link with the phones as checks; the flashes in their groups; `.env` and the key file only behind
+  ⓘs). **`/music/spotify/callback` and `/music/spotify/done` never move** - the callback is the redirect URI every
+  family registered at Spotify (`CALLBACK_PATH`, the only https path `valid_redirect_uri` takes, the login cookie's
+  `Path`), and a new path breaks every family's next login.
 - **Readers and the listing modes** (step 2a, `music_sweep::spotify_check`): the readers are the accounts without
   `needs_login`, the listing's last reader first (`music_listings.spotify_reader`), then by id. **`ReaderTurns`** is
   the one rule for the sweep and the add check: a 403/404 or an account that can't be used now passes to the next
@@ -886,25 +887,35 @@ needed to manage the phone, delete on a schedule, never store notification or me
   more bind) in `LIBRARY_ENTRIES` (its `IN` takes `'spotify'`), `device_listing`, `cover_in_library` and
   `art_in_library`: a phone gets Spotify entries, listings and covers only **while it is bound to an account**
   (`device_policy.music_spotify_account`; else 404). `needs_login` doesn't close it (the tiles say "Spør en voksen").
-  `LibEntry.spotify` is `"list"`/`"context"` (absent on every other source, and on a Spotify entry not listed yet,
-  whose `items` is then null), `cache` 0, `lan` false. The binding is the **Spotify** group on Device › Music
-  (`/devices/{id}/music#music-spotify`, design 31 step 7's page; `handlers::music::spotify_binding_card`, shown once
-  an app is set up or accounts or a binding remain): "Plays as: Off | <account>" as an inline picker (`POST
+  `LibEntry.spotify` is `"list"`/`"context"` (absent on every other source, and on a Spotify entry not listed yet, whose
+  `items` is then null), `cache` 0, `lan` false. The binding is the **Spotify** group on Device › Music
+  (`/devices/{id}/music#music-spotify`, design 31 step 7's page; `handlers::music::spotify_binding_card`, shown once an
+  app is set up or accounts or a binding remain): "Plays as: Off | <account>" as an inline picker (`POST
   /devices/{id}/music/spotify`, back to `#music-spotify`; `music_spotify_binding_changed`; an unknown id back at the
-  anchor with `music_notice=spotify_unknown` as the group's flash), its footer "One account per phone: this child's
-  own Premium account, never yours." (the account model above; the phone's hourly token carries every scope of its
-  account), the account's 6-month line, "one account on two phones" on both phones' pages, and
-  `music_state.spotify` in words (`SPOTIFY_WORDS`: `none`, `ok`, `reauthorize`, `refused`, `not_premium`,
-  `no_widevine`, `unreachable`, `quota`) - the account words as warnings above the group. A bound phone whose word is
-  `reauthorize`, `refused`, `not_premium` or `no_widevine` also raises the Attention row "Spotify can't play on this
-  phone" (`MusicWarnings.spotify_cant_play`, `attention::Kind::MusicSpotify`, to `#music-spotify`). The library row
-  (Music tab): "Spotify playlist · 42 tracks · 1 phone", "Open in Spotify" (`rel="noopener noreferrer"`) in place of
-  the Offline select; the entry page: "42 tracks · read as Ella", context mode's notice, the left-out count, the phones'
+  anchor with `music_notice=spotify_unknown` as the group's flash), its footer "One account per phone: the child's own
+  Premium account, never yours." and a "Spotify Accounts ›" row (the account model above; the phone's hourly token
+  carries every scope of its account). In design 31's shapes (§4.2; the second merge's code QA, M2): what needs the
+  parent as notes above the group - a short title and one sentence (`SpotifyBindingCard.warnings: Vec<Note>`, through
+  `note_warning.html`: "No Spotify app set up", "Spotify login needs renewing" (the account's or the phone's
+  `reauthorize`, one note), "Spotify login can't be opened", "Spotify login ends 14 Apr", "Two phones share one
+  account", "Spotify refused the account", "No Spotify Premium", "This phone can't play Spotify"); the login's "Log in
+  again before ..." and an unbound phone's "Its N Spotify entries aren't sent." as the "Plays as" row's sub-lines; the
+  phone's passing words (`ok` "Plays", `unreachable`, `quota`) as a "Spotify" row in "On the phone"
+  (`spotify_report_row`). Dates in the Phone Setup zone. **Attention rows** (to `#music-spotify`, Action level): the
+  phone's refusal - `reauthorize`, `refused`, `not_premium`, `no_widevine` - "Spotify can't play on this phone"
+  (`MusicWarnings.spotify_cant_play`, `Kind::MusicSpotify`); and the account's side from the accounts table
+  (`music::spotify_account_warnings`, read by `attention::facts` and the summary into `Sources.spotify_account`):
+  "Spotify login needs renewing" (ended, refused, another key; the phone's `reauthorize` then raises no second row),
+  "Spotify login ends soon" (14 days), "Two phones share a Spotify account", "No Spotify app set up". The library row
+  (Music tab): "Spotify playlist · 42 tracks · 1 phone", "Open in Spotify" (`rel="noopener noreferrer"`) in place of the
+  Offline select; the entry page: "42 tracks · read as Ella", context mode's notice, the left-out count, the phones'
   lines ("Plays as Ella", "Not sent - Spotify is off on this phone"; `gated`/`phone_count` follow the binding as the
-  gate does), `unplayable` from `item_errors`. "From Spotify ›" is the Music tab's fifth Add row. The streaming
-  switch's ⓘ names Spotify (it streams, never saved); the phone's Web Filter page (`/devices/{id}/filter`) says
-  Spotify's hosts are allowed while bound and marks the blocks it overrides. The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link imports as a Spotify entry on
-  no phone, a short link is `Skip::SpotifyShortLink`, `spotify_user` sections stay `Skip::SpotifyProfile`.
+  gate does), `unplayable` from `item_errors`. "From Spotify ›" is the Music tab's fifth Add row. The streaming switch's
+  ⓘ names Spotify (it streams, never saved); the phone's Web Filter page (`/devices/{id}/filter`) says in its one footer
+  that Spotify's hosts aren't blocked while bound (the detail and the site-wide blocks it overrides behind the ⓘ) and
+  marks the phone's own blocks it overrides. The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link
+  imports as a Spotify entry on no phone, a short link is `Skip::SpotifyShortLink`, `spotify_user` sections stay
+  `Skip::SpotifyProfile`.
 - **The DNS binding override** (step 3, §6.2): the policy's `music.spotify` = the phone is bound (`policy_music`;
   computed per request). For a bound phone `effective_blocklist` leaves out every domain `spotify::is_spotify_host`
   names - equal to or under a suffix (Spotify's own parents included, so `spotify.com` itself), or exactly an exact

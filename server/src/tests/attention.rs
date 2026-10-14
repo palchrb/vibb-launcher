@@ -350,6 +350,78 @@ async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
             "{key}: {list_row}"
         );
     }
+    // Spotify (design 26c, qa-26c-merge2-code L1/L3): a phone that plays as an account raises a
+    // row for its own refusal (`not_premium`) and for the account's side (a login to renew), each
+    // to Device › Music's Spotify group, with the badge and "Needs attention".
+    crate::spotify::tests::save_app(&app, crate::spotify::LOOPBACK_REDIRECT).await;
+    let kid = crate::spotify::tests::store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+    for (key, extra, renew) in [
+        (
+            "music-spotify",
+            music(json!({"package": "me.vibb.music", "bridge": "bound", "spotify": "not_premium"})),
+            false,
+        ),
+        (
+            "music-spotify-login",
+            music(json!({"package": "me.vibb.music", "bridge": "bound", "spotify": "ok"})),
+            true,
+        ),
+    ] {
+        let (id, token) = clean_phone(&app, key).await;
+        sqlx::query("UPDATE device_policy SET music_spotify_account = ? WHERE device_id = ?")
+            .bind(kid)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE music_spotify_accounts SET needs_login = ? WHERE id = ?")
+            .bind(renew)
+            .bind(kid)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        report(&app, &token, extra).await;
+        assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
+        let summary = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        let at = summary.find(&format!("data-attention=\"{key}\"")).unwrap();
+        let start = summary[..at].rfind("<a").unwrap();
+        let target = tags(&summary[start..], "a")[0]
+            .attr("href")
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            target,
+            format!("/devices/{id}/music#music-spotify"),
+            "{key}"
+        );
+        let page = app
+            .get_page(&format!("/devices/{id}/music"), &cookie)
+            .await
+            .text();
+        assert!(page.contains("id=\"music-spotify\""), "{key}");
+        let row = music_row(&summary);
+        assert!(
+            row.contains("row-value-action\">Needs attention<"),
+            "{key}: {row}"
+        );
+        let list = app.get_page("/devices", &cookie).await.text();
+        let list_row = &list[list.find(&format!("data-device=\"{id}\"")).unwrap()..];
+        let list_row = &list_row[..list_row.find("</a>").unwrap()];
+        assert!(
+            list_row.contains("data-attention-count=\"1\""),
+            "{key}: {list_row}"
+        );
+        // Unbound, nothing.
+        sqlx::query("UPDATE device_policy SET music_spotify_account = NULL WHERE device_id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(rows(&app, &cookie, id).await.is_empty(), "{key}");
+    }
     // The older-phone warning: the two switches differ while the phone sends no `extra_bytes`.
     let (id, token) = clean_phone(&app, "older").await;
     sqlx::query("UPDATE device_policy SET music_stream_mobile_data = 1 WHERE device_id = ?")

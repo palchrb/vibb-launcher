@@ -289,7 +289,7 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
   **One scope set means the phone's hourly token carries every scope of its account**: a parent account bound as
   "plays as" would give the phone a 1-hour token that can also read the parent's private playlists. Since step 8 the
   parent's account is never logged in (§0.2 item 1), so the case arises only against the setup text; the binding's hint
-  says "One account per phone: this child's own Premium account, never yours" (§2.5, §7.1).
+  says "One account per phone: the child's own Premium account, never yours" (§2.5, §7.1).
 - **The account model** (step 8, the user's answer of 2026-10-14): one account per phone, the child's own; the parent's
   never. Nothing in the code enforces it - the table holds any accounts, a phone binds one, readers are any (§3.3) - the
   Spotify page's intro, its setup steps 3 and 6 and its login hint say it (§2.1, §2.3), the device card's binding hint
@@ -402,7 +402,8 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
   plays as: [Off | Ella | Ola ...]" (auto-saving select, `POST /devices/{id}/music/spotify`, event
   `music_spotify_binding_changed`), only accounts that exist; refused for an unknown id (a 303 back to `#music-spotify` with the notice
   `music_notice=spotify_unknown`, step 2b's deviation 3).
-  Its hint (step 8): "One account per phone: this child's own Premium account, never yours."
+  Its footer (step 8, design 31's one sentence since the second merge's code QA): "One account per phone: the
+  child's own Premium account, never yours."
 - Beside it: the account's state ("logged in, log in again before ..." / "needs a new login" / "Spotify says this
   account has no Premium" from the phone's `music_state.spotify` = `not_premium`), and **one account bound to two
   phones** gives a warning on both cards: "Spotify plays on one device at a time per account: Ella's and Ola's phones
@@ -1300,7 +1301,7 @@ with the Spotify entries (the courier carries their listings like any other).
 - **The phone's token carries its account's whole scope set** (§2.2, QA L2): one hour, memory only; a parent account
   bound as "plays as" would hand the phone `playlist-read-private` for that hour. Since step 8 the parent's account is
   never logged in (§0.2 item 1), so only a parent ignoring the setup text could bind one; the binding's hint says
-  "this child's own Premium account, never yours".
+  "the child's own Premium account, never yours".
 - **Access tokens**: memory only on the server (per account), in the launcher (in flight), in the music app
   (`TokenCache`) and in the page's JavaScript (the SDK's callback). On the phone's Kotlin side `Authorization`/`Bearer`
   appear only in `StorytelApi.kt` and `spotify/SpotifyApi.kt` (`SourceScanTest`); `MediaCache`'s clients never add one.
@@ -1827,8 +1828,8 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
    never your own account; each row shows "log in again before ..."; an account not in User Management is refused with
    the sentence; Remove deletes a row.
 3. **Links** (step 2b; step 8): a playlist the child's account owns, or one of yours made collaborative and joined by
-   the child (list mode: tracks, art arriving over a day, the card "read as <child>"), a playlist of yours that isn't
-   (context mode, the card's notice saying how to get the track list), an album, a single track, an artist (context
+   the child (list mode: tracks, art arriving over a day, the entry page's "read as <child>"), a playlist of yours that
+   isn't (context mode, the entry page's notice saying how to get the track list), an album, a single track, an artist (context
    mode), a playlist made by Spotify (refused at add), a `spotify.link` short link, a show (listed newest first), with
    phone ticks on the add form.
 4. **The phone plays** (step 5b): bind the phone ("Spotify plays as: <kid>"); the tiles appear; a cover tap plays within a
@@ -1855,10 +1856,11 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 11. **Elsewhere**: start the kid's account in Spotify on another device while the phone plays -> the phone shows paused,
     "Spilles et annet sted"; playing on the phone takes it back. Connect a Spotify app to "Vibb" from another
     device while the phone is idle -> nothing plays on the phone.
-12. **Errors**: a track the kid's explicit filter blocks is skipped with "Kan ikke spilles" (the parent's card lists it);
-    the kid's account without Premium (if one is at hand) -> "Spør en voksen", the device card says no Premium.
+12. **Errors**: a track the kid's explicit filter blocks is skipped with "Kan ikke spilles" (the entry page's phone line lists it);
+    the kid's account without Premium (if one is at hand) -> "Spør en voksen", the phone's Music page says "No Spotify Premium" and its summary "Spotify can't play on this
+    phone".
 13. **Six months**: the PWA's warning 14 days before; after `invalid_grant` (simulate by removing the app's access at
-    spotify.com/account/apps) the tiles say "Spør en voksen", the card says "log in again", a new login heals it
+    spotify.com/account/apps) the tiles say "Spør en voksen", the phone's Music page and its summary say "Spotify login needs renewing", a new login heals it
     without touching the phone.
 14. **No secrets**: `adb logcat -d | grep -E 'Bearer |BQ[A-Za-z0-9_-]{20}|AQ[A-Za-z0-9_-]{20}|code='` and the server's
     `journalctl` (also with `RUST_LOG=debug`) find nothing after a day; `music_state` holds none.
@@ -1874,12 +1876,13 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
     text. Also: from another device, transfer the kid's playback to "Vibb" while the phone is idle - nothing sounds
     beyond a moment, the phone shows paused.
 18. **The artist option's dev-mode check** (assumption 7, QA L12): start the server with `SPOTIFY_ARTIST_ALBUMS=1`, add
-    an artist with more than 50 albums and singles, Check now: the card lists its tracks ("N tracks from M albums"), or
+    an artist with more than 50 albums and singles, Check Now: its entry page lists its tracks ("N tracks from M albums"), or
     says "Spotify refused the artist's albums - played as Spotify picks" (context mode). Listed with both pages read =
     the albums endpoint works for a dev-mode app, and the user may keep the setting on; refused = artists stay context
     mode. (No token leaves the server for this check.)
 19. **A refused play** (QA M5): remove the kid's account from the app's User Management, play - the tile says "Spør en
-    voksen", the device card says Spotify refused the play, and no track shows "Kan ikke spilles"; put it back
+    voksen", the phone's Music page says "Spotify refused the account" (and its summary "Spotify can't play on this
+    phone"), and no track shows "Kan ikke spilles"; put it back
     and play again.
 20. **Our queue add left over** (qa-26c-step4-code H1): a playlist over 50 tracks, let track 50 start (the add of 51),
     pick track 3, let it play out: the next track is 4 (or a short pause and 4), no "Kan ikke spilles" anywhere; the
@@ -4386,7 +4389,76 @@ debug build on the tsnet stub); music `./gradlew assembleDebug assembleRelease t
 scripts/fake-{sonos,storytel,spotify,audio}.py --selftest` all four OK.
 
 Owed: the browser pass of Device › Music's Spotify group, the Web Filter page's marks and the "From Spotify ›" row
-(390 px, light and dark, JS off - no browser here, as for design 31's own steps); the Spotify page itself is still
-step 1/2b's cards inside the new shell - rebuilding it as groups (design 31 §3.0's vocabulary), and moving its app and
-account cards to Music › Settings with a redirect, are a later step (`/music/spotify/callback` and `/done` never
-move); a code QA of this merge.
+(390 px, light and dark, JS off - no browser here, as for design 31's own steps); the Spotify page itself was still
+step 1/2b's cards inside the new shell - **rebuilt as groups in the fix round below** (M3; its app and account groups
+stay on `/music/spotify`, and `/music/spotify/callback` and `/done` never move); a code QA of this merge (done:
+`qa-26c-merge2-code.md`).
+
+### Fix round after QA's code review (qa-26c-merge2-code, 2026-10-14)
+
+All nine findings fixed; none disputed. QA's question 1 (the Spotify page before the merge to `main`) was answered by
+the coordinator: rebuild now (M3). No contract file, no migration, `launcher/` and `music/` untouched.
+- **M1** (a Storytel entry's page said "Episodes"): `handlers::music::list_title(entry)` gives "Books" for Storytel,
+  "Tracks" for a Spotify playlist, album, track or artist, "Episodes" for everything else (NRK, RSS, a Spotify show or
+  episode) - main's "Books" back. Pinned by `tests::music_spotify::entries::the_entry_pages_list_header_follows_the_source`
+  (a Storytel series, a Spotify playlist and show, an NRK series).
+- **M2** (the Spotify text on Device › Music and Web Filter in 26c's sentence shapes): `SpotifyBindingCard.warnings`
+  are `Note`s through `partials/note_warning.html` - a title of at most 6 words and one sentence, "phone" never
+  "device": "No Spotify app set up", "Spotify login needs renewing" (the account's `needs_login` and the phone's
+  `reauthorize`: one note), "Spotify login can't be opened" (`key`), "Spotify login ends 14 Apr" / "Spotify login has
+  ended", "Two phones share one account" (more: "Several phones ..."), "Spotify refused the account", "No Spotify
+  Premium", "This phone can't play Spotify". The account's "Log in again before 14 Apr 2027" and an unbound phone's
+  "Its N Spotify entries aren't sent." are the "Plays as" row's sub-lines; the phone's passing words are a "Spotify"
+  row in "On the phone" ("Plays", "Couldn't reach Spotify", "Limit reached" - the last two with their sentence behind
+  the row's ⓘ; `spotify_report_row`). The footer is one sentence of 11 words ("One account per phone: the child's own
+  Premium account, never yours."), with a "Spotify Accounts ›" row in the group. Web Filter's first group has one
+  footer again: while bound "Blocks the lists and domains below, except Spotify's while this phone plays Spotify.",
+  the DNS note and the site-wide blocks it overrides as paragraphs of the existing ⓘ panel; the per-row mark reads
+  "Not applied while this phone plays Spotify". The tests' strings follow (`the_device_card_binds_a_phone_to_an_account`
+  checks the Spotify section has no "device", `the_web_filter_page_says_what_spotify_overrides` one footer).
+- **M3** (the Spotify page in pre-design-31 markup): **rebuilt** in design 31's layout (`templates/music_spotify.html`,
+  as `music_settings.html` and the Storytel shelf): the "‹ Music" back link and the large title; a one-line intro with
+  the account model behind its ⓘ; "Spotify logins are off" as an alarm row with the key file and `MUSIC_SECRET_KEY`
+  behind its ⓘ; **Your Spotify App** - the save's flash, "Client ID · ending in cdef" (its sub-line "Set by the
+  server's configuration"), "Spotify refused this Client ID" as an alarm row, the Redirect URI as a copyable value row
+  (`code.key#redirect-uri`, `user-select: all`), the form (`#app`) with the fields' errors under them, the suggestion
+  and `SPOTIFY_CLIENT_ID`/`SPOTIFY_REDIRECT_URI` behind the Redirect URI's ⓘ, How to Set It Up as a disclosure row
+  (`details#setup`, open until an app is set up), Remove the App… as a confirm (`#app-clear`, its box kept: the handler
+  requires `confirm`), a one-line footer with the limits behind its ⓘ; **Children's Accounts** - the login's outcome
+  as the group's flash, one row per account (the name, "Logged in ... - log in again before ...", a warning in red as a
+  second sub-line) with Remove … as a confirm (`#account-<id>`), Log in with Spotify as a row button, the paste
+  (`#paste`) with its explanation behind the field's ⓘ, a one-line footer with the login hint behind its ⓘ; **Add a
+  Spotify link** - the add's flash and notes (`#added`), the link and category fields (`#add`), "On these phones" with a
+  check per phone and whom it plays as, a footer and Add. No `<style>` block, no `.card`, no `.error`/`.success`; every
+  route, field name and test id kept. The login form posts without a fragment (its answer is a 303 to Spotify; the
+  redirect table's rule). Its forms are rows of the Music tab's redirect table
+  (`every_form_on_the_music_pages_returns_to_its_page`: the app save, the clear, the login, the paste, an account's
+  Remove, the add - each lands back at its group; a refusal's fragment pinned per form; the table's delete-last sort now
+  reads the action without its fragment and puts a clear after every delete). The Release's merge path has no
+  Spotify-page step any more.
+- **L1**: `tests::attention::each_music_warning_raises_its_row_and_marks_the_music_row` has two Spotify cases - the
+  phone's `not_premium` (`music-spotify`) and a login to renew (`music-spotify-login`): the row, its target
+  `/devices/{id}/music#music-spotify` and that element on the page, "Needs attention" on the Music row, the Devices
+  list's `data-attention-count="1"`, nothing once unbound.
+- **L2**: the picker's `<noscript>` Save is pinned inside its form (`the_device_card_binds_a_phone_to_an_account`).
+- **L3**: the account's side raises Attention rows: `music::spotify_account_warnings(state, policy)` (the app, the
+  bound account's row, the phones bound to it - three small reads, §3.8) into `Sources.spotify_account`, read by
+  `attention::facts` (the Devices list's badge) and by the summary, folded into `MusicWarnings.spotify_account`:
+  "Spotify login needs renewing" (`needs_login`, `key`, or past the 6 months), "Spotify login ends soon" (the 14
+  days), "Two phones share a Spotify account", "No Spotify app set up" (`Kind::MusicSpotifyLogin`, `...Ending`,
+  `...Shared`, `...NoApp`; Action, to `#music-spotify`). A login to renew and the phone's `reauthorize` are one row.
+  `attention::tests` count them in the specs' order; `the_device_card_binds_a_phone_to_an_account` pins the shared
+  and the renewing rows on the summary.
+- **L4**: Spotify's dates in the Phone Setup zone (`display_time::Zone::local`): the Spotify page's account lines and
+  warnings (`music_spotify::day(zone, ..)`), Device › Music's "Log in again before" and "Spotify login ends ...".
+- **L5**: §6l (the links' check on the entry page, the 403 playlist's notes there, the refused refresh on the phone's
+  Music page, the Spotify page's accounts and the summary's Attention row), the QA checklist items 3, 12, 13, 18 and 19,
+  `PLAN.md`'s design 31 step 12 line (settled), `server/CLAUDE.md` (the Music page, the entry page, the page's new
+  layout, the Device › Music shapes and the Attention rows).
+- **L6**: a Spotify playlist's entry page is one of the redirect table's pages (its save, Check Now, cover, delete).
+
+Validation (from `server/`): `cargo fmt --check` clean; `cargo clippy --all-targets` the same 12 warnings as `main`
+(none new); `cargo test` **934 passed**, 0 failed (933 + `the_entry_pages_list_header_follows_the_source`; the other
+pins inside existing tests); `node --test jstest/*.test.js` 25 passed. `python3 -I
+scripts/fake-{sonos,storytel,spotify,audio}.py --selftest` all four OK. `launcher/` and `music/` untouched (their
+suites not run).

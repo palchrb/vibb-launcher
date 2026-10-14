@@ -46,9 +46,9 @@ fn field(form: &FormMap, key: &str) -> String {
     form.get(key).cloned().unwrap_or_default()
 }
 
-/// "12 Oct 2026".
-fn day(time: DateTime<Utc>) -> String {
-    time.format("%-d %b %Y").to_string()
+/// "12 Oct 2026", in the Phone Setup zone (design 31 M4, qa-26c-merge2-code L4).
+fn day(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
+    zone.local(time).format("%-d %b %Y").to_string()
 }
 
 /// A phone on the add form: its name, whom it plays as (`None` = Spotify is off on it), ticked.
@@ -216,13 +216,18 @@ async fn page(
     let now = state.music_sweep.now();
     let suggested = spotify::suggested_redirect(headers, peer_trusted);
     let query = &entered.query;
+    let zone = crate::display_time::Zone::load(&state.db).await;
     let accounts: Vec<AccountView> = rows
         .iter()
         .map(|row| {
             let ends = row.login_ends();
             let line = match (parse_stamp(&row.authorized_at), ends) {
                 (Some(at), Some(ends)) => {
-                    format!("Logged in {} - log in again before {}", day(at), day(ends))
+                    format!(
+                        "Logged in {} - log in again before {}",
+                        day(&zone, at),
+                        day(&zone, ends)
+                    )
                 }
                 _ => "Logged in".to_string(),
             };
@@ -244,7 +249,7 @@ async fn page(
                         format!(
                             "{}'s Spotify login ends on {}: log in again on this page.",
                             row.display_name,
-                            ends.format("%-d %b")
+                            zone.local(ends).format("%-d %b")
                         )
                     } else {
                         format!(

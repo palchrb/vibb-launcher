@@ -5319,6 +5319,16 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
     let preview = import_preview(&app, &cookie, vibb_library().to_string().as_bytes())
         .await
         .text();
+    // Spotify (design 26c; qa-26c-merge2-code M3, L6): an app with the loopback redirect (so the
+    // paste shows), a child's login, a listed playlist's entry page, and the album an add takes.
+    use super::music_spotify::listing as spotify;
+    spotify::ready(&app).await;
+    let playlist = spotify::entry(&app, "playlist", spotify::PLAYLIST).await;
+    app.fetch.answer(
+        &spotify::url(&app, crate::spotify::Read::Album(spotify::ALBUM_X)),
+        200,
+        crate::spotify::tests::fixture("album.json"),
+    );
 
     let mut forms: Vec<(String, String, Fields)> = Vec::new();
     for page in [
@@ -5329,6 +5339,8 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         "/music/import".to_string(),
         format!("/music/entries/{first}"),
         format!("/music/entries/{own}"),
+        format!("/music/entries/{playlist}"),
+        "/music/spotify".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
         check_forms(&page, &html);
@@ -5342,7 +5354,15 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         forms.push(("/music/import".to_string(), action, hidden));
     }
     // Deletes last: they take what the other forms need.
-    forms.sort_by_key(|(_, action, _)| action.contains("delete") || action.ends_with("/clear"));
+    forms.sort_by_key(|(_, action, _)| {
+        let target = action.split('#').next().unwrap_or_default();
+        // A clear takes the most (the Spotify app's takes its logins too): after every delete.
+        let clear = target.ends_with("/clear");
+        (
+            clear || target.contains("delete") || target.contains("/accounts/"),
+            clear,
+        )
+    });
     let mut seen = std::collections::HashSet::new();
     let mut added = 0;
     for (page, action, hidden) in forms {
@@ -5358,10 +5378,14 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         };
         let entry = id_and_rest("/music/entries/");
         let category = id_and_rest("/music/categories/");
-        let kind = match (&entry, &category) {
-            (Some((_, rest)), _) if rest.starts_with("/files/") => "entry/file-delete".to_string(),
-            (Some((_, rest)), _) => format!("entry{rest}"),
-            (_, Some((_, rest))) => format!("category{rest}"),
+        let account = id_and_rest("/music/spotify/accounts/");
+        let kind = match (&entry, &category, &account) {
+            (Some((_, rest)), _, _) if rest.starts_with("/files/") => {
+                "entry/file-delete".to_string()
+            }
+            (Some((_, rest)), _, _) => format!("entry{rest}"),
+            (_, Some((_, rest)), _) => format!("category{rest}"),
+            (_, _, Some((_, rest))) => format!("spotify-account{rest}"),
             _ => target.clone(),
         };
         seen.insert(kind.clone());
@@ -5377,6 +5401,11 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "entry" => Some("settings".to_string()),
             "entry/cover" => Some("cover".to_string()),
             "entry/files" => Some("files".to_string()),
+            "/music/spotify/app" => Some("app".to_string()),
+            "/music/spotify/app/clear" => Some("app-clear".to_string()),
+            "/music/spotify/paste" => Some("paste".to_string()),
+            "/music/spotify/add" => Some("add".to_string()),
+            "spotify-account/remove" => account.as_ref().map(|(id, _)| format!("account-{id}")),
             _ => None,
         };
         if refusal_lands_at.is_some() {
@@ -5459,6 +5488,39 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "category/delete" => ("/music/categories".into(), None),
             "/music/import" => ("(the page)".into(), None),
             "/music/import/confirm" => ("/music/import".into(), Some("import".into())),
+            "/music/spotify/app" => {
+                add(&[
+                    ("client_id", crate::spotify::tests::CLIENT),
+                    ("redirect_uri", crate::spotify::LOOPBACK_REDIRECT),
+                ]);
+                ("/music/spotify?saved=*".into(), Some("app".into()))
+            }
+            "/music/spotify/app/clear" => {
+                add(&[("confirm", "on")]);
+                ("/music/spotify?cleared=1".into(), Some("app".into()))
+            }
+            // The login goes to Spotify (a 303 off this server): no fragment to carry along.
+            "/music/spotify/login" => ("https://accounts.spotify.com/authorize?*".into(), None),
+            "/music/spotify/paste" => {
+                // A cancelled login nobody started: the outcome lands in the accounts group.
+                let url = format!(
+                    "{}?error=access_denied&state=0123456789abcdef0123456789abcdef",
+                    crate::spotify::LOOPBACK_REDIRECT
+                );
+                fields.push(("url".into(), url));
+                ("/music/spotify?login=*".into(), Some("accounts".into()))
+            }
+            "spotify-account/remove" => {
+                add(&[("confirm", "on")]);
+                ("/music/spotify?removed=1".into(), Some("accounts".into()))
+            }
+            "/music/spotify/add" => {
+                add(&[(
+                    "link",
+                    &format!("https://open.spotify.com/album/{}", spotify::ALBUM_X),
+                )]);
+                ("/music/spotify?added=*".into(), Some("added".into()))
+            }
             other => panic!("a form without a row in the redirect table: {other} on {page}"),
         };
         let id = entry.as_ref().map_or(0, |(id, _)| *id);
@@ -5530,6 +5592,12 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         "category/delete",
         "/music/import",
         "/music/import/confirm",
+        "/music/spotify/app",
+        "/music/spotify/app/clear",
+        "/music/spotify/login",
+        "/music/spotify/paste",
+        "spotify-account/remove",
+        "/music/spotify/add",
     ] {
         assert!(seen.contains(kind), "no form posted to {kind}");
     }

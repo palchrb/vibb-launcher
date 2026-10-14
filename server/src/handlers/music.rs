@@ -1903,7 +1903,7 @@ struct EntryTemplate {
     spotify: bool,
     spotify_context: bool,
     spotify_link: Option<String>,
-    /// The status card's title: "Tracks", or "Episodes" (a feed, a Spotify podcast or episode).
+    /// The status group's header ([list_title]): "Books", "Tracks" or "Episodes".
     list_title: &'static str,
     form: EntryForm,
     categories: Vec<(i64, String)>,
@@ -1924,6 +1924,27 @@ struct EntryTemplate {
     sweep: Option<SweepCard>,
     /// The cover the sweep fetched from the source (shown while the parent has none).
     source_cover: Option<String>,
+}
+
+/// The entry page's list header (design 31 step 12, qa-26c-merge2-code M1): a Storytel series'
+/// "Books", a Spotify playlist's, album's, track's or artist's "Tracks", every other's "Episodes"
+/// (NRK, RSS, a Spotify show or episode).
+fn list_title(entry: &MusicEntry) -> &'static str {
+    match entry.source.as_str() {
+        "storytel" => "Books",
+        "spotify" => match entry
+            .target
+            .as_deref()
+            .and_then(crate::spotify::parse_target)
+            .map(|r| r.kind)
+        {
+            Some(crate::spotify::LinkKind::Show | crate::spotify::LinkKind::Episode) | None => {
+                "Episodes"
+            }
+            Some(_) => "Tracks",
+        },
+        _ => "Episodes",
+    }
 }
 
 /// What a refused form on an entry's page brings back.
@@ -2059,18 +2080,7 @@ async fn render_entry(
             spotify,
             spotify_context,
             spotify_link,
-            list_title: match entry
-                .target
-                .as_deref()
-                .filter(|_| spotify)
-                .and_then(crate::spotify::parse_target)
-                .map(|r| r.kind)
-            {
-                Some(crate::spotify::LinkKind::Show | crate::spotify::LinkKind::Episode) | None => {
-                    "Episodes"
-                }
-                Some(_) => "Tracks",
-            },
+            list_title: list_title(&entry),
             form,
             categories,
             orders: ORDERS.to_vec(),
@@ -3881,9 +3891,11 @@ pub struct SpotifyBindingCard {
     pub accounts: Vec<(i64, String)>,
     /// The account this phone plays as.
     pub bound: Option<i64>,
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
-    /// Why this phone's ticked Spotify entries aren't sent (not bound).
+    /// The bound account's login: "Log in again before 14 Apr 2027" (the "Plays as" row's sub-line).
+    pub login: Option<String>,
+    /// What needs the parent (§4.2's sub-page warnings: a short title, one sentence).
+    pub warnings: Vec<Note>,
+    /// Why this phone's ticked Spotify entries aren't sent (not bound): the row's sub-line.
     pub note: Option<String>,
     /// One-shot message after a refused save (`?music_notice=spotify_...`).
     pub notice: Option<&'static str>,
@@ -3974,6 +3986,57 @@ pub struct MusicWarnings {
     /// act on (`reauthorize`, `refused`, `not_premium`, `no_widevine`: design 26c §4.4) - the tiles
     /// say "Spør en voksen"; Device › Music's Spotify group says which.
     pub spotify_cant_play: bool,
+    /// The bound account's side (qa-26c-merge2-code L3): from the accounts table, not the report -
+    /// [spotify_account_warnings], filled in by `attention::facts_of`.
+    pub spotify_account: SpotifyAccountWarnings,
+}
+
+/// What the account a phone plays as needs from the parent (design 26c §2.2, §2.5), for the
+/// Attention rows: no Spotify app set up, the login to renew (ended, refused, or locked with
+/// another key), the login ending within 14 days, the account bound to another phone too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpotifyAccountWarnings {
+    pub no_app: bool,
+    pub renew: bool,
+    pub ending: bool,
+    pub shared: bool,
+}
+
+/// [SpotifyAccountWarnings] for the phone of `policy`: all false unless it plays as an account.
+/// Three small reads (the app, the account, the phones bound to it), as `attention::facts`
+/// allows (design 31 §3.8).
+pub async fn spotify_account_warnings(
+    state: &AppState,
+    policy: &DevicePolicy,
+) -> Result<SpotifyAccountWarnings, sqlx::Error> {
+    let Some(id) = policy.music_spotify_account else {
+        return Ok(SpotifyAccountWarnings::default());
+    };
+    let no_app = crate::spotify::app(state).await?.is_none();
+    let Some(row) = crate::spotify::accounts(&state.db)
+        .await?
+        .into_iter()
+        .find(|row| row.id == id)
+    else {
+        return Ok(SpotifyAccountWarnings {
+            no_app,
+            ..Default::default()
+        });
+    };
+    let now = state.music_sweep.now();
+    let ended = row.login_ends().is_some_and(|ends| now >= ends);
+    let renew = row.needs_login != 0 || row.refresh_error.as_deref() == Some("key") || ended;
+    let phones: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM device_policy WHERE music_spotify_account = ?")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
+    Ok(SpotifyAccountWarnings {
+        no_app,
+        renew,
+        ending: !renew && row.login_ending(now),
+        shared: phones > 1,
+    })
 }
 
 impl MusicWarnings {
@@ -4031,6 +4094,7 @@ pub fn music_warnings(
                 report.and_then(|r| r.spotify.as_deref()),
                 Some("reauthorize" | "refused" | "not_premium" | "no_widevine")
             ),
+        spotify_account: SpotifyAccountWarnings::default(),
     }
 }
 
@@ -4232,6 +4296,7 @@ pub(crate) async fn device_card(
                 ),
                 _ => {}
             }
+            on_phone.extend(spotify_report_row(policy, report.spotify.as_deref()));
         }
         // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
         None if capable => on_phone.push(Row::new(
@@ -4331,10 +4396,13 @@ pub(crate) async fn device_card(
     })
 }
 
-/// Device › Music's "Plays as" (design 26c §2.5, §3.6): the select's accounts, the bound
-/// account's login state, one account bound to more than one phone, the phone's own last Spotify
-/// outcome (`music_state.spotify`) in words, and ticked Spotify entries an unbound phone isn't
-/// sent. `None` while nothing about Spotify exists here (no app, no account, no binding).
+/// Device › Music's "Plays as" (design 26c §2.5, §3.6; design 31 §4.2's shapes since the second
+/// merge of main): the picker's accounts, the bound account's login line, and what needs the
+/// parent as notes - no app, the login (renewing, another key, ending), one account on two
+/// phones, the phone's own refusals (`music_state.spotify`) - plus the ticked Spotify entries an
+/// unbound phone isn't sent. Dates in the Phone Setup zone. `None` while nothing about Spotify
+/// exists here (no app, no account, no binding). The phone's passing words (`ok`, `unreachable`,
+/// `quota`) are "On the phone" rows ([spotify_report_row]).
 async fn spotify_binding_card(
     state: &AppState,
     policy: &DevicePolicy,
@@ -4351,44 +4419,56 @@ async fn spotify_binding_card(
         return Ok(None);
     }
     let now = state.music_sweep.now();
-    let mut lines = Vec::new();
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let day = |t: chrono::DateTime<chrono::Utc>, year: bool| {
+        let local = zone.local(t);
+        if year {
+            local.format("%-d %b %Y").to_string()
+        } else {
+            local.format("%-d %b").to_string()
+        }
+    };
+    let mut login = None;
     let mut warnings = Vec::new();
     if !configured {
-        warnings.push(
-            "No Spotify app is set up on this server (the Spotify page): Spotify can't play."
-                .to_string(),
-        );
+        warnings.push(warning(
+            "No Spotify app set up",
+            "Spotify can't play until one is set up on the Spotify page.".to_string(),
+        ));
     }
     if let Some(row) = bound.and_then(|id| rows.iter().find(|row| row.id == id)) {
         let name = &row.display_name;
-        if row.needs_login != 0 {
-            warnings.push(format!(
-                "{name}'s Spotify login needs renewing: log in again as {name} on the Spotify \
-                 page."
+        let renew = row.needs_login != 0 || reported == Some("reauthorize");
+        if renew {
+            warnings.push(warning(
+                "Spotify login needs renewing",
+                format!("Log in again as {name} on the Spotify page."),
             ));
         } else if row.refresh_error.as_deref() == Some("key") {
-            warnings.push(format!(
-                "{name}'s saved Spotify login was locked with another key: log in again as \
-                 {name} on the Spotify page."
+            warnings.push(warning(
+                "Spotify login can't be opened",
+                format!(
+                    "It was locked with another key: log in again as {name} on the Spotify page."
+                ),
             ));
         } else if let Some(ends) = row.login_ends() {
             if row.login_ending(now) {
                 warnings.push(if now < ends {
-                    format!(
-                        "{name}'s Spotify login ends on {}: log in again on the Spotify page.",
-                        ends.format("%-d %b")
+                    warning(
+                        &format!("Spotify login ends {}", day(ends, false)),
+                        format!("Log in again as {name} on the Spotify page before then."),
                     )
                 } else {
-                    format!("{name}'s Spotify login has ended: log in again on the Spotify page.")
+                    warning(
+                        "Spotify login has ended",
+                        format!("Log in again as {name} on the Spotify page."),
+                    )
                 });
             } else {
-                lines.push(format!(
-                    "{name}: logged in, log in again before {}",
-                    ends.format("%-d %b %Y")
-                ));
+                login = Some(format!("Log in again before {}", day(ends, true)));
             }
         }
-        // One account plays on one device at a time (§2.5).
+        // One account plays on one phone at a time (§2.5).
         let phones: Vec<String> = sqlx::query_scalar(
             "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id \
              WHERE p.music_spotify_account = ? ORDER BY d.name, d.id",
@@ -4402,47 +4482,38 @@ async fn spotify_binding_card(
                 Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
                 None => String::new(),
             };
-            warnings.push(format!(
-                "Spotify plays on one device at a time per account: {listed} phones {} play as \
-                 {name} - give each child their own account.",
-                if phones.len() == 2 { "both" } else { "all" }
+            warnings.push(warning(
+                &format!(
+                    "{} phones share one account",
+                    if phones.len() == 2 { "Two" } else { "Several" }
+                ),
+                format!(
+                    "{listed} phones {} play as {name}, and Spotify plays on one phone at a time: \
+                     give each child their own.",
+                    if phones.len() == 2 { "both" } else { "all" }
+                ),
             ));
         }
-        // The phone's last Spotify outcome (§3.6, §4.4).
+        // The phone's own refusals (§3.6, §4.4); `reauthorize` is the renewing note above.
         match reported {
-            Some("ok") => lines.push("On the phone: Spotify plays.".to_string()),
-            Some("reauthorize") => warnings.push(
-                "On the phone: the Spotify login needs renewing on the Spotify page.".to_string(),
-            ),
-            Some("refused") => warnings.push(
-                "On the phone: Spotify refused this account or the app - check the account under \
-                 User Management in your app's dashboard."
-                    .to_string(),
-            ),
-            Some("not_premium") => warnings.push(
-                "On the phone: Spotify says this account has no Premium - the phone can't play \
-                 Spotify."
-                    .to_string(),
-            ),
-            Some("no_widevine") => warnings.push(
-                "On the phone: this phone can't play Spotify (its web player lacks the copy \
-                 protection Spotify needs)."
-                    .to_string(),
-            ),
-            Some("unreachable") => lines.push(
-                "On the phone: the phone couldn't reach Spotify the last time it tried."
-                    .to_string(),
-            ),
-            Some("quota") => lines.push(
-                "On the phone: Spotify's limit for this app was reached - it tries again later."
-                    .to_string(),
-            ),
+            Some("refused") => warnings.push(warning(
+                "Spotify refused the account",
+                format!("Check {name} under User Management in your app's dashboard."),
+            )),
+            Some("not_premium") => warnings.push(warning(
+                "No Spotify Premium",
+                format!("Spotify says {name} has no Premium, so the phone can't play Spotify."),
+            )),
+            Some("no_widevine") => warnings.push(warning(
+                "This phone can't play Spotify",
+                "Its web player lacks the copy protection Spotify needs.".to_string(),
+            )),
             _ => {}
         }
     }
     let note = (bound.is_none() && ticked > 0).then(|| match ticked {
-        1 => "Spotify is off on this phone: its Spotify entry isn't sent.".to_string(),
-        n => format!("Spotify is off on this phone: its {n} Spotify entries aren't sent."),
+        1 => "Its Spotify entry isn't sent.".to_string(),
+        n => format!("Its {n} Spotify entries aren't sent."),
     });
     Ok(Some(SpotifyBindingCard {
         accounts: rows
@@ -4450,11 +4521,28 @@ async fn spotify_binding_card(
             .map(|row| (row.id, row.display_name.clone()))
             .collect(),
         bound,
-        lines,
+        login,
         warnings,
         note,
         notice,
     }))
+}
+
+/// The phone's passing Spotify word as an "On the phone" row (as Storytel's login): `ok`
+/// "Plays", `unreachable` "Couldn't reach Spotify", `quota` "Limit reached" - only while the
+/// phone plays as an account. The words that need the parent are [spotify_binding_card]'s notes.
+fn spotify_report_row(policy: &DevicePolicy, reported: Option<&str>) -> Option<Row> {
+    policy.music_spotify_account?;
+    Some(match reported? {
+        "ok" => Row::new("spotify", "Spotify", "Plays"),
+        "unreachable" => Row::new("spotify", "Spotify", "Couldn't reach Spotify").detail(Some(
+            "The phone couldn't reach Spotify the last time it tried.",
+        )),
+        "quota" => Row::new("spotify", "Spotify", "Limit reached").detail(Some(
+            "Spotify's limit for your app was reached; the phone tries again later.",
+        )),
+        _ => return None,
+    })
 }
 
 /// `POST /devices/{id}/music/spotify` (`account`: "" or "off" = Spotify off on this phone, else

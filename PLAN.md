@@ -139,10 +139,9 @@ commit on `main` after the merge), never before 0073; the stable `music-v0.4.0` 
 is tagged (`6ae54e8`, Storytel's 0072) but its release run failed at the signing step - no release yet. **Main's
 step 0**: the `release` environment admitted the tag and `SERVER_MINISIGN_KEY` is set, but minisign can't read it
 ("Error while loading the secret key file"): re-enter it as the whole two-line key file from `minisign -G -W` (the
-pair whose public key is pinned), then re-run the failed `server-release-sign` job. **For design 31 step 12**, which
-doesn't name Spotify: keep "From Spotify ›" as a fifth Add row on the Music tab, and never move
-`/music/spotify/callback` (or `/done`) - it is the redirect URI every family registered at Spotify (26c "Release",
-open point 8).
+pair whose public key is pinned), then re-run the failed `server-release-sign` job. Design 31 step 12 and Spotify: settled at
+the merge of main `5584772` - "From Spotify ›" is the Music tab's fifth Add row, and `/music/spotify/callback` (and
+`/done`) never move: it is the redirect URI every family registered at Spotify (26c "Release", open point 8).
 **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
 stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
 (2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a

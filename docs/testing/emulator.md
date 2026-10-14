@@ -1107,12 +1107,12 @@ SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731 SPOTIFY_API_BASE=http://127.0.0.1:87
   fakekid: …`): `fakekid` is listed too.
 - [ ] **Plays as**: the phone's Music page (Devices › the phone › Music), the Spotify group's "Plays as": `fakekid`. The
   phone's Web Filter page shows the DNS note; the next sync's policy has `music.spotify` true.
-- [ ] **Links**, each with the phone ticked on the add form, then "Check now" on its card:
+- [ ] **Links**, each with the phone ticked on the add form, then "Check Now" on its entry page (Music › the entry):
   `https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=x` (list mode: the fake logs `GET
-  /v1/playlists/0FakePlaylistKveld0001/items: 200 (fakeparent)` - the path without its query; the card lists 3 tracks - the fixture's episode,
+  /v1/playlists/0FakePlaylistKveld0001/items: 200 (fakeparent)` - the path without its query; its library row says "3 tracks" and the entry page lists why the fixture's episode,
   local file, unplayable track and duplicate left out), `spotify:album:2FakeAlbumX00000000001`,
-  `spotify:show:4FakeShow0000000000001` (newest first) and `spotify:artist:3FakeArtist00000000001` (context mode: the
-  card says Spotify picks the order).
+  `spotify:show:4FakeShow0000000000001` (newest first) and `spotify:artist:3FakeArtist00000000001` (context mode:
+  open the entry - Spotify picks the order).
 - [ ] **The phone**: the debug switch, then a launcher sync (§6f; the music app follows on `BRIDGE_CHANGED`):
 
 ```
@@ -1183,8 +1183,8 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   and resume: no `play:` line. Next while paused: the title moves and it stays paused (a step only moves; if the stub
   plays the track the phone pauses it at once). Home's card and the lock's tile show the playing track's title.
 - [ ] **A playlist no account may list (the 403 playlist, context mode)**: on the Spotify page Remove `fakeparent`, then
-  "Check now" on the playlist's card: the fake logs `GET /v1/playlists/0FakePlaylistKveld0001/items: 403 (fakekid
-  doesn't own the playlist)`; the card says no logged-in account owns it, the phones play it in Spotify's order, and how
+  "Check Now" on the playlist's entry page: the fake logs `GET /v1/playlists/0FakePlaylistKveld0001/items: 403 (fakekid
+  doesn't own the playlist)`; the entry page's notes say no logged-in account owns it, the phones play it in Spotify's order, and how
   to get the track list (the playlist in the child's account, or a collaborative one). After the next sync the phone's
   playlist tile is "Musikk · rekkefølgen velges for deg". A cover tap: `play: context
   spotify:playlist:0FakePlaylistKveld0001 from Spotify's start …` (no live track stored yet). Let it play into its
@@ -1197,9 +1197,11 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
 - [ ] **A refused refresh** (the last A1 check): stop the fake, start it with `--expire-refresh`, restart the server
   (it then has no access token and must refresh), force-stop the music app; a cover tap: the fake logs `token: 400
   invalid_grant …`; "Spør en voksen" on the player's line and on **every** Spotify tile; the report's
-  `"spotify": "reauthorize"`; the device card and the PWA's accounts card say the account must log in again. Restart
-  the fake without the flag, log both accounts in again, force-stop the music app (its token cache holds the
-  `reauthorize` answer for 10 minutes), then play: `"spotify": "ok"` after the next sync, the tiles' line gone.
+  `"spotify": "reauthorize"`; the phone's Music page (its Spotify group: "Spotify login needs renewing") and the
+  Spotify page's accounts say the account must log in again, and the phone's summary shows the Attention row "Spotify
+  login needs renewing". Restart the fake without the flag, log both accounts in again, force-stop the music app (its
+  token cache holds the `reauthorize` answer for 10 minutes), then play: `"spotify": "ok"` after the next sync, the
+  tiles' line and the Attention row gone.
 - [ ] **No secrets** (none of these may match): `adb logcat -d | grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|Bearer '`,
   `adb shell run-as me.vibb.music.debug sh -c 'grep -raE -l "FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE" .'` (Room, the
   report, `no_backup/` with `spotify_state.json` - `{"outcome":…,"at":…}` only - and `spotify_page_account` -

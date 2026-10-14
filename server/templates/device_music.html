@@ -149,17 +149,18 @@
 
     {#- Spotify (design 26c §2.5, §3.6): which account this phone plays as - one per phone, the
         child's own - as an inline picker in its group, back to #music-spotify (below the library:
-        without JS a save must not land at the top); a refused save's reason in the group. Shown
-        once a Spotify app is set up, or while accounts or a binding remain. -#}
+        without JS a save must not land at the top); what needs the parent as notes above it, the
+        login's date and the unsent entries as the row's sub-line, a refused save's reason in the
+        group. Shown once a Spotify app is set up, or while accounts or a binding remain. -#}
     {% if let Some(spotify) = music.spotify %}
     <section id="music-spotify" aria-labelledby="music-spotify-title">
         <h2 class="group-header" id="music-spotify-title">Spotify</h2>
-        {% for text in spotify.warnings %}
-        <div class="attention attention-action" data-warning="spotify"><div class="attention-text">{{ text }}</div></div>
+        {% for note in spotify.warnings %}
+        {% include "partials/note_warning.html" %}
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/music/spotify#music-spotify" class="group">
-            <label class="row">
-                <span class="row-label">Plays as</span>
+            <label class="row" for="music_spotify_account">
+                <span class="row-label">Plays as{% if let Some(login) = spotify.login %}<span class="row-sub" data-row="spotify-login">{{ login }}</span>{% endif %}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
                 <select class="pick" id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
                     <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>Off</option>
                     {% for (id, name) in spotify.accounts %}
@@ -167,18 +168,16 @@
                     {% endfor %}
                 </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </label>
-            {% for line in spotify.lines %}
-            <p class="row row-note" data-row="spotify-line">{{ line }}</p>
-            {% endfor %}
-            {% if let Some(note) = spotify.note %}
-            <p class="row row-note" data-row="spotify-off">{{ note }}</p>
-            {% endif %}
             <noscript><button type="submit" class="row row-button">Save</button></noscript>
             {% if let Some(text) = spotify.notice %}
             <p class="flash flash-error" role="status" data-flash="music-spotify">{{ text }}</p>
             {% endif %}
+            <a class="row" href="/music/spotify#accounts" data-row="spotify-accounts">
+                <span class="row-label">Spotify Accounts</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
         </form>
-        <p class="group-footer">One account per phone: this child's own Premium account, never yours. Accounts are on the <a href="/music/spotify#accounts">Spotify page</a>.</p>
+        <p class="group-footer">One account per phone: the child's own Premium account, never yours.</p>
     </section>
     {% endif %}
 
