@@ -435,14 +435,22 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   default colour theme now points at the kid palette - `finnmglasTheme_background_color` = `@color/kid_ground`,
   `finnmglasTheme_accent_color` = `@color/kid_accent`, `finnmglasTheme_text_color` = `@color/kid_ink` (was µLauncher's
   `#252827`/`#5555ff`/`#fff`). Both `launcherBaseTheme` and `colorThemeDefault` (applied over it in `UIObject`) read
-  them, so the drawer and the PIN-gated parent Settings (and its dialogs, switches, the status bar via `colorPrimaryDark`)
-  are night with the peach accent: white 19:1, peach 9.9:1. The drawer stays a text list (the user's answer; the row's
+  them, so the drawer and the PIN-gated parent Settings (its switches and category titles, the status bar via
+  `colorPrimaryDark`) are night with the peach accent: white 19:1, peach 9.9:1. The parent's dialogs (`ParentPinDialog`,
+  Settings' edit-text dialog, the drawer's rename/uninstall, `EmergencyCall`, the PIN lock's) keep their explicit light
+  `AlertDialogCustom` (qa-34-s5-code N1).
+- **`KidAlertDialog`** (qa-34-s5-code M1): the base theme's `alertDialogTheme`, so every `AlertDialog.Builder(this)`
+  without a theme - the phone book's call, not-allowed and 112 confirms, the Wi-Fi password dialog - is night in both
+  system modes (before, AppCompat's panel followed the phone's dark mode: in light mode the peach buttons were 1.97:1 and
+  the white text invisible). The panel is `kid_ground_lift` (its own `bg_kid_dialog` window background - AppCompat's is
+  a white shape), title, message and text `kid_ink` (17:1), the buttons `KidDialogButton` in `kid_accent` (8.6:1, set on
+  the style so the theme's white can't win), an EditText's cursor and underline the accent. The drawer stays a text list (the user's answer; the row's
   icon view is `gone`, no per-row icons), its header and its buttons, the swipe-up that opens it, the long-press menu and launching are unchanged
   (the drawer has no search).
-- **`accentButton`** (`styles.xml`): the base theme's `android:buttonStyle` - `Widget.AppCompat.Button.Colored` with
-  `kid_ground` text. A framework `Button` (today only `PlayLinkBlockedActivity`'s OK) sits on `colorButtonNormal` =
-  the accent, and the theme's white text was 1.9:1 on peach (fine on the old blue). XML `<Button>`s become
-  `AppCompatButton` and don't use it.
+- **`accentButton`** (`styles.xml`): the base theme's `android:buttonStyle` and, since qa-34-s5-code L1, AppCompat's
+  `buttonStyle` (an XML `<Button>` inflates as `AppCompatButton`, which reads that one) - `Widget.AppCompat.Button.Colored`
+  with `kid_ground` text. A button sits on `colorButtonNormal` = the accent, and the theme's white text was 1.9:1 on
+  peach (fine on the old blue). Today's only user is `PlayLinkBlockedActivity`'s framework OK.
 - **Vibb One is never on its own list**: one condition in `AppFilter.kidListable` (`apps/AppFilter.kt`, MIT like the
   file - the existing palchrb-modified precedent): `packageName !in OWN_PACKAGES` (`me.vibb.launcher`,
   `me.vibb.launcher.debug` - both, so a debug build next to a release one lists neither). Home's own
@@ -450,9 +458,11 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - Tests: `AppFilterTest` (both own ids refused in and out of install mode; the music app, a near-miss id and the old
   `com.kidslauncher.mdm` still listed; `OWN_PACKAGES` equals `app/build.gradle.kts`'s `applicationId` and
   `applicationId + applicationIdSuffix`), `KidPaletteTest` (the three theme colours are the kid palette's, text and
-  accent >= 4.5:1 on the ground, both styles read them, `accentButton`'s text on the accent >= 4.5:1, the drawer's row
-  sets no text colour of its own).
-- Not emulator-checked yet: the drawer and parent Settings (with a dialog and a switch) at `wm density 240`, nb and en.
+  accent >= 4.5:1 on the ground (by the equalities - the palette's own test pins the pairs), both styles read them,
+  both button styles are `accentButton`, its text on the accent >= 4.5:1, `KidAlertDialog` as `alertDialogTheme` with its
+  panel, window background and every ink >= 4.5:1 on the panel, the drawer's row sets no text colour of its own).
+- Not emulator-checked yet: the drawer and parent Settings (with a switch) at `wm density 240`, nb and en; a phone-book
+  call confirm and the Wi-Fi password dialog in the system's light and dark mode.
 
 ## Home's edges and labels (design 34 step 4, P4, `docs/design/34-launcher-polish.md`, at the monorepo root)
 

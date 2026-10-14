@@ -95,10 +95,8 @@ class KidPaletteTest {
         assertEquals("@color/kid_ground", background)
         assertEquals("@color/kid_accent", accent)
         assertEquals("@color/kid_ink", text)
-        for (top in listOf(text, accent)) {
-            val ratio = contrast(top, background)
-            assertTrue("$top on $background: $ratio", ratio >= 4.5)
-        }
+        // Their contrast is the kid palette's, pinned by `ink, accent and light text are readable...`
+        // (qa-34-s5-code N2: a loop here could never fail before the equalities above).
         // Both the base theme and the default colour theme (applied over it in UIObject) use them.
         val styles = parse("values/styles.xml").getElementsByTagName("style")
         fun items(name: String): Map<String, String> {
@@ -114,9 +112,35 @@ class KidPaletteTest {
         }
         // A plain Button sits on the accent: its text is the night ink, not the theme's white.
         assertEquals("@style/accentButton", items("launcherBaseTheme")["android:buttonStyle"])
+        // An XML <Button> is an AppCompatButton, which reads AppCompat's own attribute (qa-34-s5-code L1).
+        assertEquals("@style/accentButton", items("launcherBaseTheme")["buttonStyle"])
         val buttonText = items("accentButton").getValue("android:textColor")
         val onAccent = contrast(buttonText, accent)
         assertTrue("$buttonText on $accent: $onAccent", onAccent >= 4.5)
+
+        // The default AlertDialogs are night in both system modes (qa-34-s5-code M1): the overlay's
+        // panel, its title and message, its buttons and an EditText's accent on it.
+        assertEquals("@style/KidAlertDialog", items("launcherBaseTheme")["alertDialogTheme"])
+        val dialog = items("KidAlertDialog")
+        val panel = "@color/kid_ground_lift"
+        assertEquals(panel, dialog["android:colorBackground"])
+        assertEquals(panel, dialog["colorBackgroundFloating"])
+        val window = dialog.getValue("android:windowBackground")
+        val solid = parse("drawable/${window.removePrefix("@drawable/")}.xml").getElementsByTagName("solid").item(0) as Element
+        assertEquals(panel, solid.getAttributeNS("http://schemas.android.com/apk/res/android", "color"))
+        assertEquals("@style/KidDialogButton", dialog["buttonBarButtonStyle"])
+        val dialogInks = mapOf(
+            "title/message (textColorPrimary)" to dialog.getValue("android:textColorPrimary"),
+            "text" to dialog.getValue("android:textColor"),
+            "secondary" to dialog.getValue("android:textColorSecondary"),
+            "buttons" to items("KidDialogButton").getValue("android:textColor"),
+            "accent (cursor, underline)" to dialog.getValue("colorAccent"),
+            "controls activated" to dialog.getValue("colorControlActivated"),
+        )
+        for ((what, ink) in dialogInks) {
+            val ratio = contrast(ink, panel)
+            assertTrue("dialog $what $ink on $panel: $ratio", ratio >= 4.5)
+        }
         // The drawer's rows take the theme's text colour (text only, no colour of their own).
         val row = parse("layout/list_apps_row_variant_text.xml").getElementsByTagName("TextView").item(0) as Element
         assertEquals("", row.getAttributeNS("http://schemas.android.com/apk/res/android", "textColor"))

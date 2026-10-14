@@ -1017,3 +1017,16 @@ behaviour, gesture or policy change.
   dialog and a switch, at `wm density 240`, nb and en.
 
 Counts: launcher `assembleDebug testDebugUnitTest --rerun -PwarningsAsErrors=true` 1263 tests, 0 failures (was 1260).
+
+### Step 5 fix round (qa-34-s5-code, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| M1 default AlertDialogs follow the system's dark mode (peach buttons 1.97:1 in light mode) | `KidAlertDialog` (`ThemeOverlay.AppCompat.Dialog.Alert`) is `launcherBaseTheme`'s `alertDialogTheme`: panel `kid_ground_lift` (`android:colorBackground`, `colorBackgroundFloating` and its own window background `bg_kid_dialog` - AppCompat's `abc_dialog_material_background` is a white shape), title, message and text `kid_ink` (17:1), the buttons `KidDialogButton` with `kid_accent` text on the style (8.6:1; the theme's white would otherwise override the text appearance), `colorAccent`/`colorControlActivated` peach for an EditText's cursor and underline. Covers `PhoneBookActivity`'s three dialogs (the 112 confirm among them) and `WifiNetworksActivity`'s password dialog in both modes. The parent's `AlertDialogCustom` dialogs take an explicit theme and are unchanged. `KidPaletteTest` pins the theme attribute, the panel (both attributes and the drawable's solid), the button style and every ink >= 4.5:1 on the panel. |
+| L1 AppCompat's `buttonStyle` unset | `launcherBaseTheme` sets `buttonStyle` to `accentButton` too, so an XML `<Button>` (an `AppCompatButton`) gets night text on the accent; asserted next to `android:buttonStyle`. |
+| N1 `launcher/CLAUDE.md` called the parent's dialogs night | It now says the parent Settings' switches and category titles; the parent's dialogs stay `AlertDialogCustom`'s light ones, the default ones follow M1. |
+| N2 the theme contrast loop couldn't fail on its own | Dropped: the equalities to `kid_ground`/`kid_accent`/`kid_ink` cover it, and `ink, accent and light text are readable on the ground and its lift` pins those pairs' contrast. |
+
+Counts after the fix round (main 57ac2a36 merged in): launcher 1263 tests, 0 failures (no new test methods; the
+assertions went into `KidPaletteTest`'s P5 test). Still to check on the emulator: a phone-book call confirm and the Wi-Fi
+password dialog in light and dark system mode.
