@@ -933,3 +933,137 @@ async fn a_live_session_sees_wrong_codes_and_the_lock() {
         .await;
     assert_eq!(res.location(), Some("/devices"));
 }
+
+/// The sign-in pages in the new components (design 31 step 15): one column with the name, a
+/// grouped form and a wide button, no tab bar; a refusal is one red line, and nothing typed comes
+/// back - no password, no code. The forced first steps (a new password, then two-factor login) keep
+/// their behaviour; the key shows once, behind "Can't scan it?".
+#[tokio::test]
+async fn the_sign_in_pages_use_the_new_components() {
+    let app = TestApp::new().await;
+    let login = app.get_page("/login", "").await.text();
+    for needle in [
+        "<title>Sign In · Vibb Phone</title>",
+        "<h1 class=\"auth-title\">Vibb Phone</h1>",
+        "<form method=\"post\" action=\"/login\">",
+        "<label class=\"field-label\" for=\"username\">",
+        "<label class=\"field-label\" for=\"password\">",
+        "<button type=\"submit\" class=\"button-wide\">Sign In</button>",
+    ] {
+        assert!(login.contains(needle), "{needle}: {login}");
+    }
+    assert!(!login.contains("tab-bar"));
+
+    const FIRST: &str = "generated first password";
+    sqlx::query(
+        "INSERT INTO admin_users (username, password_hash, must_change_password, totp_enabled) \
+         VALUES (?, ?, 1, 0)",
+    )
+    .bind(USER)
+    .bind(security::hash_password(FIRST))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (res, _) = password_step(&app, "not the password").await;
+    let text = res.text();
+    assert!(
+        text.contains(
+            "<p class=\"flash flash-error auth-error\" role=\"alert\">Incorrect username or password.</p>"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("not the password"));
+
+    let (res, cookie) = password_step(&app, FIRST).await;
+    assert_eq!(res.location(), Some("/"));
+    let cookie = cookie.unwrap();
+    let page = app.get_page("/auth/change-password", &cookie).await.text();
+    assert!(
+        page.contains("<h1 class=\"auth-title\">New Password</h1>"),
+        "{page}"
+    );
+    assert!(page.contains("<p class=\"auth-brand\">Vibb Phone</p>"));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/change-password",
+            Some(&cookie),
+            &[
+                ("current_password", FIRST),
+                ("new_password", "a brand new password"),
+                ("confirm_password", "a different new password"),
+            ],
+        )
+        .await;
+    let text = res.text();
+    assert!(
+        text.contains("role=\"alert\">New passwords don&#39;t match.</p>"),
+        "{text}"
+    );
+    assert!(!text.contains("brand new password") && !text.contains(FIRST));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/change-password",
+            Some(&cookie),
+            &[
+                ("current_password", FIRST),
+                ("new_password", "a brand new password"),
+                ("confirm_password", "a brand new password"),
+            ],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/"));
+
+    let page = app.get_page("/auth/setup-2fa", &cookie).await.text();
+    let secret: String =
+        sqlx::query_scalar("SELECT totp_secret FROM admin_users WHERE username = ?")
+            .bind(USER)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(
+        page.contains("<h1 class=\"auth-title\">Two-Factor Login</h1>"),
+        "{page}"
+    );
+    assert_eq!(page.matches(secret.as_str()).count(), 1, "the key once");
+    let panel = &page[page.find("Can't scan it?").unwrap()..];
+    assert!(panel[..panel.find("</details>").unwrap()].contains(&secret));
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/setup-2fa",
+            Some(&cookie),
+            &[("code", "000000")],
+        )
+        .await;
+    let text = res.text();
+    assert!(
+        text.contains("role=\"alert\">That code didn&#39;t match. Try again.</p>"),
+        "{text}"
+    );
+    assert!(!text.contains("value=\"000000\""));
+    let code = app.next_totp_code(USER, &secret).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/setup-2fa",
+            Some(&cookie),
+            &[("code", &code)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/"));
+
+    // The code step, after the next password.
+    let (_, pending) = password_step(&app, "a brand new password").await;
+    let page = app
+        .get_page("/auth/verify-2fa", &pending.unwrap())
+        .await
+        .text();
+    assert!(
+        page.contains("<h1 class=\"auth-title\">Two-Factor Code</h1>"),
+        "{page}"
+    );
+    assert!(page.contains("autocomplete=\"one-time-code\""));
+    assert!(!page.contains("tab-bar"));
+}

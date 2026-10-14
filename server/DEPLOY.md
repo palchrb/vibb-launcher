@@ -218,7 +218,7 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   start). Sign in with it, set a new password, then a new authenticator. Replacing the password matters: the lock
   you are recovering from means someone else knows the old one.
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
-  iPhone and sign in again), and enrollment codes that were open stop working: make a new one on the device page.
+  iPhone and sign in again), and enrollment codes that were open stop working: make a new one (the phone's Advanced › New Setup Code).
 
 ## Docker (server >= 0.23.0)
 

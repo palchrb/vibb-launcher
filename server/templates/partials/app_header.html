@@ -1,7 +1,9 @@
-{#- The brand bar and the 5-tab bar (design 31 §3.1). The page sets its tab before including this:
+{#- The brand bar and the 5-tab bar (design 31 §3.1). Since step 15 only the device page that step
+    10 rebuilds still includes it; every other page includes partials/tab_bar.html alone - a tab's
+    landing page opens on its large title, an inner page on its sub-page header (§3.0) - and it
+    goes once nothing includes it. The page sets its tab before including either:
     {% let tab = "devices" %} - one of devices, apps, locate, music, settings - and the server marks
-    that tab aria-current="page", so no script is needed. A rebuilt inner page has the sub-page
-    header instead of the brand bar (§3.0) and includes partials/tab_bar.html alone, the same way. -#}
+    that tab aria-current="page", so no script is needed. -#}
 <header class="app-header">
     <a href="/" class="brand">Vibb Phone</a>
 </header>

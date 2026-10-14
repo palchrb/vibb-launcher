@@ -2166,3 +2166,23 @@ input.row-num { width: 6.5em; text-align: right; }
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
 .editor-bar { position: -webkit-sticky; position: sticky; top: 0; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 .editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
+
+/* ---- Design 31 step 15: Add Phone, sign-in, the tab pages without the brand bar ---- */
+
+/* A tab's landing page opens on its large title under a 44px bar (the mockups): Devices, Apps and
+   Music put an action in it (.title-bar); Settings and Locate start with the title itself. */
+.container > .page-title:first-child { margin-top: 48px; }
+.title-add { justify-content: center; min-width: 44px; margin-right: -11px; padding: 0; }
+.title-add svg { width: 22px; height: 22px; }
+/* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
+.choice-title { margin: 28px 4px 8px; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+.choice-sub { display: block; margin-top: 2px; font-size: 0.9375rem; font-weight: 400; color: var(--label-2); }
+.group > .qr-code { margin: 0; padding: 16px; }
+.qr-code svg { max-width: 100%; height: auto; border-radius: 8px; }
+.code-cell { padding: 4px 16px; text-align: center; }
+/* The sign-in pages: one column, the app's name, the title, then the form's group. */
+.auth-card { width: 100%; max-width: 400px; }
+.auth-brand { margin: 0 4px 4px; font-size: 0.9375rem; font-weight: 600; color: var(--label-2); }
+.auth-title { margin: 0 4px 8px; font-size: 2.125rem; font-weight: 700; line-height: 1.15; }
+.auth-sub { margin: 0 4px 20px; font-size: 1rem; line-height: 1.35; color: var(--label-2); }
+.auth-error { margin: 0 0 20px; border-radius: 12px; }

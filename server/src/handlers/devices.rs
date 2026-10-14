@@ -283,33 +283,67 @@ pub(crate) fn launcher_without_rules(latest: Option<&DeviceStatus>) -> bool {
     })
 }
 
+/// A phone's name is at most this many characters (it fills a row and a page title).
+pub(crate) const MAX_DEVICE_NAME_CHARS: usize = 40;
+
+/// Add Phone, step 1 of 3 (design 31 §3.7): the name.
 #[derive(Template)]
 #[template(path = "device_add.html")]
 struct DeviceAddTemplate {
     title: String,
+    /// What was typed, after a refusal.
+    name: String,
+    error: Option<&'static str>,
+    max_name: usize,
 }
 
-pub async fn new_device_form() -> impl IntoResponse {
-    Html(
-        DeviceAddTemplate {
-            title: "Add a device".to_string(),
+fn device_add_page(status: StatusCode, name: String, error: Option<&'static str>) -> Response {
+    let page = DeviceAddTemplate {
+        title: "Add Phone".to_string(),
+        name,
+        error,
+        max_name: MAX_DEVICE_NAME_CHARS,
+    };
+    match page.render() {
+        Ok(html) => (status, Html(html)).into_response(),
+        Err(err) => {
+            tracing::error!(%err, "couldn't render Add Phone");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
-        .render()
-        .unwrap(),
-    )
+    }
+}
+
+pub async fn new_device_form() -> Response {
+    device_add_page(StatusCode::OK, String::new(), None)
 }
 
 #[derive(Deserialize)]
 pub struct CreateDeviceForm {
+    #[serde(default)]
     pub(crate) name: String,
 }
 
+/// "Next" on Add Phone: the phone is made (no code yet) and the flow goes on to Connect
+/// (`/devices/{id}/provision`: the QR code or a setup code). An empty or too long name renders
+/// the form again (400) with what was typed and the reason under the field.
 pub async fn create_device(
     State(state): State<AppState>,
     Form(form): Form<CreateDeviceForm>,
 ) -> axum::response::Response {
-    match insert_device_with_policy(&state, &form.name).await {
-        Ok(id) => Redirect::to(&format!("/devices/{id}")).into_response(),
+    let name = form.name.trim();
+    let refusal = if name.is_empty() {
+        Some("Give the phone a name.")
+    } else if name.chars().count() > MAX_DEVICE_NAME_CHARS {
+        Some("Use at most 40 characters.")
+    } else {
+        None
+    };
+    if let Some(why) = refusal {
+        let typed: String = name.chars().take(MAX_DEVICE_NAME_CHARS * 4).collect();
+        return device_add_page(StatusCode::BAD_REQUEST, typed, Some(why));
+    }
+    match insert_device_with_policy(&state, name).await {
+        Ok(id) => Redirect::to(&format!("/devices/{id}/provision")).into_response(),
         Err(err) => {
             tracing::error!(?err, "failed to create device");
             (
@@ -325,8 +359,8 @@ pub async fn create_device(
 /// row can't exist, since `device_api::build_policy` refuses to serve one (500) rather than
 /// invent a default.
 ///
-/// No enrollment code yet: the device page makes one ("New code", shown once) or the setup QR
-/// does (design 22 §3.1) - a code made here could never be shown again.
+/// No enrollment code yet: Connect makes one ("New Setup Code", shown once) or the setup QR does
+/// (design 22 §3.1) - a code made here could never be shown again.
 async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, sqlx::Error> {
     let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar("INSERT INTO devices (name) VALUES (?) RETURNING id")
@@ -358,31 +392,35 @@ struct EnrollCodeTemplate {
     title: String,
     device: Device,
     code: String,
-    expires_at: String,
-    minutes: i64,
+    /// When it stops working (local, `Zone::until`).
+    until: String,
     /// The phone is enrolled: using the code cuts the enrolled phone off (recovery).
     enrolled: bool,
-    /// Typed codes are paused right now (too many wrong ones this hour).
-    paused: Option<String>,
+    /// Until when typed codes are paused (local), when they are (too many wrong ones this hour).
+    paused_until: Option<String>,
 }
 
-/// "New code" on the device page (design 22 §3.1): a typed code (8 characters, 15 minutes),
-/// shown on this response only - only its hash is stored. Replaces any live code. Also the
-/// recovery path for an enrolled phone: using the code gives it a new token and retires the old
-/// one. 409 while typed codes are paused (the page offers the QR).
+/// "New Setup Code" on Connect and Advanced › Connection (design 22 §3.1): a typed code (8
+/// characters, 15 minutes), shown on this response only - only its hash is stored, and the page is
+/// `no-store`. Replaces any live code. Also the recovery path for an enrolled phone: using the
+/// code gives it a new token and retires the old one. While typed codes are paused the code is
+/// still made, and the page says from when it works (a setup QR code works at once).
 pub async fn regenerate_code(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+    let device = match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten()
-    else {
-        return StatusCode::NOT_FOUND.into_response();
+    {
+        Ok(Some(device)) => device,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't read the phone for a setup code");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
     let kind = crate::enrollment::Kind::Typed;
     let (code, expires_at) = match crate::enrollment::new_code(&state, id, kind).await {
@@ -404,31 +442,32 @@ pub async fn regenerate_code(
         Some(&format!("{} (device {id}), typed code", device.name)),
     )
     .await;
-    let html = EnrollCodeTemplate {
-        title: format!("Code for {}", device.name),
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
+    let page = EnrollCodeTemplate {
+        title: format!("Setup Code for {}", device.name),
         code: crate::enrollment::display(&code),
-        expires_at,
-        minutes: kind.minutes(),
+        until: crate::display_time::parse_db_utc(&expires_at)
+            .map(|t| zone.until(t, now))
+            .unwrap_or_else(|| format!("{expires_at} UTC")),
         enrolled: device.enrolled_at.is_some(),
-        paused: state
+        paused_until: state
             .enrollment
-            .typed_paused_until(chrono::Utc::now())
-            .map(|until| {
-                format!(
-                    "Typed codes are paused until {} UTC (too many wrong ones this hour): this code \
-                     works only after that. A setup QR code (Provision) works now.",
-                    until.format("%H:%M")
-                )
-            }),
+            .typed_paused_until(now)
+            .map(|until| zone.until(until, now)),
         device,
+    };
+    match page.render() {
+        Ok(html) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Html(html),
+        )
+            .into_response(),
+        Err(err) => {
+            tracing::error!(%err, "couldn't render the setup code page");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
-    .render()
-    .unwrap();
-    (
-        [(axum::http::header::CACHE_CONTROL, "no-store")],
-        Html(html),
-    )
-        .into_response()
 }
 
 #[derive(Deserialize)]

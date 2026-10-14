@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, step 15 (Add Phone, sign-in, the tab pages without the brand bar; the CSS clean-up after step 10) on `design-31-s15`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -3206,3 +3206,95 @@ cards gone, and `style.css?v=22` after step 8's section):
 | N4 | A refused pause from an older tab (no `back`) lands on Device › Time with its reason too (`lifts::back_to` sends every `gone` there). |
 | N5 | The Time row says "Needs attention" also while a rule in force or the own limit in force doesn't read. |
 | Checks | `cargo test` 837 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 15 implementation status (2026-10-14)
+
+Built on branch `design-31-s15` (from `main` at `83294eda`, steps 1-9 and 11-14 in), in parallel with step 10; server
+only, no migration, no new crate, no API change (enroll is untouched), `style.css?v=24` (main is at 22, step 10 takes
+23; appended at the end). **Split:** §8 step 15's "the old CSS classes nothing uses are deleted" is not in this step -
+it depends on what step 10 removes, and follows as a small clean-up once both are merged.
+- **Add Phone in 3 steps** (§3.7), on the pages that were there, each a Devices sub-page with the §3.0 header:
+  1. **Name** (`/devices/new`, "Add Phone"): one field, "Next". The handler trims it; an empty or over-40-character
+     name renders the form again (400) with what was typed and the reason under the field (it saved an empty name
+     before). Success redirects to Connect (it went to the device page).
+  2. **Connect** (`/devices/{id}/provision`, "Connect Anna"): two choices with a large title each, **QR code · New or
+     reset phone** (Wi-Fi network and password, Make QR Code; the footer "On the phone's welcome screen, tap 6 times in
+     one spot, then scan." with the GrapheneOS/adb path, Phone Setup and the 30 minutes behind ⓘ) and **Code · Phone
+     already set up** (New Setup Code; adb and the 15 minutes behind ⓘ; the typed-code pause as an orange warning).
+     The 302-word page is about 60 words plus three ⓘ panels.
+  3. **The QR code** renders in the POST's answer inside `#qr` - the form posts to `/provision#qr`, so the answer lands
+     on the QR with or without JS (scroll-restore defers to the fragment) - with "Works until 14:35, once" (local,
+     `Zone::until`; was "… UTC") and "Make a New QR Code". **The code** (New Setup Code → `enroll_code.html`, "Setup
+     Code"): the code, "Works until 14:20, once", the footer "Type it in Vibb's settings on Anna." with the button's
+     name ("Enroll with code" - the page said "Enroll now", which the launcher doesn't have) and the Server URL first
+     behind ⓘ; the typed-code pause local (was "… UTC").
+  - **Waiting/done:** for a phone not set up, both end on **Done** → the phone's page (which shows "Not set up" until it
+    connects); Back goes there too. For a connected phone (Advanced › Set Up with QR Code / New Setup Code) Back goes
+    to Advanced › Connection (step 3's rule) and both pages warn "Anna is connected now - the phone that uses this code
+    takes over, and the one connected now is cut off" (Connect didn't say so before).
+  - **"Server setup needed"**: one red row at the top of Connect whose ⓘ names what is missing - the checksum
+    (`LAUNCHER_SIGNATURE_CHECKSUM`, the server's `.env`, DEPLOY.md's section) and/or the server address (a link to
+    Phone Setup). Without the checksum the QR group says "Needs the server setup above." and has no form (it had a
+    form that made nothing); New Setup Code still works.
+- **Robustness:** a Wi-Fi name over 32 bytes, a password over 63 characters, or a password without a name is refused
+  before any code is made (400, in the QR group, the reason under the field; the password is never typed back, and
+  "Type the password again." when the other field was the problem) - a long field used to overflow the QR code and
+  panic the handler (`expect`). A payload too long for a QR code (a huge server address or key) is a 500 with a reason.
+  Connect's reads (the phone, Phone Setup) and the code page's are 500s on a DB error (they were 404s, and Connect
+  built a QR code from empty defaults when Phone Setup couldn't be read).
+- **Sign-in** (`login.html`, `verify_2fa.html`, `setup_2fa.html`, `change_password.html`; §3.7 "keep their
+  single-card layout"): one column - "Vibb Phone" (the sign-in page's heading, a small line above the others' titles),
+  a large title (Sign In, Two-Factor Code, Two-Factor Login, New Password), a grouped form, a wide button. A refusal is
+  one red line with `role="alert"` above the form. The 2FA setup's key is behind "Can't scan it?" (shown once on the
+  page, as before). Templates and `<title>`s only: `handlers::auth`'s logic, its messages, the lockout, the pending
+  state's expiry, session cycling, the epoch and CSRF are untouched; no field carries a `value`.
+- **The brand bar** leaves the tab landing pages: Devices, Apps, Locate, Music and Settings include
+  `partials/tab_bar.html` alone and open on their large title under the mockups' 44px bar - Devices and Apps put the
+  mockups' "+" there (Add phone / Add app, the same targets as their Add rows), Music its Edit, Settings and Locate
+  start with the title (`.container > .page-title:first-child`). Only `device_detail.html` still includes
+  `partials/app_header.html` - step 10's page.
+- **Docs (L8):** `server/CLAUDE.md` (the UI line, enrollment's "New Setup Code" and Connect, a step 15 section),
+  `server/DEPLOY.md` (a new code after 0.23.0: Advanced › New Setup Code), `docs/testing/emulator.md` (step 1: Add Phone
+  → Connect → New Setup Code; Block USB debugging is on Advanced), `docs/setup/google-account.md` ("Block account
+  changes" on Advanced before scanning, Add Phone makes the phone first; Erase Phone… on Locate; the phone's Apps page;
+  About This Phone for the battery state), `README.md` (Devices › Add Phone). `launcher/CLAUDE.md` and `PLAN.md` name
+  none of these pages' controls (the launcher's historical `/devices/provision` note stays).
+- **Tests:** `tests::provisioning` - `every_form_in_the_add_flow_lands_where_it_should` (the table from the rendered
+  forms: the name → Connect, the QR form's `#qr` encloses it and the answer's QR, New Setup Code → the code page, both
+  `no-store`, both with Done; an unknown form fails), `connecting_a_connected_phone_again_says_what_happens`,
+  `add_phone_refuses_a_bad_name_in_place` (empty, blank, 41 characters, escaped, trimmed, nothing made),
+  `a_wifi_field_that_cant_be_right_is_refused_before_any_code` (the code's hash unchanged, the password never back),
+  `server_setup_needed_is_one_row_with_its_detail_behind_info` (the env var only in the ⓘ, no QR form without the
+  checksum, 404s, unreadable settings → 500 with no code made); `admin_auth::the_sign_in_pages_use_the_new_components`
+  (the four pages, refusals as one alert line, no password or code echoed, the key once and behind its ⓘ);
+  `shell::the_tab_pages_open_on_their_large_title`, `shell::every_template_with_the_bar_sets_its_tab` (a landing page
+  without a back link, every other page with one, the brand bar only on the device page); repointed
+  `provisioning.rs`, `enrollment.rs` (Add Phone → Connect, the code page's Back), `devices_list.rs`, `shell.rs` (the
+  sign-in heading, no brand bar on Devices). `edge.rs` reads no page text and needed nothing. `cargo test` 844 passed;
+  `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings.
+
+Choices made while building:
+1. **Step 2 and 3 share a page.** Connect is the "How to set it up" page with the QR code's step 3 in its own group
+   (the QR is made only on POST, as before); the code's step 3 is its own page because it shows once. No new routes.
+2. **Add Phone goes on to Connect**, not the device page: the flow is name → connect → done. The device page's
+   not-enrolled card (step 10: "Connect this phone") still offers both.
+3. **The code page's Back for a phone not set up** is the phone's page, not a fragment: step 10 builds the "Connect
+   this phone" group and its id; the page is short, and Done goes there too.
+4. **"Server setup needed" covers a missing server address too** (§3.7 names both), though a QR code can still be made
+   without one (the phone then asks for it); only the missing checksum takes the QR form away.
+5. **"Enroll with code" and "Scan setup QR"** - the launcher's own labels - are quoted only inside ⓘ panels (§4.2's
+   "enrol(l)"); the footers say "Vibb's settings".
+6. **A refused sign-in form says why in one line above the form**, not under a field: the handlers return one message
+   for the whole form, and splitting it per field would change `handlers::auth`, which this step leaves alone.
+7. **A reload of the QR or the code page makes a new code** (its URL is the POST): as before, by design - the code
+   can't be shown twice, and a new one only replaces the last.
+8. **The "+" on Devices and Apps** (the mockups' top bar, left out in step 2 while the brand bar was there) is added:
+   a link to the same page as the Add row, `aria-label`led.
+
+Deferred, with the reason:
+- **The CSS clean-up** (§8 step 15, the split above). Made unused by this step: `.card-alarm` (only the old provision
+  page had it) and `.auth-page .card`. Left with one user each, step 10's `device_detail.html`: `.card` (+ `h2`/`h3`),
+  `.enrollment-card`, `.page-header`; `.subtitle`, `.hint` and `.error` also have `partials/app_display_form.html`.
+  `.app-header` / `.brand` and `partials/app_header.html` go once step 10's page includes `partials/tab_bar.html`
+  alone.
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.

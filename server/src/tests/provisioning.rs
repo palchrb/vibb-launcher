@@ -1,14 +1,14 @@
-//! The provisioning QR page. Admin handlers are called directly with `TestApp::state`, since the
-//! admin session/2FA middleware isn't what these tests are about.
+//! The provisioning QR page and the Add Phone flow (design 31 step 15). Some admin handlers are
+//! called directly with `TestApp::state`, to change the configuration.
 
 use std::sync::Arc;
 
 use axum::Form;
 use axum::extract::{Path, State};
-use axum::http::{Method, StatusCode};
+use axum::http::{Method, StatusCode, header};
 use axum::response::IntoResponse;
 
-use super::{TestApp, read_response};
+use super::{TestApp, assert_redirect, read_response, settings_pages};
 use crate::AppState;
 use crate::config::ForkConfig;
 use crate::handlers::provisioning::{self, AdminExtras};
@@ -42,11 +42,8 @@ async fn provision_page_without_checksum_has_no_qr() {
     state.config = Arc::new(config);
 
     let page = provision_page(state, id).await;
-    assert!(page.contains("signing checksum not configured"), "{page}");
-    assert!(
-        !page.contains("class=\"qr-code\""),
-        "a QR code was rendered"
-    );
+    assert!(page.contains("data-missing=\"checksum\""), "{page}");
+    assert!(!page.contains("data-row=\"qr\""), "a QR code was rendered");
     // Upstream's checksum must never come back as a fallback.
     assert!(!page.contains("TLXcVaskQBZyh0S88O29PvHa9RaiCCl-7TybpGlbmkg"));
 }
@@ -56,8 +53,8 @@ async fn provision_page_with_checksum_shows_qr() {
     let app = TestApp::new().await;
     let (id, _) = app.create_device("phone").await;
     let page = provision_page(app.state.clone(), id).await;
-    assert!(page.contains("class=\"qr-code\""), "no QR code rendered");
-    assert!(!page.contains("signing checksum not configured"));
+    assert!(page.contains("data-row=\"qr\""), "no QR code rendered");
+    assert!(!page.contains("data-missing=\"checksum\""));
 }
 
 #[test]
@@ -265,4 +262,324 @@ async fn provisioning_locale_settings() {
     let page = app.get_page("/settings/provisioning", &cookie).await.text();
     assert!(page.contains("value=\"en_GB\""));
     assert!(page.contains("value=\"Europe/London\""));
+}
+
+// ---- Design 31 step 15: Add Phone (name → Connect → the QR code or the setup code) ----
+
+async fn code_hash(app: &TestApp, id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT enrollment_code_hash FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn code_kind(app: &TestApp, id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// §5.1's table for the add flow, built from the rendered forms: the name goes on to Connect, the
+/// QR form returns to its own group (`#qr`, with the QR code in it - never the top of the page),
+/// New Setup Code opens the code page (shown once, `no-store`). A form the table has no row for
+/// fails.
+#[tokio::test]
+async fn every_form_in_the_add_flow_lands_where_it_should() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+
+    let add = app.get_page("/devices/new", &cookie).await.text();
+    let forms = settings_pages::forms(&add);
+    assert_eq!(forms.len(), 1, "{forms:?}");
+    assert_eq!(forms[0].0, "/devices/new");
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(&cookie),
+            &[("name", "Anna")],
+        )
+        .await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM devices WHERE name = 'Anna'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let connect = format!("/devices/{id}/provision");
+    assert_redirect(&res, &connect, None);
+    assert_eq!(code_kind(&app, id).await, None, "no code yet");
+
+    let html = app.get_page(&connect, &cookie).await.text();
+    assert!(
+        html.contains("<h1 class=\"page-title\">Connect Anna</h1>"),
+        "{html}"
+    );
+    // Not set up yet: back to the phone's page, no "connected now" warning.
+    assert!(html.contains(&format!("class=\"nav-back\" href=\"/devices/{id}\"")));
+    assert!(!html.contains("data-warning=\"replaces\""));
+    let qr_action = format!("/devices/{id}/provision#qr");
+    let code_action = format!("/devices/{id}/regenerate-code");
+    let actions: Vec<String> = settings_pages::forms(&html)
+        .into_iter()
+        .map(|(action, _)| action)
+        .collect();
+    assert_eq!(actions, [qr_action.clone(), code_action.clone()]);
+    let form_at = html.find(&format!("action=\"{qr_action}\"")).unwrap();
+    assert!(settings_pages::encloses(&html, "qr", form_at));
+
+    for action in actions {
+        let fields: &[(&str, &str)] = if action == qr_action {
+            &[
+                ("wifi_ssid", "Hjemme"),
+                ("wifi_password", "not-a-real-pass"),
+            ]
+        } else {
+            &[]
+        };
+        let res = app
+            .request_form(Method::POST, &action, Some(&cookie), fields)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{action}");
+        assert_eq!(
+            res.headers.get(header::CACHE_CONTROL).unwrap(),
+            "no-store",
+            "{action}"
+        );
+        let text = res.text();
+        if action == qr_action {
+            // The QR code is in the group the form posted to, with its end in local time.
+            let qr_at = text.find("data-row=\"qr\"").unwrap();
+            assert!(settings_pages::encloses(&text, "qr", qr_at));
+            let until = settings_pages::part(&text, "data-row=\"until\"", "</div>");
+            assert!(until.contains(", once") && until.contains(':'), "{until}");
+            assert!(!until.contains("UTC"), "{until}");
+            assert!(text.contains("Make a New QR Code"));
+            // The network's name is kept, the password never comes back.
+            assert!(text.contains("value=\"Hjemme\""));
+            assert!(!text.contains("not-a-real-pass"));
+            assert!(text.contains(&format!("href=\"/devices/{id}\" data-row=\"done\"")));
+            assert_eq!(code_kind(&app, id).await.as_deref(), Some("qr"));
+        } else {
+            assert!(text.contains("class=\"enrollment-code\""));
+            assert!(text.contains("<h1 class=\"page-title\">Setup Code</h1>"));
+            assert!(settings_pages::forms(&text).is_empty());
+            assert!(text.contains(&format!("href=\"/devices/{id}\" data-row=\"done\"")));
+            let until = settings_pages::part(&text, "data-row=\"until\"", "</div>");
+            assert!(!until.contains("UTC"), "{until}");
+            assert_eq!(code_kind(&app, id).await.as_deref(), Some("typed"));
+        }
+    }
+}
+
+/// A phone that is connected: Connect and the code page go back to Advanced › Connection, say
+/// that a new code cuts the phone off, and have no Done.
+#[tokio::test]
+async fn connecting_a_connected_phone_again_says_what_happens() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let back = format!("class=\"nav-back\" href=\"/devices/{id}/advanced#connection\"");
+    let connect = app
+        .get_page(&format!("/devices/{id}/provision"), &cookie)
+        .await
+        .text();
+    assert!(connect.contains(&back), "{connect}");
+    assert!(connect.contains("data-warning=\"replaces\""));
+    let code = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/regenerate-code"),
+            Some(&cookie),
+            &[],
+        )
+        .await
+        .text();
+    assert!(code.contains(&back), "{code}");
+    assert!(code.contains("data-warning=\"replaces\""));
+    assert!(!code.contains("data-row=\"done\""));
+}
+
+/// Add Phone refuses an empty or too long name in place (400, the reason under the field, what was
+/// typed kept and escaped); nothing is made.
+#[tokio::test]
+async fn add_phone_refuses_a_bad_name_in_place() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let long = "A".repeat(crate::handlers::devices::MAX_DEVICE_NAME_CHARS + 1);
+    for (name, why) in [
+        ("", "Give the phone a name."),
+        ("   ", "Give the phone a name."),
+        (long.as_str(), "Use at most 40 characters."),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                "/devices/new",
+                Some(&cookie),
+                &[("name", name)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{name:?}");
+        let text = res.text();
+        assert!(
+            text.contains(&format!(
+                "<p class=\"field-error\" id=\"name-error\">{why}</p>"
+            )),
+            "{text}"
+        );
+        assert!(text.contains("aria-invalid=\"true\""));
+        assert!(text.contains(&format!("value=\"{}\"", name.trim())));
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(&cookie),
+            &[("name", &format!("<b>{long}"))],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(
+        res.text().contains("value=\"&#60;b&#62;AAAA"),
+        "{}",
+        res.text()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    // A name with spaces around it is trimmed.
+    app.request_form(
+        Method::POST,
+        "/devices/new",
+        Some(&cookie),
+        &[("name", "  Emil ")],
+    )
+    .await;
+    let name: String = sqlx::query_scalar("SELECT name FROM devices")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Emil");
+}
+
+/// A Wi-Fi field that can't be a real network is refused in its group before any code is made
+/// (400); the password is never typed back.
+#[tokio::test]
+async fn a_wifi_field_that_cant_be_right_is_refused_before_any_code() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    let before = code_hash(&app, id).await;
+    let long_name = "N".repeat(33);
+    let long_password = "p".repeat(64);
+    for (ssid, password, field) in [
+        (long_name.as_str(), "not-a-real-pass", "wifi_ssid"),
+        ("Hjemme", long_password.as_str(), "wifi_password"),
+        ("", "not-a-real-pass", "wifi_ssid"),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/provision"),
+                Some(&cookie),
+                &[("wifi_ssid", ssid), ("wifi_password", password)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{field}");
+        let text = res.text();
+        let input = settings_pages::part(&text, &format!("id=\"{field}\""), ">");
+        assert!(input.contains("aria-invalid=\"true\""), "{input}");
+        assert!(text.contains("Nothing was made."));
+        assert!(!text.contains(password), "the password came back");
+        assert!(!text.contains("data-row=\"qr\""));
+        assert_eq!(
+            code_hash(&app, id).await,
+            before,
+            "{field}: a code was made"
+        );
+    }
+}
+
+/// The Connect page's "Server setup needed": one red row, its env var and Phone Setup behind ⓘ
+/// only; without the checksum there's no QR form at all. An unknown phone is a 404.
+#[tokio::test]
+async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    // No server address yet (the default): the row, the QR form still there.
+    let html = app
+        .get_page(&format!("/devices/{id}/provision"), &cookie)
+        .await
+        .text();
+    let row = settings_pages::part(&html, "data-row=\"server-setup\"", "</details>");
+    assert!(row.contains("Server setup needed"), "{row}");
+    assert!(row.contains("data-missing=\"server-url\"") && row.contains("/settings/provisioning"));
+    assert!(!row.contains("data-missing=\"checksum\""));
+    assert!(html.contains(&format!("action=\"/devices/{id}/provision#qr\"")));
+    sqlx::query("UPDATE provisioning_settings SET server_url = 'https://pi.example.ts.net'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app
+        .get_page(&format!("/devices/{id}/provision"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("Server setup needed"), "{html}");
+
+    // Without the checksum: the row says so, the env var only inside the ⓘ panel, no QR form.
+    let mut state = app.state.clone();
+    let mut config = (*state.config).clone();
+    config.launcher_signature_checksum = None;
+    state.config = Arc::new(config);
+    let response = provisioning::provision_form(State(state), Path(id))
+        .await
+        .into_response();
+    let html = read_response(response).await.text();
+    let row = settings_pages::part(&html, "data-row=\"server-setup\"", "</details>");
+    let panel = settings_pages::part(row, "<div class=\"info-panel\">", "</div>");
+    assert!(panel.contains("LAUNCHER_SIGNATURE_CHECKSUM"), "{row}");
+    assert_eq!(html.matches("LAUNCHER_SIGNATURE_CHECKSUM").count(), 1);
+    assert!(
+        !html.contains("/provision#qr"),
+        "a QR form without a checksum"
+    );
+    // New Setup Code still works.
+    assert!(html.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+
+    for res in [
+        app.get_page("/devices/9999/provision", &cookie).await,
+        app.request_form(Method::POST, "/devices/9999/provision", Some(&cookie), &[])
+            .await,
+        app.request_form(
+            Method::POST,
+            "/devices/9999/regenerate-code",
+            Some(&cookie),
+            &[],
+        )
+        .await,
+    ] {
+        assert_eq!(res.status, StatusCode::NOT_FOUND);
+    }
+
+    // Settings that can't be read are a 500 - never a QR code without the server address and key.
+    let before = code_hash(&app, id).await;
+    sqlx::query("ALTER TABLE provisioning_settings RENAME TO provisioning_settings_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/provision"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(code_hash(&app, id).await, before, "no code was made");
 }

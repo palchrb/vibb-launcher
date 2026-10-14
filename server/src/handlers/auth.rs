@@ -37,7 +37,7 @@ pub struct LoginForm {
 fn render_login(error: Option<String>) -> Html<String> {
     Html(
         LoginTemplate {
-            title: "Sign in".to_string(),
+            title: "Sign In".to_string(),
             error,
         }
         .render()
@@ -213,7 +213,7 @@ pub async fn verify_2fa_form(session: Session) -> impl IntoResponse {
 fn render_verify(error: Option<String>) -> Html<String> {
     Html(
         Verify2faTemplate {
-            title: "Verify your code".to_string(),
+            title: "Two-Factor Code".to_string(),
             error,
         }
         .render()
@@ -372,7 +372,7 @@ pub async fn change_password_form(
     }
     Html(
         ChangePasswordTemplate {
-            title: "Change password".to_string(),
+            title: "New Password".to_string(),
             error: None,
         }
         .render()
@@ -397,7 +397,7 @@ pub async fn change_password(
     let render_error = |msg: &str| -> axum::response::Response {
         Html(
             ChangePasswordTemplate {
-                title: "Change password".to_string(),
+                title: "New Password".to_string(),
                 error: Some(msg.to_string()),
             }
             .render()
@@ -496,7 +496,7 @@ pub async fn setup_2fa_form(
 
     Html(
         Setup2faTemplate {
-            title: "Set up two-factor login".to_string(),
+            title: "Two-Factor Login".to_string(),
             qr_base64,
             secret_base32: secret,
             error: None,
@@ -539,7 +539,7 @@ pub async fn setup_2fa_verify(
         let qr_base64 = totp.get_qr_base64().expect("QR generation should not fail");
         return Html(
             Setup2faTemplate {
-                title: "Set up two-factor login".to_string(),
+                title: "Two-Factor Login".to_string(),
                 qr_base64,
                 secret_base32: secret,
                 error: Some("That code didn't match. Try again.".to_string()),

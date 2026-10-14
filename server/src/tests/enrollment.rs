@@ -270,8 +270,14 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
             &[("name", "Kid")],
         )
         .await;
-    let location = res.location().unwrap().to_string();
-    let id: i64 = location.trim_start_matches("/devices/").parse().unwrap();
+    // Add Phone goes on to Connect (design 31 §3.7), which offers the code.
+    let connect = res.location().unwrap().to_string();
+    let id: i64 = connect
+        .trim_start_matches("/devices/")
+        .trim_end_matches("/provision")
+        .parse()
+        .unwrap();
+    assert_eq!(connect, format!("/devices/{id}/provision"));
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)
@@ -279,9 +285,9 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
             .await
             .unwrap();
     assert_eq!(kind, None, "no code until one is asked for");
-    let page = app.get_page(&location, &cookie).await.text();
-    assert!(page.contains("Not enrolled yet"));
-    assert!(page.contains("regenerate-code"));
+    let page = app.get_page(&connect, &cookie).await.text();
+    assert!(page.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+    let location = format!("/devices/{id}");
 
     let first = app
         .request_form(
@@ -306,12 +312,13 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
     let page = app.get_page(&location, &cookie).await.text();
     assert!(page.contains("Setup code works until"), "{page}");
     assert!(!page.contains(&first_code));
-    // "Back" from the code page returns to the not-enrolled card.
+    // Back (and Done) from the code page return to the phone's page, where it waits to connect.
     assert!(
         first
             .text()
-            .contains(&format!("href=\"/devices/{id}#access\""))
+            .contains(&format!("class=\"nav-back\" href=\"/devices/{id}\""))
     );
+    assert!(!first.text().contains("#access"));
 
     let second = app
         .request_form(
@@ -437,7 +444,7 @@ async fn the_setup_qr_carries_a_qr_code() {
         .get_page(&format!("/devices/{id}/provision"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(!page.text().contains("class=\"qr-code\""));
+    assert!(!page.text().contains("data-row=\"qr\""));
     let res = enroll_from(&app, "203.0.113.7", &old).await;
     assert_eq!(res.status, StatusCode::OK, "the old code still works");
     let (id, old) = app.create_device("second").await;
@@ -451,7 +458,7 @@ async fn the_setup_qr_carries_a_qr_code() {
         )
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.text().contains("class=\"qr-code\""));
+    assert!(page.text().contains("data-row=\"qr\""));
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)
