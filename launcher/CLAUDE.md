@@ -437,6 +437,46 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **The call badge** (the cause was layout math, not clipping): items were `itemDp` = avatar + gap wide, so three 104 dp items made a 312 dp row in the 288 dp content. The row scrolled by 24 dp and the third contact's avatar and badge were cut at the screen edge. Now a row that fits gives each item `contactItemDp` = min(avatar + gap, content / count), in whole pixels rounded down by `contactItemPx` from the row's real width, `contactsContentPx` (Home's column measured once laid out, else `screenWidthDp` - 32 dp less a pixel; qa-34-s4-code L2) (`HomeActivity.renderContacts`: the item width and the name's `maxWidth`). On the Jelly Star that is 96 dp: the third badge's right edge sits at 282 of 288 dp, and the row neither scrolls nor fades. Wider screens keep 104 dp. Every item keeps `contactRoomDp` = avatar + 2 × 4 dp (the badge's 4 dp overhang, `CALL_BADGE_OVERHANG_DP`, from the layout; P2's focus ring, `PressFeedback.FOCUS_RING_GAP_DP`). `contactRow`'s 76 dp and 64 dp centred cases also need that room, else the next case or the scroll (this only bites below about 84 dp per contact, never at real widths). A scrolling row is unchanged.
 - Not emulator-checked yet (the list is in the design doc's "Step 4 implementation status"): Home at font scale 1.0/1.3/2.0 (`docs/testing/emulator.md` §3b), 3 and 4 columns, the fade ramps over a photo wallpaper, the contacts row with 3 and 5 contacts, the swipes and long-press with the new grid class, the contacts-row swipes (M1: on a contact and between contacts, as the first gesture and after a grid tap) and a `dumpsys gfxinfo` frame-time check.
 
+## One clock format on the whole phone (design 34 step 6, P12, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Vibb never has a format of its own** (`ui/ClockFormat.kt`, `ClockFormatTest`): every clock time follows the phone's
+  system format, as the status bar does - `Settings.System.TIME_12_24` when it is "24"/"12", else the default of the
+  **system** locale, read from `LocaleManager.systemLocales` (qa-34-s6-code M1: on Android 13+ `Resources.getSystem()`
+  and `Locale.getDefault()` carry Vibb's per-app language in our process; they are only the fallbacks,
+  `chooseSystemLocale`). The pattern is the system locale's own (`getBestDateTimePattern` with the hour field forced,
+  skeleton "Hm"/"hm"), so fi's `H.mm` matches its status bar (N6). **Clock faces** (`formatTime`, `bind`) drop the
+  AM/PM marker like the status bar ("6:15"); **end times** (`formatUntil`: "until 9:30 PM") keep it in 12 h (L1) - the
+  lock's "until", Home's window banner, the relock notification (`WindowRelock`), install mode's notification
+  (`PlayRuntime`) and its Settings summary (`SettingsFragmentLauncher`). Faces: the glance clock and row times
+  (`GlancePanel`), the missed-call text. The two time TextClocks (`lock_clock`, `lock_glance_clock`; the XML keeps
+  `h:mm`/`HH:mm` for the first frame) get both formats set to the system's face pattern by `ClockFormat.bind` on the
+  start/resume path (`LockActivity.onStart`, `GlancePanel.resumeNow` - pinned by the test, not only in the watch
+  lambda), and the two lock screens `watch` `TIME_12_24` and `ACTION_LOCALE_CHANGED` while started (bind + re-render;
+  the PIN lock handles `locale` itself, so it isn't recreated). Durations (the call screen, Home's call card, the music
+  position, the PIN back-off) are not clocks. **Only `ui/ClockFormat.kt` may call `is24HourFormat`/`getTimeFormat`/
+  `getTimeInstance`/`ofLocalizedTime`/`FORMAT_SHOW_TIME`, ask `getBestDateTimePattern` for an hour field, spell a time
+  pattern or build one from `${...hour}`** (`ClockFormatTest`'s source scan, comments stripped); every TextClock with a
+  time format must be bound, and each surface's string takes its time straight from `formatTime`/`formatUntil`
+  (structural regexes, N5).
+- **The PWA sets the phone's format** (`server/ClockFormatSetting.kt`, pure `clockFormatChoiceOf`/`clockFormatWrite`/
+  `clockBeforeAfterPut`/`clockFormatApplied`, `ClockFormatSettingTest`): `launcher_ui.clock_format`
+  (`LauncherUi.clockFormat: String?`; missing, `null` or unknown = "system", `PolicyResponseCompatTest`). Every
+  `AppEnforcer.apply()` writes `TIME_12_24` = "24"/"12" when it differs; "system" writes nothing, except putting back
+  what the phone had before our first write (CE prefs `clock_format_state`: `clock_written` our value, `clock_before`
+  the phone's own - unset or a hand-set value; N4) once, only while the setting still holds our value; a hand change
+  since is left alone. **No `launcher_ui`** (no policy, an older server, the last-enforced fallback) is no choice
+  (`clockFormatChoiceOf(null)` = null) and never writes (L2: else a fallback would put back the parent's 24 h). Not a
+  restriction: the override and the pause change nothing, and the write never lifts `DISALLOW_CONFIG_DATE_TIME`
+  (pinned: `applyDateTimeLock` is called once, before the write, and nothing after it in `apply()` touches the
+  restriction). **Android's limit**: a device owner can't write it (`setSystemSetting` takes only brightness and the
+  screen-off timeout); the manifest declares `WRITE_SETTINGS` and the "Modify system settings" app-op is granted once
+  with adb (`adb shell appops set me.vibb.launcher WRITE_SETTINGS allow`, `docs/testing/emulator.md` §4) or by the
+  parent during a pause. Without it (`Settings.System.canWrite` false) nothing is written.
+- **Status** `clock_format_applied`: `true`/`false` = whether `TIME_12_24` reads back as the choice (so a missing
+  app-op and a refused write are both `false`; the PWA warns), left out (`null`) for "Follow the phone" or without
+  `launcher_ui`. Device check (design 34 step 6): whether SettingsProvider refuses the write under our
+  `DISALLOW_CONFIG_DATE_TIME` - the restriction is never lifted for it.
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.

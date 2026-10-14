@@ -15,7 +15,7 @@ import java.util.Date
 object MissedCallText {
     fun describe(context: Context, summary: MissedSummary, zone: ZoneId = ZoneId.systemDefault()): String {
         val at = Instant.ofEpochMilli(summary.lastAtMs).atZone(zone)
-        val time = DateFormat.getTimeFormat(context).format(Date(summary.lastAtMs))
+        val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, summary.lastAtMs, zone)
         val whenText = when (relativeDay(at.toLocalDate().toEpochDay(), LocalDate.now(zone).toEpochDay())) {
             RelativeDay.TODAY -> context.getString(R.string.missed_when_today, time)
             RelativeDay.YESTERDAY -> context.getString(R.string.missed_when_yesterday, time)

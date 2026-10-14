@@ -2282,8 +2282,10 @@ pub async fn update_hardening(
     }
 }
 
-/// Home Screen's language ("system", "nb", "en") and apps per row (3 or 4): one auto-saving form
-/// (design 31 §5.6); an unknown value is a 400 and nothing is written. Back to its group,
+/// Home Screen's language ("system", "nb", "en"), apps per row (3 or 4) and the phone's clock
+/// format ("system", "24", "12"; design 34 P12): one auto-saving form (design 31 §5.6); an unknown
+/// value is a 400 and nothing is written. A form without `clock_format` (a page cached before the
+/// field existed) keeps the stored format (qa-34-design L10). Back to its group,
 /// `/devices/{id}/home#layout` (§5.1.4).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
@@ -2295,19 +2297,25 @@ pub async fn update_launcher_ui(
         .get("home_columns")
         .and_then(|c| c.parse::<i64>().ok())
         .unwrap_or(3);
-    if !crate::models::LAUNCHER_LANGUAGES.contains(&language) || !(columns == 3 || columns == 4) {
+    let clock_format = form.get("clock_format").map(String::as_str);
+    if !crate::models::LAUNCHER_LANGUAGES.contains(&language)
+        || !(columns == 3 || columns == 4)
+        || clock_format.is_some_and(|f| !crate::models::CLOCK_FORMATS.contains(&f))
+    {
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            "Unknown language or column count",
+            "Unknown language, column count or clock format",
         )
             .into_response();
     }
     let result = sqlx::query(
         "UPDATE device_policy SET launcher_language = ?, home_columns = ?, \
-         updated_at = datetime('now') WHERE device_id = ?",
+         clock_format = COALESCE(?, clock_format), updated_at = datetime('now') \
+         WHERE device_id = ?",
     )
     .bind(language)
     .bind(columns)
+    .bind(clock_format)
     .bind(id)
     .execute(&state.db)
     .await;

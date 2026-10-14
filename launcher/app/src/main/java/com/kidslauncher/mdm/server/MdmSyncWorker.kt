@@ -253,6 +253,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 relockBlocksTotal = blocks?.second,
                 remoteWipeReady = LocateCommands.remoteWipeReady(context),
                 adminPoliciesPending = AdminPolicies.pending(context),
+                clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

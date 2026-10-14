@@ -927,6 +927,11 @@ async fn home_screen_holds_the_moved_forms() {
         form_action_of(&html, "home_columns"),
         Some(launcher.as_str())
     );
+    // Design 34 P12: the clock format is in the same form.
+    assert_eq!(
+        form_action_of(&html, "clock_format"),
+        Some(launcher.as_str())
+    );
     assert_eq!(
         form_action_of(&html, "wallpaper"),
         Some(format!("/devices/{id}/wallpapers#wallpapers").as_str())
@@ -951,6 +956,7 @@ async fn home_screen_holds_the_moved_forms() {
         &[
             "language",
             "home_columns",
+            "clock_format",
             "wallpaper",
             "quick_control_wifi",
         ],
@@ -1181,7 +1187,11 @@ async fn home_and_filter_forms_return_to_their_page() {
         vec![
             (
                 d("launcher#layout"),
-                &[("language", "en"), ("home_columns", "4")],
+                &[
+                    ("language", "en"),
+                    ("home_columns", "4"),
+                    ("clock_format", "24"),
+                ],
             ),
             // Navy only.
             (d("wallpapers#wallpapers"), &[("wallpaper", "1")]),

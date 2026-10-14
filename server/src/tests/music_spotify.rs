@@ -166,26 +166,28 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
         .unwrap()
 }
 
-/// The migrations end with design 30's 0073, then Spotify's 0074 (qa-26c-merge3-code L3).
-/// `startup::pre_migration_backup` compares only `MAX(version)`: a 0073 reaching a server that has
-/// run 0074 would be applied out of order with no backup first, so neither side may renumber past
-/// the other. Relax this to "74 is Spotify's" once `main` has released 0074.
+/// Design 30's 0073, then Spotify's 0074 (qa-26c-merge3-code L3), then design 34's 0075 (the clock
+/// format). `startup::pre_migration_backup` compares only `MAX(version)`: a 0073 reaching a server
+/// that has run 0074 would be applied out of order with no backup first, so neither side may
+/// renumber past the other. Design 34 step 6 relaxed it to "74 is Spotify's, just above design
+/// 30's 73", as this test's note asked once 0074 was on `main`, and renamed it (it was
+/// `the_migrations_end_with_design_30_then_spotify`; qa-34-s6-code N2).
 #[test]
-fn the_migrations_end_with_design_30_then_spotify() {
-    let tail: Vec<(i64, String)> = crate::MIGRATOR
+fn migrations_73_74_75_in_order() {
+    let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .rev()
-        .take(2)
+        .filter(|m| (73..=75).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
-        tail,
+        versions,
         [
+            (73, "music data and storage".to_string()),
             (74, "music spotify".to_string()),
-            (73, "music data and storage".to_string())
+            (75, "clock format".to_string())
         ],
-        "0073 (design 30) must stay just below 0074 (Spotify): the backup before migrating \
-         compares only the highest version"
+        "0073 (design 30), 0074 (Spotify) and 0075 (the clock format) stay in this order: the \
+         backup before migrating compares only the highest version"
     );
 }
 

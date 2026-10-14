@@ -93,9 +93,9 @@ adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
 # Security review L7: the incoming-call filter when the launcher isn't the phone app.
 adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
-# Design 34 P12 (step 6, not built yet - granting it now is harmless and saves a step later): the clock format
-# (Follow / 24 h / 12 h) goes to TIME_12_24 through the WRITE_SETTINGS app-op, which a device owner can't grant
-# itself (TIME_12_24 isn't on setSystemSetting's list; kid Settings' brightness is, so it needs no app-op).
+# Design 34 P12 (step 6): the PWA's clock format (Follow / 24 h / 12 h) goes to TIME_12_24 through the
+# WRITE_SETTINGS app-op, which a device owner can't grant itself (TIME_12_24 isn't on setSystemSetting's list;
+# kid Settings' brightness is, so it needs no app-op). Without it the PWA's Home Screen warns.
 adb shell appops set $P WRITE_SETTINGS allow
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.

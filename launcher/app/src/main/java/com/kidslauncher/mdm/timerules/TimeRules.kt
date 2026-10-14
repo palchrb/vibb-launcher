@@ -268,9 +268,6 @@ fun legacyTimePolicy(
 /** Local date-time of [instant] in [zone]. */
 fun localAt(instant: Instant, zone: ZoneId): LocalDateTime = LocalDateTime.ofInstant(instant, zone)
 
-/** `HH:mm` of a local date-time, for the lock screen. */
-fun LocalDateTime.clockText(): String = "%02d:%02d".format(hour, minute)
-
 /**
  * The device-protected copy of the no-calls rules, read before the first unlock after a reboot
  * (when the CE policy cache can't be read): only each such rule's windows - no names, apps or

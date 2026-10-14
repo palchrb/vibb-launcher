@@ -479,6 +479,10 @@ object AppEnforcer {
 
         applyDateTimeLock(dpm, admin, plan.lockDateTime)
 
+        // One clock format on the whole phone (design 34 P12): TIME_12_24 through the "Modify system
+        // settings" app-op, not a restriction - the override and the pause change nothing.
+        ClockFormatSetting.apply(context, policy?.launcherUi)
+
         // Vibb music's volume cap (design 21 §3): while managed, lifted by the override and the pause.
         com.kidslauncher.mdm.music.VolumeCap.refresh(context, policy, managedForHardening, overrideActive)
 

@@ -388,6 +388,7 @@ async fn policy_json_keys_snapshot() {
         ui_keys,
         [
             "app_display",
+            "clock_format",
             "home_columns",
             "language",
             "lock_wallpaper",
