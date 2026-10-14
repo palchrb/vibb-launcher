@@ -51,6 +51,38 @@ In the PWA, **before** enrolling the phone:
 - Wipe data in Device Manager (no Google account may be on it), boot, skip setup.
 - Take an AVD snapshot now ("clean") so you can go back in seconds.
 
+## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
+
+**Density.** The AVD `handy36` runs 480x854 at 320 dpi = 240x427 dp; the Jelly Star is 480x854 at 240 dpi =
+320x569 dp (what `PinLockLayoutTest`, `FitTest` and `KidHeaderLayoutTest` assume). At 320 dpi the call screen's
+Hang up is off the bottom, the incoming call's buttons are cut in half and Home's labels ellipsize. Check every
+screen at the Jelly Star's size:
+
+```sh
+adb shell wm density 240                         # 320x569 dp, the Jelly Star
+adb shell settings put system font_scale 1.3     # large text; 2.0 for the floor (design 34 P4, P7, P10)
+# Afterwards - back to the AVD's own values:
+adb shell wm density reset
+adb shell settings put system font_scale 1.0
+```
+
+The AVD's own 240x427 dp is still a useful stand-in for a large font scale. Screenshots of the lock (secure
+window) go through the emulator console (§6c item 10).
+
+**An `adb install`ed app is held** (expected): the launcher's install check outside a Play window blocks any app
+another installer put on the phone (`relock_blocks`, reason `outside_play`, design 24b) - it stays hidden whatever
+its tick. Let it out from the PWA: the phone's summary › Blocked Apps › **Allow these apps…** (the phone lets out
+exactly the listed apps with the keys shown).
+
+**Time zone** (design 34 P13): the launcher forces automatic time zone, so the emulator's network zone wins over
+Settings. Read it and give Phone Setup the same one, so the PWA's "Locked until ..." can show:
+
+```sh
+adb shell getprop persist.sys.timezone           # e.g. Europe/Oslo, or GMT on a fresh AVD
+```
+
+Then Settings › Phone Setup › Time zone = that value.
+
 ## 4. Provision (adb on the VM)
 
 ```sh
@@ -61,6 +93,9 @@ adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
 # Security review L7: the incoming-call filter when the launcher isn't the phone app.
 adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
+# Design 34 P12: the clock format (Follow / 24 h / 12 h) is written to the system's TIME_12_24 through the
+# WRITE_SETTINGS app-op, which a device owner can't grant itself; on a phone it's this line too.
+adb shell appops set $P WRITE_SETTINGS allow
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
 adb shell dumpsys deviceidle whitelist +$P
