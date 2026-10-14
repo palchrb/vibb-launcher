@@ -16,7 +16,8 @@
     <string name="categories">Categories</string>
     <string name="category_all">All</string>
     <string name="open_player">Open the player</string>
-    <string name="no_library">No library</string>
+    <string name="no_library">Your music will appear here</string>
+    <string name="no_library_body">Mum or dad adds music, podcasts and books. They show up here by themselves.</string>
     <string name="new_badge">NEW</string>
     <string name="kind_podcast">Podcast</string>
     <string name="kind_own">Own files</string>

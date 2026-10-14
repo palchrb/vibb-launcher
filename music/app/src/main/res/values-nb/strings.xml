@@ -14,7 +14,8 @@
     <string name="categories">Kategorier</string>
     <string name="category_all">Alle</string>
     <string name="open_player">Åpne avspilling</string>
-    <string name="no_library">Ingen bibliotek</string>
+    <string name="no_library">Her kommer musikken din</string>
+    <string name="no_library_body">Mamma eller pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv.</string>
     <string name="new_badge">NY</string>
     <string name="kind_podcast">Podkast</string>
     <string name="kind_own">Egne filer</string>

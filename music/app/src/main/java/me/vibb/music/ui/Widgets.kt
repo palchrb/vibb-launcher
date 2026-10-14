@@ -20,14 +20,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -284,6 +288,41 @@ fun Sheet(title: String, onDismiss: () -> Unit, gap: Dp, content: @Composable ()
             Box(Modifier.align(Alignment.CenterHorizontally).width(40.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Palette.dot))
             Line(title, 18, 800, Palette.white, Modifier.align(Alignment.CenterHorizontally))
             content()
+        }
+    }
+}
+
+/** The empty states' disc and its glyph (design 34 P10 a), dp. */
+const val EMPTY_DISC_DP = 104
+const val EMPTY_GLYPH_DP = 40
+
+/**
+ * An empty state (design 34 P10 a): a [EMPTY_DISC_DP] dp night disc with [icon] in peach and P2's soft shadow, the
+ * [headline] and an optional [body] under it, centred in [modifier]'s room ([centred]) or from its top (search, above
+ * the keyboard). The disc is decorative (QA L7: no description, the headline is the text); TalkBack reads the texts as
+ * one. It scrolls only when a large font makes it taller than its room; nothing in it moves on its own.
+ */
+@Composable
+fun EmptyState(icon: ImageVector, headline: String, body: String?, modifier: Modifier = Modifier, centred: Boolean = true) {
+    BoxWithConstraints(modifier) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
+                .padding(horizontal = 16.dp, vertical = if (centred) 0.dp else 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = if (centred) Arrangement.Center else Arrangement.Top,
+        ) {
+            Box(
+                Modifier.size(EMPTY_DISC_DP.dp).shadow(BAR_ELEVATION_DP.dp, CircleShape).background(Palette.card),
+                contentAlignment = Alignment.Center,
+            ) { Glyph(icon, EMPTY_GLYPH_DP.dp, Palette.peach) }
+            Column(
+                Modifier.fillMaxWidth().padding(top = 20.dp).semantics(mergeDescendants = true) {},
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Line(headline, 19, 800, Palette.fg, Modifier.fillMaxWidth(), maxLines = Int.MAX_VALUE, center = true)
+                if (body != null) Line(body, 15, 700, Palette.dim, Modifier.fillMaxWidth(), maxLines = Int.MAX_VALUE, center = true)
+            }
         }
     }
 }

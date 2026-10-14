@@ -72,18 +72,68 @@ fun flexWidths(available: Int, weights: List<Float>, mins: List<Int>): List<Int>
 /** Five category tiles fill the row with four 4 dp gaps (more scroll), each wide enough for its 44 dp circle. */
 fun categoryTileWidth(availableDp: Float): Float = (availableDp - 4 * 4) / 5
 
-/** The carousel's 180 dp cover, centred: the room left on each side of it (dp). */
-fun carouselSide(availableDp: Float): Float = ((availableDp - CAROUSEL_COVER_DP) / 2).coerceAtLeast(0f)
+/** The carousel's cover (at most 180 dp, [libraryCover]), centred: the room left on each side of it (dp). */
+fun carouselSide(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float = ((availableDp - coverDp) / 2).coerceAtLeast(0f)
 
+/** The library's cover at its largest (mockup v12). */
 const val CAROUSEL_COVER_DP = 180
 const val CAROUSEL_SPACING_DP = 8
 
 /**
- * How much of a neighbouring cover shows beside the centred one (dp): pages are 180 dp apart by 8 dp,
+ * How much of a neighbouring cover shows beside the centred one (dp): pages are a cover apart by 8 dp,
  * a neighbour is scaled to 0.733 about its centre and pulled in by as much as that took off its near
- * edge (24 dp), so its near edge stays where the page starts - 46 dp on the Jelly Star.
+ * edge ([carouselPull], 24 dp at 180), so its near edge stays where the page starts - 46 dp on the Jelly Star.
  */
-fun carouselPeek(availableDp: Float): Float = availableDp - (carouselSide(availableDp) + CAROUSEL_COVER_DP + CAROUSEL_SPACING_DP)
+fun carouselPeek(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float =
+    availableDp - (carouselSide(availableDp, coverDp) + coverDp + CAROUSEL_SPACING_DP)
+
+/** A library neighbour scaled to [NEIGHBOUR_SCALE] is pulled in by what that took off its near edge (dp). */
+fun carouselPull(coverDp: Float): Float = coverDp * (1 - NEIGHBOUR_SCALE) / 2
+
+/** The category glyph on a cover without art: 84 dp on the 180 dp cover, in proportion below it. */
+fun carouselGlyph(coverDp: Float): Float = 84f * coverDp / CAROUSEL_COVER_DP
+
+/*
+ * The library's fit (design 34 P10 b, QA L1): the carousel sits in the weighted slot between the header and the
+ * category tiles + now-playing bar, which always keep their own height. The cover is sized from the slot as measured
+ * (a BoxWithConstraints), less the title and hint lines as measured at the font scale, less the fixed rest:
+ * min(180, what is left), never under 120 - below that the slot scrolls, so nothing ever slides under the tiles or
+ * the bar.
+ */
+
+/** The smallest library cover; below it the slot scrolls (QA L1). */
+const val LIBRARY_COVER_MIN_DP = 120
+
+/** The pager's box is the cover plus this (its shadow's margin, v12's 184 for 180). */
+const val CAROUSEL_BOX_EXTRA_DP = 4
+
+/** The gap between the pager, the title block and the dots. */
+const val CAROUSEL_GAP_DP = 8
+
+/** The dots' height. */
+const val CAROUSEL_DOTS_DP = 8
+
+/**
+ * The title block's fixed part (dp): the 3 dp between the title and the hint, and the progress line's 3 + 3 + 4 -
+ * always reserved, so the cover keeps its size when the carousel turns to an entry with or without progress.
+ */
+const val CAROUSEL_TITLE_FIXED_DP = 3 + 3 + 3 + 4
+
+/** Everything in the slot but the cover and the two text lines (dp): 41. */
+const val LIBRARY_SLOT_FIXED_DP = CAROUSEL_BOX_EXTRA_DP + CAROUSEL_GAP_DP + CAROUSEL_TITLE_FIXED_DP + CAROUSEL_GAP_DP + CAROUSEL_DOTS_DP
+
+/** What the slot [slotDp] leaves the cover once the title and hint lines ([linesDp], measured) and the fixed rest are in. */
+private fun libraryRoom(slotDp: Float, linesDp: Float): Float = slotDp - linesDp - LIBRARY_SLOT_FIXED_DP
+
+/** The library's cover (dp): min(180, the room the slot leaves), floor 120. */
+fun libraryCover(slotDp: Float, linesDp: Float): Float =
+    libraryRoom(slotDp, linesDp).coerceIn(LIBRARY_COVER_MIN_DP.toFloat(), CAROUSEL_COVER_DP.toFloat())
+
+/** Below the floor the slot scrolls rather than overlap. */
+fun libraryScrolls(slotDp: Float, linesDp: Float): Boolean = libraryRoom(slotDp, linesDp) < LIBRARY_COVER_MIN_DP
+
+/** The slot's content (dp) with a cover of [coverDp]: what scrolls when it is taller than the slot. */
+fun librarySlotContent(coverDp: Float, linesDp: Float): Float = coverDp + linesDp + LIBRARY_SLOT_FIXED_DP
 
 // The player's art (design 27 §3.3): today's single cover, or the episode carousel in its place.
 
