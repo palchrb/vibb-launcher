@@ -867,7 +867,9 @@ class GuardsTest {
         assertTrue("no offline summary for Spotify", root.contains("if (isSpotify(n.entry)) null else offlineSummary("))
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.spotifyOutcomes().map { it?.outcome }"))
         assertTrue(code("src/main/java/me/vibb/music/ui/LibraryScreen.kt").contains("Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)"))
-        assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (kindOf(now.entry) == Kind.SPOTIFY) Line(stringResource(R.string.kind_spotify), 11, 800, Palette.dim)"))
+        // step 8: no source line under the title - the player looks the same for every source
+        assertFalse(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("kind_spotify"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("Kind.MUSIC -> R.string.track_of"))
         // the fake's tokens only without a launcher (§9.3): a managed phone asks the bridge
         assertTrue(renderer.contains("if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {"))
     }
@@ -908,9 +910,11 @@ class GuardsTest {
         assertTrue(store.contains("spotifyContextFlow(),\n    ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }"))
         assertTrue(store.contains("return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)"))
         assertTrue(code("src/main/java/me/vibb/music/data/Snapshot.kt").contains("listed[e.id] = listOf(contextItem(e, spotifyContexts[e.key]))"))
-        // the UI: no number and no instant step for a context; the list says Spotify picks the order
+        // the UI: no number and no instant step for a context; the list says the order is picked (no source, step 8)
         assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)"))
-        assertTrue(code("src/main/java/me/vibb/music/ui/ListScreens.kt").contains("if (isSpotifyContext(entry)) stringResource(R.string.hint_spotify_picks, spotify) else spotify"))
+        val list = code("src/main/java/me/vibb/music/ui/ListScreens.kt")
+        assertTrue(list.contains("} else if (isSpotifyContext(entry)) {\n            \n            Line(stringResource(R.string.hint_spotify_picks, kindText(kindOf(entry))), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)\n        }"))
+        assertFalse("no source line in a list-mode entry's place", list.contains("kind_spotify"))
         // the fix round (qa-26c-step6-code): L4 - a parsed library prunes the rows of entries not in context mode, and the
         // renderer's main-thread read never takes the store's lock once loaded; L2 - one rule for an artist's place
         val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")

@@ -134,7 +134,7 @@ class SpotifyRulesTest {
         assertEquals("the item by its stable key", contextItem(artist), snap.item(7, SPOTIFY_CONTEXT_KEY))
         assertTrue("never on the phone", snap.onPhone[7].orEmpty().isEmpty())
         assertEquals("spotify", PlayBodies.speakerDropReason(artist, snap.visible(artist)[0]))
-        assertEquals("Spotify picks: no N av M", Hint.Picks(Kind.SPOTIFY), hint(artist, listOf(SPOTIFY_CONTEXT_KEY), me.vibb.music.logic.Bookmark(SPOTIFY_CONTEXT_KEY, 60_000)))
+        assertEquals("Spotify picks: no N av M", Hint.Picks(Kind.MUSIC), hint(artist, listOf(SPOTIFY_CONTEXT_KEY), me.vibb.music.logic.Bookmark(SPOTIFY_CONTEXT_KEY, 60_000)))
         assertEquals("the context's uri plays it", "spotify:artist:FAKEid7", me.vibb.music.playback.spotifyItemUri(artist, SPOTIFY_CONTEXT_KEY))
         assertTrue("hidden while Spotify can't play (the tests' switch)", snap.copy(spotifyPlayable = false).visible(artist).isEmpty())
         // a list-mode entry is unchanged: its listed tracks
@@ -291,14 +291,16 @@ class SpotifyRulesTest {
     }
 
     @Test
-    fun `the words - Spotify is the kind, tracks or episodes by what the entry lists`() {
-        assertEquals(Kind.SPOTIFY, kindOf(spotify(6, "playlist")))
-        assertEquals(Hint.Started(Kind.SPOTIFY, 2, 3, episodes = false), hint(spotify(6, "playlist"), listOf("a", "b", "c"), me.vibb.music.logic.Bookmark("b", 1_000)))
-        assertEquals(Hint.Started(Kind.SPOTIFY, 2, 3, episodes = true), hint(spotify(6, "show"), listOf("a", "b", "c"), me.vibb.music.logic.Bookmark("b", 1_000)))
-        assertEquals(Hint.NotStarted(Kind.SPOTIFY), hint(spotify(6, "playlist"), listOf("a"), null))
+    fun `the words - the kind is what the entry holds, never the source (step 8)`() {
+        for (kind in listOf("playlist", "album", "track", "artist")) assertEquals(kind, Kind.MUSIC, kindOf(spotify(6, kind)))
+        for (kind in listOf("show", "episode")) assertEquals(kind, Kind.PODCAST, kindOf(spotify(6, kind)))
+        assertEquals("music's tracks", Hint.Started(Kind.MUSIC, 2, 3), hint(spotify(6, "playlist"), listOf("a", "b", "c"), me.vibb.music.logic.Bookmark("b", 1_000)))
+        assertEquals("a podcast's episodes, as NRK's and RSS's", Hint.Started(Kind.PODCAST, 2, 3), hint(spotify(6, "show"), listOf("a", "b", "c"), me.vibb.music.logic.Bookmark("b", 1_000)))
+        assertEquals(Hint.NotStarted(Kind.MUSIC), hint(spotify(6, "playlist"), listOf("a"), null))
         val strings = Fixtures.moduleFile("src/main/res/values/strings.xml").readText()
         val nb = Fixtures.moduleFile("src/main/res/values-nb/strings.xml").readText()
-        assertTrue("the attribution, both locales", strings.contains("<string name=\"kind_spotify\">Spotify</string>") && nb.contains("<string name=\"kind_spotify\">Spotify</string>"))
+        assertTrue("the kind's word, both locales", strings.contains("<string name=\"kind_music\">Music</string>") && nb.contains("<string name=\"kind_music\">Musikk</string>"))
+        assertFalse("no Spotify kind", strings.contains("kind_spotify") || nb.contains("kind_spotify"))
     }
 
     // --- step 4: the player's pure rules -------------------------------------------------------------

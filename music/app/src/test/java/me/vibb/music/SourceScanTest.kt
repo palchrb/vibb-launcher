@@ -237,17 +237,17 @@ class SourceScanTest {
 
     // Storytel (design 26b §0, §3.5, §6.1; QA L9, M2).
 
-    /** Design 26c §5.8: the player's Spotify lines as the app spells them in bokmål. */
+    /** Design 26c §5.8, step 8: the web player's lines as the app spells them in bokmål - none names the source. */
     @Test
-    fun `nb has Spotify's renderer lines`() {
+    fun `nb has the web player's renderer lines`() {
         val nb = strings("src/main/res/values-nb/strings.xml")
-        assertEquals("Spotify - trenger Wi-Fi", nb["renderer_spotify_needs_wifi"])
-        assertEquals("Spotify - trenger internett", nb["renderer_spotify_needs_internet"])
-        assertEquals("Spotify er ikke tilgjengelig nå", nb["renderer_spotify_unavailable"])
-        assertEquals("Spotify - spør en voksen", nb["renderer_spotify_ask_adult"])
-        assertEquals("Spotify virker ikke på telefonen", nb["renderer_spotify_not_on_phone"])
-        assertEquals("Spotify spiller et annet sted", nb["renderer_spotify_elsewhere"])
-        assertEquals("Spotify stoppet - trykk spill", nb["renderer_spotify_stopped"])
+        assertEquals("Trenger Wi-Fi", nb["renderer_spotify_needs_wifi"])
+        assertEquals("Trenger internett", nb["renderer_spotify_needs_internet"])
+        assertEquals("Ikke tilgjengelig nå", nb["renderer_spotify_unavailable"])
+        assertEquals("Spør en voksen", nb["renderer_spotify_ask_adult"])
+        assertEquals("Virker ikke på telefonen", nb["renderer_spotify_not_on_phone"])
+        assertEquals("Spilles et annet sted", nb["renderer_spotify_elsewhere"])
+        assertEquals("Stoppet - trykk spill", nb["renderer_spotify_stopped"])
         val screen = code(moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt"))
         for (state in me.vibb.music.playback.RendererState.entries) {
             assertTrue("$state has its line", screen.contains("RendererState.${state.name} -> R.string.renderer_"))
@@ -432,7 +432,7 @@ class SourceScanTest {
     /**
      * Design 26c step 5b (§7.1, qa-26c-step5a-code L8): the web player is made only by the service, with a log that is
      * a debug build's only and writes the renderer's fixed words as they are; the outcome file is the store's alone
-     * and holds a word; the tile and the player say "Spotify" in both languages.
+     * and holds a word. (The tile's and the player's "Spotify" went in step 8: see the next test.)
      */
     @Test
     fun `5b - the web player's log is debug-only, it is made by the service alone, and the outcome file holds a word`() {
@@ -450,9 +450,27 @@ class SourceScanTest {
         assertTrue("tmp + rename", store.contains("writeAtomic(spotifyStateFile, next.encode().toByteArray())"))
         val logic = code(moduleFile("src/main/java/me/vibb/music/logic/Spotify.kt"))
         assertTrue("the file is the word and its time", logic.contains("put(\"outcome\", outcome)\n        put(\"at\", atMs)\n    }.toString()"))
-        // the attribution and the lines, in both languages
+    }
+
+    /**
+     * Design 26c step 8 (the user's decision, 2026-10-14): the kid's app shows no trace of Spotify - a Spotify entry is
+     * a tile like NRK, RSS, Storytel or own files. No string in either language says "Spotify" (the names of the
+     * strings may: they are code), no screen spells it, and the kind is the content's: "Musikk" or "Podkast".
+     */
+    @Test
+    fun `step 8 - no kid-facing string or screen names Spotify`() {
         for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
-            assertEquals(path, "Spotify", strings(path)["kind_spotify"])
+            val values = strings(path)
+            for ((name, text) in values) assertFalse("$path: $name = $text", text.contains("spotify", ignoreCase = true))
+            assertFalse("$path: no kind_spotify", "kind_spotify" in values)
+        }
+        assertEquals("Musikk", strings("src/main/res/values-nb/strings.xml")["kind_music"])
+        assertEquals("Music", strings("src/main/res/values/strings.xml")["kind_music"])
+        for (file in sources("src/main/java").filter { it.path.contains("/ui/") }) {
+            val text = code(file)
+            assertFalse("${file.name}: no kind_spotify", text.contains("kind_spotify"))
+            // no string literal on a screen names it (identifiers like isSpotify are code, not words)
+            assertFalse("${file.name}: no \"Spotify\" literal", Regex("\"[^\"\n]*Spotify[^\"\n]*\"").containsMatchIn(text))
         }
     }
 

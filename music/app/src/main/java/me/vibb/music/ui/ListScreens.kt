@@ -39,10 +39,10 @@ import me.vibb.music.logic.OfflineSummary
 import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.formatDuration
 import me.vibb.music.logic.isSpotifyContext
+import me.vibb.music.logic.kindOf
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
-import me.vibb.music.spotify.spotifyEpisodes
 
 @Composable
 private fun Header(backLabel: String, onBack: () -> Unit, title: String?, trailing: @Composable () -> Unit = { Box(Modifier.size(44.dp)) }) {
@@ -53,7 +53,10 @@ private fun Header(backLabel: String, onBack: () -> Unit, title: String?, traili
     }
 }
 
-/** "Liste" (`onList`): the offline summary (none for Spotify, which streams only: [summary] null) and the rows in the order they play. */
+/**
+ * "Liste" (`onList`): the offline summary (none for Spotify, which streams only: [summary] null - no line, or for a
+ * context the hint that the order is picked, design 26c §5.9; no source named, step 8) and the rows in the order they play.
+ */
 @Composable
 fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -69,14 +72,9 @@ fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBa
                     12, 800, Palette.sub,
                 )
             }
-        } else {
-            // the attribution (design 26c §4.3, Developer Policy §II): the list's source - and for a context (§5.9) that
-            // Spotify picks the order: its one row is the track playing now
-            val spotify = stringResource(R.string.kind_spotify)
-            Line(
-                if (isSpotifyContext(entry)) stringResource(R.string.hint_spotify_picks, spotify) else spotify,
-                12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true,
-            )
+        } else if (isSpotifyContext(entry)) {
+            // a context (design 26c §5.9): the order is picked for the kid, its one row is the track playing now
+            Line(stringResource(R.string.hint_spotify_picks, kindText(kindOf(entry))), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
         }
         val state = rememberLazyListState(initialFirstVisibleItemIndex = (rows.indexOfFirst { it.playing }).coerceAtLeast(0))
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -150,7 +148,7 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                                 Kind.OWN -> R.string.new_track
                                 Kind.AUDIOBOOK -> R.string.new_book
                                 Kind.PODCAST -> R.string.new_episode
-                                Kind.SPOTIFY -> if (spotifyEpisodes(row.entry)) R.string.new_episode else R.string.new_track
+                                Kind.MUSIC -> R.string.new_track
                             }
                             Line(stringResource(label), 12, 800, Palette.peach)
                             Line(row.item.title, 15, 800, Palette.white)
@@ -202,7 +200,7 @@ fun SearchScreen(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(hits, key = { h -> if (h is SearchHit.ItemHit) "${h.entry.id}/${h.item.key}" else "${h.entry.id}" }) { hit ->
-                val kind = kindText(me.vibb.music.logic.kindOf(hit.entry))
+                val kind = kindText(kindOf(hit.entry))
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 60.dp).clip(RoundedCornerShape(16.dp)).background(Palette.card)
                         .button(null) { onPick(hit) }.padding(horizontal = 10.dp, vertical = 8.dp),

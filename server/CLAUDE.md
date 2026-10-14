@@ -756,7 +756,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   import); fixtures in `testdata/storytel/`; `music_library.json` holds a Storytel entry (shared with the music app and
   the launcher). `tests::music::CannedFetch` records each request (`requests`) and has `answer_once`.
 
-## Vibb music: Spotify on the server (design 26c steps 1, 2a, 2b and 3, `docs/design/26c-spotify.md`, migration `0074_music_spotify.sql`)
+## Vibb music: Spotify on the server (design 26c steps 1, 2a, 2b, 3 and 8, `docs/design/26c-spotify.md`, migration `0074_music_spotify.sql`)
 
 - **What**: `src/spotify.rs` (vibb `spotify.py`'s link grammar ported; the rest new ground) and
   `handlers::music_spotify`. **Bring your own developer app**: the server ships no client ID. Until one is set,
@@ -776,6 +776,20 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `+ 180 days`, a warning from 14 days before on the Spotify page and on each bound phone's card), `refresh_ok_at`,
   `refresh_error` (a code), `needs_login`. Remove (a confirm box) unbinds its phones first, then deletes the row and
   forgets its cached token (`spotify_account_removed`).
+- **The account model** (26c step 8, the user's answer of 2026-10-14): **one account per phone, the child's own; the
+  parent's own Spotify account is never logged in** - the parent pastes links. Nothing in the code enforces it (the
+  table holds any accounts, a phone binds one, any account is a reader); the copy says it, and tests pin the copy: the
+  Spotify page's intro ("your children's Spotify accounts: one account per phone, the child's own. Your own Spotify
+  account is never logged in here - you paste the links."), its setup steps (User Management: "each child's Spotify
+  account - one per phone, the child's own, never yours"; a sixth step on playlists: a playlist lists only when a
+  child's account owns it or collaborates on it - made in the child's account, or the parent's made collaborative -,
+  else it plays in Spotify's order without a track list), the login hint ("Log in each child's own account - one per
+  phone, never yours ..."), the context notice ("... For the track list, make the playlist in your child's Spotify
+  account, or make yours collaborative and invite your child.", card and add), and the device card's binding hint
+  ("One account per phone: this child's own Premium account, never yours."). The two-phones-one-account warning and
+  the card's "read as <name>" (which child's account listed it) stay. The PWA is also where Spotify's attribution lives:
+  the music app shows no Spotify word at all (step 8, 26c §7.3) - keep "Spotify" in the PWA's labels and "Open in
+  Spotify".
 - **The login is PKCE in the parent's browser** (`POST /music/spotify/login`): a 64-character verifier (`OsRng`), its
   S256 challenge and a 32-hex `state` kept **in memory only** (at most 8, 10 minutes, with the admin who started it; a
   restart loses an unfinished login), the `spotify_login` cookie (hex SHA-256 of the state; `HttpOnly`, `Secure`
@@ -861,14 +875,15 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **The gate** (step 2b, §3.6): `spotify_gate!()` (exported beside `storytel_gate!()`, `concat!`ed into the SQL, one
   more bind) in `LIBRARY_ENTRIES` (its `IN` takes `'spotify'`), `device_listing`, `cover_in_library` and
   `art_in_library`: a phone gets Spotify entries, listings and covers only **while it is bound to an account**
-  (`device_policy.music_spotify_account`; else 404). `needs_login` doesn't close it (the tiles say "spør en voksen").
+  (`device_policy.music_spotify_account`; else 404). `needs_login` doesn't close it (the tiles say "Spør en voksen").
   `LibEntry.spotify` is `"list"`/`"context"` (absent on every other source, and on a Spotify entry not listed yet,
   whose `items` is then null), `cache` 0, `lan` false. The binding is "Spotify plays as: Off | <account>" on the
   device card (`#music-spotify`, `POST /devices/{id}/music/spotify`, `music_spotify_binding_changed`; an unknown id
-  back at the anchor with `music_notice=spotify_unknown`), with the advice to use the child's own account (the phone's
-  hourly token carries every scope of its account), the account's 6-month line, "one account on two phones" on both
+  back at the anchor with `music_notice=spotify_unknown`), with the hint "One account per phone: this child's own
+  Premium account, never yours." (the account model above; the phone's hourly token carries every scope of its
+  account), the account's 6-month line, "one account on two phones" on both
   cards, and `music_state.spotify` in words (`SPOTIFY_WORDS`: `none`, `ok`, `reauthorize`, `refused`, `not_premium`,
-  `no_widevine`, `unreachable`, `quota`). The library card: "42 tracks · read as Pål", context mode's notice, the
+  `no_widevine`, `unreachable`, `quota`). The library card: "42 tracks · read as Ella", context mode's notice, the
   left-out count, "Open in Spotify" (`rel="noopener noreferrer"`), per-phone lines (`gated`/`phone_count` follow the
   binding as the gate does), `unplayable` from `item_errors`. The streaming switch's text names Spotify (it streams,
   never saved). The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link imports as a Spotify entry on

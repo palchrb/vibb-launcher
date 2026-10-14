@@ -254,7 +254,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Spotify is the third renderer, the web player** (design 26c §5, §5.10): a Spotify entry on a phone output gets
   `SpotifyRenderer` (`phoneRendererFor`; made once per service and kept; `local.standDown()` when it attaches), every
   other entry the `LocalRenderer`, a room its `SonosRenderer` - a room's queue drops Spotify (`speakerDropReason`
-  `spotify`, "Kan ikke spilles på Sonos"; Spotify on Sonos is 26c's later step 8). `RendererKind.onPhone` (LOCAL,
+  `spotify`, "Kan ikke spilles på Sonos"; Spotify on Sonos is 26c's later step 9). `RendererKind.onPhone` (LOCAL,
   SPOTIFY) replaces `=== local` at every site `GuardsTest` lists. The sound is local audio (focus, noisy, the volume
   cap, the 10 s sleep fade through `vibb.volume`; no hush). **List mode plays our list**: `PUT /me/player/play` with
   the track uris of a window of at most 50 from the current item and `position_ms` (the resume place, so nothing
@@ -268,8 +268,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   Spotify's queue, a stale state from before a start - is paused at once, never saved, never mapped to an index;
   after `Ended` every playing state is paused. Unplayable comes only from the SDK (a `playback_error`, or a skip the
   state's `prev` proves), three in a row stop; the play call's 403 is an account matter (`refused`/`not_premium`,
-  "spør en voksen"), never an item error. A `null` state counts only when a second look 2 s later confirms it:
-  "Spotify spiller et annet sted", the bookmark kept. `saveNow` writes only a measured position (the last state's
+  "Spør en voksen"), never an item error. A `null` state counts only when a second look 2 s later confirms it:
+  "Spilles et annet sted", the bookmark kept. `saveNow` writes only a measured position (the last state's
   of the current item, as received).
 - **Nothing starts by itself on Spotify either**: the page - and with it the Connect device "Vibb" - exists only from
   the first Spotify play, never at a restore (a stored Spotify queue loads paused: no page, no network); a play the
@@ -294,7 +294,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   library, dropped at the context's end.
 - **Spotify streams under the streaming switch** (design 30's `stream_mobile_data`, never the downloads switch or the
   storage limit; `spotifyPlayability` = `streamAllowed`, never `GONE`; the web player's own `networkLine` reads the
-  same switch). Refused, the queue is loaded paused at its place with "Spotify - trenger Wi-Fi" / "trenger internett"
+  same switch). Refused, the queue is loaded paused at its place with "Trenger Wi-Fi" / "Trenger internett"
   (`refused(line)`), never `NOT_DOWNLOADED`, never another item. Nothing of Spotify is fetchable, kept, written
   through, a played extra or a claim: `KeepItem.fetchable` false, `downloadPlan` prunes any Spotify row,
   `markPlayed`/`updateHeld` only on the phone's own player, and a queue's claim follows **its** kind -
@@ -305,7 +305,17 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `remote != true`) is the player's quiet line and the loaded tile's; the account word (`ok`, `reauthorize`,
   `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`; `none` from the token's `off` and from `forget()`)
   is `noBackupFilesDir/spotify_state.json`, written only on a change, shown on **every** Spotify tile and sent as the
-  report's `spotify`. The player shows the word "Spotify" under the title (the Policy's attribution, 26c §7.3).
+  report's `spotify`.
+- **No source on the kid's screens** (26c step 8, the user's decision of 2026-10-14): a Spotify entry is a tile like
+  any other. No string value says "Spotify" (`SourceScanTest` pins both languages and the `ui/` sources' literals;
+  string *names* like `renderer_spotify_*` and `hint_spotify_picks` are code and stay). The kind is the content's:
+  `kindOf` gives a Spotify show or episode `Kind.PODCAST` ("Podkast", episodes) and a playlist, album, track or artist
+  `Kind.MUSIC` (`kind_music` "Musikk", tracks) - there is no `Kind.SPOTIFY`. The player has no source line under the
+  title, "Liste" shows nothing in the offline summary's place (a context: "Musikk · rekkefølgen velges for deg"), and
+  the web player's lines are plain ("Trenger Wi-Fi", "Trenger internett", "Ikke tilgjengelig nå", "Spør en voksen",
+  "Virker ikke på telefonen", "Spilles et annet sted", "Stoppet - trykk spill"). This is a stated deviation from
+  Spotify's Developer Policy II (attribution where its content is shown; 26c §7.3): the attribution is the parent's
+  PWA's only. Don't add the word, a logo or a source line back without the user.
 - **The web player's WebView** (26c §5.2, §7.2): one WebView in the process, `SpotifyWebHost`'s, made with the
   application context by the service and **never attached to a window** (`SourceScanTest`: `WebView(`,
   `android.webkit` and `addJavascriptInterface` only in that file, no `addView`); JavaScript and DOM storage on, media

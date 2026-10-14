@@ -284,6 +284,23 @@ async fn not_configured_shows_the_steps() {
     assert!(page.contains("developer.spotify.com/dashboard"));
     assert!(page.contains("At most 5 accounts can use a Development-mode app"));
     assert!(page.contains("<details id=\"setup\" open"));
+    // The account model (design 26c step 8): one account per phone, the child's own; the
+    // parent's is never logged in - the parent pastes links; a playlist lists only for a
+    // child's account that owns it or collaborates on it.
+    assert!(page.contains(
+        "your children's Spotify accounts: one account per phone, the child's own. Your own \
+         Spotify account is never logged in here - you paste the links."
+    ));
+    assert!(page.contains(
+        "add each child's Spotify account - one per phone, the child's own, never yours - by \
+         name and e-mail"
+    ));
+    assert!(page.contains(
+        "a phone shows a playlist's tracks only when a child's account here owns it or \
+         collaborates on it - make it in the Spotify app while logged in as the child, or make \
+         your own playlist collaborative and invite the child."
+    ));
+    assert!(!page.contains("yours (if it reads your playlists)"));
     assert!(
         !page.contains("Log in with Spotify"),
         "no login without an app"
@@ -372,6 +389,10 @@ async fn the_app_setting() {
     )));
     assert!(page.contains("Saved."));
     assert!(page.contains("Log in with Spotify"));
+    assert!(page.contains(
+        "Log in each child's own account - one per phone, never yours. Whoever is logged into \
+         Spotify in this browser logs in, so open this page in a private window"
+    ));
     assert!(!page.contains("<details id=\"setup\" open"));
     assert_eq!(
         events(&app, "spotify_app_saved").await,
@@ -3128,7 +3149,9 @@ mod entries {
         );
         assert!(page.contains(
             "No logged-in account owns this playlist or collaborates on it, so the phones can't \
-             show its tracks"
+             show its tracks: they play it in Spotify's order. For the track list, make the \
+             playlist in your child's Spotify account, or make yours collaborative and invite \
+             your child."
         ));
         assert!(page.contains("Turn it on for a phone on that phone's Music card."));
 
@@ -3427,6 +3450,8 @@ mod entries {
             "{page}"
         );
         assert!(page.contains("No logged-in account owns this playlist or collaborates on it"));
+        assert!(page.contains("make the playlist in your child's Spotify account"));
+        assert!(!page.contains("Log in as its owner"));
         // No app (an environment client ID gone after a restart, bindings left): the card says
         // what the gate does (qa-26c-step2b-code L1) - the bound phone still gets the entry and
         // its line says it can't play; the unbound one isn't sent it.
@@ -3667,7 +3692,9 @@ mod entries {
             page.contains(&format!("<option value=\"{kid}\" >Ella</option>")),
             "{page}"
         );
-        assert!(page.contains("Use your child's own Premium account"));
+        assert!(
+            page.contains("One account per phone: this child's own Premium account, never yours.")
+        );
         assert!(!page.contains("Spotify's hosts are allowed on this phone"));
         let save = |device: i64, account: String| {
             let cookie = cookie.clone();

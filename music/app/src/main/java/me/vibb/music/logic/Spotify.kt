@@ -204,8 +204,8 @@ fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS
 
 /**
  * The quiet lines (§5.8): step 5a turns them into `RendererState` values with their strings.
- * [UNAVAILABLE] is `SPOTIFY_NEEDS_INTERNET`'s carrier with the quota's text ("Spotify er ikke
- * tilgjengelig nå").
+ * [UNAVAILABLE] is `SPOTIFY_NEEDS_INTERNET`'s carrier with the quota's text ("Ikke tilgjengelig
+ * nå"). No line names the source (step 8).
  */
 enum class SpotifyLine { NEEDS_WIFI, NEEDS_INTERNET, UNAVAILABLE, ASK_ADULT, NOT_ON_PHONE, ELSEWHERE, STOPPED }
 
@@ -280,8 +280,8 @@ fun sdkErrorProblem(kind: String): SpotifyProblem? = when (kind) {
 
 /**
  * The line every Spotify tile shows for a stored [outcome] (§5.8 "The stored outcome"): the account
- * states - `reauthorize`, `refused`, `not_premium`, `no_widevine` - "Spotify - spør en voksen", `quota`
- * "Spotify er ikke tilgjengelig nå", until a play succeeds; null for `none`, `ok`, `unreachable` (a
+ * states - `reauthorize`, `refused`, `not_premium`, `no_widevine` - "Spør en voksen", `quota`
+ * "Ikke tilgjengelig nå", until a play succeeds; null for `none`, `ok`, `unreachable` (a
  * passing state, shown on the loaded tile only).
  */
 fun spotifyTileLine(outcome: String?): SpotifyLine? = when (outcome) {

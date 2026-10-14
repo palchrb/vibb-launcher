@@ -70,9 +70,9 @@ fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: R
 
 /**
  * What a Spotify tile says in place of its hint (design 26c §5.8, QA M6): the loaded entry ([loadedId]) shows its
- * web player's line ([loadedState], `PlayerHub.State.rendererState` - "trenger Wi-Fi", "trenger internett",
- * "spiller et annet sted" ...); every Spotify tile shows the stored outcome's account line ("Spotify - spør en
- * voksen", "Spotify er ikke tilgjengelig nå": `spotifyTileLine`) until a play succeeds; else null (the hint).
+ * web player's line ([loadedState], `PlayerHub.State.rendererState` - "Trenger Wi-Fi", "Trenger internett",
+ * "Spilles et annet sted" ...); every Spotify tile shows the stored outcome's account line ("Spør en voksen", "Ikke
+ * tilgjengelig nå": `spotifyTileLine`) until a play succeeds; else null (the hint). No line names the source (step 8).
  * Never for another source, and never a room's line (`remote`).
  */
 fun spotifyTileState(entry: Entry, loadedId: Long?, loadedState: RendererState?, spotifyOutcome: String?): RendererState? {

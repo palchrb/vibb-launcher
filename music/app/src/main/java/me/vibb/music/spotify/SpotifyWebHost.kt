@@ -260,7 +260,7 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
                 runCatching { view.destroy() }
                 main.post { events?.invoke(HostEvent.Gone) }
             }
-            return true // the app goes on; the renderer shows "Spotify stoppet"
+            return true // the app goes on; the renderer shows "Stoppet - trykk spill"
         }
     }
 

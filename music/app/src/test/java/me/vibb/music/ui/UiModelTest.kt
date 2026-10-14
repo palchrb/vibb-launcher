@@ -42,7 +42,7 @@ class UiModelTest {
     fun `the loaded tile shows its web player's line, every Spotify tile the stored account line, else the hint`() {
         // nothing wrong: the hint
         assertNull(entryUi(snap, list).state)
-        assertEquals(Hint.Started(Kind.SPOTIFY, 2, 3), entryUi(snap, list).hint)
+        assertEquals(Hint.Started(Kind.MUSIC, 2, 3), entryUi(snap, list).hint)
         // the loaded entry's line (PlayerHub.State.entryId + rendererState)
         assertEquals(RendererState.SPOTIFY_NEEDS_INTERNET, entryUi(snap, list, 6, RendererState.SPOTIFY_NEEDS_INTERNET, null).state)
         assertNull("not the other Spotify tile's", entryUi(snap, other, 6, RendererState.SPOTIFY_NEEDS_INTERNET, null).state)
@@ -110,9 +110,9 @@ class UiModelTest {
         // next and previous are the web player's: no instant switch (only Spotify knows where they go)
         assertNull(skipSwitch(s, now, forward = true, posMs = 10_000, atMs = 1_000))
         assertNull(skipSwitch(s, now, forward = false, posMs = 1_000, atMs = 1_000))
-        // the tile: "Spotify · Spotify velger rekkefølgen", no progress line, the stored account line still wins
+        // the tile: "Musikk · rekkefølgen velges for deg", no progress line, the stored account line still wins
         val tile = entryUi(s, artist)
-        assertEquals(Hint.Picks(Kind.SPOTIFY), tile.hint)
+        assertEquals(Hint.Picks(Kind.MUSIC), tile.hint)
         assertNull(tile.progress)
         assertEquals(RendererState.SPOTIFY_ASK_ADULT, entryUi(s, artist, null, null, SpotifyWords.REAUTHORIZE).state)
         // a cover tap shows the context at once - an artist at 0: its play starts where Spotify starts it (§12, L2)

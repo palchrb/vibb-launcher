@@ -17,15 +17,16 @@ import java.util.Locale
  */
 
 /** What a cover says it is: NRK and RSS "Podkast", own files "Egne filer", Storytel "Lydbok" (design
- * 26b §3.5), Spotify "Spotify" (design 26c §4.3: the attribution, Developer Policy §II; its items are
- * tracks, or episodes for a show or an episode - [Hint.Started.episodes], `spotifyEpisodes`). */
-enum class Kind { PODCAST, OWN, AUDIOBOOK, SPOTIFY }
+ * 26b §3.5), and Spotify by what it holds, never by its source (design 26c §4.3, step 8: the kid's app
+ * names no source - a Spotify entry is a tile like any other): a show or an episode "Podkast" (episodes,
+ * `spotifyEpisodes`), a playlist, album, track or artist "Musikk" (tracks). */
+enum class Kind { PODCAST, OWN, AUDIOBOOK, MUSIC }
 
 fun kindOf(entry: Entry): Kind = when (entry.source) {
     Source.OWN -> Kind.OWN
     Source.STORYTEL -> Kind.AUDIOBOOK
     Source.NRK, Source.RSS -> Kind.PODCAST
-    Source.SPOTIFY -> Kind.SPOTIFY
+    Source.SPOTIFY -> if (spotifyEpisodes(entry)) Kind.PODCAST else Kind.MUSIC
 }
 
 /**
@@ -42,8 +43,8 @@ fun countedOrder(entry: Entry, visibleInPlayOrder: List<String>, readingOrder: L
 sealed interface Hint {
     val kind: Kind
 
-    /** Resume on and started: "<kind> · episode|spor|del N av M"; [episodes] a Spotify show's or episode's ("episode"). */
-    data class Started(override val kind: Kind, val n: Int, val of: Int, val episodes: Boolean = false) : Hint
+    /** Resume on and started: "<kind> · episode|spor|del N av M" (by the kind: a podcast's episodes, music's tracks). */
+    data class Started(override val kind: Kind, val n: Int, val of: Int) : Hint
 
     /** Resume on, not started: "<kind> · fortsetter der du slapp". */
     data class NotStarted(override val kind: Kind) : Hint
@@ -52,8 +53,8 @@ sealed interface Hint {
     data class FromStart(override val kind: Kind) : Hint
 
     /**
-     * A Spotify entry in context mode (design 26c §4.3, §5.9): "Spotify · Spotify velger rekkefølgen" - no "N av M"
-     * (nothing is listed: Spotify picks the tracks), whether started or not.
+     * A Spotify entry in context mode (design 26c §4.3, §5.9): "Musikk · rekkefølgen velges for deg" - no "N av M"
+     * (nothing is listed: Spotify picks the tracks), whether started or not; no source named (step 8).
      */
     data class Picks(override val kind: Kind) : Hint
 }
@@ -67,7 +68,7 @@ fun started(order: List<String>, bookmark: Bookmark?): Boolean {
 fun hint(entry: Entry, order: List<String>, bookmark: Bookmark?): Hint = when {
     isSpotifyContext(entry) -> Hint.Picks(kindOf(entry))
     !entry.resume -> Hint.FromStart(kindOf(entry))
-    started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size, spotifyEpisodes(entry))
+    started(order, bookmark) -> Hint.Started(kindOf(entry), order.indexOf(bookmark!!.itemKey) + 1, order.size)
     else -> Hint.NotStarted(kindOf(entry))
 }
 

@@ -120,7 +120,12 @@ together. **Phase 3, Spotify** (design 26c, `docs/design/26c-spotify.md`, archit
 and the user chose the WebView route - Spotify's Web Playback SDK in a headless WebView in the music app, no Spotify
 app on the phone. The parent adds a share link in the PWA with per-phone ticks; the server lists it like an RSS feed
 with the family's own developer app (bring your own client ID, PKCE logins in the parent's browser, refresh tokens
-sealed); the phone plays it as a third renderer with a server-minted token. **Built** (2026-10-13): steps 1-7, each
+sealed); the phone plays it as a third renderer with a server-minted token. **The account model** (the user,
+2026-10-14): one Spotify account per phone, the child's own; the parent's own account is never logged in - the parent
+pastes links, and a playlist lists its tracks only when a child's account owns it or collaborates on it (else it plays
+in Spotify's order). **The kid's app shows no trace of Spotify** (the user, 2026-10-14): a Spotify entry is a tile
+like any other ("Musikk"/"Podkast", plain lines); the attribution Spotify's Developer Policy asks for is the PWA's
+only - a stated deviation (26c §7.3). **Built** (2026-10-13; step 8 2026-10-14): steps 1-8, each
 code step with QA's code review and its fix round, main merged in at `571f86f` (design 30; Spotify's migration is
 0074, after design 30's 0073). Owed: the DNS capture that replaces the provisional host list (one commit of the
 list, the constants and the comment - the three `spotify_hosts.json` copies, the six constants -, before any tag of
@@ -147,7 +152,7 @@ the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 
 3b, the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
 release order of its step 1 status (no `server-v*` with step 1 before the `launcher-v*` and `music-v*` that read
 the two switches).
-Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-7 built, which merged this main on
+Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built, which merged this main on
 2026-10-13 - its migration is `0074_music_spotify.sql`, after design 30's 0073).
 
 ## Repos

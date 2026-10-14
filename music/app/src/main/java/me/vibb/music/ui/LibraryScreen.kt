@@ -73,7 +73,7 @@ fun kindText(kind: Kind): String = stringResource(
         Kind.OWN -> R.string.kind_own
         Kind.AUDIOBOOK -> R.string.kind_audiobook
         Kind.PODCAST -> R.string.kind_podcast
-        Kind.SPOTIFY -> R.string.kind_spotify
+        Kind.MUSIC -> R.string.kind_music
     },
 )
 
@@ -86,7 +86,7 @@ fun hintText(hint: Hint): String {
                 Kind.OWN -> R.string.hint_track
                 Kind.AUDIOBOOK -> R.string.hint_part
                 Kind.PODCAST -> R.string.hint_episode
-                Kind.SPOTIFY -> if (hint.episodes) R.string.hint_episode else R.string.hint_track
+                Kind.MUSIC -> R.string.hint_track
             },
             kind, hint.n, hint.of,
         )
