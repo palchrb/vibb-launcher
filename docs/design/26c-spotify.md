@@ -1896,15 +1896,21 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 Final (step 7, 2026-10-13; it replaces the drafts written with the design and at the merge of main `571f86f`).
 
 **The branch**: `music-3-spotify` holds §11 steps 1-7, each code step with QA's code review and its fix round, step 8
-(2026-10-14, "Step 8 implementation status" below), and three merges of `main` - at `a5d30b9` (merge commit `5d6bd5b`),
-at `571f86f` (merge commit `e4d4feb`, with its own code QA and fix round) and at `5584772` (design 31 steps 4-15,
-2026-10-14, "Merge of main (5584772)" below). `origin/main` is `5584772`, an ancestor: nothing on `main` is missing
-here. Last full runs, on the merge of main `5584772`: server `cargo test` 933 passed, `cargo fmt --check` clean,
-clippy's 12 known warnings, `node --test jstest/*.test.js` 25 passed; launcher `assembleDebug testDebugUnitTest` 1146
-tests (its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
-testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests; the four fakes' `--selftest`s OK. Step 7 changed
-docs only; step 8 changed the music app's strings and words, the server's copy and one fallback name, and their tests
-(`launcher/` untouched); the merge moved the Spotify controls onto design 31's pages.
+(2026-10-14, "Step 8 implementation status" below, with its QA and fix round `038822a`), and three merges of `main` -
+at `a5d30b9` (merge commit `5d6bd5b`), at `571f86f` (merge commit `e4d4feb`, with its own code QA and fix round) and at
+`5584772` (merge commit `a023e4d`, design 31 steps 4-15, 2026-10-14, "Merge of main (5584772)" below, with its code QA
+`8ba881b` and fix round `102745b`, which rebuilt `/music/spotify` in design 31's layout). The final head is the
+handover commit on top of `102745b`. `origin/main` is `5584772`, an ancestor: nothing on `main` is missing here.
+**The merge into `main` and the releases follow `docs/design/26c-handover.md`**, a self-contained handover for the
+agent doing them (what the branch is and changes, how it was verified, the exact procedure, the decisions taken and
+the open points). Last full runs (the server on `102745b`; the launcher and music on `a023e4d`, untouched since): server `cargo test` 934
+passed, `cargo fmt --check` clean, clippy's
+12 known warnings, `node --test jstest/*.test.js` 25 passed; launcher `assembleDebug testDebugUnitTest` 1146 tests (its
+`assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests; the four fakes' `--selftest`s OK. CI last ran on
+`a023e4d` (all green); `8ba881b`, `102745b` and the handover were not pushed. Step 7 changed docs only; step 8 changed
+the music app's strings and words, the server's copy and one fallback name, and their tests (`launcher/` untouched);
+the merges moved the Spotify controls onto design 31's pages.
 
 **Facts on 2026-10-13** (tags from `git ls-remote`, releases and runs from the GitHub REST API):
 - `server/Cargo.toml` says **0.24.0** here and on `main`. `server-v0.24.0` **is tagged** - on `6ae54e8`, a `main`
