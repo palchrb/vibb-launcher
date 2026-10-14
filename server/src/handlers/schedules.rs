@@ -1276,7 +1276,7 @@ async fn render_device_time(
             Err(err) => return read_failed(err, "the global rules"),
         };
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
-        Ok(report) => report.problems,
+        Ok(report) => report.problems(),
         Err(err) => return read_failed(err, "the call report"),
     };
     let zone = Zone::load(&state.db).await;

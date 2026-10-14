@@ -123,22 +123,16 @@
     </div>
     {% endif %}
 
-    <div class="card">
-        <h2>Calls &amp; SMS</h2>
-        <p class="subtitle">{{ calls_summary }}</p>
-        {% for warning in call_warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        {% for hint in call_hints %}
-        <p class="subtitle">{{ hint }}</p>
-        {% endfor %}
-        <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
-    </div>
-
-    {#- Design 31 steps 3-7: the Status/Access/Play/crash facts, the set-once controls, the lock
-        and PINs, the home screen, the web filter, the apps and the music moved to their sub-pages;
-        the rows stay where the summary (step 10) has them, at the bottom. -#}
+    {#- Design 31 steps 3-9: the Status/Access/Play/crash facts, the set-once controls, the lock
+        and PINs, the home screen, the web filter, the apps, the music, calls and time moved to
+        their sub-pages; the rows stay where the summary (step 10) has them, at the bottom. -#}
     <div class="group group-icons" id="more">
+        <a class="row" href="/devices/{{ device.id }}/calls" data-row="calls">
+            <span class="tile tile-green"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M5 2.5H3.4a1 1 0 0 0-1 1.1c.5 6 5 10.5 11 11a1 1 0 0 0 1.1-1v-1.6a1 1 0 0 0-.8-1l-2.2-.5a1 1 0 0 0-1 .3l-.8.9a8 8 0 0 1-3.8-3.8l.9-.8a1 1 0 0 0 .3-1l-.5-2.2a1 1 0 0 0-1-.8z" fill="currentColor"/></svg></span>
+            <span class="row-label">Calls &amp; Contacts</span>
+            <span class="row-value">{{ calls_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/devices/{{ device.id }}/apps" data-row="apps">
             <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="2.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/></svg></span>
             <span class="row-label">Apps</span>

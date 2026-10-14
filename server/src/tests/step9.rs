@@ -115,8 +115,8 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     .await;
     let html = page(&app, &cookie, &uri).await;
     assert!(html.contains("Waiting for the phone to confirm"), "{html}");
-    assert!(!html.contains("Phone app role not active"));
-    assert!(html.contains(r#"http-equiv="refresh""#));
+    assert!(!html.contains("Anyone can call this phone"));
+    assert!(html.contains("/static/auto-reload.js"));
 
     // Five minutes later without a newer report: the real warnings, plus "not confirmed".
     sql(
@@ -133,9 +133,9 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     )
     .await;
     let html = page(&app, &cookie, &uri).await;
-    assert!(html.contains("confirmed the change made at"), "{html}");
-    assert!(html.contains("Phone app role not active"));
-    assert!(!html.contains(r#"http-equiv="refresh""#));
+    assert!(html.contains("reported since the change at"), "{html}");
+    assert!(html.contains("Anyone can call this phone"));
+    assert!(!html.contains("/static/auto-reload.js"));
 
     // A newer report that still disagrees is a warning, never "waiting".
     sql(
@@ -148,7 +148,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
     post_status(&app, &token, report).await;
     let html = page(&app, &cookie, &uri).await;
     assert!(!html.contains("Waiting for the phone"));
-    assert!(html.contains("Phone app role not active"));
+    assert!(html.contains("Anyone can call this phone"));
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn an_error_page_never_reloads_itself() {
     assert!(
         page(&app, &cookie, &format!("/devices/{id}/calls"))
             .await
-            .contains(r#"http-equiv="refresh""#)
+            .contains("/static/auto-reload.js")
     );
     let res = app
         .request_form(
@@ -271,5 +271,29 @@ async fn an_error_page_never_reloads_itself() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
     assert!(html.contains("Mamma"));
-    assert!(!html.contains(r#"http-equiv="refresh""#));
+    assert!(!html.contains("/static/auto-reload.js"));
+    // Nor does a contact's refused Matrix ID (design 31 step 8).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts"),
+            Some(&cookie),
+            &[("name", "Mamma"), ("number", "90000001")],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let contact: i64 = sqlx::query_scalar("SELECT id FROM contacts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/contacts/{contact}"),
+            Some(&cookie),
+            &[("message_address", "not-an-id")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(!res.text().contains("/static/auto-reload.js"));
 }

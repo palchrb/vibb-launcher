@@ -872,7 +872,10 @@ pub fn build_admin_router(
             "/wallpaper-images/{hash}",
             get(handlers::wallpapers::view_image),
         )
-        .route("/settings/calls", post(handlers::calls::save_call_settings))
+        .route(
+            "/settings/calls",
+            post(handlers::settings::save_country_code),
+        )
         .route("/devices/locate", get(handlers::locate::show_locate))
         .route(
             "/devices/{id}/locations.json",

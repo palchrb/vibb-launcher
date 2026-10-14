@@ -229,11 +229,11 @@ async fn photo_is_reencoded_and_reaches_the_device() {
 
     let mut nudges = app.state.command_notify.subscribe();
     let res = upload(&app, &cookie, id, mamma, &jpeg_with_exif(&half_and_half())).await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}/calls").as_str()),
-        "{}",
-        res.text()
+    // Back to the contact's row, open (design 31 step 8).
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?open={mamma}"),
+        Some(&format!("contact-{mamma}")),
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
 
@@ -319,22 +319,67 @@ async fn bad_uploads_change_nothing() {
         b"\x89PNG\r\n\x1a\n broken".to_vec(),
         Vec::new(),
     ] {
+        // The page again, the contact open with the reason under its photo (design 31 step 8).
         let res = upload(&app, &cookie, id, mamma, &bytes).await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST);
-        assert!(res.text().contains("class=\"error\""));
+        let html = res.text();
+        let row = &html[html.find(&format!("id=\"contact-{mamma}\"")).unwrap()..];
+        assert!(row.contains("<details class=\"edit\" open>"), "{row}");
+        assert!(
+            row.contains(&format!("id=\"photo-{mamma}-error\"")),
+            "{row}"
+        );
     }
     let res = upload(&app, &cookie, id, mamma, &vec![0u8; 11 * 1024 * 1024]).await;
     assert!(res.status.is_client_error(), "{}", res.status);
     assert_eq!(photo_hash(&app, mamma).await, None);
     assert!(stored_files(&app).is_empty());
 
-    // A contact that isn't on this device.
+    // A contact that isn't on this device: back to the list, saying nothing was saved; an unknown
+    // phone is a 404.
     let (other, _) = app.enrolled_device("other").await;
     let stranger = contact(&app, other, "Stranger", "+4790000009").await;
     let png = encode(&half_and_half(), ImageFormat::Png);
     let res = upload(&app, &cookie, id, stranger, &png).await;
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?notice=contact_gone"),
+        Some("contacts"),
+    );
+    assert_eq!(photo_hash(&app, stranger).await, None);
+    let res = upload(&app, &cookie, 9999, stranger, &png).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     assert_eq!(photo_hash(&app, stranger).await, None);
+
+    // Removing the photo of another phone's contact leaves it, and says nothing was saved
+    // (qa-31-s8-code L3, N3); an unknown phone is a 404.
+    upload(&app, &cookie, other, stranger, &png).await;
+    let hash = photo_hash(&app, stranger)
+        .await
+        .expect("the stranger's photo");
+    for (device, expected) in [(id, StatusCode::SEE_OTHER), (9999, StatusCode::NOT_FOUND)] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/contacts/{stranger}/photo/remove"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        if expected == StatusCode::NOT_FOUND {
+            assert_eq!(res.status, expected);
+        } else {
+            assert_redirect(
+                &res,
+                &format!("/devices/{id}/calls?notice=contact_gone"),
+                Some("contacts"),
+            );
+        }
+        assert_eq!(
+            photo_hash(&app, stranger).await.as_deref(),
+            Some(hash.as_str())
+        );
+    }
 }
 
 #[tokio::test]

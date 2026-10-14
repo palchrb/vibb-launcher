@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -952,7 +952,7 @@ Every value comes from the database or memory, never from the network (M3):
 | | Web Filter | "3 lists" (count of enabled `dns_blocklists`) | `/dns`: shared blocklists, blocked and allowed domains, and the DNS server at the bottom (Q2: kept). The per-phone parts are on each phone's Web Filter page |
 | | Blocked Activity | "12 today" (a count of today's `device_dns_events`) | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
 | **Content** | Wallpapers | "5" (count) | `/wallpapers`; delete becomes a confirm (Q7); the per-photo "Also on the lock screen" stays (Q1) |
-| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` posts with `back=provisioning` and returns there (H3) |
+| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` returns there (H3; no `back` field - one page posts there, step 8's choice 4) |
 | | Backups | "Today 03:00" (the newest backup file's mtime) | `/backups` |
 | | Software Updates | **No value** | `/updates`. The hub never calls GitHub. No cached result of a check exists today (`data/app_update_last_check` holds only a date), so the row shows nothing (M3) |
 | | Account & Password | - | `/account` (password, two-factor, sign out everywhere) |
@@ -1326,7 +1326,7 @@ The rules for the redesign (H3):
    | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (`window_relock.rs:244`) | summary, the blocked-apps target page | `summary`, `apps` | summary |
    | `/devices/{id}/apps/toggle` (today `anchor=music`, `devices.rs:1797`) | Device › Apps, Device › Music | `apps`, `music` | apps |
    | `/dns/domains/new`, `/dns/domains/{id}/delete`, the blocklist override (`dns_filter.rs:292-311,505`) | Settings › Web Filter, Device › Web Filter | `dns`, `filter` (with the device id) | `/dns` |
-   | `/settings/calls` (today → `/devices` without `device_id`, `calls.rs:946-950`) | Settings › Phone Setup | `provisioning` | `/settings/provisioning` |
+   | `/settings/calls` (as built in step 8: one page posts here, so rule 2 applies and there is no `back` field) | Settings › Phone Setup | - | `/settings/provisioning#country-code` |
    | `/schedules/rules[/{id}]`, `/delete` | the rule editor (everyone's or a phone's own) | the existing `scope` field decides | as §3.5 |
 
 4. **Anchors only where they help.**
@@ -1798,7 +1798,7 @@ at a time. Each moved card leaves a navigation row behind until step 10 turns wh
    - **Forms:**
      - `calls/settings` and each contact row stay one form each (H1);
      - Remove Contact… gets a confirm (M6);
-     - the country code moves to Phone Setup as a second form, with `/settings/calls` taking `back=provisioning` (L6).
+     - the country code moves to Phone Setup as a second form, returning there from `/settings/calls` (L6; as built, no `back` field: one page posts there).
    - **Templates:** `device_calls.html` in the new components; `provisioning_settings.html` gains the country code.
    - **Rust texts:** `calls::call_report` typed, with no package names (§2.2b).
    - **Tests:** `calls.rs`.
@@ -2957,6 +2957,110 @@ Checks: `cargo test` 796 passed; `node --test jstest/*.test.js` 23 passed; fmt c
 | N3 | An entry's reported error shows under its row only while the entry is on for the phone, and only those count for the Attention row. |
 | N4 | "device card" → "the phone's Music page" in `server/CLAUDE.md` (the library cache) and `music.rs`'s doc comments. |
 | Checks | `cargo test` 813 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 8 implementation status (2026-10-14)
+
+Built on branch `design-31-s8` (from `main` at `2eee4de1`, steps 1-6 and 11-14 in), in parallel with step 7; server
+only, no migration, no new crate, no API change (the policy JSON, `phone_vectors.json` and the number normalisation are
+untouched; `policy_json_keys_snapshot` passes as it was), `style.css?v=21` (main is at 19, step 7 takes 20; appended at
+the end).
+- **The page** (`/devices/{id}/calls`, the route unchanged; `device_calls.html` with the §3.0 header "‹ Anna" and the
+  large title "Calls & Contacts", no brand bar):
+  - the call report's **warnings** above the groups, orange (`partials/note_warning.html`): the problem's short title
+    (the Attention row's), one or two sentences, and an expert detail behind the ⓘ only - an adb command with the real
+    package, a package name ("Its package name is com.maker.dialer."), the phone's own error ("The phone said: …");
+  - **Calls and SMS**, one form (§5.6, H1): Manage calls and SMS, Calls, SMS (switches), Message button (an inline
+    picker), and two rows from the report - "Waiting for the phone to confirm" and "Call screening · Not granted"
+    (the adb fix behind its ⓘ); the footer "While managed, only the contacts below can call or text. Emergency
+    numbers always work." with the emergency numbers, RCS, ##004#, directory services and spoofing behind its ⓘ;
+  - **Contacts**: one row per contact (the photo or the initial, the name, the number, "Both ways · Home" /
+    "Calls in only" / "No calls"); the row opens its one form (Can call Anna, In the phone book, On the home
+    screen, Message button, Matrix ID), New photo / Remove Photo, and **Remove Contact…** as a `<details>` confirm
+    (M6: "Remove Mamma from Anna's phone? Their calls are then blocked."); **Add Contact** as a disclosure at the end,
+    its hint naming the country code and Settings › Phone Setup. The empty state is one sentence. No country code
+    form here any more.
+- **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
+  rendered forms, each action's fragment checked to be the form's own element, `<noscript>` Saves checked):
+  `/calls/settings` → `/devices/{id}/calls` without a fragment (the page's first group, so the no-JS landing is the
+  group; scroll-restore keeps the exact place); a contact's save, photo upload and photo removal →
+  `?open=<id>#contact-<id>` (its row, open again - the fragment finds it in a long list with or without JS, as step 6's
+  app rows); Add Contact → `#contact-<new>`; Remove Contact… → `#contacts`, also on a second tap. A form for a contact
+  that isn't on the phone any more (another tab) → `?notice=contact_gone#contacts` ("That contact was already removed,
+  so nothing was saved.", at the top of the group); an unknown phone is a 404 (it used to be a 404 for both).
+- **Refusals render in place (400)**, the form open, what was typed kept, the reason under the field
+  (`aria-invalid`, `autofocus`), every form's action carrying its row's fragment so the answer lands there: Add
+  Contact's name or number (was a red box at the top), a contact's Matrix ID (the switches and the picker as sent;
+  was a red box at the top), a photo (was the same). A refusal's page never reloads itself.
+- **Phone Setup's second form** (L6): a Phone Numbers group under the setup form - Country code, Save, "For every
+  phone. Numbers already saved keep theirs." - posting to `/settings/calls#country-code` (now
+  `settings::save_country_code`; the route is unchanged) → `/settings/provisioning?saved=country-code#country-code`,
+  the flash in its group; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code
+  is a 500 on the page; every phone is nudged. The step 14 table (`every_form_on_the_settings_pages_returns_to_its_group`)
+  has its row.
+- **The device page**: the Calls & SMS card is gone; a row **Calls & Contacts · 8 contacts** ("Not managed",
+  "Couldn't read" on a failed count - it was "0 contacts") heads the bottom group. The Attention rows are unchanged
+  (`report.problems()`).
+- **Rust texts (M5)**: `calls::call_report` returns `CallReport { findings, screening_hint, auto_refresh }`; each
+  `Finding` carries what its words need (the times as `DateTime<Utc>`, the phone's package names and error) and gives
+  `problem()` (the `CallProblem` the Attention rows use) and `note(zone, now)` (§4.2: title + sentence, local times in
+  Phone Setup's zone, the report's time with its age, "10:58 · 3 min ago"; no package, adb, role, UTC or raw code in
+  the visible text, §2.2b). The sentences (`warnings`, `hints`) and the device card's `calls_summary` are deleted.
+- **The reload while the phone confirms** is `static/auto-reload.js` (step 6's `installing-reload.js`, renamed and
+  generalised: it holds while any `<details>` is open) instead of a `<meta refresh>`, which could cancel a save on its
+  way or lose a contact being typed. Never on a refusal's page.
+- **CSS** `?v=21` (one section at the end): the contact's photo in the avatar circle, the contact's form indented to
+  the name with its hairlines, the file field.
+- **Docs (L8):** `server/CLAUDE.md` (the Calls & SMS bullets, the pending rule, the reload's name, a "Calls &
+  Contacts" section), `docs/testing/emulator.md` (where contacts are added and SMS is switched), `docs/setup/google-
+  account.md` (the Message button's page). `launcher/CLAUDE.md`, `server/DEPLOY.md` and `PLAN.md` name none of the
+  moved parts.
+- **Tests:** `tests/calls.rs` (the redirect table; Add Contact's refusals in place; a contact's Matrix ID refusal with
+  what was sent; gone contacts and unknown phones; Remove Contact… twice; the country code on Phone Setup with its
+  refusal, flash, nudge and 500; the device page's row; the warnings and the screening row, with the device page's
+  Attention rows; the visible text without packages, adb or UTC; local times; escaping; an unreadable list),
+  `calls::tests` (every finding's words in Oslo time, one per problem, the row values); repointed `launcher_ui.rs`
+  (photo redirects and refusals in the row), `step9.rs` (the reload, never on a refusal), `step10.rs`,
+  `catalog_pins.rs`, `cleanup.rs` (the warnings now on Calls & Contacts), `attention.rs`, `settings_pages.rs`,
+  `device_pages.rs` and `tracked_apps.rs` (the script's name), `jstest/auto-reload.test.js`.
+
+Choices made while building:
+1. **The settings form returns without a fragment**, the contacts' forms with one: the switches are the page's first
+   group (§5.1.4: a same-page auto-save near the top keeps the exact place with JS and lands on its group without),
+   a contact's row can be far down a long list (§5.1.4 keeps a fragment for that, as `#app-{pkg}`).
+2. **A contact's controls sit behind its row** (a `<details class="edit">`, as the PIN rows), reopened by `?open=` after
+   each save, so eight contacts are eight rows, not 60. The Matrix ID stays in the contact's one form (§5.6: "no sheet
+   for the Matrix ID").
+3. **A contact that is already gone is not a 404** (a second tap on Remove, a toggle in a stale tab): back to
+   `#contacts`, saying nothing was saved when the parent tried to change something; Remove says nothing (it is done).
+4. **No `back` field on `/settings/calls`**: one page posts there now, so it always returns to Phone Setup (§5.1's
+   table: `provisioning` was the only value and the default); an older Calls page's `device_id` is ignored.
+5. **The reload holds while any `<details>` is open**, not only Name and icon: a contact's form, Add Contact, a
+   confirm or an ⓘ panel would close under the parent's finger. Its delay is 3 s on both pages (the calls page used
+   5 s; nothing depends on it).
+6. **"Waiting for the phone" and "Call screening" are rows in the Settings group**, not warnings: neither is wrong.
+7. **The device page's row shows the contacts only while calls are managed** ("Not managed" otherwise: the contacts
+   then reach no phone).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+- **The old contact CSS** (`.contact-row`, `.contact-photo-row`, `.contact-avatar`, `.contact-initial`) is unused now
+  and stays for step 15's clean-up (new CSS only at the end, to keep step 7's merge clean).
+- **Checks:** `cargo test` 812 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
+  warnings, none in the step's files.
+
+**Fix round after the code QA** (`qa-31-s8-code.md`: 0 High, 1 Medium, 3 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | `static/auto-reload.js` keeps the place on both pages (Device › Apps, Calls & Contacts): just before `location.reload()` it sets `history.scrollRestoration = "auto"` (scroll-restore left "manual" on the entry after the save, so the browser alone would show the top, also over a `#fragment`) and writes scroll-restore's own record (`handy-scroll`: path, `scrollY`, now), which the reloaded page restores like after a save. `?v=2` on both pages. `jstest/auto-reload.test.js`: a page scrolled to 800 with "manual" reloads with "auto" and a record that `scroll-restore.restoreTarget` turns back into 800; nothing is written once a save has started. |
+| L1 | The Waiting row's sentence ends "Reload the page in a minute." (true with and without JS, and while its ⓘ is open), never "This page reloads"; pinned in `calls::tests::findings_read_as_short_local_notes`. |
+| L2 | `contact_summary` adds "· Home" only for a phone-book contact (`home && outbound`, the launcher's `CallRules.kt`); the switch keeps its value. The row test expects "Calls in only"; the unit test has both cases. |
+| L3 | `launcher_ui::bad_uploads_change_nothing` removes the photo of another phone's contact (the photo stays, `?notice=contact_gone#contacts`; an unknown phone 404); `invalid_contact_input_is_400_with_no_row` sends `"><b>x` / `"><b>y` and finds them escaped in the fields. Mutations 12 and 15 re-run: both fail a test now. |
+| N1 | §3.6's table, §5.1's `back` table and §8 step 8's L6 line say what was built: one page posts to `/settings/calls`, no `back` field. |
+| N2 | A refused Matrix ID for a contact that is no longer on the phone redirects to `?notice=contact_gone#contacts` (it rendered a page whose fragment no longer existed, the notice far below); the page's own fallback for that case is gone. Pinned in `contact_flags_are_scoped_to_the_device`. |
+| N3 | Photo removal for a gone contact says "nothing was saved" too, like a save and an upload; only Remove Contact… lands silently (it is done). |
+| N4 | When `call_report` fails, the device page's Calls & Contacts row says "Couldn't read", so an Attention list without call rows never reads as "all good". |
+| Checks | `cargo test` 812 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
 
 ## Step 9 implementation status (2026-10-14)
 

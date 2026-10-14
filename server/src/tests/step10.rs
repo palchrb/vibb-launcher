@@ -431,12 +431,15 @@ async fn in_call_ui_failure_is_a_call_warning() {
                 "call_state": { "state": "unmanaged", "in_call_ui_failed_at": at } }),
     )
     .await;
+    // An Attention row on the device page, its words on Calls & Contacts (design 31 step 8).
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(
-        html.contains("show the incoming-call screen over its lock"),
-        "{html}"
-    );
+    assert!(html.contains("A call may have rung unanswered"), "{html}");
+    let html = app
+        .get_page(&super::device_page(id, super::Section::Calls), &cookie)
+        .await
+        .text();
+    assert!(html.contains("couldn&#39;t show over the lock"), "{html}");
 }
