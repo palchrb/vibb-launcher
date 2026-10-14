@@ -32,6 +32,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -803,13 +804,24 @@ class PlaybackService : MediaSessionService() {
         this, store, scope, writer,
         // its queue only while it renders: a detached web player's late events never write another entry's place
         queue = { active.takeIf { renderer === spotify } },
-        // a changed word is news for the parent (`reauthorize`: "log in again"): the sync writes the report and hands it to
-        // the launcher, so its next sync - "Sync now" too - carries it (emulator check §6l A, F7)
+        // a changed word is news for the parent (`reauthorize`: "log in again"): the report is written again and handed to
+        // the launcher - not a whole sync (qa-26c-6l-fixes-code L1) - so its next sync, "Sync now" too, carries it (§6l A, F7)
         outcome = { word ->
-            scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) Sync.nudge(this@PlaybackService) }
+            scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) reportSpotifyWord() }
         },
         log = ::spotifyLog,
-    ).also { spotify = it }
+    ).apply { inCall = launcherInCall }.also { spotify = it }
+
+    /** The report with the web player's new word, to the launcher (§6l A F7; a failure waits for the next sync's). */
+    private suspend fun reportSpotifyWord() {
+        try {
+            Sync.writeReport(this)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // the next sync's report carries the word
+        }
+    }
 
     /**
      * The web player's debug log (design 26c §7.1, qa-26c-step5a-code L8): fixed words from the renderer, the host
@@ -1275,6 +1287,8 @@ class PlaybackService : MediaSessionService() {
 
     private fun launcherCall(inCall: Boolean) {
         launcherInCall = inCall
+        // the web player starts nothing during a call (qa-26c-6l-fixes-code L2), as the phone's own player's refused focus
+        spotify?.inCall = inCall
         callStep()
     }
 
@@ -1293,7 +1307,9 @@ class PlaybackService : MediaSessionService() {
             callPause = CallPause(inCall = callPause.inCall)
             callRenderer = null
         }
-        val playing = r.showsPlaying
+        // a web player the WebView paused (the ring's focus loss can beat CALL_HOLD) still wants to play: the call rule's
+        // to pause and play again (qa-26c-6l-fixes-code M1)
+        val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldByPage == true
         // a Spotify line is a paused web player; a room's four mean the speaker isn't ours to count (design 26c §5.8)
         val paused = pausedForCall(playing, r.itemCount(), r.rendererState)
         val (next, action) = callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))

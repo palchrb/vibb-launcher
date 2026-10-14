@@ -260,10 +260,16 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   emulator check §6l A answered it, F2): Chromium's media session takes it when the page's audio starts, pauses on a
   loss, ducks, and plays again after a transient loss - the renderer requests none (a request of its own was taken by
   its own WebView at every play) and reads those pauses (`spotifyPauseCause`: not ours is `FAULT`) and resumes
-  (`spotifySelfResumeShown`) from the page's states. **The session's `SpotifyPlayer` calls the renderer only qualified**
+  (`spotifySelfResumeShown`) from the page's states. A pause the WebView made while the kid wanted it playing is kept
+  as `heldByPage` (no 5-minute idle close; the call rule's `callStep` counts it as playing, so `CALL_RELEASE` plays
+  again whichever of `CALL_HOLD` and the ring's pause came first), and a pause asked during it (`askedPaused`: the kid,
+  the sleep timer, the call rule) pauses Chromium's own resume at once; during the launcher's call (`inCall`) no start
+  goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). **The session's `SpotifyPlayer` calls the renderer only qualified**
   (`this@SpotifyRenderer.play()`): unqualified, `play()` is the SimpleBasePlayer's own and recursed (F1;
   `SpotifyRendererTest` drives it through Media3's `Player` API with the test-only `android.os.Looper`,
-  `android.util.Pair` and `SparseBooleanArray` in `src/test/java/android/`). **List mode plays our list**: `PUT /me/player/play` with
+  `android.util.Pair` and `SparseBooleanArray` in `src/test/java/android/`). Those stand-ins shadow the mockable
+  android.jar for every JVM test of the module (the jar is last on the test classpath): a new one there needs its reason
+  in its header, and must keep the mockable jar's answers except where a test needs the platform's. **List mode plays our list**: `PUT /me/player/play` with
   the track uris of a window of at most 50 from the current item and `position_ms` (the resume place, so nothing
   sounds from 0:00), past the window the next item added with `POST /me/player/queue` one track ahead, shuffle and
   repeat turned off first (a device session's first play, and whenever a state says either is on). Pause, resume and

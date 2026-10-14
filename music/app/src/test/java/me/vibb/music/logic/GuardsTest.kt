@@ -714,8 +714,10 @@ class GuardsTest {
         assertTrue(service.contains("private fun spotifyRenderer(): SpotifyRenderer = spotify ?: SpotifyRenderer.create("))
         assertTrue(service.contains("queue = { active.takeIf { renderer === spotify } },"))
         assertTrue(
-            "the word written on the writer; a change asks for a sync, which hands the report to the launcher (§6l A, F7)",
-            service.contains("scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) Sync.nudge(this@PlaybackService) }"),
+            "the word written on the writer; a change writes the report and hands it to the launcher, no whole sync (F7, QA L1)",
+            service.contains("scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) reportSpotifyWord() }") &&
+                serviceBody("private suspend fun reportSpotifyWord() {").contains("Sync.writeReport(this)") &&
+                !serviceBody("private suspend fun reportSpotifyWord() {").contains("Sync.nudge"),
         )
         assertTrue(service.contains("log = ::spotifyLog,"))
         assertEquals("the service's one log line: the web player's, debug builds only (qa-26c-step5a-code L8)", 1, Regex("""\bLog\.""").findAll(service).count())
@@ -901,6 +903,9 @@ class GuardsTest {
             step.contains("if (refuseSpotify()) {\n            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.STAYED)\n            return\n        }") &&
                 step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"),
         )
+        val call = serviceBody("private fun callStep() {")
+        assertTrue("a web player the WebView paused is the call rule's (QA M1)", call.contains("val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldByPage == true"))
+        assertTrue("the web player hears the launcher's call (QA L2)", serviceBody("private fun launcherCall(inCall: Boolean) {").contains("spotify?.inCall = inCall"))
         val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
         assertTrue("every message ends the hold; STAYED shows nothing more", root.substringAfter("PlayerHub.messages.collect {").substringBefore("message = it").let { it.contains("vm.switching = null") && it.contains("if (it == PlayerHub.Message.STAYED) return@collect") })
         val now = serviceBody("private fun reportNowPlaying(")

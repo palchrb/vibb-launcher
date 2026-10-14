@@ -65,6 +65,7 @@ import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.PauseCause
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.playback.Renderer
 import me.vibb.music.playback.RendererEvent
 import me.vibb.music.playback.RendererKind
@@ -274,6 +275,30 @@ internal class SpotifyRenderer(
     private var pwr = false
     private var ended = false
 
+    /**
+     * The WebView paused our track by itself while the kid wanted it playing - its media session lost the audio focus
+     * to an alarm, a ring or another app (§5.6; qa-26c-6l-fixes-code M1). The intent is kept: the page isn't closed
+     * after 5 idle minutes, and the service's call rule counts it as playing, so `CALL_RELEASE` (or Chromium's own
+     * resume) brings the music back after a long call. Cleared by any play or pause of ours, a resume, a load, a
+     * detach, a suspension.
+     */
+    var heldByPage = false
+        private set
+
+    /**
+     * A pause asked while the WebView held our track paused (the kid's pause, the sleep timer's end, the call rule;
+     * qa-26c-6l-fixes-code H1): the element is already paused, so no paused state follows it - and Chromium's resume at
+     * the gain is paused again at once, never played unseen. Cleared by a play of ours, a load, a detach.
+     */
+    private var askedPaused = false
+
+    /**
+     * The launcher says a call is up (the service's `launcherCall`; qa-26c-6l-fixes-code L2): nothing starts - as the
+     * phone's own player, whose focus request a call refuses - and the play shows paused; the call rule plays again
+     * what it paused.
+     */
+    var inCall = false
+
     /** An error that stopped the renderer (the page destroyed): Media3's IDLE. */
     private var stopped = false
     private var line: SpotifyLine? = null
@@ -386,6 +411,8 @@ internal class SpotifyRenderer(
      */
     override fun load(items: List<MediaItem>, startIndex: Int, startMs: Long, playNow: Boolean) {
         detached = false // attached again: a re-attach always loads
+        heldByPage = false
+        askedPaused = false
         val a = queue()
         val ref = a?.entry?.target?.let { spotifyTarget(it) }
         mediaItems = items
@@ -462,7 +489,7 @@ internal class SpotifyRenderer(
         if (mo != null) return // the service's move-on: its seekTo already asked (or, after the third, nothing plays)
         val s = start
         if (s != null && !s.superseded) {
-            if (s.cancelled && ports.mayPlay()) {
+            if (s.cancelled && ports.mayPlay() && !inCall) {
                 s.cancelled = false
                 pwr = true
                 changed()
@@ -502,7 +529,11 @@ internal class SpotifyRenderer(
         if (index == this.index && stepTimer == null) return seekTo(ms)
         // the network gate first (§6l A, F3): refused, the step says the line and the item stays - the service's gate
         // refuses the same before it asks; this is the renderer's belt, as before every start
-        ports.networkLine()?.let { return refuse(it) }
+        ports.networkLine()?.let {
+            // the screens drop the step they showed, as for the service's own refusal (qa-26c-6l-fixes-code N2)
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.STAYED)
+            return refuse(it)
+        }
         moveIndex(index, auto = false)
         place = Place(index, ms.coerceAtLeast(0), ports.now(), moving = false)
         ended = false
@@ -615,6 +646,7 @@ internal class SpotifyRenderer(
         if (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING) sdk("pause")
         destroyHost()
         pwr = false
+        heldByPage = false
         released = true
         if (noisyWatched) ports.watchNoisy(false) {}
         noisyWatched = false
@@ -666,6 +698,8 @@ internal class SpotifyRenderer(
         supersede()
         cancelStep()
         detached = true
+        heldByPage = false
+        askedPaused = false
         tracker.lost()
         ports.log("spotify: detached - a play from outside is paused")
         changed()
@@ -678,6 +712,7 @@ internal class SpotifyRenderer(
     fun suspended() {
         saveNow(force = true)
         pause(PauseCause.OTHER)
+        heldByPage = false
         destroyHost()
         changed()
     }
@@ -755,7 +790,10 @@ internal class SpotifyRenderer(
     private fun resume() {
         stepWhilePausedAt = null
         if (detached || !ports.mayPlay()) return
+        if (inCall) return callRefused()
         ports.networkLine()?.let { return refuse(it) }
+        heldByPage = false
+        askedPaused = false
         sdk("resume")
         tracker.resumeSent()
         pwr = true
@@ -795,7 +833,10 @@ internal class SpotifyRenderer(
             if (pwr) pause(PauseCause.OTHER)
             return
         }
+        if (inCall) return callRefused()
         ports.networkLine()?.let { return refuse(it) }
+        heldByPage = false
+        askedPaused = false
         cancelFirstState()
         cancelGap()
         cancelIdle()
@@ -1031,6 +1072,12 @@ internal class SpotifyRenderer(
         c.invokeOnCancellation { cancel() }
     }
 
+    /** A start during a call (L2): nothing is sent, the player shows paused with no line - the phone's own player's way. */
+    private fun callRefused() {
+        ports.log("spotify: a start refused (a call)")
+        if (pwr) pause(PauseCause.OTHER) else changed()
+    }
+
     /** The network gate refused a start (§5.8's first two rows). */
     private fun refuse(l: SpotifyLine) {
         ports.log("spotify: no start - ${l.name}")
@@ -1040,6 +1087,7 @@ internal class SpotifyRenderer(
     /** A start or the playback stopped on [p] (§5.8's table): paused, its line, its stored word. */
     private fun fail(p: SpotifyProblem) {
         ports.log("spotify: stopped - ${p.name}")
+        heldByPage = false
         val ours = tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING
         if (ours && host.alive) sdk("pause") // our own device only: never a pause of the account's other player
         if (ours) tracker.lost()
@@ -1069,7 +1117,13 @@ internal class SpotifyRenderer(
         }
         queued = null
         cancelFirstState()
-        if (host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
+        if (heldByPage) {
+            // the WebView holds the element paused already: no paused state will follow (H1) - Chromium's resume at the
+            // gain is paused at once instead
+            heldByPage = false
+            askedPaused = true
+            if (host.alive) sdk("pause")
+        } else if (host.alive && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
             sdk("pause")
             tracker.pauseSent()
         }
@@ -1237,13 +1291,16 @@ internal class SpotifyRenderer(
                     // own player's focus loss (vibb's resume overlap when it plays again)
                     pwr = false
                     pauseCause = spotifyPauseCause(e.ours)
+                    heldByPage = !e.ours // the intent kept across the WebView's pause (M1)
                 }
                 Event.Resumed -> if (!pwr) {
                     // a step the kid sent while paused that Spotify played (qa-26c-step6-code L1): paused, it only moves -
                     // as on every other player of the app; detached (M1): the session shows another renderer
                     val pausedStep = stepWhilePausedAt?.let { ports.now() - it <= PAUSED_STEP_MS } == true
                     stepWhilePausedAt = null
-                    if (spotifySelfResumeShown(pausedStep, detached, ports.mayPlay())) {
+                    val shown = spotifySelfResumeShown(pausedStep, detached, ports.mayPlay(), askedPaused)
+                    heldByPage = false
+                    if (shown) {
                         // our track plays again by itself - the WebView's media session after a transient focus loss
                         // (§5.6, F2), or the account's other controls: shown as it is
                         pwr = true
@@ -1493,7 +1550,7 @@ internal class SpotifyRenderer(
         if (idleTimer != null || !host.alive) return
         idleTimer = ports.after(SPOTIFY_HOST_IDLE_MS) {
             idleTimer = null
-            if (!pwr && start == null) {
+            if (!pwr && start == null && !heldByPage) {
                 ports.log("spotify: idle for ${SPOTIFY_HOST_IDLE_MS / 60_000} min - the web player goes")
                 destroyHost()
                 changed()
@@ -1570,7 +1627,8 @@ internal class SpotifyRenderer(
             noisyWatched = playing
             ports.watchNoisy(playing) { onNoisy() }
         }
-        if (playing || start != null) cancelIdle() else armIdle()
+        // held by the WebView (an alarm, a long call): the page stays for Chromium's resume or the call rule's play (M1)
+        if (playing || start != null || heldByPage) cancelIdle() else armIdle()
         if (!playing) {
             cancelGap()
             prefetchTimer?.invoke()
@@ -1647,7 +1705,9 @@ internal class SpotifyRenderer(
      * from here to the renderer is qualified** (`this@SpotifyRenderer.`): inside this inner class an unqualified
      * `play()`, `pause()` or `seekTo(..)` is the SimpleBasePlayer's own - `BasePlayer.play()` ->
      * `setPlayWhenReady(true)` -> [handleSetPlayWhenReady] again, a StackOverflowError on every play, pause, seek or
-     * stop through the session (emulator check §6l A, F1; `SpotifyPlayerApiTest`, and the scan in `GuardsTest`).
+     * stop through the session (emulator check §6l A, F1; SpotifyRendererTest's "F1 - the session's player through
+     * Media3's Player API", "F1 - a headset's play after a restart" and the scan "F1 - the session's player calls the
+     * renderer").
      */
     private inner class SpotifyPlayer(looper: Looper, clock: Clock) : SimpleBasePlayer(looper, clock) {
         fun refresh() = invalidateState()

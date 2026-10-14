@@ -12,6 +12,8 @@ import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -646,10 +648,14 @@ class SpotifyRendererTest {
     fun `the focus decision - a pause not sent is a fault, a resume by itself shows only when allowed`() {
         assertEquals(PauseCause.USER, me.vibb.music.logic.spotifyPauseCause(ours = true))
         assertEquals(PauseCause.FAULT, me.vibb.music.logic.spotifyPauseCause(ours = false))
-        assertTrue(me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = true))
-        assertFalse("a step while paused only moves", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = true, detached = false, mayPlay = true))
-        assertFalse("another renderer plays", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = true, mayPlay = true))
-        assertFalse("the app is suspended", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = false))
+        assertTrue(me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = true, askedPaused = false))
+        assertFalse("a step while paused only moves", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = true, detached = false, mayPlay = true, askedPaused = false))
+        assertFalse("another renderer plays", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = true, mayPlay = true, askedPaused = false))
+        assertFalse("the app is suspended", me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = false, askedPaused = false))
+        assertFalse(
+            "a pause asked while the WebView held it (QA H1)",
+            me.vibb.music.logic.spotifySelfResumeShown(pausedStep = false, detached = false, mayPlay = true, askedPaused = true),
+        )
     }
 
     @Test
@@ -1704,6 +1710,172 @@ class SpotifyRendererTest {
         r.seekTo(2, 0)
         advance(0)
         assertEquals(2, r.currentIndex())
+        r.release()
+    }
+
+    // --- the code QA's fix round (qa-26c-6l-fixes-code) ---
+
+    /** The service's call rule as `PlaybackService.callStep` runs it, against this renderer (QA M1). */
+    private var call = me.vibb.music.logic.CallPause()
+
+    private fun callStep(r: SpotifyRenderer, inCall: Boolean) {
+        r.inCall = inCall
+        val playing = r.showsPlaying || r.heldByPage
+        val paused = me.vibb.music.playback.pausedForCall(playing, r.itemCount(), r.rendererState)
+        val (next, action) = me.vibb.music.logic.callPauseStep(call, inCall, playing, paused, mayPlay = true)
+        call = next
+        when (action) {
+            me.vibb.music.logic.CallAction.PAUSE -> r.pause()
+            me.vibb.music.logic.CallAction.PLAY -> r.play()
+            me.vibb.music.logic.CallAction.NONE -> Unit
+        }
+    }
+
+    @Test
+    fun `H1 - the kid's pause while an alarm holds the page paused sticks - Chromium's resume is paused at once`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        post(state(0, 6_000, paused = true)) // the alarm: Chromium suspends the page's audio
+        assertTrue(r.heldByPage)
+        r.pause() // the kid's pause during the ring
+        settle()
+        assertFalse(r.heldByPage)
+        val pauses = page.calls.count { it == "vibb.pause()" }
+        events.clear()
+        post(state(0, 6_000)) // Dismiss: Chromium resumes what it suspended
+        assertEquals("paused again at once", pauses + 1, page.calls.count { it == "vibb.pause()" })
+        assertFalse("never shown playing", r.showsPlaying)
+        assertFalse(events.contains(RendererEvent.Resumed))
+        assertFalse(ports.locks)
+        post(state(0, 6_000, paused = true))
+        r.play() // the kid's own play goes on as ever
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `H1 - the sleep timer ending during the ring stays paused after it`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        r.fadeOutAndPause {}
+        advance(8_000)
+        post(state(0, 13_000, paused = true)) // the ring takes the focus in the fade's last seconds
+        advance(3_000) // the fade ends: pause(USER)
+        assertEquals("vibb.volume(1.0)", page.calls.last { it.startsWith("vibb.volume(") })
+        post(state(0, 13_000)) // the call is over: Chromium resumes
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `M1 - held by the WebView the page outlives the idle close, a pause of ours closes it 5 minutes later`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        post(state(0, 6_000, paused = true)) // a long call's ring
+        advance(6 * 60_000L)
+        assertTrue("held: the page stays for Chromium's resume", page.alive)
+        post(state(0, 6_000)) // Chromium plays on after the call
+        assertTrue(r.showsPlaying)
+        assertFalse(r.heldByPage)
+        r.pause()
+        post(state(0, 7_000, paused = true))
+        advance(5 * 60_000L + 1_000)
+        assertFalse("a pause of ours: closed after 5 idle minutes", page.alive)
+        r.release()
+    }
+
+    @Test
+    fun `M1 - a call - the ring's pause before CALL_HOLD, CALL_RELEASE plays again, short or long`() = runBlocking {
+        for (long in listOf(false, true)) {
+            call = me.vibb.music.logic.CallPause()
+            val r = playing()
+            post(state(0, 5_000))
+            post(state(0, 6_000, paused = true)) // the ring's focus loss reaches the page first
+            callStep(r, inCall = true) // then CALL_HOLD: the held web player counts as playing
+            assertTrue(call.pausedByCall)
+            post(state(0, 6_000)) // Chromium resumes within the call (a ring's transient): paused again, not shown
+            assertEquals("vibb.pause()", page.calls.last())
+            assertFalse(r.showsPlaying)
+            post(state(0, 6_000, paused = true))
+            val plays = api.plays().size
+            advance(if (long) 10 * 60_000L else 30_000L)
+            callStep(r, inCall = false) // CALL_RELEASE
+            advance(0)
+            if (long) {
+                assertFalse("the page went after 5 paused minutes", page.calls.last() == "vibb.resume()")
+                assertEquals("a fresh start at the place", plays + 1, api.plays().size)
+                assertEquals(6_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+            } else {
+                assertEquals("vibb.resume()", page.calls.last())
+                assertEquals(plays, api.plays().size)
+            }
+            assertTrue(r.showsPlaying)
+            r.release()
+        }
+    }
+
+    @Test
+    fun `M1 - a long call - CALL_HOLD before the ring's pause, CALL_RELEASE plays again from a new page`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        callStep(r, inCall = true) // CALL_HOLD first: our pause
+        post(state(0, 5_000, paused = true))
+        assertTrue(call.pausedByCall)
+        assertFalse(r.heldByPage)
+        advance(10 * 60_000L) // a pause of ours: the page goes after 5 minutes
+        assertFalse(page.alive)
+        callStep(r, inCall = false)
+        advance(0)
+        assertEquals("a fresh start at the place", 2, api.plays().size)
+        assertEquals(5_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+    }
+
+    @Test
+    fun `L2 - a play tapped during a call starts nothing and shows paused, no line - CALL_RELEASE plays what the call paused`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 1, 0, playNow = false)
+        r.inCall = true
+        r.play()
+        advance(1_000)
+        assertFalse(r.showsPlaying)
+        assertNull("no line", r.rendererState)
+        assertTrue("nothing sent", api.all().isEmpty())
+        assertEquals(0, page.opens)
+        r.inCall = false
+        r.play()
+        advance(0)
+        assertEquals(1, api.plays().size)
+        // playing, then a call: the kid's tap during it resumes nothing
+        post(state(1, 0))
+        callStep(r, inCall = true)
+        post(state(1, 1_000, paused = true))
+        r.play()
+        settle()
+        assertFalse(r.showsPlaying)
+        assertFalse(page.calls.contains("vibb.resume()"))
+        callStep(r, inCall = false)
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        r.release()
+    }
+
+    @Test
+    fun `N2 - the renderer's own refusal of a step tells the screens it stayed`() = runBlocking {
+        val r = renderer()
+        r.load(mediaItems(5), 1, 0, playNow = false)
+        ports.network = SpotifyLine.NEEDS_INTERNET
+        val seen = kotlinx.coroutines.CompletableDeferred<me.vibb.music.playback.PlayerHub.Message>()
+        val job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            seen.complete(me.vibb.music.playback.PlayerHub.messages.first())
+        }
+        r.seekTo(2, 0)
+        settle()
+        assertEquals(me.vibb.music.playback.PlayerHub.Message.STAYED, seen.await())
+        job.cancel()
         r.release()
     }
 

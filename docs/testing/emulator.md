@@ -1215,11 +1215,18 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   until a tap.
 - [ ] **A call**: in the emulator console `gsm call 4799999999` while it plays → paused (the launcher's `CALL_HOLD`, and
   the WebView's media session loses the focus to the ringtone); `gsm cancel` → it plays on (only what we paused; or
-  Chromium's own resume after the transient loss - either way one tone, no `play:` line).
+  Chromium's own resume after the transient loss - either way one tone, no `play:` line). Then (QA M1, L2) **one call
+  longer than 5 minutes**: it plays on after `gsm cancel` (a `play:` at the place if the page went meanwhile); note in
+  the report which came first in logcat - `CALL_HOLD` (MusicBridge) or the page's paused state (`spotify: …`). **During
+  a call, tap play**: no tone, no `play:` line, logcat `spotify: a start refused (a call)`, the player shows paused with
+  no line; after `gsm cancel` it plays only if the call paused it.
 - [ ] **Another app's audio** (design 26c §5.6 answered, F2): while it plays, an alarm a minute ahead in the emulator's
   Clock app - while it rings the tone pauses and the player shows paused (the WebView's media session's transient
   loss), after Dismiss it plays on by itself and the player follows; then a video in the emulator's Chrome - the tone
-  pauses and stays paused (a permanent loss), the player shows paused, no `play:` line either time. A VoIP call's `CALL_HOLD` (Element X) is a device
+  pauses and stays paused (a permanent loss), the player shows paused, no `play:` line either time. Then (QA H1):
+  **pause while the alarm rings, then Dismiss** - it stays paused (logcat: a `vibb.pause()` right after the page's own
+  resume, the player never shows playing); and **Sov with the timer ending while the alarm rings** - after Dismiss it
+  stays paused. A VoIP call's `CALL_HOLD` (Element X) is a device
   check (QA checklist item 10).
 - [ ] **Design 28**: while it plays, Home's "Spilles nå" card and the lock's tile show it (title, playing); pause: both
   show paused and go 10 minutes later (§6j's checks with Spotify playing).

@@ -4593,6 +4593,24 @@ this branch, `spotify-6l-fixes`). One line per finding:
   when our `vibb.pause()` came while it loaded (a foreign transfer, a context step while paused). The stub now handles
   it (`played(audio)`); `player.js` has no unhandled promise.
 
+### Fix round after QA's code review (qa-26c-6l-fixes-code, 2026-10-14)
+
+QA `cb799f9b`: 1 High, 1 Medium, 2 Low, 3 Nits; all fixed, none disputed. `main` (e17949e3+, design 34 steps 9 and 10)
+was merged first with no conflict.
+
+| Finding | What changed | Check |
+|---|---|---|
+| H1 | A pause asked while the WebView holds our track paused (the kid's, the sleep timer's end, the call rule's) no longer calls `tracker.pauseSent()` - no paused state would follow, and it swallowed Chromium's resume - but sets `askedPaused`; `spotifySelfResumeShown(…, askedPaused)` then answers Chromium's resume at the gain with `vibb.pause()` at once, never shown. Cleared by our own play, a load, a detach. | `H1 - the kid's pause while an alarm holds the page paused sticks`, `H1 - the sleep timer ending during the ring`, the pure rule. |
+| M1 | `heldByPage` (QA's `heldByWebView`: `SourceScanTest` keeps the word WebView in the host only; a pause not ours while the kid wanted it playing) holds off the 5-minute idle close, and `callStep` counts it as playing, so a ring whose focus loss beats `CALL_HOLD` is still the call rule's: `CALL_RELEASE` plays again (a `vibb.resume()`, or a fresh play at the place when the page went after 5 paused minutes). Cleared by a resume, any pause or play of ours, a load, a detach, a suspension, a stop. The service's foreground state still drops while paused (as for every source's pause). | `M1 - held by the WebView the page outlives the idle close…`, both call orders short and long, `GuardsTest` pins `callStep`. |
+| L1 | F7 writes the report with `Sync.writeReport` (`reportSpotifyWord`, which hands it to the launcher), not a whole sync; the nudge's debounce is no longer F7's. | `GuardsTest`: `reportSpotifyWord` calls `writeReport`, not `Sync.nudge`. |
+| L2 | During the launcher's call (`launcherCall` sets `SpotifyRenderer.inCall`) a play starts nothing - no page, no Web API call - and shows paused with no line, as the phone's own player whose focus request a call refuses; the call rule plays again only what it paused. | `L2 - a play tapped during a call…`; §6l's new call lines. |
+| N1 | `SpotifyPlayer`'s KDoc names the real tests (SpotifyRendererTest's F1 tests). | - |
+| N2 | The renderer's own refusal of a step emits `PlayerHub.Message.STAYED` too. | `N2 - the renderer's own refusal of a step tells the screens it stayed`. |
+| N3 | `music/CLAUDE.md` says what the test-only stand-ins under `src/test/java/android/` are and that a new one needs its reason. | - |
+
+§6l's re-run gains (emulator.md): pause during an alarm, the sleep timer ending during the ring, a call over 5 minutes
+with the order of `CALL_HOLD` and the page's pause logged, and play tapped during a call.
+
 Re-run after these (builds paused; the report's list): A1 #9 (the tone keeps sounding; the focus stack), #10, #11,
 #13, #15 (the headset's play), #16, #17, #18, #19 (a call) and the new "Another app's audio", #20, #21, #22, #23 (with
 the cooldown) and #24 ("Sync now" ~20 s after the refusal); A1 #3 in the browser (it lands on the callback now); A2 on

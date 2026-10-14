@@ -214,9 +214,12 @@ fun spotifyPauseCause(ours: Boolean): PauseCause = if (ours) PauseCause.USER els
 /**
  * Our paused track playing again by itself (the WebView's media session after a transient focus loss, or the account's
  * other controls) is shown playing - unless the kid stepped while paused just before ([pausedStep]: a step only moves),
- * another renderer plays ([detached]) or the launcher's time rule says no ([mayPlay] false): then it is paused at once.
+ * another renderer plays ([detached]), the launcher's time rule says no ([mayPlay] false) or a pause was asked while
+ * the WebView held it paused ([askedPaused]: the kid's, the sleep timer's, the call rule's - qa-26c-6l-fixes-code H1):
+ * then it is paused at once.
  */
-fun spotifySelfResumeShown(pausedStep: Boolean, detached: Boolean, mayPlay: Boolean): Boolean = !pausedStep && !detached && mayPlay
+fun spotifySelfResumeShown(pausedStep: Boolean, detached: Boolean, mayPlay: Boolean, askedPaused: Boolean): Boolean =
+    !pausedStep && !detached && mayPlay && !askedPaused
 
 /** The deadline of a start that begins at [nowMs] (the elapsed clock). */
 fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS
