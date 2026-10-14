@@ -177,7 +177,7 @@ fun LibraryScreen(
  *
  * It fills the library's weighted slot (design 34 P10 b, QA L1): the cover is [libraryFit] of the slot's
  * measured height less the title and hint lines measured at the font scale, in whole pixels - at most 180 dp, at
- * least 120; below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room is kept out
+ * least [LIBRARY_COVER_MIN_DP] (64); below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room is kept out
  * of the cover's, so the cover doesn't jump when the bar comes or goes (qa-34-s11-code N2); the spare room centres.
  * The covers' shadow is soft: the centred one keeps v12's 12 dp, a neighbour has P2's 2 dp, in between it follows
  * the page offset (P10 c).
@@ -296,7 +296,7 @@ private fun CarouselPager(
                         }
                     },
             ) {
-                CoverBadges(e)
+                CoverBadges(e, coverShowsKind(cover))
             }
         }
     }
@@ -337,11 +337,14 @@ private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
 private const val COVER_ELEVATION_DP = 12f
 private const val NEIGHBOUR_ELEVATION_DP = 2f
 
+/** The cover's badges: the kind chip ([kind]: not on a small cover, N6), NY, and the play mark of a started entry. */
 @Composable
-private fun CoverBadges(e: EntryUi) {
+private fun CoverBadges(e: EntryUi, kind: Boolean) {
     Box(Modifier.fillMaxSize().padding(10.dp)) {
-        Box(Modifier.align(Alignment.BottomStart).clip(RoundedCornerShape(11.dp)).background(Palette.chip).padding(horizontal = 9.dp, vertical = 3.dp)) {
-            Line(kindText(e.kind), 11, 800, Palette.fg)
+        if (kind) {
+            Box(Modifier.align(Alignment.BottomStart).clip(RoundedCornerShape(11.dp)).background(Palette.chip).padding(horizontal = 9.dp, vertical = 3.dp)) {
+                Line(kindText(e.kind), 11, 800, Palette.fg)
+            }
         }
         if (e.isNew) {
             Box(Modifier.align(Alignment.TopStart).clip(RoundedCornerShape(11.dp)).background(Palette.peach).padding(horizontal = 9.dp, vertical = 3.dp)) {
@@ -356,18 +359,32 @@ private fun CoverBadges(e: EntryUi) {
     }
 }
 
-/** Alle + the categories with entries here; single choice; more than four scroll. */
+/**
+ * Alle + the categories with entries here; single choice; more than four scroll. Each tile is as wide as its label
+ * needs at the font scale, never narrower than a fifth of the row ([categoryTileWidthFor], N6): a label is never cut.
+ */
 @Composable
 private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (Long?) -> Unit) {
     val label = stringResource(R.string.categories)
+    val all = stringResource(R.string.category_all)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
-        val tileWidth = categoryTileWidth(maxWidth.value).dp
+        val room = maxWidth.value
+        // the label as the tile draws it (11 sp ExtraBold, one line), its natural width at this font scale
+        val widthOf = { name: String ->
+            val px = measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1).size.width
+            categoryTileWidthFor(room, px / density.density).dp
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            item { CategoryTile(null, selected == null, tileWidth) { onCategory(null) } }
-            items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, tileWidth) { onCategory(c.id) } }
+            item { CategoryTile(null, selected == null, widthOf(all)) { onCategory(null) } }
+            items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, widthOf(c.name)) { onCategory(c.id) } }
         }
     }
 }
+
+/** The category tile's label size (sp). */
+private const val CATEGORY_LABEL_SP = 11
 
 @Composable
 private fun CategoryTile(category: Category?, on: Boolean, width: Dp, onClick: () -> Unit) {
@@ -398,7 +415,7 @@ private fun CategoryTile(category: Category?, on: Boolean, width: Dp, onClick: (
                 Image(painterResource(categoryGlyph(category)), null, Modifier.size(20.dp), colorFilter = ColorFilter.tint(fg))
             }
         }
-        Line(label, 11, 800, if (on) Palette.white else Palette.dim)
+        Line(label, CATEGORY_LABEL_SP, 800, if (on) Palette.white else Palette.dim)
     }
 }
 

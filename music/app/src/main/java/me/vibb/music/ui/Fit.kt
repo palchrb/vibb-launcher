@@ -72,6 +72,17 @@ fun flexWidths(available: Int, weights: List<Float>, mins: List<Int>): List<Int>
 /** Five category tiles fill the row with four 4 dp gaps (more scroll), each wide enough for its 44 dp circle. */
 fun categoryTileWidth(availableDp: Float): Float = (availableDp - 4 * 4) / 5
 
+/**
+ * A category tile as wide as its one-line label needs ([labelDp], measured at the font scale) and never narrower than
+ * [categoryTileWidth] - the row scrolls when the labels need more (design 34 step 11, emulator round 2026-10-14 N6: at
+ * font scale 2.0 "Musikk" and "Podkaster" were cut to "Mu…" and "Po…"); at most the whole row.
+ */
+fun categoryTileWidthFor(availableDp: Float, labelDp: Float): Float =
+    maxOf(categoryTileWidth(availableDp), kotlin.math.ceil(labelDp) + CATEGORY_LABEL_SLACK_DP).coerceAtMost(availableDp)
+
+/** A label's measured width gets this much more (sub-pixel rounding, so it never ellipsizes by a hair). */
+const val CATEGORY_LABEL_SLACK_DP = 2f
+
 /** The carousel's cover (at most 180 dp, [libraryCover]), centred: the room left on each side of it (dp). */
 fun carouselSide(availableDp: Float, coverDp: Float = CAROUSEL_COVER_DP.toFloat()): Float = ((availableDp - coverDp) / 2).coerceAtLeast(0f)
 
@@ -97,13 +108,24 @@ fun carouselGlyph(coverDp: Float): Float = 84f * coverDp / CAROUSEL_COVER_DP
  * The library's fit (design 34 P10 b, QA L1): the carousel sits in the weighted slot between the header and the
  * category tiles + now-playing bar, which always keep their own height. The cover is sized from the slot as measured
  * (a BoxWithConstraints), less the title and hint lines as measured at the font scale, less the fixed rest:
- * min(180, what is left), never under 120 - below that the slot scrolls, so nothing ever slides under the tiles or
+ * min(180, what is left), never under 64 - below that the slot scrolls, so nothing ever slides under the tiles or
  * the bar. Everything is in whole pixels, each fixed part rounded as Compose rounds a Dp (qa-34-s11-code L1: at
  * density 1.5 the 3 dp gaps are 4.5 px each, drawn as 5), so the content is never a pixel taller than the slot.
  */
 
-/** The smallest library cover; below it the slot scrolls (QA L1). */
-const val LIBRARY_COVER_MIN_DP = 120
+/**
+ * The smallest library cover; below it the slot scrolls (QA L1). 64 dp, not step 11's 120 (emulator round 2026-10-14
+ * N6): at font scale 2.0 Android 16 grows the status bar to about 90 dp, so on a 320x569 dp screen with the
+ * now-playing bar the slot held a 120 dp cover only by scrolling, and the hint line was cut at the slot's edge. A
+ * cover gives way before the words do; it is still well above a 48 dp target, its neighbours peek beside it.
+ */
+const val LIBRARY_COVER_MIN_DP = 64
+
+/** Below this cover the kind chip on it ("Musikk") is left out: the hint line under the title says the kind (N6). */
+const val COVER_KIND_CHIP_MIN_DP = 120
+
+/** Does a cover of [coverDp] carry the kind chip ([COVER_KIND_CHIP_MIN_DP])? */
+fun coverShowsKind(coverDp: Float): Boolean = coverDp >= COVER_KIND_CHIP_MIN_DP
 
 /** The pager's box is the cover plus this (its shadow's margin, v12's 184 for 180). */
 const val CAROUSEL_BOX_EXTRA_DP = 4
@@ -141,7 +163,7 @@ data class LibraryFit(val coverPx: Int, val scrolls: Boolean)
 
 /**
  * The library's cover for a slot of [slotPx] holding the measured title and hint lines ([linesPx]): min(180 dp, what
- * is left once [reservePx] is also kept free), floor 120 dp. [reservePx] is the now-playing bar's room (and its gap)
+ * is left once [reservePx] is also kept free), floor [LIBRARY_COVER_MIN_DP]. [reservePx] is the now-playing bar's room (and its gap)
  * while there is no bar, so the cover is the same with and without it (qa-34-s11-code N2: no 180/174 jump when the
  * bar comes or goes). The slot scrolls only when the content is taller than the slot itself.
  */
