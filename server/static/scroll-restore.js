@@ -123,7 +123,12 @@
         } else {
             restore();
         }
-        win.addEventListener("load", restore);
+        // Then the entry goes back to the browser: the record is used up, so Back to this page later
+        // must find the place the browser keeps, not the top (qa-browser-fixes-code M1).
+        win.addEventListener("load", function () {
+            restore();
+            if (win.history && "scrollRestoration" in win.history) win.history.scrollRestoration = "auto";
+        });
     }
 
     var api = { install: install, restoreTarget: restoreTarget, KEY: KEY, MAX_AGE_MS: MAX_AGE_MS };

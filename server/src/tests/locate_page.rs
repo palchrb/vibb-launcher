@@ -160,6 +160,7 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
             .request_form(Method::POST, target, Some(&cookie), &sent)
             .await;
         assert_redirect(&res, path, *fragment);
+        app.assert_lands(&res, &cookie).await;
     }
     assert_eq!(
         commands(&app, id).await,

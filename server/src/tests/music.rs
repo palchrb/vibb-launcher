@@ -5033,7 +5033,7 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
     )
     .unwrap();
     let page = app.get_page("/music/settings", &cookie).await.text();
-    assert!(page.contains("id=\"orphans\""));
+    assert!(page.contains("data-row=\"orphans\""));
     assert!(page.contains("2 files</span>"), "{page}");
     assert!(page.contains("2.0 MB"), "{page}");
     // Behind a confirm (design 31 §5.6): the delete form sits inside its <details>.
@@ -5057,12 +5057,11 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
         events(&app, "music_orphans_deleted").await,
         vec!["2 file(s), 2.0 MB".to_string()]
     );
-    assert!(
-        !app.get_page("/music/settings", &cookie)
-            .await
-            .text()
-            .contains("id=\"orphans\"")
-    );
+    // The group is gone, its anchor stays: the redirect still lands where the parent was
+    // (qa-browser-fixes-code L1).
+    let page = app.get_page("/music/settings", &cookie).await.text();
+    assert!(!page.contains("data-row=\"orphans\""));
+    assert!(page.contains("id=\"orphans\""));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -5353,6 +5352,7 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             (None, None) => assert_eq!(action_fragment, None, "{action}"),
             _ => panic!("{action} on {page}: {location}"),
         }
+        app.assert_lands(&res, &cookie).await;
     }
     for kind in [
         "/music",

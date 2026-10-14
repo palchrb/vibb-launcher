@@ -5,6 +5,10 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { install, restoreTarget, KEY, MAX_AGE_MS } = require("../static/scroll-restore.js");
 
+test("a record counts for 20 s (server/CLAUDE.md, design 31 §5.1)", () => {
+    assert.strictEqual(MAX_AGE_MS, 20000);
+});
+
 /** An element with an id (or "") at `top` on the screen, inside `parent`. */
 function fakeElement(id, top, parent = null) {
     return { id, parentNode: parent, getBoundingClientRect: () => ({ top }) };
@@ -88,6 +92,25 @@ test("the page that comes back scrolls to the saved position, once", () => {
     assert.ok(!w.store.has(KEY), "consumed");
     w.winListeners.load();
     assert.deepStrictEqual(w.scrolls, [[0, 840], [0, 840]]);
+    // Then the entry is the browser's again (qa-browser-fixes-code M1).
+    assert.strictEqual(w.win.history.scrollRestoration, "auto");
+});
+
+// qa-browser-fixes-code M1: after the save's page has loaded, the user opens a link and comes
+// Back. The record is used up, so only the browser can bring the place back: the entry must not
+// stay "manual", and the page loaded again from history restores nothing itself.
+test("Back to a saved page later is the browser's: the entry is \"auto\" again after load", () => {
+    const w = fakeWindow({ hash: "#music-settings", stored: { path: "/devices/1", y: 840, t: 0, tops: { "music-settings": 120 } }, elements: { "music-settings": 960 } });
+    install(w.win, () => 100);
+    assert.strictEqual(w.win.history.scrollRestoration, "manual", "before load: the script restores");
+    w.winListeners.load();
+    assert.strictEqual(w.win.history.scrollRestoration, "auto", "after load: the browser keeps the place");
+    // Coming Back reloads the page with no record: the script leaves the browser's place alone.
+    const back = fakeWindow({ hash: "#music-settings", elements: { "music-settings": 960 } });
+    back.win.history = w.win.history;
+    install(back.win, () => 5000);
+    assert.deepStrictEqual(back.scrolls, []);
+    assert.strictEqual(back.win.history.scrollRestoration, "auto");
 });
 
 test("still loading: restores at DOMContentLoaded", () => {
@@ -113,6 +136,7 @@ test("a #fragment naming the form's own group keeps that group where it was on t
     assert.deepStrictEqual(moved.scrolls, [[0, 1380]]);
     moved.winListeners.load();
     assert.deepStrictEqual(moved.scrolls, [[0, 1380], [0, 1380]]);
+    assert.strictEqual(moved.win.history.scrollRestoration, "auto");
     // Not on the page that came back: the saved position.
     const gone = fakeWindow({ hash: "#music-settings", stored });
     install(gone.win, () => 100);
@@ -172,6 +196,12 @@ test("another path or an old save don't restore", () => {
     const old = fakeWindow({ stored: { path: "/devices/1", y: 5, t: 0 } });
     install(old.win, () => MAX_AGE_MS);
     assert.deepStrictEqual(old.scrolls, []);
+    // An old record over the form's own group's fragment restores nothing either (qa L2).
+    const oldGroup = fakeWindow({ hash: "#a", stored: { path: "/devices/1", y: 5, t: 0, tops: { a: 40 } }, elements: { a: 300 } });
+    install(oldGroup.win, () => MAX_AGE_MS);
+    assert.deepStrictEqual(oldGroup.scrolls, []);
+    oldGroup.winListeners.load();
+    assert.deepStrictEqual(oldGroup.scrolls, []);
 });
 
 test("restoreTarget rejects garbage and clock jumps", () => {

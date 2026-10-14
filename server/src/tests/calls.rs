@@ -1168,6 +1168,7 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         } else {
             assert_redirect(&res, path, *fragment);
         }
+        app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says: managed, Mamma saved, her photo gone, then her too, Pappa added.
     let managed: bool =

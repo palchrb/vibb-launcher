@@ -678,3 +678,55 @@ async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
         "The lock's first page shows the clock, what's playing and the newest notifications."
     ));
 }
+
+/// qa-browser-fixes-code L1: a row listed only because it is ticked (here the default Element X on
+/// a phone that hasn't reported) goes with its tick, so its untick lands on the group - an anchor
+/// the answer still has -, not on the gone row; a listed app's switch keeps its row.
+#[tokio::test]
+async fn unticking_a_row_listed_only_for_its_tick_lands_on_the_group() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    let (action, hidden) = super::settings_pages::forms(&html)
+        .into_iter()
+        .find(|(action, _)| action.contains("/lock-screen/apps"))
+        .expect("Element X's row");
+    assert_eq!(
+        action,
+        format!("/devices/{id}/lock-screen/apps#notifications")
+    );
+    let fields: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    assert!(fields.contains(&("unlisted", "1")));
+    let res = app
+        .request_form(Method::POST, &action, Some(&cookie), &fields)
+        .await;
+    super::assert_redirect(&res, &lock_page(id), Some("notifications"));
+    app.assert_lands(&res, &cookie).await;
+    assert!(ticks(&app, id).await.is_empty());
+
+    // A listed app (reported and allowed) keeps its row, ticked or not.
+    report(
+        &app,
+        &token,
+        &[("org.thoughtcrime.securesms", "Signal")],
+        json!({}),
+    )
+    .await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = '[\"org.thoughtcrime.securesms\"]'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for on in [true, false] {
+        let res = tick(&app, Some(&cookie), id, "org.thoughtcrime.securesms", on).await;
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some("lock-screen-app-org.thoughtcrime.securesms"),
+        );
+        app.assert_lands(&res, &cookie).await;
+    }
+}

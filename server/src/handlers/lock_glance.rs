@@ -2,7 +2,8 @@
 //! `crate::lock_glance`; design 31 step 4): one tick per app. Both are auto-saving forms behind
 //! full admin auth (and the admin listener's CSRF check, as every form); each change is in the
 //! security log, nudges the phone and goes back to its form's row on `/devices/{id}/lock`
-//! (`#lock-screen-text`, `#lock-screen-app-<package>`): without JS the answer lands on the switch
+//! (`#lock-screen-text`, `#lock-screen-app-<package>`; `#notifications` for a row listed only
+//! because it was ticked, which goes with its tick): without JS the answer lands on the switch
 //! in a long app list, with JS `scroll-restore.js` keeps the exact place (design 31 §5.1.4).
 
 use std::collections::HashMap;
@@ -133,7 +134,13 @@ pub async fn save_app(
                 Some(&lock_glance::log_line(id, &package, on)),
             )
             .await;
-            saved(&state, id, &format!("lock-screen-app-{package}"))
+            // A row listed only because it was ticked is gone once unticked: back to the group
+            // (qa-browser-fixes-code L1), else to the row.
+            if form.contains_key("unlisted") && !on {
+                saved(&state, id, "notifications")
+            } else {
+                saved(&state, id, &format!("lock-screen-app-{package}"))
+            }
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the lock screen's app");

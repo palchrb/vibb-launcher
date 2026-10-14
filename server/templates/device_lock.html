@@ -198,8 +198,11 @@
             <p class="row text-alarm" data-row="lock-screen-unreadable">The apps couldn't be read. Check the server log.</p>
             {% else %}
             {% for app in lock_screen.apps %}
-            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps#lock-screen-app-{{ app.package_name }}" class="cell" id="lock-screen-app-{{ app.package_name }}">
+            {#- A row listed only because it is ticked goes with its tick: its save lands on the group
+                (qa-browser-fixes-code L1). -#}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps#{% if app.note.is_some() %}notifications{% else %}lock-screen-app-{{ app.package_name }}{% endif %}" class="cell" id="lock-screen-app-{{ app.package_name }}">
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
                     <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ note }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if app.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

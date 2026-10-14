@@ -316,7 +316,10 @@ async fn advanced_forms_return_to_their_groups() {
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
         match expected {
-            Some((path, fragment)) => assert_redirect(&res, path, *fragment),
+            Some((path, fragment)) => {
+                assert_redirect(&res, path, *fragment);
+                app.assert_lands(&res, &cookie).await;
+            }
             None => {
                 assert_eq!(res.status, StatusCode::OK, "{route}");
                 assert!(res.text().contains("class=\"enrollment-code\""), "{route}");
@@ -681,11 +684,12 @@ async fn lock_forms_return_to_the_page() {
             &[("show_text", "on")],
             (lock.clone(), Some("lock-screen-text")),
         ),
-        // Element X, ticked for every new phone (its hidden `package_name`).
+        // Element X, ticked for every new phone (its hidden `package_name`); listed only for its
+        // tick (no report yet), so the untick lands on the group (qa-browser-fixes-code L1).
         (
-            "lock-screen/apps#lock-screen-app-io.element.android.x",
+            "lock-screen/apps#notifications",
             &[],
-            (lock.clone(), Some("lock-screen-app-io.element.android.x")),
+            (lock.clone(), Some("notifications")),
         ),
     ];
     let found = forms(&html);
@@ -708,6 +712,7 @@ async fn lock_forms_return_to_the_page() {
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
         assert_redirect(&res, path, *fragment);
+        app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says.
     let (kid, timeout, text): (Option<String>, i64, bool) = sqlx::query_as(
@@ -1166,6 +1171,7 @@ async fn home_and_filter_forms_return_to_their_page() {
                     .request_form(Method::POST, action, Some(cookie), &sent)
                     .await;
                 assert_redirect(&res, &back, action.split_once('#').map(|(_, group)| group));
+                app.assert_lands(&res, cookie).await;
             }
         }
     };
@@ -1917,6 +1923,7 @@ async fn apps_forms_return_to_their_rows() {
             .request_form(Method::POST, &target, Some(&cookie), &sent)
             .await;
         assert_redirect(&res, &page, Some(&expected));
+        app.assert_lands(&res, &cookie).await;
     }
     assert_eq!((toggles, names, updates), (4, 2, 1));
 
@@ -2508,6 +2515,7 @@ async fn music_forms_return_to_their_groups() {
             .request_form(Method::POST, &target, Some(&cookie), &fields)
             .await;
         assert_redirect(&res, &page, expected.as_deref());
+        app.assert_lands(&res, &cookie).await;
         seen.push(target);
     }
     assert_eq!(

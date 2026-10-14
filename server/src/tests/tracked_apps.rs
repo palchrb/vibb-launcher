@@ -1626,6 +1626,7 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 }
                 (_, None) => assert_redirect(&res, &page, group),
             }
+            app.assert_lands(&res, &cookie).await;
         }
     }
     for route in [

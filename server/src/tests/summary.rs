@@ -328,6 +328,7 @@ async fn every_form_on_the_summary_returns_to_its_group() {
             )
             .await;
         assert_redirect(&res, path, Some(fragment));
+        app.assert_lands(&res, &cookie).await;
         // The flash is in that group, where the page lands.
         let page = app.get_page(path, &cookie).await.text();
         assert!(

@@ -236,7 +236,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   the form; with JS the script keeps the place over it - no fragment: the exact position; a fragment inside the
   form's elements (its group, a new row in it, a deleted file's neighbour): that element back where it was on the
   screen (an app switched to the other group stays under the finger); a fragment elsewhere (another group): the
-  browser's anchor. A form in a closed `<details>` returns with it open (`?open=`). A new
+  browser's anchor. At `load` the script gives the history entry back to the browser (`scrollRestoration` "auto"),
+  so Back to that page later finds the browser's place, not the top (qa-browser-fixes-code M1). A fragment must name
+  an element the answer still has (a group that is always rendered; a row that goes with the save lands on its
+  group - `#notifications`, the always-rendered `#orphans`): the redirect tables follow each redirect with
+  `TestApp::assert_lands`. A form in a closed `<details>` returns with it open (`?open=`). A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs its group's fragment in its action and its redirect

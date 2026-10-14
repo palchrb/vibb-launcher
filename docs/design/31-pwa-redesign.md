@@ -1313,6 +1313,8 @@ How it works (amended by the PWA browser pass's fix round, 2026-10-14; `docs/tes
     above it changed, the row still under the finger when the save moved it (an app switched to the other group);
   - with a #fragment the form's elements don't hold (another group, a result shown elsewhere) the browser goes to
     that anchor.
+- Once the page has loaded it gives the history entry back to the browser (`scrollRestoration` "auto"), so
+  Back to it later returns to the place, not the top (qa-browser-fixes-code M1).
 - Before the fix round it never restored over a #fragment: a save that returned to its group's anchor scrolled the
   group to the top edge (a 360 px jump, Medium 3), and the saves that returned without one landed at the top
   without JS (High 2).
@@ -1348,8 +1350,12 @@ The rules for the redesign (H3):
    - A form that leaves its page has no fragment of that page: signing in and out, Dismiss, Add Phone's and Add App's
      first step, New Setup Code (the code page), the deletes that return to a list (which keep their list's
      fragment).
+   - The fragment names an element the answer still has: a row that goes with the save (a lock-screen app
+     listed only for its tick) returns to its group, and a group that can empty out keeps its anchor
+     (`#orphans`).
    - Pinned for every page by `tests::shell::every_form_on_every_page_lands_on_its_own_group` (with
-     `settings_pages::check_forms`) and by each area's redirect table.
+     `settings_pages::check_forms`) and by each area's redirect table, which follows each redirect
+     (`TestApp::assert_lands`).
 5. **Links that point at today's anchors** move with their targets (L5):
    - `#parent-pin` in `window_relock.rs` → `/devices/{id}/lock#parent-pin`;
    - `#app-{package}` in the blocks list → `/devices/{id}/apps#app-{package}`;

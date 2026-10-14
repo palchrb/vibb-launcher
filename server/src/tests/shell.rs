@@ -592,7 +592,14 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
 /// of 2026-10-14, Finding 1).
 fn css_shape_error(css: &str) -> Option<String> {
     // The at-rules whose block holds rules; every other block holds declarations.
-    const RULE_LISTS: [&str; 4] = ["@media", "@supports", "@keyframes", "@-webkit-keyframes"];
+    const RULE_LISTS: [&str; 6] = [
+        "@media",
+        "@supports",
+        "@keyframes",
+        "@-webkit-keyframes",
+        "@container",
+        "@layer",
+    ];
     let line = |at: usize| css[..at].matches('\n').count() + 1;
     // Each open block: whether it holds declarations, and the line it opened on.
     let mut open: Vec<(bool, usize)> = Vec::new();
@@ -633,7 +640,11 @@ fn css_shape_error(css: &str) -> Option<String> {
                         prelude.trim()
                     ));
                 }
-                let name = prelude.split_whitespace().next().unwrap_or("");
+                // The at-rule's name ends at a space or a `(`: `@media(min-width: 600px)` is valid.
+                let head = prelude.trim_start();
+                let name = &head[..head
+                    .find(|c: char| c.is_whitespace() || c == '(')
+                    .unwrap_or(head.len())];
                 open.push((!RULE_LISTS.contains(&name), line(at)));
                 prelude.clear();
             }
@@ -665,6 +676,16 @@ fn style_css_has_the_shape_browsers_read() {
     // The guard catches what it is for, and reads comments and strings as what they are.
     let fine = "@media (x) {\n a { content: \"}{\"; /* } { */ }\n}\n@font-face { src: url('a;b') }";
     assert_eq!(css_shape_error(fine), None);
+    // Valid CSS it must not flag (qa-browser-fixes-code N1): an at-rule's condition with no space
+    // before it, and the other at-rules that hold rules.
+    for fine in [
+        "@media(min-width: 600px) { a { b: c } }",
+        "@supports(display: grid) { a { b: c } }",
+        "@container card (min-width: 400px) { a { b: c } }",
+        "@layer base { a { b: c } }\n@layer base, extra;",
+    ] {
+        assert_eq!(css_shape_error(fine), None, "{fine}");
+    }
     let lost_brace =
         ".a {\n    padding-left: 64px;\n\n/* step 14 */\n.b,\n.c {\n    margin: 0;\n}\n";
     assert_eq!(

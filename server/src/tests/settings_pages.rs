@@ -222,6 +222,7 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
                     .request_form(Method::POST, action, Some(cookie), &sent)
                     .await;
                 assert_redirect(&res, path, Some(fragment.as_str()));
+                app.assert_lands(&res, cookie).await;
             }
         }
     };

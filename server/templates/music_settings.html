@@ -101,9 +101,12 @@
     </div>
     <p class="group-footer">{% if catalog.is_some() %}Switch it on for a phone on the phone's page.{% else %}Watches this project's music-v releases; nothing is installed until you switch it on for a phone.{% endif %}</p>
 
+    {#- Always rendered, so Delete Files… lands here (at the page's end) once the files are gone
+        (qa-browser-fixes-code L1). -#}
+    <div id="orphans">
     {% if let Some((count, size)) = orphans %}
     <h2 class="group-header">Files no entry uses</h2>
-    <div class="group" id="orphans">
+    <div class="group">
         <div class="row" data-row="orphans">
             <span class="row-label">{{ count }} file{% if *count != 1 %}s{% endif %}</span>
             <span class="row-value">{{ size }}</span>
@@ -118,6 +121,7 @@
     </div>
     <p class="group-footer">Most likely left over after an older backup was restored.</p>
     {% endif %}
+    </div>
 </main>
 </body>
 </html>

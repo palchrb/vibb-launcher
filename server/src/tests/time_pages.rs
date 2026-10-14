@@ -580,6 +580,7 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                 expected.0 = format!("/schedules/rules/{}?saved=added", new_id().await);
             }
             assert_redirect(&res, &expected.0, expected.1);
+            app.assert_lands(&res, &cookie).await;
             seen.push(target);
         }
     }
