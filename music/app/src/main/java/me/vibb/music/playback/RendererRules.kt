@@ -87,6 +87,25 @@ fun pausedForCall(showsPlaying: Boolean, itemCount: Int, state: RendererState?):
     !showsPlaying && itemCount > 0 && state?.remote != true
 
 /**
+ * The call rule's "a call is on" for the renderer [kind] (26a §6.7, `callStep`): the launcher's word for every renderer;
+ * the audio mode (a ringing or active system call) too on a Sonos room - the backstop without the launcher's listener
+ * access - and on Spotify's web player (emulator round 2026-10-14 N3): Chromium's own focus loss pauses the page before
+ * the launcher looks at the session, so the launcher often sends nothing; the phone's own player has its audio focus.
+ */
+fun callOn(launcherInCall: Boolean, modeInCall: Boolean, kind: RendererKind): Boolean =
+    launcherInCall || (modeInCall && (kind == RendererKind.SONOS || kind == RendererKind.SPOTIFY))
+
+/**
+ * A cover tap on the Spotify entry whose queue is [loaded] goes on with it only while the library still lists it the same
+ * way ([now], the library's entry of that id now; null = gone, nothing to compare): the same key, target and mode. An
+ * entry flipped from list to context mode (a 403 on the playlist, design 26c §5.9) - or back - while its play was alive
+ * starts its new queue instead, so the old list's queue adds stop (emulator round 2026-10-14 N5). Every other source
+ * resumes as ever (vibb's tile press).
+ */
+fun loadedPlayStale(loaded: Entry, now: Entry?): Boolean =
+    isSpotify(loaded) && now != null && (now.key != loaded.key || now.target != loaded.target || now.spotifyMode != loaded.spotifyMode)
+
+/**
  * A natural advance resumes an item heard before (vibb: in-session jumps resume too) on the phone's own
  * player only (§5.10, QA M4): on a room and on Spotify the next track starts where the renderer starts it,
  * at 0 - nothing is sent.

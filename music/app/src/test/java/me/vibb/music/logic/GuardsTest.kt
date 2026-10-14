@@ -458,7 +458,9 @@ class GuardsTest {
         assertTrue(service.contains("audio.addOnModeChangedListener(mainExecutor, modeListener)"))
         assertTrue(service.contains("audio.removeOnModeChangedListener(modeListener)"))
         val step = service.substringAfter("private fun callStep() {").substringBefore("\n    }\n")
-        assertTrue(step.contains("val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)"))
+        // the audio mode counts on a room and on the web player (`callOn`, emulator round 2026-10-14 N3)
+        assertTrue(step.contains("val inCall = callOn(launcherInCall, modeInCall, r.kind)"))
+        assertTrue(service.contains("modeInCall = callMode(audio.mode)\n        audio.addOnModeChangedListener(mainExecutor, modeListener)"))
         assertTrue(step.contains("callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))"))
         // the same entry point as the session's play (qa-26a-step3b-code L7)
         assertTrue(step.contains("CallAction.PLAY -> if (callRenderer === r) r.player.play()"))
@@ -731,7 +733,6 @@ class GuardsTest {
                 // design 30 (merged from main 571f86f): the changed-source reload, the played mark and the held set are
                 // the phone's own player's (LOCAL) - never Spotify's web player, never a room; the claim is claimsQueue's
                 "val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local",
-                "val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)",
                 "renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL",
                 "if (renderer.kind != RendererKind.LOCAL || item.fileId != null || a.entry.source == Source.STORYTEL) return",
                 "val held = if (a == null || renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0) {",
@@ -905,7 +906,17 @@ class GuardsTest {
         )
         val call = serviceBody("private fun callStep() {")
         assertTrue("a web player the WebView paused is the call rule's (QA M1)", call.contains("val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldByPage == true"))
-        assertTrue("the web player hears the launcher's call (QA L2)", serviceBody("private fun launcherCall(inCall: Boolean) {").contains("spotify?.inCall = inCall"))
+        // the web player hears the launcher's call (QA L2) and the audio mode's (emulator round 2026-10-14 N3), set wherever
+        // either changes and when the renderer is made
+        val hears = "spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)"
+        assertTrue(serviceBody("private fun launcherCall(inCall: Boolean) {").contains(hears))
+        assertTrue(service.substringAfter("private val modeListener = AudioManager.OnModeChangedListener { mode ->").substringBefore("\n    }\n").contains(hears))
+        assertTrue(service.contains(".apply { inCall = spotifyInCall(launcherInCall, modeInCall) }.also { spotify = it }"))
+        assertEquals("inCall set nowhere else", 3, Regex("""inCall = spotifyInCall\(""").findAll(service).count())
+        // N5: a cover tap on the loaded Spotify entry goes on with it only while the library lists it the same way
+        val tap = serviceBody("private suspend fun playEntry(entryId: Long) {")
+        assertTrue(tap.contains("if (!loadedPlayStale(current.entry, now)) {\n                renderer.play()"))
+        assertTrue(tap.contains("store.library()?.entries?.firstOrNull { it.id == entryId }"))
         val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
         assertTrue("every message ends the hold; STAYED shows nothing more", root.substringAfter("PlayerHub.messages.collect {").substringBefore("message = it").let { it.contains("vm.switching = null") && it.contains("if (it == PlayerHub.Message.STAYED) return@collect") })
         val now = serviceBody("private fun reportNowPlaying(")

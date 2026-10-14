@@ -36,9 +36,16 @@ import kotlin.math.abs
  * - **The end of a track** is read from the state: our current track paused at position 0 after its
  *   last playing position, carried on by the time since (the page posts every 5 s), came within 3 s of
  *   its duration, with no pause of ours pending (or a track not ours playing then: Autoplay). Spotify's
- *   own advance shows as the expected next uri.
+ *   own advance shows as the expected next uri. **A paused state at the track's duration** after it ran
+ *   out (the HTML audio element's `pause` before its `ended`, which the fake's stub posted; the real SDK
+ *   may post one too - emulator round 2026-10-14 N1) is the track ending, never a pause: while Spotify
+ *   knows our next item the state that follows says where it went (nothing is emitted, the player keeps
+ *   playing and its locks), else it is the end as at 0. The advance plays again after a paused state of
+ *   ours that wasn't our pause ([Event.Resumed]).
  * - **Unplayable** (QA M5) only from the SDK: a `playback_error` on our current track, or Spotify
- *   skipping past one of ours on the evidence above. After three in a row the renderer stops.
+ *   skipping past one of ours on the evidence above. A `playback_error` after our current track played
+ *   out is the next item's (Spotify moved on to it and it failed before any state of its own; N2). After
+ *   three in a row the renderer stops.
  * - **A `null` state** is confirmed before it counts (QA L11): [Event.Look] asks the page again; a
  *   `null` 2 s or more after the first, or a `not_ready`, is [Event.Elsewhere].
  * - **Context mode** (§5.9, step 6; [loadContext], [playedContext]): Spotify plays the entry's context (an artist,
@@ -331,10 +338,20 @@ class SpotifyTracker {
         return listOf(Event.Elsewhere)
     }
 
-    /** The SDK's `playback_error`: our current track can't be played. */
-    fun onPlaybackError(): List<Event> {
+    /**
+     * The SDK's `playback_error` at [nowMs]: our current track can't be played - or, once it played out with our next
+     * item on Spotify's queue, the next one (emulator round 2026-10-14 N2: the error comes when Spotify reaches it, before
+     * any state names it), which becomes the current item; the state that follows says where Spotify went from there.
+     */
+    fun onPlaybackError(nowMs: Long): List<Event> {
         if (mode != Mode.OURS && mode != Mode.STARTING) return emptyList()
         if (context != null) return emptyList() // Spotify skips it in its own order; the synthetic item is no track
+        val next = index + 1
+        if (mode == Mode.OURS && next <= known && next in queue.indices && ranOut(nowMs)) {
+            moveTo(next)
+            lastPaused = false // the play goes on past it: Spotify's next state is no resume
+            return unplayable(next)
+        }
         return unplayable(index)
     }
 
@@ -560,7 +577,11 @@ class SpotifyTracker {
     /** A state of our current track. */
     private fun ourState(s: SdkState, nowMs: Long): List<Event> {
         if (s.paused) {
-            if (!pausePending && s.positionMs < END_RESET_MS && ranOut(nowMs)) return end()
+            if (!pausePending && ranOut(nowMs)) {
+                if (s.positionMs < END_RESET_MS) return end()
+                // N1: paused at its duration - the track ended (the element's `pause` before `ended`), never a pause
+                if (atDuration(s)) return playedOut()
+            }
             val ours = pausePending
             pausePending = false
             observe(s, nowMs)
@@ -574,18 +595,41 @@ class SpotifyTracker {
         return if (wasPaused) listOf(Event.Resumed) else emptyList()
     }
 
+    /**
+     * [s] is our current track paused at (or past) its duration: the end of the track, as the HTML audio element's
+     * `pause` before its `ended` (N1). Within [END_RESET_MS] of the state's duration, else the listing's.
+     */
+    private fun atDuration(s: SdkState): Boolean {
+        val duration = s.durationMs ?: durationSeen ?: queue.getOrNull(index)?.durationMs ?: return false
+        return duration > 0 && s.positionMs >= duration - END_RESET_MS
+    }
+
+    /**
+     * Our current track ended with a paused state at its duration (N1): while Spotify knows our next item (the window,
+     * or our add one ahead) - or in a context, where Spotify picks the next - its own advance follows, and the state
+     * after this one says where it went (nothing now: still playing, the locks kept, nothing measured); with nothing of
+     * ours left on Spotify's side it is the end, as the reset to 0 is.
+     */
+    private fun playedOut(): List<Event> = if (context != null || index + 1 <= known) emptyList() else end()
+
     /** Spotify moved on to [to] (the expected next, or a later uri of ours past [skipped] ones it proved it skipped). */
     private fun advance(to: Int, skipped: List<Int>, s: SdkState, nowMs: Long): List<Event> {
         val events = mutableListOf<Event>()
         for (k in skipped) events += unplayable(k)
         if (mode == Mode.LOST) return events
+        val wasPaused = lastPaused
         moveTo(to)
         forget(s)
         events += Event.ItemChanged(to, auto = true)
         observe(s, nowMs)
-        if (s.paused) {
-            lastPaused = true
-            events += Event.Paused(ours = false)
+        when {
+            s.paused -> {
+                lastPaused = true
+                events += Event.Paused(ours = false)
+            }
+            // the next track plays after a paused state of ours that wasn't our pause (N1: a pause posted at a
+            // track's end): playing again, as context mode's advance says it
+            wasPaused && !pausePending -> events += Event.Resumed
         }
         events += aheadAdd()
         return events
@@ -719,7 +763,10 @@ class SpotifyTracker {
         /** The end rule: the last playing position within this of the duration. */
         const val END_MARGIN_MS = 3_000L
 
-        /** ...and the paused state's position under this (Spotify shows the played-out track at 0). */
+        /**
+         * ...and the paused state's position under this (Spotify shows the played-out track at 0) - or within this of
+         * its duration (N1: a pause at the track's end).
+         */
         const val END_RESET_MS = 1_000L
 
         /** A track that played this long isn't unplayable. */

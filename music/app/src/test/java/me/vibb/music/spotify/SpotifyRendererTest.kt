@@ -244,6 +244,9 @@ class SpotifyRendererTest {
     /** Play the service's part on an unplayable track (`PlaybackService.onError`: record, then on to the next). */
     private var serviceMovesOn = true
 
+    /** The current item at each `Error("unplayable")`: the one the service records (`item_errors`). */
+    private val errorsAt = mutableListOf<Int>()
+
     private fun key(n: Int) = "FAKEtrack%013d".format(n)
     private fun uri(n: Int) = "spotify:track:${key(n)}"
 
@@ -281,6 +284,7 @@ class SpotifyRendererTest {
         }
         r.onEvent = { e ->
             events += e
+            if (e is RendererEvent.Error) errorsAt += r.currentIndex() // the item the service records the error for
             if (e is RendererEvent.Error && serviceMovesOn) {
                 val next = r.currentIndex() + 1
                 if (next < r.itemCount()) {
@@ -606,6 +610,9 @@ class SpotifyRendererTest {
         // Chromium's media session lost the focus to another app (or a call): the page's audio paused, not by us
         post(state(0, 3_000, paused = true))
         assertFalse(r.showsPlaying)
+        // the session keeps the intent for the launcher's look at a ring (N3), then shows paused
+        assertTrue(r.spec().playWhenReady)
+        advance(me.vibb.music.logic.SPOTIFY_HELD_SHOWN_MS)
         assertFalse(r.spec().playWhenReady)
         assertTrue("a fault, as the phone's player's focus loss", events.contains(RendererEvent.Paused(PauseCause.FAULT)))
         assertFalse("the locks go with it", ports.locks)
@@ -1877,6 +1884,173 @@ class SpotifyRendererTest {
         assertEquals(me.vibb.music.playback.PlayerHub.Message.STAYED, seen.await())
         job.cancel()
         r.release()
+    }
+
+    // --- the emulator round of 2026-10-14 (N1, N2, N3, N5) ---
+
+    @Test
+    fun `N1 - list mode - a pause posted at a track's end keeps playing and the locks while the next track plays`() = runBlocking {
+        val r = playing(count = 3, duration = 20_000)
+        advance(15_000)
+        post(state(0, 15_000, duration = 20_000))
+        events.clear()
+        advance(5_000)
+        post(state(0, 20_000, paused = true, duration = 20_000)) // the element's pause before its `ended`
+        assertTrue("still playing", r.showsPlaying)
+        assertTrue("the locks kept", ports.locks)
+        assertTrue(r.spec().playWhenReady)
+        assertFalse("no pause heard", events.any { it is RendererEvent.Paused })
+        assertFalse(r.heldByPage)
+        advance(100)
+        post(state(1, 0, prev = listOf(0), duration = 20_000))
+        assertEquals(1, r.currentIndex())
+        assertTrue(events.contains(RendererEvent.ItemChanged(1, true)))
+        assertTrue(r.showsPlaying && ports.locks)
+        assertEquals("nothing sent: Spotify's own advance", 1, api.plays().size)
+        // and if a pause before the end did show paused, Spotify's advance shows playing again with its locks
+        advance(15_000)
+        post(state(1, 15_000, prev = listOf(0), duration = 20_000))
+        advance(1_000)
+        post(state(1, 16_000, paused = true, prev = listOf(0), duration = 20_000))
+        assertFalse(r.showsPlaying || ports.locks)
+        advance(4_000)
+        post(state(2, 0, prev = listOf(0, 1), duration = 20_000))
+        assertEquals(2, r.currentIndex())
+        assertTrue("Resumed: playing again", r.showsPlaying && ports.locks)
+        r.release()
+    }
+
+    @Test
+    fun `N2 - an unplayable track at a boundary is the next item's - recorded once, the list goes on`() = runBlocking {
+        val r = playing(count = 4, duration = 20_000)
+        advance(15_000)
+        post(state(0, 15_000, duration = 20_000))
+        advance(5_000)
+        post(state(0, 20_000, paused = true, duration = 20_000))
+        page.emit(HostEvent.Error("playback", "x")) // Spotify reached item 1 and it failed
+        settle()
+        assertEquals("the error is item 1's, never the one that played out", listOf(1), errorsAt)
+        advance(300)
+        post(state(2, 0, prev = listOf(0, 1), duration = 20_000)) // Spotify went on past it
+        advance(0)
+        post(state(2, 500, prev = listOf(0, 1), duration = 20_000))
+        assertEquals(2, r.currentIndex())
+        assertTrue(r.showsPlaying)
+        assertEquals("recorded once", listOf(1), errorsAt)
+        assertFalse(ports.log.any { it.contains("three unplayable") })
+        assertFalse("item 2 is ours, never paused as not ours", ports.log.any { it.contains("isn't ours") })
+        r.release()
+    }
+
+    @Test
+    fun `N3 - a play the WebView paused still says playing to the session for its first seconds, never on the player`() = runBlocking {
+        val r = playing()
+        post(state(0, 5_000))
+        advance(1_000)
+        post(state(0, 6_000, paused = true)) // the ring's focus loss reaches the page before the launcher looks
+        assertTrue(r.heldByPage)
+        assertFalse("the player's own button shows play", r.showsPlaying)
+        assertTrue("the session the launcher reads says playing", r.spec().playWhenReady)
+        assertFalse("no locks held for it", ports.locks)
+        advance(me.vibb.music.logic.SPOTIFY_HELD_SHOWN_MS)
+        assertTrue(r.heldByPage)
+        assertFalse("a hold Chromium never ends doesn't keep the session playing", r.spec().playWhenReady)
+        // the launcher's CALL_HOLD in time: the call rule pauses it, CALL_RELEASE plays it again
+        post(state(0, 6_000))
+        assertTrue(r.showsPlaying)
+        post(state(0, 7_000, paused = true))
+        assertTrue(r.spec().playWhenReady)
+        callStep(r, inCall = true)
+        assertTrue(call.pausedByCall)
+        assertFalse(r.spec().playWhenReady)
+        callStep(r, inCall = false)
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `N3 - the session's play-when-ready - the intent, or a hold for its first seconds, never after the end`() {
+        val held = me.vibb.music.logic.SPOTIFY_HELD_SHOWN_MS
+        assertTrue(me.vibb.music.logic.spotifySessionPlays(wanted = true, held = false, heldForMs = 0, ended = false))
+        assertTrue(me.vibb.music.logic.spotifySessionPlays(wanted = false, held = true, heldForMs = 0, ended = false))
+        assertTrue(me.vibb.music.logic.spotifySessionPlays(wanted = false, held = true, heldForMs = held - 1, ended = false))
+        assertFalse(me.vibb.music.logic.spotifySessionPlays(wanted = false, held = true, heldForMs = held, ended = false))
+        assertFalse("a clock gone back counts as no hold", me.vibb.music.logic.spotifySessionPlays(false, true, -1, false))
+        assertFalse(me.vibb.music.logic.spotifySessionPlays(wanted = false, held = false, heldForMs = 0, ended = false))
+        assertFalse(me.vibb.music.logic.spotifySessionPlays(wanted = true, held = true, heldForMs = 0, ended = true))
+        assertTrue("long enough for the launcher's look (60-220 ms after the ring's pause)", held >= 1_000)
+    }
+
+    @Test
+    fun `N3 - a call the mode reports - a play tapped during it starts nothing, before or after the page's own pause`() = runBlocking {
+        // paused before the call, then a call the launcher never sent (it saw nothing playing): the mode's call
+        val r = playing()
+        post(state(0, 5_000))
+        r.pause()
+        post(state(0, 5_000, paused = true))
+        callStep(r, inCall = true)
+        assertFalse("nothing of ours to pause", call.pausedByCall)
+        val pages = page.calls.size
+        val plays = api.plays().size
+        r.play() // the kid's tap in the music app during the call
+        advance(1_000)
+        assertFalse(r.showsPlaying)
+        assertEquals("nothing sent to the page", pages, page.calls.size)
+        assertEquals(plays, api.plays().size)
+        assertTrue(ports.log.contains("spotify: a start refused (a call)"))
+        callStep(r, inCall = false)
+        advance(1_000)
+        assertFalse("the call ends: nothing plays that it didn't pause", r.showsPlaying)
+        assertEquals(pages, page.calls.size)
+        // playing at the ring, the page's pause first, then the mode's call: paused by the call, played again after
+        call = me.vibb.music.logic.CallPause()
+        r.play()
+        settle()
+        post(state(0, 5_000))
+        assertTrue(r.showsPlaying)
+        post(state(0, 5_500, paused = true))
+        callStep(r, inCall = true)
+        assertTrue(call.pausedByCall)
+        r.play() // a tap during the call: refused, the call rule's play still comes
+        settle()
+        assertFalse(r.showsPlaying)
+        callStep(r, inCall = false)
+        settle()
+        assertEquals("vibb.resume()", page.calls.last())
+        assertTrue(r.showsPlaying)
+        r.release()
+    }
+
+    @Test
+    fun `N5 - a list flipped to a context while it plays - the new queue's context play, no more queue adds`() = runBlocking {
+        val l = playing(count = 60)
+        for (n in 1..50) {
+            advance(4_000)
+            post(state(n, 0, prev = listOf(n - 1)))
+        }
+        val adds = api.all().count { it.url.encodedPath == "/v1/me/player/queue" }
+        assertTrue("the list adds one ahead", adds >= 1)
+        val plays = api.plays().size
+        // the service's new queue for the flipped entry (its cover tap, PlaybackService.playEntry)
+        val entry = Entry(6, "e6", "Kveldsliste", null, Source.SPOTIFY, playlistContext, "auto", 0, true, null, "11ee", 6, spotifyMode = "context")
+        assertTrue(me.vibb.music.playback.loadedPlayStale(active!!.entry, entry))
+        val items = listOf(me.vibb.music.logic.contextItem(entry))
+        active = Active(entry, items, items, mutableMapOf(), mutableSetOf(), mutableMapOf(), false, mutableMapOf<String, Uri>())
+        l.load(contextItems(), 0, 0, playNow = true)
+        advance(0)
+        assertEquals("one context play", plays + 1, api.plays().size)
+        assertTrue(api.plays().last().body!!.contains("\"context_uri\":\"$playlistContext\""))
+        post(state(51, 0, prev = listOf(50))) // the old list's next track, before the context took over: not ours
+        post(cstate(3, 0))
+        assertTrue(l.showsPlaying)
+        for (n in 4..8) {
+            advance(4_000)
+            post(cstate(n, 0))
+        }
+        assertEquals("no queue add after the flip", adds, api.all().count { it.url.encodedPath == "/v1/me/player/queue" })
+        l.release()
     }
 
     private companion object {

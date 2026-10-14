@@ -811,7 +811,10 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     var self = this;
     this._audio.addEventListener('ended', function () { self._advance(); });
     this._audio.addEventListener('playing', function () { self._changed(); });
-    this._audio.addEventListener('pause', function () { self._changed(); });
+    // A track's natural end fires the element's `pause` (paused at the full position) right before `ended`: Spotify's
+    // SDK posts no such pause between tracks - its own advance shows as the next track, and the played-out end of the
+    // list as paused at 0 (_advance). Not posted (emulator round 2026-10-14 N1; the phone reads both).
+    this._audio.addEventListener('pause', function () { if (!self._audio.ended) self._changed(); });
   }
 
   Player.prototype.addListener = function (name, cb) {
@@ -1368,6 +1371,8 @@ def selftest():
     assert "this._userQueue.length" in STUB_SDK.split("Player.prototype._advance = function () {")[1].split("};")[0], \
         "after a track, Spotify's queue plays before the context"
     assert "repeat_mode: this._repeat" in STUB_SDK and "shuffle: this._shuffle" in STUB_SDK
+    # a track's natural end posts no pause at its full position, as Spotify's SDK (emulator round 2026-10-14 N1)
+    assert "addEventListener('pause', function () { if (!self._audio.ended) self._changed(); });" in STUB_SDK
     # context mode (design 26c §5.9): the play starts at the offset's index, previous follows Spotify's 3 s rule, and
     # Autoplay after a context plays in its own context (the phone pauses it: not ours)
     assert "var index = c.index || 0;" in play_branch and "this._current = tracks[index];" in play_branch

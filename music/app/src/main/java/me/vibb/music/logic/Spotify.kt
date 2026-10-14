@@ -221,6 +221,31 @@ fun spotifyPauseCause(ours: Boolean): PauseCause = if (ours) PauseCause.USER els
 fun spotifySelfResumeShown(pausedStep: Boolean, detached: Boolean, mayPlay: Boolean, askedPaused: Boolean): Boolean =
     !pausedStep && !detached && mayPlay && !askedPaused
 
+/**
+ * How long a play the WebView holds paused ([heldForMs] since its pause, the renderer's `heldByPage`) still counts as
+ * playing for the session the launcher reads (emulator round 2026-10-14 N3): Chromium pauses the page at a ring 60-220 ms
+ * before the launcher's `MusicCalls` looks at the session, which then saw "not playing" and sent no `CALL_HOLD`. Long
+ * enough for that look, short enough that a pause Chromium never undoes (another app's playback, a permanent loss)
+ * doesn't keep the session playing - the player's own screen shows paused throughout (`showsPlaying`).
+ */
+const val SPOTIFY_HELD_SHOWN_MS = 5_000L
+
+/**
+ * The session's play-when-ready (§5.4's table; N3): the kid's intent ([wanted], the renderer's own), or a play the
+ * WebView paused by itself less than [SPOTIFY_HELD_SHOWN_MS] ago ([held], [heldForMs]) - as the phone's own player's
+ * play-when-ready stays on through a transient focus loss - never after the queue's end.
+ */
+fun spotifySessionPlays(wanted: Boolean, held: Boolean, heldForMs: Long, ended: Boolean): Boolean =
+    !ended && (wanted || (held && heldForMs in 0 until SPOTIFY_HELD_SHOWN_MS))
+
+/**
+ * Whether the web player hears a call (N3): the launcher's (`CALL_HOLD` .. `CALL_RELEASE`) - which it sends only when the
+ * session plays at the call's begin - or the audio mode's (a ringing or active system call, `callMode`), which needs
+ * nobody's look at the session: a play tapped during a call that began while paused starts nothing then (qa-26c-6l-fixes
+ * L2), and the call rule pauses and plays again a web player whatever paused it first.
+ */
+fun spotifyInCall(launcherInCall: Boolean, modeInCall: Boolean): Boolean = launcherInCall || modeInCall
+
 /** The deadline of a start that begins at [nowMs] (the elapsed clock). */
 fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS
 

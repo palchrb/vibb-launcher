@@ -95,6 +95,7 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.spotifyInCall
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
@@ -254,6 +255,7 @@ class PlaybackService : MediaSessionService() {
         LiveBridge.acquire(this)
         PlayerHub.suspendStop = { scope.launch { suspendStop() } }
         PlayerHub.capChanged = { (renderer as? SonosRenderer)?.controller?.capChanged() }
+        modeInCall = callMode(audio.mode)
         audio.addOnModeChangedListener(mainExecutor, modeListener)
         // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
         val choice = home.choice()
@@ -652,8 +654,14 @@ class PlaybackService : MediaSessionService() {
     private suspend fun playEntry(entryId: Long) {
         val current = active
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
-            renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
-            return
+            // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
+            val now = if (isSpotify(current.entry)) withContext(Dispatchers.IO) { store.library()?.entries?.firstOrNull { it.id == entryId } } else null
+            if (!loadedPlayStale(current.entry, now)) {
+                renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
+                return
+            }
+            spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
+            renderer.saveNow(force = true)
         }
         val (snap, rows) = loadForRenderer()
         if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return
@@ -810,7 +818,7 @@ class PlaybackService : MediaSessionService() {
             scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) reportSpotifyWord() }
         },
         log = ::spotifyLog,
-    ).apply { inCall = launcherInCall }.also { spotify = it }
+    ).apply { inCall = spotifyInCall(launcherInCall, modeInCall) }.also { spotify = it }
 
     /** The report with the web player's new word, to the launcher (§6l A F7; a failure waits for the next sync's). */
     private suspend fun reportSpotifyWord() {
@@ -1282,13 +1290,15 @@ class PlaybackService : MediaSessionService() {
 
     private val modeListener = AudioManager.OnModeChangedListener { mode ->
         modeInCall = callMode(mode)
+        // the web player hears a system call by the mode too (emulator round 2026-10-14 N3)
+        spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)
         callStep()
     }
 
     private fun launcherCall(inCall: Boolean) {
         launcherInCall = inCall
         // the web player starts nothing during a call (qa-26c-6l-fixes-code L2), as the phone's own player's refused focus
-        spotify?.inCall = inCall
+        spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)
         callStep()
     }
 
@@ -1301,7 +1311,7 @@ class PlaybackService : MediaSessionService() {
      */
     private fun callStep() {
         val r = renderer
-        val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)
+        val inCall = callOn(launcherInCall, modeInCall, r.kind)
         if (callRenderer != null && callRenderer !== r) {
             // the renderer changed under the call: nothing of ours to play again
             callPause = CallPause(inCall = callPause.inCall)

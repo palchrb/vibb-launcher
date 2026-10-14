@@ -143,4 +143,32 @@ class RendererRulesTest {
         // and the reverse: a Spotify tap while the phone's own player is attached claims nothing
         assertFalse(claimsQueue(queueKind(RendererKind.LOCAL, spotify()), spotify()))
     }
+
+    @Test
+    fun `N3 - the call is on by the launcher for every renderer, by the audio mode on a room and on the web player`() {
+        for (kind in RendererKind.entries) {
+            assertTrue("$kind: the launcher's word", callOn(launcherInCall = true, modeInCall = false, kind))
+            assertFalse(callOn(launcherInCall = false, modeInCall = false, kind))
+        }
+        assertTrue("a room's backstop", callOn(false, modeInCall = true, RendererKind.SONOS))
+        assertTrue("the web player: Chromium's pause beats the launcher's look at the session", callOn(false, modeInCall = true, RendererKind.SPOTIFY))
+        assertFalse("the phone's own player has its audio focus", callOn(false, modeInCall = true, RendererKind.LOCAL))
+        assertTrue(me.vibb.music.logic.spotifyInCall(launcherInCall = false, modeInCall = true))
+        assertTrue(me.vibb.music.logic.spotifyInCall(launcherInCall = true, modeInCall = false))
+        assertFalse(me.vibb.music.logic.spotifyInCall(launcherInCall = false, modeInCall = false))
+    }
+
+    @Test
+    fun `N5 - a cover tap goes on with a loaded Spotify play only while the library lists it the same way`() {
+        val list = spotify(mode = "list")
+        assertFalse("the same entry: go on", loadedPlayStale(list, list))
+        assertTrue("flipped to a context (a 403 on the playlist)", loadedPlayStale(list, list.copy(spotifyMode = "context")))
+        assertTrue("and back", loadedPlayStale(list.copy(spotifyMode = "context"), list))
+        assertTrue("another target", loadedPlayStale(list, list.copy(target = "spotify:playlist:FAKEother")))
+        assertTrue("another key", loadedPlayStale(list, list.copy(key = "e6b")))
+        assertFalse("gone from the library: nothing to compare", loadedPlayStale(list, null))
+        assertFalse("a renamed entry goes on", loadedPlayStale(list, list.copy(name = "Ny liste")))
+        val rss = entry(2)
+        assertFalse("every other source resumes as ever (vibb)", loadedPlayStale(rss, rss.copy(target = "https://example.org/other.xml")))
+    }
 }

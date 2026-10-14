@@ -20,10 +20,8 @@ import android.webkit.WebViewClient
 import me.vibb.music.BuildConfig
 import me.vibb.music.media.MediaCache
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Request
 import java.io.ByteArrayInputStream
 import java.io.InputStream
-import java.util.concurrent.TimeUnit
 
 /*
  * The phone's one web player (design 26c §5.2, §5.3, §7.2): Spotify's Web Playback SDK in a WebView that
@@ -298,12 +296,6 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         /** `needToken`'s request ids are the page's counter. */
         private const val MAX_REQUEST_ID = 1_000_000_000
 
-        /** The debug proxy's call: the stub's long-poll waits 20 s. */
-        private const val PROXY_TIMEOUT_S = 45L
-
-        /** The answers the proxy passes back (qa-26c-step4-code: the tone's seek and the stub's fetches need them). */
-        private val PROXY_HEADERS = listOf("Content-Range", "Accept-Ranges", "Access-Control-Allow-Origin")
-
         /** The SDK's `disconnect()` has this long after it ran, and the view at most [DISCONNECT_WAIT_MS], before it goes. */
         private const val DISCONNECT_SETTLE_MS = 300L
         private const val DISCONNECT_WAIT_MS = 1_000L
@@ -371,40 +363,29 @@ class SpotifyWebHost(context: Context, private val log: (String) -> Unit) : Spot
         private var appAssets: ((String) -> InputStream)? = null
 
         /**
-         * The debug switch's proxy (§9.3): `https://fake-spotify.invalid/<path>` fetched from the debug base
-         * over the LAN client - GET only (the interceptor sees no body; the stub uses GETs), `Range`
-         * forwarded, and the status, `Content-Type`, `Content-Range`, `Accept-Ranges` and
-         * `Access-Control-Allow-Origin` passed back. The host is logged, never the URL (the stub's query
-         * carries a fake token).
+         * The debug switch's proxy (§9.3): `https://fake-spotify.invalid/<path>` fetched from the debug base over the LAN
+         * client by [DebugProxy] - GET only (the interceptor sees no body; the stub uses GETs), `Range` forwarded, the
+         * status, the content type and [DebugProxy.HEADERS] (`Content-Length` too, N4) passed back, and no deadline on
+         * a streamed body. The host is logged, never the URL (the stub's query carries a fake token).
          */
         private fun proxy(d: WebDecision.Proxy, request: WebResourceRequest, log: (String) -> Unit): WebResourceResponse {
             if (request.method != "GET") return empty(405, "Method Not Allowed")
-            val b = Request.Builder().url(d.url).get()
-            request.requestHeaders?.entries?.firstOrNull { it.key.equals("Range", ignoreCase = true) }?.let { b.header("Range", it.value) }
-            val client = MediaCache.httpClient(publicOnly = false).newBuilder()
-                .followRedirects(false).followSslRedirects(false)
-                .callTimeout(PROXY_TIMEOUT_S, TimeUnit.SECONDS).readTimeout(PROXY_TIMEOUT_S, TimeUnit.SECONDS)
-                .build()
+            val range = request.requestHeaders?.entries?.firstOrNull { it.key.equals("Range", ignoreCase = true) }?.value
             return try {
-                val response = client.newCall(b.build()).execute()
-                val status = response.code
-                if (status !in 200..299 && status !in 400..599) {
-                    response.close()
-                    log("spotify: the fake answered $status (proxy)")
+                val a = DebugProxy.fetch(proxyClient, d.url, range)
+                if (a == null) {
+                    log("spotify: the fake answered a redirect (proxy)")
                     return empty(502, "Bad Gateway")
                 }
-                val type = response.header("Content-Type") ?: "application/octet-stream"
-                val mime = type.substringBefore(';').trim()
-                val charset = Regex("charset=([^;]+)", RegexOption.IGNORE_CASE).find(type)?.groupValues?.get(1)?.trim()
-                val headers = PROXY_HEADERS.mapNotNull { h -> response.header(h)?.let { h to it } }.toMap()
-                val reason = response.message.ifBlank { if (status < 400) "OK" else "Error" }
-                val body = response.body?.byteStream() ?: ByteArrayInputStream(ByteArray(0))
-                WebResourceResponse(mime, charset, status, reason, headers, body)
+                WebResourceResponse(a.mime, a.charset, a.status, a.reason, a.headers, a.body)
             } catch (e: Exception) {
                 log("spotify: the fake at ${d.url.host} unreachable (${e.javaClass.simpleName})")
                 empty(502, "Bad Gateway")
             }
         }
+
+        /** The proxy's client: the LAN one, no redirects, no call timeout (N4). */
+        private val proxyClient by lazy { DebugProxy.client(MediaCache.httpClient(publicOnly = false)) }
 
         /** The assets the interceptor serves (the first host's application). */
         internal fun useAssets(context: Context) {
