@@ -1,53 +1,42 @@
-{#- One library card on /music (design 21b §3): head, the sweep's status, the actions and one line
-    per phone. `entry` is a handlers::music::EntryRow. -#}
+{#- One library row on /music (design 31 §3.4): cover, name, "NRK series · 98 episodes · 2 phones",
+    the live status (swapped by static/music-cards.js, which finds .music-status[data-entry] and
+    keeps a .music-card that holds the focus untouched), then Check now and the Offline select - or,
+    in Edit mode, ↑ ↓. `entry` is a handlers::music::EntryRow, `edit` the page's mode. -#}
 {% import "partials/music_status.html" as music_status %}
-<div class="music-card" id="entry-{{ entry.id }}">
-    <div class="music-head">
+<div class="cell music-card" id="entry-{{ entry.id }}">
+    <a class="row music-row" href="/music/entries/{{ entry.id }}">
         {% if let Some(cover) = entry.cover %}
         <img class="music-cover" src="/music-covers/{{ cover }}" alt="">
         {% else %}
-        <span class="music-tile" style="background: {{ entry.category_color }}"><img src="/static/music-icons/{{ entry.category_icon }}.svg" alt=""></span>
+        <span class="music-tile" style="background: {{ entry.category_color }}" aria-hidden="true"><img src="/static/music-icons/{{ entry.category_icon }}.svg" alt=""></span>
         {% endif %}
-        <div class="music-text">
-            <strong class="music-oneline">{{ entry.name }}</strong>
-            {% if let Some(sweep) = entry.sweep %}{% if let Some(title) = sweep.source_title %}
-            <div class="music-oneline subtitle">{{ title }}</div>
-            {% endif %}{% endif %}
-            <div class="subtitle">{{ entry.kind }} · {{ entry.category }} · on {{ entry.phones }} phone{% if entry.phones != 1 %}s{% endif %}{% if let Some(sweep) = entry.sweep %}{% if sweep.lan %}, home network{% endif %}{% endif %}{% if entry.kind == "Own files" %} · {{ entry.files }} file{% if entry.files != 1 %}s{% endif %}{% endif %}{% if entry.missing > 0 %} · <strong>{{ entry.missing }} missing on this server</strong>{% endif %}</div>
-            {% if let Some(sweep) = entry.sweep %}
-            {% if let Some(episodes) = sweep.episodes %}
-            <div class="music-oneline subtitle">{{ episodes }}</div>
-            {% endif %}
-            {% for note in sweep.notes %}
-            <div class="subtitle music-note">{{ note }}</div>
-            {% endfor %}
-            {% endif %}
-        </div>
-    </div>
-    {% if let Some(sweep) = entry.sweep %}
-    {% call music_status::status_block(sweep.status) %}{% endcall %}
-    {% endif %}
-    <div class="music-actions">
+        <div class="row-label"><span class="music-name">{{ entry.name }}</span><span class="row-sub music-sub">{{ entry.sub }}{% if entry.missing > 0 %} · <span class="music-missing">{{ entry.missing }} missing</span>{% endif %}</span>{% if let Some(sweep) = entry.sweep %}{% call music_status::status_block(sweep.status) %}{% endcall %}{% endif %}</div>
+        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% if edit %}
+    <div class="music-actions" data-actions="move">
         {% if !entry.first %}
         <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} up">&uarr;</button></form>
         {% endif %}
         {% if !entry.last %}
         <form method="post" action="/music/entries/{{ entry.id }}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary" aria-label="Move {{ entry.name }} down">&darr;</button></form>
         {% endif %}
-        <a class="button-small" href="/music/entries/{{ entry.id }}">Edit</a>
-        {% if let Some(sweep) = entry.sweep %}
+    </div>
+    {% else if let Some(sweep) = entry.sweep %}
+    <div class="music-actions" data-actions="row">
         {% if let Some(after) = sweep.check_after %}
-        <span class="subtitle music-check-after">Check again after {{ after }}</span>
+        <span class="music-after">Check again after {{ after }}</span>
         {% else %}
         <form method="post" action="/music/entries/{{ entry.id }}/check"><button type="submit" class="button-small button-secondary">Check now</button></form>
         {% endif %}
+        {#- A Spotify entry streams (no Offline select) and links back to Spotify (design 26c §3.6). -#}
         {% if let Some(link) = sweep.spotify_link %}
         <a class="button-small button-secondary" href="{{ link }}" rel="noopener noreferrer" target="_blank">Open in Spotify</a>
         {% endif %}
         {% if sweep.offline %}
-        <form method="post" action="/music/entries/{{ entry.id }}/offline" class="music-offline">
+        <form method="post" action="/music/entries/{{ entry.id }}/offline">
             <label for="offline-{{ entry.id }}">Offline</label>
-            <select id="offline-{{ entry.id }}" name="cache" data-autosave>
+            <select id="offline-{{ entry.id }}" name="cache" class="pick" data-autosave>
                 {% for (value, label) in sweep.caches %}
                 <option value="{{ value }}"{% if sweep.cache == *value %} selected{% endif %}>{{ label }}</option>
                 {% endfor %}
@@ -55,11 +44,6 @@
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
         {% endif %}
-        {% endif %}
     </div>
-    {% if !entry.phone_lines.is_empty() %}
-    <ul class="music-phones">
-        {% for line in entry.phone_lines %}<li>{{ line }}</li>{% endfor %}
-    </ul>
     {% endif %}
 </div>

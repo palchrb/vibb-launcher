@@ -1,10 +1,13 @@
 //! Catalog downloads on the phone (design `docs/design/13-app-downloads.md` at the monorepo root,
 //! with its QA review and decisions): what the phone reports in `app_downloads` - a full snapshot
 //! of every download it waits for or runs, whether its "Wi-Fi only" switch is on and what network
-//! it is on - stored re-serialized and capped like `update_fence`, and the device page's texts for
-//! it. Pure.
+//! it is on - stored re-serialized and capped like `update_fence`, and Device › Apps' texts for it
+//! (design 31 step 6: short, in Phone Setup's zone). Pure.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::display_time::Zone;
 
 /// At most this many downloads are stored.
 pub const MAX_ENTRIES: usize = 20;
@@ -86,9 +89,9 @@ impl AppDownloads {
     }
 }
 
-/// "9 Oct" (UTC).
-fn day(ms: i64) -> Option<String> {
-    chrono::DateTime::from_timestamp_millis(ms).map(|t| t.format("%-d %b").to_string())
+/// A phone-supplied time, local: "since 10:58", "since yesterday 21:40", "since 12 Oct".
+fn time(ms: i64) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp_millis(ms)
 }
 
 /// "120 of 326 MB", "120 MB so far", or nothing before the first byte.
@@ -112,19 +115,20 @@ pub fn refused(entry: &AppDownloadEntry) -> bool {
     entry.state.starts_with("refused")
 }
 
-/// "Waiting for Wi-Fi", "Downloading", ...
+/// What the download does, lower case, so it reads after "update": "waiting for Wi-Fi",
+/// "refused: signed with another key". Never a raw code (design 31 §4.2).
 fn state_text(state: &str) -> &'static str {
     match state {
         "waiting_wifi" => "waiting for Wi-Fi",
         "waiting_network" => "waiting for a network",
-        "waiting_roaming" => "waiting - the phone is roaming",
-        "waiting_space" => "waiting for free storage on the phone",
+        "waiting_roaming" => "paused while roaming",
+        "waiting_space" => "waiting for storage space",
         "downloading" => "downloading",
         "installing" => "installing",
-        "refused_package" => "refused - another Android package than this app's",
-        "refused_signer" => "refused - signed with another key than this app's",
-        "refused_unreadable" => "refused - the phone can't read the APK",
-        "refused_unpinned" => "refused - no package and signing key on the server yet",
+        "refused_package" => "refused: it is another app",
+        "refused_signer" => "refused: signed with another key",
+        "refused_unreadable" => "refused: the file is unreadable",
+        "refused_unpinned" => "refused: its key isn't known yet",
         other if other.starts_with("refused") => "refused by the phone",
         _ => "waiting",
     }
@@ -138,43 +142,38 @@ fn capitalized(text: &str) -> String {
     }
 }
 
-/// " since 6 Oct" while waiting, else nothing.
-fn since(entry: &AppDownloadEntry) -> String {
-    if !waiting(&entry.state) {
-        return String::new();
+/// `head`, then " · since 10:58" while it waits, " · any network from Mon 14:30" while an update
+/// waits for Wi-Fi with a grace, and " · 120 of 326 MB". Times in Phone Setup's zone (design 31
+/// M4).
+fn line(head: String, entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
+    let mut parts = vec![head];
+    if waiting(&entry.state)
+        && let Some(since) = entry.since_ms.and_then(time)
+    {
+        parts.push(format!("since {}", zone.when(since, now)));
     }
-    entry
-        .since_ms
-        .and_then(day)
-        .map(|d| format!(" since {d}"))
-        .unwrap_or_default()
-}
-
-fn with_progress(mut line: String, entry: &AppDownloadEntry) -> String {
-    if let Some(p) = progress(entry) {
-        line.push_str(" · ");
-        line.push_str(&p);
+    if entry.state == "waiting_wifi"
+        && let Some(any) = entry.any_network_at_ms.and_then(time)
+    {
+        parts.push(format!("any network from {}", zone.until(any, now)));
     }
-    line
+    parts.extend(progress(entry));
+    parts.join(" · ")
 }
 
-/// A catalog app that isn't on the phone yet: "Waiting for Wi-Fi since 6 Oct · 120 of 326 MB".
-pub fn new_app_label(entry: &AppDownloadEntry) -> String {
-    with_progress(
-        format!("{}{}", capitalized(state_text(&entry.state)), since(entry)),
-        entry,
-    )
+/// A catalog app that isn't on the phone yet: "Waiting for Wi-Fi · since 10:58 · 120 of 326 MB".
+pub fn new_app_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
+    line(capitalized(state_text(&entry.state)), entry, zone, now)
 }
 
-/// An installed catalog app with a newer release: "Installed · update waiting for Wi-Fi since 6 Oct".
-pub fn update_label(entry: &AppDownloadEntry) -> String {
-    with_progress(
-        format!(
-            "Installed · update {}{}",
-            state_text(&entry.state),
-            since(entry)
-        ),
+/// An installed catalog app with a newer release: "Installed · update waiting for Wi-Fi · since
+/// 10:58".
+pub fn update_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
+    line(
+        format!("Installed · update {}", state_text(&entry.state)),
         entry,
+        zone,
+        now,
     )
 }
 
@@ -186,34 +185,34 @@ pub fn release_name(tag: &str) -> &str {
         .unwrap_or(tag)
 }
 
-/// The launcher's own update: "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct".
-pub fn launcher_label(entry: &AppDownloadEntry) -> String {
-    let name = release_name(&entry.release_tag);
-    let line = match entry.state.as_str() {
-        "waiting_wifi" => match entry.any_network_at_ms.and_then(day) {
-            Some(d) => format!("{name} waits for Wi-Fi, any network from {d}"),
-            None => format!("{name} waits for Wi-Fi"),
-        },
-        "downloading" => format!("downloading {name}"),
-        "installing" => format!("{name} downloaded"),
-        other if waiting(other) || other.starts_with("refused") => {
-            format!("{name} is {}", state_text(other))
-        }
-        _ => format!("{name} waits"),
+/// Vibb's own update, named: "Installed · update 0.32.0 waiting for Wi-Fi · any network from Mon
+/// 14:30". Downloaded, it waits for the night window ("downloaded").
+pub fn launcher_label(entry: &AppDownloadEntry, zone: &Zone, now: DateTime<Utc>) -> String {
+    let state = match entry.state.as_str() {
+        "installing" => "downloaded",
+        other => state_text(other),
     };
-    with_progress(format!("Installed · {line}"), entry)
+    line(
+        format!(
+            "Installed · update {} {state}",
+            release_name(&entry.release_tag)
+        ),
+        entry,
+        zone,
+        now,
+    )
 }
 
-/// The Apps card's line about the phone's network, from the last report.
-pub fn network_line(downloads: &AppDownloads) -> Option<String> {
-    let network = match downloads.network.as_str() {
-        "unmetered" => "on Wi-Fi (or another network that isn't metered)",
-        "metered" => "on mobile data",
-        "roaming" => "roaming - downloads wait until it is home again",
-        "none" => "without a network",
+/// The phone's network at its last report, as a row value: "Wi-Fi", "Mobile data", "Roaming",
+/// "No network"; `None` for a value this server doesn't know.
+pub fn network(downloads: &AppDownloads) -> Option<&'static str> {
+    Some(match downloads.network.as_str() {
+        "unmetered" => "Wi-Fi",
+        "metered" => "Mobile data",
+        "roaming" => "Roaming",
+        "none" => "No network",
         _ => return None,
-    };
-    Some(format!("Last report: the phone was {network}."))
+    })
 }
 
 #[cfg(test)]
@@ -230,78 +229,105 @@ mod tests {
             state: state.to_string(),
             bytes,
             total,
+            // 01:00 UTC, 03:00 in Oslo.
             since_ms: Some(OCT_6 + 3_600_000),
             any_network_at_ms: None,
         }
     }
 
+    fn oslo() -> Zone {
+        Zone::from_setting("Europe/Oslo")
+    }
+
+    /// The same day, 12:00 UTC.
+    fn now() -> DateTime<Utc> {
+        time(OCT_6 + 12 * 3_600_000).unwrap()
+    }
+
     #[test]
     fn labels_say_what_waits_and_since_when() {
+        let (zone, now) = (oslo(), now());
         let e = entry("waiting_wifi", 120_000_000, Some(326_123_456));
         assert_eq!(
-            new_app_label(&e),
-            "Waiting for Wi-Fi since 6 Oct · 120 of 326 MB"
+            new_app_label(&e, &zone, now),
+            "Waiting for Wi-Fi · since 03:00 · 120 of 326 MB"
         );
         assert_eq!(
-            update_label(&e),
-            "Installed · update waiting for Wi-Fi since 6 Oct · 120 of 326 MB"
+            update_label(&e, &zone, now),
+            "Installed · update waiting for Wi-Fi · since 03:00 · 120 of 326 MB"
         );
         assert_eq!(
-            new_app_label(&entry("waiting_wifi", 0, None)),
-            "Waiting for Wi-Fi since 6 Oct"
+            new_app_label(&entry("waiting_wifi", 0, None), &zone, now),
+            "Waiting for Wi-Fi · since 03:00"
         );
         assert_eq!(
-            new_app_label(&entry("downloading", 0, Some(326_000_000))),
+            new_app_label(&entry("downloading", 0, Some(326_000_000)), &zone, now),
             "Downloading · 0 of 326 MB"
         );
         assert_eq!(
-            new_app_label(&entry("waiting_roaming", 5_000_000, None)),
-            "Waiting - the phone is roaming since 6 Oct · 5 MB so far"
+            new_app_label(&entry("waiting_roaming", 5_000_000, None), &zone, now),
+            "Paused while roaming · since 03:00 · 5 MB so far"
         );
-        assert_eq!(new_app_label(&entry("installing", 0, None)), "Installing");
+        assert_eq!(
+            new_app_label(&entry("installing", 0, None), &zone, now),
+            "Installing"
+        );
+        // A day later it says which day; in the fallback zone, UTC and labelled.
+        let later = now + chrono::Duration::days(1);
+        assert_eq!(
+            new_app_label(&e, &zone, later),
+            "Waiting for Wi-Fi · since yesterday 03:00 · 120 of 326 MB"
+        );
+        assert_eq!(
+            new_app_label(&entry("waiting_space", 0, None), &Zone::utc_fallback(), now),
+            "Waiting for storage space · since 01:00 UTC"
+        );
     }
 
     /// Security review M10: the phone's refusal of a release, with its reason - never "waiting".
     #[test]
     fn a_refused_release_says_why() {
+        let (zone, now) = (oslo(), now());
         let e = entry("refused_signer", 0, None);
         assert!(refused(&e));
         assert_eq!(
-            new_app_label(&e),
-            "Refused - signed with another key than this app's"
+            new_app_label(&e, &zone, now),
+            "Refused: signed with another key"
         );
         assert_eq!(
-            update_label(&e),
-            "Installed · update refused - signed with another key than this app's"
+            update_label(&e, &zone, now),
+            "Installed · update refused: signed with another key"
         );
-        assert!(
-            new_app_label(&entry("refused_package", 0, None)).contains("another Android package")
-        );
-        assert!(new_app_label(&entry("refused_unreadable", 0, None)).contains("can't read"));
-        assert!(
-            new_app_label(&entry("refused_unpinned", 0, None))
-                .contains("no package and signing key")
-        );
-        assert_eq!(
-            new_app_label(&entry("refused_later", 0, None)),
-            "Refused by the phone"
-        );
+        for (state, text) in [
+            ("refused_package", "Refused: it is another app"),
+            ("refused_unreadable", "Refused: the file is unreadable"),
+            ("refused_unpinned", "Refused: its key isn't known yet"),
+            ("refused_later", "Refused by the phone"),
+        ] {
+            assert_eq!(new_app_label(&entry(state, 0, None), &zone, now), text);
+        }
         assert!(!refused(&entry("waiting_wifi", 0, None)));
     }
 
     #[test]
     fn the_launcher_row_names_the_release_and_the_grace() {
+        let (zone, now) = (oslo(), now());
         let mut e = entry("waiting_wifi", 0, None);
         e.release_tag = "launcher-v0.32.0@99".to_string();
         e.any_network_at_ms = Some(OCT_6 + 3 * DAY);
         assert_eq!(
-            launcher_label(&e),
-            "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct"
+            launcher_label(&e, &zone, now),
+            "Installed · update 0.32.0 waiting for Wi-Fi · since 03:00 · any network from Fri 02:00"
         );
         e.state = "waiting_roaming".to_string();
         assert_eq!(
-            launcher_label(&e),
-            "Installed · 0.32.0 is waiting - the phone is roaming"
+            launcher_label(&e, &zone, now),
+            "Installed · update 0.32.0 paused while roaming · since 03:00"
+        );
+        e.state = "installing".to_string();
+        assert_eq!(
+            launcher_label(&e, &zone, now),
+            "Installed · update 0.32.0 downloaded"
         );
         assert_eq!(release_name("v1.2"), "1.2");
         assert_eq!(release_name("1.0 beta"), "1.0 beta");
@@ -329,10 +355,7 @@ mod tests {
         assert_eq!(parsed.entries[0].total, Some(MAX_BYTES));
         assert_eq!(parsed.entries[0].since_ms, Some(0));
         assert!(parsed.wifi_only);
-        assert_eq!(
-            network_line(&parsed).as_deref(),
-            Some("Last report: the phone was on mobile data.")
-        );
+        assert_eq!(network(&parsed), Some("Mobile data"));
         assert_eq!(sanitize(&serde_json::json!([1, 2])), None);
     }
 }

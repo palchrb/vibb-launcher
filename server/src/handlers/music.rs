@@ -1,13 +1,19 @@
-//! The parent's music pages (design 21 §1.2): `/music` (entries, categories, Storytel, the music
-//! app's catalog row), `/music/entries/{id}` (an entry's settings, cover, own files) and the device
-//! page's Music card (`#music`: the app, the ticks, mobile data, the volume cap, Storytel, what the
-//! phone reports).
+//! The parent's music pages (design 21 §1.2, design 31 §3.4): the Music tab `/music` (the library,
+//! Add, On phones) and its sub-pages `/music/settings` (new episodes, Storytel, the music app's
+//! catalog row, files no entry uses), `/music/categories`, `/music/import`, `/music/storytel` (the
+//! shelf) and `/music/entries/{id}` (an entry's cover, episodes, settings, own files, phones), and
+//! a phone's Device › Music parts and saves (`/devices/{id}/music`, design 31 step 7: the app,
+//! the library's switches, mobile data, the storage limit, the volume cap, Storytel, Sonos, what
+//! the phone reports; the page itself is `device_pages::view_music`).
 //!
-//! No form makes the page jump to the top (memory rule, server/CLAUDE.md): every save redirects to
-//! its card's anchor (`#entry-<id>`, `#categories`, `#category-<id>`, `#storytel`, `#music`, ...);
-//! a refused one (400) shows the page again with the values as entered and the error by the field,
-//! which is `autofocus`ed. Every change nudges the phones it reaches (SSE) and is in the security
-//! log (`music_*`, `storytel_login_saved/cleared`).
+//! No form makes the page jump to the top (design 31 §5.1, server/CLAUDE.md): every save
+//! redirects to the page its form is on - to the row or group's anchor where the list is long or
+//! the result is in a group (`#entry-<id>`, `#category-<id>`, `#storytel`, `#music-entry-<id>`,
+//! `#music-settings`, ...), else
+//! without one so `scroll-restore.js` keeps the place; a refused one (400) shows the page again
+//! with the values as entered and the error by the field, which is `autofocus`ed. Every change
+//! nudges the phones it reaches (SSE) and is in the security log (`music_*`,
+//! `storytel_login_saved/cleared`).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
@@ -23,6 +29,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
+use crate::handlers::device_pages::{Note, Row};
 use crate::models::{DevicePolicy, DeviceStatus, InstalledApp};
 use crate::music::{
     self, CACHE_CHOICES, MAX_CATEGORY_NAME_CHARS, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES_PER_ENTRY,
@@ -93,7 +100,7 @@ pub async fn add_catalog_row(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     match music_app_row(&state.db).await {
-        Ok(Some(_)) => return Redirect::to("/music#app").into_response(),
+        Ok(Some(_)) => return Redirect::to("/music/settings#app").into_response(),
         Ok(None) => {}
         Err(err) => return server_error(err, "music app row lookup failed"),
     }
@@ -117,44 +124,45 @@ pub async fn add_catalog_row(
         &format!("Vibb music app from {}", state.config.server_release_repo),
     )
     .await;
-    Redirect::to("/music#app").into_response()
+    Redirect::to("/music/settings#app").into_response()
 }
 
 // ------------------------------------------------------------------------------------------------
-// /music
+// /music and its sub-pages (design 31 §3.4): the tab (library, Add, On phones), Settings,
+// Categories and Import from Vibb
 // ------------------------------------------------------------------------------------------------
 
+/// One row of the library on `/music`.
 pub struct EntryRow {
     pub id: i64,
     pub name: String,
-    pub kind: &'static str,
-    pub category: String,
+    /// "NRK series · 98 episodes · 2 phones".
+    pub sub: String,
     pub category_color: String,
     pub category_icon: String,
-    pub phones: i64,
-    pub files: i64,
+    /// Own files missing on this server.
     pub missing: i64,
     pub cover: Option<String>,
     pub first: bool,
     pub last: bool,
-    /// What the sweep knows (NRK and RSS entries, design 21b §3).
+    /// What the sweep knows (NRK, RSS and Storytel entries, design 21b §3).
     pub sweep: Option<SweepCard>,
-    /// One line per phone with the entry ticked.
-    pub phone_lines: Vec<String>,
 }
 
-/// An NRK/RSS card's sweep part (design 21b §3).
+/// An NRK/RSS/Storytel entry's sweep part (design 21b §3).
 pub struct SweepCard {
     /// The source's own title, when it differs from the entry's name.
     pub source_title: Option<String>,
     /// A feed on the home network or tailnet.
     pub lan: bool,
+    /// "98 episodes", "4 books": the library row's count.
+    pub count: Option<String>,
     /// "42 episodes · 31 with episode art · newest: <title> · 9 Oct".
     pub episodes: Option<String>,
     /// "first 100 episodes (the series has more)", "list cut to the newest 812 (size limit)".
     pub notes: Vec<String>,
     pub status: StatusBlock,
-    /// Check now isn't allowed before this ("14:20 UTC").
+    /// Check now isn't allowed before this ("14:20").
     pub check_after: Option<String>,
     /// The offline select (never for Spotify: it streams, design 26c §3.2).
     pub offline: bool,
@@ -165,8 +173,8 @@ pub struct SweepCard {
     pub spotify_link: Option<String>,
 }
 
-/// The card's status (`.music-status`, two lines at least, swapped in place by
-/// `static/music-cards.js` while `busy`).
+/// The entry's status (`.music-status`, swapped in place by `static/music-cards.js` while
+/// `busy`).
 #[derive(Clone)]
 pub struct StatusBlock {
     pub entry_id: i64,
@@ -174,6 +182,41 @@ pub struct StatusBlock {
     /// "ok", "busy" or "error".
     pub tone: &'static str,
     pub busy: bool,
+}
+
+/// A phone row on the Music tab ("Anna · 6 of 9") and on an entry's page (with what the phone
+/// reported about the entry).
+pub struct PhoneRow {
+    pub id: i64,
+    pub name: String,
+    pub initial: String,
+    pub avatar: &'static str,
+    /// "6 of 9" on the tab; the phone's line on an entry's page.
+    pub value: String,
+    pub href: String,
+}
+
+impl PhoneRow {
+    /// `entry`: the row links to that entry's switch on the phone's page (from an entry's page).
+    fn new(device: &crate::models::Device, value: String, entry: Option<i64>) -> Self {
+        PhoneRow {
+            id: device.id,
+            name: device.name.clone(),
+            initial: crate::handlers::devices::initial(&device.name),
+            avatar: crate::handlers::devices::avatar_class(device),
+            value,
+            href: phone_music_href(device.id, entry),
+        }
+    }
+}
+
+/// Where a phone's music is set: Device › Music (design 31 step 7), at an entry's switch when one
+/// is named.
+fn phone_music_href(device_id: i64, entry: Option<i64>) -> String {
+    match entry {
+        Some(entry) => format!("/devices/{device_id}/music#music-entry-{entry}"),
+        None => format!("/devices/{device_id}/music"),
+    }
 }
 
 pub struct CategoryView {
@@ -185,11 +228,13 @@ pub struct CategoryView {
     pub entries: i64,
     pub first: bool,
     pub last: bool,
+    /// The editor is open: asked for (`?open=`) or refused.
+    pub open: bool,
     pub error: Option<String>,
     pub error_field: &'static str,
 }
 
-/// The values of the "Add from a link" form.
+/// The values of the "Podcast or NRK link" form.
 #[derive(Default)]
 pub struct AddForm {
     pub link: String,
@@ -197,7 +242,7 @@ pub struct AddForm {
     pub error: Option<String>,
 }
 
-/// "Own files" (a new entry for uploads).
+/// "Upload your own files" (a new entry for uploads).
 #[derive(Default)]
 pub struct OwnForm {
     pub name: String,
@@ -249,6 +294,7 @@ pub struct CatalogCard {
     pub phones: i64,
 }
 
+/// `/music`, the tab (design 31 §3.4).
 #[derive(Template)]
 #[template(path = "music.html")]
 struct MusicTemplate {
@@ -256,93 +302,101 @@ struct MusicTemplate {
     entries: Vec<EntryRow>,
     entry_count: i64,
     max_entries: i64,
-    categories: Vec<CategoryView>,
+    /// `?edit=1`: the rows show ↑ ↓ instead of Check now and Offline.
+    edit: bool,
     category_options: Vec<(i64, String)>,
-    icons: Vec<&'static str>,
-    colors: Vec<(&'static str, &'static str)>,
+    category_count: usize,
     add: AddForm,
     own: OwnForm,
-    new_category: NewCategoryForm,
-    storytel: StorytelCard,
-    catalog: Option<CatalogCard>,
-    /// "Import from Vibb" (design 21a, `#import`).
-    import: super::music_import::ImportCard,
-    /// Own files on disk no entry names (qa-21-step1-code #7): how many and how big.
-    orphans: Option<(usize, String)>,
-    /// The sweep setting (design 21b §3, `#sweep`): the hours and every choice.
-    sweep_hours: i64,
-    sweep_choices: Vec<i64>,
+    /// The From Storytel row's value: "Signed in" or "No login".
+    storytel_value: &'static str,
     /// The "From Spotify ›" row's value (design 31 §3.4's Add rows, design 26c step 2b): "Signed
     /// in" (an account that can read), "No login", or "No app".
     spotify_state: &'static str,
+    phones: Vec<PhoneRow>,
 }
 
-/// What a refused form on `/music` brings back.
-#[derive(Default)]
-struct Entered {
-    add: Option<AddForm>,
-    own: Option<OwnForm>,
-    new_category: Option<NewCategoryForm>,
-    /// A refused category save: its id, the values and the error.
-    category: Option<(i64, String, String, String, String, &'static str)>,
-    storytel_error: Option<String>,
-    storytel_notice: Option<String>,
-    import: Option<super::music_import::ImportCard>,
+/// `/music/settings`: new episodes, Storytel, the music app, files no entry uses.
+#[derive(Template)]
+#[template(path = "music_settings.html")]
+struct MusicSettingsTemplate {
+    title: String,
+    storytel: StorytelCard,
+    catalog: Option<CatalogCard>,
+    /// Own files on disk no entry names (qa-21-step1-code #7): how many and how big.
+    orphans: Option<(usize, String)>,
+    /// The sweep setting (design 21b §3): the hours and every choice.
+    sweep_hours: i64,
+    sweep_choices: Vec<i64>,
 }
+
+/// `/music/categories`.
+#[derive(Template)]
+#[template(path = "music_categories.html")]
+struct MusicCategoriesTemplate {
+    title: String,
+    categories: Vec<CategoryView>,
+    icons: Vec<&'static str>,
+    colors: Vec<(&'static str, &'static str)>,
+    new_category: NewCategoryForm,
+}
+
+/// `/music/import` (design 21a).
+#[derive(Template)]
+#[template(path = "music_import.html")]
+struct MusicImportTemplate {
+    title: String,
+    category_options: Vec<(i64, String)>,
+    import: super::music_import::ImportCard,
+}
+
+/// A refused category save: its id, the values and the error.
+type RefusedCategory = (i64, String, String, String, String, &'static str);
 
 fn tile_of(color: &str) -> String {
     music::color_hex(color).unwrap_or("#5C6370").to_string()
 }
 
-/// `GET /music`; shows (once) how the last import went (design 21a, a session flash).
-pub async fn show(State(state): State<AppState>, session: tower_sessions::Session) -> Response {
-    let result: Option<super::music_import::ImportResult> = session
-        .remove(super::music_import::RESULT_FLASH)
-        .await
-        .ok()
-        .flatten();
-    let storytel_notice: Option<String> =
-        session.remove(STORYTEL_NOTICE_FLASH).await.ok().flatten();
-    let entered = Entered {
-        import: result.map(|result| super::music_import::ImportCard {
-            open: true,
-            result: Some(result),
-            ..Default::default()
-        }),
-        storytel_notice,
-        ..Default::default()
-    };
-    render_music(&state, StatusCode::OK, entered).await
+fn html(status: StatusCode, page: Result<impl Template, sqlx::Error>, what: &str) -> Response {
+    match page {
+        Ok(page) => (status, Html(page.render().unwrap())).into_response(),
+        Err(err) => server_error(err, what),
+    }
 }
 
-/// The page as it is, without a session (the tests call it with another state).
-#[cfg(test)]
-pub(crate) async fn render_plain(state: &AppState) -> Response {
-    render_music(state, StatusCode::OK, Entered::default()).await
+/// `GET /music[?edit=1]`: the tab.
+pub async fn show(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let edit = query.get("edit").is_some_and(|v| v == "1");
+    render_music(
+        &state,
+        StatusCode::OK,
+        edit,
+        AddForm::default(),
+        OwnForm::default(),
+    )
+    .await
 }
 
-/// The page with the import card as given (a preview, or a refused import).
-pub(super) async fn render_import(
+async fn render_music(
     state: &AppState,
     status: StatusCode,
-    card: super::music_import::ImportCard,
+    edit: bool,
+    add: AddForm,
+    own: OwnForm,
 ) -> Response {
-    let entered = Entered {
-        import: Some(card),
-        ..Default::default()
-    };
-    render_music(state, status, entered).await
+    let page = music_page(state, edit, add, own).await;
+    html(status, page, "couldn't load the music page")
 }
 
-async fn render_music(state: &AppState, status: StatusCode, entered: Entered) -> Response {
-    let page = match music_page(state, entered).await {
-        Ok(page) => page,
-        Err(err) => return server_error(err, "couldn't load the music page"),
-    };
-    (status, Html(page.render().unwrap())).into_response()
-}
-
-async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate, sqlx::Error> {
+async fn music_page(
+    state: &AppState,
+    edit: bool,
+    add: AddForm,
+    own: OwnForm,
+) -> Result<MusicTemplate, sqlx::Error> {
     let categories: Vec<MusicCategory> =
         sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
             .fetch_all(&state.db)
@@ -361,13 +415,6 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
     .into_iter()
     .map(|(entry, count, missing)| (entry, (count, missing)))
     .collect();
-    let in_use: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
-        "SELECT category_id, COUNT(*) FROM music_entries GROUP BY category_id",
-    )
-    .fetch_all(&state.db)
-    .await?
-    .into_iter()
-    .collect();
 
     let category_of = |id: i64| categories.iter().find(|c| c.id == id);
     let count = entries.len();
@@ -378,60 +425,134 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         .map(|(index, e)| {
             let category = category_of(e.category_id);
             let (file_count, missing) = files.get(&e.id).copied().unwrap_or((0, 0));
+            let sweep = view.card(e);
+            let phones = view.phone_count(e);
+            let kind = music::kind_label(&e.source, e.target.as_deref());
+            let mut sub = vec![kind.to_string()];
+            match &sweep {
+                // "Storytel book" already says it is one book.
+                Some(_) if kind == "Storytel book" => {}
+                Some(card) => sub.extend(card.count.clone()),
+                None => sub.push(plural(file_count as usize, "file", "files")),
+            }
+            sub.push(match phones {
+                0 => "no phones".to_string(),
+                n => plural(n as usize, "phone", "phones"),
+            });
+            if sweep.as_ref().is_some_and(|s| s.lan) {
+                sub.push("home network".to_string());
+            }
             EntryRow {
-                sweep: view.card(e),
-                phone_lines: view.phone_lines(e),
                 id: e.id,
                 name: e.name.clone(),
-                kind: music::kind_label(&e.source, e.target.as_deref()),
-                category: category.map(|c| c.name.clone()).unwrap_or_default(),
+                sub: sub.join(" · "),
                 category_color: tile_of(category.map_or("", |c| c.color.as_str())),
                 category_icon: category
                     .map(|c| c.icon.clone())
                     .filter(|i| music::icon_known(i))
                     .unwrap_or_else(|| "music_note".to_string()),
-                phones: view.phone_count(e),
-                files: file_count,
                 missing,
                 // The parent's cover, else the source's (design 21b §3), else the category tile.
                 cover: e.cover_hash.clone().or_else(|| view.source_cover(e.id)),
                 first: index == 0,
                 last: index + 1 == count,
+                sweep,
             }
         })
         .collect();
 
-    let category_count = categories.len();
-    let category_views = categories
+    // "Anna · 6 of 9": the entries each phone has ticked.
+    let devices: Vec<crate::models::Device> =
+        sqlx::query_as("SELECT * FROM devices ORDER BY name, id")
+            .fetch_all(&state.db)
+            .await?;
+    let ticks: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT device_id, COUNT(*) FROM device_music_entries GROUP BY device_id",
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+    let phones = devices
         .iter()
-        .enumerate()
-        .map(|(index, c)| {
-            let mut view = CategoryView {
-                id: c.id,
-                name: c.name.clone(),
-                icon: c.icon.clone(),
-                color: c.color.clone(),
-                tile: tile_of(&c.color),
-                entries: in_use.get(&c.id).copied().unwrap_or(0),
-                first: index == 0,
-                last: index + 1 == category_count,
-                error: None,
-                error_field: "",
-            };
-            if let Some((id, name, icon, color, error, error_field)) = &entered.category
-                && *id == c.id
-            {
-                view.name = name.clone();
-                view.icon = icon.clone();
-                view.color = color.clone();
-                view.tile = tile_of(color);
-                view.error = Some(error.clone());
-                view.error_field = error_field;
-            }
-            view
+        .map(|d| {
+            let ticked = ticks.get(&d.id).copied().unwrap_or(0);
+            PhoneRow::new(d, format!("{ticked} of {count}"), None)
         })
         .collect();
 
+    let (stored, fingerprint): (bool, Option<String>) = sqlx::query_as(
+        "SELECT ciphertext IS NOT NULL, key_fingerprint FROM music_storytel WHERE id = 1",
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let signed_in = stored && login_opens(state, fingerprint.as_deref());
+
+    Ok(MusicTemplate {
+        title: "Music".to_string(),
+        entries: entry_rows,
+        entry_count: count as i64,
+        max_entries: MAX_ENTRIES,
+        edit,
+        category_options: categories.iter().map(|c| (c.id, c.name.clone())).collect(),
+        category_count: categories.len(),
+        add,
+        own,
+        storytel_value: if signed_in { "Signed in" } else { "No login" },
+        spotify_state: if !view.spotify_configured {
+            "No app"
+        } else if crate::spotify::accounts(&state.db)
+            .await?
+            .iter()
+            .any(|row| row.needs_login == 0)
+        {
+            "Signed in"
+        } else {
+            "No login"
+        },
+        phones,
+    })
+}
+
+/// Whether a stored Storytel login, sealed under the key `fingerprint`, opens with this server's
+/// key: the tab's "Signed in" and Settings' "Enter the login again" both ask this.
+fn login_opens(state: &AppState, fingerprint: Option<&str>) -> bool {
+    state
+        .music_key
+        .as_ref()
+        .is_some_and(|key| fingerprint == Some(key.fingerprint.as_str()))
+}
+
+/// `GET /music/settings`; shows (once) how the last Storytel save went (a session flash).
+pub async fn show_settings(
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+) -> Response {
+    let notice: Option<String> = session.remove(STORYTEL_NOTICE_FLASH).await.ok().flatten();
+    render_settings(&state, StatusCode::OK, None, notice).await
+}
+
+/// The settings page as it is, without a session (the tests call it with another state).
+#[cfg(test)]
+pub(crate) async fn render_settings_plain(state: &AppState) -> Response {
+    render_settings(state, StatusCode::OK, None, None).await
+}
+
+async fn render_settings(
+    state: &AppState,
+    status: StatusCode,
+    storytel_error: Option<String>,
+    storytel_notice: Option<String>,
+) -> Response {
+    let page = settings_page(state, storytel_error, storytel_notice).await;
+    html(status, page, "couldn't load the music settings")
+}
+
+async fn settings_page(
+    state: &AppState,
+    storytel_error: Option<String>,
+    storytel_notice: Option<String>,
+) -> Result<MusicSettingsTemplate, sqlx::Error> {
     type StoredRow = (
         Option<Vec<u8>>,
         Option<String>,
@@ -454,21 +575,19 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         sqlx::query_scalar("SELECT COUNT(*) FROM device_policy WHERE music_storytel = 1")
             .fetch_one(&state.db)
             .await?;
+    let zone = crate::display_time::Zone::load(&state.db).await;
     let saved_on = stored.0.as_ref().map(|_| {
         stored
             .2
             .as_deref()
-            .and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").ok())
-            .map(|t| t.format("%-d %b %Y").to_string())
+            .and_then(crate::music_sweep::parse_stamp)
+            .map(|t| zone.local(t).format("%-d %b %Y").to_string())
             .unwrap_or_else(|| "earlier".to_string())
     });
-    let stale = stored.0.is_some()
-        && state
-            .music_key
-            .as_ref()
-            .is_none_or(|key| stored.1.as_deref() != Some(key.fingerprint.as_str()));
+    let stale = stored.0.is_some() && !login_opens(state, stored.1.as_deref());
     let (status, status_error) = if stored.0.is_some() && !stale {
         storytel_status(
+            &zone,
             stored.3,
             stored.4.as_deref(),
             stored.5,
@@ -486,8 +605,8 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         saved_on,
         stale,
         phones: storytel_phones,
-        error: entered.storytel_error,
-        notice: entered.storytel_notice,
+        error: storytel_error,
+        notice: storytel_notice,
         status,
         status_error,
     };
@@ -510,40 +629,135 @@ async fn music_page(state: &AppState, entered: Entered) -> Result<MusicTemplate,
         None => None,
     };
 
-    Ok(MusicTemplate {
-        title: "Music".to_string(),
-        entries: entry_rows,
-        entry_count: count as i64,
-        max_entries: MAX_ENTRIES,
-        category_options: categories.iter().map(|c| (c.id, c.name.clone())).collect(),
-        categories: category_views,
-        icons: crate::music_icons::ICONS.iter().map(|(k, _)| *k).collect(),
-        colors: crate::music_icons::COLORS.to_vec(),
-        add: entered.add.unwrap_or_default(),
-        own: entered.own.unwrap_or_default(),
-        new_category: entered.new_category.unwrap_or_default(),
+    Ok(MusicSettingsTemplate {
+        title: "Music Settings".to_string(),
         storytel,
         catalog,
-        import: entered.import.unwrap_or_default(),
         orphans: music::orphan_files(&state.db, &state.music_files_dir)
             .await
             .map(|o| {
                 (!o.files.is_empty()).then(|| (o.files.len(), music::megabytes(o.bytes as i64)))
             })?,
-        sweep_hours: view.setting,
+        sweep_hours: crate::music_sweep::sweep_hours(&state.db).await?,
         sweep_choices: crate::music_sweep::SWEEP_HOURS.to_vec(),
-        spotify_state: if !view.spotify_configured {
-            "No app"
-        } else if crate::spotify::accounts(&state.db)
-            .await?
-            .iter()
-            .any(|row| row.needs_login == 0)
-        {
-            "Signed in"
-        } else {
-            "No login"
-        },
     })
+}
+
+/// `GET /music/categories[?open=<id>]`: `open` keeps that category's editor open, so a save or
+/// a move comes back to it as it was (qa-31-s12-code N8).
+pub async fn show_categories(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let open = query.get("open").and_then(|v| v.parse().ok());
+    render_categories(&state, StatusCode::OK, None, None, open).await
+}
+
+async fn render_categories(
+    state: &AppState,
+    status: StatusCode,
+    new_category: Option<NewCategoryForm>,
+    refused: Option<RefusedCategory>,
+    open: Option<i64>,
+) -> Response {
+    let page = categories_page(state, new_category, refused, open).await;
+    html(status, page, "couldn't load the music categories")
+}
+
+async fn categories_page(
+    state: &AppState,
+    new_category: Option<NewCategoryForm>,
+    refused: Option<RefusedCategory>,
+    open: Option<i64>,
+) -> Result<MusicCategoriesTemplate, sqlx::Error> {
+    let categories: Vec<MusicCategory> =
+        sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
+            .fetch_all(&state.db)
+            .await?;
+    let in_use: HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT category_id, COUNT(*) FROM music_entries GROUP BY category_id",
+    )
+    .fetch_all(&state.db)
+    .await?
+    .into_iter()
+    .collect();
+    let count = categories.len();
+    let views = categories
+        .iter()
+        .enumerate()
+        .map(|(index, c)| {
+            let mut view = CategoryView {
+                id: c.id,
+                name: c.name.clone(),
+                icon: c.icon.clone(),
+                color: c.color.clone(),
+                tile: tile_of(&c.color),
+                entries: in_use.get(&c.id).copied().unwrap_or(0),
+                first: index == 0,
+                last: index + 1 == count,
+                open: open == Some(c.id),
+                error: None,
+                error_field: "",
+            };
+            if let Some((id, name, icon, color, error, error_field)) = &refused
+                && *id == c.id
+            {
+                view.name = name.clone();
+                view.icon = icon.clone();
+                view.color = color.clone();
+                view.tile = tile_of(color);
+                view.error = Some(error.clone());
+                view.open = true;
+                view.error_field = error_field;
+            }
+            view
+        })
+        .collect();
+    Ok(MusicCategoriesTemplate {
+        title: "Categories".to_string(),
+        categories: views,
+        icons: crate::music_icons::ICONS.iter().map(|(k, _)| *k).collect(),
+        colors: crate::music_icons::COLORS.to_vec(),
+        new_category: new_category.unwrap_or_default(),
+    })
+}
+
+/// `GET /music/import`; shows (once) how the last import went (design 21a, a session flash).
+pub async fn show_import(
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+) -> Response {
+    let result: Option<super::music_import::ImportResult> = session
+        .remove(super::music_import::RESULT_FLASH)
+        .await
+        .ok()
+        .flatten();
+    let card = super::music_import::ImportCard {
+        result,
+        ..Default::default()
+    };
+    render_import(&state, StatusCode::OK, card).await
+}
+
+/// The import page with its card as given (a preview, or a refused import).
+pub(super) async fn render_import(
+    state: &AppState,
+    status: StatusCode,
+    card: super::music_import::ImportCard,
+) -> Response {
+    let page = async {
+        let category_options: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id, name FROM music_categories ORDER BY sort, id")
+                .fetch_all(&state.db)
+                .await?;
+        Ok(MusicImportTemplate {
+            title: "Import from Vibb".to_string(),
+            category_options,
+            import: card,
+        })
+    }
+    .await;
+    html(status, page, "couldn't load the import page")
 }
 
 /// `POST /music/orphans/delete`: deletes the own files no entry names (left by restoring an older
@@ -577,7 +791,7 @@ pub async fn delete_orphans(
         ),
     )
     .await;
-    Redirect::to("/music#entries").into_response()
+    Redirect::to("/music/settings").into_response()
 }
 
 /// The category for a new entry: the one picked, else the first whose `default_kind` matches the
@@ -615,6 +829,30 @@ pub(super) const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM mus
 /// the bound limit (`MAX_ENTRIES`): the count and the write are one statement.
 pub(super) const BELOW_ENTRY_LIMIT: &str = "WHERE (SELECT COUNT(*) FROM music_entries) < ?";
 
+/// A refused "Podcast or NRK link": the tab, the link kept, the reason in its open form.
+async fn refused_add(state: &AppState, form: AddForm) -> Response {
+    render_music(
+        state,
+        StatusCode::BAD_REQUEST,
+        false,
+        form,
+        OwnForm::default(),
+    )
+    .await
+}
+
+/// A refused "Upload your own files": the tab, the name kept, the reason in its open form.
+async fn refused_own(state: &AppState, form: OwnForm) -> Response {
+    render_music(
+        state,
+        StatusCode::BAD_REQUEST,
+        false,
+        AddForm::default(),
+        form,
+    )
+    .await
+}
+
 /// `POST /music`: adds an NRK or RSS entry from a pasted link, after one GET that must look like
 /// the source; its title becomes the name. 400 (the page, the link kept, the reason by the field)
 /// when it isn't.
@@ -625,24 +863,21 @@ pub async fn add_link(
 ) -> Response {
     let link_text = field(&form, "link");
     let picked = field(&form, "category");
-    let refuse = |error: String| Entered {
-        add: Some(AddForm {
-            link: link_text.clone(),
-            category: picked.clone(),
-            error: Some(error),
-        }),
-        ..Default::default()
+    let refuse = |error: String| AddForm {
+        link: link_text.clone(),
+        category: picked.clone(),
+        error: Some(error),
     };
     let link = match music::parse_link(&link_text) {
         Ok(link) => link,
         Err(error) => {
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error.to_string())).await;
+            return refused_add(&state, refuse(error.to_string())).await;
         }
     };
     match entry_count(&state.db).await {
         Ok(n) if n >= MAX_ENTRIES => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+            return refused_add(&state, refuse(error)).await;
         }
         Ok(_) => {}
         Err(err) => return server_error(err, "music entry count failed"),
@@ -659,19 +894,19 @@ pub async fn add_link(
         };
     if let Some(name) = exists {
         let error = format!("That link is already in the library (\"{name}\").");
-        return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+        return refused_add(&state, refuse(error)).await;
     }
     let category = match pick_category(&state.db, &picked, link.source()).await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error.to_string())).await;
+            return refused_add(&state, refuse(error.to_string())).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
     let title = match music::check_link(state.music_fetch.as_ref(), &link).await {
         Ok(title) => title,
         Err(err) => {
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(err.message())).await;
+            return refused_add(&state, refuse(err.message())).await;
         }
     };
     // The limit is checked in the INSERT itself (qa-21-step1-code #6): two adds can't pass it.
@@ -692,12 +927,12 @@ pub async fn add_link(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+            return refused_add(&state, refuse(error)).await;
         }
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
             let error = "That link is already in the library.".to_string();
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+            return refused_add(&state, refuse(error)).await;
         }
         Err(err) => return server_error(err, "couldn't add a music entry"),
     };
@@ -721,23 +956,20 @@ pub async fn add_own(
 ) -> Response {
     let name_text = field(&form, "name");
     let picked = field(&form, "category");
-    let refuse = |error: String| Entered {
-        own: Some(OwnForm {
-            name: name_text.clone(),
-            category: picked.clone(),
-            error: Some(error),
-        }),
-        ..Default::default()
+    let refuse = |error: String| OwnForm {
+        name: name_text.clone(),
+        category: picked.clone(),
+        error: Some(error),
     };
     let Some(name) = music::clean_name(&name_text, MAX_NAME_CHARS) else {
         let error = format!("Give it a name (at most {MAX_NAME_CHARS} characters).");
-        return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+        return refused_own(&state, refuse(error)).await;
     };
     // The 200-entry limit is the INSERT's own condition below.
     let category = match pick_category(&state.db, &picked, "own").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error.to_string())).await;
+            return refused_own(&state, refuse(error.to_string())).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
@@ -758,7 +990,7 @@ pub async fn add_own(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return render_music(&state, StatusCode::BAD_REQUEST, refuse(error)).await;
+            return refused_own(&state, refuse(error)).await;
         }
         Err(err) => return server_error(err, "couldn't add an own-files entry"),
     };
@@ -825,7 +1057,7 @@ pub async fn move_entry(
             .unwrap_or_default();
     nudge(&state, &phones);
     log_event(&state, &admin, "music_entry_moved", &format!("entry {id}")).await;
-    Redirect::to(&format!("/music#entry-{id}")).into_response()
+    Redirect::to(&format!("/music?edit=1#entry-{id}")).into_response()
 }
 
 /// A category as typed: `Err((message, field))`.
@@ -859,17 +1091,15 @@ pub async fn add_category(
     let checked = match check_category(&name, &icon, &color) {
         Ok(checked) => checked,
         Err((error, error_field)) => {
-            let entered = Entered {
-                new_category: Some(NewCategoryForm {
-                    name,
-                    icon,
-                    color,
-                    error: Some(error),
-                    error_field,
-                }),
-                ..Default::default()
+            let form = NewCategoryForm {
+                name,
+                icon,
+                color,
+                error: Some(error),
+                error_field,
             };
-            return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+            return render_categories(&state, StatusCode::BAD_REQUEST, Some(form), None, None)
+                .await;
         }
     };
     let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
@@ -892,7 +1122,7 @@ pub async fn add_category(
         &format!("category {id}: {checked}"),
     )
     .await;
-    Redirect::to(&format!("/music#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}`: renames it and sets its icon and colour.
@@ -910,11 +1140,9 @@ pub async fn save_category(
     let checked = match check_category(&name, &icon, &color) {
         Ok(checked) => checked,
         Err((error, error_field)) => {
-            let entered = Entered {
-                category: Some((id, name, icon, color, error, error_field)),
-                ..Default::default()
-            };
-            return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+            let refused = (id, name, icon, color, error, error_field);
+            return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None)
+                .await;
         }
     };
     let updated =
@@ -945,7 +1173,7 @@ pub async fn save_category(
         &format!("category {id}: {checked}"),
     )
     .await;
-    Redirect::to(&format!("/music#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}/move` (`direction` up/down): the tiles' order on the phones.
@@ -980,7 +1208,7 @@ pub async fn move_category(
         &format!("category {id}"),
     )
     .await;
-    Redirect::to(&format!("/music#category-{id}")).into_response()
+    Redirect::to(&format!("/music/categories?open={id}#category-{id}")).into_response()
 }
 
 /// `POST /music/categories/{id}/delete`: only while no entry uses it (else 400, the card says so).
@@ -1011,23 +1239,20 @@ pub async fn delete_category(
             Err(err) => return server_error(err, "music category use lookup failed"),
         };
     if used > 0 {
-        let entered = Entered {
-            category: Some((
-                id,
-                category.name.clone(),
-                category.icon.clone(),
-                category.color.clone(),
-                format!(
-                    "Not deleted: {used} entr{} use{} this category - move {} to another one first.",
-                    if used == 1 { "y" } else { "ies" },
-                    if used == 1 { "s" } else { "" },
-                    if used == 1 { "it" } else { "them" }
-                ),
-                "delete",
-            )),
-            ..Default::default()
-        };
-        return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+        let refused = (
+            id,
+            category.name.clone(),
+            category.icon.clone(),
+            category.color.clone(),
+            format!(
+                "Not deleted: {used} entr{} use{} this category - move {} to another one first.",
+                if used == 1 { "y" } else { "ies" },
+                if used == 1 { "s" } else { "" },
+                if used == 1 { "it" } else { "them" }
+            ),
+            "delete",
+        );
+        return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None).await;
     }
     if let Err(err) = sqlx::query("DELETE FROM music_categories WHERE id = ?")
         .bind(id)
@@ -1043,7 +1268,7 @@ pub async fn delete_category(
         &format!("category {id}: {}", category.name),
     )
     .await;
-    Redirect::to("/music#categories").into_response()
+    Redirect::to("/music/categories").into_response()
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1062,7 +1287,9 @@ async fn storytel_phones(db: &sqlx::SqlitePool) -> Vec<i64> {
 
 /// The card's line about the stored login (design 26b §2.3) from `music_storytel`'s stamps and
 /// `login_error` (a code): `(text, bad news)`, `None` while Storytel hasn't been asked.
+#[allow(clippy::too_many_arguments)]
 fn storytel_status(
+    zone: &crate::display_time::Zone,
     generation: i64,
     refused_at: Option<&str>,
     refused_generation: Option<i64>,
@@ -1071,15 +1298,15 @@ fn storytel_status(
     error_at: Option<&str>,
     now: DateTime<Utc>,
 ) -> Option<(String, bool)> {
-    // " (10:02 UTC)" from `login_error_at`.
+    // " (10:02)" from `login_error_at`.
     let when = error_at
         .and_then(crate::music_sweep::parse_stamp)
-        .map(|at| format!(" ({})", utc_time(at, now)))
+        .map(|at| format!(" ({})", zone.when(at, now)))
         .unwrap_or_else(|| " at the last try".to_string());
     let Some(code) = error else {
         let at = crate::music_sweep::parse_stamp(ok_at?)?;
         return Some((
-            format!("Storytel accepted the login ({}).", utc_time(at, now)),
+            format!("Storytel accepted the login ({}).", zone.when(at, now)),
             false,
         ));
     };
@@ -1093,15 +1320,15 @@ fn storytel_status(
                 crate::storytel::cooldown_until(refused_at, refused_generation, generation, now),
             ) {
                 (Some(at), Some(until)) => format!(
-                    "Storytel refused the login at {}. Nothing is tried again before {} - save \
+                    "Storytel refused the login ({}). Nothing is tried again before {} - save \
                      the password again to try now.",
-                    utc_time(at, now),
-                    until.format("%H:%M UTC")
+                    zone.when(at, now),
+                    zone.until(until, now)
                 ),
                 (Some(at), None) => format!(
-                    "Storytel refused the login at {}. It is tried again the next time the shelf \
+                    "Storytel refused the login ({}). It is tried again the next time the shelf \
                      is read - save the password again if it changed.",
-                    utc_time(at, now)
+                    zone.when(at, now)
                 ),
                 _ => "Storytel refused the login - save the password again.".to_string(),
             }
@@ -1132,13 +1359,10 @@ pub async fn save_storytel(
     Form(form): Form<FormMap>,
 ) -> Response {
     use crate::storytel::Probe;
-    let refuse = |error: &str| Entered {
-        storytel_error: Some(error.to_string()),
-        ..Default::default()
-    };
+    let refuse = |error: &str| Some(error.to_string());
     let Some(key) = state.music_key.clone() else {
         let entered = refuse("Storytel is off: this server has no key to keep the login safe.");
-        return render_music(&state, StatusCode::SERVICE_UNAVAILABLE, entered).await;
+        return render_settings(&state, StatusCode::SERVICE_UNAVAILABLE, entered, None).await;
     };
     let email = field(&form, "email").trim().to_string();
     let password = field(&form, "password");
@@ -1147,14 +1371,14 @@ pub async fn save_storytel(
         && !email.chars().any(|c| c.is_control() || c.is_whitespace());
     if !email_ok {
         let entered = refuse("Enter the Storytel account's e-mail address.");
-        return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+        return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
     }
     if password.is_empty()
         || password.chars().count() > 200
         || password.chars().any(char::is_control)
     {
         let entered = refuse("Enter the Storytel password.");
-        return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+        return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
     }
     let probe =
         crate::storytel::probe(&state, &email, &password, crate::storytel::PROBE_BUDGET).await;
@@ -1179,7 +1403,7 @@ pub async fn save_storytel(
                 ),
             };
             let entered = refuse(&text);
-            return render_music(&state, StatusCode::BAD_REQUEST, entered).await;
+            return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
         }
         Probe::Accepted { jwt, shelf } => {
             let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
@@ -1232,7 +1456,7 @@ pub async fn save_storytel(
     if let Err(err) = session.insert(STORYTEL_NOTICE_FLASH, notice).await {
         tracing::warn!(%err, "couldn't keep the Storytel notice for the page");
     }
-    Redirect::to("/music#storytel").into_response()
+    Redirect::to("/music/settings#storytel").into_response()
 }
 
 /// `POST /music/storytel/clear`: forgets the login (and the server's session with it); the phones
@@ -1261,7 +1485,7 @@ pub async fn clear_storytel(
         "Storytel login removed",
     )
     .await;
-    Redirect::to("/music#storytel").into_response()
+    Redirect::to("/music/settings#storytel").into_response()
 }
 
 /// One book in a picker row's details.
@@ -1369,7 +1593,11 @@ async fn render_picker(
         let (no_login, error, groups) = match shelf {
             Ok(groups) => (false, None, groups),
             Err(StorytelError::NotConfigured) => (true, None, Default::default()),
-            Err(err) => (false, Some(err.message()), Default::default()),
+            Err(err) => {
+                let zone = crate::display_time::Zone::load(&state.db).await;
+                let text = err.message(&zone, state.music_sweep.now());
+                (false, Some(text), Default::default())
+            }
         };
         let rows = groups
             .iter()
@@ -1686,14 +1914,14 @@ struct EntryTemplate {
     files: Vec<FileRow>,
     file_count: i64,
     max_files: i64,
-    phones: Vec<(i64, String)>,
+    /// The phones with it ticked, each with what it last reported about the entry.
+    phones: Vec<PhoneRow>,
     /// What went wrong with an upload (each file on its own line), and how many were saved.
     upload_problems: Vec<String>,
     upload_saved: usize,
     cover_error: Option<String>,
-    /// The sweep's status, Check now and the per-phone lines (NRK and RSS, design 21b §3).
+    /// The sweep's status and Check now (NRK, RSS and Storytel, design 21b §3).
     sweep: Option<SweepCard>,
-    phone_lines: Vec<String>,
     /// The cover the sweep fetched from the source (shown while the parent has none).
     source_cover: Option<String>,
 }
@@ -1759,14 +1987,19 @@ async fn render_entry(
         .bind(id)
         .fetch_all(&state.db)
         .await?;
-        let phones: Vec<(i64, String)> = sqlx::query_as(
-            "SELECT d.id, d.name FROM devices d JOIN device_music_entries m ON m.device_id = d.id \
-             WHERE m.entry_id = ? ORDER BY d.name",
+        let devices: Vec<crate::models::Device> = sqlx::query_as(
+            "SELECT d.* FROM devices d JOIN device_music_entries m ON m.device_id = d.id \
+             WHERE m.entry_id = ? ORDER BY d.name, d.id",
         )
         .bind(id)
         .fetch_all(&state.db)
         .await?;
         let view = SweepView::load(state, state.music_sweep.now()).await?;
+        let mut lines: HashMap<i64, String> = view.phone_lines(&entry).into_iter().collect();
+        let phones = devices
+            .iter()
+            .map(|d| PhoneRow::new(d, lines.remove(&d.id).unwrap_or_default(), Some(entry.id)))
+            .collect();
         let storytel = entry.source == "storytel";
         let spotify = entry.source == "spotify";
         let spotify_context = spotify
@@ -1861,7 +2094,6 @@ async fn render_entry(
             upload_saved: entered.upload_saved,
             cover_error: entered.cover_error,
             sweep: view.card(&entry),
-            phone_lines: view.phone_lines(&entry),
             source_cover: view.source_cover(entry.id),
             entry,
         })
@@ -2009,7 +2241,7 @@ pub async fn save_entry(
         &format!("entry {id}: {name}, {order}, cache {cache}, resume {resume}"),
     )
     .await;
-    Redirect::to(&format!("/music/entries/{id}#entry-{id}")).into_response()
+    Redirect::to(&format!("/music/entries/{id}#settings")).into_response()
 }
 
 /// `POST /music/entries/{id}/delete`: the entry, its ticks, its own files (rows and disk) and
@@ -2694,18 +2926,9 @@ pub async fn view_cover(State(state): State<AppState>, Path(hash): Path<String>)
 // The sweep on the cards (design 21b §3)
 // ------------------------------------------------------------------------------------------------
 
-/// "14:30 UTC" today, else "9 Oct 14:30 UTC".
-fn utc_time(time: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    if time.date_naive() == now.date_naive() {
-        time.format("%H:%M UTC").to_string()
-    } else {
-        time.format("%-d %b %H:%M UTC").to_string()
-    }
-}
-
-/// "9 Oct".
-fn day_text(time: DateTime<Utc>) -> String {
-    time.format("%-d %b").to_string()
+/// "9 Oct", the local date.
+fn day_text(zone: &crate::display_time::Zone, time: DateTime<Utc>) -> String {
+    zone.local(time).format("%-d %b").to_string()
 }
 
 /// "just now", "5 min ago", "2 h ago", "3 days ago".
@@ -2723,7 +2946,8 @@ fn ago(time: DateTime<Utc>, now: DateTime<Utc>) -> String {
 /// cards on a Pi Zero).
 struct SweepView {
     now: DateTime<Utc>,
-    setting: i64,
+    /// Times in the Phone Setup zone (design 31 M4).
+    zone: crate::display_time::Zone,
     current: Option<i64>,
     listings: HashMap<i64, crate::music_sweep::Listing>,
     /// Entry -> the newest listed item's title and date.
@@ -2849,7 +3073,7 @@ impl SweepView {
         .collect();
         Ok(SweepView {
             now,
-            setting: sweep::sweep_hours(&state.db).await?,
+            zone: crate::display_time::Zone::load(&state.db).await,
             current,
             listings,
             newest,
@@ -2924,7 +3148,7 @@ impl SweepView {
             return block("Checking…".to_string(), "busy", true);
         }
         let scheduled = self.schedule.get(&entry.id);
-        let next_try = scheduled.map(|(s, _)| utc_time(s.at.max(now), now));
+        let next_try = scheduled.map(|(s, _)| self.zone.until(s.at.max(now), now));
         let waiting = |what: &str, ahead: usize| {
             if ahead == 0 {
                 format!("Waiting for {what}")
@@ -2960,7 +3184,7 @@ impl SweepView {
                         .error_at
                         .as_deref()
                         .and_then(parse_stamp)
-                        .map(|t| utc_time(t, now))
+                        .map(|t| self.zone.when(t, now))
                         .unwrap_or_default(),
                     music::sweep_error_text(&entry.source, &code),
                 ),
@@ -2970,11 +3194,11 @@ impl SweepView {
                         .error_at
                         .as_deref()
                         .and_then(parse_stamp)
-                        .map(|t| utc_time(t, now))
+                        .map(|t| self.zone.when(t, now))
                         .unwrap_or_default(),
                     music::sweep_error_text(&entry.source, &code),
                     listed_at
-                        .map(|t| format!(" from {}", day_text(t)))
+                        .map(|t| format!(" from {}", day_text(&self.zone, t)))
                         .unwrap_or_default(),
                 ),
                 (None, _) => format!(
@@ -3037,10 +3261,18 @@ impl SweepView {
                     text.push_str(&format!(" · newest: {title}"));
                 }
                 if let Some(date) = date.as_deref().and_then(parse_stamp) {
-                    text.push_str(&format!(" · {}", day_text(date)));
+                    text.push_str(&format!(" · {}", day_text(&self.zone, date)));
                 }
             }
             text
+        });
+        let count = listing.filter(|l| l.version.is_some()).map(|l| {
+            let n = l.item_count.max(0) as usize;
+            if storytel {
+                plural(n, "book", "books")
+            } else {
+                plural(n, "episode", "episodes")
+            }
         });
         let mut notes = Vec::new();
         if let Some(listing) = listing.filter(|l| l.version.is_some()) {
@@ -3093,6 +3325,7 @@ impl SweepView {
                 .and_then(|l| l.title.clone())
                 .filter(|t| t != &entry.name),
             lan: listing.and_then(|l| l.lan) == Some(true),
+            count,
             episodes,
             notes,
             status: self.status(entry),
@@ -3104,8 +3337,8 @@ impl SweepView {
         })
     }
 
-    /// Check now isn't allowed before this ("14:20 UTC"): the entry's 15 minutes, the hourly and
-    /// daily limits.
+    /// Check now isn't allowed before this ("14:20", the Phone Setup zone): the entry's 15
+    /// minutes, the hourly and daily limits.
     fn check_after(&self, entry: &MusicEntry) -> Option<String> {
         use crate::music_sweep::parse_stamp;
         let requested_gap = self
@@ -3116,7 +3349,7 @@ impl SweepView {
             .filter(|at| *at > self.now);
         requested_gap
             .max(self.check_block)
-            .map(|at| utc_time(at, self.now))
+            .map(|at| self.zone.until(at, self.now))
     }
 
     /// A Spotify card's sweep part (design 26c §3.6): "42 tracks · read as Pål", what was left
@@ -3131,6 +3364,21 @@ impl SweepView {
         let kind = reference.as_ref().map(|r| r.kind);
         let listing = self.listings.get(&entry.id).filter(|l| l.version.is_some());
         let mut notes = Vec::new();
+        // The row's count ("42 tracks"; a context lists none) and the entry page's line with
+        // the reader (which child's account listed it).
+        let count = listing
+            .filter(|l| l.spotify_mode.as_deref() != Some("context"))
+            .map(|l| {
+                let (one, many) = match kind {
+                    Some(LinkKind::Show | LinkKind::Episode) => ("episode", "episodes"),
+                    _ => ("track", "tracks"),
+                };
+                format!(
+                    "{} {}",
+                    l.item_count,
+                    if l.item_count == 1 { one } else { many }
+                )
+            });
         let episodes = listing.map(|l| {
             let reader = l
                 .spotify_reader
@@ -3204,6 +3452,7 @@ impl SweepView {
                 .and_then(|l| l.title.clone())
                 .filter(|t| t != &entry.name),
             lan: false,
+            count,
             episodes,
             notes,
             status: self.status(entry),
@@ -3215,8 +3464,8 @@ impl SweepView {
         }
     }
 
-    /// One line per phone with the entry ticked, from its last report (§3).
-    fn phone_lines(&self, entry: &MusicEntry) -> Vec<String> {
+    /// What each phone with the entry ticked last reported about it (§3): (phone, line).
+    fn phone_lines(&self, entry: &MusicEntry) -> Vec<(i64, String)> {
         let Some(phones) = self.phones.get(&entry.id) else {
             return Vec::new();
         };
@@ -3224,15 +3473,18 @@ impl SweepView {
         let own = entry.source == "own";
         phones
             .iter()
-            .map(|(device, name)| {
+            .map(|(device, _)| {
                 if let Some(why) = self.gated(entry, *device) {
-                    return format!("{name}: not sent - {why}");
+                    return (*device, format!("Not sent - {why}"));
                 }
                 if entry.source == "spotify" {
-                    return self.spotify_phone_line(entry, *device, name, current.as_deref());
+                    return (
+                        *device,
+                        self.spotify_phone_line(entry, *device, current.as_deref()),
+                    );
                 }
                 let Some((report, at)) = self.reports.get(device) else {
-                    return format!("{name}: not reported yet");
+                    return (*device, "Not reported yet".to_string());
                 };
                 let row = report.downloads.iter().find(|d| d.entry == entry.id);
                 let failing: Vec<&music::ItemError> = report
@@ -3277,11 +3529,17 @@ impl SweepView {
                         music::sweep_error_text(&entry.source, &first.error)
                     ));
                 }
-                let mut line = format!("{name}: {}", parts.join(" · "));
+                let mut line = parts.join(" · ");
                 if let Some(at) = at.filter(|at| *at < self.now - chrono::TimeDelta::hours(1)) {
-                    line.push_str(&format!(" (as of {})", at.format("%-d %b %H:%M UTC")));
+                    line.push_str(&format!(" (as of {})", self.zone.when(at, self.now)));
                 }
-                line
+                // "Has an older list", "3 of 5 offline": the line starts the row's sub-line.
+                let mut chars = line.chars();
+                let line = chars
+                    .next()
+                    .map(|c| c.to_uppercase().chain(chars).collect())
+                    .unwrap_or_default();
+                (*device, line)
             })
             .collect()
     }
@@ -3289,19 +3547,13 @@ impl SweepView {
     /// A bound phone's line on a Spotify card (design 26c §3.6): whom it plays as, and the tracks
     /// it couldn't play at the current list (`unplayable`). Nothing is downloaded, so no "on the
     /// phone" counts.
-    fn spotify_phone_line(
-        &self,
-        entry: &MusicEntry,
-        device: i64,
-        name: &str,
-        current: Option<&str>,
-    ) -> String {
+    fn spotify_phone_line(&self, entry: &MusicEntry, device: i64, current: Option<&str>) -> String {
         let mut line = match self.spotify_bound.get(&device) {
             Some(account) if !self.spotify_configured => {
-                format!("{name}: plays as {account} - no Spotify app is set up, so it can't play")
+                format!("Plays as {account} - no Spotify app is set up, so it can't play")
             }
-            Some(account) => format!("{name}: plays as {account}"),
-            None => format!("{name}: Spotify is off on this phone"),
+            Some(account) => format!("Plays as {account}"),
+            None => "Spotify is off on this phone".to_string(),
         };
         if let Some((report, at)) = self.reports.get(&device) {
             let failing: Vec<&music::ItemError> = report
@@ -3316,7 +3568,7 @@ impl SweepView {
                     music::sweep_error_text(&entry.source, &first.error)
                 ));
                 if let Some(at) = at.filter(|at| *at < self.now - chrono::TimeDelta::hours(1)) {
-                    line.push_str(&format!(" (as of {})", at.format("%-d %b %H:%M UTC")));
+                    line.push_str(&format!(" (as of {})", self.zone.when(at, self.now)));
                 }
             }
         }
@@ -3354,7 +3606,7 @@ pub async fn save_sweep(
         &format!("every {hours} hours"),
     )
     .await;
-    Redirect::to("/music#sweep").into_response()
+    Redirect::to("/music/settings").into_response()
 }
 
 /// `POST /music/entries/{id}/check` (`back` = "entry" from the entry's page): Check now, within
@@ -3538,26 +3790,32 @@ pub async fn cards(
 }
 
 // ------------------------------------------------------------------------------------------------
-// The device page's Music card
+// Device › Music (design 31 step 7): the phone's music page
 // ------------------------------------------------------------------------------------------------
 
+/// One library entry on Device › Music: a switch, its own form (`#music-entry-<id>`).
 pub struct MusicTick {
     pub id: i64,
     pub name: String,
+    /// "NRK series · Podkast".
     pub detail: String,
     pub checked: bool,
-    /// A refused tick of this entry (`?music_notice=...&music_entry=<id>`), shown by its row.
+    /// What the phone reported wrong with this entry ("not found at the source"), under its name.
+    pub error: Option<String>,
+    /// A refused tick of this entry (`?music_notice=too_big&music_entry=<id>`), under its row.
     pub notice: Option<&'static str>,
 }
 
+/// The music app's switch (`/apps/toggle` with `back=music`).
 pub struct MusicAppSwitch {
     pub tracked_app_id: i64,
     pub package_name: String,
     pub checked: bool,
-    pub status: String,
+    /// "Installed", "Waiting for the phone", "Not installed", "No release yet".
+    pub status: &'static str,
 }
 
-/// One Sonos room on the Music card (design 26a §5.5).
+/// One Sonos room on Device › Music (design 26a §5.5).
 pub struct SonosRoomRow {
     pub uid: String,
     /// The room's name as the phone reported it, else its uid.
@@ -3567,8 +3825,8 @@ pub struct SonosRoomRow {
     pub reported: bool,
 }
 
-/// The Music card's Sonos rooms (`#music-sonos`, design 26a §5.5): the "All rooms" switch and,
-/// when it is off, one tick per room the phone reported (and any still in the stored scope).
+/// Device › Music's Sonos rooms (`#music-sonos`, design 26a §5.5): the "All rooms" switch and,
+/// when it is off, one switch per room the phone reported (and any still in the stored scope).
 pub struct SonosRoomsCard {
     pub all: bool,
     pub rows: Vec<SonosRoomRow>,
@@ -3616,7 +3874,7 @@ impl SonosRoomsCard {
     }
 }
 
-/// The Music card's Spotify part (`#music-spotify`, design 26c §2.5, §3.6): "Spotify plays as"
+/// Device › Music's Spotify part (`#music-spotify`, design 26c §2.5, §3.6): "Spotify plays as"
 /// and what goes with it. Shown once a Spotify app is set up (or accounts or a binding remain).
 pub struct SpotifyBindingCard {
     /// Every logged-in account (id, display name), by id.
@@ -3631,15 +3889,20 @@ pub struct SpotifyBindingCard {
     pub notice: Option<&'static str>,
 }
 
-/// The device page's "Music" card (`#music`).
+/// Device › Music's parts (`device_pages::view_music`, design 31 step 7): the music app, the
+/// library's switches, the one settings form, Sonos and what the phone reported - typed, worded as
+/// rows and short warnings (§4).
 pub struct MusicCard {
     pub app: Option<MusicAppSwitch>,
+    /// A refused music app switch (`toggle_app` with `back=music`, `?music_notice=from_play`), in
+    /// its group.
+    pub app_refused: Option<&'static str>,
     pub ticks: Vec<MusicTick>,
     /// Streaming and downloads on mobile data (design 30 §1.1).
     pub stream_mobile_data: bool,
     pub download_mobile_data: bool,
-    /// When the switches differ and the phone still runs on the old one (design 30 §1.3).
-    pub data_note: Option<&'static str>,
+    /// The switches differ and the phone still runs on the old one (design 30 §1.3): above them.
+    pub older_phone: Option<Note>,
     pub volume_cap: Option<i64>,
     /// Every choice and whether it is the current one.
     pub volume_caps: Vec<(i64, bool)>,
@@ -3647,28 +3910,31 @@ pub struct MusicCard {
     pub storage_limit: Option<i64>,
     /// Every choice and whether it is the current one ("No limit" is `storage_limit.is_none()`).
     pub storage_limits: Vec<(i64, bool)>,
+    /// The kept items alone pass the limit (design 30 §1.10): above the picker.
+    pub over_limit: Option<Note>,
     pub storytel: bool,
     pub storytel_stored: bool,
-    /// Why this phone's ticked Storytel entries aren't sent (design 26b §2.3, §2.7), by the switch.
-    pub storytel_note: Option<String>,
-    /// The library this phone gets: "3 entries · 12.3 kB", or none.
-    pub library: Option<String>,
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
-    /// One-shot message after a refused tick (`?music_notice=`).
-    pub notice: Option<&'static str>,
+    /// "2 Storytel entries aren't sent": ticked, but the switch is off or no login is saved
+    /// (design 26b §2.3, §2.7). Under the switch.
+    pub storytel_unsent: Option<String>,
+    /// The phone's own Storytel login was refused (design 26b §4.5): above the switch.
+    pub storytel_refused: Option<Note>,
+    /// Above the first group: Vibb can't deliver music yet, or can't reach the music app.
+    pub warnings: Vec<Note>,
+    /// What the phone reported: the music app, the library, downloads, storage, Storytel.
+    pub on_phone: Vec<Row>,
     pub sonos: SonosRoomsCard,
     pub spotify: Option<SpotifyBindingCard>,
 }
 
-/// `?music_notice=` codes.
+/// `?music_notice=` codes of a tick or a Sonos save (the music app's switch uses
+/// `devices::toggle_refusal`'s).
 pub fn notice_text(code: &str) -> Option<&'static str> {
     Some(match code {
         "too_big" => {
-            "Not ticked: with that entry this phone's music library would be bigger than 3 MB. \
-             Untick another entry first."
+            "Not added: this phone's library would pass 3 MB. Turn another entry off first."
         }
-        "sonos_too_many" => "Not saved: at most 32 speakers can be ticked. Untick one first.",
+        "sonos_too_many" => "Not saved: at most 32 speakers can be on. Turn one off first.",
         "sonos_unknown" => "Not saved: that isn't a Sonos speaker.",
         "spotify_unknown" => {
             "Not saved: that Spotify account isn't logged in here (any more) - pick another one."
@@ -3677,6 +3943,113 @@ pub fn notice_text(code: &str) -> Option<&'static str> {
     })
 }
 
+fn warning(title: &str, detail: String) -> Note {
+    Note {
+        warning: true,
+        title: title.to_string(),
+        value: None,
+        detail: Some(detail),
+        fix: None,
+    }
+}
+
+/// What on Device › Music needs the parent, typed (qa-31-s7-code M1): the page's warnings and the
+/// summary's Attention rows both come from here, so they agree. All from the last report (and the
+/// entries switched on for the phone).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MusicWarnings {
+    /// A reporting launcher without `music_v1` while entries are on.
+    pub cant_deliver: bool,
+    /// The launcher's bridge to the music app isn't bound.
+    pub unreachable: bool,
+    /// The phone's own Storytel login was refused (design 26b §4.5).
+    pub storytel_refused: bool,
+    /// The kept items alone pass the storage limit: what they use ("3.2 GB") and the limit in GB.
+    pub over_limit: Option<(String, i64)>,
+    /// The two mobile-data switches differ and the phone still reads the old one (design 30 §1.3).
+    pub older_phone: bool,
+    /// Entries switched on for this phone that the phone reported an error for.
+    pub failing_entries: usize,
+    /// The phone plays as a Spotify account and its last Spotify outcome is one the parent must
+    /// act on (`reauthorize`, `refused`, `not_premium`, `no_widevine`: design 26c §4.4) - the tiles
+    /// say "Spør en voksen"; Device › Music's Spotify group says which.
+    pub spotify_cant_play: bool,
+}
+
+impl MusicWarnings {
+    pub fn any(&self) -> bool {
+        *self != MusicWarnings::default()
+    }
+}
+
+/// [MusicWarnings] from the phone's settings, its last report and the entries on for it (`ticked`).
+pub fn music_warnings(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+    ticked: &[i64],
+) -> MusicWarnings {
+    let report = music::parse_music_state(latest.and_then(|s| s.music_state_json.as_deref()));
+    let capable = latest
+        .and_then(|s| s.capabilities_json.as_deref())
+        .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
+        .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
+    let report = report.as_ref();
+    MusicWarnings {
+        cant_deliver: latest.is_some() && !capable && !ticked.is_empty(),
+        unreachable: report
+            .and_then(|r| r.bridge.as_deref())
+            .is_some_and(|b| b != "bound"),
+        storytel_refused: report.and_then(|r| r.storytel.as_deref()) == Some("refused"),
+        over_limit: report
+            .and_then(|r| {
+                r.cache_bytes.map(|bytes| {
+                    music::storage(
+                        bytes,
+                        r.audio_bytes,
+                        r.extra_bytes,
+                        music::storage_limit(policy.music_storage_limit_gb),
+                    )
+                })
+            })
+            .and_then(|stored| stored.over_limit),
+        older_phone: music::older_phone(
+            policy.music_stream_mobile_data,
+            policy.music_download_mobile_data,
+            report.and_then(|r| r.cache_bytes),
+            report.and_then(|r| r.extra_bytes),
+        ),
+        failing_entries: report
+            .map(|r| {
+                ticked
+                    .iter()
+                    .filter(|id| r.entry_errors.iter().any(|e| e.entry == **id))
+                    .count()
+            })
+            .unwrap_or(0),
+        spotify_cant_play: policy.music_spotify_account.is_some()
+            && matches!(
+                report.and_then(|r| r.spotify.as_deref()),
+                Some("reauthorize" | "refused" | "not_premium" | "no_widevine")
+            ),
+    }
+}
+
+/// The entries switched on for a phone (the Music row's count, [music_warnings]' `ticked`).
+pub async fn ticked_entries(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT entry_id FROM device_music_entries WHERE device_id = ? ORDER BY entry_id",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await
+}
+
+/// Device › Music's parts for the phone of `policy`; `notice` and `notice_entry` are the page's
+/// `?music_notice=` and `&music_entry=` (a refused save, shown in its group). A DB error is the
+/// caller's 500.
 pub(crate) async fn device_card(
     state: &AppState,
     policy: &DevicePolicy,
@@ -3684,23 +4057,22 @@ pub(crate) async fn device_card(
     notice: Option<&str>,
     notice_entry: Option<i64>,
 ) -> Result<MusicCard, sqlx::Error> {
-    // A refused Sonos save goes by the Sonos rooms (qa-26a-step3c-code L4), a refused Spotify
-    // binding by its select.
-    let (sonos_notice, notice) = match notice {
-        Some(code) if code.starts_with("sonos_") => (notice_text(code), None),
-        other => (None, other),
-    };
-    let (spotify_notice, notice) = match notice {
-        Some(code) if code.starts_with("spotify_") => (notice_text(code), None),
-        other => (None, other),
-    };
-    let notice = notice.and_then(notice_text);
-    // A notice about one entry goes by its row; otherwise at the card's top.
-    let (row_notice, notice) = match notice_entry {
-        Some(entry) => (Some((entry, notice)), None),
-        None => (None, notice),
-    };
+    // A refused Spotify binding goes by its select (design 26c §2.5), as Sonos's by its rooms.
+    let spotify_notice = notice
+        .filter(|code| code.starts_with("spotify_"))
+        .and_then(notice_text);
     let device_id = policy.device_id;
+    let state_report =
+        music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
+    // What the phone reported wrong with an entry, by its row - only while it is on for this
+    // phone (qa-31-s7-code N3: an error under an off switch reads as current); an entry no longer
+    // in the library has no row and nothing to fix.
+    let errors: HashMap<i64, String> = state_report
+        .iter()
+        .flat_map(|report| &report.entry_errors)
+        .map(|e| (e.entry, music::entry_error_text(&e.error)))
+        .collect();
+    let row_notice = notice_entry.zip(notice.filter(|c| *c == "too_big").and_then(notice_text));
     let entries: Vec<(i64, String, String, Option<String>, String, bool)> = sqlx::query_as(
         "SELECT e.id, e.name, e.source, e.target, COALESCE(c.name, ''), \
          EXISTS(SELECT 1 FROM device_music_entries d WHERE d.device_id = ? AND d.entry_id = e.id) \
@@ -3710,10 +4082,6 @@ pub(crate) async fn device_card(
     .bind(device_id)
     .fetch_all(&state.db)
     .await?;
-    let names: HashMap<i64, String> = entries
-        .iter()
-        .map(|(id, name, ..)| (*id, name.clone()))
-        .collect();
     let storytel_ticked = entries
         .iter()
         .filter(|(_, _, source, _, _, checked)| *checked && source == "storytel")
@@ -3722,6 +4090,11 @@ pub(crate) async fn device_card(
         .iter()
         .filter(|(_, _, source, _, _, checked)| *checked && source == "spotify")
         .count();
+    let ticked: Vec<i64> = entries
+        .iter()
+        .filter(|(.., checked)| *checked)
+        .map(|(id, ..)| *id)
+        .collect();
     let ticks = entries
         .into_iter()
         .map(|(id, name, source, target, category, checked)| MusicTick {
@@ -3732,9 +4105,10 @@ pub(crate) async fn device_card(
                 music::kind_label(&source, target.as_deref())
             ),
             checked,
+            error: errors.get(&id).filter(|_| checked).cloned(),
             notice: row_notice
                 .filter(|(entry, _)| *entry == id)
-                .and_then(|(_, notice)| notice),
+                .map(|(_, text)| text),
         })
         .collect();
 
@@ -3756,10 +4130,10 @@ pub(crate) async fn device_card(
                 .iter()
                 .any(|a| a.package_name == row.package_name && !row.package_name.is_empty());
             let status = match (on_phone, &row.latest_release_tag) {
-                (true, _) => "Installed".to_string(),
-                (false, None) => "No release yet".to_string(),
-                (false, Some(_)) if checked => "Waiting for the phone".to_string(),
-                (false, Some(_)) => "Not installed".to_string(),
+                (true, _) => "Installed",
+                (false, None) => "No release yet",
+                (false, Some(_)) if checked => "Waiting for the phone",
+                (false, Some(_)) => "Not installed",
             };
             Some(MusicAppSwitch {
                 tracked_app_id: row.id,
@@ -3772,26 +4146,20 @@ pub(crate) async fn device_card(
     };
 
     let library = music::cached_library(&state.db, &state.music_libraries, device_id).await?;
-    let entry_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_music_entries WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&state.db)
-            .await?;
     let storytel_stored: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM music_storytel WHERE id = 1 AND ciphertext IS NOT NULL)",
     )
     .fetch_one(&state.db)
     .await?;
 
-    let mut lines = Vec::new();
+    let found = music_warnings(policy, latest_status, &ticked);
+    let mut on_phone = Vec::new();
     let mut warnings = Vec::new();
     let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
     let capable = latest_status
         .and_then(|s| s.capabilities_json.as_deref())
         .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
         .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
-    let state_report =
-        music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
     let stored_rooms: Option<String> =
         sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -3805,90 +4173,92 @@ pub(crate) async fn device_card(
             .as_ref()
             .map_or(&[][..], |report| &report.sonos_rooms),
     );
-    sonos.notice = sonos_notice;
+    sonos.notice = notice
+        .filter(|code| code.starts_with("sonos_"))
+        .and_then(notice_text);
     match &state_report {
         Some(report) => {
-            if let Some(package) = &report.package {
-                lines.push(match report.version_code {
-                    Some(code) => format!("Music app: {package} (version code {code})"),
-                    None => format!("Music app: {package}"),
-                });
-            }
-            if let Some(bridge) = &report.bridge
-                && bridge != "bound"
-            {
-                warnings.push(format!(
-                    "The launcher can't reach the music app ({}).",
-                    bridge.replace('_', " ")
-                ));
-            }
+            on_phone.extend(crate::handlers::device_pages::music_app_row("app", report));
             let current = library.as_ref().map(|l| l.version.as_str());
-            match (&report.library_version, current) {
-                (Some(applied), Some(current)) if applied == current => {
-                    lines.push("Library: up to date on the phone".to_string())
-                }
-                (Some(_), Some(_)) => lines.push(
-                    "Library: the phone has an older one - it updates at its next sync".to_string(),
-                ),
-                (None, Some(_)) => lines.push("Library: not on the phone yet".to_string()),
-                (_, None) => {}
+            let library_state = match (&report.library_version, current) {
+                (Some(applied), Some(current)) if applied == current => Some("Up to date"),
+                (Some(_), Some(_)) => Some("Update waiting"),
+                (None, Some(_)) => Some("Not there yet"),
+                (_, None) => None,
+            };
+            if let Some(value) = library_state {
+                // The library's size only behind the ⓘ (§2.2b, qa-31-s7-code L3).
+                let size = library.as_ref().map(|l| {
+                    let n = ticked.len();
+                    format!(
+                        "This phone's library: {n} entr{}, {:.1} kB.",
+                        if n == 1 { "y" } else { "ies" },
+                        l.json.len() as f64 / 1000.0
+                    )
+                });
+                on_phone.push(Row::new("library", "Library", value).detail(size));
             }
             if let Some(waiting) = report.downloads_waiting.filter(|n| *n > 0) {
-                lines.push(format!("Downloads waiting: {waiting}"));
+                on_phone.push(Row::new(
+                    "waiting",
+                    "Waiting to download",
+                    waiting.to_string(),
+                ));
             }
             if let Some(bytes) = report.cache_bytes {
-                // An app from before design 30 step 3a sends no `audio_bytes`: today's line (§1.10).
-                let (line, warning) = music::storage_line(
-                    bytes,
-                    report.audio_bytes,
-                    report.extra_bytes,
-                    storage_limit,
-                );
-                lines.push(line);
-                warnings.extend(warning);
+                // An app from before design 30 step 3a sends no `audio_bytes`: only what it stores.
+                let stored =
+                    music::storage(bytes, report.audio_bytes, report.extra_bytes, storage_limit);
+                on_phone.push(Row::new("stored", "Stored on the phone", stored.stored));
+                if let Some(downloads) = stored.downloads {
+                    on_phone.push(Row::new("downloads", "Music downloads", downloads));
+                }
+                if let Some(extras) = stored.extras {
+                    on_phone.push(
+                        Row::new("extras", "Played, kept for now", extras).detail(Some(
+                            "Played beyond the offline depth, kept while there is room: removed \
+                             first when the limit is reached.",
+                        )),
+                    );
+                }
             }
-            // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused`.
+            // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused` -
+            // all the music app sends; anything else shows no row (qa-31-s7-code N1).
             match report.storytel.as_deref() {
-                Some("none") => lines.push("Storytel: no login on the phone".to_string()),
-                Some("refused") => warnings.push(
-                    "Storytel refused the phone's login - it waits an hour; saving the password \
-                     again retries at once."
-                        .to_string(),
+                Some("ok") => on_phone.push(Row::new("storytel", "Storytel login", "Logged in")),
+                Some("none") => on_phone.push(Row::new("storytel", "Storytel login", "None")),
+                Some("refused") => on_phone.push(
+                    Row::new("storytel", "Storytel login", "Refused").class("row-value-alarm"),
                 ),
-                Some(other) => lines.push(format!(
-                    "Storytel on the phone: {}",
-                    other.replace('_', " ")
-                )),
-                None => {}
-            }
-            for error in &report.entry_errors {
-                let entry = names
-                    .get(&error.entry)
-                    .map(|name| format!("\"{name}\""))
-                    .unwrap_or_else(|| format!("Entry {}", error.entry));
-                warnings.push(format!(
-                    "{entry} on the phone: {}",
-                    music::entry_error_text(&error.error)
-                ));
+                _ => {}
             }
         }
         // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
-        None if capable
-            && !installed
+        None if capable => on_phone.push(Row::new(
+            "app",
+            "Music app",
+            if installed
                 .iter()
-                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str())) =>
-        {
-            lines.push("Music app not installed.".to_string())
-        }
-        None if capable => lines.push("The phone hasn't reported on music yet.".to_string()),
+                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str()))
+            {
+                "No report yet"
+            } else {
+                "Not installed"
+            },
+        )),
         None => {}
     }
-    if latest_status.is_some() && !capable && entry_count > 0 {
-        warnings.push(
-            "The launcher on this phone doesn't handle music yet - update it to deliver the \
-             library."
-                .to_string(),
-        );
+    if found.unreachable {
+        warnings.push(warning(
+            "Music app not reachable",
+            "Vibb on the phone can't reach the music app.".to_string(),
+        ));
+    }
+    if found.cant_deliver {
+        warnings.push(warning(
+            "Vibb can't deliver music yet",
+            "Update Vibb on this phone to send it the library.".to_string(),
+        ));
     }
 
     let spotify = spotify_binding_card(
@@ -3902,16 +4272,18 @@ pub(crate) async fn device_card(
 
     Ok(MusicCard {
         app,
+        app_refused: notice.and_then(crate::handlers::devices::toggle_refusal),
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
         // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
-        data_note: music::older_phone_note(
-            policy.music_stream_mobile_data,
-            policy.music_download_mobile_data,
-            state_report.as_ref().and_then(|report| report.cache_bytes),
-            state_report.as_ref().and_then(|report| report.extra_bytes),
-        ),
+        older_phone: found.older_phone.then(|| {
+            warning(
+                "Update Vibb and the music app",
+                "Until then this phone uses mobile data for music only when both switches are on."
+                    .to_string(),
+            )
+        }),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
             .iter()
@@ -3927,36 +4299,39 @@ pub(crate) async fn device_card(
             .iter()
             .map(|gb| (*gb, storage_limit == Some(*gb)))
             .collect(),
-        storytel: policy.music_storytel,
-        storytel_stored,
-        storytel_note: {
-            let entries = |n: usize| match n {
-                1 => "its Storytel entry isn't sent".to_string(),
-                n => format!("its {n} Storytel entries aren't sent"),
-            };
-            match (storytel_ticked, policy.music_storytel, storytel_stored) {
-                (0, _, _) => None,
-                (n, false, _) => Some(format!("Storytel is off on this phone: {}.", entries(n))),
-                (n, true, false) => Some(format!("No Storytel login is saved: {}.", entries(n))),
-                _ => None,
-            }
-        },
-        library: library.map(|l| {
-            format!(
-                "{entry_count} entr{} · {:.1} kB",
-                if entry_count == 1 { "y" } else { "ies" },
-                l.json.len() as f64 / 1000.0
+        over_limit: found.over_limit.as_ref().map(|(used, gb)| {
+            warning(
+                "Over the storage limit",
+                format!(
+                    "Kept episodes and books alone use {used} of the {gb} GB limit. Lower an \
+                     entry's offline depth or raise the limit."
+                ),
             )
         }),
-        lines,
+        storytel: policy.music_storytel,
+        storytel_stored,
+        storytel_unsent: (storytel_ticked > 0 && !(policy.music_storytel && storytel_stored)).then(
+            || match storytel_ticked {
+                1 => "1 Storytel entry isn't sent".to_string(),
+                n => format!("{n} Storytel entries aren't sent"),
+            },
+        ),
+        storytel_refused: found.storytel_refused.then(|| {
+            warning(
+                "Storytel refused the phone's login",
+                "The phone tries again in an hour, or at once when you save the password again in \
+                 Music › Settings."
+                    .to_string(),
+            )
+        }),
         warnings,
-        notice,
+        on_phone,
         sonos,
         spotify,
     })
 }
 
-/// The Music card's "Spotify plays as" (design 26c §2.5, §3.6): the select's accounts, the bound
+/// Device › Music's "Plays as" (design 26c §2.5, §3.6): the select's accounts, the bound
 /// account's login state, one account bound to more than one phone, the phone's own last Spotify
 /// outcome (`music_state.spotify`) in words, and ticked Spotify entries an unbound phone isn't
 /// sent. `None` while nothing about Spotify exists here (no app, no account, no binding).
@@ -4084,7 +4459,9 @@ async fn spotify_binding_card(
 
 /// `POST /devices/{id}/music/spotify` (`account`: "" or "off" = Spotify off on this phone, else
 /// an account's id; design 26c §2.5): which Spotify account the phone plays as. One auto-saving
-/// select; an account that isn't logged in here is refused back at `#music-spotify` with nothing
+/// select on Device › Music (design 31 step 7), back to its group `/devices/{id}/music#music-spotify`
+/// (below a long library: without JS a fragment-less redirect would land at the top); an
+/// account that isn't logged in here is refused back at `#music-spotify` with nothing
 /// changed (checked in the `UPDATE` itself, so a Remove can't slip in between). The binding moves
 /// the library revision (0074's trigger): the phone's Spotify entries come or go with it.
 pub async fn save_device_spotify(
@@ -4099,7 +4476,7 @@ pub async fn save_device_spotify(
             Ok(account) => Some(account),
             Err(_) => {
                 return Redirect::to(&format!(
-                    "/devices/{id}?music_notice=spotify_unknown#music-spotify"
+                    "/devices/{id}/music?music_notice=spotify_unknown#music-spotify"
                 ))
                 .into_response();
             }
@@ -4143,7 +4520,7 @@ pub async fn save_device_spotify(
             .await;
             return match device {
                 Ok(true) => Redirect::to(&format!(
-                    "/devices/{id}?music_notice=spotify_unknown#music-spotify"
+                    "/devices/{id}/music?music_notice=spotify_unknown#music-spotify"
                 ))
                 .into_response(),
                 Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
@@ -4166,11 +4543,14 @@ pub async fn save_device_spotify(
         },
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music-spotify")).into_response()
+    Redirect::to(&format!("/devices/{id}/music#music-spotify")).into_response()
 }
 
-/// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving tick.
-/// Ticking is refused when the phone's library would pass the limit (QA #4).
+/// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving switch on
+/// Device › Music, back to its row (`/devices/{id}/music#music-entry-<id>`). Ticking is refused when
+/// the phone's library would pass the limit (QA #4): back to the row with `?music_notice=too_big`.
+/// An entry deleted since the page loaded returns to the list (`#library`), an unknown phone is a
+/// 404.
 pub async fn set_device_entry(
     State(state): State<AppState>,
     Path((id, entry_id)): Path<(i64, i64)>,
@@ -4193,7 +4573,12 @@ pub async fn set_device_entry(
     .await;
     let name = match found {
         Ok((true, Some(name))) => name,
-        Ok(_) => return (StatusCode::NOT_FOUND, "No such phone or entry").into_response(),
+        // Deleted since the page loaded (another tab, a double tap): back to the list, nothing
+        // written - never an error page for a row that is simply gone.
+        Ok((true, None)) => {
+            return Redirect::to(&format!("/devices/{id}/music#library")).into_response();
+        }
+        Ok((false, _)) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => return server_error(err, "music tick lookup failed"),
     };
     if selected {
@@ -4219,7 +4604,7 @@ pub async fn set_device_entry(
             Ok(true) => {}
             Ok(false) => {
                 return Redirect::to(&format!(
-                    "/devices/{id}?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
+                    "/devices/{id}/music?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
                 ))
                 .into_response();
             }
@@ -4247,8 +4632,8 @@ pub async fn set_device_entry(
         ),
     )
     .await;
-    // Back to that row, not the card's top (qa-21-step1-code #8).
-    Redirect::to(&format!("/devices/{id}#music-entry-{entry_id}")).into_response()
+    // Back to that row, not the page's top (qa-21-step1-code #8).
+    Redirect::to(&format!("/devices/{id}/music#music-entry-{entry_id}")).into_response()
 }
 
 /// The two mobile-data switches of a `POST /devices/{id}/music` (design 30 §3, QA L6): today's
@@ -4269,7 +4654,9 @@ pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
 /// `POST /devices/{id}/music`: the mobile-data switches ([mobile_switches]), the volume cap
 /// (`volume_cap`: "off" or one of [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none"
 /// or one of [STORAGE_LIMITS]; missing - a page from before design 30 - keeps the stored one) and
-/// Storytel on this phone (`storytel`). One auto-saving form: a missing checkbox is off.
+/// Storytel on this phone (`storytel`). One auto-saving form (Device ›
+/// Music's settings, design 31 §5.6: one group): a missing checkbox is off; back to
+/// `/devices/{id}/music#music-settings`.
 pub async fn save_device_settings(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4327,14 +4714,14 @@ pub async fn save_device_settings(
         ),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music-settings")).into_response()
+    Redirect::to(&format!("/devices/{id}/music#music-settings")).into_response()
 }
 
 /// `POST /devices/{id}/music/sonos-rooms` (design 26a §5.5): the "All rooms" switch (`all`) or the
 /// ticked rooms (`room`, repeated: speaker uids). With the switch on the stored scope is NULL (every
 /// room); off, it is the ticked rooms - none ticked is none allowed. While the switch is on the card
 /// sends every room as a hidden field, so turning it off keeps them all ticked until the parent
-/// unticks one. One auto-saving form; back to `#music-sonos`.
+/// unticks one. One auto-saving form; back to Device › Music's `#music-sonos`.
 pub async fn save_device_sonos_rooms(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4412,7 +4799,7 @@ pub async fn save_device_sonos_rooms(
         crate::audit::clip(&detail, MAX_ROOMS_EVENT_CHARS),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music-sonos")).into_response()
+    Redirect::to(&format!("/devices/{id}/music#music-sonos")).into_response()
 }
 
 /// The security event's detail is cut to this many characters.
@@ -4421,7 +4808,10 @@ const MAX_ROOMS_EVENT_CHARS: usize = 300;
 /// A refused Sonos save: back to the rooms with the reason by them, nothing stored (qa-26a-step3c-code
 /// L4; the form is a row of auto-saving ticks, so the page as it was is the values as entered).
 fn refused_rooms(id: i64, code: &str) -> Response {
-    Redirect::to(&format!("/devices/{id}?music_notice={code}#music-sonos")).into_response()
+    Redirect::to(&format!(
+        "/devices/{id}/music?music_notice={code}#music-sonos"
+    ))
+    .into_response()
 }
 
 #[cfg(test)]

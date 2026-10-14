@@ -65,36 +65,58 @@ pub async fn policy_lock_glance(
     })
 }
 
-/// What the parent should know (error style, in the "On the lock screen" subsection): there is no
-/// lock without a kid PIN; a launcher without notification access shows missed calls only; a
-/// reporting launcher without the capability has no glance page yet.
+/// What Lock Screen & PINs' Notifications group warns about (design 31 step 4, typed): there is
+/// no lock without a Child PIN; a reporting launcher without the capability has no glance page
+/// yet; a launcher without notification access shows missed calls only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Note {
+    NoChildPin,
+    NeedsUpdate,
+    NoNotificationAccess,
+}
+
+impl Note {
+    pub fn note(self) -> crate::handlers::device_pages::Note {
+        let (title, detail) = match self {
+            Note::NoChildPin => (
+                "No lock without a Child PIN",
+                "The phone opens straight to its home screen and shows none of this.",
+            ),
+            Note::NeedsUpdate => (
+                "Vibb can't show these yet",
+                "Update Vibb on the phone to show notifications on its lock screen.",
+            ),
+            Note::NoNotificationAccess => (
+                "Missed calls only",
+                "Vibb has no notification access, so messages don't show. The fix is under \
+                 Launcher on the phone's page.",
+            ),
+        };
+        crate::handlers::device_pages::Note {
+            warning: true,
+            title: title.to_string(),
+            value: None,
+            detail: Some(detail.to_string()),
+            fix: None,
+        }
+    }
+}
+
 pub fn notes(
     kid_pin_set: bool,
     reported: bool,
     capable: bool,
     listener_enabled: Option<bool>,
-) -> Vec<String> {
+) -> Vec<Note> {
     let mut notes = Vec::new();
     if !kid_pin_set {
-        notes.push(
-            "There is no lock screen without a kid PIN - see Screen lock. The phone then opens \
-             straight to its home screen and shows nothing of this."
-                .to_string(),
-        );
+        notes.push(Note::NoChildPin);
     }
     if reported && !capable {
-        notes.push(
-            "This phone's launcher doesn't show notifications on its lock screen yet - update the \
-             launcher."
-                .to_string(),
-        );
+        notes.push(Note::NeedsUpdate);
     }
     if listener_enabled == Some(false) {
-        notes.push(
-            "The launcher can't read notifications, so the lock screen shows missed calls only; \
-             see Launcher for the fix."
-                .to_string(),
-        );
+        notes.push(Note::NoNotificationAccess);
     }
     notes
 }
@@ -121,11 +143,12 @@ fn on_off(on: bool) -> &'static str {
 
 // ---- the device page ----------------------------------------------------------------------------
 
-/// The "On the lock screen" subsection of the device page's Apps card.
+/// Lock Screen & PINs' message-text switch and Notifications group (the device page's Apps card's
+/// "On the lock screen" before design 31 step 4).
 #[derive(Default)]
 pub struct LockScreenCard {
     pub show_text: bool,
-    pub notes: Vec<String>,
+    pub notes: Vec<Note>,
     pub apps: Vec<LockScreenApp>,
     /// The ticks couldn't be read: the subsection says so instead of showing every box unticked.
     pub unreadable: bool,
@@ -139,7 +162,8 @@ pub struct LockScreenApp {
     pub package_name: String,
     pub label: String,
     pub on: bool,
-    /// Ticked but not in the listed apps ("not allowed - ticked"), so any tick can be removed.
+    /// Ticked but not in the listed apps ("Not allowed", under its switch that is on), so any tick
+    /// can be removed.
     pub note: Option<&'static str>,
 }
 
@@ -187,16 +211,16 @@ pub fn unlisted_note(allowlist: Option<&BTreeSet<String>>, package: &str) -> &'s
     }
 }
 
-pub const NOT_ALLOWED_TICKED: &str = "not allowed - ticked";
-pub const NOT_ON_PHONE_TICKED: &str = "not on the phone - ticked";
+pub const NOT_ALLOWED_TICKED: &str = "Not allowed";
+pub const NOT_ON_PHONE_TICKED: &str = "Not on the phone";
 
-/// The subsection's text when it has no app to list (code QA Low 6): the phone hasn't reported its
+/// The group's text when it has no app to list (code QA Low 6): the phone hasn't reported its
 /// apps yet, or it has but none is allowed (an allowlist) or listed.
 pub fn empty_text(reported: bool, has_allowlist: bool) -> &'static str {
     match (reported, has_allowlist) {
-        (false, _) => "No apps to choose from yet - the phone hasn't reported its apps.",
-        (true, true) => "No allowed apps to choose from - allow an app above first.",
-        (true, false) => "No apps to choose from - the phone reported none.",
+        (false, _) => "No apps yet: the phone hasn't reported its apps.",
+        (true, true) => "No allowed apps to choose from. Allow one under Apps first.",
+        (true, false) => "No apps to choose from: the phone reported none.",
     }
 }
 
@@ -252,12 +276,30 @@ mod tests {
         assert!(notes(true, true, true, Some(true)).is_empty());
         assert!(notes(true, false, false, None).is_empty(), "no report yet");
         let all = notes(false, true, false, Some(false));
-        assert_eq!(all.len(), 3);
-        assert!(all[0].starts_with("There is no lock screen without a kid PIN - see Screen lock"));
-        assert!(all[1].ends_with("update the launcher."));
-        assert!(all[2].contains("shows missed calls only; see Launcher for the fix"));
-        assert_eq!(notes(true, true, false, None).len(), 1);
-        assert_eq!(notes(true, true, true, Some(false)).len(), 1);
+        assert_eq!(
+            all,
+            [
+                Note::NoChildPin,
+                Note::NeedsUpdate,
+                Note::NoNotificationAccess
+            ]
+        );
+        assert_eq!(notes(true, true, false, None), [Note::NeedsUpdate]);
+        assert_eq!(
+            notes(true, true, true, Some(false)),
+            [Note::NoNotificationAccess]
+        );
+        for note in all {
+            let words = note.note();
+            assert!(words.warning);
+            // §4.2: a title of up to 6 words and one sentence.
+            assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
+            let detail = words.detail.unwrap();
+            assert!(
+                !detail.contains("kid") && !detail.contains("adb"),
+                "{detail}"
+            );
+        }
     }
 
     #[test]

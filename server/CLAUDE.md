@@ -41,7 +41,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
-- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/app_header.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; a rebuilt inner page with its own back link and large title includes `partials/tab_bar.html` alone instead (no brand bar; design 31 step 3); Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
+- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
 
 ## About the developer
@@ -59,7 +59,7 @@ No prior programming experience - build features directly rather than explaining
 - **WiFi/Bluetooth restriction *levels* (open/restricted/disabled) were removed entirely (2026-08-11)** - `device_policy.wifi_mode`/`bluetooth_mode` are gone (migration `0017_schedules_page.sql`, `DROP COLUMN`), confirmed in practice not worth the UI complexity. The client's `AppEnforcer.kt` still unconditionally *clears* the four `UserManager` restrictions this used to set, every `apply()` cycle, rather than just deleting that code outright - a device that already had "restricted"/"disabled" saved from before this change needs those actively lifted, not abandoned in place. WiFi/Bluetooth on/off toggles on the kid-facing Quick Controls swipe-left screen are a completely separate feature and unaffected.
 - **Offline override PIN**: a per-device PIN (PBKDF2-HMAC-SHA256, `security::hash_pin`/`verify_pin`), cached hashed on the device so it verifies with zero network. Entering it correctly on the phone lifts every restriction for a bounded window and self-heals the moment the device can reach the server again. The client's Settings screen is also gated behind this same PIN, plus a separate manually-toggled "pause all restrictions" kill-switch that does *not* auto-clear (unlike the PIN override) - an emergency escape hatch if a policy or client update ever ships something broken.
 - **Apps tab is a unified list+detail structure** (`/apps` → `/apps/tracked/{id}`) covering every app the server pushes to devices, including the launcher's own self-update - it's just another `tracked_apps` row (GitHub-sourced, `include_prereleases` on, since its CI only ever publishes to a rolling `pre-release` tag). The old launcher-specific `launcher_releases` table/routes/handlers (`handlers::releases`) are fully retired, not just deprecated - there is exactly one app-update system now, not two.
-- **`/apps` is the global catalog, not an install list** (added 2026-08-08, migration `0013_device_tracked_apps.sql`) - adding an app there doesn't push it to any device by itself. `device_tracked_apps` (device_id, tracked_app_id) is the per-device opt-in join table; a device's own page (`/devices/{id}`, "Apps to install" card) is where an admin actually selects which of the catalog's apps get pushed to *that* device - each checkbox is its own auto-submitting mini-form (`POST /devices/{id}/apps/{app_id}/toggle`, `handlers::devices::toggle_tracked_app`), not folded into the big device-policy form; live testing showed an admin checking a box and not separately scrolling down to a Save button, since every other on/off switch in this app already auto-saves. `handlers::device_api::tracked_app_updates` is the enforcement point - it only returns rows the requesting device is enabled=1 AND (has a `device_tracked_apps` row OR `is_launcher`) for, not "every enabled tracked app" like it used to. `tracked_apps.is_launcher` marks the one row that's the launcher/MDM agent itself - it's never given a `device_tracked_apps` row and is unconditionally included for every device instead, since there's no real-world case for a kid's phone not running the app that enforces every other restriction on it. Enforced server-side too, not just hidden in the UI: `handlers::tracked_apps::delete_tracked_app` refuses to delete an `is_launcher` row, and `device_detail.html` renders its checkbox `checked disabled` so it can never reach `toggle_tracked_app` at all. **Not auto-seeded from a package-name guess anymore** - the migration's one-time `WHERE package_name = 'com.kidslauncher.mdm'` missed the real row on a live install (every build shipped so far is the debug variant, `com.kidslauncher.mdm.debug`), so there's now a direct admin toggle instead (`POST /apps/tracked/{id}/is-launcher`, `tracked_app_detail.html`) - don't rely on a package-name heuristic for this again.
+- **`/apps` is the global catalog, not an install list** (added 2026-08-08, migration `0013_device_tracked_apps.sql`) - adding an app there doesn't push it to any device by itself. `device_tracked_apps` (device_id, tracked_app_id) is the per-device opt-in join table; a phone's Apps page (`/devices/{id}/apps` since design 31 step 6; the device page's "Apps to install" card before) is where an admin actually selects which of the catalog's apps get pushed to *that* device - each switch is its own auto-submitting mini-form (`POST /devices/{id}/apps/toggle`, `handlers::devices::toggle_app`; `toggle_tracked_app` before), not folded into the big device-policy form; live testing showed an admin checking a box and not separately scrolling down to a Save button, since every other on/off switch in this app already auto-saves. `handlers::device_api::tracked_app_updates` is the enforcement point - it only returns rows the requesting device is enabled=1 AND (has a `device_tracked_apps` row OR `is_launcher`) for, not "every enabled tracked app" like it used to. `tracked_apps.is_launcher` marks the one row that's the launcher/MDM agent itself - it's never given a `device_tracked_apps` row and is unconditionally included for every device instead, since there's no real-world case for a kid's phone not running the app that enforces every other restriction on it. Enforced server-side too, not just hidden in the UI: `handlers::tracked_apps::delete_tracked_app` refuses to delete an `is_launcher` row, and the Apps page shows it "Always on" without a switch, and `toggle_app` refuses its id (400). **Not auto-seeded from a package-name guess anymore** - the migration's one-time `WHERE package_name = 'com.kidslauncher.mdm'` missed the real row on a live install (every build shipped so far is the debug variant, `com.kidslauncher.mdm.debug`), so there's now a direct admin toggle instead (`POST /apps/tracked/{id}/is-launcher`, `tracked_app_detail.html`) - don't rely on a package-name heuristic for this again.
 - **`tracked_apps.package_name` is optional now** (same day) - typing a real Android package name was never actually required for a silent install to work (`PackageInstaller` determines the real package from the APK's own signed manifest at commit time; the string passed to `Session.openWrite()` is just an arbitrary session label). It's kept only for the admin's own reference in the UI, and as the join key `toggle_tracked_app` uses to auto-add an app to the device's kiosk allowlist (see below) - skipped when blank, since there's nothing to allowlist by. The client-side pieces that used to key off it (install-state tracking, cache filenames, self-update detection) were switched to `TrackedAppUpdate.id`/`is_launcher` instead - see kids-launcher-mdm's CLAUDE.md.
 - **Selecting an app for a device also allowlists it, automatically** (`toggle_tracked_app`'s `add_to_allowlist`) - checking "install" without also checking the app in "Allowed apps" left it pushed-but-invisible under kiosk mode until an admin came back later and checked a second box, reported live as real friction. Only fires when the tracked app has a package name on file. This surfaced a real correctness gap in `update_policy`: its allowlist reconstruction only ever considered checkboxes actually rendered on the page (i.e. apps the device has already reported installed - see `view_device`'s `apps`), so a package auto-added ahead of the device installing and reporting back could get silently dropped by any unrelated policy save (schedule, WiFi mode, whatever) in the meantime. **First fix attempt was wrong**: unconditionally preserving any currently-allowed package that wasn't a rendered checkbox this time also preserved a package that *had* been installed and allowed, then got uninstalled - its checkbox just stops rendering once uninstalled, so it could never be unchecked again either, and would silently regain kiosk access if ever reinstalled without re-approval. Narrowed to only preserve a package name that belongs to a tracked app still selected for this device (`device_tracked_apps`) and not yet reported installed - genuinely pending, not stale. Everything else keeps the original self-cleaning behavior: an allowed package that's no longer installed quietly falls out of the allowlist on the device's next unrelated policy save.
 - **Unchecking "Apps to install" now also silently uninstalls the app and removes it from the allowlist**, at the admin's explicit request - `toggle_tracked_app`'s uncheck branch is now symmetric with the check branch (`remove_from_allowlist` mirrors `add_to_allowlist`), and if the device's last status report shows the package currently installed, queues an uninstall via a new `device_pending_uninstalls` table (migration `0014_device_pending_uninstalls.sql`), surfaced to the device as `PolicyResponse.packages_to_uninstall`. Checking the app again deletes that row (the form's package and the catalog app's own), so untick-then-tick before the phone syncs no longer uninstalls it (found on the emulator, 2026-10-12). Deliberately its own table, not a `device_commands` row - that queue has "last action wins" single-slot replace semantics (`handlers::locate::queue_command`) that would let an unrelated ring/lock queued afterward silently clobber a pending uninstall before the device ever saw it. Self-cleaning: `handlers::device_api::status` deletes an entry once a status report no longer lists that package as installed - no separate "uninstall result" round trip needed. See kids-launcher-mdm's CLAUDE.md for the client-side silent-uninstall call.
@@ -72,7 +72,7 @@ No prior programming experience - build features directly rather than explaining
 - **`/devices/provision`** (`handlers::provisioning`; this fork takes the component/URL/checksum from `ForkConfig`, see "This fork" above) generates a QR code for Android's standard 6-tap zero-touch Device Owner provisioning flow, as an adb-free alternative to the existing enrollment-code system - not per-device, not persisted, just a form that renders a QR code from a mostly-constant payload (admin component + signature checksum barely ever change; the download URL is `kids-launcher-mdm`'s rolling `pre-release` GitHub Release tag, so the QR stays valid across every new build). Does **not** work on GrapheneOS - its setup wizard has no `ManagedProvisioning` trigger built in at all yet (confirmed by searching its source directly; tracked at github.com/GrapheneOS/platform_packages_apps_SetupWizard2/pull/40, open/unmerged) - works on stock Android and most custom ROMs today. The signature checksum (`SIGNATURE_CHECKSUM` constant) is the signing certificate's SHA-256 digest, base64url-encoded with no padding - **not** the same as the whole-APK checksum (different source data, different Android extra key); recompute via `apksigner verify --print-certs` (gives the digest as hex) if the signing key is ever rotated. After provisioning, the device still goes through the normal per-device enrollment-code flow in Settings, same as an adb-provisioned device - this only replaces the "get the app installed and made device owner" step.
 - **DNS/Filters (`/dns`, `src/dns_engine.rs`, `handlers::dns_filter`) is a Pi-hole-style DNS content filter built directly into this binary**, on `hickory-server`/`hickory-resolver` (MIT/Apache-2.0) - not on any AGPL codebase (crab-hole was researched as a design reference only, never depended on or copied from; see the module doc comment on `dns_engine.rs` for the full reasoning). Global/singleton, not per-device. Blocking is `hickory_server::store::blocklist::BlocklistZoneHandler` (a ready-made part of the library itself, not custom code) chained ahead of `store::forwarder::ForwardZoneHandler` in a `Catalog` for the root zone; `Catalog` itself implements hickory's `RequestHandler` and does the "check blocklist, else forward upstream" chaining natively (`LookupControlFlow::Break` on a hit) - our own `Handler` just wraps it to track query/blocked-query stats. Settings/blocklist/custom-domain changes call `dns_engine::rebuild`, which reconstructs the whole `Catalog` from the DB and hot-swaps it into a shared `Arc<RwLock<..>>` - no process restart, no DNS blip, ever.
 - **Two independent ways a device's queries actually reach the DNS filter engine, added in that order and kept for defense-in-depth, not because either alone turned out to be sufficient**: (1) **plain port 53** - requires the device to be using this Pi as its Tailscale exit node *and* the `iptables` PREROUTING DNAT rule (port 53 on `tailscale0` → the engine's own unprivileged port 5300) to be in place, requested through the same flag-file/root-owned-watcher mechanism `system_maintenance.rs` uses for reboot/Tailscale-update/etc (`action_dns_filter_enable`/`disable` in `deploy/install.sh`). Confirmed live to have a lot of independent failure modes: exit-node routing not actually engaging, Android's system Private DNS or a browser's own DNS-over-HTTPS bypassing port 53 entirely, and Tailscale's own tailnet-wide "Override DNS servers" (MagicDNS) intercepting queries before they ever reach this Pi at all. (2) **DNS-over-TLS on port 8853** (redirected from 853 by the same iptables mechanism, `action_dns_filter_enable`) - the client force-locks Android's system Private DNS to this Pi's own tailnet hostname via `DevicePolicyManager.setGlobalPrivateDnsModeSpecifiedHost` (see the client's own CLAUDE.md, `AppEnforcer.applyPrivateDnsLock`), which only requires the device to be a normal tailnet peer, not exit-node routing - the more reliable path in practice. `PolicyResponse.force_private_dns_to_pi` mirrors the same global `dns_filter_settings.enabled` flag that drives the iptables actions. The DoT listener (`hickory-server`'s `register_tls_listener_with_tls_config`, feature `tls-ring`) loads its cert/key from `data/tls/{cert,key}.pem` at startup only - if they don't exist yet (before `tailscale cert` has ever run), it simply doesn't start, and the plain port-53 path keeps working regardless. Certificate provisioning is via Tailscale's own built-in ACME support (`tailscale cert <magicdns-hostname>` - needs "HTTPS Certificates" turned on for the tailnet in the Tailscale admin console first, a one-time manual step this project can't automate) - `action_tls_cert_renew` in `deploy/install.sh` runs it, both as part of `action_dns_filter_enable` (best-effort, non-fatal - `request_privileged_action` only writes one flag file at a time, so this can't be requested as a second separate action without racing the first) and on its own daily systemd timer (`kid-phone-server-tls-cert.timer`) so the cert stays renewed even after the feature's initially been turned on. **This bumped the watcher schema to 3** - see the `REQUIRED_WATCHER_SCHEMA` gotcha below; do not repeat the mistake of forgetting to bump the app-side constant to match.
-- **Find My Device (`/devices/locate`, `handlers::locate`) is locate/ring/lock/wipe/stop_ring for a lost or missing device**, referencing [fmd-foss/fmd-android](https://gitlab.com/fmd-foss/fmd-android) (GPLv3) for the feature set only - not its actual protocol, which doesn't fit this project (SMS/IM delivery, its own crypto/server stack). Built on the existing sync loop instead: `device_commands` is a small queue table (`ring`/`stop_ring`/`lock`/`wipe`/`locate`; `locate` is the locate page's "Update location now"), and `PolicyResponse.pending_command` surfaces the oldest undelivered row for a device - `handlers::device_api::build_policy` pops it (one `UPDATE ... RETURNING`) only after every other read for the response has succeeded, so a 500 never consumes a command and two concurrent polls never get the same one. A launcher with capability `command_receipt_v1` confirms each command before running it (`POST /api/devices/command-receipt` -> `received_at`; security review L12, migration 0065), and the pop offers a command it didn't confirm again after 2 minutes, at most 3 deliveries (`deliveries`) and only within 15 minutes of its first delivery (`first_delivered_at`, `REDELIVER_WINDOW_MINUTES` - nothing stale replays, QA of the launcher wave High 1; 0065 marks every row delivered before it as used up), nudging the phone over its stream 2 minutes after each delivery while it stays unconfirmed (`spawn_redelivery_nudge`; the phone runs an id once); once a command goes out, every older unconfirmed one of that phone is never offered again (QA Low 1: a lost pause must not run after a later "lock again"); an enrollment into the row cancels its undelivered commands (`cancel_reason` 'enrolled', kept as history) and uses up the unconfirmed ones (`end_pending_commands`, QA Low 2 - a wipe for a lost phone never reaches its replacement), and the `device_enrolled` event says how many; **expiry and cancel** (the user's decision, 2026-10-12, migration 0068): `start_pause`, `ring`, `stop_ring` and `locate` (`models::EXPIRING_COMMANDS`) are never handed out - first or again - once their `requested_at` is an hour old (`COMMAND_EXPIRY_MINUTES`; the page says "Expired ... never sent", the Status card's 24b answer "expired"), while `wipe`, `lock`, `end_windows` and `allow_blocked` wait however long it takes; the expiry is read against the clock, so an enrollment cancels every undelivered row, expired ones too (the page still says "Expired" for one that was), and a server start cancels every waiting expiring command (`device_api::end_expiring_at_start`, `cancel_reason` 'restart': the Pi has no RTC and may start with its clock behind - QA of cmd-expiry, Low 4; a clock that jumps backwards while the server runs is not guarded); a command the phone hasn't fetched has a "Cancel" next to its request time on the Locate page (`POST /devices/{id}/commands/{command_id}/cancel`, `locate::cancel_command`: one `UPDATE ... WHERE delivered_at IS NULL AND cancelled_at IS NULL` that races the pop cleanly - `?cancel=done|too_late` -, a `device_command_cancelled` security event), and the pop skips `cancelled_at`; for older launchers delivery stays at-most-once: a command in a response the launcher then rejects is lost, so every command must be safe to queue again (`handlers::locate::queue_command` replaces only a waiting command of the same kind - ring/stop_ring, locate - as cancelled `replaced`, logged `device_command_replaced`; a wipe or lock is never replaced, the parent cancels it with Cancel - QA of cmd-expiry, Medium 1). `device_locations` is a plain history table (not just a latest-point column set), attached to every regular `StatusReportRequest.location` from the device - not just after an explicit `locate` command - so the map's trail stays fresh on its own; pruned by `retention::prune` (per-phone `location_retention_days`, default 7, the newest fix always kept - see "Retention"). The admin map is vendored Leaflet (`static/leaflet/`, BSD-2-Clause, downloaded once from unpkg and committed - no CDN dependency, no build step) against public OpenStreetMap tiles, fed by a plain `/devices/{id}/locations.json` endpoint. The parent's browser loads the tiles directly from OSM with an origin-only `Referer` (the tile layer's `referrerPolicy: 'strict-origin-when-cross-origin'`; the page itself stays `same-origin`, OSM refuses tiles without a `Referer` - design 33, `docs/design/33-osm-tiles-referrer.md`), so the parent's browser needs to reach tile.openstreetmap.org. The "Play and kiosk" card warns "Restart the phone once: ..." while the launcher reports device-admin policies Android hasn't granted yet (`admin_policies_pending` -> `device_status.admin_policies_pending_json`, known tags only, `models::admin_policy_notice`; a policy an update added may count only after a restart). The Locate page warns "Remote wipe works after the phone restarts once" while the phone's last report has `remote_wipe_ready` false (Android 14 after the launcher update that declared the wipe policy; `device_status.remote_wipe_ready`, migration 0065, QA of the launcher wave Low 4). Wipe is gated by typing the device's exact name to confirm, same pattern as backup restore/delete in `backups.html` - a wipe that works never reports a result (the device is gone), but an up-to-date launcher confirms receipt right before it wipes, and reports a refused wipe (`succeeded` = 0, "Failed: ..."). Ring also has a server-side "Stop ringing" button (queues `stop_ring`) since the on-device UI is otherwise the only way to silence it. "Delivered" means fetched, not done (security review L12): `DeviceCommand::status_line(now, receipts)` (every time in it, and the Requested column, labelled "UTC" - QA of cmd-expiry Low 5) shows a result as "Done"/"Failed", a receipt as "Received ..., not finished yet" (after 10 minutes "never said it finished"; a wipe "the phone is wiping now"), and a fetched, unconfirmed command - for a phone that confirms - as "not confirmed yet", then "offered again", then after the last delivery "never confirmed - ... send it again"; for an older launcher "never confirmed" after 10 minutes, and its wipe as one that can't confirm. Queuing a new command of the same kind (`queue_command`) also stops an unconfirmed one from being offered again (its row stays).
+- **Find My Device (`/devices/locate`, `handlers::locate`) is locate/ring/lock/wipe/stop_ring for a lost or missing device**, referencing [fmd-foss/fmd-android](https://gitlab.com/fmd-foss/fmd-android) (GPLv3) for the feature set only - not its actual protocol, which doesn't fit this project (SMS/IM delivery, its own crypto/server stack). Built on the existing sync loop instead: `device_commands` is a small queue table (`ring`/`stop_ring`/`lock`/`wipe`/`locate`; `locate` is the Locate tab's Update Location), and `PolicyResponse.pending_command` surfaces the oldest undelivered row for a device - `handlers::device_api::build_policy` pops it (one `UPDATE ... RETURNING`) only after every other read for the response has succeeded, so a 500 never consumes a command and two concurrent polls never get the same one. A launcher with capability `command_receipt_v1` confirms each command before running it (`POST /api/devices/command-receipt` -> `received_at`; security review L12, migration 0065), and the pop offers a command it didn't confirm again after 2 minutes, at most 3 deliveries (`deliveries`) and only within 15 minutes of its first delivery (`first_delivered_at`, `REDELIVER_WINDOW_MINUTES` - nothing stale replays, QA of the launcher wave High 1; 0065 marks every row delivered before it as used up), nudging the phone over its stream 2 minutes after each delivery while it stays unconfirmed (`spawn_redelivery_nudge`; the phone runs an id once); once a command goes out, every older unconfirmed one of that phone is never offered again (QA Low 1: a lost pause must not run after a later "lock again"); an enrollment into the row cancels its undelivered commands (`cancel_reason` 'enrolled', kept as history) and uses up the unconfirmed ones (`end_pending_commands`, QA Low 2 - a wipe for a lost phone never reaches its replacement), and the `device_enrolled` event says how many; **expiry and cancel** (the user's decision, 2026-10-12, migration 0068): `start_pause`, `ring`, `stop_ring` and `locate` (`models::EXPIRING_COMMANDS`) are never handed out - first or again - once their `requested_at` is an hour old (`COMMAND_EXPIRY_MINUTES`; Recent says "Expired" and "Never sent: ...", the summary's Today row for a 24b command "Expired"), while `wipe`, `lock`, `end_windows` and `allow_blocked` wait however long it takes; the expiry is read against the clock, so an enrollment cancels every undelivered row, expired ones too (Recent still says "Expired" for one that was), and a server start cancels every waiting expiring command (`device_api::end_expiring_at_start`, `cancel_reason` 'restart': the Pi has no RTC and may start with its clock behind - QA of cmd-expiry, Low 4; a clock that jumps backwards while the server runs is not guarded); a command the phone hasn't fetched has a "Cancel" in its Recent row on the Locate tab (`POST /devices/{id}/commands/{command_id}/cancel`, `locate::cancel_command`: one `UPDATE ... WHERE delivered_at IS NULL AND cancelled_at IS NULL` that races the pop cleanly - `?cancel=done|too_late#recent`, the line in Recent -, a `device_command_cancelled` security event), and the pop skips `cancelled_at`; for older launchers delivery stays at-most-once: a command in a response the launcher then rejects is lost, so every command must be safe to queue again (`handlers::locate::queue_command` replaces only a waiting command of the same kind - ring/stop_ring, locate - as cancelled `replaced`, logged `device_command_replaced`; a wipe or lock is never replaced, the parent cancels it with Cancel - QA of cmd-expiry, Medium 1). `device_locations` is a plain history table (not just a latest-point column set), attached to every regular `StatusReportRequest.location` from the device - not just after an explicit `locate` command - so the map's trail stays fresh on its own; pruned by `retention::prune` (per-phone `location_retention_days`, default 7, the newest fix always kept - see "Retention"). The admin map is vendored Leaflet (`static/leaflet/`, BSD-2-Clause, downloaded once from unpkg and committed - no CDN dependency, no build step) against public OpenStreetMap tiles, fed by a plain `/devices/{id}/locations.json` endpoint. The parent's browser loads the tiles directly from OSM with an origin-only `Referer` (the tile layer's `referrerPolicy: 'strict-origin-when-cross-origin'`; the page itself stays `same-origin`, OSM refuses tiles without a `Referer` - design 33, `docs/design/33-osm-tiles-referrer.md`), so the parent's browser needs to reach tile.openstreetmap.org. The "Play and kiosk" card warns "Restart the phone once: ..." while the launcher reports device-admin policies Android hasn't granted yet (`admin_policies_pending` -> `device_status.admin_policies_pending_json`, known tags only, `models::admin_policy_notice`; a policy an update added may count only after a restart). The Locate tab warns "Erasing works after the phone restarts once" while the phone's last report has `remote_wipe_ready` false (Android 14 after the launcher update that declared the wipe policy; `device_status.remote_wipe_ready`, migration 0065, QA of the launcher wave Low 4). Erase Phone… (a `<details>` confirm) is gated by typing the device's exact name, same pattern as backup restore/delete in `backups.html` (a wrong name renders the page with the confirm open and the refusal in it, nothing queued) - a wipe that works never reports a result (the device is gone), but an up-to-date launcher confirms receipt right before it wipes, and reports a refused wipe (`succeeded` = 0, "Failed: ..."). Ring also has a server-side "Stop Ringing" button (queues `stop_ring`) since the on-device UI is otherwise the only way to silence it. "Delivered" means fetched, not done (security review L12): `DeviceCommand::status(now, receipts)` -> the typed `models::CommandStatus` (design 31 step 13; `locate::status_words` words it in local time) is a result "Done"/"Failed" (the phone's answer reworded under the row, `locate::reword`, its own words in `title`), a receipt "Received" (after 10 minutes "No answer ... never said it finished"; a wipe "Erasing"), and a fetched, unconfirmed command - for a phone that confirms - "Sent · Not confirmed yet", then "sent again when the phone is back", then after the last delivery "Not confirmed ... Send it again"; for an older launcher "Not confirmed" after 10 minutes, and its wipe as one that can't confirm. Queuing a new command of the same kind (`queue_command`) also stops an unconfirmed one from being offered again (its row stays).
 - **Command delivery is push, not just poll**: `AppState.command_notify` is a `tokio::sync::broadcast::Sender<i64>` (device_id) that both `handlers::locate::queue_command` (ring/lock/wipe/stop_ring) and `handlers::devices::update_policy` (every regular policy save - allowlist, schedule, WiFi/BT mode, quick controls, PIN, etc.) fire on. `GET /api/devices/commands/stream` (bearer, `handlers::device_api::commands_stream`) is a Server-Sent Events endpoint (`axum::response::sse`, core axum, no extra feature flag) that filters the broadcast stream to one device and holds the connection open, backed by `KeepAlive` (every `SSE_KEEPALIVE_SECS`, default 240 since design 19 - 120 in step 7, 15 before; its default payload is a bare SSE comment line, not a `data:` event, so it never fires the client's `onEvent` callback). Since design 19 it is the only way this server nudges a phone (FCM removed), and `AppState.command_streams` (`src/streams.rs`, in memory) counts each device's open streams for the device page's "Instant changes" line. The SSE payload itself carries no data - it's purely a "wake up and poll" nudge; the client always re-fetches `/api/devices/policy` on any event and reuses the exact same dispatch path as a normal 2-minute cycle, so there's no duplicated command-handling logic between push and poll. This cut ring/lock/stop_ring delivery from up to 2 minutes down to near-instant, at the cost of the client needing to run a permanent foreground service to hold the SSE connection open (see the client's own CLAUDE.md).
 
 ## Fail closed
@@ -110,17 +110,17 @@ No prior programming experience - build features directly rather than explaining
   restricts outgoing calls unless the system dialer is allowed and hides an SMS app that isn't (QA Medium 3) - never
   everything installed. `calls::call_report` warns when the allowlist leaves either out. Fixtures: `testdata/apk/` (aapt2 + apksigner, throwaway keys, no code).
 - **`GET /api/devices/policy` never answers with a default policy** (`handlers::device_api::build_policy`): a missing `device_policy` row, an unparseable `allowlist_json`, or any DB error is an empty 500 (logged). The launcher treats non-2xx as "no fresh policy" and keeps enforcing its cache. A `NULL` allowlist is still served as `null` (a new device before its first heartbeat); `"[]"` is served as `[]` and means "nothing allowed" on the launcher. Upstream returned `DevicePolicy::default()` (kiosk off, no allowlist) on these errors, which unlocked the phone.
-- **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) shows a warning on the device page. `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, also shown as a warning.
+- **The launcher reports what it did with the policy** (`StatusReportRequest.policy_state`, migration `0021`): `"ok"`, `"cache_corrupt"`, `"rejected_suspect"`, `"fresh_decode_failed"` or `"server_error"` (this server answered 5xx) - anything but `"ok"` (or `NULL` from an older launcher) is an Attention alarm ("Phone can't apply its settings", About This Phone › Software says which). `restrictions_paused` reports the launcher's PIN-gated, time-limited "pause all restrictions" switch, an Attention alarm too ("Restrictions paused", to the summary's Quick actions).
 - **Allowlist writes never guess**: `devices::add_to_allowlist`/`remove_from_allowlist` read-modify-write in one transaction (`edit_allowlist`) and return an error on a DB error, a missing policy row or a stored allowlist that isn't valid JSON - `toggle_app` then answers 500 and writes nothing. The first-heartbeat bootstrap in `device_api::status` is one `UPDATE ... WHERE allowlist_json IS NULL`, so a read error can't make it overwrite a parent's list.
 - **`create_device` inserts the device and its policy row in one transaction** and returns 500 if either fails, so a device without a policy row can't be created through the UI.
 
 ## Calls & SMS (handy step 2, design `docs/design/02-calls.md`, at the monorepo root)
 
-- **`/devices/{id}/calls`** (`handlers::calls`, linked from a "Calls & SMS" card on the device page): per-device switches `calls_managed`, `calls_enabled`, `sms_enabled` and `default_message_app` (one auto-submitting form, so a missing checkbox means off), the device's contacts with In/Out/Home flags and a Message button choice (`device_contacts.message_app`: none/sms/element/signal, NULL = device default; `message_address` = Matrix ID for Element), an add form, and the global default country code (`POST /settings/calls`, `call_settings` singleton). Every write runs in a transaction, answers 500 on a DB error, nudges the device (`command_notify`) and redirects back. Flag/remove routes are scoped `WHERE device_id = ? AND contact_id = ?` and 404 otherwise; remove deletes an address-book entry no device has any more (so does deleting a device).
+- **`/devices/{id}/calls`** (`handlers::calls`, Calls & Contacts since design 31 step 8 - see that section below; linked from the device page's "Calls & Contacts" row): per-device switches `calls_managed`, `calls_enabled`, `sms_enabled` and `default_message_app` (one auto-submitting form, so a missing checkbox means off), the device's contacts with In/Out/Home flags and a Message button choice (`device_contacts.message_app`: none/sms/element/signal, NULL = device default; `message_address` = Matrix ID for Element), and Add Contact. The global default country code (`POST /settings/calls`, `call_settings` singleton) is on Settings › Phone Setup (`handlers::settings::save_country_code`). Every write runs in a transaction, answers 500 on a DB error, nudges the device (`command_notify`) and redirects back. Flag/photo/remove routes are scoped `WHERE device_id = ? AND contact_id = ?`: an unknown phone is a 404, a contact not on it (removed meanwhile) returns to the page's `#contacts` with nothing written; remove deletes an address-book entry no device has any more (so does deleting a device).
 - **`contacts` is a global address book** keyed by the normalised number (`src/phone.rs`): adding a number another device already has reuses the row and renames it for every device (the page says so). Changing the default country code does not renormalise stored numbers.
 - **Number normalisation is a shared contract with the launcher**: `src/phone.rs` and the launcher's `calls/PhoneNumbers.kt` run the same `testdata/phone_vectors.json` (the launcher keeps a byte-identical copy; each test suite compares the two when the sibling repo is checked out next to it). ASCII digits only; `*`/`#`/`,`/`;` rejected (MMI/USSD never allowlisted); 3-6 digits = short number, matched exactly; no suffix matching. Change both sides and both copies together.
 - **`PolicyResponse.call_policy` is always sent, with an explicit `managed`** (QA blocker 3, `device_api::build_call_policy`): unmanaged devices get `{"managed": false, ...defaults, "contacts": []}`. The launcher rejects a whole response without the key once its calls were managed, so a rolled-back server can't silently unmanage calls - never make this key optional. Contacts are ordered by `sort_order, name`; `message_app` is resolved against the device default server-side.
-- **Status reports carry `capabilities` (`["call_policy_v1"]`) and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json`. `calls::call_warnings` turns them into warnings on the calls page and the device page: launcher can't enforce calls (or stopped reporting it - an older launcher), dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.hints`, a subtitle line: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb; absent from older launchers = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and for 7 days an emergency call / an open callback window.
+- **Status reports carry `capabilities` (`["call_policy_v1"]`) and `call_state`** (the launcher's `CallState` object: role holders, restrictions, fail-closed state, last error, last emergency call, callback window), stored capped as JSON in `device_status.capabilities_json`/`call_state_json`. `calls::call_report` turns them into typed `calls::Finding`s (design 31 step 8; each one's `CallProblem` is an Attention row, its `note` the calls page's warning): launcher can't enforce calls (or stopped reporting it - an older launcher), dialer/call-redirection role missing, whether incoming calls are still filtered without the dialer role (`screening_role_held`, security review L7: the call-screening role's holder screens them; neither = "not filtered - anyone can call"), the call-screening role missing while the launcher is the phone app - a plain hint, not an error (`CallReport.screening_hint`, the "Call screening · Not granted" row: the launcher hangs up calls that aren't allowed, but another app could screen first - the phone can't read who holds the role -, so grant it with adb, the command behind the row's ⓘ; absent from older launchers = nothing; no "accept the prompt": Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS), fail-closed, a reported error, an unreadable call log (`call_log_readable: false`), the Messages app allowlisted while SMS is off, and for 7 days an emergency call / an open callback window.
 - Emergency numbers are never configured here: the launcher always allows them. The override PIN and "pause" don't open calls beyond the call rules (decision after QA review); since step 6 they do lift a time rule's call block (school), back to the normal call rules.
 
 ## Hardening (handy step 4, design `docs/design/04-hardening.md`, at the monorepo root)
@@ -134,9 +134,9 @@ No prior programming experience - build features directly rather than explaining
 
 - **Contact photos** (`src/photos.rs`, migration `0024`): upload per contact on the calls page (`POST /devices/{id}/contacts/{cid}/photo`, multipart field `photo`, route body limit ~10 MB; remove: `.../photo/remove`), scoped to the device (404 otherwise) but stored on the global `contacts` row (`photo_hash`), so every device with the contact gets it and is nudged. Never stored as sent: decoded with the pure-Rust `image` crate (already in the tree via `totp-rs`'s QR feature; we enable `jpeg`/`webp`; format sniffed from the bytes, limits 8000 px / 256 MiB), EXIF orientation applied, centre-cropped square, shrunk to ≤ 512 px, re-encoded JPEG q85 - which drops all metadata (EXIF/GPS). Decoding is capped at 40 MP / 8000 px a side / 128 MiB, only the ≤ 512 px crop is copied and rotated, and `photos::process_limited` runs one upload at a time on a blocking thread. Store + `photo_hash` commit and `prune`/`recover_missing` share one file lock (`photos::lock_files`), so a prune can't delete a just-stored photo (QA step 5 #2/#3). Files: `AppState.photo_dir` (`data/contact_photos/<sha256>.jpg`, a temp dir in tests). `photos::prune` deletes unreferenced files after replace/remove/contact remove/device delete. Backups include the photos (`contact_photos/<hash>.jpg` in the zip); the root restore script still swaps only the DB, and at startup `photos::recover_missing` extracts missing referenced photos from `data/backups/*.zip` (hash checked) and sets `photo_hash = NULL` for any it can't find. Admin thumbnails: `/contact-photos/{hash}` (session).
 - **Device API**: `call_policy.contacts[].photo` (hash or null); `GET /api/devices/contact-photos/{hash}` (bearer) serves it only when a contact on *this* device has that hash (invalid hash, other device's contact, missing file: 404).
-- **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, wallpapers: [...]}` (wallpapers since step 8) from `device_policy.launcher_language`/`home_columns`, set on the device page's "Launcher" card (`POST /devices/{id}/launcher`, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
+- **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, wallpapers: [...]}` (wallpapers since step 8) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
-- **Status** `notification_listener_enabled` (`device_status` column): `false` shows a warning on the Launcher card with the adb command (no device-owner API grants notification-listener access).
+- **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -144,10 +144,10 @@ No prior programming experience - build features directly rather than explaining
 - **Rules** (`src/time_rules.rs`, migration `0025`, table `time_rules`): name, kind (`school`/`bedtime`/`custom`), `calls_allowed`, `exempt_apps_json` (package names usable during the rule), `days_json` = 7 entries Monday first, `{start,end}` minutes 0-1439 or null; `start > end` ends the next day, `start == end` lasts 24 h (the phone's local time). `device_id` NULL = global; a device with `device_policy.custom_schedule_enabled` uses its own rules **and** its own `daily_budget_json` instead of the global ones (`global_schedule.daily_budget_json`), 7 entries, minutes or null = unlimited. The phone evaluates everything (DST, overnight, lock screen); the server only stores, validates and serves.
 - **Legacy conversion**: `time_rules::migrate_legacy`, called from `connect_db` right after the SQL migrations, converts each `global_schedule`/`device_policy` row with `rules_migrated = 0` once (one transaction per row): bedtime -> a bedtime rule on all 7 days; the allowed weekday/weekend windows -> one custom rule "Outside allowed hours" `[end_D, start_D+1)` when every day has a non-wrapping window and no locked span exceeds 24 h, else a "(morning)" and an "(evening)" rule. Calls stay allowed (step 4 behaviour). Unit tests compare the old launcher logic and the new semantics minute by minute over a week. The legacy columns stay and are still sent, frozen, so a launcher without `time_rules_v1` keeps the pre-migration schedule (the device page warns).
 - **Wire**: `PolicyResponse.time_policy = {rules, daily_budget_minutes, lifts}` and `location_policy = {mode, interval_minutes}`, always sent (the launcher rejects a response without `time_policy` once it has had one). A stored rule/budget that doesn't validate (bad JSON, not 7 entries, minute out of range, unknown kind, bad package name) is a 500 (`PolicyError::CorruptTimePolicy`), never fewer rules. Status reports carry `time_state` (active rule, `used_minutes`, `budget_minutes`, `extra_minutes`, `calls_blocked`, `lock_reason` NONE/BEDTIME/SCHOOL/RULE/SCREEN_TIME, `lifts_active`), stored capped (object, ≤ 4096) in `device_status.time_state_json`, and capability `time_rules_v1`.
-- **Admin UI**: `/schedules` ("Time rules", `handlers::schedules`): global rules (add/edit/delete, `POST /schedules/rules`, `/schedules/rules/{id}`, `/schedules/rules/{id}/delete`, every form carries `scope` = "" or a device id and a rule outside that scope is a 404), global budget (`POST /schedules/global`), and per device the override switch + budget (`POST /schedules/device/{id}`) and its own rules. Exempt apps are checkboxes from the devices' latest reported installed apps (plus already chosen ones). The kind select pre-sets the calls checkbox (school: off). 400 on invalid input (nothing written), 500 on DB errors; a global change nudges every device, a device change that device.
-- **Lifts** (`handlers::lifts`, table `time_lifts`): device page "Time rules" card - lift one rule or all rules for 15/30/60/120 min (`POST /devices/{id}/lifts`, `target=rule`, `rule=all|id`, the rule must be one of the device's effective rules), or `+15/30/60` min screen time (`target=budget`). Rule lifts are delivered until `created + minutes`, budget lifts for 12 h (the phone adds them once, to the day it first sees them). "End now" (`POST /devices/{id}/lifts/{lift_id}/end`) stops delivering an active rule lift (`ended_early_at`); added screen time can't be taken back. Both write a `security_events` row (`time_lift`, `time_lift_ended`) and nudge. The card also shows the phone's last `time_state` and the recent lifts.
-- **Location policy** (`device_policy.location_mode` off/on_request/interval, default `on_request`; `location_interval_minutes` 10/15/30/60/120/240, default 30): set on the locate page (`POST /devices/{id}/location-policy`, mode alone keeps the interval). "Update location now" (`POST /devices/{id}/command/locate`) queues `locate` (a fresh fix past the phone's throttle) and the page then polls `locations.json` for up to a minute for a newer fix; the page shows the last fix's age and accuracy.
-- **Fix round after `qa-step6-code.md`**: the device card and `/schedules?device=` warn when a calls-off rule applies while calls are unmanaged (incoming calls still ring); rule-lift status comes from the phone's `time_state.lifts_active` ("Active on the phone" / "Ended on the phone" / "Waiting for the phone", `devices::rule_lift_status`), the server expiry is secondary; `time_state.ledger_unreadable` shows "today's budget counts as used up"; the locate page shows the phone's answer to the newest `locate` (`device_commands.result`, also `GET /devices/{id}/locate-result.json` for the page's wait) and says "off" switches location off on the phone; rule create/update/delete, budget saves and location-policy changes are in the security log (`time_rule_*`, `screen_time_saved`, `location_policy_changed`). The override PIN text says it lifts the time rules incl. school's call block, never calls beyond the call rules, never hardening (user decision on QA item 4). Tests: unauthenticated POSTs to every new admin route write nothing.
+- **Admin UI** (`handlers::schedules`; laid out as design 31's Settings › Time Rules and Device › Time since step 9, "Time Rules and Device › Time" below): global rules (add/edit/delete, `POST /schedules/rules`, `/schedules/rules/{id}`, `/schedules/rules/{id}/delete`, every form carries `scope` = "" or a device id and a rule outside that scope is a 404), global budget (`POST /schedules/global`), and per device the override switch + budget (`POST /schedules/device/{id}`, `section=switch|budget`) and its own rules. Exempt apps are switches from the devices' latest reported installed apps (plus already chosen ones). The kind select pre-sets the calls switch (school: off). A refusal renders its page again (400, nothing written), 500 on DB errors; a global change nudges every device, a device change that device.
+- **Lifts** (`handlers::lifts`, table `time_lifts`): Device › Time (the device page's "Time rules" card until design 31 step 9) - pause one rule or all rules for 15/30/60/120 min (`POST /devices/{id}/lifts`, `target=rule`, `rule=all|id`, the rule must be one of the device's effective rules - one that no longer is lands back with nothing written), or `+15/30/60` min screen time (`target=budget`). Rule lifts are delivered until `created + minutes`, budget lifts for 12 h (the phone adds them once, to the day it first sees them). "End now" (`POST /devices/{id}/lifts/{lift_id}/end`) stops delivering an active rule lift (`ended_early_at`; a pause already over lands back, one the phone never had is a 404); added screen time can't be taken back. Both write a `security_events` row (`time_lift`, `time_lift_ended`) and nudge. `back=time` returns to Device › Time, anything else to the device page (§5.1).
+- **Location policy** (`device_policy.location_mode` off/on_request/interval, default `on_request`; `location_interval_minutes` 10/15/30/60/120/240, default 30): set on the Locate tab's Location Settings (`POST /devices/{id}/location-policy`, mode alone keeps the interval; "Every" shows only for Regularly). Update Location (`POST /devices/{id}/command/locate`, back to `#location`) queues `locate` (a fresh fix past the phone's throttle) and the page then polls `locations.json` for up to a minute for a newer fix; the page shows the last fix's age and accuracy ("10 min ago", "Within 40 m", `locate::Fix`).
+- **Fix round after `qa-step6-code.md`**: the device card and `/schedules?device=` warn when a calls-off rule applies while calls are unmanaged (incoming calls still ring); rule-lift status comes from the phone's `time_state.lifts_active` (since design 31 step 9 the typed `lifts::LiftState`: "Until 10:42" / "Ended on the phone" / "Waiting for the phone", local time), the server expiry is secondary; `time_state.ledger_unreadable` shows "today's budget counts as used up"; the Locate tab shows the phone's answer to the newest `locate` (`device_commands.result`, reworded; also `GET /devices/{id}/locate-result.json` for the page's wait, with the reworded `text`) and says "off" switches location off on the phone; rule create/update/delete, budget saves and location-policy changes are in the security log (`time_rule_*`, `screen_time_saved`, `location_policy_changed`). The override PIN text says it lifts the time rules incl. school's call block, never calls beyond the call rules, never hardening (user decision on QA item 4). Tests: unauthenticated POSTs to every new admin route write nothing.
 
 ## FCM removed, SSE only (design 19, `docs/design/19-remove-fcm.md`, at the monorepo root; server 0.20.0)
 
@@ -175,7 +175,7 @@ No prior programming experience - build features directly rather than explaining
 
 ## Play (handy step 7, design `docs/design/07-battery-fcm-play.md`, at the monorepo root; its FCM half removed in 19)
 
-- **Play** (`src/play.rs`): `PLAY_CORE` (vending, gms, gsf) is the launcher's business - never listed in the device page's Apps card, `toggle_app` answers 400 for it, and the first-heartbeat allowlist bootstrap leaves it out. One source per package: selecting a catalog app whose package the phone reports installed by `com.android.vending` is a 409 (nothing written). Security log: `play_install_mode` (a new `install_mode.until_ms`), `app_installed` (a package new since the previous report, with its installer; not on the first report). The device page's "Play and kiosk" card ("Push and Play" until design 19) shows the "Instant changes" line, install mode, the nightly update window and the kiosk app block switch.
+- **Play** (`src/play.rs`): `PLAY_CORE` (vending, gms, gsf) is the launcher's business - never listed on the phone's Apps page, `toggle_app` answers 400 for it, and the first-heartbeat allowlist bootstrap leaves it out. One source per package: turning on a catalog app whose package the phone reports installed by `com.android.vending` writes nothing and returns to its row with the reason (`/devices/{id}/apps?notice=from_play&app=<row>#<row>`; a 409 before design 31 step 6). Security log: `play_install_mode` (a new `install_mode.until_ms`), `app_installed` (a package new since the previous report, with its installer; not on the first report). The device page's "Play and kiosk" card ("Push and Play" until design 19) shows the "Instant changes" line, install mode, the nightly update window and the kiosk app block switch.
 - **Battery (design 19b phase 1, migration `0055_battery_exemption.sql`)**: status `battery_optimization_exempt` (`Option<bool>`, `#[serde(default)]`) is stored in `device_status.battery_optimization_exempt` (NULL from an older launcher or when unreadable); About This Phone shows a "Battery optimisation" row for true ("Off") and false ("On", the fix behind its ⓘ), nothing for NULL. No policy key, no capability.
 - **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Spotify's hosts get the same split **per phone**, only while it is bound to a Spotify account (design 26c, "Vibb music: Spotify on the server"). Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
@@ -192,13 +192,13 @@ No prior programming experience - build features directly rather than explaining
 
 ## Wallpapers (handy step 8, design `docs/design/08-ui-polish.md`, at the monorepo root)
 
-- **Data** (migration `0028`): `wallpapers` (`kind` color/gradient/image, `colors` JSON hex list, `image_hash`, `label`, `sort`, `builtin_key` for the six built-ins navy/forest/plum/green/sky/sunset - navy is id 1 -, `lock_screen` opt-in per photo) and `device_wallpapers` (cascades on device and wallpaper delete). Every device gets the built-ins (existing rows in the migration, new ones by the `devices_get_builtin_wallpapers` trigger); **uploads start on no device** until ticked on the device page's "Wallpapers" card (`POST /devices/{id}/wallpapers`, repeated `wallpaper=<id>`, an unknown id is a 400 and nothing changes).
+- **Data** (migration `0028`): `wallpapers` (`kind` color/gradient/image, `colors` JSON hex list, `image_hash`, `label`, `sort`, `builtin_key` for the six built-ins navy/forest/plum/green/sky/sunset - navy is id 1 -, `lock_screen` opt-in per photo) and `device_wallpapers` (cascades on device and wallpaper delete). Every device gets the built-ins (existing rows in the migration, new ones by the `devices_get_builtin_wallpapers` trigger); **uploads start on no device** until ticked in the Wallpapers group of the phone's Home Screen (`POST /devices/{id}/wallpapers`, repeated `wallpaper=<id>`, an unknown id is a 400 and nothing changes; back to `/devices/{id}/home`).
 - **Uploads** (`/wallpapers` page under Settings, `handlers::wallpapers`): `photos::process(bytes, Shape::Portrait)` - same sniffing and limits as contact photos, the centred crop is computed on the **upright** size (EXIF 5-8 swap width/height) so it commutes with the orientation applied afterwards; cut to 9:20, shrunk to ≤ 1080×2400, never enlarged, JPEG q85 (q75/q65 if over 3 MB, else 400). Contact photos use `Shape::Square` (unchanged result).
 - **Storage**: `photos::Store` - `CONTACT_PHOTOS` (`data/contact_photos`) and `WALLPAPERS` (`data/wallpapers`, `AppState.wallpaper_dir`) each with its own lock, prune (only its own directory - never share a dir: prune deletes every file the table doesn't reference), backup zip prefix (`wallpapers/<hash>.jpg`) and `recover_missing` at startup (a wallpaper whose image is in no backup is deleted). Deleting an upload (`POST /wallpapers/{id}/delete`; built-ins: 400) cascades, prunes and nudges the devices that had it.
 - **The lock's background** (design 25, "Lock background", migration `0069`): `device_lock_wallpaper` (one row per
   device at most, composite key onto `device_wallpapers`, so unticking or deleting it falls back by itself) -> the policy's
   `launcher_ui.lock_wallpaper` (id or null = the lock shows Home's wallpaper, always sent). `POST /devices/{id}/lock-wallpaper`
-  (`wallpaper` = "" or a ticked id, else 400; security event `lock_wallpaper_changed`; back to `/devices/{id}`). The tick save
+  (`wallpaper` = "" or a ticked id, else 400; security event `lock_wallpaper_changed`; back to `/devices/{id}/lock`, no fragment). The tick save
   deletes only the unticked `device_wallpapers` rows (a delete-all would clear the lock choice by the cascade). Tests:
   `the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen`.
 - **Fix round (qa-08-code.md #8)**: a failing wallpaper query is logged and the policy goes out with `wallpapers: []` (never a 500 for time rules/calls); `Store::add_to_zip` skips a file that vanished between `read_dir` and the read (a prune during a backup).
@@ -208,17 +208,17 @@ No prior programming experience - build features directly rather than explaining
 
 Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays the on/off switch.
 - **Migration `0029_step9_fixes.sql`**: `device_policy.roles_changed_at` (stamped by `calls::save_settings` only when `calls_managed` changes), `device_policy.block_activity_start` (default 1), `device_status.play_store_suspendable`.
-- **Pending rule** (B1, QA 09 #5, pure `calls::role_report`): a latest report older than `roles_changed_at` shows "Waiting for the phone to confirm (last report HH:MM UTC)" instead of the role/call-log/fail-closed warnings **only while the change is < 5 minutes old** (the calls page reloads every 5 s for 2 minutes); later the real warnings plus "hasn't confirmed the change made at HH:MM"; a report newer than the change is always taken as is (a disagreeing one is a warning, never "waiting"). `call_report` returns warnings + `auto_refresh`; `call_warnings` stays for the device page.
+- **Pending rule** (B1, QA 09 #5, pure `calls::role_report`): a latest report older than `roles_changed_at` shows "Waiting for the phone to confirm" (the last report's local time and age behind its ⓘ) instead of the role/call-log/fail-closed warnings **only while the change is < 5 minutes old** (the calls page reloads every 3 s for 2 minutes, `static/auto-reload.js`); later the real warnings plus "Calls change not confirmed yet"; a report newer than the change is always taken as is (a disagreeing one is a warning, never "waiting"). `call_report` returns the findings + `auto_refresh`.
 - **Kiosk app block** (B4): `PolicyResponse.block_activity_start` (always sent) - the launcher ORs `LOCK_TASK_FEATURE_BLOCK_ACTIVITY_START_IN_TASK` in itself together with the system helpers it pins; `lock_task_features` is always sent with bit 64 masked out, so a launcher without the helpers never gets it. Switch "Block other apps' screens" on Advanced › App screens (the device page's "Play and kiosk" card until design 31 step 3; `POST /devices/{id}/kiosk-block`, missing checkbox = off, 404 unknown device, nudges, back to `/devices/{id}/advanced` without a fragment so the position is kept). The group warns when the phone reports `play_store_suspendable: false` (Play is then blocked only in kiosk, or not at all with the block off).
-- Fix round (qa-09-code.md): the calls page never auto-refreshes an error render (it would lose the typed contact); `valid_matrix_id` follows the Matrix grammar (localpart `a-z0-9._=-/+`, server host/IPv4/`[IPv6]` + optional port) like the launcher's `isMatrixId`, which percent-encodes the id into Element X's URIs. A launcher on a server without this key treats the kiosk app block as off.
+- Fix round (qa-09-code.md): the calls page never auto-refreshes a refusal's render (it would lose the typed contact); `valid_matrix_id` follows the Matrix grammar (localpart `a-z0-9._=-/+`, server host/IPv4/`[IPv6]` + optional port) like the launcher's `isMatrixId`, which percent-encodes the id into Element X's URIs. A launcher on a server without this key treats the kiosk app block as off.
 - Tests: `src/tests/step9.rs`, `calls::tests::role_report_pending_expires`; `policy_json_keys_snapshot` has `block_activity_start`.
 
 ## Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
 
 - **Migration `0030_kid_lock.sql`**: `device_policy.kid_pin_hash/kid_pin_salt/kid_pin_length` (NULL hash = no lock), `device_status.lock_state_json`.
-- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on the device page's "Screen lock" card (`POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
+- **Kid PIN** (`src/kid_lock.rs`, pure + unit tests): 4-6 ASCII digits, hashed with `security::hash_pin` like the parent (override) PIN. Set/remove on Lock Screen & PINs (design 31 step 4; the device page's "Screen lock" card before; `POST /devices/{id}/kid-lock`, `new_kid_pin` / `clear_kid_pin`; 404 unknown device, 500 nothing written on a DB error; security events `kid_pin_changed`/`kid_pin_cleared`; nudges). Refused (nothing written, `?notice=<code>` flash on the device page, `kid_lock::flash_text`) when not 4-6 digits, **without an override PIN** (it is the lock screen's "Parent code") or when it verifies against the override hash (`security::verify_pin`). The other way round in `update_policy`: a new override PIN that verifies against the kid hash is refused, and the override PIN can't be removed while a kid PIN is set. PBKDF2 for these checks runs in `spawn_blocking`; the kid-PIN `UPDATE` only applies `WHERE override_pin_hash IS NOT NULL` (0 rows = needs_override) and `update_policy`'s SQL keeps the override while a kid PIN is set, so parallel saves can't leave a kid PIN without its parent code. The **first** kid PIN also sets `disallow_safe_boot` (safe mode skips the launcher's lock); later changes leave the switch as the parent set it.
 - **Wire**: `PolicyResponse.kid_lock = {pin_hash, pin_salt, pin_length} | null`, always sent (`policy_json_keys_snapshot`); a half-written row (length outside 4-6, a NULL column) is sent as null - a privacy lock fails open. The kid hash appears only there (never in a status, log or page). Status `lock_state` is stored **re-serialized through `kid_lock::LockState`** (`sanitize_lock_state`: only `active, inactive, locked, failures, backoff_until_ms, exempt_yields`, `inactive` capped at 64 chars), so no unlock times or PIN material can reach the DB. Capability `pin_lock_v1`.
-- **Device page**: the card shows privacy text (no Android code any more: forensic reading possible, bank/ID apps, no fingerprint, safe mode, don't reuse the PIN, ~100 tries a day), the phone's state, and warnings: launcher without `pin_lock_v1`, safe boot allowed, and every `inactive` but `no_pin` (`android_credential` with the removal runbook, `crash_guard`, `bad_hash`, `keyguard_not_disabled`, `unmanaged`). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The locate page explains what "Lock" does with and without a kid PIN (result "locked (handy lock)" / "locked (Android)").
+- **PWA** (Lock Screen & PINs › Child PIN since design 31 step 4): the footer's ⓘ has the privacy text (calls and emergency calls work, the back-off, never erases, the Parent PIN opens it; nearby people kept out, not forensic reading, some bank/wallet apps), the phone's state as rows and warnings as typed `kid_lock::LockNote`s: launcher without `pin_lock_v1`, safe boot allowed, every `inactive` but `no_pin` (`kid_lock::Inactive`; `android_credential`'s adb removal behind the warning's ⓘ), a VoIP app without full-screen intents (its adb fix behind the ⓘ). `call_state.in_call_ui_failed_at` (the in-call screen couldn't come up over the lock) is a call warning for 7 days. The Locate tab's ⓘ under the actions explains what Lock does with and without a Child PIN (the answers "locked (handy lock)" / "locked (Android)" read "Locked with the Child PIN" / "Screen off (no Child PIN set)").
 - Tests: `src/tests/step10.rs`, `kid_lock::tests`, `security::tests::pin_hash_shared_vector` (same vector as the launcher's `PinHashTest`).
 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`)
@@ -230,18 +230,18 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   `HTMLFormElement.prototype.submit` for the auto-saving controls - marked `data-autosave` and
   saved by `static/autosave.js` since design 31, which on a `<select>` changed from the keyboard
   waits for Enter or blur) per path in sessionStorage for 20 s, and restores it on the page that comes back; a
-  redirect with a `#fragment` (e.g. `#screen-lock` with a notice) keeps its anchor instead. A new
+  redirect with a `#fragment` (e.g. `/lock?notice=…#child-pin` with a flash) keeps its anchor instead. A new
   page template must include the head partial (`pages_restore_scroll_after_auto_save` checks
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs nothing else as long as it redirects back to
   its own page. External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
-  "Screen timeout" card on the device page (`POST /devices/{id}/screen-timeout`, 400 for other
-  values), `PolicyResponse.screen_timeout_seconds` always sent (`policy_json_keys_snapshot`). The
+  Lock Screen & PINs › Screen › "Turn off after" (design 31 step 4; `POST /devices/{id}/screen-timeout`, 400 for
+  other values, back to `/devices/{id}/lock`), `PolicyResponse.screen_timeout_seconds` always sent (`policy_json_keys_snapshot`). The
   launcher applies it as device owner (`setSystemSetting(SCREEN_OFF_TIMEOUT)`) and reports the
   value it reads back as `screen_timeout_seconds` (`device_status`, kept only if 1 s..1 day),
-  shown on the card. Handy's PIN lock locks at screen-off, so this is the auto-lock delay.
+  shown ("On the phone now") while it differs from the chosen one. Handy's PIN lock locks at screen-off, so this is the auto-lock delay.
 - **Vibb night wallpaper** (migration `0033`): built-in `vibb_night` (`#0C0C14`, sort 5, so first
   and the default on phones added from now on; no fixed id). Existing phones don't get it
   automatically - their list and shown wallpaper stay as they were.
@@ -396,7 +396,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 
 **Phase E (server) shipped 2026-08-08 - this server no longer runs a live DNS server at all.** `dns_engine.rs`'s hickory-server plumbing (`Handler`/`RequestHandler`, `Catalog`/`BlocklistZoneHandler`/`ForwardZoneHandler`, the UDP/TCP/DoT socket binding in `run()`, `SingleCertResolver`/TLS cert loading) is gone - the file now holds only `CompiledBlocklist`/`compile_blocklist`, i.e. exactly what Phase A already added. `install.sh` had the matching root-owned surface removed to match: the `dns_filter_enable`/`disable` iptables DNAT rules (ports 53/853 → the now-deleted listeners), `action_tls_cert_renew` and its daily systemd timer, and the `route_localnet` sysctl block those DNAT rules needed - re-running the installer on an already-provisioned Pi also best-effort cleans up any of those left over from before. `WATCHER_SCHEMA_VERSION`/`security::REQUIRED_WATCHER_SCHEMA` both bumped to `4` together (removing privileged actions counts as a watcher-schema change same as adding them - see the gotcha below). The `hickory-proto`/`hickory-resolver`/`hickory-server`/`rustls-pemfile`/`async-trait` crates are no longer dependencies at all; `rustls` itself stays (reqwest's own `rustls` feature still needs the process-wide `CryptoProvider` `main.rs` installs at startup, unrelated to the deleted DoT listener - see the `rustls` gotcha above, still very much alive, now for a different reason).
 
-`dns_filter_settings.enabled` (the old network-wide "Enable DNS filtering" toggle, no longer meaningful with no live listener to enable) is dropped from the schema along with `device_policy`'s now-fully-dead `require_tailscale`/`tailscale_exit_node_id` columns (migration `0012_vpn_filter_toggle.sql` - see the client's CLAUDE.md for the Phase D work that made those client-side fields dead first). In their place: `device_policy.vpn_filter_enabled` (default on), a genuine per-device admin toggle for the on-device filter's VPN piece (`KidVpnService` on the client) - added at the parent's explicit request after confirming live on the Moto that there was no way to turn filtering off for a specific kid short of the client's own offline-override kill-switch. Surfaced in `device_detail.html`'s former "VPN (Tailscale)" card, now "Ad/content filtering (VPN)"; threaded through `PolicyResponse.vpn_filter_enabled` to `AppEnforcer.applyVpnRestrictions` on the client, which actually starts/stops `KidVpnService` and sets/clears the always-on-VPN designation accordingly (see that repo's CLAUDE.md).
+`dns_filter_settings.enabled` (the old network-wide "Enable DNS filtering" toggle, no longer meaningful with no live listener to enable) is dropped from the schema along with `device_policy`'s now-fully-dead `require_tailscale`/`tailscale_exit_node_id` columns (migration `0012_vpn_filter_toggle.sql` - see the client's CLAUDE.md for the Phase D work that made those client-side fields dead first). In their place: `device_policy.vpn_filter_enabled` (default on), a genuine per-device admin toggle for the on-device filter's VPN piece (`KidVpnService` on the client) - added at the parent's explicit request after confirming live on the Moto that there was no way to turn filtering off for a specific kid short of the client's own offline-override kill-switch. Surfaced as the "Web filter" switch on the phone's Web Filter page (`/devices/{id}/filter`, `section=filter`, design 31 step 5; once the device page's "VPN (Tailscale)" card); threaded through `PolicyResponse.vpn_filter_enabled` to `AppEnforcer.applyVpnRestrictions` on the client, which actually starts/stops `KidVpnService` and sets/clears the always-on-VPN designation accordingly (see that repo's CLAUDE.md).
 
 **Confirmed live on both test phones (Pixel 4a 5G, Moto G Play) as of 2026-08-08**: ad-blocking, policy sync, the new `vpn_filter_enabled` toggle (both this admin checkbox and the client's local pause-restrictions switch), and the `/dns/log` blocked-domain log all verified end to end with the live DNS server fully retired - see the client's own CLAUDE.md for the full verification pass, including a real ANR bug the toggle work surfaced and fixed on the client side. Not yet cleaned up: the `com.tailscale.ipn` tracked-app row still silently auto-updates the now-unused standalone Tailscale app on enrolled devices - harmless, minor, low priority.
 
@@ -405,10 +405,10 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - **Blocked-domain log**: `device_policy.dns_log_enabled`, **default off** (the migration deleted every existing
   entry), sent as `PolicyResponse.dns_log_enabled` (always; the launcher records and reports only while it is on).
   `POST /api/devices/dns-events` stores nothing for a phone with the log off (204, an older launcher still sends).
-  Switch on the Blocked activity page (`POST /dns/log/{device_id}`, auto-saving checkbox, missing = off, 404 unknown
+  Switch "Keep a log" on the phone's Web Filter page (design 31 step 5; `POST /dns/log/{device_id}`, back to `/devices/{id}/filter`, auto-saving checkbox, missing = off, 404 unknown
   device, nudges, security event `dns_log_changed`); off deletes the phone's log at once. Entries are kept
   `DNS_LOG_RETENTION_DAYS` = 7 (by `received_at`).
-- **Location history**: `device_policy.location_retention_days` (1/7/14/30, default 7; was a fixed 30), locate page
+- **Location history**: `device_policy.location_retention_days` (1/7/14/30, default 7; was a fixed 30), Locate tab
   `POST /devices/{id}/location-retention` (400 other values, 404, security event `location_retention_changed`,
   prunes at once). By `received_at` (server time); the newest fix per phone is always kept (Find My Device's "last
   seen").
@@ -467,10 +467,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   below.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth, brightness and (design 18) sound on
   (`devices::DEFAULT_QUICK_CONTROLS`, mask 15, set in `insert_device_with_policy`); existing devices keep theirs.
-- **Sound mode** (design 18, `src/sound_mode.rs`, migration `0047_sound_mode.sql`): `QUICK_CONTROL_SOUND` = 8, a box on the
-  Quick Controls card (it only shows the kid's Sound / Silent (vibrate) row; the volume keys still work). Status
+- **Sound mode** (design 18, `src/sound_mode.rs`, migration `0047_sound_mode.sql`): `QUICK_CONTROL_SOUND` = 8, a switch in the
+  Quick controls group of Home Screen (it only shows the kid's Sound / Silent (vibrate) row; the volume keys still work). Status
   `ringer_mode` / `interruption_filter` (`#[serde(default)] Option<String>`, only known values stored, else NULL) ->
-  `device_status`, shown in the Status card "at the last sync" (DND only while on). Policy shape unchanged. Tests:
+  `device_status`, shown on About This Phone › Sound (Do Not Disturb, while on, is an Attention alarm). Policy shape unchanged. Tests:
   `sound_mode::tests`, `src/tests/sound_mode.rs`.
 - **A catalog app installed on a phone is allowed and the phone nudged** (`device_api::allow_installed_catalog_apps`,
   every status report; it replaced the package-name backfill, which guessed the package from the one new package in a
@@ -481,8 +481,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
 ## App downloads: Wi-Fi only, resumable (design 13, `docs/design/13-app-downloads.md`, migration `0043_app_downloads.sql`)
 
 - **Switch**: `device_policy.app_updates_wifi_only` (default 1, existing phones too) -> `PolicyResponse.app_updates_wifi_only`,
-  always sent (`policy_json_keys_snapshot`). Apps card on the device page, `POST /devices/{id}/app-updates` (auto-save,
-  back to the page - scroll-restore keeps the place -, nudges the phone). The phone: catalog apps only on an unmetered
+  always sent (`policy_json_keys_snapshot`). "Download apps on Wi-Fi only" on the phone's Apps page, `POST /devices/{id}/app-updates`
+  (auto-save, back to `/devices/{id}/apps#downloads` - its group at the bottom of a long page -, nudges the phone). The phone: catalog apps only on an unmetered
   network, its own update after 3 days on any; roaming always waits.
 - **Scope**: one query for the list and the download (`device_api::scoped_apps`: enabled, a release, launcher OR
   `device_tracked_apps`) - a deselected or another phone's app is a 404 like an unknown id.
@@ -495,12 +495,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   before 0043 are hashed at startup (`backfill_release_hashes`, own task, stored only while the row still names that file).
 - **Status**: `app_downloads` (`{wifi_only, network, entries: <= 20 {tracked_app_id, release_tag, state, bytes, total,
   since_ms, any_network_at_ms}}`, a full snapshot) -> `device_status.app_downloads_json` (`src/app_downloads.rs`: known
-  fields only, capped). The app rows show it ("Waiting for Wi-Fi since 6 Oct · 120 of 326 MB", "Installed · update
-  waiting for Wi-Fi since ...", the launcher's "Installed · 0.32.0 waits for Wi-Fi, any network from 9 Oct") plus a line
-  about the phone's network; a fresh progress row (< 10 min) still wins for the live percentage - except over a
-  release the phone refused (`refused_*`, security review M10: "Refused - signed with another key than this app's",
-  "Installed · update refused - ...", styled as failed), which it reports until the server lists another release.
-  Status pills wrap when long (`.app-status`, `style.css?v=7`).
+  fields only, capped). The rows of the phone's Apps page show it, times in Phone Setup's zone (design 31 step 6:
+  "Waiting for Wi-Fi · since 10:58 · 120 of 326 MB", "Installed · update waiting for Wi-Fi · since ...", the
+  launcher's "Installed · update 0.32.0 waiting for Wi-Fi · since ... · any network from Mon 14:30") plus a
+  "Network · Mobile data · 10:58" row (at the last report); a fresh progress row (< 10 min) still wins for the live
+  percentage - except over a release the phone refused (`refused_*`, security review M10: "Refused: signed with
+  another key", "Installed · update refused: ...", styled as failed), which it reports until the server lists
+  another release.
 - Tests: `app_downloads::tests`, `src/tests/tracked_apps.rs` (`downloads_resume_with_range_and_if_match`,
   `only_this_devices_apps_download`, `the_list_carries_each_files_hash`, `the_app_update_switch_saves_and_reaches_the_phone`,
   `app_downloads_are_stored_and_shown`, `a_refused_release_says_why_on_the_device_page`).
@@ -516,11 +517,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
   icon|null, color}` resolved per phone (`app_display::policy_app_display`): unknown icons left out, unknown colours
   `auto`, entries with nothing left dropped; a failing query sends `[]` and logs (cosmetic, like wallpapers).
 - **Forms** (`partials/app_display_form.html`, `AppDisplayForm`): every allowed app with a valid package (not the
-  launcher) on the device page's Apps card (`POST /devices/{id}/apps/display`, `action` save/own/catalog, back to
-  `#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `#display`, nudges every
+  launcher) under its row on the phone's Apps page (`POST /devices/{id}/apps/display#app-<package>`, `action`
+  save/own/catalog, back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `#display`, nudges every
   phone). Validation (`app_display::validate`): label trimmed, 1-20 chars (`chars().count()`), no control chars;
   icon empty or known; colour `auto` or known; package per Android's grammar, never Play core. Refused: 400 with the
-  device/catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
+  phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
   POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
   live (the tile in the phone's resolved colour; `auto` previews grey).
 - **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with seed **and** the launcher's
@@ -548,24 +549,26 @@ needed to manage the phone, delete on a schedule, never store notification or me
   no room, logged). `music_state.sonos_rooms` (the speakers the phone knows) is kept by `sanitize_music_state` as
   Sonos-shaped uids (`is_sonos_uid`, `RINCON_[A-Z0-9]{12,20}`) once each, names cut like `cut_title` (40), at most 32;
   a bad row drops only itself.
-- **PWA** (`handlers::music`, `templates/music*.html`): `/music` (add by link - one GET, `AppState.music_fetch`,
-  canned in tests; own-files entries; categories; Storytel; the music app's catalog row), `/music/entries/{id}`
-  (settings, cover, uploads), device page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
-  ticks, the `#music-settings` form - since design 30 two switches "Streaming may use mobile data" / "Downloads may use
-  mobile data" (a hidden `v=2` marks today's page; a post without it is a page from before the update, and its one
-  `mobile_data` checkbox sets both - `handlers::music::mobile_switches`), the "Music storage limit" select (1/2/5/10
-  GB/No limit, `storage_limit` = a choice or `none`, else 400; missing = the stored one kept), the note "This phone's
-  launcher or music app is older ..." while the switches differ and the phone's app report (`cache_bytes`) has no
-  `extra_bytes` (`music::older_phone_note`), the storage line and its over-the-limit warning (`music::storage_line`;
-  from the report's `audio_bytes`/`extra_bytes`, which a music app from design 30 step 3a on always sends - without
-  them, an older app, today's "Stored on the phone"; `MusicState` keeps and clamps both like `cache_bytes`),
-  event `music_phone_settings` naming both switches and the limit -, volume cap Off/90/80/70/60 - NULL = off,
-  Storytel switch, the Sonos rooms at `#music-sonos`
-  - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event
-  `music_sonos_rooms_changed` (detail clipped to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "The
-  phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
-  redirects to its anchor; a 400 re-renders with the values and the error by the autofocused field. Changes nudge the
-  phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
+- **PWA** (`handlers::music`, `templates/music*.html`; laid out as design 31's Music tab since step 12, below):
+  `/music` (add by link - one GET, `AppState.music_fetch`, canned in tests; own-files entries), `/music/categories`,
+  `/music/settings` (Storytel, the music app's catalog row), `/music/entries/{id}` (settings, cover, uploads), and
+  each phone's Music page `/devices/{id}/music` (design 31 step 7, "Device › Music" below; the device page's card
+  `#music` before): the app switch = `toggle_app` with `back=music`, an auto-saving switch per entry, the
+  `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
+  `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
+  sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
+  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb and the music app" while the
+  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`), the storage
+  rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
+  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
+  design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
+  clamps both like `cache_bytes`), event `music_phone_settings` naming both switches and the limit -, volume cap
+  Off/90/80/70/60 - NULL = off, the Storytel switch, the Sonos rooms at `#music-sonos` - "All rooms" or one switch per
+  room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event `music_sonos_rooms_changed` (detail clipped
+  to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "No speakers seen yet." before a report - the
+  phone's `music_state`. Every form redirects to its page and group; a 400 re-renders with the values and the error
+  by the autofocused field. Changes nudge the phones they reach and log `music_*` / `storytel_login_*` events. PWA
+  text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
   volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (`spotify`: the phone is bound to a Spotify
   account, design 26c; always the key; `null` when the library query fails, QA #3;
@@ -584,10 +587,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   backed up. The same content again restores a `missing` row in place (id and path kept) or is refused as a double;
   the 300-file and 200-entry limits are the INSERT's own `WHERE`, and a tick's size check and write share one
   `BEGIN IMMEDIATE`. Own keys are `own-<12 random hex>` (ids repeat after a restore). Files no row names (an older
-  backup restored) show on `/music` with a delete button, never removed by themselves.
+  backup restored) show in Music › Settings behind Delete Files…, never removed by themselves.
 - **Library cache** (migration `0050`): triggers on `music_entries`, `music_categories`, `music_files` and
   `device_music_entries` move `music_library_revision`; `music::cached_library` (`AppState.music_libraries`) keeps each
-  phone's built library under it, so the policy poll, the library route and the device card build once per change. A
+  phone's built library under it, so the policy poll, the library route and the phone's Music page build once per change. A
   new table that feeds the library needs the same triggers (or `music::bump_library_revision`). Covers are checked
   with one scoped query; the import builds each phone's library once plus once to confirm.
 - **Add check**: through the sweep's client (`music_net`, below): psapi's catalog root (public only) or the feed
@@ -602,13 +605,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
   prefix only its tags; without one never `music-v*`), so the launcher row can't take `vibb-music.apk`. Editable on the
   app's page and the add form.
 - **Import from Vibb** (design 21a, `src/music_import.rs` pure, `handlers::music_import`): `POST /music/import`
-  (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` at `#import`; `POST
-  /music/import/confirm` re-reads the preview's hidden document with the same parser and re-checks in one transaction
-  (new categories, entries in file order after `NEXT_SORT`, ticks via `music::tick_fits`), then a session flash at
-  `/music#import` and one `music_library_imported` event. Targets only through `parse_link` (a `storytel:` one through
-  `storytel::parse_target`, a Storytel entry since design 26b, below; a Spotify URI or `open.spotify.com` link through
-  `spotify::parse_link`, a Spotify entry on no phone since design 26c, below): no outgoing request. Skips: Spotify short
-  links, folders, `parse_link` refusals, `spotify_user` sections, no name, already in the library (target or key), repeats, past 200.
+  (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` on the import page
+  (`/music/import`, its GET the empty form); `POST /music/import/confirm` re-reads the preview's hidden document with
+  the same parser and re-checks in one transaction (new categories, entries in file order after `NEXT_SORT`, ticks via
+  `music::tick_fits`), then a session flash at `/music/import#import` and one `music_library_imported` event. Targets
+  only through `parse_link` (a `storytel:` one through `storytel::parse_target`, a Storytel entry since design 26b,
+  below; a Spotify URI or `open.spotify.com` link through `spotify::parse_link`, a Spotify entry on no phone since
+  design 26c, below): no outgoing request. Skips: Spotify short links, folders, `parse_link` refusals, `spotify_user`
+  sections, no name, already in the library (target or key), repeats, past 200.
 - Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `music_import::tests`, `tracked_apps::tests`
   (`launcher_and_music_rows_keep_to_their_own_releases`).
 
@@ -662,10 +666,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   check then fails - and kept when the day's budget ran out; two items reported within 24 h re-resolve the whole entry
   (once a day); 300 manifests a day server-wide (expiry re-resolves count); a re-resolve answered 404/410 is `gone`;
   a flag that lands during a check survives its rewrite.
-- **PWA**: `#sweep` setting card, the library cards (`partials/music_card.html`: cover, source title, LAN, episodes,
-  capped/cut notes, a two-line `.music-status`, Check now within its limits, the offline select, per-phone lines from
-  `music_state.downloads`/`item_errors`), the entry page's `#status`, `GET /music/cards?ids=` (<= 200) +
-  `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times say UTC.
+- **PWA**: the setting on Music › Settings (`#sweep`), the library rows (`partials/music_card.html`: cover, "NRK
+  series · 98 episodes · 2 phones", LAN, a one-line `.music-status`, Check now within its limits, the offline
+  select), the entry page's `#status` (source title, episodes, capped/cut notes, the status, Check now) and its On
+  phones rows with each phone's line from `music_state.downloads`/`item_errors`, `GET /music/cards?ids=` (<= 200) +
+  `static/music-cards.js` (swaps busy status blocks in place, `scrollBy` keeps the view). Times are local
+  (`display_time::Zone`, design 31 M4).
 - **Contract**: `music_listing_snapshot` pins `testdata/music_listing.json`; `music_library_snapshot` now shows
   `items`. Listings aren't counted against a phone (no listing budget; a library of long feeds is a few MB). The
   policy shape is unchanged. Revision triggers are on `music_listings` only (version, cover, kept end).
@@ -724,13 +730,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `IN` takes `'storytel'`), `device_listing`, `cover_in_library` (both entry branches) and `art_in_library`: a phone
   gets Storytel entries, listings and covers only while its `music_storytel` switch is on and a login is stored
   (else 404, and the library drops them - the phone then prunes the books, vibb's logout). 0072's triggers move
-  `music_library_revision` on the switch and on the login's presence. The library card knows the gate (`SweepView`:
-  "Ella: not sent - Storytel is off on this phone", `phone_count` counts only phones that get the entry; without a
-  login a failed check says "The phones don't get it until a login is saved."); a card says "N books" (no "newest", no
-  "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
-  (`no_audio` "Storytel gave no audio for this book"). The device card: the phone's `music_state.storytel`
-  (`none`/`ok`/`refused`, refused as a warning), "Storytel is off on this phone: its N Storytel entries aren't sent",
-  and the downloads switch's text "... a Storytel book is often several hundred MB" (design 30).
+  `music_library_revision` on the switch and on the login's presence. The library knows the gate (`SweepView`: the
+  entry page's phone row "Not sent - Storytel is off on this phone", `phone_count` counts only phones that get the
+  entry; without a login a failed check says "The phones don't get it until a login is saved."); a Storytel entry
+  says "N books" (no "newest", no "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
+  (`no_audio` "Storytel gave no audio for this book"). The phone's Music page: its `music_state.storytel` as the
+  "Storytel login" row (`none`/`ok`/`refused`; refused red, with a warning above the Storytel switch), "N Storytel
+  entries aren't sent" under the switch while it is off or no login is saved, and the mobile-data ⓘ's "A Storytel
+  book is often several hundred MB" (design 30).
 - **The import** (`music_import.rs`, §2.6): a `storytel:` target `parse_target` accepts imports as a Storytel entry
   (name, order, resume; cache 0 -> -1); one it refuses is `Skip::BadLink`. Nothing is fetched: the sweep lists it
   (`not_on_shelf` if the family's shelf lacks it, `storytel_off` without a login).
@@ -880,16 +887,23 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `art_in_library`: a phone gets Spotify entries, listings and covers only **while it is bound to an account**
   (`device_policy.music_spotify_account`; else 404). `needs_login` doesn't close it (the tiles say "Spør en voksen").
   `LibEntry.spotify` is `"list"`/`"context"` (absent on every other source, and on a Spotify entry not listed yet,
-  whose `items` is then null), `cache` 0, `lan` false. The binding is "Spotify plays as: Off | <account>" on the
-  device card (`#music-spotify`, `POST /devices/{id}/music/spotify`, `music_spotify_binding_changed`; an unknown id
-  back at the anchor with `music_notice=spotify_unknown`), with the hint "One account per phone: this child's own
-  Premium account, never yours." (the account model above; the phone's hourly token carries every scope of its
-  account), the account's 6-month line, "one account on two phones" on both
-  cards, and `music_state.spotify` in words (`SPOTIFY_WORDS`: `none`, `ok`, `reauthorize`, `refused`, `not_premium`,
-  `no_widevine`, `unreachable`, `quota`). The library card: "42 tracks · read as Ella", context mode's notice, the
-  left-out count, "Open in Spotify" (`rel="noopener noreferrer"`), per-phone lines (`gated`/`phone_count` follow the
-  binding as the gate does), `unplayable` from `item_errors`. The streaming switch's text names Spotify (it streams,
-  never saved). The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link imports as a Spotify entry on
+  whose `items` is then null), `cache` 0, `lan` false. The binding is the **Spotify** group on Device › Music
+  (`/devices/{id}/music#music-spotify`, design 31 step 7's page; `handlers::music::spotify_binding_card`, shown once
+  an app is set up or accounts or a binding remain): "Plays as: Off | <account>" as an inline picker (`POST
+  /devices/{id}/music/spotify`, back to `#music-spotify`; `music_spotify_binding_changed`; an unknown id back at the
+  anchor with `music_notice=spotify_unknown` as the group's flash), its footer "One account per phone: this child's
+  own Premium account, never yours." (the account model above; the phone's hourly token carries every scope of its
+  account), the account's 6-month line, "one account on two phones" on both phones' pages, and
+  `music_state.spotify` in words (`SPOTIFY_WORDS`: `none`, `ok`, `reauthorize`, `refused`, `not_premium`,
+  `no_widevine`, `unreachable`, `quota`) - the account words as warnings above the group. A bound phone whose word is
+  `reauthorize`, `refused`, `not_premium` or `no_widevine` also raises the Attention row "Spotify can't play on this
+  phone" (`MusicWarnings.spotify_cant_play`, `attention::Kind::MusicSpotify`, to `#music-spotify`). The library row
+  (Music tab): "Spotify playlist · 42 tracks · 1 phone", "Open in Spotify" (`rel="noopener noreferrer"`) in place of
+  the Offline select; the entry page: "42 tracks · read as Ella", context mode's notice, the left-out count, the phones'
+  lines ("Plays as Ella", "Not sent - Spotify is off on this phone"; `gated`/`phone_count` follow the binding as the
+  gate does), `unplayable` from `item_errors`. "From Spotify ›" is the Music tab's fifth Add row. The streaming
+  switch's ⓘ names Spotify (it streams, never saved); the phone's Web Filter page (`/devices/{id}/filter`) says
+  Spotify's hosts are allowed while bound and marks the blocks it overrides. The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link imports as a Spotify entry on
   no phone, a short link is `Skip::SpotifyShortLink`, `spotify_user` sections stay `Skip::SpotifyProfile`.
 - **The DNS binding override** (step 3, §6.2): the policy's `music.spotify` = the phone is bound (`policy_music`;
   computed per request). For a bound phone `effective_blocklist` leaves out every domain `spotify::is_spotify_host`
@@ -987,29 +1001,29 @@ needed to manage the phone, delete on a schedule, never store notification or me
   the walk finished within the budget.
 - **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
   from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
-  and after an entry is deleted. The card's count line adds "· N with episode art" (not on a Storytel card: "N books" only).
+  and after an entry is deleted. The entry page's episodes line adds "· N with episode art" (not for Storytel: "N books" only).
 - Tests: `src/tests/music_art.rs`, the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
   `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
   `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).
 
 ## Parent PIN (design 24, `docs/design/24-parent-pin-hardening.md`, migrations `0056_parent_pin_easy.sql`, `0057_device_pin_events.sql`)
 
-- **Its own card and save**: `#parent-pin` on the device page, right after "Screen lock"; `POST /devices/{id}/parent-pin` (`handlers::parent_pin::update_parent_pin`, full auth) takes `new_pin` or `clear_pin`. `update_policy` (the Quick Controls/VPN form) no longer touches the PIN columns. Refused with a notice and nothing written: not 6-10 ASCII digits (`parent_pin_invalid` - silently ignored before), the kid's PIN (`override_is_kid_pin`), removing it while a kid PIN is set (`override_needed_by_lock`, the SQL `CASE` keeps it even against a parallel kid-PIN save). Security events `override_pin_changed`/`_cleared`; nudges the phone, which then takes the new PIN - and a fresh lockout state with it. Every outcome redirects to `?notice=<code>#parent-pin`.
-- **Easy PINs are warned about, never refused** (user's answer; no date check): `parent_pin::easy` - all one digit, every step +1 or -1 mod 10 (890123, 1234567890), or `COMMON_PINS`. Saved with `override_pin_easy = 1` and `parent_pin_saved_easy`; the card and the Status card show the warning. PINs stored before the check get it once from a startup task (`parent_pin::run_easy_sweep` with `easy_candidates()`, the 187 PINs `easy` flags: PBKDF2 per candidate, one device at a time, `UPDATE ... WHERE override_pin_hash = ?` so a newer save wins). `override_pin_easy` is not in the policy JSON.
-- **Notices inside their cards**: the `?notice=` codes of the parent PIN render at the top of `#parent-pin` (`parent_pin::flash_text`), the kid lock's at the top of `#screen-lock` (`kid_lock::flash_text`, `(text, warning)`); nothing at the top of the page. "Parent PIN" replaces "unlock code (offline override PIN)" on the device page.
-- **The phone's events** (`POST /api/devices/pin-events`, `handlers::parent_pin::pin_events`): read leniently field by field (`parent_pin::clean_event`) - a bad id (not 32 hex) or an unknown `kind`/`entry` is skipped and logged; a time outside 2020..now + 1 day is kept with the received time and `clock_off = 1`; an implausible `until_ms`/`failures`/`level` becomes null. `INSERT OR IGNORE` on `(device_id, event_id)`; only a newly stored `unlocked`/`lockout` also writes `parent_pin_used`/`parent_pin_lockout` to the security log, in the same transaction, its detail built only from the checked enums and numbers and saying when it happened on the phone (`parent_pin::log_line`: `device 3, 2026-10-09 14:02 UTC: ...`, the window's end dated) - the row's own time is its arrival. Wrong tries stay on the device page. **No `command_notify`**: a sync would end the override. Retention: 90 days by `received_at` (`retention::prune`).
-- **Device page**: the card lists the last 10 events ("2026-10-09 14:02 UTC (3 h ago): ..."), or says the launcher doesn't report yet (no `parent_pin_events_v1`). The Status card shows at most two notices from the last 24 h and since the PIN was last saved here (`device_policy.override_pin_set_at_ms`, so a new PIN ends them; `parent_pin::notices`): the latest use (with "Typed where your child could see?" for the time lock and the PIN lock), then a lockout (error) or else the count of wrong tries. The old `offline_override_used` banner shows only without the capability.
+- **Its own group and save**: `#parent-pin` on Lock Screen & PINs (design 31 step 4; a device page card before); `POST /devices/{id}/parent-pin` (`handlers::parent_pin::update_parent_pin`, full auth) takes `new_pin` or `clear_pin`. `update_policy` (the quick controls and the web filter switch) no longer touches the PIN columns. Refused with a notice and nothing written: not 6-10 ASCII digits (`parent_pin_invalid` - silently ignored before), the kid's PIN (`override_is_kid_pin`), removing it while a kid PIN is set (`override_needed_by_lock`, the SQL `CASE` keeps it even against a parallel kid-PIN save). Security events `override_pin_changed`/`_cleared`; nudges the phone, which then takes the new PIN - and a fresh lockout state with it. Every outcome redirects to `/devices/{id}/lock?notice=<code>#parent-pin`.
+- **Easy PINs are warned about, never refused** (user's answer; no date check): `parent_pin::easy` - all one digit, every step +1 or -1 mod 10 (890123, 1234567890), or `COMMON_PINS`. Saved with `override_pin_easy = 1` and `parent_pin_saved_easy`; Lock Screen & PINs shows the warning and the summary an Attention row. PINs stored before the check get it once from a startup task (`parent_pin::run_easy_sweep` with `easy_candidates()`, the 187 PINs `easy` flags: PBKDF2 per candidate, one device at a time, `UPDATE ... WHERE override_pin_hash = ?` so a newer save wins). `override_pin_easy` is not in the policy JSON.
+- **Flashes inside their groups** (design 31 §3.0): the `?notice=` codes of the Parent PIN render in `#parent-pin` (`parent_pin::flash_text`), the Child PIN's in `#child-pin` (`kid_lock::flash_text`, `(text, warning)`), under the group's rows; a refusal opens the form again. Nothing at the top of the page.
+- **The phone's events** (`POST /api/devices/pin-events`, `handlers::parent_pin::pin_events`): read leniently field by field (`parent_pin::clean_event`) - a bad id (not 32 hex) or an unknown `kind`/`entry` is skipped and logged; a time outside 2020..now + 1 day is kept with the received time and `clock_off = 1`; an implausible `until_ms`/`failures`/`level` becomes null. `INSERT OR IGNORE` on `(device_id, event_id)`; only a newly stored `unlocked`/`lockout` also writes `parent_pin_used`/`parent_pin_lockout` to the security log, in the same transaction, its detail built only from the checked enums and numbers and saying when it happened on the phone (`parent_pin::log_line`: `device 3, 2026-10-09 14:02 UTC: ...`, the window's end dated) - the row's own time is its arrival. Wrong tries stay in the PWA (Lock Screen & PINs › Recent use, and a count in the summary's Today). **No `command_notify`**: a sync would end the override. Retention: 90 days by `received_at` (`retention::prune`).
+- **PWA**: Lock Screen & PINs › "Recent use" lists the last 10 events as rows (`parent_pin::event_row`: a short title, the details under it, the local time with the exact one in `title`; a lockout red), or says Vibb doesn't report yet (no `parent_pin_events_v1`). The summary's Today shows at most two notices from the last 24 h and since the PIN was last saved here (`device_policy.override_pin_set_at_ms`, so a new PIN ends them; `parent_pin::notices`, typed `Notice { title, sub, error, child_tail }`, local times), each a row to `/lock#parent-pin`: the latest use (with "Typed where your child could see?" for the time lock and the PIN lock), then a lockout (red) or else the count of wrong tries. The old `offline_override_used` flag shows (as a warning on Lock Screen & PINs) only without the capability. The security log keeps its UTC lines (`parent_pin::log_line`).
 - Tests: `parent_pin::tests` (every easy rule, the full 6-digit loop against the candidates, `clean_event`, every line and notice), `src/tests/parent_pin.rs`.
 
 ## Windows that lock again, unseen boots (design 24b, `docs/design/24b-override-relock.md`, migrations `0063_window_relock.sql`, `0064_unseen_boots.sql`, `0067_relock_blocks.sql`)
 
-- **The phone's parent-PIN windows** (an override, a pause) lock down again by themselves; the launcher's `relock` report (status, capability `window_relock_v1`) says what it reset and what it couldn't undo. Stored re-serialized through the known fields only (`window_relock::sanitize_relock`: known trigger/windows/step names, valid package names, at most 8 per list, counts 0..1000) in `device_status.relock_json`. The Status card warns for 7 days after a relock that found something (`window_relock::relock_notes`): what it removed (Wi-Fi proxies, certificates, an Android screen lock), "Blocked: ..." (apps installed or re-signed from outside Play while it was open, each with its signing key from `blocked_signers`; one with another key than the catalog's pin - `tracked_apps.signer_sha256` - "stays blocked: uninstall it") with "Allow these apps" for the others until the phone answered one pressed after the relock, "Still on: ..." (accessibility services, notification access, device admins, a proxy on a network, a screen lock it couldn't remove), system apps turned off, the launcher's notifications off, failed steps. A new `at_ms` with findings writes `phone_relock_findings` (`window_relock::log_line`, the phone's time in the detail).
-- **Commands** (`handlers::window_relock`, full auth, plain forms): `POST /devices/{id}/end-windows` ("Lock the phone again now": shown in the Status card while the latest report has a pause or an install mode still running and the capability; the pause line then names it), `POST /devices/{id}/allow-blocked` and `POST /devices/{id}/start-pause` ("Pause restrictions for 2 hours", the phone's own pause without the PIN on it; shown while no pause is reported). The newest of each shows for a week with the phone's answer or "no answer from the phone yet" (`window_relock::answer_line`). Their own insert into `device_commands` - `locate::queue_command`'s "replace the undelivered one" skips them (`window_relock::OWN_INSERT_COMMANDS`) and they delete nothing (QA #8); the phone syncs once more after each. Security event `device_command_queued`; redirect to `/devices/{id}?notice=...` without a fragment, the notice in the Status card.
+- **The phone's parent-PIN windows** (an override, a pause) lock down again by themselves; the launcher's `relock` report (status, capability `window_relock_v1`) says what it reset and what it couldn't undo. Stored re-serialized through the known fields only (`window_relock::sanitize_relock`: known trigger/windows/step names, valid package names, at most 8 per list, counts 0..1000) in `device_status.relock_json`. The summary's Locked Again group shows for 7 days after a relock that found something (`window_relock::findings`, typed `Findings`, design 31 step 10): when (local, with its age) and why, what it removed (Wi-Fi proxies, certificates, an Android screen lock), what is still on (accessibility services, notification access, device admins by the phone's name for them, a proxy on a network, a screen lock it couldn't remove), system apps turned off, Vibb's notifications off, the failed steps in words. An older launcher's relock `blocked` apps (with their keys from `blocked_signers`) are the Blocked Apps group's for that week (`window_relock::relock_blocked`): one with another key than the catalog's pin - `tracked_apps.signer_sha256` - stays blocked ("Not the catalog's app: uninstall it"), "Allow these apps…" lets out the others until the phone answered one pressed after the relock. A new `at_ms` with findings writes `phone_relock_findings` (`window_relock::log_line`, the phone's time in the detail).
+- **Commands** (`handlers::window_relock`, full auth, plain forms): `POST /devices/{id}/end-windows` ("Lock again", a quick action on the summary while the latest report has a pause or an install mode still running and the capability), `POST /devices/{id}/allow-blocked` ("Allow these apps…", a `<details>` confirm under the Blocked Apps list that names the apps) and `POST /devices/{id}/start-pause` ("Unlock for 2 h…", a quick action behind a `<details>` confirm, the phone's own pause without the PIN on it; shown while no pause is reported). The newest of each shows in the summary's Today for a week: Answered (what the phone said behind the ⓘ), Cancelled, Expired or "No answer yet" (`window_relock::answer`, typed). Their own insert into `device_commands` - `locate::queue_command`'s "replace the undelivered one" skips them (`window_relock::OWN_INSERT_COMMANDS`) and they delete nothing (QA #8); the phone syncs once more after each. Security event `device_command_queued`; redirect to the summary group the form is in, the flash there (`window_relock::flash`): `/devices/{id}?notice=…#quick`, `…#blocked-apps` for Allow.
 - **Do Not Disturb** at the last sync is an Attention alarm linking to About This Phone › Sound, where it is a red value (`sound_mode::state`, typed).
-- **Current blocks** (fix of 2026-10-12): status `relock_blocks` `[{package_name, signer, reason, found, at_ms}]` - every app the phone keeps hidden whatever its tick, from a relock or the install check outside windows (`sanitize_relock_blocks`: valid names, a valid key or none, known reason `outside_play|other_key|catalog_key|unknown` and place `relock|install`, at most 16; `[]` = none, NULL = an older launcher) -> `device_status.relock_blocks_json` (0067), with `relock_blocks_total` (how many in all, stored only with the list - 0068; the card says "And N more - the phone lists at most 16 ...", `more_blocks_line`, QA of cmd-expiry Low 2). The Status card lists each with its key, why and when (`blocks_note`) and whether it is ticked under Apps ("Ticked under Apps: it shows again after ..." / "Not ticked under Apps: ... until you tick it too", linking to its row `#app-<package>`; nothing for an imposter or unmanaged apps - QA of cmd-expiry Low 3), with "Allow these apps" while one can be let out; one with another key than the catalog's pin stays ("uninstall it"). The button posts the listed apps with the keys shown (hidden `blocks` = `package:key,...`, `allow_form_value`/`parse_allow_form`; nothing valid -> 400) into `device_commands.payload` (0068), and the pop sends them as `pending_command.allow` `[{package_name, signer}]` (left out for other commands): the phone lets out only those, each while its key is still the one shown - never a block that came after the parent looked (QA of cmd-expiry, Low 1); a row from before 0068 has none and lets out every block, as before. `device_command_queued` names the apps. When the phone reports them, the last relock's "Blocked:" line gives way to this list. `phone_app_blocked` in the security log for each newly reported block.
-- **Foreign access** (the fix round, QA High 1 (b)): status `foreign_access` `{admins, accessibility}` (apps outside the allowlist with a device admin or an accessibility service on; valid package names, at most 8 each, `sanitize_foreign_access`) -> `device_status.foreign_access_json` (in 0063). While the latest report has one, the phone refuses the parent PIN and the Status card shows a red warning with the steps (`foreign_note`: pause from here, deactivate and uninstall on the phone, lock again, change the parent PIN); `phone_foreign_access` in the security log when it appears, changes or goes.
+- **Current blocks** (fix of 2026-10-12): status `relock_blocks` `[{package_name, signer, reason, found, at_ms}]` - every app the phone keeps hidden whatever its tick, from a relock or the install check outside windows (`sanitize_relock_blocks`: valid names, a valid key or none, known reason `outside_play|other_key|catalog_key|unknown` and place `relock|install`, at most 16; `[]` = none, NULL = an older launcher) -> `device_status.relock_blocks_json` (0067), with `relock_blocks_total` (how many in all, stored only with the list - 0068; the group's footer says "And N more the phone doesn't list ...", `Blocks::more`, QA of cmd-expiry Low 2). The summary's Blocked Apps group (`#blocked-apps`, the Attention row "N blocked apps wait" lands there) lists each by the phone's name for it (else its package), why and when, its package and key behind the row's ⓘ (`window_relock::blocks`, typed `BlockItem`/`BlockWhy`) and whether it is allowed under Apps ("Allowed" / "Not allowed", the ⓘ linking to its row on the phone's Apps page, `/devices/{id}/apps#app-<package>`; nothing for an imposter or unmanaged apps - QA of cmd-expiry Low 3), with "Allow these apps…" while one can be let out; one with another key than the catalog's pin stays ("Not the catalog's app: uninstall it"). The button posts the listed apps with the keys shown (hidden `blocks` = `package:key,...`, `allow_form_value`/`parse_allow_form`; nothing valid -> 400) into `device_commands.payload` (0068), and the pop sends them as `pending_command.allow` `[{package_name, signer}]` (left out for other commands): the phone lets out only those, each while its key is still the one shown - never a block that came after the parent looked (QA of cmd-expiry, Low 1); a row from before 0068 has none and lets out every block, as before. `device_command_queued` names the apps. When the phone reports them, the last relock's `blocked` gives way to this list. `phone_app_blocked` in the security log for each newly reported block.
+- **Foreign access** (the fix round, QA High 1 (b)): status `foreign_access` `{admins, accessibility}` (apps outside the allowlist with a device admin or an accessibility service on; valid package names, at most 8 each, `sanitize_foreign_access`) -> `device_status.foreign_access_json` (in 0063). While the latest report has one, the phone refuses the parent PIN and the summary shows a red warning (`#foreign-access`, the Attention row lands there) with the steps (`window_relock::foreign_view`, typed: the apps by the phone's name, the packages behind its ⓘ; Unlock for 2 h, turn them off and uninstall them on the phone, Lock again, change the Parent PIN); `phone_foreign_access` in the security log when it appears, changes or goes.
 - **Unseen boots** (H4, `boot_witness`): status `unseen_boots` `{count, last_at_ms}` (read leniently) -> `device_status.unseen_boots_count`/`_last_at_ms`; `boot_unseen` in the security log when the count rose; for 30 days an Attention alarm and About This Phone's "Starts without Vibb" row (`boot_witness::unseen`, typed: count, last time, `BootAdvice`) say so ("safe mode, or a start cut short"), advising "Block safe mode" or, with it on since before the boot was noticed (`device_policy.disallow_safe_boot_set_at_ms`, in 0064: set when the hardening card or the first kid PIN turns it on, cleared when off), "probably a start cut short" - otherwise both explanations. `disallow_safe_boot` by default (design 24b S4) waits for device check 6 on the Jelly Star.
-- Tests: `window_relock::tests`, `boot_witness::tests`, `src/tests/window_relock.rs`, `src/tests/hardening.rs` (`unseen_boots_*`).
+- Tests: `window_relock::tests` (the typed views in Oslo time), `boot_witness::tests`, `src/tests/window_relock.rs` (the summary's groups), `src/tests/hardening.rs` (`unseen_boots_*`).
 
 ## The lock's glance page (design 25, `docs/design/25-lock-glance.md`, migration `0066_lock_glance.sql`)
 
@@ -1027,21 +1041,22 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`app_display::valid_package_name`, the launcher's grammar). Cosmetic like the wallpapers: a failing query sends
   `apps: []` (missed calls only on the lock) and logs, never a 500. An older server's missing key reads as Element X,
   sender only on the phone; an older launcher ignores it - deploy order is free.
-- **PWA** (`handlers::lock_glance`, full auth, CSRF as every form): the Apps card's `<h3 id="lock-screen">On the lock
-  screen</h3>` (after the allow list, before "Names and icons"): the explanation, Low 8's warning (names show to anyone
-  holding the phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes
-  show too), the notes (`lock_glance::notes`: no kid PIN, `notification_listener_enabled` false, a reporting launcher
-  without `lock_glance_v1`), the switch (`POST /devices/{id}/lock-screen`, checkbox `show_text`, form
-  `#lock-screen-text`) and one auto-saving tick per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
+- **PWA** (`handlers::lock_glance`, full auth, CSRF as every form; Lock Screen & PINs since design 31 step 4, the
+  Apps card's "On the lock screen" before): the explanation and Low 8's warning (names show to anyone holding the
+  phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes show too) in
+  the Lock screen group's ⓘ, the warnings (typed `lock_glance::Note`: no Child PIN, `notification_listener_enabled`
+  false, a reporting launcher without `lock_glance_v1`), the switch "Show message text" (`POST
+  /devices/{id}/lock-screen`, checkbox `show_text`, form `#lock-screen-text`) and, under "Notifications on the lock
+  screen", one auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
   checkbox `on`, form `#lock-screen-app-<package>`). Listed: with an allowlist the allowed apps (the "Names and
   icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
-  too), never Play core or the launcher; every ticked package outside that list is added - "not allowed - ticked"
-  when the allowlist lacks it, else "not on the phone - ticked" (`lock_glance::unlisted_note`) - so any tick can be
+  too), never Play core or the launcher; every ticked package outside that list is added - "Not allowed"
+  when the allowlist lacks it, else "Not on the phone" (`lock_glance::unlisted_note`) - so any tick can be
   removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
   that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
   `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
-  the lock screen: on"); nudges; redirect to `/devices/{id}` without a fragment (scroll-restore keeps the place). The
-  Launcher card's listener warning and the Screen lock card's text name the lock's first page.
+  the lock screen: on"); nudges; redirect to `/devices/{id}/lock` without a fragment (scroll-restore keeps the place). The
+  Home Screen's notification-access warning and the Lock screen group's ⓘ name the lock's first page.
 - Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (the migration on an old database, the trigger, the
   cascade, the policy incl. a dropped table, both routes, refusals, the page and its notes), `policy_json_keys_snapshot`
   (`lock_glance` non-null, a fresh phone's `{"apps": ["io.element.android.x"], "show_text": false}`; the launcher's
@@ -1092,15 +1107,16 @@ needed to manage the phone, delete on a schedule, never store notification or me
   only as SHA-256 of the normalised code (upper-case, no spaces/dashes) in `devices.enrollment_code_hash` with
   `enrollment_code_kind` - `qr` (26 chars base32, 30 min, only in the setup QR) or `typed` (8 chars of
   `TYPED_ALPHABET`, 15 min, shown as ABCD-EFGH); the plaintext column is cleared and never written (open codes died
-  with the migration). A new device has no code; "New code" (`POST /devices/{id}/regenerate-code`) renders
-  `enroll_code.html` once (`no-store`), the provision page makes a QR code. `enroll`: not code-shaped -> 401;
+  with the migration). A new device has no code; "New Setup Code" (`POST /devices/{id}/regenerate-code`) renders
+  `enroll_code.html` once (`no-store`), Connect (`/devices/{id}/provision`) makes a QR code. `enroll`: not code-shaped -> 401;
   typed-shaped -> 429 while paused or the client's failure bucket is full, 401 uncounted with no typed code live, a
   miss counts toward the bucket and `Enrollment::typed_failed` (20 an hour server-wide while a typed code is live
-  pause typed codes until the hour ends: `enroll_typed_paused`, the device page offers the QR); QR-shaped always
+  pause typed codes until the hour ends: `enroll_typed_paused`, the summary's Connect This Phone, Connect and the code
+  page say so and offer the QR); QR-shaped always
   checked. At most 8 enrollments at once (`Enrollment::gate`, taken before the body is read; the body then has 5 s). Use = one `UPDATE ... WHERE
   enrollment_code_hash = ? AND not expired RETURNING`; then the token index, streams, `device_enrolled` (with IP).
   Failures: throttled `enroll_failed`. Advanced › Connection (`/devices/{id}/advanced#connection`, the device page's
-  "Access" card until design 31 step 3; a phone not set up keeps the "Not enrolled yet" card on its page): the live
+  "Access" card until design 31 step 3; a phone not set up has the summary's Connect This Phone group instead): the live
   code's kind and local expiry, New Setup Code (re-enroll: disconnects the enrolled phone), Set Up with QR Code,
   Disconnect Phone… (a `<details>` confirm with the required box; `POST /devices/{id}/revoke`; `token_hash = NULL`,
   index, streams closed, `access_revoked`; back to `/devices/{id}/advanced?notice=…#connection`, the flash in the group).
@@ -1113,8 +1129,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   requests can't slip past it - QA 22 H2; locked = no code checked): 5 attempts lock 15 min, each further lock doubles
   (`lock_count`) up to 24 h, a lock running out resets nothing, only a complete login does (`reset_after_login`); a correct password on a locked
   account says so (`login_locked` event). The pending state (`pending_admin_id` + `pending_at`) lasts 5 min. After a
-  complete login with earlier failures the session carries a banner (`login_warning`, shown on Devices and Account
-  via `partials/login_warning.html`, `POST /account/dismiss-warning`, back to the page it was on); a signed-in session
+  complete login with earlier failures the session carries a banner (`login_warning`, a short orange row on Devices
+  and the full sentence on Account, `POST /account/dismiss-warning`, back to the page it was on); a signed-in session
   also sees wrong codes entered since its sign-in and the lock (`auth::live_warning`, from the `AdminUser` row - QA 22
   Low 9), and a password change lifts the counter and the lock. Sessions: `cycle_id()` after each step; the
   session stores `session_epoch`, and a password change, a 2FA reset (asks for the current password - user
@@ -1127,7 +1143,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
-  Provisioning: `GET /devices/{id}/provision` is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
+  Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
   the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
@@ -1145,8 +1161,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`/healthz` on `BIND_ADDR`, 0.0.0.0 -> 127.0.0.1, :: -> ::1, 3 s), `selftest-tls` (api.github.com through
   reqwest/rustls, any status passes), `reset-2fa <user>`. In docker: the root-helper routes (`/update/*`,
   `/system/*`, `/backups/format-drive`) aren't registered, the live mirror and app-update scheduler aren't
-  spawned, the Updates page (`updates::page`, pure) says "Set `HANDY_VERSION=X` in `.env`, then `docker compose pull
-  && docker compose up -d`" with no OS/Tailscale/helper cards, the Backups page has no external drive or mirror.
+  spawned, Software Updates (`updates::page`, pure) says "Version X is out" with "Set `HANDY_VERSION=X` in `.env`, then
+  `docker compose pull && docker compose up -d`" behind its ⓘ, no OS/Tailscale/installer groups, and Backups has no
+  external drive or mirror.
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
   Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
@@ -1178,7 +1195,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   characters, so "Europe/Olso" is stored) falls back to UTC and every clock time then says "UTC". `relative`
   ("just now", "3 min ago", "2 h ago", "yesterday 21:40", "12 Oct") uses the server's clock only, never the
   phone's; `exact` is for `title=`. `parse_db_utc` reads `datetime('now')` text and RFC 3339. The Settings hub's
-  "today" and backup time use it too. `parent_pin::when_text` remains for the cards the later steps move.
+  "today" and backup time use it too. `parent_pin::when_text` is gone (step 10 moved its last callers).
 - **Connection** (`streams::connection_state`, pure; `devices::connection_of` feeds it): last contact = the newest
   of `limits::last_access`, `devices.last_seen_at` and an open stream's `since`. Online = a stream open and contact
   <= `ONLINE_WINDOW_MINUTES` (60); Away = no stream and <= `AWAY_WINDOW_MINUTES` (45); else Offline; plus
@@ -1197,10 +1214,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct").
 - **Attention** (`src/attention.rs`): `facts(state, device, connection)` (or `facts_of` from cards already built,
   as the device page does) -> `items` = rows with a level (alarm/action), a typed title (<= 8 words;
-  `calls::CallProblem` types the call report's warnings), a target (the sub-page that fixes it, or the device page's card anchor until each card
-  has its sub-page) and `at_last_report`. A phone not set up has none; an Offline or Disconnected phone's
-  report-based rows are marked "At last report" and still count. The device page shows them in an "Attention" group
-  at the top; the Devices list shows their count as the badge - the same `items`, so they agree.
+  `calls::CallProblem` types the call report's warnings), a target (the sub-page that fixes it, or since step 10 a group of the summary: Restrictions
+  paused → `#quick`, the foreign app → `#foreign-access`, blocked apps → `#blocked-apps`) and `at_last_report`. A phone not set up has none; an Offline or Disconnected phone's
+  report-based rows are marked "At last report" and still count. The summary shows them in its Attention group; the Devices list shows their count as the badge - the same `items`, so they agree.
 - **Devices list** (`devices_list.html`, `devices::list_row`): avatar + dot, name, "Online · seen 3 min ago" (or
   the lock part while a rule locks it), the screen-time bar, the badge, Add Phone. The sign-in warnings are short
   orange rows at the top (`auth::live_warning_row`/`login_warning_row`); the full sentences stay on Account. Tests:
@@ -1212,7 +1228,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two
   rows at the bottom of the device page ("About This Phone · Vibb 0.23.6", "Advanced"). A rebuilt sub-page has the
   §3.0 header - a back link to the phone (`.nav-back`) and the large title - and includes `partials/tab_bar.html`
-  alone, without the brand bar (`partials/app_header.html` = brand bar + tab bar).
+  alone, without the brand bar (gone since step 15).
 - **About This Phone** (`GET /devices/{id}/about`, read-only): Connection (Status "Online since 08:12" from
   `connection_state`, Last contact, Last full report, Network from `limits::LastAccess`), Sound (`sound_mode::state`),
   Software (Vibb version, the music app's version from its versionCode, "Settings from server" = Applied or a
@@ -1248,16 +1264,278 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `step11.rs`, `step9.rs`, `play.rs`, `sound_mode.rs`, `cleanup.rs` (crash pin), `enrollment.rs`, `edge.rs`,
   `device_api.rs`, `command_receipts.rs`, `window_relock.rs`, `devices_list.rs`, `shell.rs`.
 
+## Lock Screen & PINs (design 31 step 4, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/lock`, `device_pages::view_lock`, `device_lock.html`), reached from a row at the
+  bottom of the device page ("Lock Screen & PINs · PIN on/off"); also for a phone not set up yet (PINs can be set
+  before setup). Groups in the LockScreen mockup's order: Child PIN, Parent PIN (+ "Recent use"), Screen, Lock screen,
+  Notifications on the lock screen.
+- **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
+  and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
+  `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
+  "Background" are inline `select.pick`s, "Show message text" and each app a switch - all `data-autosave` with a
+  `<noscript>` Save.
+- **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
+  `/lock?notice=…#child-pin`, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`,
+  `lock-wallpaper`, `lock-screen`, `lock-screen/apps` → `/devices/{id}/lock` with **no fragment** (scroll-restore
+  keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off →
+  `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
+- **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
+  `lock_glance::Note` the notes' sentences; `parent_pin::event_row` the PWA's event lines (`event_line`, `until_text`'s
+  same-day form) and `parent_pin::notices` takes the zone. A sub-page warning (`device_pages::Note`) may carry a `fix`
+  (an adb command) shown behind an ⓘ after its sentence (`partials/note_warning.html`), never in the visible text.
+- **Fix round (qa-31-s4-code):** "On the phone · Locked · 10:59" carries the report's local time, so an old report
+  never reads as now; `device_pages::load_policy` gives a 500 on a DB error (About, Advanced and this page), never the
+  defaults' "Child PIN · Off"; `device_pages::has_capability` is the pages' one capability check; the device page asks
+  `parent_pin::card` for the notices only (`with_events = false`), not the 10-event list.
+- **Shared builders:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is the
+  device page's and Lock Screen & PINs' (`devices::lock_screen_card` takes it).
+- Tests: `src/tests/device_pages.rs` (the moved forms, the row's value, the groups' order, the confirm, the redirect
+  table, `<noscript>` Saves, a phone not set up, 404), repointed `parent_pin.rs`, `step10.rs`, `lock_glance.rs`,
+  `window_relock.rs`, `device_api.rs` (screen timeout), `wallpapers.rs` (lock background), `devices_list.rs`,
+  `shell.rs`; unit tests in `kid_lock`, `parent_pin` (rows and notices in Oslo time), `lock_glance`, `attention`.
+
+## Home Screen and Web Filter (design 31 step 5, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **Home Screen** (`GET /devices/{id}/home`, `device_pages::view_home`, `device_home.html`; row "Home Screen · 3 per
+  row"): Language and Apps per row (`/launcher`, one form, two inline selects), the Wallpapers grid (`/wallpapers`, one
+  form) and the four Quick controls (`/policy` with `section=quick`). "Notification access off" sits above the first
+  group (`device_pages::notification_access_note`, the adb command behind its ⓘ; the Attention row's fact and target
+  `/home#layout`). A failed wallpaper read is a 500, never an empty grid (its Save would untick everything).
+- **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
+  On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - Default (the
+  list as everyone has it) / On / Off (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an
+  older form's `clear` / `enabled` still works; 400 other values, 404 unknown phone or list), with the list's download
+  problem as a short title (`dns_filter::FeedState::problem`; the global page keeps its sentence); Blocked / Allowed
+  on this phone (`/dns/domains/new` with `device_id`, `/dns/domains/{id}/delete`; a name that isn't a domain goes back
+  to its group with `?notice=not_a_domain_block|allow#blocked|allowed` from this page, a 400 from `/dns`; a domain
+  already in that list is kept once; a `device_id` that isn't a number is a 400 - never "every phone" -, an unknown
+  phone 404; a Remove whose row is already gone returns to the page its form's `device_id` names, which never picks
+  the row); Blocked Activity: the "Keep a log" switch (`/dns/log/{id}`) and, while on, the 200 newest arrivals sorted
+  by the phone's time in local time (a garbled phone time reads "Time unknown" and sorts last). Every read the page
+  needs fails as a 500 (the code QA fix round, `qa-31-s5-code.md`).
+- **`section` on `/devices/{id}/policy`** (§5.6, H1): `quick` writes only `quick_controls_mask` and returns to
+  `/home`, `filter` only `vpn_filter_enabled` and returns to `/filter`; no section (an older tab) writes both and returns
+  to the device page; another value 400. `kiosk_desired = 1` and the lock-task features in every case; 404 unknown phone,
+  500 on a DB error (it used to log and redirect).
+- **`back`** (§5.1) on the domain and list routes (`dns_filter::back_to`): `back=filter` returns to the phone's Web
+  Filter page - the phone from the path or the deleted row, never from the form -, anything else to the form's group on
+  `/dns` (step 14). Every form on the two phone pages returns to its page with **no fragment** (scroll-restore keeps
+  the place), pinned by
+  `tests::device_pages::home_and_filter_forms_return_to_their_page`.
+- **Old URLs** (L5): `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`. `/dns`
+  and `/dns/log` are in "The rest of Settings" below.
+- Tests: `src/tests/device_pages.rs` (both pages, the rows, the section test, the redirect table, the old URLs, bad
+  input, unreadable parts, a phone not set up), repointed `launcher_ui.rs`, `wallpapers.rs`, `sound_mode.rs`,
+  `cleanup.rs` (the log), `dns_blocklist.rs` (the phone's list problem), `lock_glance.rs`, `devices_list.rs`, `shell.rs`.
+
+## Device › Apps (design 31 step 6, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/apps`, `device_pages::view_apps`/`render_apps`, `device_apps.html` with
+  `partials/device_app_row.html`; the device page's row "Apps · 14 allowed", the count the Apps tab shows, "List
+  unreadable" for a corrupt allowlist): **Allowed** (Vibb first, "Always on", no switch; then every app switched on)
+  and **Not allowed**, one row per app from `devices::app_rows` - a tile (the icon the phone shows: its own Name and
+  icon, else the catalog's, else the first letter), the name, the state as a sub-line ("Installing 40%", "Not
+  installed · No release yet", a refusal red) and a switch, its own form; an allowed app with a package has its
+  `app_display_form` in a `<details>` under the row ("Name and icon: …"). The footer's ⓘ holds the keyboard and
+  accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
+  search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
+  `jstest/auto-reload.test.js`; Calls & Contacts uses it too): never once a save has started (a `submit`, a `change` on a `data-autosave`
+  control, `pagehide` - a reload would cancel the POST), never while a Name and icon form is open, never on a refused
+  save's page (the answer to a POST); a refusal's `?notice=` is dropped from the address once shown. A phone
+  not set up has the page too. Every read is a 500 on a DB error (`app_rows`, the names, the last report), never a
+  shorter list.
+- **Where the forms return** (§5.1, `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
+  forms): a switch (`/apps/toggle`, `back=apps`) to its row, `/devices/{id}/apps#app-<package>` (`#catalog-<id>` for a
+  catalog app without a package; `devices::app_anchor`) - the row moves between the groups and the fragment finds it,
+  with or without JS; `back=music` (or a page's old `anchor=music`) to Device › Music (step 7, below); a Name
+  and icon save to the same row (the action carries the fragment, for a refusal rendered in the answer);
+  `/app-updates` to `#downloads`. The blocked apps' "tick it" and the Apps tab's phone rows link to the rows.
+- **`toggle_app`** takes a package name (the status intake's rule) or exactly what the catalog row it names stores (an
+  older catalog's free-text package stays switchable). Refused at its row (`?notice=<code>&app=<row>`,
+  `devices::toggle_refusal`): a Play copy of a catalog app (`from_play`), a free-text package that isn't its catalog
+  row's (`not_an_app`). A 400: nothing at all, another free text, Play's core, Vibb by its catalog id or its package;
+  404 an unknown phone. A catalog app deleted since the page loaded returns to the group the tap came from
+  (`#not-allowed` / `#allowed`) with nothing written; every write's DB error is a 500. The device page's Apps row says
+  "Couldn't read" when the list can't be read ("List unreadable" is the corrupt allowlist).
+- Tests: `src/tests/device_pages.rs` (the page, the redirect table, refusals and failed reads, a phone not set up),
+  repointed `app_display.rs`, `tracked_apps.rs` (downloads, the Wi-Fi switch, the tab's links and count),
+  `catalog_pins.rs`, `play.rs`, `hardening.rs`, `window_relock.rs`, `device_api.rs`, `music.rs` (`back=music`);
+  `app_downloads::tests` (the labels in Oslo time).
+
+## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
+  `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
+  "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
+  read): warnings at the top (Vibb can't deliver music yet, the music app not reachable), **Music app** (the catalog
+  switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
+  `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
+  `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups
+  only for their footers), **Sonos speakers** and **On the phone** (only once the phone reported on music: the music
+  app's version with its package and code behind ⓘ - `device_pages::music_app_row`, About's too -, the library's
+  state with its size behind ⓘ, downloads waiting, the storage rows, the Storytel login; the report's age under the
+  group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
+  never an empty library or default settings.
+- **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
+  warnings and six orange rows - "Vibb can't deliver music yet" and "Music app not reachable" (→ the page),
+  "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
+  "Update Vibb and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
+- **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
+  rendered forms, each fragment checked to hold its form): the app switch to the page **without a fragment** (its
+  first group), refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
+  deleted since the page loaded to `#music-app`; an entry's switch to `#music-entry-<id>` (refused
+  `?music_notice=too_big&music_entry=<id>#music-entry-<id>`; an entry deleted since to `#library`); the settings form
+  to `#music-settings`, Sonos to `#music-sonos` (refused `?music_notice=sonos_*#music-sonos`). The policy JSON and
+  the music contract files are unchanged.
+- Tests: `src/tests/device_pages.rs` (the row, the groups, the redirect table, refusals and failed reads, a phone not
+  set up, the Music tab's and an entry page's links), repointed `music.rs` (the settings form, the older-phone
+  warning, the storage rows, the ticks and the app switch, Sonos, the report's rows) and `music_storytel.rs` (the
+  Storytel switch's note and warning, no secret on the phone's page).
+
+## Calls & Contacts (design 31 step 8, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/calls`, `handlers::calls::show_calls`, `device_calls.html`; the device page's row
+  "Calls & Contacts · 8 contacts" / "Not managed" / "Couldn't read" replaced the Calls & SMS card): the call report's
+  warnings above the groups (`partials/note_warning.html`: the problem's title, a sentence, an expert detail - an adb
+  command with the real package, a package name, the phone's own error - behind the ⓘ only); **Calls and SMS** (one
+  form, H1: Manage calls and SMS, Calls, SMS, Message button; "waiting" and "Call screening · Not granted" as rows in
+  it; the emergency, RCS, voicemail and spoofing facts behind the footer's ⓘ); **Contacts** (one row per contact: the
+  photo or the initial, the name, the number, "Both ways · Home"; the row opens its form - Can call, In the phone book,
+  On the home screen, Message button, Matrix ID, one form (§5.6); New photo / Remove Photo; **Remove Contact…** as a
+  `<details>` confirm, M6), Add Contact as a disclosure at the end. No country code here.
+- **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
+  rendered forms): `/calls/settings` → the page, no fragment (the page's first group; scroll-restore keeps the place);
+  a contact's save, photo and photo removal → `?open=<id>#contact-<id>` (its row, open again, with or without JS);
+  Add Contact → `#contact-<new>`; Remove Contact… → `#contacts`, also for a second tap. A contact that isn't on the
+  phone (another tab removed it) → `?notice=contact_gone#contacts` ("nothing was saved", at the top of the group); an
+  unknown phone 404. **Refusals render the page (400)** with that form open, what was typed and the reason under the
+  field (`aria-invalid`, `autofocus`): Add Contact's name or number, a contact's Matrix ID (the switches and picker as
+  sent), a photo. Every read the page needs is a 500 on a DB error.
+- **Typed (M5)**: `calls::CallReport { findings, screening_hint, auto_refresh }`; `Finding` (with its times and the
+  phone's strings) → `problem()` (`CallProblem`, the Attention row) and `note(zone, now)` (local times, report times
+  with their age; no package name, adb or raw code in the visible text, §2.2b). The old sentences, `warnings` and
+  `hints` are gone; the device page reads only `problems()`.
+- **The reload** while the phone confirms a change is `static/auto-reload.js` (was a `<meta refresh>`, which could
+  cancel a save on its way or lose a typed contact): every 3 s, never once a save started, never while a `<details>` is
+  open, never on a refusal's page. It keeps the place (qa-31-s8-code M1): before reloading it sets
+  `history.scrollRestoration = "auto"` (scroll-restore leaves "manual" on the entry after a save) and writes
+  scroll-restore's own record (`handy-scroll`), so the reloaded page restores the position. The Waiting row says
+  "Reload the page in a minute." (true with and without JS).
+- **A contact row's "· Home"** shows only for a phone-book contact (`outbound && show_on_home`, as the launcher's
+  `CallRules.kt` puts it on Home). Every form for a contact that is gone (a save, a refused Matrix ID, a photo, a photo
+  removal) lands on `?notice=contact_gone#contacts`; only Remove Contact… says nothing (it is done). The device page's
+  row says "Couldn't read" when the call report can't be read (its Attention rows would be missing).
+- **Phone Setup's second form** (L6): the default country code (`POST /settings/calls`, `#country-code`, Phone
+  Numbers group) → `/settings/provisioning?saved=country-code#country-code` (the flash in its group); 1-3 digits, a
+  leading + dropped; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code is a
+  500 on the page. Every phone is nudged. No `back` field: one form posts there (an older page's `device_id` lands on
+  Phone Setup too).
+- Tests: `src/tests/calls.rs` (the redirect table, refusals in place, gone contacts, the confirm, escaping, the
+  warnings and the screening row, local times, the country code), `calls::tests` (every finding's words),
+  `settings_pages` (Phone Setup's table), repointed `launcher_ui.rs`, `step9.rs`, `step10.rs`, `catalog_pins.rs`,
+  `cleanup.rs`, `attention.rs`.
+
+## Time Rules and Device › Time (design 31 step 9, `docs/design/31-pwa-redesign.md` §3.5, §8)
+
+- **Settings › Time Rules** (`GET /schedules`, `schedules.html`, links only): everyone's rules as rows ("Skole" over
+  "Mon-Fri 08:15-14:30 · calls off", `schedules::days_summary`; a rule that doesn't read says "Can't be read" and still
+  opens), Add Rule, the Daily Limit row ("Mon-Fri 90 min · Sat-Sun 2 h", `budget_summary`), a row per phone
+  ("Everyone's rules" / "Own rules") to its Time page. `/schedules?device=X` (an old bookmark) redirects to
+  `/devices/X/time` (L5). **Daily Limit** (`GET /schedules/screen-time`, `schedule_budget.html`): the 7 fields
+  (`partials/budget_rows.html`, also Device › Time's) as one form.
+- **The rule editor** (`GET /schedules/rules/{id}` chained with its POST, `GET /schedules/rules/new` and
+  `?device=X` for a phone's own; `schedule_rule.html`): one form, Save at the top (the RuleEditor mockup), Name, Type
+  as an inline select, "Calls with contacts", the 7 day rows, Exceptions as a `<details>` inside the form (H1: the
+  handler writes the exempt apps with every save); Delete Rule… a `<details>` confirm outside it. A stored rule that
+  doesn't read opens with what does and a warning (saving it again fixes it). Its tab is Settings, also for a phone's
+  own rule (its back link goes to the phone's Time page).
+- **Device › Time** (`GET /devices/{id}/time`, `schedules::view_device_time`, `device_time.html`; the device page's row
+  "Time · Everyone's rules / Own rules", "Needs attention" (orange) while the page shows the record or Vibb-too-old
+  warning, "Couldn't read" on a failed read): warnings (Vibb too old for time rules, the screen-time record unreadable,
+  incoming calls not blocked), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows
+  only when provably right, which needs the phone's `time_state.zone`: no launcher sends it yet -, today's screen time
+  with the extra minutes, the report's age with the exact local time in `title`), **Extra Time Today** (+15 min / +30
+  min / +1 h tiles), **Pause a Rule** (rule and length pickers, only with rules to pause), **Recent** (the 10 newest
+  lifts, `lifts::recent`, statuses local - `lifts::LiftState` -, End now), **Rules** (the own-rules switch, its own
+  form, and while off a row to everyone's rules), **Own Rules** (rows to the editor, Add Rule), **Own Daily Limit**. A
+  phone not set up has the page. Every read is a 500 on a DB error, never an empty list.
+- **Where forms return** (§5.1, `tests::time_pages::every_form_on_the_time_pages_returns_to_its_group`, built from the
+  rendered forms): a rule's save → `/schedules/rules/{id}?saved=1` (no fragment: Save is at the top), a new rule → its
+  page `?saved=added`, a delete → the list it was in (`/schedules?notice=deleted#rules`,
+  `/devices/{id}/time?notice=deleted#own-rules`); a save or delete of a rule deleted in another tab lands on that list
+  (`notice=gone_unsaved|gone`), nothing written. Daily Limit → `/schedules/screen-time?saved=1#screen-time`. On Device
+  › Time each form carries its group's fragment: the lifts (`back=time`) → `?done=extra|pause|gone#extra|pause`, End
+  now → `?done=ended|over#lifts` (`lifts::done_flash`); the switch → `#rules`, the limits → `?saved=budget#screen-time`.
+- **`section` on `/schedules/device/{id}`** (§5.6, H1): `switch` writes only `custom_schedule_enabled`, `budget` only
+  `daily_budget_json` (`COALESCE` of a NULL bind keeps the other), none both (an older tab), another value 400. Pinned
+  by `tests::time_pages::a_switch_only_post_keeps_the_limits`.
+- **Refusals in place**: a rule (no name, a day with one time or a time that isn't `HH:MM`, more than 50 apps) or a
+  limit (outside 0-1440) renders its page again (400) as typed (escaped, cut short), the reason under the field, which
+  is `autofocus`ed and `aria-invalid`; the editor also shows it in its sticky top bar beside Save, where a save's flash
+  shows too (qa-31-s9-code M2, L1); an unreadable stored rule's warning names the parts that will be saved empty;
+  a refused pause (the rule no longer applies) always lands on Device › Time's Pause a Rule, which then shows even
+  with no rule left; an unknown kind or another phone's rule stays a plain 400 / 404 (no page sends one). Times must be
+  `HH:MM` (what `<input type="time">` sends).
+- **Attention**: the screen-time record and Vibb too old for time rules → `/devices/{id}/time` (the warnings at its
+  top); incoming calls not blocked → Calls & Contacts. `TimeReport` now also reads `extra_minutes` and
+  `ledger_unreadable`; `time_state::rule_days` gives the badge its rules (the Devices list's too).
+- Tests: `src/tests/time_pages.rs` (the four pages, the redirect table, the section test, refusals, local times and
+  the zone-less badge, failed reads, the device page's row), repointed `time_rules.rs` (redirects, lift statuses in
+  local time, the escaped rule name on every page, the warnings on Device › Time and as Attention rows),
+  `devices_list.rs`, `shell.rs`; `lifts::tests`, `schedules::tests`, `attention::tests`.
+
+## The phone's summary (design 31 step 10, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **`/devices/{id}`** (`devices::view_device` → `render_device`, `device_detail.html`; a sub-page header "‹ Devices",
+  `partials/tab_bar.html` alone), top to bottom: the **header** (the large avatar and dot, the name, "Online · seen 3
+  min ago" with the exact time in `title`, "· changes may be delayed" while Away, "· changes wait until it's back"
+  while Offline, "Disconnected · access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet",
+  "Not set up"; the lock badge only while a rule locks - `devices::badge_and_screen`, the Devices list's rules, so no
+  end until the phone reports its zone -; today's bar); **Attention** (`attention::items`, the list's count); the
+  **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: a red "Unlocked on the phone" first while the last report has the restrictions
+  paused - what ends it, also for an older launcher -; +15 min, +30 min, +1 h,
+  Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
+  runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
+  launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid); **Today** (`#today`:
+  `lifts::today` - the lifts made since the local midnight and every pause still running - with End now, today's
+  24b answers and any still waiting, the Parent PIN notices; only when there is something or its flash); **Blocked Apps** (`#blocked-apps`, Allow these apps…);
+  **Locked Again** (`#relock`, the last relock's findings); the **Settings** rows (Calls & Contacts, Apps, Music,
+  Time, Lock Screen & PINs, Home Screen, Web Filter) and About This Phone / Advanced. A phone not set up has the
+  header, "Set a Parent PIN before setup ›" while managed without one, **Connect This Phone** (`#access`: the live code, the typed-code pause, New Setup Code - a POST -, Set Up
+  with QR Code ›) and every row live (each sub-page answers before setup; what is saved reaches the first policy).
+- **Where the forms return** (§5.1, `tests::summary::every_form_on_the_summary_returns_to_its_group`, built from the
+  rendered forms, each action carrying its group's fragment): the lifts (`back=summary`) →
+  `/devices/{id}?done=extra|pause|gone#quick` (`lifts::summary_group`; a refused pause says why there), End now →
+  `?done=ended|over#today`; `end-windows`/`start-pause` → `?notice=…#quick`, `allow-blocked` →
+  `?notice=allow_blocked_sent#blocked-apps` (the group shows for its flash even when the list is gone). A lift without
+  `back` (an older tab) lands on the summary too. The commands' payloads, `allow_form_value` and the once-per-relock
+  rule are unchanged.
+- **Reads**: the phone, its settings, its last report, its lifts, the catalog's pins and the 24b answers are a 500 on
+  a DB error (without the pins an imposter would be offered, without the answers an answered Allow; the Devices list's
+  badge reads them leniently); a row whose read fails
+  says "Couldn't read" (logged), as before.
+- **Typed (M5)**: `window_relock::{Blocks, BlockItem, BlockWhy, ForeignView, Findings, Answer, AnswerState, flash}`
+  replace `blocks_note`, `more_blocks_line`, `foreign_note`, `relock_notes`, `answer_line` and `flash_text` (deleted
+  with their unit tests); apps are named by the phone's label (`window_relock::app_names`), the package behind ⓘ;
+  times in the Phone Setup zone, a phone time with its age. `parent_pin::when_text` and `ago` are gone;
+  `parent_pin::notices` returns typed rows. The security log keeps its UTC lines.
+- Tests: `src/tests/summary.rs` (the header states, the badge and bar, the quick actions, the redirect table, Today in
+  local time, the not-set-up variant, the 500s), `src/tests/window_relock.rs`, repointed `command_expiry.rs`,
+  `device_api.rs`, `device_pages.rs`, `devices_list.rs`, `enrollment.rs`, `hardening.rs`, `parent_pin.rs`,
+  `time_pages.rs`, `time_rules.rs`; `window_relock::tests`, `parent_pin::tests`, `lifts::tests`, `attention::tests`.
+
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 
 - **`/apps`** (`tracked_apps::list_apps`, `apps_list.html`): **On phones** - a row per phone with "N allowed"
-  (`allowed_count`: what the phone's Apps card ticks - reported apps on its allowlist, not Play's core, plus catalog
+  (`allowed_count`: what the phone's Apps page switches on, the device page's Apps row's number too - reported apps on its allowlist, not Play's core, plus catalog
   apps chosen for it and not reported installed; the launcher not counted; "Not set up" before enrolment) -, then the
   **Catalog**: the icon tile (the catalog default's icon on its colour, else a letter), the name phones show with the
   admin name in the sub-line, "N phones" (`device_tracked_apps`; the launcher "all phones"), the version from the tag
   (`version_of`) or a badge instead (Off / Update failed - the in-memory last sync / No release yet), the launcher
-  first; the footer and Add App. Phone rows link through `phone_apps_href` (the device page, at `#app-<package>` from
-  an app page) until `/devices/{id}/apps` exists (step 6).
+  first; the footer and Add App. Phone rows link through `phone_apps_href` to the phone's Apps page
+  (`/devices/{id}/apps`, at `#app-<package>` from an app page; step 6).
 - **`/apps/tracked/{id}`** (`render_detail_full`): the sub-page header; Version, Last checked (local, relative,
   `display_time`), Check Now with the running state or the failed check's title + ⓘ; Show on phones as (the
   `app_display_form` partial); On phones (the phones with it ticked, every set-up phone for the launcher); Source &
@@ -1277,6 +1555,151 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Add App** (`tracked_app_add.html`): name, source (two radios before the rows, so CSS - no script - hides the
   GitHub fields for an upload), repo; filter, tag prefix, package and pre-releases under More Options
   (`TrackedAppAddTemplate::more_open`).
+
+## The Music tab (design 31 step 12, `docs/design/31-pwa-redesign.md` §3.4)
+
+- **`/music`** (`handlers::music::show`, `music.html`): the Library (one row per entry: cover or category tile,
+  name, "NRK series · 98 episodes · 2 phones", the live status on one line, then Check now and the Offline select;
+  `?edit=1` shows ↑ ↓ instead, the move redirecting to `/music?edit=1#entry-<id>`), Add (Podcast or NRK link and
+  Upload your own files as `<details>` forms that open on a refusal, From Storytel › "Signed in"/"No login", Import
+  from Vibb ›), On phones ("Anna · 6 of 9": ticks of the whole library, linking through `phone_music_href` to the
+  phone's Music page, `/devices/{id}/music` - from an entry's page to its row, `#music-entry-<id>`), Categories › and
+  Settings ›. Its CSS is in `style.css` (since `?v=14`, the
+  "Music tab" section; the code QA fix round moved it out of a per-page partial).
+- **Sub-pages** (sub-page header, `partials/tab_bar.html` alone): `/music/settings` (Check for new episodes as an
+  inline picker, the Storytel login with its notice and Remove Login…, the music app's catalog row, Files no entry
+  uses with Delete Files…), `/music/categories` (the `<details>` editors, Delete Category… for an unused one, Add a
+  category), `/music/import` (GET the form; `POST /music/import` renders this page with the preview). GETs chained
+  with their POSTs on one route (L5).
+- **Where forms return** (§5.1, `tests::music::every_form_on_the_music_pages_returns_to_its_page` posts every rendered
+  form): sweep and orphans → `/music/settings` (no fragment), the Storytel login and its removal →
+  `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories?open=<id>#category-<id>` (the editor stays open; delete:
+  no fragment), the import → `/music/import#import`; an entry's save → `/music/entries/<id>#settings`, Check now from
+  there `#status`, cover `#cover`, files `#files`/`#file-<id>`; the row's Check now and Offline → `/music#entry-<id>`;
+  delete → `/music#entries`. A form whose redirect has no fragment has none in its action either (a browser keeps the
+  action's over such a redirect). Every delete is a `<details>` confirm, no `confirm()` left
+  (`the_music_deletes_are_behind_a_confirm`).
+- **The entry page** (`music_entry.html`): Cover (with the kind and link) → Episodes/Books (`#status`) → Settings (one
+  form, the resume switch in it) → Files (each file's row opens its Delete File… confirm) → On phones (each phone's
+  report on the entry as its sub-line, `SweepView::phone_lines` → `(device, line)`; tests read it through
+  `tests::music::phone_line`) → Delete Entry…. The shelf (`music_storytel.html`) keeps its shape: a one-line intro, the
+  rest behind ⓘ; its links go to `/music/settings#storytel`.
+- **Local times** (M4): `SweepView`, `storytel_status` and `StorytelError::message` (the shelf's cooldown) take the
+  Phone Setup zone (`Zone::when` for what happened, `Zone::until` for "Next try", "Check again after" and the
+  cooldown's end; dates by the local day too). Every form posts to its group's fragment, every auto-saving form has a
+  `<noscript>` Save (`tests::music::check_forms`).
+
+## The Locate tab (design 31 step 13, `docs/design/31-pwa-redesign.md` §3.6)
+
+- **`/devices/locate`** (`handlers::locate::show_locate`, `device_locate.html`; the route is unchanged): the large
+  title, then with several phones and none chosen (or an unknown id) the phones as rows ("Online · seen 3 min ago" ›,
+  as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
+  state as a dot and in each `aria-label`, "Anna, online"; the chosen one `aria-current="true"` - the tab bar has the
+  page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
+  trail, the **last fix** as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
+  `title`; the marker's popup says the same, built with `textContent`), the phone's **answer** to the newest Update
+  Location (reworded, with when it came), the waiting line and its poll, **Update Location**; the two **warnings** as
+  orange rows (location off, erasing not ready); **Ring, Stop Ringing, Lock** as three tiles, **Erase Phone…** as a
+  `<details>` confirm with the type-the-name field; the footer with Lock's note behind ⓘ; **Recent** (the 10 newest:
+  "Lock" · "10:58 · Done", the line under it, **Cancel** while it waits); **Location Settings** (When to locate +
+  Every as one form - `location-policy` needs the mode on every post -, Keep history for, both auto-saving).
+- **Where the forms return** (§5.1, `tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`, built
+  from the rendered forms): Update Location → `?device={id}&requested=1#location` (the map and the wait in view; the
+  poll's reload goes to `#location` too), Ring / Stop Ringing / Lock / Erase → `#actions` (Recent right under it),
+  Cancel → `&cancel=done|too_late#recent` (its line in Recent), the two pickers → `#location-settings` (the last
+  group of a long page: a `<noscript>` Save or a save after a refused erase must not land at the top). Erase
+  Phone…'s form posts to `.../command/wipe#erase`: a wrong name renders the page there with the confirm open.
+- **Robust**: the actions queue only for an existing phone (`queue_command` checks it inside its transaction - the
+  replace, the used-up mark and the insert are one transaction; an unknown phone is a 404, a DB error a 500 "nothing
+  was queued"); every read on the page, `locations.json` and `locate-result.json` is a 500 on a DB error, never an
+  empty Recent or a made-up setting.
+- **Typed (M5)**: `DeviceCommand::status` (`models::CommandStatus`, `CancelledBy`, `Unconfirmed`) replaces
+  `status_line`; `models::command_label` names every command ("Stop Ringing", "Lock again", "Unlock for 2 h", never the
+  id); `locate::status_words` words a status in local time ("Expires 12:30 if the phone isn't back."); `locate::reword`
+  turns the launcher's answers into words (an unknown one is shown as sent); `locate::Fix` is the fix's age and
+  accuracy (`describe_fix` is gone).
+- Tests: `src/tests/locate_page.rs` (the redirect table, the erase refusal, the switcher and the list, local times
+  and the answer, Recent's labels and Cancel, the warnings and pickers, unknown phones and failed reads),
+  `handlers::locate::tests`, repointed `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`.
+
+## The rest of Settings (design 31 step 14, `docs/design/31-pwa-redesign.md` §3.6)
+
+- **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
+  Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
+  Password (`/account`), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+- **Where forms return** (§5.1; every action carries its group's fragment, so a save near the bottom never lands at the
+  top, with or without JS; `tests::settings_pages::check_forms`): Web Filter → `/dns#lists|blocked|allowed|server`
+  (`dns_filter::back_to` takes the group; a refused domain `?notice=not_a_domain_block|allow#blocked|allowed`, a list
+  without a name or an http(s) address `?notice=bad_list#lists` with Add a List… open; a second tap on Remove goes to
+  the group the form's hidden `list_type` names); a photo's switch → `/wallpapers#wallpaper-<id>`, an upload to the new
+  photo's row, a delete (a `<details>` confirm, idempotent) → `#all`, a refused upload renders at `#add` with the reason
+  under the field; Phone Setup → `?saved=1#saved` (a refusal renders the form again, 400, with what was typed - never the
+  key - and the reason under the field, a pasted key not kept and said so, the remove tick kept); Unban →
+  `/security?unbanned=<address>#banned` (the line only for an address no longer blocked). **Every success redirects**
+  (post/redirect/get, qa-31-s14-code M1: a reload never restores, updates, restarts or backs up again):
+  `/account?changed=password#password`, `/backups?done=backup|deleted|gone|schedule|upload|restore|format#<group>`
+  (`backups::Done`), `/updates?done=update|restart|os_check|os_upgrade|tailscale|reboot|app_schedule|os_schedule#<group>`
+  (`updates::Done`, `updates::request_action` writes the root helper's request file); the GET shows the line in that
+  group (`settings::Flash` + `partials/group_flash.html`). Only refusals render in the POST's answer, posting to their
+  group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`, `#drive`, `#app`, `#os`, `#tailscale`,
+  `#app-schedule`, `#os-schedule`): a password or typed confirm never goes into a URL; a refused Restore… or Format
+  renders with that confirm open and the reason under the typed field. `check_forms` asserts each fragment is the
+  form's own group. A refused Web Filter add keeps what was typed (`&typed=`, `&name=`, `&url=`).
+- **Testable without the working directory or the network**: `AppState::data_dir` (`data/`, a temp dir in tests)
+  holds the backups, the schedules and the root helper's request file; `ForkConfig::github_api` is a closed local port
+  in tests, so Software Updates renders at once.
+- **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a photo's Delete Photo…, a backup's Restore… and
+  Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
+  Updates and Update Tailscale stay one tap.
+- **Robust**: every page read is a 500 on a DB error, never an empty page (Web Filter, Blocked Activity, Phone Setup,
+  Security Log); every Web Filter write too (it used to redirect as if saved); a password change and a 2FA reset move
+  the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
+  out exactly when the change is
+  stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
+- **Texts (M5)**: the security log's event ids are labels (`admin::event_label`; every id the server writes has one,
+  pinned by `admin::tests::every_written_event_has_a_label`, which reads the writers in `src/` - a new event needs its
+  label there; an unknown id reads as its words), the row
+  says who and from where, the time local (`Zone::when`, the exact one in `title`), the stored detail and the id behind
+  the row's ⓘ; a ban's end with `Zone::until`; the live sign-in warning's lock end local (`auth::live_warning(admin,
+  zone, now)`); a backup's time local. The schedule summaries are gone (the forms show the values); the update, backup
+  and restore results are short `Flash`es; the installer command and the Docker commands sit behind ⓘ.
+- Tests: `src/tests/settings_pages.rs` (the redirect table for Web Filter, Wallpapers, Phone Setup and the Security
+  Log; Web Filter's refusals, rows and unreadable page; Blocked Activity's values; Wallpapers' confirm and refused
+  upload; Phone Setup's refusal and flash; Account's field errors, confirms and local lock time; the Security Log's
+  labels, escaping and local times; Backups' refusals in their groups), `tests::docker` (Software Updates on both
+  kinds, its confirms and where each result shows), `admin::tests`, repointed `admin_auth.rs`, `intake_limits.rs`,
+  `provisioning.rs`, `wallpapers.rs`, `dns_blocklist.rs`, `deploy_scripts.rs`.
+
+## Add Phone, sign-in, the tab pages (design 31 step 15, `docs/design/31-pwa-redesign.md` §3.7)
+
+- **Add Phone in 3 steps** on the pages that were there: **Name** (`/devices/new`, `device_add.html`; "Next" makes
+  the phone and redirects to Connect; an empty or > 40-character name (`devices::MAX_DEVICE_NAME_CHARS`) renders the
+  form again, 400, what was typed kept, the reason under the field; the name is trimmed), **Connect**
+  (`/devices/{id}/provision`, `provision_qr.html`: two choices, "QR code · New or reset phone" (the Wi-Fi fields and
+  Make QR Code, the GrapheneOS/adb detail behind the footer's ⓘ) and "Code · Phone already set up" (New Setup Code,
+  the adb detail behind ⓘ)), then **the QR code** (rendered in the POST's answer inside `#qr`, the form posts there, so
+  it lands on the QR with or without JS; its end local, `Zone::until`) or **the code** (`regenerate-code` →
+  `enroll_code.html`, "Setup Code", shown once, `no-store`, its end and the typed-code pause local). Both end on
+  **Done** → the phone's page for a phone not set up; for a connected phone both go back to Advanced › Connection and
+  warn that a new code cuts it off. "Server setup needed" (no `LAUNCHER_SIGNATURE_CHECKSUM` - no QR form then -, no
+  server address) is one red row with the env var / Phone Setup behind its ⓘ.
+- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password under 8 or over 63 characters (a 64-hex-digit raw key passes), or a password without a
+  name renders Connect again (400) with the reason under the field, never the password; nothing was made (the QR
+  code's capacity can't be overflowed by a form). A payload too long for a QR code (a huge server address or key)
+  is a 500 with a reason, checked before the code is made (the live code survives), never a panic; Connect's and the
+  code page's DB reads are 500s, not 404s.
+- **Sign-in pages** (`login.html`, `verify_2fa.html`, `setup_2fa.html`, `change_password.html`): one column
+  (`.auth-card`): the name, a large title, a grouped form, a wide button; a refusal is one red line (`role="alert"`)
+  above the form; the 2FA key shows once behind "Can't scan it?". Templates and titles only: `handlers::auth`'s
+  logic (lockout, pending expiry, session cycling, epoch, CSRF) is unchanged.
+- **The tab pages** (Devices, Apps, Locate, Music, Settings) include `partials/tab_bar.html` alone and open on their
+  large title under a 44px bar (`.title-bar`: "+" on Devices and Apps, Edit on Music; Settings and Locate start with
+  the title). `partials/app_header.html` is gone (the summary, step 10, has its back link); `shell::every_template_with_the_bar_sets_its_tab`
+  asserts no template names it. For a phone not set up, Back from Connect and the code page goes to the summary's
+  Connect This Phone group (`/devices/{id}#access`).
+- Tests: `tests::provisioning` (the add flow's table from the rendered forms, a connected phone, the name and Wi-Fi
+  refusals, "Server setup needed", 404s), `admin_auth::the_sign_in_pages_use_the_new_components`,
+  `shell::the_tab_pages_open_on_their_large_title`, repointed `enrollment.rs`, `devices_list.rs`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

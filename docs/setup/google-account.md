@@ -36,7 +36,7 @@ changes and starts the kiosk).
 while the phone sleeps. Without adb (QR provisioning, or later): launcher Settings -> "Pause all
 restrictions" -> "Background connection" ("Bakgrunnstilkobling") -> Allow, then end the pause. The
 phone's About This Phone page ("Battery optimisation") says which it is. Android's own battery page shows the launcher
-as "Unrestricted" whatever the real state - trust the device page.
+as "Unrestricted" whatever the real state - trust About This Phone.
 
 **Power-button gestures (bug 25b), in the same adb session:** `adb shell settings put secure
 camera_double_tap_power_gesture_disabled 1` and `adb shell settings put secure
@@ -46,8 +46,9 @@ second key, 15 and older only the first - `docs/testing/emulator.md` §4). Witho
 safe either way; these keep the camera from opening over Home. Leave Emergency SOS on.
 
 **With the provisioning QR there is no "before enrolling":** the QR enrolls the phone by itself,
-and its first policy blocks accounts and starts the kiosk at once. Untick "Block adding or removing
-accounts" on the device row before scanning, then follow the enrolled-phone steps below.
+and its first policy blocks accounts and starts the kiosk at once. Turn off "Block account changes" on
+the phone's Advanced page (Restrictions) before scanning - Add Phone creates the phone first, then its QR code -
+then follow the enrolled-phone steps below.
 
 **On an enrolled phone:**
 
@@ -76,7 +77,7 @@ Open before enrolling.
   handy's PINs; keep it with the credentials, section 6).
 - Network preferences -> **Auto-update apps** on, **over Wi-Fi only** (handy un-suspends the Play
   Store from 02:00 to 04:00 while the screen is off, so Play can update in that window). This is
-  Play's own setting - handy's "App updates only on Wi-Fi" on the device page covers only the apps
+  Play's own setting - handy's "Download apps on Wi-Fi only" on the phone's Apps page covers only the apps
   from handy's catalog and the launcher. Before launcher design 13 handy's VPN made the whole phone
   "metered", so Play's Wi-Fi-only updates (and other apps' unmetered jobs) never ran behind it; the
   VPN now takes its meteredness from the network below (section 10).
@@ -90,7 +91,7 @@ server; the calendar is DAVx5's CalDAV account, which is a separate account and 
 
 ## 6. Factory reset protection (FRP)
 
-After a wipe - from the recovery menu, or the remote wipe on the device page (it doesn't clear the
+After a wipe - from the recovery menu, or Erase Phone… on the Locate tab (it doesn't clear the
 reset protection, which helps with a lost phone) - Android's setup asks for the Google account that was on the
 phone, and won't continue without it. **Keep the account's address, password and 2-Step backup
 codes with the override PIN** (and the Play parental-controls PIN). After such a wipe, finish
@@ -114,8 +115,8 @@ from a launcher that doesn't report it yet). By hand, with adb allowed:
 1. Phone: launcher Settings -> **"Install from Play"** ("Installer fra Play") -> unlock code. The
    Play Store opens for 15 minutes (notification with "End now"; not during a time rule's lock).
 2. Install the app. It stays hidden on the phone until it is allowed.
-3. PWA, device page, "Apps": tick the new app.
-4. For **Element X**: on the "Calls & SMS" page, set the contacts' message button to "Element X"
+3. PWA, the phone's Apps page: turn the new app on.
+4. For **Element X**: on the phone's Calls & Contacts page, set the contacts' message button to "Element X"
    (per contact, or as the phone's default) and enter each contact's Matrix ID
    (`@name:matrix.org`).
 

@@ -19,7 +19,8 @@ Built and tested on the Android emulator; device tests on a Unihertz Jelly Star 
 
 - Server: [`server/DEPLOY.md`](server/DEPLOY.md).
 - Emulator test loop: [`docs/testing/emulator.md`](docs/testing/emulator.md) and `scripts/dev-rebuild.sh`.
-- Provisioning a phone: the server's Devices > Provision page (QR), or `adb` as in the emulator guide.
+- Provisioning a phone: the server's Devices › Add Phone (a setup QR code, or a setup code on a phone set up with
+  `adb` as in the emulator guide).
 - Google account and Play on the child's phone (optional): [`docs/setup/google-account.md`](docs/setup/google-account.md).
 
 ## Releases

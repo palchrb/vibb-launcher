@@ -127,7 +127,8 @@ in Spotify's order). **The kid's app shows no trace of Spotify** (the user, 2026
 like any other ("Musikk"/"Podkast", plain lines); the attribution Spotify's Developer Policy asks for is the PWA's
 only - a stated deviation (26c §7.3). **Built** (2026-10-13; step 8 2026-10-14): steps 1-8, each
 code step with QA's code review and its fix round, main merged in at `571f86f` (design 30; Spotify's migration is
-0074, after design 30's 0073). Owed: the DNS capture that replaces the provisional host list (one commit of the
+0074, after design 30's 0073) and at `5584772` (design 31 steps 4-15: Spotify's "Plays as" on Device › Music, "From
+Spotify ›" the Music tab's fifth Add row). Owed: the DNS capture that replaces the provisional host list (one commit of the
 list, the constants and the comment - the three `spotify_hosts.json` copies, the six constants -, before any tag of
 this release), `docs/testing/emulator.md` §6l
 (parts A1/A2 never ran; part B with the user's account), the Jelly Star checks (26c's QA checklist, the 2.5-hour Doze
@@ -152,8 +153,8 @@ the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 
 3b, the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
 release order of its step 1 status (no `server-v*` with step 1 before the `launcher-v*` and `music-v*` that read
 the two switches).
-Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built, which merged this main on
-2026-10-13 - its migration is `0074_music_spotify.sql`, after design 30's 0073).
+Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built, which merged this main at
+`5584772` on 2026-10-14 - its migration is `0074_music_spotify.sql`, after design 30's 0073).
 
 ## Repos
 
@@ -241,7 +242,7 @@ enrollment codes, the Docker image), QA 22's fixes, and the server part of the s
 
 **The lock's glance page (design 25, 2026-10-12, not device-tested yet)**: the PIN lock always comes up on a first
 page - clock, date, the music tile, the newest missed calls and messages (Element X ticked by default; the parent
-picks the apps and whether the text shows in the PWA's Apps card, "On the lock screen"), "Lås opp" and the emergency
+picks the apps and whether the text shows on the phone's Lock Screen & PINs page in the PWA), "Lås opp" and the emergency
 call. A row's tap asks for the code and then opens the conversation or the missed calls; under a time rule only what
 the rule leaves usable, over the time-rule screen. Read in memory only, never sent to the server; the lock's window
 is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the design's "Implementation status". **Lock fix round 25b** (2026-10-12): the camera gesture no longer crashes SystemUI on the lock (cameras off by policy while LOCKED), the lock re-fronts after a pause too (Recents), no transition or status-bar flicker at power-on, Emergency SOS works on the lock, Element X missed calls as missed-call rows, the music tile for any session on the glance page only (user decision); device checks in design 25.

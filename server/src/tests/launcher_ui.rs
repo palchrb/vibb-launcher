@@ -10,7 +10,7 @@ use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::{TestApp, TestResponse};
+use super::{Section, TestApp, TestResponse, assert_redirect, device_page, form_action_of};
 
 async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
     let res = app
@@ -171,7 +171,8 @@ async fn launcher_ui_defaults_and_form() {
             &[("language", "nb"), ("home_columns", "4")],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to Home Screen (design 31 step 5), no fragment: scroll-restore keeps the place.
+    assert_redirect(&res, &device_page(id, Section::Home), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         launcher_settings(&app, &token).await,
@@ -207,11 +208,14 @@ async fn launcher_ui_defaults_and_form() {
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("action=\"/devices/{id}/launcher\"")));
+    let action = format!("/devices/{id}/launcher");
+    assert_eq!(form_action_of(&page, "language"), Some(action.as_str()));
+    assert_eq!(form_action_of(&page, "home_columns"), Some(action.as_str()));
     assert!(page.contains("<option value=\"nb\" selected>"));
+    assert!(page.contains("<option value=\"4\" selected>"));
 }
 
 #[tokio::test]
@@ -225,11 +229,11 @@ async fn photo_is_reencoded_and_reaches_the_device() {
 
     let mut nudges = app.state.command_notify.subscribe();
     let res = upload(&app, &cookie, id, mamma, &jpeg_with_exif(&half_and_half())).await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/devices/{id}/calls").as_str()),
-        "{}",
-        res.text()
+    // Back to the contact's row, open (design 31 step 8).
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?open={mamma}"),
+        Some(&format!("contact-{mamma}")),
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
 
@@ -315,22 +319,67 @@ async fn bad_uploads_change_nothing() {
         b"\x89PNG\r\n\x1a\n broken".to_vec(),
         Vec::new(),
     ] {
+        // The page again, the contact open with the reason under its photo (design 31 step 8).
         let res = upload(&app, &cookie, id, mamma, &bytes).await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST);
-        assert!(res.text().contains("class=\"error\""));
+        let html = res.text();
+        let row = &html[html.find(&format!("id=\"contact-{mamma}\"")).unwrap()..];
+        assert!(row.contains("<details class=\"edit\" open>"), "{row}");
+        assert!(
+            row.contains(&format!("id=\"photo-{mamma}-error\"")),
+            "{row}"
+        );
     }
     let res = upload(&app, &cookie, id, mamma, &vec![0u8; 11 * 1024 * 1024]).await;
     assert!(res.status.is_client_error(), "{}", res.status);
     assert_eq!(photo_hash(&app, mamma).await, None);
     assert!(stored_files(&app).is_empty());
 
-    // A contact that isn't on this device.
+    // A contact that isn't on this device: back to the list, saying nothing was saved; an unknown
+    // phone is a 404.
     let (other, _) = app.enrolled_device("other").await;
     let stranger = contact(&app, other, "Stranger", "+4790000009").await;
     let png = encode(&half_and_half(), ImageFormat::Png);
     let res = upload(&app, &cookie, id, stranger, &png).await;
+    super::assert_redirect(
+        &res,
+        &format!("/devices/{id}/calls?notice=contact_gone"),
+        Some("contacts"),
+    );
+    assert_eq!(photo_hash(&app, stranger).await, None);
+    let res = upload(&app, &cookie, 9999, stranger, &png).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     assert_eq!(photo_hash(&app, stranger).await, None);
+
+    // Removing the photo of another phone's contact leaves it, and says nothing was saved
+    // (qa-31-s8-code L3, N3); an unknown phone is a 404.
+    upload(&app, &cookie, other, stranger, &png).await;
+    let hash = photo_hash(&app, stranger)
+        .await
+        .expect("the stranger's photo");
+    for (device, expected) in [(id, StatusCode::SEE_OTHER), (9999, StatusCode::NOT_FOUND)] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/contacts/{stranger}/photo/remove"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        if expected == StatusCode::NOT_FOUND {
+            assert_eq!(res.status, expected);
+        } else {
+            assert_redirect(
+                &res,
+                &format!("/devices/{id}/calls?notice=contact_gone"),
+                Some("contacts"),
+            );
+        }
+        assert_eq!(
+            photo_hash(&app, stranger).await.as_deref(),
+            Some(hash.as_str())
+        );
+    }
 }
 
 #[tokio::test]
@@ -394,6 +443,8 @@ async fn replaced_and_removed_photos_are_deleted() {
     assert!(stored_files(&app).is_empty());
 }
 
+/// Vibb can't read notifications: Home Screen warns (the sentence visible, the adb command only
+/// behind its ⓘ, design 31 §4.2) and the device page's Attention row links there.
 #[tokio::test]
 async fn missing_notification_access_is_a_warning() {
     let app = TestApp::new().await;
@@ -405,10 +456,11 @@ async fn missing_notification_access_is_a_warning() {
             "notification_listener_enabled": enabled,
         })
     };
-    let warning = "can't read notifications";
+    let warning = "Notification access off";
+    let row = format!("href=\"/devices/{id}/home#layout\" data-attention=\"notification-access\"");
 
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
     assert!(!page.contains(warning));
@@ -427,10 +479,24 @@ async fn missing_notification_access_is_a_warning() {
             .await;
         assert!(res.status.is_success());
         let page = app
-            .get_page(&format!("/devices/{id}"), &cookie)
+            .get_page(&device_page(id, Section::Home), &cookie)
             .await
             .text();
         assert_eq!(page.contains(warning), shown);
+        let summary = app
+            .get_page(&device_page(id, Section::Summary), &cookie)
+            .await
+            .text();
+        assert_eq!(summary.contains(&row), shown);
+        if shown {
+            // In the target's section, above its group; the command only in the ⓘ panel.
+            let at = page.find(warning).unwrap();
+            assert!(page[..at].contains("<section id=\"layout\""));
+            assert!(!page[..at].contains("<form"));
+            let command = page.find("allow_listener").expect("the fix");
+            let panel = page[..command].rfind("<details class=\"info\">").unwrap();
+            assert!(at < panel && !page[panel..command].contains("</details>"));
+        }
     }
 }
 

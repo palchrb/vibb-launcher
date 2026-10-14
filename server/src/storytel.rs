@@ -503,8 +503,8 @@ impl StorytelError {
         }
     }
 
-    /// The picker's text (UTC times).
-    pub fn message(&self) -> String {
+    /// The picker's text, times in `zone` (design 31 M4) and relative to `now`.
+    pub fn message(&self, zone: &crate::display_time::Zone, now: DateTime<Utc>) -> String {
         match self {
             StorytelError::NotConfigured => {
                 "No Storytel login is saved on this server.".to_string()
@@ -522,7 +522,7 @@ impl StorytelError {
             StorytelError::Cooldown { until } => format!(
                 "Storytel refused the saved login. Nothing is tried again before {} - save the \
                  password again to try now.",
-                until.format("%H:%M UTC")
+                zone.until(*until, now)
             ),
             StorytelError::NoJwt => {
                 "Storytel took the login but sent no session - try again later.".to_string()
@@ -1499,9 +1499,10 @@ mod tests {
                 }
             );
             assert!(
-                err.message().contains("before 11:02 UTC"),
+                err.message(&crate::display_time::Zone::utc_fallback(), t0)
+                    .contains("before 11:02 UTC"),
                 "{}",
-                err.message()
+                err.message(&crate::display_time::Zone::utc_fallback(), t0)
             );
             assert_eq!(app.fetch.count(), 0, "{minutes} min: no request");
         }
@@ -1739,7 +1740,13 @@ mod tests {
             assert!(!text.contains("k%40"), "{text}");
             assert!(!text.contains(&encrypt_password(PASSWORD)), "{text}");
             let storytel = StorytelError::Fetch(err);
-            assert!(!format!("{storytel:?} {}", storytel.message()).contains("pwd="));
+            assert!(
+                !format!(
+                    "{storytel:?} {}",
+                    storytel.message(&crate::display_time::Zone::utc_fallback(), Utc::now())
+                )
+                .contains("pwd=")
+            );
         }
     }
 
@@ -1801,7 +1808,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, StorytelError::Fetch(FetchError::Timeout));
         assert_eq!(
-            err.message(),
+            err.message(&crate::display_time::Zone::utc_fallback(), Utc::now()),
             "Storytel didn't answer in time - try again later."
         );
         app.fetch.delay(0);

@@ -45,6 +45,10 @@ pub struct TimeReport {
     pub used_minutes: Option<i64>,
     /// Today's budget including extra time; `None` = no limit.
     pub budget_minutes: Option<i64>,
+    /// The parent's extra time counted into today's budget.
+    pub extra_minutes: Option<i64>,
+    /// The phone couldn't read its screen-time record and counts today as used up.
+    pub ledger_unreadable: bool,
     /// The phone's own IANA time zone, when the launcher says it (none does yet).
     pub zone: Option<String>,
 }
@@ -73,6 +77,8 @@ impl TimeReport {
                 .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()),
             used_minutes: state["used_minutes"].as_i64().filter(|m| *m >= 0),
             budget_minutes: state["budget_minutes"].as_i64().filter(|m| *m >= 0),
+            extra_minutes: state["extra_minutes"].as_i64().filter(|m| *m > 0),
+            ledger_unreadable: state["ledger_unreadable"].as_bool() == Some(true),
             zone: state["zone"]
                 .as_str()
                 .filter(|z| !z.is_empty() && z.len() <= 64)
@@ -117,6 +123,18 @@ impl TimeReport {
             .to_string(),
         )
     }
+}
+
+/// Each rule's id and its 7 windows, for [BadgeContext::rules]. A rule whose days don't read is
+/// kept as "always on" (an empty list), which refuses any end.
+pub fn rule_days(rules: &[crate::time_rules::TimeRuleRow]) -> Vec<(i64, Vec<Option<DayWindow>>)> {
+    rules
+        .iter()
+        .map(|rule| {
+            let days = crate::time_rules::parse_days(&rule.days_json).unwrap_or_default();
+            (rule.id, days)
+        })
+        .collect()
 }
 
 /// The lock badge, while something locks the phone.
@@ -432,9 +450,16 @@ mod tests {
             (Some(42), Some(90))
         );
         assert_eq!(report.zone.as_deref(), Some("Europe/Oslo"));
+        assert_eq!(report.extra_minutes, Some(30));
+        assert!(!report.ledger_unreadable);
         let empty = TimeReport::parse(r#"{"active_rule_name":"  ","day":"13.10.2026"}"#).unwrap();
         assert_eq!(empty.active_rule_name, None);
         assert_eq!((empty.day, empty.zone.as_deref()), (None, None));
+        assert_eq!(empty.extra_minutes, None);
+        assert!(
+            TimeReport::parse(r#"{"ledger_unreadable":true,"extra_minutes":0}"#)
+                .is_some_and(|r| r.ledger_unreadable && r.extra_minutes.is_none())
+        );
         assert!(!empty.locking());
         assert_eq!(TimeReport::parse("[]"), None);
         assert_eq!(TimeReport::parse("not json"), None);

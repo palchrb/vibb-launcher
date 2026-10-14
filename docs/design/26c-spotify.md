@@ -1893,15 +1893,15 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 Final (step 7, 2026-10-13; it replaces the drafts written with the design and at the merge of main `571f86f`).
 
 **The branch**: `music-3-spotify` holds §11 steps 1-7, each code step with QA's code review and its fix round, step 8
-(2026-10-14, "Step 8 implementation status" below), and
-two merges of `main` - at `a5d30b9` (merge commit `5d6bd5b`) and at `571f86f` (merge commit `e4d4feb`, with its own
-code QA and fix round). `origin/main` is still `571f86f`, an
-ancestor: nothing on `main` is missing here. Last full runs: server `cargo test` 827 passed with `parent_pin` green (step 8's fix round), `cargo fmt --check`
-clean, clippy's 12 known warnings (step 7's run); launcher `assembleDebug testDebugUnitTest` 1146 tests (step 7's fix
-round; its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
-testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests (step 8's fix round); the four fakes'
-`--selftest`s OK. Step 7 changed docs only; step 8 changed the music app's strings and words, the server's copy and one
-fallback name, and their tests (`launcher/` untouched).
+(2026-10-14, "Step 8 implementation status" below), and three merges of `main` - at `a5d30b9` (merge commit `5d6bd5b`),
+at `571f86f` (merge commit `e4d4feb`, with its own code QA and fix round) and at `5584772` (design 31 steps 4-15,
+2026-10-14, "Merge of main (5584772)" below). `origin/main` is `5584772`, an ancestor: nothing on `main` is missing
+here. Last full runs, on the merge of main `5584772`: server `cargo test` 933 passed, `cargo fmt --check` clean,
+clippy's 12 known warnings, `node --test jstest/*.test.js` 25 passed; launcher `assembleDebug testDebugUnitTest` 1146
+tests (its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests; the four fakes' `--selftest`s OK. Step 7 changed
+docs only; step 8 changed the music app's strings and words, the server's copy and one fallback name, and their tests
+(`launcher/` untouched); the merge moved the Spotify controls onto design 31's pages.
 
 **Facts on 2026-10-13** (tags from `git ls-remote`, releases and runs from the GitHub REST API):
 - `server/Cargo.toml` says **0.24.0** here and on `main`. `server-v0.24.0` **is tagged** - on `6ae54e8`, a `main`
@@ -2040,16 +2040,17 @@ read literally):
    stamping them in the past would fix it); a red run stops a `server-v*` release.
 7. **For the main session**: `pre_migration_backup` comparing the set of applied versions (not `MAX(version)`) would
    end the out-of-order hazard for good (§14 item 12, 26b open point 6); until then 0073 before (or with) 0074.
-8. **A request to the main session for design 31 step 12**: design 31 doesn't name Spotify - its step 12 gives the
-   Music tab's Add four rows and its redirect list no `/music/spotify` entry, so built from design 31 alone it would
-   drop the "From Spotify ›" row (`templates/music.html`). When this branch merges, step 12 must take that row as a
-   **fifth Add row** (`/music/spotify`, the value "No app" / "No login" / "Signed in"), and may move the app and
-   account cards to `/music/settings` with a redirect from `/music/spotify` like its other anchors. **But
-   `/music/spotify/callback` and `/music/spotify/done` stay where they are, for good**: the callback is the redirect
-   URI every family registered in its Spotify dashboard (`spotify::CALLBACK_PATH`, the only https path
-   `valid_redirect_uri` accepts, the `spotify_login` cookie's `Path`, `SPOTIFY_REDIRECT_URI` in `.env`); moving it
-   breaks every family's next login until each parent edits the dashboard. The login-address rule stays too.
-   (`server/CLAUDE.md` and `PLAN.md` say the same.)
+8. **Design 31 step 12 - settled at the merge of main `5584772`** ("From Spotify ›" is the Music tab's fifth Add row;
+   the app and account cards stay on `/music/spotify`). The request as it stood: design 31 doesn't name Spotify - its
+   step 12 gives the Music tab's Add four rows and its redirect list no `/music/spotify` entry, so built from design 31
+   alone it would drop the "From Spotify ›" row (`templates/music.html`). When this branch merges, step 12 must take
+   that row as a **fifth Add row** (`/music/spotify`, the value "No app" / "No login" / "Signed in"), and may move the
+   app and account cards to `/music/settings` with a redirect from `/music/spotify` like its other anchors. **But
+   `/music/spotify/callback` and `/music/spotify/done` stay where they are, for good**: the callback is the redirect URI
+   every family registered in its Spotify dashboard (`spotify::CALLBACK_PATH`, the only https path `valid_redirect_uri`
+   accepts, the `spotify_login` cookie's `Path`, `SPOTIFY_REDIRECT_URI` in `.env`); moving it breaks every family's next
+   login until each parent edits the dashboard. The login-address rule stays too. (`server/CLAUDE.md` and `PLAN.md` say
+   the same.)
 9. **A later contract change**: an optional `{"rejected": true}` on the token route through a new appended bridge
    method would let the server refresh a token Spotify refused (§5.4's 401 row); the parent's card naming a context
    playlist the player's account can't open (§5.9) needs a report field.
@@ -2096,9 +2097,9 @@ Spotify client ID - each family registers its own (bring your own app, Spotify's
   and shows are checked at the sweep's interval (a playlist's tracks are read again only when it changed, or after a
   day), albums, tracks, episodes and artists daily. The quota is per developer account and shared with the phones'
   play calls: if Spotify says it is used up, the server pauses its Spotify reads for an hour.
-- **The phones**: a phone gets Spotify entries only while its Music card says "Spotify plays as <account>". For such
-  a phone the Web Filter never blocks Spotify's hosts - a parent's own block of `spotify.com` or `scdn.co` is
-  overridden on that phone for every app (the device page and the Web Filter page say so).
+- **The phones**: a phone gets Spotify entries only while its Music page (Devices › the phone › Music) says "Plays as
+  <account>". For such a phone the Web Filter never blocks Spotify's hosts - a parent's own block of `spotify.com` or
+  `scdn.co` is overridden on that phone for every app (the phone's Web Filter page says so, and marks the blocks).
 - **Testing only, never on a real server**: `SPOTIFY_ACCOUNTS_BASE` and `SPOTIFY_API_BASE` point the server at
   `scripts/fake-spotify.py` and are honoured **only** as `http://127.0.0.1:<port>` or `http://[::1]:<port>` (anything
   else is ignored with a warning; while one is set Spotify requests may go to a private address, and the start logs a
@@ -4295,3 +4296,97 @@ All six findings fixed; none disputed. No contract file, no migration, `launcher
   mutation red, reverted); lint 0 errors, 42 warnings, none in a touched file. Server `cargo fmt --check` clean, `cargo
   test` 827 passed, 0 failed (L2's case inside `context_playlists_short_links_and_kinds`), `cargo clippy --all-targets`
   the 12 known warnings, none new. `python3 -I scripts/fake-spotify.py --selftest` OK.
+
+## Merge of main (5584772, 2026-10-14)
+
+`origin/main` at `5584772` (design 31 steps 4-10 and 12-15 since `571f86f`: the parent PWA rebuilt as iOS-style
+sub-pages - Device › Music (step 7, with the music warnings as Attention rows), Calls & Contacts (8), Time Rules (9),
+the phone's summary without the Status card (10), the Music tab with Settings, Categories and Import as their own
+pages (12), the Web Filter split into Settings › Web Filter and each phone's own page (5), the add-phone flow and the
+sign-in pages without the brand bar (15)) merged into `music-3-spotify` after step 8's fix round (`038822a`). No
+migration came from `main` (0073 is still its newest, design 30's; 0074 is ours), no contract file changed on either
+side of the merge, and `launcher/` and `music/` changed on `main` only in their `CLAUDE.md`. **Main's shell and pages
+win**; the Spotify parts moved to where design 31 puts their neighbours.
+
+Conflicts and their resolutions:
+- `server/templates/device_detail.html` (main rebuilt it as the summary; ours had the Music card's Spotify part and
+  the DNS note in the filter card): **main's file**. The Spotify part moved to **Device › Music**
+  (`templates/device_music.html`): a "Spotify" group (`<section id="music-spotify">`) between the settings form and
+  Sonos - the account warnings above it as orange notes, "Plays as" as an inline picker (`select.pick`,
+  `data-autosave`, `<noscript>` Save), the account's lines and the "its N Spotify entries aren't sent" note as row
+  notes, a refused save's reason as the group's flash, the footer "One account per phone: this child's own Premium
+  account, never yours. Accounts are on the Spotify page." The mobile-data sentence about Spotify went into the
+  Mobile data group's ⓘ (the streaming paragraph). The DNS note moved to the phone's **Web Filter page**
+  (`templates/device_filter.html`, `device_pages::view_filter`: `spotify_on`).
+- `server/src/handlers/dns_filter.rs`, `templates/dns_filter.html` (main moved the per-phone part of `/dns` to
+  `/devices/{id}/filter` and redirects `/dns?device=`; ours had the Spotify marks there, qa-26c-step3-code L5):
+  **main's files**; the marks moved with the per-phone part - `view_filter` reads which of the phone's blocks and of
+  the site-wide blocks are Spotify hosts while it is bound (`spotify_overridden`, `spotify_global`; a DB error is
+  the page's 500 like its other reads): "Not applied while Spotify is on for this phone" under the block's row, "Not
+  applied on Ella while Spotify is on for this phone (its Music page): i.scdn.co." and the DNS note under the filter
+  switch.
+- `server/src/handlers/music.rs` (6 hunks): main's `SweepCard.count`, local times (`Zone`), `phone_lines` returning
+  `(phone, line)` and Device › Music's `device_card` kept; ours on top - `check_after` stays a method (Spotify's card
+  shares it) but words its time with `self.zone.until` like main's inline code it replaces; `spotify_card` gives the
+  row's `count` ("42 tracks"; none in context mode) besides the entry page's line with the reader;
+  `spotify_phone_line` returns the line without the name, capitalised as main's ("Plays as Ella", "Not sent - Spotify
+  is off on this phone" through `gated`), its "(as of ...)" in the zone; `SpotifyBindingCard` and
+  `spotify_binding_card` unchanged, fed by `device_card` (`spotify_notice` from a `spotify_*` notice, as Sonos's);
+  `save_device_spotify` redirects to `/devices/{id}/music#music-spotify` (refused: `?music_notice=spotify_unknown`).
+  The "From Spotify ›" row's value (`spotify_state`) had auto-merged onto Music › Settings' template: moved back to
+  the tab's (`MusicTemplate`).
+- `templates/music.html` (main's tab): **main's file** plus **"From Spotify ›" as the fifth Add row** (after "From
+  Storytel ›", a green tile, the value No app / No login / Signed in, `id="spotify"` for the Spotify page's back
+  link) - open point 8, settled. The import's ⓘ (now `music_import.html`, auto-merged) says Storytel and Spotify
+  entries come over (Spotify ones on no phone), short links and profiles don't.
+- `templates/partials/music_card.html` (main's library row): **main's file**; a Spotify row shows "Open in Spotify"
+  in place of the Offline select (`sweep.offline` false).
+- `templates/music_entry.html` (main's entry page): **main's file**; ours re-applied - "Open in Spotify" by the
+  target, `list_title` ("Tracks"/"Episodes") as the status group's header, and for Spotify no offline field: the play
+  order (none in context mode, with the hint "Spotify picks the order ...") and the hint that Spotify streams ("the
+  phone's Music page").
+- `server/src/tests/music.rs` (the import test): main's `/music/import` page with our short-link reason.
+- `server/CLAUDE.md`: main's import paragraph with our Spotify import sentence.
+
+Not in a conflict, needed by the merge:
+- `templates/music_spotify.html` still included the brand bar (`partials/app_header.html`, which design 31 step 15
+  deleted): now the tab bar, a "‹ Music" back link (to `/music#spotify`) and the large title, like the Storytel shelf.
+  Its cards keep their step 1/2b markup inside (`.card` and friends are still in `style.css`); a rebuild as groups is
+  a later step (below).
+- **Attention** (design 31 §3.8, step 7's M1): `MusicWarnings.spotify_cant_play` - a bound phone whose last Spotify
+  word is `reauthorize`, `refused`, `not_premium` or `no_widevine` - raises a new orange row "Spotify can't play on
+  this phone" (`attention::Kind::MusicSpotify`, to `/devices/{id}/music#music-spotify`); the badge and the summary
+  count it like the other music rows. The account-side warnings (a login ending, two phones on one account, no app)
+  stay on the page only: `music_warnings` reads the phone's report and policy, never the accounts table.
+- **Event labels** (main's `every_written_event_has_a_label`, qa-31-s14-code M2): labels for `spotify_app_saved`,
+  `spotify_app_cleared`, `spotify_account_added`, `spotify_account_removed`, `spotify_login_failed`,
+  `spotify_login_needed`, `music_spotify_binding_changed`; the login failure's codes (`access_denied`,
+  `authorize_error`, `invalid_grant`) listed in `NOT_EVENTS`.
+- **The redirect table** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`): its phone now has a
+  Spotify app and a child's login, so the Spotify form is on the page and in the table (`account` -> `#music-spotify`,
+  the binding checked afterwards).
+- Tests moved with the pages: `the_device_card_binds_a_phone_to_an_account` reads `/devices/{id}/music` (the
+  streaming sentence in the ⓘ between the streaming and downloads paragraphs, the select's options, the redirects,
+  the refused save's flash) and the DNS note on `/devices/{id}/filter`, and pins the new Attention row on the summary
+  (raised by `not_premium`, gone with `ok` and when unbound); `the_cards_and_check_now` reads the library row ("Spotify
+  playlist · 3 tracks · 1 phone", "Open in Spotify", no offline form; context mode without a count) and the entry
+  page (the line with the reader, the notes, each phone's line through `tests::music::phone_line`);
+  `the_entry_page_has_no_offline_and_in_context_mode_no_order` ("Check Now"); the import's Spotify reason on
+  `/music/import`; `the_web_filter_page_says_what_spotify_overrides` on `/devices/{id}/filter` (and `/dns?device=`
+  redirecting there); the From Spotify row's markup.
+- Docs: `server/CLAUDE.md` (the binding on Device › Music, the Attention row, the library row and entry page, the
+  Web Filter page), `docs/testing/emulator.md` §6l (Plays as on the Music page, the DNS note on the Web Filter page),
+  this design's Release (the branch, the runs, open point 8 settled) and DEPLOY note, design 26, `PLAN.md`.
+
+Validation on the merge commit: server (from `server/`) `cargo fmt --check` clean, `cargo test` **933 passed**, 0
+failed, `cargo clippy --all-targets` the 12 known warnings (none in a file the merge touched), `node --test
+jstest/*.test.js` 25 passed; launcher `./gradlew assembleDebug testDebugUnitTest` BUILD SUCCESSFUL, 1146 tests (the
+debug build on the tsnet stub); music `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
+-PwarningsAsErrors=true` BUILD SUCCESSFUL, 845 tests, lint 0 errors (42 warnings, none new); `python3 -I
+scripts/fake-{sonos,storytel,spotify,audio}.py --selftest` all four OK.
+
+Owed: the browser pass of Device › Music's Spotify group, the Web Filter page's marks and the "From Spotify ›" row
+(390 px, light and dark, JS off - no browser here, as for design 31's own steps); the Spotify page itself is still
+step 1/2b's cards inside the new shell - rebuilding it as groups (design 31 §3.0's vocabulary), and moving its app and
+account cards to Music › Settings with a redirect, are a later step (`/music/spotify/callback` and `/done` never
+move); a code QA of this merge.

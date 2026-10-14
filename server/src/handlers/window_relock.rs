@@ -1,55 +1,69 @@
-//! Design 24b on the device page and in the status report: the Status card's "Lock the phone
-//! again now" (`end_windows`), "Allow these apps" (`allow_blocked`), "Pause restrictions for 2
-//! hours" (`start_pause`), the last relock's findings and the warning when the phone refuses the
-//! parent PIN (`foreign_access`, the fix round) - `crate::window_relock`.
+//! Design 24b on the phone's summary (design 31 step 10) and in the status report: "Lock again"
+//! (`end_windows`), "Allow these apps…" (`allow_blocked`), "Unlock for 2 h…" (`start_pause`), the
+//! last relock's findings, the blocked apps and the warning when the phone refuses the Parent PIN
+//! (`foreign_access`, the fix round) - `crate::window_relock`.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
+use chrono::{DateTime, Utc};
 
 use crate::AppState;
+use crate::display_time::Zone;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
-    self, ALLOW_BLOCKED, AllowedBlock, BlocksNote, END_WINDOWS, ForeignNote, RelockNotes,
-    START_PAUSE, WINDOW_RELOCK_CAPABILITY,
+    self, ALLOW_BLOCKED, AllowedBlock, Answer, BlockContext, Blocks, END_WINDOWS, Findings,
+    ForeignView, START_PAUSE, WINDOW_RELOCK_CAPABILITY,
 };
 
-/// What the Status card shows for design 24b.
+/// What the summary shows for design 24b, typed (the words are the template's).
+#[derive(Default)]
 pub struct RelockCard {
-    /// The launcher reports `relock` and takes the commands (`window_relock_v1`).
-    pub capable: bool,
-    /// "Lock the phone again now": a pause or Play install mode is open at the last report.
+    /// "Lock again": the launcher takes the commands (`window_relock_v1`) and a pause or Play
+    /// install mode is open at the last report.
     pub lock_again: bool,
-    /// The one-shot message after a command was queued (`?notice=`).
-    pub notice: Option<&'static str>,
-    /// The last relock's findings ([window_relock::relock_notes]).
-    pub notes: RelockNotes,
-    /// "Pause restrictions for 2 hours": no pause at the last report.
+    /// "Unlock for 2 h…": the launcher takes the commands and no pause is on at the last report.
     pub pause_button: bool,
-    /// The phone refuses the parent PIN ([window_relock::foreign_note]).
-    pub foreign: Option<ForeignNote>,
-    /// The last answer to each command, under a week old ([window_relock::answer_line]).
-    pub answers: Vec<String>,
-    /// What the phone blocks now ([window_relock::blocks_note]; fix of 2026-10-12).
-    pub blocks: BlocksNote,
-    /// "Allow these apps": a current block it lets out, or - from an older launcher - the last
-    /// relock's.
-    pub allow_button: bool,
-    /// Its hidden `blocks` value: the listed apps and the keys shown
+    /// The flash after a command was queued (`?notice=`): its summary group and text.
+    pub notice: Option<(&'static str, &'static str)>,
+    /// The last relock's findings, for a week ([window_relock::findings]).
+    pub findings: Option<Findings>,
+    /// The phone refuses the Parent PIN ([window_relock::foreign_view]).
+    pub foreign: Option<ForeignView>,
+    /// The newest answer to each command, under a week old ([window_relock::answer]).
+    pub answers: Vec<Answer>,
+    /// What the phone blocks now - or, from an older launcher, what its last relock blocked.
+    pub blocks: Blocks,
+    /// "Allow these apps…"'s hidden `blocks` value: the listed apps and the keys shown
     /// ([window_relock::allow_form_value], QA of cmd-expiry Low 1).
     pub allow_value: String,
 }
 
+impl RelockCard {
+    /// The flash for summary group [group], if the last command's is there.
+    pub fn flash_in(&self, group: &str) -> Option<&'static str> {
+        self.notice
+            .filter(|(g, _)| *g == group)
+            .map(|(_, text)| text)
+    }
+}
+
+/// [allowed]: the apps allowed under Apps, `None` when apps aren't managed. A failed read of the
+/// answers or the catalog's pins is the caller's error (qa-31-s10-code L4): without the pins an
+/// imposter would be offered to "Allow these apps…", without the answers an Allow already answered
+/// would be offered again.
 pub async fn card(
     db: &sqlx::SqlitePool,
     device_id: i64,
     latest: Option<&DeviceStatus>,
     notice: Option<&str>,
-    now_ms: i64,
+    zone: &Zone,
+    now: DateTime<Utc>,
     allowed: Option<&std::collections::HashSet<String>>,
-) -> RelockCard {
+) -> Result<RelockCard, sqlx::Error> {
+    let now_ms = now.timestamp_millis();
     let capable = latest.is_some_and(|s| {
         s.capabilities_json
             .as_deref()
@@ -58,75 +72,67 @@ pub async fn card(
     let open = latest.is_some_and(|s| {
         s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
-    let answers = last_answers(db, device_id).await;
-    let pins = catalog_pins(db).await;
-    // The phone's current blocks (`relock_blocks`, fix of 2026-10-12): the install check's too.
-    let blocks =
-        window_relock::parse_relock_blocks(latest.and_then(|s| s.relock_blocks_json.as_deref()));
-    let notes = match window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref())) {
-        Some(r) => {
-            let mut notes = window_relock::relock_notes(&r, now_ms, &pins);
-            if blocks.is_some() {
-                // Listed - all of them, as they are now - with the button below.
-                notes.lines.retain(|line| !line.starts_with("Blocked: "));
-                notes.allow_button = false;
-            } else {
-                // An older launcher: pressed after this relock and answered, the blocks it lists
-                // are gone (QA Low 10).
-                let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
-                if window_relock::allowed_since_relock(allowed, r.at_ms) {
-                    notes.allow_button = false;
-                }
-            }
-            notes
-        }
-        None => RelockNotes::default(),
+    let answers = last_answers(db, device_id).await?;
+    let pins = catalog_pins(db).await?;
+    let names = window_relock::app_names(latest.and_then(|s| s.installed_apps_json.as_deref()));
+    let ctx = BlockContext {
+        pins: &pins,
+        allowed,
+        names: &names,
+        zone,
+        now,
     };
-    let blocks = blocks
-        .map(|b| {
-            let mut note = window_relock::blocks_note(&b, &pins, now_ms, allowed);
-            note.more = window_relock::more_blocks_line(
-                b.len(),
-                latest.and_then(|s| s.relock_blocks_total),
-            );
-            note
-        })
-        .unwrap_or_default();
-    let foreign =
-        window_relock::parse_foreign_access(latest.and_then(|s| s.foreign_access_json.as_deref()))
-            .map(|f| {
-                window_relock::foreign_note(&f, latest.is_some_and(|s| s.restrictions_paused))
-            });
-    // One of the two lists is empty: with `relock_blocks` the relock's line yields to them.
-    let allow: Vec<AllowedBlock> = blocks
-        .allow
-        .iter()
-        .chain(notes.allow.iter())
-        .cloned()
-        .collect();
-    RelockCard {
-        capable,
+    let relock = window_relock::parse_relock(latest.and_then(|s| s.relock_json.as_deref()));
+    // The phone's current blocks (`relock_blocks`, fix of 2026-10-12), the install check's too;
+    // an older launcher has only its last relock's, until it answered an "Allow" pressed after it
+    // (QA Low 10).
+    let blocks = match window_relock::parse_relock_blocks(
+        latest.and_then(|s| s.relock_blocks_json.as_deref()),
+    ) {
+        Some(list) => {
+            window_relock::blocks(&list, latest.and_then(|s| s.relock_blocks_total), &ctx)
+        }
+        None => match &relock {
+            Some(r) => {
+                let allowed = answers.iter().find(|a| a.command == ALLOW_BLOCKED);
+                window_relock::relock_blocked(
+                    r,
+                    window_relock::allowed_since_relock(allowed, r.at_ms),
+                    &ctx,
+                )
+            }
+            None => Blocks::default(),
+        },
+    };
+    let paused = latest.is_some_and(|s| s.restrictions_paused);
+    Ok(RelockCard {
         lock_again: capable && open,
-        notice: notice.and_then(window_relock::flash_text),
-        allow_button: notes.allow_button || blocks.allow_button,
-        allow_value: window_relock::allow_form_value(&allow),
-        blocks,
-        notes,
-        pause_button: capable && !latest.is_some_and(|s| s.restrictions_paused),
-        foreign,
+        pause_button: capable && !paused,
+        notice: notice.and_then(window_relock::flash),
+        findings: relock
+            .as_ref()
+            .and_then(|r| window_relock::findings(r, &names, zone, now)),
+        foreign: window_relock::parse_foreign_access(
+            latest.and_then(|s| s.foreign_access_json.as_deref()),
+        )
+        .map(|f| window_relock::foreign_view(&f, paused, &names)),
         answers: answers
             .iter()
-            .filter_map(|a| window_relock::answer_line(a, now_ms))
+            .filter_map(|a| window_relock::answer(a, zone, now))
             .collect(),
-    }
+        allow_value: window_relock::allow_form_value(&blocks.allow),
+        blocks,
+    })
 }
 
 /// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled.
 type AnswerRow = (String, String, Option<String>, Option<String>, bool, bool);
 
-/// The newest of each of this design's commands for [device_id], with the phone's answer. Empty on
-/// a database error.
-async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_relock::CommandAnswer> {
+/// The newest of each of this design's commands for [device_id], with the phone's answer.
+async fn last_answers(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Vec<window_relock::CommandAnswer>, sqlx::Error> {
     let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
     let rows: Vec<AnswerRow> = sqlx::query_as(
         "SELECT command, requested_at, acknowledged_at, result, delivered_at IS NOT NULL, \
@@ -140,18 +146,15 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
     .bind(allow_blocked)
     .bind(start_pause)
     .fetch_all(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(device_id, %err, "can't read the window commands");
-        Vec::new()
-    });
+    .await?;
     // SQLite's datetime('now'): UTC, "YYYY-MM-DD HH:MM:SS".
     let ms = |text: &str| {
         chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
             .ok()
             .map(|t| t.and_utc().timestamp_millis())
     };
-    rows.into_iter()
+    Ok(rows
+        .into_iter()
         .filter_map(
             |(command, requested, acknowledged, result, delivered, cancelled)| {
                 Some(window_relock::CommandAnswer {
@@ -164,24 +167,21 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
                 })
             },
         )
-        .collect()
+        .collect())
 }
 
-/// The catalog's pinned signers (M10): package -> signing key. Empty on a database error (then no
-/// app is called "not the catalog's").
-async fn catalog_pins(db: &sqlx::SqlitePool) -> std::collections::HashMap<String, String> {
-    sqlx::query_as::<_, (String, String)>(
+/// The catalog's pinned signers (M10): package -> signing key.
+async fn catalog_pins(
+    db: &sqlx::SqlitePool,
+) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String)>(
         "SELECT package_name, signer_sha256 FROM tracked_apps \
          WHERE signer_sha256 IS NOT NULL AND package_name != ''",
     )
     .fetch_all(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(%err, "can't read the catalog's pinned signers");
-        Vec::new()
-    })
+    .await?
     .into_iter()
-    .collect()
+    .collect())
 }
 
 /// One of this design's commands: its own insert, never deleted by another command and deleting
@@ -240,8 +240,10 @@ async fn queue(
                 Some(&detail),
             )
             .await;
-            // No #fragment: scroll-restore.js keeps the place, the notice is in the Status card.
-            Redirect::to(&format!("/devices/{id}?notice={notice}")).into_response()
+            // To the summary group the form is in, where the flash is (design 31 §3.0, §5.1): the
+            // quick actions, or the blocked apps for "Allow these apps…".
+            let group = window_relock::flash(notice).map_or("quick", |(group, _)| group);
+            Redirect::to(&format!("/devices/{id}?notice={notice}#{group}")).into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => {
@@ -255,7 +257,7 @@ async fn queue(
     }
 }
 
-/// `POST /devices/{id}/end-windows` (full auth): "Lock the phone again now" - the phone ends a
+/// `POST /devices/{id}/end-windows` (full auth): "Lock again" - the phone ends a
 /// pause or an override and Play install mode, and locks again.
 pub async fn end_windows(
     State(state): State<AppState>,
@@ -275,13 +277,13 @@ pub async fn end_windows(
 
 #[derive(serde::Deserialize)]
 pub struct AllowForm {
-    /// The card's list ([window_relock::allow_form_value]).
+    /// The summary's list ([window_relock::allow_form_value]).
     #[serde(default)]
     pub blocks: String,
 }
 
-/// `POST /devices/{id}/allow-blocked` (full auth): "Allow these apps" - the phone lets out the
-/// blocks the card listed, each only while its signing key is still the one shown (QA of
+/// `POST /devices/{id}/allow-blocked` (full auth): "Allow these apps…" - the phone lets out the
+/// blocks the summary listed, each only while its signing key is still the one shown (QA of
 /// cmd-expiry, Low 1); apps on the allowed list show again.
 pub async fn allow_blocked(
     State(state): State<AppState>,
@@ -293,7 +295,7 @@ pub async fn allow_blocked(
     if allow.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            "No app to allow - reload the device page and press \"Allow these apps\" again.",
+            "No app to allow - reload the phone's page and try \"Allow these apps\" again.",
         )
             .into_response();
     }
@@ -308,8 +310,8 @@ pub async fn allow_blocked(
     .await
 }
 
-/// `POST /devices/{id}/start-pause` (full auth): "Pause restrictions for 2 hours" - the phone's
-/// own pause (it locks again by itself), without the parent PIN on the phone (the fix round, QA
+/// `POST /devices/{id}/start-pause` (full auth): "Unlock for 2 h…" - the phone's own 2-hour
+/// pause (it locks again by itself), without the parent PIN on the phone (the fix round, QA
 /// High 1: a phone that refuses the PIN, or one where it shouldn't be typed).
 pub async fn start_pause(
     State(state): State<AppState>,

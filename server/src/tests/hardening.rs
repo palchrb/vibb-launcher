@@ -219,14 +219,25 @@ async fn corrupt_allowlist_is_a_warning_on_the_device_page() {
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
-    // ... and the parent sees why.
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    // ... and the parent sees why: on Device › Apps (the cause behind its ⓘ), and as the Apps
+    // row's value on the device page.
+    let page = app.get_page(&device_page(id, Section::Apps), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    let warning = &html[html.find("data-warning").expect("the warning")..];
+    assert!(warning.contains("App list unreadable"), "{warning}");
     assert!(
-        page.text()
-            .contains("stored app list for this device can't be read"),
-        "{}",
-        page.text()
+        warning.contains("failed to build device policy"),
+        "{warning}"
+    );
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"apps\"").unwrap()..];
+    assert!(
+        row[..row.find("</a>").unwrap()].contains("List unreadable"),
+        "{row}"
     );
 }
 
@@ -235,19 +246,31 @@ async fn managed_device_without_pin_is_warned() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
-    let warning = "No parent PIN is set for this phone";
+    // The summary's Attention row (design 31 step 10; the device page's red card before) and the
+    // warning on Lock Screen & PINs it links to.
+    let row = format!("href=\"/devices/{id}/lock#parent-pin\" data-attention=\"no-parent-pin\"");
+    let warning = "data-warning=\"no-parent-pin\"";
+    async fn pages(app: &TestApp, id: i64, cookie: &str) -> (String, String) {
+        (
+            app.get_page(&format!("/devices/{id}"), cookie).await.text(),
+            app.get_page(&format!("/devices/{id}/lock"), cookie)
+                .await
+                .text(),
+        )
+    }
     // Unmanaged (no allowlist, calls unmanaged): nothing to warn about yet.
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(!page.text().contains(warning));
+    let (summary, lock) = pages(&app, id, &cookie).await;
+    assert!(!summary.contains(&row) && !lock.contains(warning));
 
     sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(page.text().contains(warning));
-    assert!(page.text().contains("with USB debugging blocked"));
+    let (summary, lock) = pages(&app, id, &cookie).await;
+    assert!(summary.contains(&row), "{summary}");
+    assert!(lock.contains(warning), "{lock}");
+    assert!(lock.contains("only a reset gets the phone back"), "{lock}");
 
     sqlx::query(
         "UPDATE device_policy SET override_pin_hash = 'aa', override_pin_salt = 'bb' \
@@ -257,8 +280,8 @@ async fn managed_device_without_pin_is_warned() {
     .execute(&app.db)
     .await
     .unwrap();
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(!page.text().contains(warning));
+    let (summary, lock) = pages(&app, id, &cookie).await;
+    assert!(!summary.contains(&row) && !lock.contains(warning));
 }
 
 #[tokio::test]

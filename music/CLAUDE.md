@@ -112,8 +112,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 
 - Nothing ever starts playback by itself: a restart brings the now-playing bar back paused (`NowPlayingRow`).
 - Playback never waits for the network: a copy plays as it is, a stream only through the gate (Wi-Fi unless the
-  parent's "streaming may use mobile data" switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the
-  queue moves on. The download job follows the other switch, "downloads may use mobile data" (design 30 §1.1:
+  parent's "Stream on mobile data" switch, never roaming), else "Ikke lastet ned - trenger Wi-Fi" and the
+  queue moves on. The download job follows the other switch, "Download on mobile data" (design 30 §1.1:
   `streamAllowed`/`downloadAllowed` in `logic/NetGate.kt`, one formula, `Store.streamMobileData` /
   `downloadMobileData`). The player's upstream asks the streaming switch again at every open (`StreamGate`, design
   30 §1.6): a copy's holes and the preloaded next item too; its refusal is "Ikke lastet ned", never an item error.
@@ -219,8 +219,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `NotConfigured`, `Refused` and `LoginFailed` stop Storytel for the run with no item error; `NoAudio` is `no_audio`
   (a day); `Failed`/`Unreachable` are transient (`http_<n>`/`network`, 2 min doubling, at most 6 h). A failure after
   the partial grew by at least max(1 MiB, 1 %) since the last one counts as the first again (`grewEnough`,
-  `GROWTH_FLOOR_BYTES`; every source). **With the parent's "downloads may use mobile data" switch on, Storytel books
-  download over mobile data like every other download** (often several hundred MB each; the device card says so). The report's
+  `GROWTH_FLOOR_BYTES`; every source). **With the parent's "Download on mobile data" switch on, Storytel books
+  download over mobile data like every other download** (often several hundred MB each; the phone's Music page in the PWA says so). The report's
   `storytel` is `StorytelAccount.state()` (`none`/`ok`/`refused`) and a Storytel entry's `waiting` is
   `storytelWaiting` (`login`, `storage` below the floor, else the shared rule).
 - **Storytel secrets** (design 26b §0, §6.1): the password, `pwd=` (AES with a public key: as good as the password),

@@ -33,9 +33,10 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   `scripts/fake-spotify.py`; the WebView host and `SpotifyRenderer`; the service, the UI and §6l; context mode and the
   debug-only state recorder; the docs; step 8, the user's decisions of 2026-10-14 - one Spotify account per phone,
   the child's own, the parent's never logged in, and no Spotify word anywhere in the kid's app, the attribution the
-  PWA's only), each step with QA's review and its fix round; main merged in twice
+  PWA's only), each step with QA's review and its fix round; main merged in three times
   (at `a5d30b9`, merge `5d6bd5b`; then at `571f86f` with design 30, merge `e4d4feb` - design 30 took 0073, so
-  Spotify's migration is **0074**). **Not done yet:**
+  Spotify's migration is **0074**; then at `5584772` with design 31 steps 4-15 - the Spotify controls on Device ›
+  Music, "From Spotify ›" on the Music tab). **Not done yet:**
   `docs/testing/emulator.md` §6l (parts A1 and A2 never ran - steps 5b and 6's acceptance; part B needs the user's
   account), the DNS capture that replaces the provisional `spotify_hosts.json`, the Jelly Star checks (26c's QA
   checklist, the 2.5-hour Doze run); the merge to `main` is the user's, then the tags in 26c "Release" (a launcher tag,

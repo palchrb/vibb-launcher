@@ -203,7 +203,7 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
         .get_page(&format!("/devices/{typed_device}"), &cookie)
         .await
         .text();
-    assert!(page.contains("Typed codes are paused until"), "{page}");
+    assert!(page.contains("Typed codes paused until"), "{page}");
     assert!(page.contains("/provision"));
 
     // A flood of QR-shaped junk first, then a real QR code still enrolls.
@@ -270,8 +270,14 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
             &[("name", "Kid")],
         )
         .await;
-    let location = res.location().unwrap().to_string();
-    let id: i64 = location.trim_start_matches("/devices/").parse().unwrap();
+    // Add Phone goes on to Connect (design 31 §3.7), which offers the code.
+    let connect = res.location().unwrap().to_string();
+    let id: i64 = connect
+        .trim_start_matches("/devices/")
+        .trim_end_matches("/provision")
+        .parse()
+        .unwrap();
+    assert_eq!(connect, format!("/devices/{id}/provision"));
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)
@@ -279,8 +285,12 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
             .await
             .unwrap();
     assert_eq!(kind, None, "no code until one is asked for");
+    let page = app.get_page(&connect, &cookie).await.text();
+    assert!(page.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+    // The phone's summary offers both too, in its Connect This Phone group (step 10).
+    let location = format!("/devices/{id}");
     let page = app.get_page(&location, &cookie).await.text();
-    assert!(page.contains("Not enrolled yet"));
+    assert!(page.contains("Connect This Phone"));
     assert!(page.contains("regenerate-code"));
 
     let first = app
@@ -304,13 +314,24 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
     assert_eq!(first_code.len(), 9, "ABCD-EFGH");
     // The device page says a code is live (in local time, never UTC), but never shows it.
     let page = app.get_page(&location, &cookie).await.text();
-    assert!(page.contains("Setup code works until"), "{page}");
+    assert!(
+        page.contains("<span class=\"row-label\">Setup code</span>"),
+        "{page}"
+    );
+    assert!(page.contains("Works until "), "{page}");
+    assert!(!page.contains("UTC"), "{page}");
     assert!(!page.contains(&first_code));
-    // "Back" from the code page returns to the not-enrolled card.
+    // Back from the code page returns to the summary's Connect This Phone group (`#access`, step
+    // 10); Done to the summary's top, where it waits to connect.
     assert!(
         first
             .text()
-            .contains(&format!("href=\"/devices/{id}#access\""))
+            .contains(&format!("class=\"nav-back\" href=\"/devices/{id}#access\""))
+    );
+    assert!(
+        first
+            .text()
+            .contains(&format!("href=\"/devices/{id}\" data-row=\"done\""))
     );
 
     let second = app
@@ -412,7 +433,17 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(summary.contains(&format!("href=\"/devices/{id}/advanced#connection\"")));
+    assert!(summary.contains(&format!(
+        "href=\"/devices/{id}/advanced#connection\" data-attention"
+    )));
+    // And the header says so, with "Connect again" there (L2).
+    assert!(
+        summary.contains("Disconnected</span> · access removed"),
+        "{summary}"
+    );
+    assert!(summary.contains(&format!(
+        "href=\"/devices/{id}/advanced#connection\" data-connect-again"
+    )));
     let events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'access_revoked'",
     )
@@ -437,7 +468,7 @@ async fn the_setup_qr_carries_a_qr_code() {
         .get_page(&format!("/devices/{id}/provision"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(!page.text().contains("class=\"qr-code\""));
+    assert!(!page.text().contains("data-row=\"qr\""));
     let res = enroll_from(&app, "203.0.113.7", &old).await;
     assert_eq!(res.status, StatusCode::OK, "the old code still works");
     let (id, old) = app.create_device("second").await;
@@ -447,11 +478,11 @@ async fn the_setup_qr_carries_a_qr_code() {
             Method::POST,
             &format!("/devices/{id}/provision"),
             Some(&cookie),
-            &[("wifi_ssid", "home"), ("wifi_password", "secret")],
+            &[("wifi_ssid", "home"), ("wifi_password", "not-a-real-pass")],
         )
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.text().contains("class=\"qr-code\""));
+    assert!(page.text().contains("data-row=\"qr\""));
     let kind: Option<String> =
         sqlx::query_scalar("SELECT enrollment_code_kind FROM devices WHERE id = ?")
             .bind(id)

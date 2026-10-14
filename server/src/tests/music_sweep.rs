@@ -7,8 +7,8 @@ use axum::http::{Method, StatusCode, header};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{Value, json};
 
-use super::TestApp;
 use super::music::{Canned, device_get, events, nudged, pretty_json, tick};
+use super::{TestApp, autosaves, form_action_of};
 use crate::music_net::FetchError;
 use crate::music_sweep::{self as sweep, CheckReport, parse_stamp, stamp};
 
@@ -1395,7 +1395,7 @@ async fn changes_wake_the_sweeper() {
             &[("hours", "3")],
         )
         .await;
-    assert_eq!(res.location(), Some("/music#sweep"));
+    assert_eq!(res.location(), Some("/music/settings"));
     assert!(app.state.music_sweep.woken().await, "the setting");
     assert_eq!(events(&app, "music_sweep_saved").await, ["every 3 hours"]);
     assert_eq!(sweep::sweep_hours(&app.db).await.unwrap(), 3);
@@ -2504,32 +2504,59 @@ async fn the_cards_say_what_the_sweep_knows() {
     .await
     .unwrap();
 
+    // The setting, on Music › Settings (design 31 §3.4): an inline picker, its hints behind ⓘ.
+    let settings = app.get_page("/music/settings", &cookie).await.text();
+    assert!(settings.contains("Check for new episodes"));
+    assert!(
+        settings.contains("Every 6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours)")
+    );
+    assert!(settings.contains("value=\"6\" selected"));
+    assert!(autosaves(&settings, "hours"));
+    assert_eq!(form_action_of(&settings, "hours"), Some("/music/sweep"));
     let page = app.get_page("/music", &cookie).await.text();
-    assert!(page.contains("Check for new episodes"));
-    assert!(page.contains("6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours)"));
     assert!(
         page.contains(
             "A public feed can never send the server or the phones to a private address."
         )
     );
-    assert!(page.contains("value=\"6\" selected"));
-    // The listed, capped, cut series.
-    assert!(page.contains("Radioteatret"), "the source's own title");
-    assert!(page.contains("98 episodes · newest: Andre del · 9 Oct"));
-    assert!(page.contains("first 100 episodes (the series has more)"));
-    assert!(page.contains("list cut to the first 98 (size limit)"));
+    // The listed, capped, cut series: its row counts, its page says the rest.
+    assert!(page.contains("98 episodes"));
     assert!(page.contains("Checked 2 h ago"));
-    assert!(page.contains(
-        "Ella: 2 of 5 offline · waiting for Wi-Fi · 1 failing (the source answered 403)"
-    ));
-    assert!(page.contains("Max: has an older list (as of 1 Oct 08:00 UTC)"));
-    assert!(page.contains("Ida: not reported yet"));
-    assert!(
-        page.contains("Ella: nothing on it reported yet"),
+    let ok_page = app
+        .get_page(&format!("/music/entries/{ok}"), &cookie)
+        .await
+        .text();
+    assert!(ok_page.contains("Radioteatret"), "the source's own title");
+    assert!(ok_page.contains("98 episodes · newest: Andre del · 9 Oct"));
+    assert!(ok_page.contains("first 100 episodes (the series has more)"));
+    assert!(ok_page.contains("list cut to the first 98 (size limit)"));
+    assert!(ok_page.contains("Checked 2 h ago"));
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Ella").as_deref(),
+        Some("2 of 5 offline · waiting for Wi-Fi · 1 failing (the source answered 403)")
+    );
+    // An old report says when, in the Phone Setup zone (no "UTC").
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Max").as_deref(),
+        Some("Has an older list (as of 1 Oct)")
+    );
+    assert_eq!(
+        super::music::phone_line(&ok_page, "Ida").as_deref(),
+        Some("Not reported yet")
+    );
+    assert!(!ok_page.contains("Times are UTC"));
+    let failing_page = app
+        .get_page(&format!("/music/entries/{failing}"), &cookie)
+        .await
+        .text();
+    assert_eq!(
+        super::music::phone_line(&failing_page, "Ella").as_deref(),
+        Some("Nothing on it reported yet"),
         "a report without the entry"
     );
+    assert!(failing_page.contains("On your home network or tailnet."));
     // The failing feed on the LAN, and the one never listed.
-    assert!(page.contains(", home network"));
+    assert!(page.contains(" · home network"));
     assert!(page.contains("Last check failed"));
     assert!(
         page.contains("the source answered 404. The phones keep the list from 8 Oct. Next try")
@@ -3158,4 +3185,64 @@ async fn the_card_says_checking_while_a_check_runs() {
             .unwrap()
             .contains("Checking…")
     );
+}
+
+/// The rows' times are local (design 31 M4, qa-31-s12-code L4): "Check again after" and "Next try"
+/// in the Phone Setup zone, without "UTC" - here Tokyo, UTC+9 all year.
+#[tokio::test]
+async fn the_rows_times_are_in_the_phone_setup_zone() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Asia/Tokyo' WHERE id = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let t0 = DateTime::parse_from_rfc3339("2026-10-13T10:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    app.state.music_sweep.set_clock(Some(t0));
+    let fresh = entry(
+        &app,
+        "https://example.org/fresh.rss",
+        "Fersk",
+        "auto",
+        "2026-10-01 10:00:00",
+    )
+    .await;
+    let failing = entry(
+        &app,
+        "https://example.org/fails.rss",
+        "Feiler",
+        "auto",
+        "2026-10-01 10:00:00",
+    )
+    .await;
+    // A check failed a minute ago: the next try is 15 minutes after it (10:14 UTC).
+    let failed_at = stamp(t0 - TimeDelta::minutes(1));
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, listed_at, checked_at, error, error_at, \
+           failing_since, failures) VALUES (?, '1111111111111111', '2026-10-08 10:00:00', ?, \
+           'http_404', ?, ?, 1)",
+    )
+    .bind(failing)
+    .bind(&failed_at)
+    .bind(&failed_at)
+    .bind(&failed_at)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    // Check now at 10:00 UTC: again after 10:15 UTC.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/music/entries/{fresh}/check"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection());
+    let page = app.get_page("/music", &cookie).await.text();
+    assert!(page.contains("Check again after 19:15"), "{page}");
+    assert!(page.contains("Next try 19:14"), "{page}");
+    assert!(!page.contains("UTC"), "{page}");
 }

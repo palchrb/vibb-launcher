@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 11 (the Apps tab) on `design-31-s11`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 7 (Device › Music) on `design-31-s7`, step 8 (Calls & Contacts) on `design-31-s8`, step 9 (Settings › Time Rules + Device › Time) on `design-31-s9`, step 10 (the summary) on `design-31-s10`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, step 15 (Add Phone, sign-in, the tab pages without the brand bar; the CSS clean-up after step 10) on `design-31-s15`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -817,7 +817,9 @@ value.
   with QR code ›**, and today's notices, `access.typed_paused` included (L6);
 - Remove.
 
-The sub-page rows show greyed out with "After setup".
+The sub-page rows stay live, as built in step 10 (the user can overrule): every sub-page answers for a phone not set up
+(steps 3-9) and what is saved there reaches the phone with its first settings - the PINs can be set first (step 4,
+choice 11), so the first policy already has its Parent PIN, and Advanced holds Restrictions and Remove Phone.
 
 ### 3.3 Apps
 
@@ -951,7 +953,7 @@ Every value comes from the database or memory, never from the network (M3):
 | | Web Filter | "3 lists" (count of enabled `dns_blocklists`) | `/dns`: shared blocklists, blocked and allowed domains, and the DNS server at the bottom (Q2: kept). The per-phone parts are on each phone's Web Filter page |
 | | Blocked Activity | "12 today" (a count of today's `device_dns_events`) | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
 | **Content** | Wallpapers | "5" (count) | `/wallpapers`; delete becomes a confirm (Q7); the per-photo "Also on the lock screen" stays (Q1) |
-| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` posts with `back=provisioning` and returns there (H3) |
+| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` returns there (H3; no `back` field - one page posts there, step 8's choice 4) |
 | | Backups | "Today 03:00" (the newest backup file's mtime) | `/backups` |
 | | Software Updates | **No value** | `/updates`. The hub never calls GitHub. No cached result of a check exists today (`data/app_update_last_check` holds only a date), so the row shows nothing (M3) |
 | | Account & Password | - | `/account` (password, two-factor, sign out everywhere) |
@@ -1322,10 +1324,10 @@ The rules for the redesign (H3):
    | Route | Posted from | `back` values | Default |
    |---|---|---|---|
    | `/devices/{id}/lifts`, `/lifts/{lift}/end` (`lifts.rs:123,154`) | summary, Device › Time | `summary`, `time` | summary |
-   | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (`window_relock.rs:244`) | summary, the blocked-apps target page | `summary`, `apps` | summary |
+   | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (as built in step 10: only the summary posts here - its Quick actions and its Blocked Apps group -, so rule 2 applies and there is no `back` field) | summary | - | the summary group the form is in (`#quick`, `#blocked-apps`) |
    | `/devices/{id}/apps/toggle` (today `anchor=music`, `devices.rs:1797`) | Device › Apps, Device › Music | `apps`, `music` | apps |
    | `/dns/domains/new`, `/dns/domains/{id}/delete`, the blocklist override (`dns_filter.rs:292-311,505`) | Settings › Web Filter, Device › Web Filter | `dns`, `filter` (with the device id) | `/dns` |
-   | `/settings/calls` (today → `/devices` without `device_id`, `calls.rs:946-950`) | Settings › Phone Setup | `provisioning` | `/settings/provisioning` |
+   | `/settings/calls` (as built in step 8: one page posts here, so rule 2 applies and there is no `back` field) | Settings › Phone Setup | - | `/settings/provisioning#country-code` |
    | `/schedules/rules[/{id}]`, `/delete` | the rule editor (everyone's or a phone's own) | the existing `scope` field decides | as §3.5 |
 
 4. **Anchors only where they help.**
@@ -1797,7 +1799,7 @@ at a time. Each moved card leaves a navigation row behind until step 10 turns wh
    - **Forms:**
      - `calls/settings` and each contact row stay one form each (H1);
      - Remove Contact… gets a confirm (M6);
-     - the country code moves to Phone Setup as a second form, with `/settings/calls` taking `back=provisioning` (L6).
+     - the country code moves to Phone Setup as a second form, returning there from `/settings/calls` (L6; as built, no `back` field: one page posts there).
    - **Templates:** `device_calls.html` in the new components; `provisioning_settings.html` gains the country code.
    - **Rust texts:** `calls::call_report` typed, with no package names (§2.2b).
    - **Tests:** `calls.rs`.
@@ -2233,3 +2235,1223 @@ Choices made while building:
 | L7 | Add App's wrapper has no `role="radiogroup"`/`aria-labelledby` any more: the two radios with one name are the group. |
 | Nits | (1) the header partial says only definition counts ("set it to anything"); (2) `style.css?v=11` kept, `v=12` if step 3's CSS lands first; (3) `DEPLOY.md`'s launcher setup says Add App, "File name contains", "Tag starts with" and that the package is pinned from the APK; (4) "Check Now" in the refused-release detail; (5) `version_of` strips a leading "v" first, then takes the first "-v" before a digit (`v2.1.0-v8a` -> "2.1.0-v8a"); (6) phones sort by name the same way on the tab and the app page (the Devices list's binary order); (7) the launcher's row says "no phones" until one is set up (`the_launcher_is_on_all_phones_only_once_there_are_some`); (8) the two result ⓘ are labelled "More about the refused upload/package"; (9) `.group-tiles` is gone: step 2's `.group-avatars` hairline reads `--avatar-inset` (72px), `.group-small` sets 64px; the unstyled `.flash-line`, `.flash-info` and `.catalog-empty` hooks are gone; (10) the tab's phone rows still open the device page at its top until step 6 (choice 1); `device_detail.html` is step 3's. |
 | Mutations | Each surviving mutation the review lists now fails a test: confirm redirecting to `/apps` (the redirect table, the confirm test), 404 as `GithubError` (`github_answers_are_classified`), download errors re-kinded (`a_failed_download_leaves_no_file`), Forget's form outside its confirm (the app page test), `\|safe` on the failure detail, the catalog label or the shared result partial (the escaping test), Play's core counted (the tab test); and dropping the `#upload` fragment fails three tests. |
+
+## Step 4 implementation status (2026-10-13)
+
+Built on branch `design-31-s4` (from `main` at `571f86fa`, steps 1-3 and 11 merged); server only, no migration, no
+new crate, no API change (the policy JSON and the launcher are untouched).
+- **Route:** `GET /devices/{id}/lock` (`device_pages::view_lock`, `device_lock.html`). Unknown phone: 404, a DB
+  error 500 (`load_device`). Every POST route is unchanged; only where the forms return moved.
+- **Lock Screen & PINs**, in the LockScreen mockup's order:
+  - **Child PIN:** the row "Child PIN · On · 4 digits" / "Off" opens a `<details>` with the field and **Save Child
+    PIN** (`kid-lock`); "Set a Parent PIN first" sits in it while there is none. The phone's lock as rows (On the
+    phone · Locked/Unlocked/Waiting for a report, Wrong PINs in a row, Next try in, Stepped aside) and warnings
+    above the group (Safe mode is allowed, Vibb needs an update, the `inactive` reasons, Calls can't ring over the
+    lock). **Remove Child PIN…** is a `<details>` confirm (M6). The flash in the group. Footer "Locks the phone when
+    the screen turns off." with §4.5 #1/#2 and §6.0's back-off facts behind its ⓘ.
+  - **Parent PIN:** the row "Parent PIN · Set / Not set" opens its form (field, hint, "Remove it instead" kept as a
+    checkbox, **Save Parent PIN**); warnings above (No Parent PIN set - when managed, as the Attention alarm; easy to
+    guess; the older launcher's "used offline"); the flash in the group; the footer "Opens the phone's settings and
+    lifts limits, even offline." with what it opens, the lockout ladder and "typed where your child could see?"
+    behind its ⓘ. **Recent use** (its own group under it): the last 10 events as rows, title · local time (exact in
+    `title`), the details under the title, a lockout red.
+  - **Screen:** "Turn off after" as an inline select (`screen-timeout`); "On the phone now" only while the phone
+    reports another value. Footer: "With a Child PIN, the phone locks when the screen turns off."
+  - **Lock screen:** "Background" as an inline select (`lock-wallpaper`: Same as Home or one of the phone's ticked
+    wallpapers) and the "Show message text" switch (`lock-screen`); footer "Anyone holding the phone can read the
+    message text." with what the lock's first page shows, Low 8's names/login-codes caution and the photo caution
+    behind its ⓘ.
+  - **Notifications on the lock screen:** one switch per app (`lock-screen/apps`, `#lock-screen-app-{pkg}` kept), a
+    ticked app outside the list with "Not allowed" / "Not on the phone" under its name, the empty and unreadable
+    states, the warnings above; footer "Missed calls always show."
+- **Redirects** (§5.1): `kid-lock` → `/devices/{id}/lock?notice=…#child-pin`, `parent-pin` →
+  `/lock?notice=…#parent-pin` (each lands on its group, where its flash is); `screen-timeout`, `lock-wallpaper`,
+  `lock-screen`, `lock-screen/apps` → `/devices/{id}/lock` with **no fragment**, so `scroll-restore.js` keeps the
+  exact place (§5.1.4, qa-31-s3-code M3). Pinned by the redirect table built from the rendered forms.
+- **The device page:** the Screen lock, Remove the kid's PIN, Parent PIN and Screen timeout cards, the Wallpapers
+  card's "Lock screen background" and the Apps card's "On the lock screen" are gone. A row **Lock Screen & PINs ·
+  PIN on/off** (the mockup's lock tile) heads the bottom group, before About This Phone and Advanced. The Status
+  card's Parent PIN links (foreign app, notices, easy PIN) and the no-PIN card point to `/lock#parent-pin`.
+  Attention targets moved: no / easy Parent PIN → `/lock#parent-pin`, "Lock is off on the phone" → `/lock#child-pin`.
+- **Rust texts (M5):** `kid_lock::LockNote` and `kid_lock::Inactive` replace `LockCard.lines`/`warnings` and
+  `inactive_warning` (deleted, with their unit tests rewritten); `lock_glance::Note` replaces `notes`' sentences;
+  `parent_pin::event_row` (typed rows, local times, an end past midnight with its date and clock) replaces
+  `event_line` for the PWA, and `parent_pin::notices` takes the zone (local times; "Parent PIN" spelled as §4.3);
+  the security log keeps its UTC sentences (`log_line`, step 14 relabels it). `kid_lock::flash_text` and
+  `parent_pin::flash_text` reworded (Child PIN / Parent PIN, no "sync"). `device_pages::Note` gained `fix`: an
+  expert fix (an adb command, a package name) shown only behind an ⓘ after a warning's sentence (§4.2).
+- **Shared builder:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is cut
+  out of `render_device`; the device page and Lock Screen & PINs (`lock_screen_card`) use it, and step 6 can too.
+- **CSS** `?v=13`: `details.edit` (a row that opens its form, the chevron turning), `.edit-body`, `.field-hint`, the
+  warning's inline ⓘ (`.attention-sub details.info`).
+- **Docs (L8):** `server/CLAUDE.md` (step 10's PIN lock, the screen timeout, Parent PIN, the lock's glance page, the
+  scroll rule's example, and a "Lock Screen & PINs" section), `docs/testing/emulator.md` (setup and the lock runbook),
+  `PLAN.md` (the glance page), the Locate page's Lock hint.
+- **Tests:** `tests/device_pages.rs` (the moved forms gone from the device page, its row and value, the groups'
+  order, the PIN forms inside their `<details>`, the Remove confirm, the redirect table, a `<noscript>` Save for every
+  auto-save, a phone not set up, the 404); repointed through `device_page(id, Section::Lock)` (new): `parent_pin.rs`,
+  `step10.rs` (the lock-state warnings, the adb fix behind its ⓘ), `lock_glance.rs`, `window_relock.rs` (the
+  foreign-app link), `device_api.rs` (the screen timeout), `wallpapers.rs` (the background), `devices_list.rs` (the
+  Attention targets exist), `shell.rs`; unit tests in `kid_lock`, `parent_pin` (rows and notices in Oslo time),
+  `lock_glance`, `attention`. `cargo test` 757 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy:
+  the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **The PIN rows open a form, not a picker:** §3.2 says the row "opens a `<details>` under it with the change field
+   and Save". The forms keep `required` off the Parent PIN field (an empty field with "Remove it instead" ticked is
+   a valid post) and put it on the Child PIN's (its remove has its own form now).
+2. **A refusal opens the form again** (and an easy Parent PIN, which is saved but invites a better one), so the
+   parent can retype without hunting for the row.
+3. **"Recent use" is its own group** under the Parent PIN's footer, not rows in the PIN group: up to 10 rows would
+   push the footer and its ⓘ a screen away.
+4. **"On the phone now"** for the screen timeout shows only while the reported value differs from the chosen one
+   (the old card always repeated it).
+5. **The device page keeps the Status card's Parent PIN notices** and the no-PIN card until step 10 builds the
+   summary; their links go to this page.
+6. **Warnings with an adb fix** (`android_credential`, a VoIP app without full-screen intents) show the command and
+   the package name only behind the warning's ⓘ (§4.2), via `Note.fix`. Step 3's Unsuspendable note still lists its
+   packages in the sentence; it can move to `fix` when Advanced is next touched.
+7. **"No Parent PIN set"** is a warning on this page too (only when managed, as the Attention alarm), so the
+   Attention row lands on its explanation.
+8. **Labels:** "Turn off after", "Background", "Show message text", "Notifications on the lock screen" and the
+   footers follow the LockScreen mockup and §6.0's table; "Show what's playing" is not built (no such setting; the
+   ⓘ says the lock shows it).
+9. **The Child PIN's ⓘ** drops the old card's fingerprint, safe-mode and Locate sentences: safe mode has its own
+   warning while it is allowed, and the rest is §4.5's cut.
+10. **A ticked app outside the list** still shows its package name as its label (the server knows no other name for
+    it), as before.
+11. **A phone not set up has the page** (qa-31-s4-code L6): its PINs can be set before setup, so the first policy the
+    phone fetches already has a Parent PIN and it is never managed without one (the old device page offered the PIN
+    cards before setup too). §3.2's not-enrolled paragraph now makes this row the exception to "After setup".
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses only step 1-3
+  components plus the four small rules above.
+
+**Fix round after the code QA** (`qa-31-s4-code.md`: 0 High, 0 Medium, 6 Low, 4 nits; all fixed):
+
+| # | Fix |
+|---|---|
+| L1 | `parent_pin::flashes_render_inside_their_groups` checks that a refused Child PIN (`needs_override`) opens its form and a saved one (`saved`) doesn't. The mutation `child_open: false` now fails it. |
+| L2 | `device_pages::lock_screen_and_pins_holds_the_moved_forms` checks `new_pin` is `type="password"` with `autocomplete="new-password"` and `new_kid_pin` plain text. The mutation `type="text"` now fails it. |
+| L3 | "On the phone" reads "Locked · 10:59" / "Unlocked · yesterday 21:40" (`Zone::when` of the report's `reported_at`), "At the phone's last report." behind its ⓘ; `LockNote::note` takes the time. Test: `device_pages::the_lock_state_says_when_it_was_reported` (a report from yesterday). |
+| L4 | `device_pages::load_policy` returns a `Result`: a missing row is the defaults, a DB error the 500 "Couldn't read this phone - check the server log." on Lock Screen & PINs, About and Advanced. Test: `device_pages::an_unreadable_policy_is_an_error_not_off`. |
+| L5 | CrashGuard: "…tries it again within 10 minutes of its next check-in…"; KeyguardNotDisabled: "Vibb may no longer manage this phone.", the device-owner check (`adb shell dpm list-owners`) in its `fix`. The warnings test hides "sync", "device owner" and an unknown code. |
+| L6 | Choice 11 above, and §3.2's not-enrolled paragraph amended. |
+| N1 | `server/CLAUDE.md`: the lock background returns to `/devices/{id}/lock`; wrong tries are on Lock Screen & PINs › Recent use and counted in the Status card. |
+| N2 | `parent_pin::card(…, with_events)`: the device page passes `false` and loads no event list. |
+| N3 | `device_pages::has_capability`, used by Lock Screen & PINs and `escapes_card`. |
+| N4 | An unknown `inactive` code: "Vibb reported a reason this server doesn't know.", the code behind the ⓘ. |
+| Checks | `cargo test` 759 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+
+## Step 5 implementation status (2026-10-13)
+
+Built on branch `design-31-s5` (from `main` at `58e97c1f`, steps 1-4 and 11 merged); server only, no migration, no
+new crate, no API change (the policy JSON, its snapshot and the launcher are untouched).
+- **Routes:** `GET /devices/{id}/home` (`device_pages::view_home`, `device_home.html`) and `GET /devices/{id}/filter`
+  (`device_pages::view_filter`, `device_filter.html`). Unknown phone 404, a DB error 500 (`load_device`,
+  `load_policy`, and every read the page needs). Every POST route is unchanged.
+- **Home Screen:** Language and Apps per row as two inline selects in **one** form (`/launcher`, §5.6); the
+  "Notification access off" warning above that group (§4.5 #3: the sentence visible, the adb command behind its ⓘ);
+  **Wallpapers**, the thumbnail grid as one form (`/wallpapers`), the upload page and the lock's background behind the
+  footer's ⓘ; **Quick controls**, the four switches as one form posting `/policy` with `section=quick` (Wi-Fi,
+  Bluetooth, Screen brightness, Sound or silent; §4.5 #12/#13 footer and ⓘ).
+- **Web Filter:** the **Web filter** switch (`/policy` with `section=filter`; §4.5 #11's footer, the rest behind its
+  ⓘ with a link to Settings › Web Filter); **Blocklists**, one inline select per list - "Default (On)" / On / Off
+  (`/dns/devices/{id}/blocklists/{list}/override`, `back=filter`) - with a list's download problem under its name
+  ("Not loaded yet", "Last download failed"); **Blocked on this phone** and **Allowed on this phone**, each domain a row
+  with Remove (one tap, §5.6) and an add row (`/dns/domains/new` with `device_id` and `back=filter`; the field has
+  `pattern`, the server checks again); **Blocked Activity**, the "Keep a log" switch (`/dns/log/{id}`) and, while on,
+  the newest 200 entries (domain, list, local time with the exact one in `title`).
+- **Forms (§5.1, §5.6):** `policy` takes `section` (H1): `quick` writes only `quick_controls_mask`, `filter` only
+  `vpn_filter_enabled` (`COALESCE` of a NULL bind keeps the other), no section writes both as before, another value is
+  a 400; `kiosk_desired = 1` and the lock-task features in every case. The domain and list routes take `back`
+  (`dns_filter::back_to`): `filter` → the phone's page, the phone from the path or the deleted row, never from the
+  form; anything else → `/dns`. Every form on both pages returns to its page with **no fragment**, so
+  `scroll-restore.js` keeps the exact place; each auto-save has a `<noscript>` Save.
+- **Redirects (L5):** `/dns?device=X` → `/devices/X/filter`, `/dns/log?device=X` → `/devices/X/filter#log`.
+- **The device page:** the Launcher, Wallpapers and "Quick Controls + Ad/content filtering" cards are gone; two rows,
+  **Home Screen · 3 per row** and **Web Filter · On/Off**, follow Lock Screen & PINs. The notification-access
+  Attention row targets `/home#layout`, from the same `device_pages::notification_access_note` the page shows.
+- **Rust texts (M5):** the notification-access warning is a typed `Note` (it was template text); a feed's state is
+  `dns_filter::FeedState` (`problem()` for a phone's row, `sentence()` for the global page until step 14); the log's
+  times go through `display_time` (a time the phone sent garbled reads "Time unknown", never the raw text).
+- **The global pages** (step 14 rebuilds them): `/dns` lost its per-device card for an "Each phone" group linking each
+  phone's Web Filter page; `/dns/log` is a list of phones, "Log on/off" ›, linking to `#log`.
+- **CSS** `?v=15` (step 12 takes `v=14`): `.row-action` (a text button at a row's end), `input.row-input` (a field that
+  is the row), `.wallpaper-grid`/`.wallpaper-choice`/`.wallpaper-thumb`.
+- **Docs (L8):** `server/CLAUDE.md` (launcher_ui, the listener warning, wallpapers, the VPN switch, the DNS log, sound
+  mode, Parent PIN, the lock's glance page, and a "Home Screen and Web Filter" section), `server/DEPLOY.md` (a feed's
+  state on a phone's page). `docs/testing/emulator.md`, `docs/setup/google-account.md`, `launcher/CLAUDE.md` and
+  `PLAN.md` name none of the moved cards.
+- **Tests:** `tests/device_pages.rs` (both pages, the device page's two rows and their values, the moved forms gone
+  from it, the section test `a_policy_section_leaves_the_other_section_alone`, the redirect table built from the
+  rendered forms of both pages `home_and_filter_forms_return_to_their_page`, the old URLs, bad input on the shared
+  routes, unreadable parts as 500, a phone not set up, the log's local times and escaping); repointed through
+  `device_page(id, Section::Home | Filter)` (new): `launcher_ui.rs` (the form, the warning with its fix behind ⓘ and
+  the Attention link), `wallpapers.rs`, `sound_mode.rs` (`section=quick`), `cleanup.rs` (the log switch),
+  `dns_blocklist.rs` (a list's problem on the phone's page, no raw error), `lock_glance.rs`, `devices_list.rs`
+  (`home#layout` exists), `shell.rs`; `attention`'s unit test. `cargo test` 768 passed; `node --test
+  jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **A list's setting is an inline select** (Default / On / Off), not today's switch plus "Use default" button: one
+   control per row, the picker pattern of §3.0. The route takes `setting`; an older page's `clear`/`enabled` still
+   works.
+2. **The domain routes check the input:** a name that isn't a domain (`dns_engine::looks_like_a_domain`, made
+   `pub(crate)`) is a 400 and nothing is added (before, anything was stored); a `device_id` that isn't a number is a
+   400 instead of silently "every phone"; an unknown phone or list is a 404 (a foreign key); a DB error is a 500
+   (before: logged nowhere, redirected as if saved). The same for `update_policy` (it logged and redirected).
+3. **A second tap on Remove** (the row already gone) changes nothing and returns to `/dns`, since the phone comes only
+   from the row.
+4. **Home Screen and Web Filter answer for a phone not set up** (as About and Advanced): what is saved reaches the phone
+   with its first settings. Whether step 10 greys their rows "After setup" is its call.
+5. **A failed wallpaper read is a 500**, not an empty grid: the grid's `<noscript>` Save would untick every wallpaper.
+6. **The first group on Home Screen has no header** (the page title says it); its section is `#layout`, the Attention
+   row's anchor. The footers: "The language of Vibb's own screens on the phone.", "Your child picks from these on the
+   phone.", §4.5 #12 for Quick controls.
+7. **The notification-access sentence** keeps the old card's facts: unread counts and the music card off, the lock
+   screen shows only missed calls (`lock_glance::the_home_screen_warning_and_the_lock_page_name_the_lock_screen`).
+8. **The log** shows only while it is on (off: the switch and its footer only), at the bottom, so 200 rows push no form
+   away.
+9. **The global `/dns` and `/dns/log`** got the smallest change that removes their per-phone parts (a phone list each);
+   their restyle stays step 14's.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. New CSS is the few small
+  rules above; the pages otherwise use step 1-4 components.
+
+**Fix round after the code QA** (`qa-31-s5-code.md`: 0 High, 1 Medium, 4 Low, 5 nits; all fixed, with `main` merged
+first - step 12 at `474a6015`):
+
+| # | Fix |
+|---|---|
+| Merge | `style.css?v=15` (step 12 took `v=14`); step 12's CSS first, then step 5's section; both status sections kept. Step 5's `.row > form` rule is now `.row > form.row-end`, so it can't touch a form another page puts in a row. |
+| M1 | The two Remove forms carry a hidden `device_id`. When the row is already gone (a double tap, a second tab) nothing is written and the redirect is `back_to(form, that number)`, the phone's page; the path's id alone picks the row and a deleted row's own phone picks the page. Tests: the second tap lands on the phone's page; a `device_id` naming Emil deletes Anna's row (the path's) and returns to Anna's page. |
+| L1 | From a phone's page a refused domain redirects to `/devices/{id}/filter?notice=not_a_domain_block|allow#blocked|allowed`, the refusal under its group's add row (`refused`, an unknown notice shows nothing); the global page keeps its 400 until step 14, and its two fields now have the `pattern` and `title`. Tests in `the_filter_routes_refuse_bad_input` and `old_per_phone_filter_urls_redirect_to_the_filter_page`. |
+| L2 | `home_and_filter_fail_on_an_unreadable_part` turns the log on and renames `device_dns_events`: mutation 10 (an empty log) now fails it. |
+| L3 | `web_filter_holds_the_phones_parts` posts an entry on a whole minute and checks the Oslo clock time and the exact local time in `title`: mutation 15 (the UTC clock) now fails it. |
+| L4 | `setting=default` checks the phone and the list first: an unknown one is a 404, as documented. Both 404 cases run for `on` and `default`. |
+| N1 | Kept "Blocks the lists and domains below on this phone." over §4.5 #11's "Blocks ads and adult sites": the lists are off until a parent turns them on, so the spec's sentence isn't always true. |
+| N2 | The warning's sentence is one ("Unread counts and the music card are off, and the lock screen shows only missed calls."); "Android can't turn this on for Vibb." opens the ⓘ, before the adb command. |
+| N3 | Both pages' domain `pattern` allows leading and trailing spaces (the server trims them). |
+| N4 | A domain already in that list (same phone or every phone) is stored once (`INSERT … SELECT … WHERE NOT EXISTS`). Test: two adds, one row. |
+| N5 | `launcher/CLAUDE.md` names the phone's Web Filter page for the VPN switch. The log reads the 200 newest arrivals (`ORDER BY id DESC`) and sorts them by the phone's time, a garbled time last (it sorted first as text). Test: the garbled row after the others. |
+| Checks | `cargo test` 773 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. Mutations 10 and 15 re-run: both now fail a test. |
+
+## Step 12 implementation status (2026-10-13)
+
+Built on branch `design-31-s12` (from `main` at `571f86fa`, steps 1, 2, 3 and 11 in), in parallel with step 4; server
+only, no migration, no new crate, no API change (`server/testdata/music_*.json` unchanged), `style.css` unchanged
+(still `?v=12`): the tab's own CSS is `partials/music_style.html`, included by the six music pages.
+- **The tab** (`/music`, `music.html`, `handlers::music::show`): the large title and, with two entries or more, an
+  **Edit** link (top right, as the mockup) to `/music?edit=1#entries`; **Library**, the whole list (no "Show all"):
+  one row per entry (`partials/music_card.html`: a 44px cover or category tile, the name, "NRK series · 98 episodes ·
+  2 phones" - "Own files · 12 files · no phones", "· home network" for a LAN feed, "· 2 missing" in red -, the live
+  status as one coloured line, the row linking to the entry's page), then **Check now** (or "Check again after
+  14:20") and the **Offline** inline select (`data-autosave`, `<noscript>` Save) under it; in Edit mode ↑ ↓ instead,
+  and **Done**; the footer "2 of 200 entries…" (in Edit: the order is the phones' order). **Add**: Podcast or NRK
+  link and Upload your own files, each a `<details>` holding its form (open on a refusal, the error under the field
+  with `aria-invalid`), From Storytel › "Signed in" / "No login", Import from Vibb ›. **On phones**: one row per phone,
+  "Anna · 6 of 9" (its ticks of the whole library). **Categories ›** with the count, **Settings ›**.
+- **Music › Settings** (`/music/settings`, `music_settings.html`): Check for new episodes (an inline picker, "Every 6
+  hours"; the two old hints behind the footer's ⓘ), Storytel (Login "Saved 9 Oct 2026", On phones, the status line,
+  Pick Books from the Shelf ›, the e-mail/password form, the save's notice as the group's flash, **Remove Login…**
+  behind a confirm; without a key "Storytel is off" with the why behind ⓘ; a stale login "Enter the login again"),
+  The music app (its catalog row › with the release, or **Add to the App Catalog**), Files no entry uses (count,
+  size, **Delete Files…** behind a confirm).
+- **Music › Categories** (`/music/categories`, `music_categories.html`): today's `<details>` editors as rows (tile,
+  name, how many entries use it), unchanged inside apart from **Delete Category…** as a confirm (an unused one only;
+  "In use, so it can't be deleted" otherwise), and Add a category.
+- **Import from Vibb** (`/music/import`, `music_import.html`): GET is the form; `POST /music/import` renders this
+  page with the preview (sections as groups, a category picker each, a tick per row, the phones); the confirm's
+  result shows in the form's group (`#import`). The intro is one line, the rest behind ⓘ ("Storytel" no longer in
+  the list of what isn't brought over: design 26b imports it).
+- **Routes**: GET `/music/settings`, `/music/categories` (chained with its POST) and `/music/import` (chained with
+  the preview's POST, under the same body limit) (L5). No POST route changed.
+- **The entry page** (`music_entry.html`, 12b): the sub-page header ("‹ Music" back to the row), then Cover (the
+  picture with the kind and the source link, Upload a Photo in a `<details>`, Use the Source's Picture) → Episodes /
+  Books (`#status`: at the source, the episodes line, the capped/cut notes, LAN, the status, **Check Now** or "Check
+  again after") → Settings (**one form**: name, category, play order, offline - its hint behind ⓘ, "(the phone's Music
+  page)" (M7) -, the resume switch, Save; `#settings`) → Files (upload with its result in the group; each file's row
+  opens its **Delete File…** confirm) → On phones (one row per phone with what it reported about the entry as the
+  sub-line, linking to the phone) → **Delete Entry…**. "Times are UTC." is gone: times are local (below).
+- **The shelf** (`music_storytel.html`, 12b): the same shape in groups - a one-line intro with the rest behind ⓘ,
+  the filter row, one checkbox row per series or book (what it is, "for kids", the notes on the sub-line), "In the
+  library" linking to its row, The books behind a disclosure, the category picker, Add Checked. Its links to the login
+  go to `/music/settings#storytel`.
+- **Redirects** (§5.1, L5): `/music#app` → `/music/settings#app`, `#storytel` → `/music/settings#storytel`, `#sweep`
+  → `/music/settings` (no fragment: the picker is the page's first group, and scroll-restore keeps the place),
+  `#import` → `/music/import#import`, `#category-{id}` → `/music/categories#category-{id}`, `#categories` (a delete)
+  → `/music/categories` (no fragment), the orphans' delete → `/music/settings`, the entry save → `#settings`, the
+  move → `/music?edit=1#entry-{id}` (stays in Edit). Unchanged: `/music#entry-{id}` (Check now, Offline, an add),
+  `/music#entries` (a delete), the entry page's `#status`, `#cover`, `#files`, `#file-{id}`. Forms whose result
+  renders in the POST's answer post to an action with their group's fragment (`/music#add-link`,
+  `/music/own#add-own`, `/music/storytel#storytel`, `/music/categories#new-category`,
+  `/music/categories/{id}#category-{id}`, `/music/import#import-preview`, `/music/import/confirm#import-preview`, the
+  entry's `#settings`, `#cover`, `#files`, the shelf's `#shelf`), so a refusal lands where the parent was; every
+  form whose success redirect has no fragment has none in its action (a browser keeps the action's).
+- **Confirms** (§5.6, Q7): the five `confirm()` deletes on these pages (orphans, the Storytel login, a category, a
+  file, an entry) are `<details>` confirms; no music page calls `confirm()`.
+- **Rust**: the one music page builder is split into four (`music_page`, `settings_page`, `categories_page`,
+  `render_import`), each loading only what its page shows; the `Entered` bag of refused forms is gone (each refusal
+  renders its own page). `SweepCard.count` ("98 episodes", "4 books") is the row's count; `SweepView::phone_lines`
+  returns `(phone, line)` and the line no longer starts with the name ("Has an older list (as of 1 Oct)", "Not sent -
+  Storytel is off on this phone"). **Local times** (M4): `SweepView` and `storytel_status` take the Phone Setup zone,
+  `Zone::when` for what happened ("Storytel accepted the login (12:02)."), `Zone::until` for "Next try",
+  "Check again after" and the cooldown's end; `utc_time` is gone. `ImportCard.open` is gone (no card to open).
+- **Tests**: `tests/music.rs` `every_form_on_the_music_pages_returns_to_its_page` (this step's rows of §5.1's table:
+  it posts every form the tab, Edit, Settings, Categories, Import, the import's preview and two entry pages render,
+  and fails on a form it has no row for), `the_music_deletes_are_behind_a_confirm` (each delete's form inside its
+  `<details>`, after the summary; no `confirm(`), `the_library_rows_and_edit_mode` (the row's line, Check now, the
+  Offline select's form, ↑ ↓ only in Edit and in order, On phones "1 of 2", names escaped, a refused add opening its
+  form), `the_music_pages_render_and_link_both_ways` (every sub-page in the Music tab with a back link and no brand
+  bar); repointed: `music.rs` (import, orphans, Storytel, categories, the move), `music_sweep.rs` (the setting on
+  Settings through `autosaves`/`form_action_of`, the counts on the row, the details and phone lines on the entry page
+  through the new `tests::music::phone_line`), `music_storytel.rs` (the card on Settings in local time, the gate's
+  lines on the entry page), `music_art.rs` (the art count on the entry page). `cargo test` 753 passed; `node --test
+  jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. **One commit for 12a and 12b**: the handler and the tests are shared by both halves (the phone lines moved from
+   the library rows to the entry page), so a 12a without 12b would have needed a throwaway entry page.
+2. **Local times now, not with design 30 step 3a**: 30 step 3a is in `main`, and §3.4 drops "Times are UTC." with
+   local times. Only the times changed, no wording. `storytel::StorytelError`'s cooldown text on the shelf ("Nothing
+   is tried again before 11:02 UTC") still says UTC: it is built where no zone is at hand, and it says so.
+3. **The row's sub-line** drops the category (the mockup's "NRK series · 98 episodes · 2 phones"); the category is on
+   the entry page. Own files count files ("12 files"), Storytel counts books.
+4. **The status in the row is one line** (CSS ellipsis); the whole text is on the entry page. It stays inside the
+   row's link, so `music-cards.js` swaps it unchanged: its selectors (`.music-status[data-entry]`, `.music-card`) are
+   kept and the script and its `?v=1` are untouched.
+5. **Edit mode** (`?edit=1`) shows ↑ ↓ *instead of* Check now and Offline, and Done; Edit shows only with two
+   entries or more.
+6. **"On phones" rows** go to the device page's Music card (`/devices/{id}#music`) through one function,
+   `phone_music_href`, until step 7 builds `/devices/{id}/music`; the entry page's phone rows too. Every phone is
+   listed, set up or not ("0 of 9").
+7. **A file's delete**: the file's row is the `<details>` summary (with a red "Delete…"), so a long file list
+   doesn't double its rows.
+8. **The shelf's links** to an entry stay `/music#entry-{id}` (the row exists on the tab).
+9. **The device page's two links** to `/music#app` and `/music#storytel` (`device_detail.html`, the Music card) are
+   **not** moved: step 4 is rebuilding `device_detail.html` in parallel, and step 7 rebuilds that card. They still
+   open the Music tab, one tap from Settings.
+10. **Not checked here**: a browser pass (no headless Chromium on this VM) - 390 px light/dark, JS on and off, every
+    `<details>` opened - is owed before merging, with the real phones (iOS Safari 14, Chrome 80).
+
+**Fix round after the code QA** (`qa-31-s12-code.md`: 1 Medium, 4 Low, 8 Nits; all fixed but L1, which the
+coordinator repoints at the merge with step 4):
+
+| # | Fix |
+|---|---|
+| M1 | QA's second option: `StorytelError::message(zone, now)` words the cooldown with `Zone::until` (the fallback zone still says "UTC"); `render_picker` passes the Phone Setup zone, `storytel.rs`'s tests `Zone::utc_fallback()`. The shelf and Settings now give the same local time; the log line stays UTC. |
+| L1 | Not changed here (`device_detail.html` is step 4's). `/music/settings` has `id="app"` and `id="storytel"`; at the merge the Music card's links become `/music/settings#app` ("add it in Music › Settings") and `/music/settings#storytel` ("none saved yet - add it in Music › Settings"). Done in the merge commit into main. |
+| L2 | "Storytel refused the login (12:02). Nothing is tried again before 13:02 - …", the bracket form of the accepted line, for both cooldown wordings. |
+| L3 | The tab's CSS moved to `style.css` (appended: the generic title action, `details.disclosure` - was `add-form` -, `.tile-orange`, the switch in a form and full-width selects in a form group; then the Music section), `partials/music_style.html` deleted with its six includes, `style.css?v=14` (step 4 takes 13; the coordinator resolves it at the merge). |
+| L4 | `check_forms` (in the redirect table, on all seven pages and the preview): every action's fragment names an element of its page, and every form with a `data-autosave` control has a `<noscript>` submit. The table pins each refusal's fragment per form kind. `music_sweep::the_rows_times_are_in_the_phone_setup_zone` (Tokyo): "Check again after 19:15", "Next try 19:14", no "UTC". `a_file_is_deleted_only_through_its_own_entry`: another entry's id in the path is a 404 and the file stays (the `AND entry_id = ?` check was already there). A refused Storytel save (503/429, a malformed e-mail) holds neither the e-mail nor the password. Re-run: the `<noscript>` mutation, the Storytel action without `#storytel`, "Check again after" in UTC, `delete_file` without `entry_id` and the e-mail echoed in a refusal all fail a test now. The import preview's body limit is not pinned: past it the handler answers the same 400 as its own 1 MB check, so no response tells them apart (defence in depth, as QA says). |
+| N1 | `day_text` ("keeps the list from 9 Oct", "newest: … · 9 Oct") and Storytel's "Saved 9 Oct 2026" use the local date. |
+| N2 | `login_opens(state, fingerprint)`: the tab's "Signed in" and Settings' stale login ask the same question. |
+| N3 | The tab's phones `ORDER BY name, id`, as on an entry's page. |
+| N4 | A Storytel entry's cover group has a "Storytel Shelf ›" row again. |
+| N5 | A single Storytel book's row says "Storytel book · 1 phone", without "· 1 book". |
+| N6 | Without a preview the file field is `id="import-preview"`, so a refused file lands on its field. |
+| N7 | The title bar (Edit / Done) is always there, so the title doesn't move with the second entry. |
+| N8 | A category's save, move and add come back to `/music/categories?open=<id>#category-<id>` and that editor renders open (`show_categories` reads `open`); the redirect table and the categories test pin it. |
+| Checks | `cargo test` 755 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+
+## Step 13 implementation status (2026-10-13)
+
+Built on branch `design-31-s13` (from `main` at `474a6015`, steps 1-4, 11 and 12 in), in parallel with step 5; server
+only, no migration, no new crate, no API change (the policy JSON, `pending_command` and the launcher are untouched;
+`/devices/{id}/locate-result.json` is the PWA's own JSON and gained a `text`), `style.css?v=16` (main is at 14, step 5
+may take 15; resolved at the merge).
+- **Route:** `/devices/locate` unchanged (`locate::show_locate`, `device_locate.html`); no POST route changed.
+- **The page**, in the Locate mockup's order: the large title; with several phones and none chosen (or an unknown
+  `?device=`) the phones as rows with their state ("Online · seen 3 min ago" ›, as on Devices); one phone is shown at
+  once; no phones: "No phones yet." + Add Phone. A chosen phone:
+  - **the phone switcher**: plain links to `?device={id}` (the `onchange` select is gone), the state as a dot and in
+    each `aria-label` ("Anna, online"), the chosen one `aria-current="true"`; every phone, set up or not;
+  - **Location** (`#location`): the map (Leaflet, design 33's OSM tile layer and Referer unchanged) with the trail;
+    the last fix as age and accuracy ("10 min ago" large, "Within 40 m" under it, the exact local time in `title`;
+    the marker's popup says the same, set with `textContent`); the phone's answer to the newest Update Location in
+    words, with when it came ("Location is off on the phone · 10:58"); "Waiting for a fresh fix…" and its poll (which
+    now shows the answer's words and reloads to `#location`); **Update Location**;
+  - **warnings** as orange rows above the actions: "Location is off for this phone", "Erasing works after the phone
+    restarts once";
+  - **actions** (`#actions`): Ring, Stop Ringing, Lock as three tiles (one tap each, §5.6); **Erase Phone…** as a
+    `<details>` confirm holding the type-the-name field and "Erase Anna's phone"; the footer "An offline phone gets
+    Ring and Locate within an hour, Lock and Erase whenever it's back." with Lock's note behind ⓘ;
+  - **Recent** (`#recent`): the 10 newest, "Lock" · "10:58 · Done" (the word coloured), the line under it (the
+    phone's answer in words, or what happened: "Expires 11:58 if the phone isn't back.", "Never sent: the server
+    restarted first."), **Cancel** at the row's end while it waits, the line after a Cancel as the group's flash;
+  - **Location Settings**: "When to locate" (Off / Only when asked / Regularly) and "Every" (only while Regularly) as
+    one form, "Keep history for" its own; both auto-save with a `<noscript>` Save; the footer with the modes behind ⓘ.
+- **Redirects** (§5.1): Update Location → `?device={id}&requested=1#location`; Ring, Stop Ringing, Lock and an erase
+  → `?device={id}#actions` (Recent is right under the actions, so the new row is in view, with and without JS);
+  Cancel → `&cancel=done|too_late#recent`; the two pickers → `?device={id}` with no fragment (scroll-restore keeps
+  the place, §5.1.4). Erase Phone…'s form posts to `.../command/wipe#erase`: a wrong name renders the page there with
+  the confirm open and the refusal under the field (`aria-invalid`), nothing queued. Pinned by the redirect table
+  built from the rendered forms (`tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`), which also
+  checks every action's fragment names an element and every auto-saving form has its `<noscript>` Save.
+- **Rust texts (M5):** `DeviceCommand::status_line` is gone; `DeviceCommand::status` returns the typed
+  `models::CommandStatus` (`Done`/`Failed`/`Expired`/`Cancelled { by: CancelledBy }`/`Erasing`/`Received`/`Waiting {
+  expires }`/`Sent { unconfirmed: Unconfirmed }`, same rules as before), `locate::status_words` words it in the Phone
+  Setup zone (`Zone::when` / `Zone::until`, no "UTC" unless the zone falls back); `models::command_label` names every
+  command ("Stop Ringing", "Update Location", "Erase Phone", and the device page's "Lock again", "Unlock for 2 h",
+  "Allow these apps"; never the id); `locate::reword` turns the launcher's answers into words ("locked (handy lock)"
+  → "Locked with the Child PIN", "fix ±12 m, 3 s old" → "Found within 12 m", "wipe failed, …: <exception>" → "Not
+  erased: the phone keeps its data", the phone's own words in the line's `title`); `describe_fix` is the typed
+  `locate::Fix` (`age`, `accuracy`).
+- **Robustness:** `queue_command` runs in one transaction and checks the phone exists (an unknown id is a 404 for
+  Ring, Stop Ringing, Lock, Update Location and Erase, nothing queued; a DB error a 500 "nothing was queued" - before,
+  a failed insert redirected as if sent); every read on the page and in `locations.json` / `locate-result.json` is a
+  500 on a DB error, never an empty Recent, "No location" or a made-up mode.
+- **Docs (L8):** `server/CLAUDE.md` (the Find My Device bullet, location policy, step 10's Lock note, retention, a
+  "Locate tab" section), `docs/testing/emulator.md` (remote lock, the wipe check, command receipts),
+  `launcher/CLAUDE.md` (Update Location). No change in `DEPLOY.md`, `google-account.md` or `PLAN.md` (nothing there
+  names the page's controls).
+- **Tests:** `tests/locate_page.rs` (new: the redirect table, the erase refusal, the switcher and the list with escaped
+  names, the fix and the answer in Tokyo time and the fallback zone, Recent's labels and Cancel, the warnings and
+  pickers, unknown phones and failed reads), `handlers::locate::tests` (the fix, every answer reworded, every status
+  worded without "UTC"/"sync"/"launcher", the labels); repointed through `locate_page::recent_row` (the row's
+  `data-command` hook): `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`. `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same
+  13 warnings, none in the step's files.
+
+Choices made while building:
+1. **Recent sits right under the actions, Location Settings last**: the mockup puts Recent under the actions, and the
+   actions' `#actions` landing then shows the new row; the settings are set once.
+2. **The actions land on `#actions`, not on the exact place**: an anchor is the only way a one-tap POST doesn't land at
+   the top without JS; with JS the parent lands on the group they pressed in.
+3. **Recent lists 10 commands** (was 20): the rows are taller than the old table's, and older ones are history.
+4. **"Every" only while Regularly**: a post without it keeps the stored interval (the handler's existing rule), so
+   choosing Regularly shows the row with the last interval.
+5. **The switcher's chosen phone is `aria-current="true"`**: the tab bar keeps the page's one `"page"` (the shell
+   test's rule).
+6. **Phones not set up are in the switcher** ("Not set up"): a command queued before setup is cancelled by the
+   enrollment, as before.
+7. **Labels of design 24b's commands** follow their buttons on the device page (§4.3: "Lock again", "Unlock for 2 h",
+   "Allow these apps"); the Locate actions are Title Case as drawn.
+8. **An answer this server doesn't know** is shown as the phone sent it (escaped): it is the phone's sentence, not a
+   code; every answer today's launcher sends is reworded.
+9. **The erase refusal renders in the POST's answer** (200, the page at `#erase`), as the old page did, so the typed
+   name never goes into a URL.
+10. **The security log keeps its raw lines** ("ring", "wipe (asked … UTC)"): step 14 relabels it.
+11. **Not checked here**: a browser pass (no browser on this VM) - 390 px light and dark, JS on and off, the confirm
+    and the ⓘ opened, the map's stacking under the tab bar - is owed before merging, with the real phones.
+
+**Fix round after the code QA** (`qa-31-s13-code.md`: 0 High, 1 Medium, 3 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Both Location Settings pickers redirect to `/devices/locate?device={id}#location-settings`, and their forms post to that fragment: the group is the last on a long page, so a `<noscript>` Save, or a save from a refused erase's page (another path, where scroll-restore can't help), no longer lands at the top. Every other form already redirects with its group's fragment (`#location`, `#actions`, `#recent`), so none lands at the top; the redirect table now asserts that every row has a fragment. |
+| L1 | `time_rules::update_location_now_queues_locate` pins the poll's reload, `location.replace('/devices/locate?device={id}#location')`. Re-run: the mutation without `#location` fails it. |
+| L2 | `locations::the_locate_page_builds_no_html_from_stored_values` stores `<img src=x onerror=alert(1)>` as a locate's, a lock's and a reworded wipe's answer: escaped in the answer row, Recent's line and the `title`, no `<img src=x` on the page, plain text in `locate-result.json`. Re-run: `|safe` on the answer row or Recent's line fails it. |
+| L3 | `answer` treats the server's own placeholders `"ok"`/`"failed"` (`device_api::command_result` without a message) as no answer: the row shows its word and the status line, no "ok". `a_delivered_command_is_not_shown_as_done` asserts the Done row has no sub-line. |
+| N1 | The wait's last line: "No answer yet. The phone may be offline; it gets the request if it is back within an hour." |
+| N2 | A `wipe` with a successful answer ("wiping (…)") is `CommandStatus::Erasing`, worded like a confirmed erase ("Erasing", "An erased phone stops reporting."); tested in `recent_names_each_command_and_cancels_what_waits`. |
+| N3 | `unknown_phones_and_failed_reads` also renames `device_commands` and checks `locate-result.json` is a 500. |
+| Checks | `cargo test` 775 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings, none in the step's files. |
+
+
+## Step 6 implementation status (2026-10-13)
+
+Built on branch `design-31-s6` (from `main` at `c8d0ad44`, steps 1-5, 11, 12 and 13 merged); server only, no
+migration, no new crate, no API change (the policy JSON, its snapshot and the launcher are untouched), `style.css?v=18`.
+- **Route:** `GET /devices/{id}/apps` (`device_pages::view_apps` → `render_apps`, `device_apps.html` with
+  `partials/device_app_row.html`). Unknown phone 404; every read the page needs is a 500 on a DB error ("Couldn't read
+  this phone"): the phone, its settings, its last report (`load_latest` is a `Result` now, for the other sub-pages
+  too), `devices::app_rows` (a `Result` now: the catalog, the phone's choices and the install progress used to read
+  as empty), the names and icons. The POST routes are unchanged; where they return moved here.
+- **The page**, in the AnnaApps mockup's order:
+  - **Allowed**: Vibb first ("Always on", no switch, its update state as the sub-line), then every app switched on;
+    **Not allowed**: the rest - the phone's reported apps and the catalog apps not chosen for it. Each row: a tile
+    (the icon the phone shows for the app - its own Name and icon, else the catalog's - on its colour, else the
+    first letter), the name, the state as a sub-line ("Installing 40%", "Not installed · No release yet", "Installed
+    from Play", a refusal in red) and a switch, its own form (`/apps/toggle`, `back=apps`, `<noscript>` Save).
+    `#app-{pkg}` is the row (`#catalog-{id}` for a catalog app without a package, `devices::app_anchor`).
+  - **Name and icon**: under each allowed app with a package (not Vibb), `app_display_form` in its `<details>`, the
+    summary "Name and icon: Chat, with the chat icon on peach (from the catalog)".
+  - The footer "Turning an app off hides it, and uninstalls it where possible." (§4.5 #4) with the catalog install,
+    the keyboard and accessibility note and "your child can rename only the apps you haven't named" behind its ⓘ.
+  - **Downloads**: "Download apps on Wi-Fi only" (`/app-updates`, §4.5 #10, the 3-day grace and roaming behind the
+    footer's ⓘ) and a "Network · Mobile data · 10:58" row (at the phone's last report, the exact time in `title`).
+  - A corrupt allowlist is a warning above the groups ("App list unreadable", the server-log hint behind its ⓘ).
+  - No search field (§6.0). The installing reload moved here (every 3 s while an app installs, not while a Name and
+    icon form is open - a reload would lose what was typed); it never runs on the device page.
+- **Redirects** (§5.1, pinned by `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
+  forms, each fragment checked against the page's ids): a switch → `/devices/{id}/apps#app-{pkg}` (the row moves to
+  the other group; the fragment finds it again with and without JS); `back=music` (and an older page's
+  `anchor=music`) → `/devices/{id}#music` until step 7; Name and icon → `/devices/{id}/apps#app-{pkg}`, its form posts
+  to `…/apps/display#app-{pkg}` so a refusal (400, this page re-rendered with the form open and the field focused)
+  lands on the row; `/app-updates` → `#downloads` (the last group of a long page).
+- **`toggle_app`**: the package must be a package name (the status intake's
+  rule, `device_api::is_package_name`; before, any string went into the allowlist and the `Location`), a post needs a
+  package or a catalog id, Vibb's own row is a 400, an unknown phone a 404 (it was a 500 or a silent no-op), a catalog
+  app deleted since the page loaded returns to the page with nothing written; the writes it used to `.ok()` away
+  (`device_tracked_apps`, cancelling or queuing an uninstall) are 500s. A Play copy of a catalog app is no longer a
+  plain-text 409 page: back to its row with the reason under it (`?notice=from_play&app=<row>`). The last report is
+  read once (`latest_installed`, replacing two helpers).
+- **The device page:** the Apps card and its reload are gone; a row **Apps · 14 allowed** (the Apps tab's count;
+  "List unreadable" for a corrupt list) heads the bottom group. The Status card's blocked apps link "tick it" to
+  `/devices/{id}/apps#app-{pkg}`; the Music card's app switch sends `back=music`. Home Screen's row got the mockup's
+  house tile (it shared the Apps grid).
+- **Rust texts (M5):** `app_downloads` labels rewritten (§4.2, M4): "Waiting for Wi-Fi · since 10:58 · 120 of 326 MB",
+  "Paused while roaming" (was "Waiting - the phone is roaming since 6 Oct"), "Refused: signed with another key" (was
+  "Refused - signed with another key than this app's"), the launcher's "Installed · update 0.32.0 waiting for Wi-Fi ·
+  any network from Mon 14:30"; times in Phone Setup's zone via `display_time` (were UTC dates). `network_line`'s
+  sentence became `network()`, a row value.
+- **The Apps tab**: `phone_apps_href` points at `/devices/{id}/apps` (`#app-{pkg}` from an app page).
+- **CSS** `?v=18` (one section at the end): the Name and icon line under its row, a refusal's flash indented to the
+  name.
+- **Docs (L8):** `server/CLAUDE.md` (the catalog bullets, Play, App downloads, App names and icons, the blocked apps'
+  link, the Apps tab, and a "Device › Apps" section), `docs/setup/google-account.md` (the Wi-Fi switch's place),
+  `docs/testing/emulator.md` (the lock runbook's allowlist), `launcher/CLAUDE.md` (the uninstall bullet).
+  `server/DEPLOY.md` and `PLAN.md` name none of the moved parts.
+- **Tests:** `tests/device_pages.rs` (`apps_holds_the_moved_forms`: the device page's row and count, the groups and
+  their order, Vibb's row, the escaped name, the switches' states, Name and icon only for allowed apps, unique row ids,
+  no search, the ⓘ, `<noscript>` Saves; `apps_forms_return_to_their_rows`; the refusals and failed reads in
+  `the_apps_switch_refuses_bad_input_and_the_page_fails_loudly`; `a_phone_not_set_up_has_its_apps_page`), repointed through `device_page(id, Section::Apps)`
+  (new): `app_display.rs` (the forms under their rows, the action's fragment, the tile, the 400 on this page),
+  `tracked_apps.rs` (downloads in local time, the network row, the reload, the refused release, the Wi-Fi switch's
+  `#downloads`, the tab's links and the device page's equal count), `catalog_pins.rs` (the parent turns the dialer
+  and SMS app off through the switches), `play.rs` (the Play copy's refusal under its row), `hardening.rs` (the
+  corrupt list), `window_relock.rs` (the "tick it" link lands on the row under Not allowed), `device_api.rs` (real
+  package names), `music.rs` (`back=music` and the old `anchor=music`); `app_downloads::tests` in Oslo time.
+
+Choices made while building:
+1. **A switch's redirect keeps `#app-{pkg}`** (§5.1.4 lists it), with JS too: the switch moves its row to the other
+   group, so restoring the old scroll offset would show another app; the fragment shows the app just switched.
+2. **The row's name is the app's own**, not the name the phone shows: the Name and icon line under it says what the
+   phone shows. The tile does use the phone's icon, as the mockup draws it.
+3. **Vibb's row has no switch** ("Always on"), not a disabled one: a disabled switch reads as broken.
+4. **Downloads is the last group**, with a fragment (`#downloads`), not the first: the daily task is the app list; the
+   Wi-Fi switch is set once.
+5. **The shared Name and icon partial** got a neutral summary ("Name and icon: …", the row above names the app) and a
+   shorter hint; the catalog page shows the same.
+6. **"Network"** is a value row with the report's time, not the old sentence; an unknown network value shows no row.
+7. **A phone not set up has the page** (as Home Screen and Web Filter): a catalog app turned on installs with the
+   first settings; "The phone hasn't reported its apps yet." heads Not allowed.
+8. **Toggle validation uses the status intake's package rule**, not Name and icon's stricter grammar, so every app a
+   phone can report can still be switched.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses step 1-5 and 11
+  components plus the small section above.
+- **Step 7** builds Device › Music: `back=music` returns to the device page's `#music` until then.
+
+**Fix round after the code QA** (`qa-31-s6-code.md`: 0 High, 1 Medium, 4 Low, 5 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | The installing reload is `static/installing-reload.js` (loaded only while an app installs). It stops for good once a save has started - a capturing `submit`, a `change` on a `data-autosave` control (autosave.js's `form.submit()` fires no `submit`), `pagehide` - so it never cancels a POST on its way; it still waits while a Name and icon form is open. `jstest/installing-reload.test.js` pins the reload, the stop on a switch, a submit and `pagehide`, and that a change on a control that doesn't save keeps reloading. |
+| L1 | The same test pins the pause (open form: no reload; closed: one). A refused Name and icon save renders without the reload (`installing && entered.is_none()`): `device_pages::a_refused_name_save_never_reloads` checks the GET page has the script while an app installs and the 400 page doesn't. Mutation 9 now fails the jstest. |
+| L2 | `tracked_apps::app_downloads_are_stored_and_shown` sets Phone Setup to Europe/Oslo and the report to yesterday 10:00 UTC, and asserts the Network row's Oslo clock (never "10:00") and the exact local time in its `title`. Mutation 13 now fails it. |
+| L3 | `toggle_app` refuses Vibb by its catalog id or its package (one query, `is_launcher = 1 AND (id = ? OR package_name = ?)`); the package-only post is in the refusal table. |
+| L4 | A package is a package name or exactly what the posted catalog row stores, so an older catalog's free text (`"Element X"`) stays switchable on and off at `#catalog-<id>`; another free text with that row lands on the row with "This app changed in the catalog since the page loaded. Try again." (`?notice=not_an_app`, `devices::toggle_refusal`, which now words both refusals); free text without a catalog row stays a 400 (no page sends one). Test: `a_legacy_catalog_package_stays_switchable`. |
+| N1 | A catalog app deleted since the page loaded returns to the group the tap came from (`#not-allowed` for a turn-on, `#allowed` for a turn-off). |
+| N2 | The device page's Apps row says "Couldn't read" on a failed read, "List unreadable" only for the corrupt list (`the_apps_row_says_when_the_list_couldnt_be_read`). |
+| N3 | `app_anchor`'s unreachable fallback is `apps`, no group's id. |
+| N4 | The reload script drops `?notice=…` from the address once the page shows it (`history.replaceState`, the row's fragment kept), so a reload doesn't show the refusal again; jstest-pinned. |
+| N5 | The Status card's blocked apps say "Allowed under Apps" / "Not allowed under Apps … until you turn it on there too", and `window_relock`'s lines "hidden even when allowed under Apps", "turn it on under Apps", "the ones allowed under Apps". |
+| Checks | `cargo test` 791 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 14 implementation status (2026-10-13)
+
+Built on branch `design-31-s14` (from `main` at `c8d0ad44`, steps 1-5 and 11-13 in), in parallel with step 6; server
+only, no migration, no new crate, no API change (nothing a phone reads changed), `style.css?v=19` (main is at 17, step
+6 takes 18; appended at the end, resolved at the merge).
+- **The pages** (§3.6), each a Settings sub-page with the §3.0 header ("‹ Settings", the large title, no brand bar):
+  - **Web Filter** (`/dns`): Blocklists (one switch each, the list's size or its problem under the name, the download
+    error behind a "What happened" ⓘ row; Add a List… as a disclosure), Blocked Domains and Allowed Domains (Remove one
+    tap, an add row each), Each Phone (to its Web Filter page), and **DNS Server** at the bottom ("Look-ups go to"
+    Cloudflare / Quad9, an inline picker; the addresses and DNS-over-TLS behind ⓘ). The 37-word intro is gone.
+  - **Blocked Activity** (`/dns/log`): a list of phones, each "Off", "None today" or "12 today" (since local
+    midnight in the Phone Setup zone, as the Settings row counts) › its log on the phone's Web Filter page.
+  - **Wallpapers**: Add a Photo (name, "Also on the lock screen" switch, the photo; the processing and the lock-screen
+    note behind the footer's ⓘ), All Wallpapers (one row per wallpaper with its thumbnail, "Built in · on 2 phones";
+    a photo keeps its per-photo "Also on the lock screen" switch (Q1) and gets **Delete Photo…** as a `<details>`
+    confirm (Q7); no `confirm()` left).
+  - **Phone Setup** (`/settings/provisioning`): one form (§5.6) - Server address, Tailscale key ("Set
+    (tskey-auth-...abcd)", §4.5 #16's footer, tag/pre-approval/DEPLOY.md behind ⓘ), Phone language, Time zone (its ⓘ
+    says the app shows times in it), Save. Step 8 adds the country code as a second form; not done here.
+  - **Account & Password**: the two sign-in warnings as red rows (Dismiss kept); Password (Signed in as, the form);
+    Two-Factor Login (On, **Reset Two-Factor Login…** as a confirm holding the current-password field, the CLI
+    recovery behind the footer's ⓘ); Sessions (**Sign Out Everywhere…** as a confirm, M6).
+  - **Security Log**: Blocked Addresses (address, "Until 14:05 · reason", Unban one tap), Recent / Older Activity
+    (one row per event: label, "parent · 192.0.2.9", local time; the exact time, the stored detail and the raw id
+    behind the row's ⓘ), paging links, the 54-word intro behind the footer's ⓘ.
+  - **Backups**: Back Up Now, then each backup as a row (local time, size) opening Download, **Restore…** (type the
+    file name, unchanged) and **Delete…**; Upload a Backup… as a disclosure; Schedule (one form, the switches for the
+    drive and the live copy on the Pi only); External Drive (Pi only: Connected/Not connected with the mount path
+    behind ⓘ, **Format …** per drive with type-the-size, unchanged).
+  - **Software Updates**: Vibb Phone Server (Version, "Up to date" / "Version 0.25.0 is out" / "Couldn't check",
+    **Update Now…** and **Restart Server…** as confirms; Docker: the `HANDY_VERSION` and `docker compose` commands
+    behind the row's ⓘ); "Run the installer again" as an orange warning with the command behind ⓘ; Raspberry Pi OS
+    (status, Check for Updates, Install Updates…, Restart Pi… while needed, the running-update warning); Tailscale;
+    Automatic Server Updates and Automatic System Updates (one form each).
+- **Where forms return** (§5.1; every action carries its group's fragment, `tests::settings_pages::check_forms` on
+  every page): `/dns#lists|blocked|allowed|server`, a photo's switch `/wallpapers#wallpaper-<id>`, an upload the new
+  photo's row, a delete `#all`, Phone Setup `?saved=1#saved` (the flash under Save), Unban
+  `/security?unbanned=<address>#banned`. Account, Backups and Software Updates keep rendering their answer in the POST's
+  response (a password never goes into a URL; a restore, update or restart takes the server down, so a redirect's
+  GET could fail), each form posting to its group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`,
+  `#drive`, `#app`, `#os`, `#tailscale`, `#app-schedule`, `#os-schedule`) with the result in that group
+  (`settings::Flash` + `partials/group_flash.html`). Pinned by the redirect table built from the rendered forms
+  (`every_form_on_the_settings_pages_returns_to_its_group`) and, for the rendered answers, by the group tests.
+- **Refusals** land in their group with a short message (§3.0): a global domain that isn't one now goes back to its
+  group like the phone page (`/dns?notice=not_a_domain_block|allow#blocked|allowed`, was a plain 400); a list without
+  a name or an http(s) address `?notice=bad_list#lists` with Add a List… open (was: nothing, silently); Phone Setup
+  renders again (400) with what was typed - never the key - and the reason under the field (was a plain 400); a wrong
+  password field, the 2FA reset, Restore's and Format's typed confirms and a refused upload say why under their field,
+  their confirm or disclosure open.
+- **Rust texts (M5):** `admin::event_label` (every event id this server writes, an unknown one as its words - never the
+  raw id outside ⓘ); `auth::live_warning(admin, zone, now)` (the lock's end local, no "UTC"); the backup, update and
+  restore results as short `Flash`es (green, or a red title with the reason behind ⓘ: "Run the installer again
+  first", "Already on the newest version", "Nothing was started"); "not a Vibb Phone backup". The three schedule
+  summaries (`summary()`) and `day_of_week_name` are gone: the forms show the values (`backups::WEEKDAYS` feeds the
+  three day pickers).
+- **Robustness:** every read on Web Filter, Blocked Activity, Phone Setup and the Security Log is a 500 on a DB error,
+  never an empty page; every Web Filter write too (they ignored errors and redirected as if saved); an unknown upstream
+  is a 400 (was silently Cloudflare), an unknown list's toggle a 404. A password change and a 2FA reset write the new
+  hash or cleared TOTP **and** the session epoch in one UPDATE (they were two, the second's failure ignored: another
+  session could survive a change the parent saw succeed); Sign Out Everywhere answers 500 and keeps this session when
+  the epoch can't move (it signed this one out and left the others). Unban's DB error is a 500. A wallpaper deleted
+  twice lands on the list; a backup deleted twice says so.
+- **Docs (L8):** `server/CLAUDE.md` (the admin-auth banner, the Docker Updates page, step 5's `back`, a "The rest of
+  Settings" section), `server/DEPLOY.md` (Sign Out Everywhere…, Software Updates in Docker, "Update Now…", the Backups
+  section), `docs/testing/emulator.md` (Phone Setup's two fields). `launcher/CLAUDE.md`, `docs/setup/google-account.md`
+  and `PLAN.md` name none of these pages' controls.
+- **Tests:** `tests/settings_pages.rs` (new: the redirect table; Web Filter's refusals in their groups, its rows and an
+  unreadable page; Blocked Activity's values; Wallpapers' confirm, switch and refused upload; Phone Setup's refusal and
+  flash; Account's field errors, confirms and local lock time; the Security Log's labels, escaping and local times;
+  Backups' refusals in their groups), `tests::docker` (Software Updates on both kinds: the commands behind ⓘ, the
+  confirms, the installer warning, every result in its own group), `admin::tests::every_event_reads_as_words`;
+  repointed `admin_auth.rs` (Unban's redirect, the reset's refusal), `intake_limits.rs` (paging links with
+  `#activity`), `wallpapers.rs` (the photo's row, `#all`), `device_pages.rs` (Blocked Activity's "Off", the global
+  domain's group). `cargo test` 795 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy:
+  the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. ~~Account, Backups and Software Updates still render in the POST's answer~~ - reversed in the fix round (M1):
+   every success redirects (a reload must never repeat a restore, update, restart or backup; the 303's GET comes back
+   before the server goes away), and only refusals render in the POST's answer, so a password or typed confirm still
+   never goes into a URL.
+2. **The schedule summaries are gone**: the form shows every value; the day fields say which frequency uses them
+   ("Day (every week)", "Day of the month (every month, 1-28)"). Times are the server's clock ("by the Pi's clock").
+3. **A schedule's result shows at the top of its form**, the rest of a group's results under its rows: the action's
+   fragment lands on the group's top, and a tall form would hide a result under Save.
+4. **Blocked Activity shows today's count** for a phone with its log on (the Settings row's number per phone).
+5. **The security log's stored details are shown as stored**, behind the row's ⓘ: older rows (and today's
+   `device_command_cancelled`, `parent_pin_used` lines) carry "UTC" times; the audit trail is not rewritten. The row's
+   own time is local.
+6. **`/dns/blocklists/{id}/delete` keeps no button** (it had none before); it returns to `#lists`.
+7. **A wallpaper's delete is idempotent** (an already-gone one lands on the list) and a built-in's is a plain 400
+   (the page offers no button for one).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+- **Software Updates' POSTs aren't driven end to end**: every answer renders `/updates`, which asks GitHub (no network
+  in tests); the page itself is tested through `updates::page`, and the schedule's HH:MM refusals stay pinned by
+  `deploy_scripts`. Making a backup, a restore's or a format's request and a schedule save write to `data/` in the
+  working directory, so those success paths aren't posted in tests either (their refusals are).
+
+**Fix round after the code QA** (`qa-31-s14-code.md`: 0 High, 2 Medium, 4 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Post/redirect/get for every success: Account's password change → `/account?changed=password#password`; Backups → `/backups?done=backup\|deleted\|gone\|schedule\|upload\|restore\|format#<group>` (`backups::Done`); Software Updates → `/updates?done=update\|restart\|os_check\|os_upgrade\|tailscale\|reboot\|app_schedule\|os_schedule#<group>` (`updates::Done`; `updates::request_action` replaces the two modules' copies). The GET (a plain render, so it works right after a restart) shows the line in its group; an unknown code shows nothing. Only refusals (nothing happened) render in the POST's answer, so passwords and typed confirms still stay out of URLs. "Open this page again" is gone: the lines say "Reload this page in a minute" - a reload is a GET now. Choice 1 reversed. Tests: `backups_answer_in_their_groups`, `updates_redirect_after_each_request`, `account_answers_in_its_groups`, `admin_auth` (both password changes). |
+| M2 | Labels for all 20 `music_*` events ("Music added", "Music moved", "Unused music files deleted", "Music on a phone changed", "Sonos rooms changed", …). `admin::tests::every_written_event_has_a_label` reads `src/` (not tests): the `snake_case` literals around every writer (`record_security_event`, `log_event`, `log_change`, the audit's `.record`, `request_action`, the raw `INSERT INTO security_events`) and the `let (…event…)` tuples that pick one must each have a label (`label_of`), minus a listed set of non-events (form fields, notice codes, root actions); it checks that it finds `login_failed`, `music_phone_settings`, `backup_restored` and `kid_pin_cleared`. The fallback's example is the made-up `retired_event`. |
+| L1 | `AppState::data_dir` (`data/`, a temp dir in tests) holds the backups, the three schedule files, the last-run markers, the live mirror and the root helper's request file; `ForkConfig::github_api` (a closed local port in tests) lets `/updates` and its POSTs render without the network. Pinned: Back Up Now, the restore's typed name (wrong: 400 with its confirm open and no request file; right: the request file says `restore_backup <name>`), Delete twice, the schedule save, each Updates request's file and redirect; Format's typed size through the pure `backups::format_target` and a render of the page with a backup and a USB drive (`check_forms` sees Restore, Delete and Format); Sign Out Everywhere's 500 by a `RAISE(ABORT)` trigger on `session_epoch` (`sign_out_everywhere_fails_visibly`: 500, this session and the other still work; without the trigger both end). Mutations 2, 4 and 10 re-run: all three fail a test now. |
+| L2 | The first-sign-in password change (`/auth/change-password`) writes the hash, `must_change_password = 0` and `session_epoch + 1` in one UPDATE with `RETURNING`; a failure is a 500 that changed nothing. `signed_out_elsewhere` is gone. |
+| L3 | A refused Phone Setup save that carried a key says under the key field "The new key wasn't saved. Paste it again." (`aria-invalid`), never echoing it; a ticked "Remove the stored key" stays ticked. Pinned in `phone_setup_refuses_under_the_field_and_flashes_a_save`. |
+| L4 | `check_forms` asserts each action's fragment is the element that holds the form (its section, its own id, a photo's row), not just any element. |
+| N1 | Unban redirects with the address only when a ban was lifted (else to `#banned` with no line), and the GET says "… is unbanned." only for an address not blocked now. |
+| N2 | The post-sign-in warning reads "13 wrong two-factor codes were entered before this sign-in (from …). Whoever entered them knew your password - change it now." |
+| N3 | A refused add on Web Filter keeps what was typed: `&typed=` (a domain), `&name=`/`&url=` (Add a List…), URL-encoded, at most 300 characters, escaped back into the field. |
+| Checks | `cargo test` 800 passed; `node --test server/jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 7 implementation status (2026-10-14)
+
+Built on branch `design-31-s7` (from `main` at `9d19277f`: steps 1-6, 11, 12 and 13 merged, design 30 with step 3 in
+it); server only, no migration, no new crate, no API change (the policy JSON, `server/testdata/music_*.json` and
+`music_state.json` are byte-identical; the launcher and the music app are untouched), `style.css?v=20` (step 14 takes
+19).
+- **M7's condition is met:** design 30 step 3 (3a and 3b) is in `main`, so the music texts on the page follow §4 -
+  moved, restyled **and** reworded, the sentences typed (M5).
+- **Route:** `GET /devices/{id}/music`, chained with the settings form's POST on one route (L5;
+  `device_pages::view_music`, `device_music.html`; the parts are `handlers::music::device_card`'s). Unknown phone 404;
+  every read is a 500 on a DB error ("Couldn't read this phone": the phone, its settings, its last report, the
+  library, the catalog row, the Storytel row, the rooms), never an empty library or the defaults.
+- **The page**, top to bottom: warnings (`device_pages::Note`: "Vibb can't deliver music yet" for a launcher without
+  `music_v1` while entries are on, "Music app not reachable" for a bridge that isn't bound - its raw state no longer
+  shown); **Music app** (the catalog switch, `/apps/toggle` with `back=music`, its state as the sub-line; without a
+  catalog row "Music app · Not in the catalog ›" to `/music/settings#app`); **Library** (one switch per entry, its
+  own form, `#music-entry-<id>`; "NRK series · Podkast" under the name and, red, what the phone reported wrong with
+  the entry - it used to be a warning list at the card's top); the **settings form** `#music-settings` (one form,
+  `v=2`, the handler writes all five values - §5.6: Mobile data with "Stream on mobile data" / "Download on mobile
+  data", Storage with the Storage limit and Volume cap pickers, Storytel; the groups inside are only for their
+  footers, the warnings "Update Vibb and the music app" (an older phone, design 30 §1.3), "Over the storage limit" and
+  "Storytel refused the phone's login" above their groups); **Sonos speakers** (`#music-sonos`; a room no longer
+  reported is "A speaker not seen lately", its code only in `title`); **On the phone** (the report as rows: Music app
+  "1.2.3" with the package and version code behind ⓘ, Library "Up to date" / "Update waiting" / "Not there yet" - or
+  what the phone gets before its first report -, Waiting to download, Stored on the phone, Music downloads "980.0 MB of
+  2 GB", "Played, kept for now", Storytel login; the report's age under the group, the exact time in `title`).
+- **Typed (M5):** `music::storage` (`Storage`: stored, downloads, extras, `over_limit`) replaces `storage_line`'s
+  sentence, `music::older_phone` (a bool) `older_phone_note`'s; the card's `lines`/`warnings` became `Row`s and
+  `Note`s (`device_pages::Row::new`/`detail`/`class` are `pub(crate)` for it). Their unit tests moved with them.
+- **Redirects** (§5.1, pinned by `tests::device_pages::music_forms_return_to_their_groups`, built from the rendered
+  forms; each fragment is checked to be the element that holds its form, and an action's own fragment to be the
+  redirect's): the app switch → `/devices/{id}/music` **without a fragment** (the first group); refused →
+  `?music_notice=from_play|not_an_app#music-app`, a catalog row deleted since → `#music-app` (both landed on Device ›
+  Apps before); an entry → `#music-entry-<id>`, refused `?music_notice=too_big&music_entry=<id>#music-entry-<id>`, an
+  entry deleted since the page loaded → `#library` (a 404 before); the settings form → `#music-settings`; Sonos →
+  `#music-sonos`, refused `?music_notice=sonos_*#music-sonos`.
+- **Links:** `phone_music_href` → `/devices/{id}/music` (the Music tab's On phones), an entry page's phone rows →
+  `/devices/{id}/music#music-entry-<id>`; the entry page's hint says "'Download on mobile data' is on (the phone's
+  Music page)" (M7); "Music card" → "Music page" in Music › Settings' Storytel ⓘ, the shelf's "Added" flash and the
+  import's result.
+- **The device page:** the Music card is gone; a row **Music · 6 in library** ("None" with nothing on, "Couldn't
+  read" on a failed count) right after Apps, as the DeviceSummary mockup orders them, with its pink note tile.
+- **CSS** `?v=20`: `.tile-pink` only (one section at the end); the page uses the existing components.
+- **Docs (L8):** `server/CLAUDE.md` (the music library's PWA bullet, the Storytel bullet, Device › Apps, the Music tab,
+  a "Device › Music" section), `server/DEPLOY.md` (the Music page), `docs/testing/emulator.md` (§6f, §6h),
+  `music/CLAUDE.md` (the switches' names). `docs/setup/google-account.md`, `launcher/CLAUDE.md` and `PLAN.md` name
+  none of the moved parts.
+- **Tests:** `tests/device_pages.rs` (`music_holds_the_moved_card`, `music_forms_return_to_their_groups`,
+  `music_refusals_land_in_their_group_and_the_page_fails_loudly`, `a_phone_not_set_up_has_its_music_page`,
+  `the_music_pages_link_to_the_phones_music_page`), repointed through `device_page(id, Section::Music)` (new):
+  `music.rs` (QA-30's settings form, older-phone and storage tests on the page's rows and warnings, the ticks and the
+  app switch, the 3 MB refusal by its row, Sonos, the report's rows, the library cache), `music_storytel.rs` (the
+  Storytel switch's note and warning, the phone's Music page in the no-secret sweep), `music::tests`.
+
+Choices made while building:
+1. **The app switch returns without a fragment**, its refusals with `#music-app`: it is the page's first group, so a
+   save lands where it was with and without JS; a refusal's reason sits in that group.
+2. **The settings form keeps `#music-settings`** (design 30's anchor): it sits below a library of up to 200 entries,
+   so without JS a fragment-less redirect would land at the top. With JS it lands on the form's top, as Device ›
+   Apps' `#downloads` and Locate's `#location-settings` do.
+3. **Storage, volume cap and Storytel stay in the one form**, shown as groups with their own headers and footers
+   (Advanced › Restrictions' precedent), not split - the handler writes all five values.
+4. **An entry's error is under its row**, not a list at the top; errors for entries no longer in the library are
+   dropped (nothing to fix).
+5. **The bridge's raw state is not shown** (§4.2); the warning says the music app isn't reachable.
+6. **A refused app switch with `back=music` returns to Device › Music**, not Device › Apps (it used to): a refusal
+   lands on its own group.
+7. **The tick of an entry deleted since the page loaded returns to the list** (`#library`) with nothing written,
+   instead of a 404 page (the double-submit rule); an unknown phone stays a 404.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses step 1-6
+  components plus `.tile-pink`.
+
+Checks: `cargo test` 796 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings.
+
+**Fix round after the code QA** (`qa-31-s7-code.md`: 0 High, 1 Medium, 3 Low, 4 Nits; all fixed; on `main` at
+`2eee4de1` merged in - step 14 - with `style.css?v=20`):
+
+| # | Fix |
+|---|---|
+| M1 | The music warnings are Attention rows again. `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both Device › Music's warnings and six orange rows (`attention::Kind::Music*`): "Vibb can't deliver music yet" and "Music app not reachable" → `/devices/{id}/music` (the warnings sit at the top), "Storytel refused the phone's login" → `#storytel-title`, "Music over the storage limit" → `#storage-title`, "Update Vibb and the music app" → `#music-settings`, "N music entries fail on the phone" (one row for every entry that is on and reported failing) → `#library`. `attention::Sources::music_ticked` (`music::ticked_entries`) carries the entries on; the list's badge and the summary count the same rows. The Music row says "Needs attention" in orange while any shows. Pinned by `tests::attention::each_music_warning_raises_its_row_and_marks_the_music_row` (each row on a clean phone, its level, its target an element of the page, the row's value, the badge) and `attention::tests`. |
+| L1 | `music_holds_the_moved_card`'s entry is `Eventyr <b>`: escaped, never raw. Mutation 6 (`|safe`) now fails it. |
+| L2 | `the_phone_reports_music_state_with_known_fields_only` sets Phone Setup to Europe/Oslo and the report to yesterday 10:00 UTC, and asserts the footer's relative time and the local exact time ("12:00:00 CEST") in its `title`. Mutation 9 (UTC) now fails it. |
+| L3 | No JSON size as a value: before the phone's first music report "On the phone" has no Library row (a phone that never reported, or isn't set up, has no group at all); with a report the size is only behind the Library row's ⓘ. |
+| N1 | A Storytel state the music app doesn't send (`ok`/`none`/`refused`) shows no row, never its code. |
+| N2 | One builder for the Music app row: `device_pages::music_app_row(key, &MusicState)`, used by About This Phone (`music-app`) and Device › Music (`app`). |
+| N3 | An entry's reported error shows under its row only while the entry is on for the phone, and only those count for the Attention row. |
+| N4 | "device card" → "the phone's Music page" in `server/CLAUDE.md` (the library cache) and `music.rs`'s doc comments. |
+| Checks | `cargo test` 813 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 8 implementation status (2026-10-14)
+
+Built on branch `design-31-s8` (from `main` at `2eee4de1`, steps 1-6 and 11-14 in), in parallel with step 7; server
+only, no migration, no new crate, no API change (the policy JSON, `phone_vectors.json` and the number normalisation are
+untouched; `policy_json_keys_snapshot` passes as it was), `style.css?v=21` (main is at 19, step 7 takes 20; appended at
+the end).
+- **The page** (`/devices/{id}/calls`, the route unchanged; `device_calls.html` with the §3.0 header "‹ Anna" and the
+  large title "Calls & Contacts", no brand bar):
+  - the call report's **warnings** above the groups, orange (`partials/note_warning.html`): the problem's short title
+    (the Attention row's), one or two sentences, and an expert detail behind the ⓘ only - an adb command with the real
+    package, a package name ("Its package name is com.maker.dialer."), the phone's own error ("The phone said: …");
+  - **Calls and SMS**, one form (§5.6, H1): Manage calls and SMS, Calls, SMS (switches), Message button (an inline
+    picker), and two rows from the report - "Waiting for the phone to confirm" and "Call screening · Not granted"
+    (the adb fix behind its ⓘ); the footer "While managed, only the contacts below can call or text. Emergency
+    numbers always work." with the emergency numbers, RCS, ##004#, directory services and spoofing behind its ⓘ;
+  - **Contacts**: one row per contact (the photo or the initial, the name, the number, "Both ways · Home" /
+    "Calls in only" / "No calls"); the row opens its one form (Can call Anna, In the phone book, On the home
+    screen, Message button, Matrix ID), New photo / Remove Photo, and **Remove Contact…** as a `<details>` confirm
+    (M6: "Remove Mamma from Anna's phone? Their calls are then blocked."); **Add Contact** as a disclosure at the end,
+    its hint naming the country code and Settings › Phone Setup. The empty state is one sentence. No country code
+    form here any more.
+- **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
+  rendered forms, each action's fragment checked to be the form's own element, `<noscript>` Saves checked):
+  `/calls/settings` → `/devices/{id}/calls` without a fragment (the page's first group, so the no-JS landing is the
+  group; scroll-restore keeps the exact place); a contact's save, photo upload and photo removal →
+  `?open=<id>#contact-<id>` (its row, open again - the fragment finds it in a long list with or without JS, as step 6's
+  app rows); Add Contact → `#contact-<new>`; Remove Contact… → `#contacts`, also on a second tap. A form for a contact
+  that isn't on the phone any more (another tab) → `?notice=contact_gone#contacts` ("That contact was already removed,
+  so nothing was saved.", at the top of the group); an unknown phone is a 404 (it used to be a 404 for both).
+- **Refusals render in place (400)**, the form open, what was typed kept, the reason under the field
+  (`aria-invalid`, `autofocus`), every form's action carrying its row's fragment so the answer lands there: Add
+  Contact's name or number (was a red box at the top), a contact's Matrix ID (the switches and the picker as sent;
+  was a red box at the top), a photo (was the same). A refusal's page never reloads itself.
+- **Phone Setup's second form** (L6): a Phone Numbers group under the setup form - Country code, Save, "For every
+  phone. Numbers already saved keep theirs." - posting to `/settings/calls#country-code` (now
+  `settings::save_country_code`; the route is unchanged) → `/settings/provisioning?saved=country-code#country-code`,
+  the flash in its group; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code
+  is a 500 on the page; every phone is nudged. The step 14 table (`every_form_on_the_settings_pages_returns_to_its_group`)
+  has its row.
+- **The device page**: the Calls & SMS card is gone; a row **Calls & Contacts · 8 contacts** ("Not managed",
+  "Couldn't read" on a failed count - it was "0 contacts") heads the bottom group. The Attention rows are unchanged
+  (`report.problems()`).
+- **Rust texts (M5)**: `calls::call_report` returns `CallReport { findings, screening_hint, auto_refresh }`; each
+  `Finding` carries what its words need (the times as `DateTime<Utc>`, the phone's package names and error) and gives
+  `problem()` (the `CallProblem` the Attention rows use) and `note(zone, now)` (§4.2: title + sentence, local times in
+  Phone Setup's zone, the report's time with its age, "10:58 · 3 min ago"; no package, adb, role, UTC or raw code in
+  the visible text, §2.2b). The sentences (`warnings`, `hints`) and the device card's `calls_summary` are deleted.
+- **The reload while the phone confirms** is `static/auto-reload.js` (step 6's `installing-reload.js`, renamed and
+  generalised: it holds while any `<details>` is open) instead of a `<meta refresh>`, which could cancel a save on its
+  way or lose a contact being typed. Never on a refusal's page.
+- **CSS** `?v=21` (one section at the end): the contact's photo in the avatar circle, the contact's form indented to
+  the name with its hairlines, the file field.
+- **Docs (L8):** `server/CLAUDE.md` (the Calls & SMS bullets, the pending rule, the reload's name, a "Calls &
+  Contacts" section), `docs/testing/emulator.md` (where contacts are added and SMS is switched), `docs/setup/google-
+  account.md` (the Message button's page). `launcher/CLAUDE.md`, `server/DEPLOY.md` and `PLAN.md` name none of the
+  moved parts.
+- **Tests:** `tests/calls.rs` (the redirect table; Add Contact's refusals in place; a contact's Matrix ID refusal with
+  what was sent; gone contacts and unknown phones; Remove Contact… twice; the country code on Phone Setup with its
+  refusal, flash, nudge and 500; the device page's row; the warnings and the screening row, with the device page's
+  Attention rows; the visible text without packages, adb or UTC; local times; escaping; an unreadable list),
+  `calls::tests` (every finding's words in Oslo time, one per problem, the row values); repointed `launcher_ui.rs`
+  (photo redirects and refusals in the row), `step9.rs` (the reload, never on a refusal), `step10.rs`,
+  `catalog_pins.rs`, `cleanup.rs` (the warnings now on Calls & Contacts), `attention.rs`, `settings_pages.rs`,
+  `device_pages.rs` and `tracked_apps.rs` (the script's name), `jstest/auto-reload.test.js`.
+
+Choices made while building:
+1. **The settings form returns without a fragment**, the contacts' forms with one: the switches are the page's first
+   group (§5.1.4: a same-page auto-save near the top keeps the exact place with JS and lands on its group without),
+   a contact's row can be far down a long list (§5.1.4 keeps a fragment for that, as `#app-{pkg}`).
+2. **A contact's controls sit behind its row** (a `<details class="edit">`, as the PIN rows), reopened by `?open=` after
+   each save, so eight contacts are eight rows, not 60. The Matrix ID stays in the contact's one form (§5.6: "no sheet
+   for the Matrix ID").
+3. **A contact that is already gone is not a 404** (a second tap on Remove, a toggle in a stale tab): back to
+   `#contacts`, saying nothing was saved when the parent tried to change something; Remove says nothing (it is done).
+4. **No `back` field on `/settings/calls`**: one page posts there now, so it always returns to Phone Setup (§5.1's
+   table: `provisioning` was the only value and the default); an older Calls page's `device_id` is ignored.
+5. **The reload holds while any `<details>` is open**, not only Name and icon: a contact's form, Add Contact, a
+   confirm or an ⓘ panel would close under the parent's finger. Its delay is 3 s on both pages (the calls page used
+   5 s; nothing depends on it).
+6. **"Waiting for the phone" and "Call screening" are rows in the Settings group**, not warnings: neither is wrong.
+7. **The device page's row shows the contacts only while calls are managed** ("Not managed" otherwise: the contacts
+   then reach no phone).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+- **The old contact CSS** (`.contact-row`, `.contact-photo-row`, `.contact-avatar`, `.contact-initial`) is unused now
+  and stays for step 15's clean-up (new CSS only at the end, to keep step 7's merge clean).
+- **Checks:** `cargo test` 812 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
+  warnings, none in the step's files.
+
+**Fix round after the code QA** (`qa-31-s8-code.md`: 0 High, 1 Medium, 3 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | `static/auto-reload.js` keeps the place on both pages (Device › Apps, Calls & Contacts): just before `location.reload()` it sets `history.scrollRestoration = "auto"` (scroll-restore left "manual" on the entry after the save, so the browser alone would show the top, also over a `#fragment`) and writes scroll-restore's own record (`handy-scroll`: path, `scrollY`, now), which the reloaded page restores like after a save. `?v=2` on both pages. `jstest/auto-reload.test.js`: a page scrolled to 800 with "manual" reloads with "auto" and a record that `scroll-restore.restoreTarget` turns back into 800; nothing is written once a save has started. |
+| L1 | The Waiting row's sentence ends "Reload the page in a minute." (true with and without JS, and while its ⓘ is open), never "This page reloads"; pinned in `calls::tests::findings_read_as_short_local_notes`. |
+| L2 | `contact_summary` adds "· Home" only for a phone-book contact (`home && outbound`, the launcher's `CallRules.kt`); the switch keeps its value. The row test expects "Calls in only"; the unit test has both cases. |
+| L3 | `launcher_ui::bad_uploads_change_nothing` removes the photo of another phone's contact (the photo stays, `?notice=contact_gone#contacts`; an unknown phone 404); `invalid_contact_input_is_400_with_no_row` sends `"><b>x` / `"><b>y` and finds them escaped in the fields. Mutations 12 and 15 re-run: both fail a test now. |
+| N1 | §3.6's table, §5.1's `back` table and §8 step 8's L6 line say what was built: one page posts to `/settings/calls`, no `back` field. |
+| N2 | A refused Matrix ID for a contact that is no longer on the phone redirects to `?notice=contact_gone#contacts` (it rendered a page whose fragment no longer existed, the notice far below); the page's own fallback for that case is gone. Pinned in `contact_flags_are_scoped_to_the_device`. |
+| N3 | Photo removal for a gone contact says "nothing was saved" too, like a save and an upload; only Remove Contact… lands silently (it is done). |
+| N4 | When `call_report` fails, the device page's Calls & Contacts row says "Couldn't read", so an Attention list without call rows never reads as "all good". |
+| Checks | `cargo test` 812 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 9 implementation status (2026-10-14)
+
+Built on branch `design-31-s9` (from `main` at `e8a21506`: steps 1-7 and 11-14 merged), in parallel with step 8's fix
+round; server only, no migration, no new crate, no API change (the policy JSON and `policy_json_keys_snapshot` are
+untouched; the launcher is untouched), `style.css?v=22` (main is at 20, step 8 takes 21; one section at the end).
+- **Routes** (`handlers::schedules`): `GET /schedules/screen-time` (`show_budget`), `GET /schedules/rules/new`
+  (`new_rule`, `?device=X` for a phone's own rule; an unknown phone 404, a non-number 400), `GET /schedules/rules/{id}`
+  chained with its POST (`show_rule`, L5; unknown 404), `GET /devices/{id}/time` (`view_device_time`). `/schedules?device=X`
+  redirects to `/devices/X/time` (L5); a `device` that isn't a number is ignored. Every POST route is unchanged.
+- **Settings › Time Rules** (`schedules.html`, §3.5): "‹ Settings", **Everyone · Rules** (one row per rule, "Skole" over
+  "Mon-Fri 08:15-14:30 · calls off"; a rule that doesn't read says "Can't be read" in red and still opens), Add Rule;
+  **Everyone · Screen Time** (Daily Limit over "Mon-Fri 90 min · Sat-Sun 2 h", or "Can't be read"); **Phones** (avatar,
+  name, "Everyone's rules" / "Own rules" › `/devices/{id}/time`), the footer "Emergency calls always work." Links only:
+  no form on the page. The device picker is gone.
+- **Daily Limit** (`schedule_budget.html`): the 7 days as rows (`partials/budget_rows.html`, shared with Device › Time;
+  a number field and "min" at the row's end, "No limit" placeholder), Save, the flash under it; the calls/music facts
+  behind the footer's ⓘ; a stored limit that doesn't read is a red warning above the group.
+- **The rule editor** (`schedule_rule.html`, the RuleEditor mockup): one form (§5.6) - the top bar "‹ Time Rules" (a
+  phone's own: "‹ Time", its Time page) with **Save** (Add for a new rule), the rule's name as the title, Name, **Type**
+  as an inline select (School / Bedtime / Other; its inline `onchange` still pre-sets the calls switch, §5.2's one
+  allowed script), "Calls with contacts", **When** (7 day rows, two time fields each; the overnight and 24-h rules behind
+  the footer's ⓘ), **Exceptions** ("Apps that still work · Kalender ›" as a `<details>` *inside* the form, H1, a switch
+  per reported app). **Delete Rule…** is a `<details>` confirm after the form ("Delete Skole? The phones that follow
+  everyone's rules are no longer locked by it." / "Anna's phone is …"); no `confirm()` left.
+- **Device › Time** (`device_time.html`, §3.5; no mockup, built from the components): warnings at the top (**Vibb too old
+  for time rules**, **Screen-time record unreadable**, **Incoming calls aren't blocked**); **Now** (Time lock as §3.10's
+  badge or "None" / "No report yet"; Screen time "42 of 90 min today" with "Includes 30 min extra"; the footer "From the
+  phone's last report, 3 min ago" with the exact local time in `title`); **Extra Time Today** (+15 min / +30 min / +1 h,
+  Locate's tiles); **Pause a Rule** (Rule and For pickers, Pause; only while a rule applies); **Recent** (the 10 newest
+  lifts: "Skole paused for 30 min" over "10:12 · parent", the status as the value, End now; only when there are any);
+  **Rules** (the Own rules switch, its own form with a `<noscript>` Save; while off "Everyone's Rules · 2 rules ›");
+  **Own Rules** (rows to the editor, Add Rule; "Used once Own rules is on." while off); **Own Daily Limit** (the 7
+  rows, Save). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read the time rules"):
+  the phone, its settings, its last report, both rule lists, the call report, the lifts.
+- **Forms** (§5.1, §5.6): `schedules/device` takes `section` (H1): `switch` writes only `custom_schedule_enabled` →
+  `/devices/{id}/time#rules`, `budget` only `daily_budget_json` → `?saved=budget#screen-time` (a NULL bind keeps the
+  other column), none both (an older tab) → `/devices/{id}/time`, another value 400. The rule editor: Save →
+  `/schedules/rules/{id}?saved=1` **without a fragment** (Save is at the top, and scroll-restore keeps the place), Add →
+  the new rule's page `?saved=added`, Delete → the list it was in (`/schedules?notice=deleted#rules` /
+  `/devices/{id}/time?notice=deleted#own-rules`), the flash in that group. Daily Limit →
+  `/schedules/screen-time?saved=1#screen-time`. `lifts` takes `back` (§5.1's table): `time` → Device › Time at the
+  posting group with a `done` code (`?done=extra#extra`, `pause#pause`, `ended#lifts`; `lifts::done_flash`), anything
+  else → `/devices/{id}` (the summary's quick actions come in step 10). On Device › Time and Daily Limit every action
+  carries its group's fragment, so a refusal rendered in the POST's answer lands where the redirect would.
+- **Double submits and stale tabs** land back with nothing written: a save of a rule deleted since →
+  `?notice=gone_unsaved#rules` ("That rule was deleted in the meantime, so nothing was saved."), a second Delete →
+  `?notice=gone` ("already deleted"), a pause of a rule that no longer applies (deleted, or the switch flipped) →
+  `?done=gone#pause` (red), a second End now → `?done=over#lifts`; a lift id this phone never had stays a 404, another
+  phone's rule through a scope stays a 404.
+- **Refusals in place** (step 14's rule): a rule without a name, a day with one time (or one that isn't `HH:MM`), more
+  than 50 apps or an app that isn't a package name renders the editor again (400) as typed (escaped, cut short; an
+  invalid package dropped), the reason under its field, which is `autofocus`ed and `aria-invalid` (the exceptions open
+  for theirs); a limit outside 0-1440 renders Daily Limit or Device › Time again (400) the same way. An unknown kind
+  (no page sends one) stays a plain 400.
+- **Rust texts (M5)**: `devices::time_state_lines`, `TimeCard`, `time_card` and `rule_lift_status` are gone (their test
+  with them); Device › Time reads the typed `time_state::TimeReport` (now with `extra_minutes` and
+  `ledger_unreadable`) through `lock_badge`/`screen_time` (§3.10: the end only when provably right, "at last report"
+  when stale, "· calls off" only when calls are managed and screened); `time_state::rule_days` feeds the badge here and
+  on the Devices list. Lift statuses are `lifts::LiftState` (Waiting / OnPhone / EndedOnPhone / EndedEarly / Over /
+  Sent / Done), worded in the Phone Setup zone: "Until 12:30", "Until 00:30 tomorrow", "Ended early 11:50", "Ended
+  yesterday 21:30", "Waiting for the phone" (was "… - server expiry 2026-10-05 10:30:00 (UTC)"); created times local
+  with the exact one in `title`. `days_summary` says "Every day" and "Never" and drops "(next day)"; `budget_summary`
+  is new.
+- **The device page**: the Time rules card is gone; a row **Time · Everyone's rules / Own rules** (the mockup's indigo
+  clock tile) follows Music, "Needs attention" (orange) while Device › Time shows the record or Vibb-too-old warning,
+  "Couldn't read" on a failed read. The moved warnings keep their signal there as Attention rows: the screen-time record
+  and Vibb too old now target `/devices/{id}/time` (no fragment: the warnings sit at its top), incoming calls not
+  blocked stays → Calls & Contacts.
+- **CSS** `?v=22`: the editor's split top bar and its Save button, the right-aligned name field, the day and minute
+  fields at a row's end, the footer under the tiles.
+- **Docs (L8)**: `server/CLAUDE.md` (the step-6 Admin UI, Lifts and fix-round bullets, and a "Time Rules and Device ›
+  Time" section), `launcher/CLAUDE.md` (the status bullet: the server shows `time_state`, and waits for its `zone`).
+  `server/DEPLOY.md`, `docs/testing/emulator.md`, `docs/setup/google-account.md` and `PLAN.md` name none of the moved
+  parts.
+- **Tests**: `tests/time_pages.rs` (new: Time Rules' rows and phones, the old URLs, Daily Limit's save and refusal,
+  the editor's one form and confirm, a refused rule as typed, **the redirect table built from the rendered forms of
+  all six pages** - each fragment checked to hold its form, the action's fragment to be the redirect's, every
+  auto-save to have a `<noscript>` Save -, **the section test** `a_switch_only_post_keeps_the_limits`, Device › Time's
+  groups and flashes, its local times and the zone-less badge, its failed reads, the device page's row), repointed
+  `time_rules.rs` (redirects, the double submits, lift statuses in local time on Device › Time, the warnings there and
+  as Attention rows, the rule name escaped on all four pages), `devices_list.rs` (the Attention target), `shell.rs`
+  (the new pages' tabs); unit tests `lifts::tests`, `schedules::tests`, `time_state::tests`, `attention::tests`.
+  `admin::tests`' non-event list takes the `gone_unsaved` notice code.
+- **Checks**: `cargo test` 829 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
+  warnings, none in the step's files.
+
+Choices made while building:
+1. **Save only at the top** of the rule editor, as the mockup draws it (and Enter in a field submits through it): the
+   save returns to the same place it was pressed, with and without JS. No second Save at the bottom - its answer would
+   land at the top without JS.
+2. **A phone's own rule opens in the Settings tab** (the template sets its tab, §3.1's table puts `schedule_rule` in
+   Settings); its back link goes to the phone's Time page.
+3. **Own rules and the own daily limit show while the switch is off**, marked "Used once Own rules is on.", so a parent
+   can prepare them before switching (switching on with no own rules would leave the phone unrestricted).
+4. **Everyone's rules are a row on Device › Time while the switch is off** (to Settings › Time Rules), not repeated as
+   rows; Pause a Rule lists the rules that apply.
+5. **The lock row uses the badge's wording** with "at last report" but not the time (the group's footer says when the
+   report came, `text_beside`).
+6. **Times must be `HH:MM`** (what `<input type="time">` sends); "8:00" is refused under its day.
+7. **A stored rule that doesn't read opens in the editor** with what does and a red warning, so it can be saved again
+   (fixing the phones' 500) or deleted - the old page listed it by name with no way to delete it.
+8. **Without a `back`** a lift still returns to the device page (an older tab), until step 10 puts the quick actions
+   there.
+9. **The exceptions offer only reported apps with a package name** (`reported_apps` drops anything else and is now a
+   500 on a DB error, not an empty list).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: this VM has no browser.
+- **The lock badge's end on a real phone** ("Skole until 14:30") needs the launcher to report its time zone. The server
+  side is done and degrades cleanly without it (`time_state::provable_end` returns no end while `TimeReport::zone` is
+  absent - pinned by `device_time_shows_the_phones_state_in_local_time` and `time_state::tests`). A later
+  `time_state.zone` step needs only:
+  - **launcher**: add `zone` = `ZoneId.systemDefault().id` (an IANA id, at most 64 characters) to the status
+    `timeState` (its DTO in `server/dto/StatusReportRequest.kt`, the builder in `timerules/TimeRulesRuntime.kt`), with a unit test of the serialised key; no capability
+    and no policy change (an older server ignores the key);
+  - **server**: nothing to build - `TimeReport::parse` already keeps a non-empty `zone` of at most 64 characters and
+    `provable_end` compares it with the Phone Setup zone (`Zone::name`); the stored `time_state_json` cap (4096) has room.
+    Worth adding then: one end-to-end test posting a real launcher report with `zone`, and a line in `server/CLAUDE.md`'s
+    time-state bullet;
+  - **behaviour to expect**: the end then shows on the Devices list, Device › Time and (step 10) the summary header at
+    once, only for a phone whose zone equals Phone Setup's; a phone travelling in another zone shows no end (by
+    design: the rules are the phone's wall clock). An `active_until` field from the launcher would be simpler still
+    (no rule maths on the server), but it is a bigger contract change.
+- **The summary's quick actions** (+15/+30/+1 h, Pause a rule…, Today with End now) are step 10's; `back=summary` is
+  already the lifts' default.
+
+**Fix round after the code QA** (`qa-31-s9-code.md`: 0 High, 2 Medium, 4 Low, 5 Nits; all fixed; on `main` at
+`ac826538` merged in - steps 7 and 8 - with the device page's Calls & Contacts, Music and Time rows, all three old
+cards gone, and `style.css?v=22` after step 8's section):
+
+| # | Fix |
+|---|---|
+| M1 | Pause a Rule shows for its flash even when no rule applies any more ("No rules apply to this phone right now." and the red reason), so `?done=gone#pause` always lands on it. Pinned in `time_rules::invalid_lifts_are_rejected` (the redirect followed, the group and its flash). |
+| M2 | Every refusal's reason is also in the editor's top bar beside Save ("Not saved. Pick at most 50 apps."), in view wherever the answer opens - with JS (scroll-restore back to the top for a saved rule), without JS, and for a new rule (another path); the apps' reason moved under the Exceptions summary, above the list. Pinned in `time_pages::a_refused_rule_renders_in_place_as_typed` (the bar, and the reason before the first app row). |
+| L1 | The top bar (`.editor-bar`) is sticky, so Save is in reach after editing any field, and the save's flash ("Saved." / "Rule added." …) sits in it, in view where scroll-restore returns. `time_pages::the_editor_bar_holds_save_and_its_flash`. |
+| L2 | Two messages: a day with one time "Friday: give both times, or leave both empty.", a time that isn't `HH:MM` "Friday: use times like 08:15." (`schedules::tests::rule_form_validation`). |
+| L3 | The unreadable rule's warning names what didn't read ("Its days and apps couldn't be read, so they show empty here and are saved as you see them: set them again, then Save - or delete the rule.", `schedules::unreadable_parts`), and a refused save of it keeps the warning (`refuse_rule` takes the stored row). `time_pages::an_unreadable_rule_says_what_will_be_reset`. |
+| L4 | End now through another phone's URL is a 404 and the pause keeps running (`time_rules::lifts_are_recorded_delivered_and_end`); the Time row's "Couldn't read" (`time_pages::the_time_row_says_when_the_rules_cant_be_read`). Mutations 3 and 12 re-run: both now fail a test. |
+| N1 | One `attention::calls_enforced(policy, problems)` for the badge's "· calls off" (Attention and Device › Time); the ledger flag is read through `TimeReport` in both. |
+| N2 | A phone's own rule saved while the phone follows everyone's says "Saved. Used once Own rules is on." (`RuleScope::in_force`). |
+| N3 | `time_input_to_minutes` takes digits only ("+8:00" is refused). |
+| N4 | A refused pause from an older tab (no `back`) lands on Device › Time with its reason too (`lifts::back_to` sends every `gone` there). |
+| N5 | The Time row says "Needs attention" also while a rule in force or the own limit in force doesn't read. |
+| Checks | `cargo test` 837 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 10 implementation status (2026-10-14)
+
+Built on branch `design-31-s10` (from `main` at `83294eda`: steps 1-9 and 11-14 in), in parallel with step 15; server
+only, no migration, no new crate, no API change (the policy JSON, `policy_json_keys_snapshot`, the device routes and
+the 24b commands' payloads are untouched; the launcher is untouched), `style.css?v=23` (main is at 22, step 15 takes
+24; one section at the end).
+- **Route:** `GET /devices/{id}` (`devices::view_device` → `render_device`, `device_detail.html` rewritten). The phone,
+  its settings, its last report and its lifts are a 500 on a DB error ("Couldn't read this phone", the sub-pages'
+  `device_pages::load_*`, now `pub(crate)`); an unknown phone is a 404 (a DB error used to read as a 404 and the
+  policy as the defaults). A Sections row whose read fails still says "Couldn't read".
+- **The summary**, top to bottom (the DeviceSummary mockup, §3.2): the sub-page header "‹ Devices" with the tab bar
+  alone; the **header** (the 76 px avatar with its dot, the name, "Online · seen 3 min ago" - the exact time in
+  `title` -, "· changes may be delayed" while Away, "· changes wait until it's back" while Offline, "Disconnected ·
+  access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet", "Not set up"; the lock badge only
+  while a rule locks, `text_beside` the seen time as on the Devices list; today's bar and "42 of 90 min today");
+  **Attention** (`attention::items`, unchanged rows - the list's count); the **foreign-app warning** (`#foreign-access`,
+  red, with its steps); **Quick Actions** (`#quick`: +15 min, +30 min, +1 h; Pause a rule… as a `<details>` sheet with
+  the rules that apply; Lock again (strong) while a pause or Play install mode runs; Unlock for 2 h… behind a
+  `<details>` confirm while no pause is on - both only for a `window_relock_v1` launcher, as before; Locate, a link to
+  `/devices/locate?device={id}`; an open sheet spans the grid; the quick actions' flash under the tiles); **Today**
+  (`#today`: the lifts made on the local today and the pauses still running, with End now; the newest answer to each 24b
+  command for a week; the Parent PIN notices of the last 24 h, each a row to `/lock#parent-pin`; shown only when it has
+  something or its flash); **Blocked Apps** (`#blocked-apps`: one row per app with why and when, its package, key and
+  "allowed under Apps" behind the row's ⓘ, "Allowed" / "Not allowed" as the value; **Allow these apps…** a `<details>`
+  confirm naming the apps; the "N more" footer); **Locked Again** (`#relock`, the last relock's findings for a week);
+  **Settings** (Calls & Contacts, Apps, Music, Time, Lock Screen & PINs, Home Screen, Web Filter; then About This Phone
+  and Advanced in their own group, as the mockup has them).
+- **A phone not set up**: the header ("Not set up"), **Connect This Phone** (`#access`, the id `enroll_code.html`'s Back
+  uses: the live code's kind and end, the typed-code pause, New Setup Code - a POST -, Set Up with QR Code ›) and every
+  Settings row live; no Attention, Quick actions or Today.
+- **Where the forms return** (§5.1, `tests::summary::every_form_on_the_summary_returns_to_its_group`, built from the
+  rendered forms; each action carries its group's fragment, each Location's fragment is checked, and the group it names
+  holds the flash): the tiles and Pause a rule… (`lifts`, `back=summary`) → `/devices/{id}?done=extra|pause|gone#quick`;
+  End now → `?done=ended|over#today` (`lifts::summary_group` maps Device › Time's groups); Lock again and Unlock →
+  `?notice=end_windows_sent|start_pause_sent#quick`; Allow these apps… → `?notice=allow_blocked_sent#blocked-apps` (the
+  group shows for its flash even when the list is already gone). A lift without `back` (an older tab) lands on the
+  summary too, a refused pause with its reason there (qa-31-s9-code N4 sent it to Device › Time while the summary had no
+  word for it). No auto-saving form on the page (so no `<noscript>` Save needed); every answer is a redirect (PRG).
+- **Rust (M5):** the sentence builders the Status card used are deleted with their unit tests -
+  `window_relock::{blocks_note, more_blocks_line, foreign_note, relock_notes, answer_line, flash_text}` and the
+  `BlocksNote`/`ForeignNote`/`RelockNotes` structs, `parent_pin::{when_text, ago}` (the last UTC page times), the
+  `parent_pin::Notice` sentences - and replaced by typed values the template words: `window_relock::Blocks`
+  (`BlockItem`, `BlockWhy`, `allow`, `more`, `waiting` = the Attention count), `relock_blocked` (an older launcher's
+  relock `blocked`, now listed the same way), `ForeignView`, `Findings` (trigger and failed steps as words, never
+  codes), `Answer`/`AnswerState`, `flash` (group + text), `app_names` (the phone's label for an app, else its package),
+  `parent_pin::Notice { title, sub, error, child_tail }`. Times in the Phone Setup zone, a phone time with its age
+  ("14:40 · 3 h ago"). The security log's lines stay UTC (`log_line`, `blocks_log_line`, `foreign_log_line`).
+  `handlers::window_relock::RelockCard` is the typed card (`flash_in(group)`); `capable` folded into `lock_again` /
+  `pause_button`. `devices::time_glance` is split into `time_report` + `badge_and_screen`, which the summary and Device
+  › Time share (Device › Time's own copy of the badge maths is gone). The card builders the old page used and nothing
+  else (the Status card's fields: `restrictions_paused`, `managed_without_pin`, `hardening`, `latest_status`) are gone;
+  the compiler finds no other unused builder (`cargo clippy` stays at 13 warnings, all older).
+- **Tests:** `tests/summary.rs` (new: the header states incl. Online with a stream and Offline after a restart, the
+  name escaped, the badge and bar, the quick actions per phone, the redirect table, Today in Oslo time with the exact
+  time in `title`, the not-set-up variant, the 500s and the 404); `window_relock.rs` rewritten on the summary's groups
+  (the relock findings with the phone's names escaped and no step codes, a relock time in Oslo time, the imposter, Lock
+  again and the Attention target, the commands' Locations and flashes, the install-time block with its confirm, Allowed
+  / Not allowed, the answers in Today, the Unlock confirm, the foreign warning with its steps and target); repointed
+  `command_expiry.rs` (the answers' Expired / Cancelled), `device_api.rs`, `device_pages.rs` (Connect This Phone, the
+  summary's 404), `devices_list.rs` (the `#quick` target), `enrollment.rs` (the live code row, the typed-code pause, the
+  Disconnected header), `hardening.rs` (no Parent PIN: the Attention row and Lock Screen & PINs' warning),
+  `parent_pin.rs` (the notices in Today, the easy-PIN row), `time_pages.rs`, `time_rules.rs` (the lifts' summary
+  redirects and the refused pause's flash); unit tests `window_relock::tests` (every typed view in Oslo time, the
+  UTC fallback), `parent_pin::tests` (the notices), `lifts::tests` (`summary_group`), `attention::tests` (the targets).
+  `command_receipts.rs` (the restart once) and `step9.rs` pass unchanged. Checks: `cargo test` 845 passed; `node
+  --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings, none in the step's files.
+
+**Security-relevant warnings, old condition vs new** (nothing dropped; the Attention rows are unchanged, so the list's
+badge equals the summary's rows - `devices_list::the_badge_counts_the_device_pages_attention_rows`):
+
+| Warning | Before (the Status card) | Now |
+|---|---|---|
+| Foreign access (a device admin / accessibility service outside the allowlist) | Red block with the sentence and 3 steps while the latest report has `foreign_access`; Attention alarm → `#status` | Same condition (`parse_foreign_access` of the latest report): red block `#foreign-access` with the apps by name, the packages behind ⓘ, the same 3 steps + change the Parent PIN; the Attention alarm now lands on it |
+| Relock findings (proxies, certificates, screen lock removed; still on; turned off; Vibb's notifications off; failed steps) | Red lines for 7 days after a relock that found something (`relock_notes`: `now - at <= WARN_MS && found_anything`) | Same condition (`findings`): the Locked Again group, still-on, turned-off and failed steps in red; no Attention row before or now |
+| Blocked apps (outside Play, replaced with another key, an imposter of a catalog app) | The list while `relock_blocks` is reported, else an older launcher's relock `blocked` for 7 days; Allow while one may be let out (older launcher: until an Allow pressed after the relock was answered); imposters "stay blocked: uninstall it"; Attention "N blocked apps wait" | Same lists and rules (`blocks`, `relock_blocked`, `allowed_since_relock`); imposters red "Not the catalog's app: uninstall it" with the catalog's key behind ⓘ; the same count (`Blocks::waiting`) → `#blocked-apps` |
+| Restrictions paused | Red sentence + Attention alarm while `restrictions_paused` | Attention alarm, same condition, → `#quick` (Lock again is there) |
+| No Parent PIN (managed) | Red card + Attention alarm (`managed_without_pin`) | Attention alarm, same condition, → Lock Screen & PINs, whose warning (same condition) says only a reset gets the phone back |
+| Easy Parent PIN | Red line + Attention alarm | Attention alarm, same condition, → Lock Screen & PINs' warning |
+| Parent PIN used / locked / wrong tries (24 h, since the last save) | Lines (red for a lockout or wrong tries) | Today rows, same `parent_pin::notices` rules, red title for a lockout or wrong tries, each to `/lock#parent-pin` |
+| Unseen boots | Attention alarm → About › Diagnostics (step 3) | Unchanged |
+
+Choices made while building:
+1. **The command flashes sit in the group the form is in** (the Quick actions under the tiles, Allow under the Blocked
+   Apps list), not in Today as §3.2 item 4 sketches: that is where the redirect lands (§3.0's flash rule), and Today,
+   right under the tiles, shows the command's answer as it comes.
+2. **Blocked Apps, Locked Again and the foreign-app warning are groups of the summary**, the Attention rows' targets:
+   §3.2 puts Allow these apps "on the Attention row's target", and these were Status card warnings with no sub-page of
+   their own. The foreign warning sits above the Quick actions its steps name ("Unlock for 2 h below", "Lock again
+   below"); the other two after Today.
+3. **Apps are named by the phone's label**, else the package (the server knows no other name, step 4 choice 10); the
+   package and key are always behind the row's ⓘ, so a parent can still compare keys before allowing.
+4. **Every Settings row stays live for a phone not set up** (not greyed "After setup"): each sub-page answers before
+   setup (steps 3-9) and Advanced holds Remove Phone; §3.2 amended. The user can overrule.
+5. **"Restrictions paused" and "No Parent PIN" lost their summary sentences**: the Attention row is the signal, and the
+   page it links to explains (Lock again in the Quick actions; Lock Screen & PINs' warning). The no-PIN card's "with USB
+   debugging blocked" nuance is Lock Screen & PINs' plainer "only a reset gets the phone back".
+6. **`allow-blocked` without a valid list stays a 400** (no page sends one: the confirm only shows with something to
+   allow), like step 9's unknown kind.
+7. **Today's answers are a week's** (the 24b rule), though the group is called Today; the lifts are the local today's
+   plus the pauses still running.
+8. **The header's exact time is a `title`**, not an ⓘ (About This Phone has the full times).
+9. **The Settings header** over the first rows group, as the mockup draws it.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened, the open sheet spanning the grid) is
+  owed: no browser on this VM.
+- **CSS made unused here, for step 15's clean-up:** `.success` (the Status card's green notice; nothing else uses it).
+  `.enrollment-card`, `.page-header`, `.admin-actions`, `.subtitle`, `.card`, `.error`, `.button-small` and
+  `.button-secondary` are still used by other templates.
+- **The lock badge's end** still needs the launcher's `time_state.zone` (step 9's deferred item); the summary header
+  shows it the day it comes, through `badge_and_screen`.
+
+**Fix round after the code QA** (`qa-31-s10-code.md`: 0 High, 1 Medium, 4 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | While the last report has the restrictions paused, Quick Actions (where the Attention row lands) opens with a red "Unlocked on the phone": paused from here or with the Parent PIN, apps, Settings and Play open, "It ends by itself, or tap Lock again to end it now." - for an older launcher (no Lock again) "It ends by itself; this version of Vibb can't be locked again from here." No launcher reports the pause's end, so no time. Pinned for both in `window_relock::lock_again_follows_the_status_and_the_capability`. |
+| L1 | A phone not set up that is managed without a Parent PIN shows an orange "Set a Parent PIN before setup ›" (to `/lock#parent-pin`) above Connect This Phone; gone once a PIN is set (`summary::a_phone_not_set_up_shows_connect_this_phone`). |
+| L2 | The Locked Again group's "Removed" row is red, as Still on and the failed steps (24b §1.7); pinned in `the_last_relock_shows_on_the_summary_for_a_week`. |
+| L3 | `an_install_time_block_is_listed_allowed_and_cleared` reports the label `Mus<i>ic` and finds it escaped in the row and in the Allow confirm, no `<i>`. Mutations 9 and 13 (`|safe`) re-run: both fail it now. |
+| L4 | `handlers::window_relock::card` returns a `Result`: a failed read of the catalog's pins or of the commands' answers is the summary's 500 (never an imposter in the Allow list, never an answered Allow offered again); the Devices list's badge keeps the lenient read (`attention::facts`, logged, `RelockCard::default()`). Pinned in `summary::the_summary_fails_loudly_on_a_db_error` (`tracked_apps`, `device_commands`). |
+| N1 | `reported_when` decides by the local day (`Zone::is_today`, new), not by comparing strings; the header passes the relative time and the template adds "seen ". |
+| N2 | Today keeps the answers from the local today and any still waiting; older ones are on the Locate tab's Recent (choice 7 changed). `window_relock::Answer` carries its time (`at`). Test: `summary::today_is_today_and_keeps_running_pauses`; `command_expiry`'s expired pause picks a zone where two hours ago is today. |
+| N3 | Today's lifts come from their own query (`lifts::today`: made since the local midnight - `Zone::start_of_today`, new - or a pause still running, at most 50), not the newest 10 filtered; the same test has a running pause behind 11 newer lifts. |
+| N4 | One case for the actions: "Allow these apps…" (as "Lock again", "Unlock for 2 h…", "Pause a rule…"); the answers' labels match. |
+| Checks | `cargo test` 846 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. Mutations 9 and 13 re-run: both fail a test. |
+
+## Step 15 implementation status (2026-10-14)
+
+Built on branch `design-31-s15` (from `main` at `83294eda`, steps 1-9 and 11-14 in), in parallel with step 10; server
+only, no migration, no new crate, no API change (enroll is untouched), `style.css?v=24` (main is at 22, step 10 takes
+23; appended at the end). **Split:** §8 step 15's "the old CSS classes nothing uses are deleted" is not in this step -
+it depends on what step 10 removes, and follows as a small clean-up once both are merged.
+- **Add Phone in 3 steps** (§3.7), on the pages that were there, each a Devices sub-page with the §3.0 header:
+  1. **Name** (`/devices/new`, "Add Phone"): one field, "Next". The handler trims it; an empty or over-40-character
+     name renders the form again (400) with what was typed and the reason under the field (it saved an empty name
+     before). Success redirects to Connect (it went to the device page).
+  2. **Connect** (`/devices/{id}/provision`, "Connect Anna"): two choices with a large title each, **QR code · New or
+     reset phone** (Wi-Fi network and password, Make QR Code; the footer "On the phone's welcome screen, tap 6 times in
+     one spot, then scan." with the GrapheneOS/adb path, Phone Setup and the 30 minutes behind ⓘ) and **Code · Phone
+     already set up** (New Setup Code; adb and the 15 minutes behind ⓘ; the typed-code pause as an orange warning).
+     The 302-word page is about 60 words plus three ⓘ panels.
+  3. **The QR code** renders in the POST's answer inside `#qr` - the form posts to `/provision#qr`, so the answer lands
+     on the QR with or without JS (scroll-restore defers to the fragment) - with "Works until 14:35, once" (local,
+     `Zone::until`; was "… UTC") and "Make a New QR Code". **The code** (New Setup Code → `enroll_code.html`, "Setup
+     Code"): the code, "Works until 14:20, once", the footer "On Anna: Vibb's Settings › Enroll with code." (the
+     launcher's own label - the page said "Enroll now", which the launcher doesn't have) with the Server URL first
+     behind ⓘ; the typed-code pause local (was "… UTC").
+  - **Waiting/done:** for a phone not set up, both end on **Done** → the phone's page (which shows "Not set up" until it
+    connects); Back goes there too. For a connected phone (Advanced › Set Up with QR Code / New Setup Code) Back goes
+    to Advanced › Connection (step 3's rule) and both pages warn "Anna is connected now - the phone that uses this code
+    takes over, and the one connected now is cut off" (Connect didn't say so before).
+  - **"Server setup needed"**: one red row at the top of Connect whose ⓘ names what is missing - the checksum
+    (`LAUNCHER_SIGNATURE_CHECKSUM`, the server's `.env`, DEPLOY.md's section) and/or the server address (a link to
+    Phone Setup). Without the checksum the QR group says "Needs the server setup above." and has no form (it had a
+    form that made nothing); New Setup Code still works.
+- **Robustness:** a Wi-Fi name over 32 bytes, a password over 63 characters, or a password without a name is refused
+  before any code is made (400, in the QR group, the reason under the field; the password is never typed back, and
+  "Type the password again." when the other field was the problem) - a long field used to overflow the QR code and
+  panic the handler (`expect`). A payload too long for a QR code (a huge server address or key) is a 500 with a reason.
+  Connect's reads (the phone, Phone Setup) and the code page's are 500s on a DB error (they were 404s, and Connect
+  built a QR code from empty defaults when Phone Setup couldn't be read).
+- **Sign-in** (`login.html`, `verify_2fa.html`, `setup_2fa.html`, `change_password.html`; §3.7 "keep their
+  single-card layout"): one column - "Vibb Phone" (the sign-in page's heading, a small line above the others' titles),
+  a large title (Sign In, Two-Factor Code, Two-Factor Login, New Password), a grouped form, a wide button. A refusal is
+  one red line with `role="alert"` above the form. The 2FA setup's key is behind "Can't scan it?" (shown once on the
+  page, as before). Templates and `<title>`s only: `handlers::auth`'s logic, its messages, the lockout, the pending
+  state's expiry, session cycling, the epoch and CSRF are untouched; no field carries a `value`.
+- **The brand bar** leaves the tab landing pages: Devices, Apps, Locate, Music and Settings include
+  `partials/tab_bar.html` alone and open on their large title under the mockups' 44px bar - Devices and Apps put the
+  mockups' "+" there (Add phone / Add app, the same targets as their Add rows), Music its Edit, Settings and Locate
+  start with the title (`.container > .page-title:first-child`). Only `device_detail.html` still includes
+  `partials/app_header.html` - step 10's page.
+- **Docs (L8):** `server/CLAUDE.md` (the UI line, enrollment's "New Setup Code" and Connect, a step 15 section),
+  `server/DEPLOY.md` (a new code after 0.23.0: Advanced › New Setup Code), `docs/testing/emulator.md` (step 1: Add Phone
+  → Connect → New Setup Code; Block USB debugging is on Advanced), `docs/setup/google-account.md` ("Block account
+  changes" on Advanced before scanning, Add Phone makes the phone first; Erase Phone… on Locate; the phone's Apps page;
+  About This Phone for the battery state), `README.md` (Devices › Add Phone). `launcher/CLAUDE.md` and `PLAN.md` name
+  none of these pages' controls (the launcher's historical `/devices/provision` note stays).
+- **Tests:** `tests::provisioning` - `every_form_in_the_add_flow_lands_where_it_should` (the table from the rendered
+  forms: the name → Connect, the QR form's `#qr` encloses it and the answer's QR, New Setup Code → the code page, both
+  `no-store`, both with Done; an unknown form fails), `connecting_a_connected_phone_again_says_what_happens`,
+  `add_phone_refuses_a_bad_name_in_place` (empty, blank, 41 characters, escaped, trimmed, nothing made),
+  `a_wifi_field_that_cant_be_right_is_refused_before_any_code` (the code's hash unchanged, the password never back),
+  `server_setup_needed_is_one_row_with_its_detail_behind_info` (the env var only in the ⓘ, no QR form without the
+  checksum, 404s, unreadable settings → 500 with no code made); `admin_auth::the_sign_in_pages_use_the_new_components`
+  (the four pages, refusals as one alert line, no password or code echoed, the key once and behind its ⓘ);
+  `shell::the_tab_pages_open_on_their_large_title`, `shell::every_template_with_the_bar_sets_its_tab` (a landing page
+  without a back link, every other page with one, the brand bar only on the device page); repointed
+  `provisioning.rs`, `enrollment.rs` (Add Phone → Connect, the code page's Back), `devices_list.rs`, `shell.rs` (the
+  sign-in heading, no brand bar on Devices). `edge.rs` reads no page text and needed nothing. `cargo test` 844 passed;
+  `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings.
+
+Choices made while building:
+1. **Step 2 and 3 share a page.** Connect is the "How to set it up" page with the QR code's step 3 in its own group
+   (the QR is made only on POST, as before); the code's step 3 is its own page because it shows once. No new routes.
+2. **Add Phone goes on to Connect**, not the device page: the flow is name → connect → done. The device page's
+   not-enrolled card (step 10: "Connect this phone") still offers both.
+3. **The code page's Back for a phone not set up** is the phone's page, not a fragment: step 10 builds the "Connect
+   this phone" group and its id; the page is short, and Done goes there too.
+4. **"Server setup needed" covers a missing server address too** (§3.7 names both), though a QR code can still be made
+   without one (the phone then asks for it); only the missing checksum takes the QR form away.
+5. **"Enroll with code" and "Scan setup QR"** - the launcher's own labels: "Scan setup QR" only inside Connect's ⓘ;
+   "Enroll with code" is in the code page's footer, the button the parent has to find on the phone (§4.2 keeps
+   "enrol(l)" out of the PWA's own words; this quotes the phone's). Connect's Code footer says "Vibb's settings".
+6. **A refused sign-in form says why in one line above the form**, not under a field: the handlers return one message
+   for the whole form, and splitting it per field would change `handlers::auth`, which this step leaves alone.
+7. **A reload of the QR or the code page makes a new code** (its URL is the POST): as before, by design - the code
+   can't be shown twice, and a new one only replaces the last. Post/redirect/get would be worse: the GET would need the
+   code - and the Wi-Fi password inside the QR - kept server-side between the POST and the GET (the session store),
+   breaking design 22's "only the hash is stored" and the field's "never stored". The browser asks "Confirm form
+   resubmission?" first (the page is `no-store`, so nothing replays from a cache), the new QR replaces the old one on
+   the same screen, and the case it can hurt - a phone that scanned and is still provisioning loses its code, so it
+   ends set up but not connected - is recovered with New Setup Code. The QR answer says "Keep this page open until the
+   phone has connected. Reloading it makes a new code." (qa-31-s15-code N1).
+8. **The "+" on Devices and Apps** (the mockups' top bar, left out in step 2 while the brand bar was there) is added:
+   a link to the same page as the Add row, `aria-label`led.
+
+Deferred, with the reason:
+- **The CSS clean-up** (§8 step 15, the split above). Made unused by this step: `.card-alarm` (only the old provision
+  page had it) and `.auth-page .card`. Left with one user each, step 10's `device_detail.html`: `.card` (+ `h2`/`h3`),
+  `.enrollment-card`, `.page-header`; `.subtitle`, `.hint` and `.error` also have `partials/app_display_form.html`.
+  `.app-header` / `.brand` and `partials/app_header.html` go once step 10's page includes `partials/tab_bar.html`
+  alone.
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+
+**Fix round after the code QA** (`qa-31-s15-code.md`: 0 High, 0 Medium, 3 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| L1 | `provision_qr` builds the payload with a placeholder code of the real length (`QR_LEN` letters - the encoder's worst case; a real code is never larger) and checks it fits a QR code **before** `new_code`: an overflow is a 500 "… Nothing was changed." and the phone's live code survives. `provisioning::a_payload_too_big_for_a_qr_code_keeps_the_live_code` (a 3 kB server address, the code's hash unchanged). |
+| L2 | A 64-hex-digit raw WPA key is accepted; a password of 1-7 characters is refused ("at least 8 characters"), never echoed. `provisioning::wifi_fields_are_judged_at_their_edges` (7/8/63/64-hex/64-other characters, an open network, a password without a name). |
+| L3 | The boundaries: a 40-character name (of "Å") makes the phone; 16 × "ø" (32 bytes) with a 63-character password makes a QR, 17 is refused (`a_wifi_name_at_the_limit_makes_a_qr_and_one_over_is_typed_back`); no checksum → the POST leaves the live code (`provision_page_without_checksum_has_no_qr`); "Type the password again." shows exactly on the name refusals that carried a password; `/devices/3/regenerate-code` in `admin_auth::tests::no_store_paths`. Mutations 2, 3, 6, 13, 14 and 15 re-run: all six fail a test now. `enrollment::the_setup_qr_carries_a_qr_code` sends an 8+ character password. |
+| N1 | Choice 7 says why post/redirect/get is worse here; the QR answer has the "Keep this page open …" line (`data-row="keep-open"`). |
+| N2 | The name refusal says "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count as two)", and the name is typed back (escaped). |
+| N3 | Connect keeps the zone and time it loaded (`ProvisionQrTemplate.zone`/`now`); `Zone::until_db` formats a stored end for both pages. |
+| N4 | The status describes the code page's footer as it is ("On Anna: Vibb's Settings › Enroll with code."), choice 5 reworded. |
+| Checks | See the merge with step 10 below. |
+
+**Merge with step 10** (`main` at `1bed2a68` merged in, after the fix round):
+
+| What | Resolution |
+|---|---|
+| Conflicts | `partials/head.html` → `style.css?v=24`; both CSS sections kept (step 10's, then step 15's); both status sections and the status line (steps 1-15); `server/CLAUDE.md`'s typed-code-pause line names the summary's Connect This Phone, Connect and the code page; `enrollment.rs` keeps both checks (Connect offers the code, the summary's Connect This Phone group too). |
+| The brand bar | Step 10's summary already includes `partials/tab_bar.html` alone with its back link ("‹ Devices") and the phone's large header, as §3.0 and the DeviceSummary mockup draw it. Nothing includes `partials/app_header.html` any more, so it is deleted; `shell::every_template_with_the_bar_sets_its_tab` now asserts no template names it and every non-landing page has its back link. The `.app-header` / `.brand` CSS goes with the clean-up. |
+| Back links into the summary | Choice 3 changed: step 10's not-set-up variant has its Connect This Phone group at `#access`, so Back from the code page and from Connect for a phone not set up now goes to `/devices/{id}#access`; Done still goes to the summary's top. Pinned in `enrollment::new_code_is_shown_once_and_replaces_the_last` and `provisioning::every_form_in_the_add_flow_lands_where_it_should`. |
+| Checks | `cargo test` 856 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "music" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/music"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Music</a>
+    <h1 class="page-title">Categories</h1>
+
+    {% if !categories.is_empty() %}
+    <div class="group group-icons" id="categories">
+        {% for category in categories %}
+        <details class="cell category-block" id="category-{{ category.id }}"{% if category.open %} open{% endif %}>
+            <summary class="row">
+                <span class="music-tile music-tile-small" style="background: {{ category.tile }}" aria-hidden="true"><img src="/static/music-icons/{{ category.icon }}.svg" alt=""></span>
+                <span class="row-label">{{ category.name }}</span>
+                <span class="row-value">{{ category.entries }}</span>
+                <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </summary>
+            <div class="category-body">
+                <form method="post" action="/music/categories/{{ category.id }}#category-{{ category.id }}">
+                    <div class="field">
+                        <label class="field-label" for="category-{{ category.id }}-name">Name</label>
+                        <input type="text" id="category-{{ category.id }}-name" name="name" value="{{ category.name }}" maxlength="20" required{% if category.error_field == "name" || category.error_field == "delete" %} autofocus{% endif %}{% if category.error_field == "name" %} aria-invalid="true"{% endif %}>
+                        {% if category.error_field != "delete" %}{% if let Some(error) = category.error %}<p class="field-error">{{ error }}</p>{% endif %}{% endif %}
+                    </div>
+                    <fieldset class="glyph-grid">
+                        <legend>Icon</legend>
+                        {% for icon in icons %}
+                        <label class="glyph-choice" title="{{ icon }}"><input type="radio" name="icon" value="{{ icon }}"{% if category.icon == **icon %} checked{% endif %}{% if loop.first && category.error_field == "icon" %} autofocus{% endif %}><span class="app-tile app-tile-small"><img src="/static/music-icons/{{ icon }}.svg" alt="{{ icon }}"></span></label>
+                        {% endfor %}
+                    </fieldset>
+                    <fieldset class="color-grid">
+                        <legend>Colour</legend>
+                        {% for (key, hex) in colors %}
+                        <label class="color-choice"><input type="radio" name="color" value="{{ key }}"{% if category.color == **key %} checked{% endif %}{% if loop.first && category.error_field == "color" %} autofocus{% endif %}><span class="swatch" style="background: {{ hex }}"></span> {{ key }}</label>
+                        {% endfor %}
+                    </fieldset>
+                    <button type="submit" class="button-wide">Save</button>
+                </form>
+                <div class="admin-actions">
+                    {% if !category.first %}
+                    <form method="post" action="/music/categories/{{ category.id }}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary">&uarr; Earlier</button></form>
+                    {% endif %}
+                    {% if !category.last %}
+                    <form method="post" action="/music/categories/{{ category.id }}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary">&darr; Later</button></form>
+                    {% endif %}
+                </div>
+                {% if category.error_field == "delete" %}{% if let Some(error) = category.error %}<p class="field-error" style="margin: 12px 0 0;">{{ error }}</p>{% endif %}{% endif %}
+                {% if category.entries == 0 %}
+                <details class="confirm" id="category-{{ category.id }}-delete">
+                    <summary class="row">Delete Category…</summary>
+                    <form method="post" action="/music/categories/{{ category.id }}/delete" class="confirm-body">
+                        <p>Delete {{ category.name }}? Its button goes from the phones.</p>
+                        <button type="submit" class="button-destructive">Delete Category</button>
+                    </form>
+                </details>
+                {% else %}
+                <p class="row row-note">In use, so it can't be deleted.</p>
+                {% endif %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+    <p class="group-footer">The round buttons under the covers on the phone, in this order. "Alle" is always there.</p>
+    {% endif %}
+
+    <h2 class="group-header">Add a category</h2>
+    <form method="post" action="/music/categories#new-category" class="group form-group" id="new-category">
+        <div class="field">
+            <label class="field-label" for="new_category_name">Name</label>
+            <input type="text" id="new_category_name" name="name" value="{{ new_category.name }}" maxlength="20" required{% if new_category.error_field == "name" %} aria-invalid="true" autofocus{% endif %}>
+            {% if let Some(error) = new_category.error %}<p class="field-error">{{ error }}</p>{% endif %}
+        </div>
+        <fieldset class="glyph-grid">
+            <legend>Icon</legend>
+            {% for icon in icons %}
+            <label class="glyph-choice" title="{{ icon }}"><input type="radio" name="icon" value="{{ icon }}"{% if new_category.icon == **icon %} checked{% endif %}{% if loop.first && new_category.error_field == "icon" %} autofocus{% endif %}><span class="app-tile app-tile-small"><img src="/static/music-icons/{{ icon }}.svg" alt="{{ icon }}"></span></label>
+            {% endfor %}
+        </fieldset>
+        <fieldset class="color-grid">
+            <legend>Colour</legend>
+            {% for (key, hex) in colors %}
+            <label class="color-choice"><input type="radio" name="color" value="{{ key }}"{% if new_category.color == **key %} checked{% endif %}{% if loop.first && new_category.error_field == "color" %} autofocus{% endif %}><span class="swatch" style="background: {{ hex }}"></span> {{ key }}</label>
+            {% endfor %}
+        </fieldset>
+        <button type="submit" class="button-wide">Add Category</button>
+    </form>
+</main>
+</body>
+</html>

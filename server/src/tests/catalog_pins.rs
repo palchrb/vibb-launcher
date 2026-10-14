@@ -514,19 +514,31 @@ async fn a_new_phone_keeps_its_phone_and_sms_apps() {
         ]
     );
 
-    // The parent unchecks both: the device page says what that costs.
-    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
-        .bind(first)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    // The parent turns both off on Device › Apps (each back at its row): the device page says
+    // what that costs.
+    for package in ["com.maker.dialer", "com.maker.sms"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{first}/apps/toggle"),
+                Some(&cookie),
+                &[("package_name", package), ("back", "apps")],
+            )
+            .await;
+        super::assert_redirect(
+            &res,
+            &super::device_page(first, super::Section::Apps),
+            Some(&format!("app-{package}")),
+        );
+    }
+    // Calls & Contacts says what it costs; the packages only behind the warnings' ⓘ (design 31
+    // step 8).
     let page = app
-        .get_page(&format!("/devices/{first}"), &cookie)
+        .get_page(&super::device_page(first, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(
-        page.contains("Only emergency calls work on this phone: its phone app (com.maker.dialer)"),
-        "{page}"
-    );
-    assert!(page.contains("The phone hides its Messages app (com.maker.sms)"));
+    assert!(page.contains("Only emergency calls work"), "{page}");
+    assert!(page.contains("Its package name is com.maker.dialer."));
+    assert!(page.contains("Messages app is hidden"));
+    assert!(page.contains("Its package name is com.maker.sms."));
 }

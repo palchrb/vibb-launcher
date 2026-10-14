@@ -1,6 +1,6 @@
 //! The Attention list (design 31 §3.2 item 2, §3.8): what about a phone needs the parent, as one
-//! line each with a link to the fix. The device page shows the rows, the Devices list their count
-//! as the red badge - both from [items] over the same [Facts], so the two always agree.
+//! line each with a link to the fix. The phone's summary shows the rows, the Devices list their
+//! count as the red badge - both from [items] over the same [Facts], so the two always agree.
 //!
 //! Every title comes from a typed value, never from the first sentence of a card's text (M5):
 //! those run past 8 words and carry package names. Alarms (red) come first, then what needs
@@ -13,8 +13,8 @@
 //!   are current and unmarked. Both kinds count, on the list and on the page alike.
 //!
 //! [facts] reads about 10 small things per phone (the policy, the last report, the relock card,
-//! the call report, the rules); fine at 1-5 phones - don't make it one query. The device page,
-//! which builds those cards anyway, passes them to [facts_of] instead of reading them twice.
+//! the call report, the rules); fine at 1-5 phones - don't make it one query. The summary, which
+//! builds those parts anyway, passes them to [facts_of] instead of reading them twice.
 
 use crate::AppState;
 use crate::handlers::calls::CallProblem;
@@ -63,6 +63,19 @@ pub enum Kind {
     Calls(CallProblem),
     LedgerUnreadable,
     LauncherWithoutRules,
+    /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
+    /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
+    /// app not reachable, Storytel's login refused, over the storage limit, the old mobile-data
+    /// switch, entries the phone can't fetch (one row for all).
+    MusicCantDeliver,
+    MusicUnreachable,
+    MusicStorytelRefused,
+    MusicOverLimit,
+    MusicOlderPhone,
+    MusicFailing(usize),
+    /// The phone's Spotify account can't play (design 26c §4.4: the login, the app, Premium or
+    /// the phone's web player) - the music app's tiles say "Spør en voksen".
+    MusicSpotify,
 }
 
 impl Kind {
@@ -125,6 +138,13 @@ impl AttentionItem {
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::LauncherWithoutRules => "launcher-without-rules",
+            Kind::MusicCantDeliver => "music-cant-deliver",
+            Kind::MusicUnreachable => "music-unreachable",
+            Kind::MusicStorytelRefused => "music-storytel-refused",
+            Kind::MusicOverLimit => "music-over-limit",
+            Kind::MusicOlderPhone => "music-older-phone",
+            Kind::MusicFailing(_) => "music-entries",
+            Kind::MusicSpotify => "music-spotify",
         }
     }
 }
@@ -163,6 +183,8 @@ pub struct Facts {
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
     /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
     pub calls_enforced: bool,
+    /// Device › Music's warnings (qa-31-s7-code M1).
+    pub music: crate::handlers::music::MusicWarnings,
 }
 
 /// The rows for one phone, alarms first.
@@ -205,6 +227,17 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
     add(facts.launcher_without_rules, Kind::LauncherWithoutRules);
+    let music = &facts.music;
+    add(music.cant_deliver, Kind::MusicCantDeliver);
+    add(music.unreachable, Kind::MusicUnreachable);
+    add(music.storytel_refused, Kind::MusicStorytelRefused);
+    add(music.over_limit.is_some(), Kind::MusicOverLimit);
+    add(music.older_phone, Kind::MusicOlderPhone);
+    add(
+        music.failing_entries > 0,
+        Kind::MusicFailing(music.failing_entries),
+    );
+    add(music.spotify_cant_play, Kind::MusicSpotify);
     kinds
         .into_iter()
         .map(|kind| AttentionItem {
@@ -239,7 +272,14 @@ fn level(kind: Kind) -> Level {
         | Kind::NoNotificationAccess
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
-        | Kind::LauncherWithoutRules => Level::Action,
+        | Kind::LauncherWithoutRules
+        | Kind::MusicCantDeliver
+        | Kind::MusicUnreachable
+        | Kind::MusicStorytelRefused
+        | Kind::MusicOverLimit
+        | Kind::MusicOlderPhone
+        | Kind::MusicFailing(_)
+        | Kind::MusicSpotify => Level::Action,
     }
 }
 
@@ -267,17 +307,26 @@ fn title(kind: Kind) -> String {
         Kind::Calls(problem) => problem.title(),
         Kind::LedgerUnreadable => "Screen-time record unreadable",
         Kind::LauncherWithoutRules => "Vibb too old for time rules",
+        Kind::MusicCantDeliver => "Vibb can't deliver music yet",
+        Kind::MusicUnreachable => "Music app not reachable",
+        Kind::MusicStorytelRefused => "Storytel refused the phone's login",
+        Kind::MusicOverLimit => "Music over the storage limit",
+        Kind::MusicOlderPhone => "Update Vibb and the music app",
+        Kind::MusicFailing(1) => "1 music entry fails on the phone",
+        Kind::MusicFailing(n) => return format!("{n} music entries fail on the phone"),
+        Kind::MusicSpotify => "Spotify can't play on this phone",
     }
     .to_string()
 }
 
-/// The page that fixes it. Until each card has its sub-page (design 31 §8 steps 4-10) some are
-/// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
-/// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
-/// and the restart to Advanced.
+/// The page that fixes it: a sub-page's group, or (design 31 step 10) a group of the summary
+/// itself - the quick actions with Lock again, the foreign-app warning with its steps, the blocked
+/// apps with "Allow these apps…".
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
-        Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
+        Kind::RestrictionsPaused => ("", "quick"),
+        Kind::ForeignAccess => ("", "foreign-access"),
+        Kind::BlockedApps(_) => ("", "blocked-apps"),
         Kind::DoNotDisturb => ("/about", "sound"),
         Kind::PolicyProblem => ("/about", "software"),
         Kind::UnseenRestarts => ("/about", "diagnostics"),
@@ -287,18 +336,40 @@ fn target(kind: Kind, id: i64) -> String {
             ("/advanced", "app-screens")
         }
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
-        Kind::NoParentPin | Kind::EasyParentPin => ("", "parent-pin"),
-        Kind::ChildLockOff => ("", "screen-lock"),
-        Kind::NoNotificationAccess => ("", "launcher"),
-        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => ("", "time"),
+        Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
+        Kind::ChildLockOff => ("/lock", "child-pin"),
+        Kind::NoNotificationAccess => ("/home", "layout"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
         }
+        // Device › Time's warnings at the top of the page (step 9): no fragment needed.
+        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => {
+            return format!("/devices/{id}/time");
+        }
+        // Device › Music's warnings at the top of the page: no fragment needed.
+        Kind::MusicCantDeliver | Kind::MusicUnreachable => {
+            return format!("/devices/{id}/music");
+        }
+        // The others above their own group (its header) or by their rows.
+        Kind::MusicStorytelRefused => ("/music", "storytel-title"),
+        Kind::MusicOverLimit => ("/music", "storage-title"),
+        Kind::MusicOlderPhone => ("/music", "music-settings"),
+        Kind::MusicFailing(_) => ("/music", "library"),
+        Kind::MusicSpotify => ("/music", "music-spotify"),
     };
     format!("/devices/{id}{page}#{anchor}")
 }
 
-/// What [facts_of] reads; the device page passes the cards it has built.
+/// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
+/// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
+pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
+    policy.calls_managed
+        && !problems
+            .iter()
+            .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
+}
+
+/// What [facts_of] reads; the summary passes the parts it has built.
 pub struct Sources<'a> {
     pub device: &'a Device,
     pub policy: &'a DevicePolicy,
@@ -306,9 +377,11 @@ pub struct Sources<'a> {
     pub relock: &'a RelockCard,
     /// The call report's problems.
     pub call_problems: &'a [CallProblem],
-    /// Calls aren't managed while a no-calls rule is in force (the Time rules card's warning).
+    /// Calls aren't managed while a no-calls rule is in force (Device › Time's warning).
     pub incoming_calls_not_blocked: bool,
     pub connection: ConnectionState,
+    /// The music entries switched on for the phone (`music::ticked_entries`).
+    pub music_ticked: &'a [i64],
 }
 
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
@@ -350,11 +423,24 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
         .map(|list| list.into_iter().collect());
-    let relock =
-        crate::handlers::window_relock::card(&state.db, id, latest, None, now_ms, allowed.as_ref())
-            .await;
+    // Only the counts are read here, so the zone doesn't matter.
+    let relock = crate::handlers::window_relock::card(
+        &state.db,
+        id,
+        latest,
+        None,
+        &crate::display_time::Zone::utc_fallback(),
+        chrono::Utc::now(),
+        allowed.as_ref(),
+    )
+    .await
+    // The badge only counts; the summary itself fails on this (qa-31-s10-code L4).
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "attention: can't read the relock parts");
+        crate::handlers::window_relock::RelockCard::default()
+    });
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
-        Ok(report) => report.problems,
+        Ok(report) => report.problems(),
         Err(err) => {
             tracing::error!(device_id = id, %err, "attention: can't read the call report");
             Vec::new()
@@ -366,6 +452,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             .unwrap_or_default()
             .iter()
             .any(|rule| !rule.calls_allowed);
+    let music_ticked = crate::handlers::music::ticked_entries(&state.db, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the music ticks");
+            Vec::new()
+        });
     facts_of(
         &Sources {
             device,
@@ -375,6 +467,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             call_problems: &call_problems,
             incoming_calls_not_blocked,
             connection,
+            music_ticked: &music_ticked,
         },
         now_ms,
     )
@@ -394,15 +487,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.capabilities_json.as_deref())
             .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
     };
-    let blocked_apps = if s.relock.blocks.items.is_empty() && s.relock.notes.allow_button {
-        // An older launcher: its last relock's "Blocked:" apps that "Allow these apps" lets out.
-        s.relock.notes.allow.len().max(1)
-    } else {
-        s.relock.blocks.items.len()
-    };
-    let time = latest
-        .and_then(|st| st.time_state_json.as_deref())
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let play =
@@ -447,7 +531,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
             latest.is_some(),
         ),
-        blocked_apps,
+        blocked_apps: s.relock.blocks.waiting,
         restart_once: !crate::models::admin_policy_effects(
             latest.and_then(|st| st.admin_policies_pending_json.as_deref()),
         )
@@ -461,18 +545,19 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         boot_cover_not_shown: escapes
             .iter()
             .any(|n| matches!(n, EscapeNote::BootCoverNotShown { .. })),
-        no_notification_access: latest.and_then(|st| st.notification_listener_enabled)
-            == Some(false),
+        // Home Screen's own warning, so the row and the page agree.
+        no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
+            .is_some(),
         calls: s.call_problems.to_vec(),
-        ledger_unreadable: time
-            .as_ref()
-            .is_some_and(|t| t["ledger_unreadable"].as_bool() == Some(true)),
+        // Device › Time reads the same typed report.
+        ledger_unreadable: latest
+            .and_then(|st| st.time_state_json.as_deref())
+            .and_then(crate::time_state::TimeReport::parse)
+            .is_some_and(|report| report.ledger_unreadable),
         launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
-        calls_enforced: policy.calls_managed
-            && !s
-                .call_problems
-                .iter()
-                .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall)),
+        calls_enforced: calls_enforced(policy, s.call_problems),
+        // Device › Music's own warnings, so the rows and the page agree.
+        music: crate::handlers::music::music_warnings(policy, latest, s.music_ticked),
     }
 }
 
@@ -503,6 +588,15 @@ mod tests {
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
+            music: crate::handlers::music::MusicWarnings {
+                cant_deliver: true,
+                unreachable: true,
+                storytel_refused: true,
+                over_limit: Some(("3.2 GB".to_string(), 2)),
+                older_phone: true,
+                failing_entries: 2,
+                spotify_cant_play: true,
+            },
             ..Default::default()
         }
     }
@@ -585,6 +679,13 @@ mod tests {
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
                 "Vibb too old for time rules",
+                "Vibb can't deliver music yet",
+                "Music app not reachable",
+                "Storytel refused the phone's login",
+                "Music over the storage limit",
+                "Update Vibb and the music app",
+                "2 music entries fail on the phone",
+                "Spotify can't play on this phone",
             ]
         );
         let first_action = rows.iter().position(|r| r.level == Level::Action).unwrap();
@@ -612,6 +713,7 @@ mod tests {
             .map(|r| r.kind)
             .collect();
         kinds.push(Kind::BlockedApps(1));
+        kinds.push(Kind::MusicFailing(1));
         kinds.extend(CallProblem::ALL.iter().map(|p| Kind::Calls(*p)));
         for kind in kinds {
             let title = title(kind);
@@ -626,6 +728,10 @@ mod tests {
             }
         }
         assert_eq!(title(Kind::BlockedApps(1)), "1 blocked app waits");
+        assert_eq!(
+            title(Kind::MusicFailing(1)),
+            "1 music entry fails on the phone"
+        );
     }
 
     #[test]
@@ -637,8 +743,13 @@ mod tests {
                 .map(|r| r.target.as_str())
                 .unwrap()
         };
-        assert_eq!(target("restrictions-paused"), "/devices/7#status");
-        assert_eq!(target("easy-parent-pin"), "/devices/7#parent-pin");
+        // Step 10: the summary's own groups.
+        assert_eq!(target("restrictions-paused"), "/devices/7#quick");
+        assert_eq!(target("foreign-access"), "/devices/7#foreign-access");
+        assert_eq!(target("blocked-apps"), "/devices/7#blocked-apps");
+        // Step 4: Lock Screen & PINs.
+        assert_eq!(target("easy-parent-pin"), "/devices/7/lock#parent-pin");
+        assert_eq!(target("no-parent-pin"), "/devices/7/lock#parent-pin");
         // Design 31 step 3: About This Phone and Advanced.
         assert_eq!(target("do-not-disturb"), "/devices/7/about#sound");
         assert_eq!(target("policy-problem"), "/devices/7/about#software");
@@ -659,10 +770,27 @@ mod tests {
             target("boot-cover-not-shown"),
             "/devices/7/advanced#updates"
         );
-        assert_eq!(target("child-lock-off"), "/devices/7#screen-lock");
-        assert_eq!(target("notification-access"), "/devices/7#launcher");
-        assert_eq!(target("screen-time-record"), "/devices/7#time");
+        assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
+        // Step 5: Home Screen.
+        assert_eq!(target("notification-access"), "/devices/7/home#layout");
+        // Step 9: Device › Time, its warnings at the top.
+        assert_eq!(target("screen-time-record"), "/devices/7/time");
+        assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");
+        // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
+        // their group.
+        assert_eq!(target("music-cant-deliver"), "/devices/7/music");
+        assert_eq!(target("music-unreachable"), "/devices/7/music");
+        assert_eq!(
+            target("music-storytel-refused"),
+            "/devices/7/music#storytel-title"
+        );
+        assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
+        assert_eq!(
+            target("music-older-phone"),
+            "/devices/7/music#music-settings"
+        );
+        assert_eq!(target("music-entries"), "/devices/7/music#library");
     }
 }

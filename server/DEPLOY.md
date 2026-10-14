@@ -208,8 +208,8 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   the address that sent them, for an hour after 15); wrong 2FA codes do: 5 lock it for 15 minutes, every further lock
   doubles, up to 24 hours. After a sign-in that followed wrong codes, the Devices page says how many and from where:
   whoever typed them knew the password - change it.
-- Changing the password or resetting 2FA signs out every other session; Account > "Sign out everywhere" signs out
-  this one too.
+- Changing the password or resetting 2FA signs out every other session; Settings › Account & Password › "Sign Out
+  Everywhere…" signs out this one too.
 - **Lost the authenticator and signed out?** On the Pi:
   `cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server reset-2fa admin` (in Docker:
   `docker compose exec handy /app/kid_phone_server reset-2fa admin`). It removes the 2FA setup, the lock and its
@@ -218,7 +218,7 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   start). Sign in with it, set a new password, then a new authenticator. Replacing the password matters: the lock
   you are recovering from means someone else knows the old one.
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
-  iPhone and sign in again), and enrollment codes that were open stop working: make a new one on the device page.
+  iPhone and sign in again), and enrollment codes that were open stop working: make a new one (the phone's Advanced › New Setup Code).
 
 ## Docker (server >= 0.23.0)
 
@@ -280,7 +280,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
   back. A backup whose database is over 1 GiB is refused.
-- The Updates page has no OS, Tailscale or reboot controls in the container, and the Backups page no external drive:
+- Settings › Software Updates has no OS, Tailscale or restart controls in the container, and Backups no external drive:
   copy `data/backups` off the host yourself.
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
   see "Signing in and recovery").
@@ -326,7 +326,8 @@ To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for 
 (`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
 and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration), but the
 root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above; it keeps
-`.env` and the database. Until then the server refuses "Update now" and scheduled auto-updates and shows the command.
+`.env` and the database. Until then the server refuses "Update Now…" and scheduled auto-updates and shows the command (Settings › Software
+Updates, "Run the installer again").
 (The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
 
 Updates only ever go forward: the Updates page, the scheduler and `update.sh` refuse a release that isn't newer than the
@@ -479,27 +480,28 @@ launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` r
 
 ## Vibb music library (server 0.21.0, design 21 step 1)
 
-The Music tab holds the library for the Vibb music app; each phone's page has a Music card.
+The Music tab holds the library for the Vibb music app; each phone has a Music page (`/devices/{id}/music`, the
+Music row on its page).
 
 - **Order**: install this server (`server-v0.21.0` or later) **before any stable `music-v*` release** is published in
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
   `vibb-music.apk` as the launcher update. Migration 0049 sets the launcher row to `launcher-v*` releases and
   `^kids-launcher-mdm\.apk$` (only where its cached release already is a `launcher-v*` one) and adds the music app's
-  catalog row; anything else: the Music page's "Add the music app to the catalog" and the app's "Tag starts with" (Source & Signing).
+  catalog row; anything else: Music › Settings, "Add to the App Catalog", and the app's "Tag starts with" (Source & Signing).
 - **Storytel key**: the family's Storytel login is encrypted with `MUSIC_SECRET_KEY` (base64, 32 bytes) from `.env`,
   or else with the key file `/opt/kid-phone-server/data/keys/music-secret.key`, which the server writes (0600, in a
   0700 directory) at its first start - `data/` is the only place the service may write (`ProtectSystem=strict`).
   `MUSIC_SECRET_KEY_FILE` points elsewhere, but only somewhere the service can write. No backup holds the key: the
   backup zip has the database and the image stores, the live mirror and the external drive copy the database and
   `data/backups/`, `update.sh` the database files - don't copy `data/keys/` anywhere yourself. A database restored
-  on another box, or a lost key file, means entering the login again on the Music page. Without a usable key the
+  on another box, or a lost key file, means entering the login again in Music › Settings. Without a usable key the
   Storytel form is off and the phones get 503.
 - **Smoke check after the update**: `journalctl -u kid-phone-server -b | grep -i storytel` shows "Storytel logins are
   sealed with ..." - never "Storytel logins are off: ..." (that line says which file and why).
 - **Own files** are stored in `data/music_files/` and are **not** in the backups (too big). After a restore without
   them they are listed as missing (the phones keep their copies); upload them again to restore them in place. Their
-  covers are in the backups. Files left by restoring an *older* backup show on the Music page ("Files no entry
-  uses") with a delete button - nothing is deleted by itself.
+  covers are in the backups. Files left by restoring an *older* backup show in Music › Settings ("Files no entry
+  uses") with Delete Files… - nothing is deleted by itself.
 - Rolling back to 0.20 means restoring the `update.sh` backup: 0.20 refuses to start on a database with migration 0049
   (and 0050, the library revision).
 
@@ -510,7 +512,7 @@ audio from the source.
 
 - **What it fetches**: psapi.nrk.no (one 5-episode page per NRK entry at each check, manifests only for new
   episodes), the RSS feeds (a conditional GET), gfx.nrk.no and feed images (covers, at most once a day). One request
-  at a time, 200 ms apart, 4 s between entries. The Music page's "New episodes" card sets how often (every 1/3/6/12/24 h, default 6 =
+  at a time, 200 ms apart, 4 s between entries. Music › Settings, "Check for new episodes", sets how often (every 1/3/6/12/24 h, default 6 =
   the Vibb Pi; NRK every 12 h at 6). Check now on an entry checks it at once (15 min per entry, 12 an hour, 48 a day).
 - **Addresses**: a feed on the home LAN or the tailnet works (its first check fixes it as LAN). A public feed is never
   followed to a private address (redirects, DNS answers and media URLs are checked).
@@ -523,7 +525,7 @@ audio from the source.
   `/api/devices/music/entries/{id}/items` with a phone's token); a restart, and a `kill -9` mid-fill (it doesn't loop:
   the entry waits 15 minutes, then its fill starts over - a fill is written in one go); a setting change and the Check now limits; a 21a import filled in the background; a 404 feed keeping
   its list; a public feed that redirects to a LAN address refused; yesterday's NRK series HLS URL still playing; the
-  cards on a phone in light and dark, iOS Safari included.
+  Music tab's rows on a phone in light and dark, iOS Safari included.
 - **Order**: this server before any stable `music-v*` release, as for 0.21.
 - Rolling back to 0.21 means restoring the `update.sh` backup: 0.21 refuses to start on a database with migration
   0051.
@@ -572,7 +574,8 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - The DNS blocklist fails closed: a feed that can't be downloaded keeps its previous domains, also across a restart
   without internet (the server keeps each feed's last good copy in `data/dns_feeds/`). A feed that has never loaded
   (a mistyped URL) is left out until it does, the rest still reaches the phones. The Web Filter page (Settings) shows each
-  feed's state. Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
+  feed's state, a phone's Web Filter page (the phone's own lists, domains and log) a short "Not loaded yet" or
+  "Last download failed". Feeds may also be `127.0.0.1` hosts files or adblock `||domain^` lists.
 - **Catalog apps are pinned** to their Android package and signing key, read from the APK of their first release
   (releases already cached are pinned at the first start): a later release of another package or signed with another
   key is refused, and the app's page says so. So is a first release naming a system package, or an app a phone
@@ -614,7 +617,7 @@ the PWA's address, e.g. its tailnet host name, never a path), so the parent's br
 
 ## Backups
 
-Built in - see the **Backups** page under Settings in the admin UI. Create a backup on demand, set a schedule for automatic ones, and optionally mirror them live to an external drive plugged into the Pi. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
+Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one on demand, the Schedule group sets automatic ones, and on the Pi they can be copied (and the database mirrored live) to an external drive plugged into it. Each backup in the list has Download, Restore… (type its file name) and Delete…; Upload a Backup… adds one from elsewhere. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
 
 - **Keep backups as safe as the admin password.** A backup (and a copy of the data volume or the live mirror) holds
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on

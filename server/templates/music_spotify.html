@@ -27,12 +27,10 @@ input, select { max-width: 100%; }
 </head>
 <body>
 {% let tab = "music" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Spotify</h1>
-        <a href="/music#spotify" class="button-small button-secondary">Back to Music</a>
-    </div>
+    <a class="nav-back" href="/music#spotify"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Music</a>
+    <h1 class="page-title">Spotify</h1>
     <p class="subtitle">Spotify plays on the phones through your family's own Spotify developer app and your children's Spotify accounts: one account per phone, the child's own. Your own Spotify account is never logged in here - you paste the links. This server ships no app of its own: set yours up once, then log in each child's account. Until then nothing else in the music library changes.</p>
 
     {% if !key_available %}
@@ -163,7 +161,7 @@ input, select { max-width: 100%; }
         <h2>Add a Spotify link</h2>
         {% if let Some(added) = added %}
         <div class="flash" id="added">
-            Added <a href="/music#entry-{{ added.id }}">{{ added.name }}</a>. {% if added.ticked.is_empty() %}Turn it on for a phone on that phone's Music card.{% else %}On {{ added.ticked.join(", ") }} within a few minutes.{% endif %}
+            Added <a href="/music#entry-{{ added.id }}">{{ added.name }}</a>. {% if added.ticked.is_empty() %}Turn it on for a phone on that phone's Music page.{% else %}On {{ added.ticked.join(", ") }} within a few minutes.{% endif %}
             {% if added.context || !added.skipped.is_empty() %}
             <ul class="sp-notes">
                 {% if added.context %}<li>No logged-in account owns this playlist or collaborates on it, so the phones can't show its tracks: they play it in Spotify's order. For the track list, make the playlist in your child's Spotify account, or invite your child to collaborate on yours and join from your child's account.</li>{% endif %}
@@ -173,7 +171,7 @@ input, select { max-width: 100%; }
         </div>
         {% endif %}
         <div class="subtitle">A playlist, album, track, artist or podcast: in Spotify, Share › Copy link.
-            <details class="info"><summary aria-label="About Spotify links"><span aria-hidden="true">ⓘ</span></summary><div class="info-panel"><p>It plays like a podcast: its list, where it stopped, the same player. Nothing is downloaded, so it needs Wi-Fi, or mobile data if the phone may use it.</p><p>Only phones that play as a Spotify account get it (each phone's Music card).</p></div></details></div>
+            <details class="info"><summary aria-label="About Spotify links"><span aria-hidden="true">ⓘ</span></summary><div class="info-panel"><p>It plays like a podcast: its list, where it stopped, the same player. Nothing is downloaded, so it needs Wi-Fi, or mobile data if the phone may use it.</p><p>Only phones that play as a Spotify account get it (each phone's Music page).</p></div></details></div>
         {% if !add.usable %}
         <p class="subtitle">Log in with a Spotify account above first.</p>
         {% endif %}

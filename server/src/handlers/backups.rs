@@ -10,28 +10,33 @@
 
 use askama::Template;
 use axum::Extension;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
-use axum::response::{Html, IntoResponse};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use std::io::Write;
 
 use crate::AppState;
+use crate::handlers::settings::Flash;
 use crate::security::{self, CurrentAdmin};
 
-pub(crate) const BACKUP_DIR: &str = "data/backups";
-const SCHEDULE_FILE: &str = "data/backup_schedule.conf";
-const LAST_RUN_FILE: &str = "data/backup_schedule_last_run";
+/// The backups' folder in `AppState::data_dir` (`data/backups`).
+pub(crate) const BACKUP_DIR: &str = "backups";
+const SCHEDULE_FILE: &str = "backup_schedule.conf";
+const LAST_RUN_FILE: &str = "backup_schedule_last_run";
 const EXTERNAL_MOUNT: &str = "/mnt/kid-phone-server-backup";
-const LIVE_MIRROR_DB: &str = "data/live_mirror.db";
-/// Where a backup's database snapshot is made before it is zipped.
-const SNAPSHOT_DIR: &str = "data";
-const FLAG_FILE: &str = "data/update_requested";
+const LIVE_MIRROR_DB: &str = "live_mirror.db";
+/// The root helper's request file in `data_dir` (`system_update` and `system_maintenance` write
+/// the same one).
+pub(crate) const FLAG_FILE: &str = "update_requested";
 
+/// A backup in the list: when it was made (local, the exact time in `title`) and its size; the
+/// file name only inside its Restore… confirm, where it is typed.
 struct BackupRow {
     filename: String,
     size_display: String,
-    created_display: String,
+    when: String,
+    exact: String,
 }
 
 #[derive(Clone)]
@@ -58,8 +63,8 @@ impl BackupScheduleConfig {
         }
     }
 
-    pub async fn load() -> Self {
-        let Ok(contents) = tokio::fs::read_to_string(SCHEDULE_FILE).await else {
+    pub async fn load(data: &std::path::Path) -> Self {
+        let Ok(contents) = tokio::fs::read_to_string(data.join(SCHEDULE_FILE)).await else {
             return Self::defaults();
         };
         let mut config = Self::defaults();
@@ -102,58 +107,19 @@ impl BackupScheduleConfig {
             .ok()
             .filter(|n| *n > 0)
     }
-
-    /// Plain-language readout of what's actually configured right now -
-    /// scheduled backups run unconditionally as a background task from the
-    /// moment the app starts (there's no separate "enable scheduling"
-    /// toggle, just these settings, which default to daily/02:00/keep-14 if
-    /// this file has never been saved), so without this an admin who set it
-    /// up once has no way to check months later what it's actually doing.
-    fn summary(&self) -> String {
-        let when = match self.frequency.as_str() {
-            "weekly" => format!(
-                "every {} at {}",
-                day_of_week_name(&self.day_of_week),
-                self.backup_time
-            ),
-            "monthly" => format!(
-                "on day {} of the month at {}",
-                self.day_of_month, self.backup_time
-            ),
-            _ => format!("daily at {}", self.backup_time),
-        };
-        let retention = match self.retention_count() {
-            Some(n) => format!("keeping the last {n}"),
-            None => "keeping all of them (no automatic deletion)".to_string(),
-        };
-        let external = if self.external_copy_enabled {
-            "on"
-        } else {
-            "off"
-        };
-        let mirror = if self.continuous_mirror_enabled {
-            "on"
-        } else {
-            "off"
-        };
-        format!(
-            "Backing up {when}, {retention}. Copy to external drive: {external}. Continuous mirror: {mirror}."
-        )
-    }
 }
 
-pub(crate) fn day_of_week_name(day_of_week: &str) -> &'static str {
-    match day_of_week {
-        "0" => "Sunday",
-        "1" => "Monday",
-        "2" => "Tuesday",
-        "3" => "Wednesday",
-        "4" => "Thursday",
-        "5" => "Friday",
-        "6" => "Saturday",
-        _ => "Sunday",
-    }
-}
+/// The schedule forms' day choices (Sunday = 0, as the schedule files and the root scheduler
+/// read them).
+pub(crate) const WEEKDAYS: [(&str, &str); 7] = [
+    ("1", "Monday"),
+    ("2", "Tuesday"),
+    ("3", "Wednesday"),
+    ("4", "Thursday"),
+    ("5", "Friday"),
+    ("6", "Saturday"),
+    ("0", "Sunday"),
+];
 
 async fn external_drive_mounted() -> bool {
     tokio::process::Command::new("mountpoint")
@@ -187,9 +153,9 @@ pub(crate) fn is_safe_backup_filename(name: &str) -> bool {
         && !name.contains("..")
 }
 
-async fn list_backup_filenames() -> Vec<String> {
+async fn list_backup_filenames(dir: &std::path::Path) -> Vec<String> {
     let mut names = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(BACKUP_DIR).await {
+    if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let filename = entry.file_name().to_string_lossy().to_string();
             if is_safe_backup_filename(&filename) {
@@ -203,13 +169,13 @@ async fn list_backup_filenames() -> Vec<String> {
 
 /// Deletes the oldest backups beyond `retention_count` (filenames are
 /// timestamp-prefixed, so lexical order is chronological order).
-pub async fn prune_old_backups(retention_count: usize) {
-    let names = list_backup_filenames().await;
+pub async fn prune_old_backups(dir: &std::path::Path, retention_count: usize) {
+    let names = list_backup_filenames(dir).await;
     if names.len() <= retention_count {
         return;
     }
     for name in &names[..names.len() - retention_count] {
-        let _ = tokio::fs::remove_file(format!("{BACKUP_DIR}/{name}")).await;
+        let _ = tokio::fs::remove_file(dir.join(name)).await;
     }
 }
 
@@ -312,15 +278,23 @@ async fn strip_secrets_in(path: &std::path::Path) -> Result<(), String> {
 /// admin-triggered handler and the background scheduled-backup task, so the
 /// actual backup logic only needs to be reviewed/maintained in one place.
 pub async fn perform_backup(state: &AppState) -> Result<String, String> {
-    tokio::fs::create_dir_all(BACKUP_DIR)
+    let backup_dir = state.data_dir.join(BACKUP_DIR);
+    tokio::fs::create_dir_all(&backup_dir)
         .await
         .map_err(|_| "Couldn't create the backups folder.".to_string())?;
 
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     // In data/, not data/backups/: backup_sync.sh copies everything in backups/ to the drive.
-    let snapshot_path = format!("{SNAPSHOT_DIR}/backup-snapshot-{timestamp}.db");
+    let snapshot_path = state
+        .data_dir
+        .join(format!("backup-snapshot-{timestamp}.db"))
+        .to_string_lossy()
+        .into_owned();
     let zip_filename = format!("backup-{timestamp}.zip");
-    let zip_path = format!("{BACKUP_DIR}/{zip_filename}");
+    let zip_path = backup_dir
+        .join(&zip_filename)
+        .to_string_lossy()
+        .into_owned();
 
     // VACUUM INTO takes a consistent, complete snapshot of the live database
     // (including anything only committed to the WAL so far) without needing
@@ -367,10 +341,14 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
 struct BackupsTemplate {
     title: String,
     backups: Vec<BackupRow>,
-    success: Option<String>,
-    error: Option<String>,
+    /// The last form's result, in its group ("backups", "upload", "schedule", "drive").
+    flash: Option<Flash>,
+    /// A refused restore: the file whose confirm renders open, and why.
+    restore_refused: Option<(String, &'static str)>,
+    /// A refused format: the drive whose confirm renders open, and why.
+    format_refused: Option<(String, &'static str)>,
     schedule: BackupScheduleConfig,
-    schedule_summary: String,
+    weekdays: &'static [(&'static str, &'static str)],
     external_mount: String,
     external_drive_mounted: bool,
     removable_drives: Vec<RemovableDrive>,
@@ -378,14 +356,129 @@ struct BackupsTemplate {
     docker: bool,
 }
 
-async fn render_backups(
-    state: &AppState,
-    success: Option<String>,
-    error: Option<String>,
-) -> Html<String> {
+impl BackupsTemplate {
+    /// Why a restore of `file` was refused, if it was (its confirm then renders open).
+    fn restore_error(&self, file: &str) -> Option<&'static str> {
+        self.restore_refused
+            .as_ref()
+            .filter(|(refused, _)| refused == file)
+            .map(|(_, why)| *why)
+    }
+
+    /// Why formatting `device` was refused, if it was.
+    fn format_error(&self, device: &str) -> Option<&'static str> {
+        self.format_refused
+            .as_ref()
+            .filter(|(refused, _)| refused == device)
+            .map(|(_, why)| *why)
+    }
+}
+
+/// What a form on Backups sent back, besides the page.
+#[derive(Default)]
+struct Answer {
+    flash: Option<Flash>,
+    restore_refused: Option<(String, &'static str)>,
+    format_refused: Option<(String, &'static str)>,
+}
+
+/// What a form that worked did (qa-31-s14-code M1): the POST redirects to
+/// `/backups?done=<code>#<group>` and the GET shows its line in that group, so a reload repeats
+/// nothing (no second restore, backup or format). Refusals still render in the POST's answer: they
+/// changed nothing, and a typed confirm never goes into a URL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Done {
+    Backup,
+    Deleted,
+    Gone,
+    Schedule,
+    Upload,
+    Restore,
+    Format,
+}
+
+impl Done {
+    const ALL: [Done; 7] = [
+        Done::Backup,
+        Done::Deleted,
+        Done::Gone,
+        Done::Schedule,
+        Done::Upload,
+        Done::Restore,
+        Done::Format,
+    ];
+
+    fn code(self) -> &'static str {
+        match self {
+            Done::Backup => "backup",
+            Done::Deleted => "deleted",
+            Done::Gone => "gone",
+            Done::Schedule => "schedule",
+            Done::Upload => "upload",
+            Done::Restore => "restore",
+            Done::Format => "format",
+        }
+    }
+
+    fn group(self) -> &'static str {
+        match self {
+            Done::Schedule => "schedule",
+            Done::Upload => "upload",
+            Done::Format => "drive",
+            _ => "backups",
+        }
+    }
+
+    fn parse(code: &str) -> Option<Done> {
+        Done::ALL.into_iter().find(|done| done.code() == code)
+    }
+
+    /// The line in its group. A restore's result is shown on the page the server answers after
+    /// it is back, so it says what happened.
+    fn flash(self, docker: bool) -> Flash {
+        let text = match self {
+            Done::Backup => "Backup made.",
+            Done::Deleted => "Backup deleted.",
+            Done::Gone => "That backup was already deleted.",
+            Done::Schedule => "Schedule saved.",
+            Done::Upload => "Uploaded. It is at the top of the list.",
+            Done::Restore if docker => {
+                "Restore started. The server puts the backup in place and starts again within a \
+                 few seconds; everyone signs in again then."
+            }
+            Done::Restore => {
+                "Restore started. The server puts the backup in place and starts again within \
+                 about a minute; everyone signs in again then."
+            }
+            Done::Format => {
+                "Formatting the drive. It takes about a minute; reload this page then to see it."
+            }
+        };
+        Flash::done(self.group(), text)
+    }
+
+    fn redirect(self) -> Response {
+        Redirect::to(&format!("/backups?done={}#{}", self.code(), self.group())).into_response()
+    }
+}
+
+impl Answer {
+    fn refused(at: &'static str, title: impl Into<String>) -> Answer {
+        Answer {
+            flash: Some(Flash::refused(at, title)),
+            ..Answer::default()
+        }
+    }
+}
+
+/// The page. Every form renders its answer here, in the POST's response (as before design 31), and
+/// posts to its group's fragment, so the answer lands where the parent was.
+async fn render_backups(state: &AppState, status: StatusCode, answer: Answer) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
     let mut backups: Vec<BackupRow> = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(BACKUP_DIR).await {
+    if let Ok(mut entries) = tokio::fs::read_dir(state.data_dir.join(BACKUP_DIR)).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
             let filename = entry.file_name().to_string_lossy().to_string();
             if !is_safe_backup_filename(&filename) {
@@ -394,90 +487,88 @@ async fn render_backups(
             let Ok(meta) = entry.metadata().await else {
                 continue;
             };
-            // The filename's own timestamp (e.g. backup-20260714-140000.zip)
-            // is generated from chrono::Local::now() in perform_backup above -
-            // format this the same way (Local, not UTC) so the date shown
-            // here always matches the date in the filename next to it.
-            let created_display = meta
+            let made = meta
                 .modified()
                 .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .and_then(|d| {
-                    chrono::DateTime::<chrono::Utc>::from_timestamp(d.as_secs() as i64, 0)
-                })
-                .map(|dt| {
-                    dt.with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d %H:%M")
-                        .to_string()
-                })
-                .unwrap_or_default();
+                .map(chrono::DateTime::<chrono::Utc>::from);
             backups.push(BackupRow {
                 filename,
                 size_display: human_size(meta.len()),
-                created_display,
+                when: made.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+                exact: made.map(|t| zone.exact(t)).unwrap_or_default(),
             });
         }
     }
+    // The file names start with their time: newest first.
     backups.sort_by(|a, b| b.filename.cmp(&a.filename));
 
-    let schedule = BackupScheduleConfig::load().await;
-    let schedule_summary = schedule.summary();
-
-    Html(
-        BackupsTemplate {
-            title: "Backups".to_string(),
-            backups,
-            success,
-            error,
-            schedule,
-            schedule_summary,
-            external_mount: EXTERNAL_MOUNT.to_string(),
-            external_drive_mounted: !docker && external_drive_mounted().await,
-            removable_drives: if docker {
-                Vec::new()
-            } else {
-                list_removable_drives().await
-            },
-            docker,
-        }
-        .render()
-        .unwrap(),
-    )
+    let page = BackupsTemplate {
+        title: "Backups".to_string(),
+        backups,
+        flash: answer.flash,
+        restore_refused: answer.restore_refused,
+        format_refused: answer.format_refused,
+        schedule: BackupScheduleConfig::load(&state.data_dir).await,
+        weekdays: &WEEKDAYS,
+        external_mount: EXTERNAL_MOUNT.to_string(),
+        external_drive_mounted: !docker && external_drive_mounted().await,
+        removable_drives: if docker {
+            Vec::new()
+        } else {
+            list_removable_drives().await
+        },
+        docker,
+    };
+    (status, Html(page.render().unwrap())).into_response()
 }
 
-pub async fn list_backups(State(state): State<AppState>) -> impl IntoResponse {
-    render_backups(&state, None, None).await
+/// The page; `?done=<code>` (a form that worked, [Done]) shows its line in its group.
+pub async fn list_backups(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
+    let answer = Answer {
+        flash: query
+            .get("done")
+            .and_then(|code| Done::parse(code))
+            .map(|done| done.flash(docker)),
+        ..Answer::default()
+    };
+    render_backups(&state, StatusCode::OK, answer).await
 }
 
-pub async fn create_backup(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn create_backup(State(state): State<AppState>) -> Response {
     match perform_backup(&state).await {
         Ok(_) => {
-            let schedule = BackupScheduleConfig::load().await;
+            let schedule = BackupScheduleConfig::load(&state.data_dir).await;
             if let Some(retention) = schedule.retention_count() {
-                prune_old_backups(retention).await;
+                prune_old_backups(&state.data_dir.join(BACKUP_DIR), retention).await;
             }
-            render_backups(&state, Some("Backup created.".to_string()), None)
-                .await
-                .into_response()
+            Done::Backup.redirect()
         }
         Err(e) => {
             tracing::error!("manual backup failed: {e}");
-            render_backups(
-                &state,
-                None,
-                Some("Something went wrong creating the backup.".to_string()),
-            )
-            .await
-            .into_response()
+            let answer = Answer {
+                flash: Some(
+                    Flash::refused("backups", "The backup failed")
+                        .because("Nothing was saved. The server's log says why."),
+                ),
+                ..Answer::default()
+            };
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
         }
     }
 }
 
-pub async fn download_backup(Path(filename): Path<String>) -> impl IntoResponse {
+pub async fn download_backup(
+    State(state): State<AppState>,
+    Path(filename): Path<String>,
+) -> impl IntoResponse {
     if !is_safe_backup_filename(&filename) {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
-    match tokio::fs::read(format!("{BACKUP_DIR}/{filename}")).await {
+    match tokio::fs::read(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
         Ok(bytes) => {
             let headers = [
                 (header::CONTENT_TYPE, "application/zip".to_string()),
@@ -492,14 +583,23 @@ pub async fn download_backup(Path(filename): Path<String>) -> impl IntoResponse 
     }
 }
 
+/// Deletes a backup file (behind a `<details>` confirm). One already gone (a second tab) says so.
 pub async fn delete_backup(
     State(state): State<AppState>,
     Path(filename): Path<String>,
-) -> impl IntoResponse {
-    if is_safe_backup_filename(&filename) {
-        let _ = tokio::fs::remove_file(format!("{BACKUP_DIR}/{filename}")).await;
+) -> Response {
+    if !is_safe_backup_filename(&filename) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
-    render_backups(&state, Some("Backup deleted.".to_string()), None).await
+    match tokio::fs::remove_file(state.data_dir.join(BACKUP_DIR).join(&filename)).await {
+        Ok(()) => Done::Deleted.redirect(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Done::Gone.redirect(),
+        Err(err) => {
+            tracing::error!(%err, "couldn't delete a backup");
+            let answer = Answer::refused("backups", "Couldn't delete the backup.");
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -515,17 +615,16 @@ pub struct BackupScheduleForm {
 
 const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 
+/// Saves the schedule (one form, §5.6). A bad frequency or a time that isn't HH:MM writes nothing
+/// (400, the reason in the group).
 pub async fn save_backup_schedule(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<BackupScheduleForm>,
-) -> impl IntoResponse {
+) -> Response {
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            render_backups(&state, None, Some("Invalid frequency.".to_string())).await,
-        )
-            .into_response();
+        let answer = Answer::refused("schedule", "Unknown frequency - nothing was saved.");
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
@@ -535,16 +634,11 @@ pub async fn save_backup_schedule(
     } else if security::valid_clock_time(form.backup_time.trim()) {
         form.backup_time.trim().to_string()
     } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            render_backups(
-                &state,
-                None,
-                Some("The time must look like 02:00 - nothing was saved.".to_string()),
-            )
-            .await,
-        )
-            .into_response();
+        let answer = Answer::refused(
+            "schedule",
+            "The time must look like 02:00 - nothing was saved.",
+        );
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     };
     let retention_count: i64 = form
         .retention_count
@@ -566,9 +660,12 @@ pub async fn save_backup_schedule(
             && state.net.deploy_kind == crate::net::DeployKind::Systemd,
     };
 
-    let message = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
-        .await
-        .is_ok()
+    let answer = if tokio::fs::write(
+        state.data_dir.join(SCHEDULE_FILE),
+        config.to_file_contents(),
+    )
+    .await
+    .is_ok()
     {
         security::record_security_event(
             &state.db,
@@ -578,14 +675,11 @@ pub async fn save_backup_schedule(
             None,
         )
         .await;
-        "Backup schedule saved.".to_string()
+        return Done::Schedule.redirect();
     } else {
-        "Couldn't save the schedule.".to_string()
+        Answer::refused("schedule", "Couldn't save the schedule.")
     };
-
-    render_backups(&state, Some(message), None)
-        .await
-        .into_response()
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
 }
 
 /// Background task (spawned once at startup, see main.rs) that creates a
@@ -598,13 +692,16 @@ pub async fn run_scheduled_backups(state: AppState) {
     loop {
         interval.tick().await;
 
-        let schedule = BackupScheduleConfig::load().await;
-        if !is_due(&schedule).await {
+        let schedule = BackupScheduleConfig::load(&state.data_dir).await;
+        if !is_due(&state.data_dir, &schedule).await {
             continue;
         }
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        if tokio::fs::write(LAST_RUN_FILE, &today).await.is_err() {
+        if tokio::fs::write(state.data_dir.join(LAST_RUN_FILE), &today)
+            .await
+            .is_err()
+        {
             tracing::warn!("couldn't write backup schedule last-run marker, skipping this cycle");
             continue;
         }
@@ -613,7 +710,7 @@ pub async fn run_scheduled_backups(state: AppState) {
             Ok(filename) => {
                 tracing::info!("scheduled backup created: {filename}");
                 if let Some(retention) = schedule.retention_count() {
-                    prune_old_backups(retention).await;
+                    prune_old_backups(&state.data_dir.join(BACKUP_DIR), retention).await;
                 }
             }
             Err(e) => tracing::error!("scheduled backup failed: {e}"),
@@ -621,9 +718,9 @@ pub async fn run_scheduled_backups(state: AppState) {
     }
 }
 
-async fn is_due(schedule: &BackupScheduleConfig) -> bool {
+async fn is_due(data: &std::path::Path, schedule: &BackupScheduleConfig) -> bool {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let last_run = tokio::fs::read_to_string(LAST_RUN_FILE)
+    let last_run = tokio::fs::read_to_string(data.join(LAST_RUN_FILE))
         .await
         .unwrap_or_default();
     if last_run.trim() == today {
@@ -681,19 +778,13 @@ pub async fn run_live_mirror(state: AppState) {
     loop {
         interval.tick().await;
 
-        let schedule = BackupScheduleConfig::load().await;
+        let schedule = BackupScheduleConfig::load(&state.data_dir).await;
         if !schedule.continuous_mirror_enabled {
             continue;
         }
 
-        let tmp_path = format!("{LIVE_MIRROR_DB}.tmp");
-        if let Err(e) = snapshot(
-            &state.db,
-            std::path::Path::new(&tmp_path),
-            std::path::Path::new(LIVE_MIRROR_DB),
-        )
-        .await
-        {
+        let mirror = state.data_dir.join(LIVE_MIRROR_DB);
+        if let Err(e) = snapshot(&state.db, &mirror.with_extension("db.tmp"), &mirror).await {
             tracing::warn!("live mirror snapshot failed: {e}");
         }
     }
@@ -772,6 +863,51 @@ async fn list_removable_drives() -> Vec<RemovableDrive> {
     drives
 }
 
+/// Why a Format request is refused.
+#[derive(Debug, PartialEq, Eq)]
+enum FormatRefusal {
+    /// The drive isn't in the fresh list.
+    Gone,
+    /// The typed size isn't the drive's.
+    WrongSize,
+}
+
+impl FormatRefusal {
+    /// The page's answer: a wrong size under that drive's open confirm, a gone drive in the group.
+    fn answer(self, device: &str) -> Answer {
+        match self {
+            FormatRefusal::Gone => Answer::refused(
+                "drive",
+                "That drive isn't connected any more - nothing was formatted.",
+            ),
+            FormatRefusal::WrongSize => Answer {
+                format_refused: Some((
+                    device.to_string(),
+                    "That isn't the drive's size - nothing was formatted.",
+                )),
+                ..Answer::default()
+            },
+        }
+    }
+}
+
+/// The drive a Format request names, only if it is in the freshly listed `drives` and the typed
+/// size is its size exactly.
+fn format_target<'a>(
+    drives: &'a [RemovableDrive],
+    device: &str,
+    confirm: &str,
+) -> Result<&'a RemovableDrive, FormatRefusal> {
+    let drive = drives
+        .iter()
+        .find(|d| d.device == device)
+        .ok_or(FormatRefusal::Gone)?;
+    if confirm.trim() != drive.size_display {
+        return Err(FormatRefusal::WrongSize);
+    }
+    Ok(drive)
+}
+
 #[derive(Deserialize)]
 pub struct FormatDriveForm {
     device: String,
@@ -788,37 +924,27 @@ pub struct FormatDriveForm {
 /// a plain confirm() dialog is bypassable by anyone who can hit this route
 /// directly, and formatting is the one action here with no undo.
 /// The root side independently re-validates the device again from scratch
-/// regardless of what this handler already checked.
+/// regardless of what this handler already checked. A wrong size renders the
+/// page with that drive's confirm open and the reason under the field.
 pub async fn format_drive(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<FormatDriveForm>,
-) -> impl IntoResponse {
+) -> Response {
     let drives = list_removable_drives().await;
-    let Some(drive) = drives.iter().find(|d| d.device == form.device) else {
-        return render_backups(
-            &state,
-            None,
-            Some("That drive is no longer detected - nothing was formatted.".to_string()),
-        )
-        .await
-        .into_response();
+    let drive = match format_target(&drives, &form.device, &form.confirm_size) {
+        Ok(drive) => drive,
+        Err(refusal) => {
+            let answer = refusal.answer(&form.device);
+            return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        }
     };
-    if form.confirm_size.trim() != drive.size_display {
-        return render_backups(
-            &state,
-            None,
-            Some(
-                "Confirmation text didn't match the drive size - nothing was formatted."
-                    .to_string(),
-            ),
-        )
-        .await
-        .into_response();
-    }
 
     let flag_content = format!("format_drive {}", drive.device);
-    let message = if tokio::fs::write(FLAG_FILE, &flag_content).await.is_ok() {
+    let answer = if tokio::fs::write(state.data_dir.join(FLAG_FILE), &flag_content)
+        .await
+        .is_ok()
+    {
         security::record_security_event(
             &state.db,
             "drive_format_triggered",
@@ -827,17 +953,19 @@ pub async fn format_drive(
             Some(&drive.device),
         )
         .await;
-        format!(
-            "Formatting {} now - this can take a minute. Refresh this page shortly.",
-            drive.device
-        )
+        return Done::Format.redirect();
     } else {
-        "Couldn't write the request file.".to_string()
+        not_requested("drive")
     };
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+}
 
-    render_backups(&state, Some(message), None)
-        .await
-        .into_response()
+/// The root helper's request file couldn't be written: nothing happens, and why is behind ⓘ.
+fn not_requested(at: &'static str) -> Answer {
+    Answer {
+        flash: Some(crate::handlers::updates::not_requested(at)),
+        ..Answer::default()
+    }
 }
 
 #[derive(Deserialize)]
@@ -856,44 +984,45 @@ pub struct RestoreBackupForm {
 /// discards whatever's in the live database right now, so a plain confirm()
 /// dialog (bypassable via a direct POST) isn't enough. The root side takes
 /// its own safety copy of the current data before overwriting anything, in
-/// case the wrong backup gets picked.
+/// case the wrong backup gets picked. A wrong name renders the page with that
+/// backup's confirm open and the reason under the field.
 pub async fn restore_backup(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(filename): Path<String>,
     axum::Form(form): axum::Form<RestoreBackupForm>,
-) -> impl IntoResponse {
+) -> Response {
     if !is_safe_backup_filename(&filename) {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
-    let names = list_backup_filenames().await;
+    let names = list_backup_filenames(&state.data_dir.join(BACKUP_DIR)).await;
     if !names.contains(&filename) {
-        return render_backups(
-            &state,
-            None,
-            Some("That backup is no longer there - nothing was restored.".to_string()),
-        )
-        .await
-        .into_response();
+        let answer = Answer::refused(
+            "backups",
+            "That backup isn't there any more - nothing was restored.",
+        );
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     }
     if form.confirm_filename.trim() != filename {
-        return render_backups(
-            &state,
-            None,
-            Some("Confirmation text didn't match the filename - nothing was restored.".to_string()),
-        )
-        .await
-        .into_response();
+        let answer = Answer {
+            restore_refused: Some((
+                filename,
+                "That isn't the file's name - nothing was restored.",
+            )),
+            ..Answer::default()
+        };
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     }
 
     if state.net.deploy_kind == crate::net::DeployKind::Docker {
-        return restore_in_container(&state, &admin, &filename)
-            .await
-            .into_response();
+        return restore_in_container(&state, &admin, &filename).await;
     }
 
     let flag_content = format!("restore_backup {filename}");
-    let message = if tokio::fs::write(FLAG_FILE, &flag_content).await.is_ok() {
+    let answer = if tokio::fs::write(state.data_dir.join(FLAG_FILE), &flag_content)
+        .await
+        .is_ok()
+    {
         security::record_security_event(
             &state.db,
             "backup_restore_triggered",
@@ -902,16 +1031,11 @@ pub async fn restore_backup(
             Some(&filename),
         )
         .await;
-        "Restoring now - the app will stop, swap in the backup, and restart. \
-         This can take a minute; the app will be unreachable until it's done."
-            .to_string()
+        return Done::Restore.redirect();
     } else {
-        "Couldn't write the request file.".to_string()
+        not_requested("backups")
     };
-
-    render_backups(&state, Some(message), None)
-        .await
-        .into_response()
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
 }
 
 /// The restore in the container (design 22 §6): no root helper, so the marker
@@ -923,16 +1047,15 @@ async fn restore_in_container(
     state: &AppState,
     admin: &crate::models::AdminUser,
     filename: &str,
-) -> Html<String> {
-    let marker = std::path::Path::new("data").join(crate::startup::RESTORE_REQUEST);
+) -> Response {
+    let marker = state.data_dir.join(crate::startup::RESTORE_REQUEST);
     if let Err(err) = tokio::fs::write(&marker, filename).await {
         tracing::error!(%err, "couldn't write the restore request");
-        return render_backups(
-            state,
-            None,
-            Some("Couldn't write the restore request - nothing was restored.".to_string()),
-        )
-        .await;
+        let answer = Answer::refused(
+            "backups",
+            "Couldn't start the restore - nothing was restored. The server's log says why.",
+        );
+        return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer).await;
     }
     security::record_security_event(
         &state.db,
@@ -942,17 +1065,9 @@ async fn restore_in_container(
         Some(filename),
     )
     .await;
+    // The 303's GET comes back at once, well inside the second before the exit.
     restart_soon(state.clone());
-    render_backups(
-        state,
-        Some(
-            "Restoring now - the server stops, swaps in the backup and starts again (Docker's \
-             restart policy). This takes a few seconds; reload the page then."
-                .to_string(),
-        ),
-        None,
-    )
-    .await
+    Done::Restore.redirect()
 }
 
 /// Exits non-zero a moment after the response went out, with the database closed (its WAL
@@ -973,29 +1088,32 @@ fn restart_soon(state: AppState) {
 /// was lost - and adds it to the list above so it can be restored like any
 /// other backup. Never trusts the browser-supplied filename or the .zip
 /// extension alone: the archive is actually opened and checked for a
-/// `kidphone.db` entry before being accepted.
+/// `kidphone.db` entry before being accepted. A refusal says why in the
+/// Upload group (its form open).
 pub async fn upload_backup(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
-) -> impl IntoResponse {
+) -> Response {
+    let refused = |why: &'static str| Answer::refused("upload", why);
     let Ok(Some(field)) = multipart.next_field().await else {
-        return render_backups(&state, None, Some("No file was uploaded.".to_string()))
-            .await
-            .into_response();
-    };
-    let Ok(bytes) = field.bytes().await else {
         return render_backups(
             &state,
-            None,
-            Some("Couldn't read the uploaded file.".to_string()),
+            StatusCode::BAD_REQUEST,
+            refused("Choose a file first."),
         )
-        .await
-        .into_response();
+        .await;
+    };
+    let Ok(bytes) = field.bytes().await else {
+        let answer = refused("The file couldn't be read. Nothing was added.");
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     };
     if bytes.is_empty() {
-        return render_backups(&state, None, Some("That file is empty.".to_string()))
-            .await
-            .into_response();
+        return render_backups(
+            &state,
+            StatusCode::BAD_REQUEST,
+            refused("That file is empty."),
+        )
+        .await;
     }
 
     let bytes_for_check = bytes.clone();
@@ -1009,27 +1127,14 @@ pub async fn upload_backup(
     .unwrap_or(false);
 
     if !valid {
-        return render_backups(
-            &state,
-            None,
-            Some(
-                "That doesn't look like a Vibb Phone backup (couldn't find \
-                 kidphone.db inside the zip)."
-                    .to_string(),
+        let answer = Answer {
+            flash: Some(
+                Flash::refused("upload", "That isn't a Vibb Phone backup")
+                    .because("A backup is a .zip with kidphone.db inside. Nothing was added."),
             ),
-        )
-        .await
-        .into_response();
-    }
-
-    if tokio::fs::create_dir_all(BACKUP_DIR).await.is_err() {
-        return render_backups(
-            &state,
-            None,
-            Some("Couldn't create the backups folder.".to_string()),
-        )
-        .await
-        .into_response();
+            ..Answer::default()
+        };
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
     }
 
     let nanos = std::time::SystemTime::now()
@@ -1038,15 +1143,110 @@ pub async fn upload_backup(
         .unwrap_or(0);
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let filename = format!("backup-{timestamp}-uploaded-{nanos}.zip");
-    let path = format!("{BACKUP_DIR}/{filename}");
+    let dir = state.data_dir.join(BACKUP_DIR);
+    let path = dir.join(&filename);
 
-    let message = if tokio::fs::write(&path, &bytes).await.is_ok() {
-        format!("Uploaded and added to the list below as {filename}.")
-    } else {
-        "Couldn't save the uploaded file.".to_string()
-    };
+    let saved = async {
+        tokio::fs::create_dir_all(&dir).await?;
+        tokio::fs::write(&path, &bytes).await
+    }
+    .await;
+    match saved {
+        Ok(()) => Done::Upload.redirect(),
+        Err(err) => {
+            tracing::error!(%err, "couldn't save an uploaded backup");
+            let answer = refused("Couldn't save the file. Nothing was added.");
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+        }
+    }
+}
 
-    render_backups(&state, Some(message), None)
-        .await
-        .into_response()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drive() -> RemovableDrive {
+        RemovableDrive {
+            device: "/dev/sda".to_string(),
+            size_display: "29.8 GB".to_string(),
+        }
+    }
+
+    /// Format needs the drive in the fresh list and its size typed exactly (qa-31-s14-code L1).
+    #[test]
+    fn format_needs_a_listed_drive_and_its_size() {
+        let drives = [drive()];
+        assert!(format_target(&drives, "/dev/sda", " 29.8 GB ").is_ok());
+        assert_eq!(
+            format_target(&drives, "/dev/sda", "29.8").err(),
+            Some(FormatRefusal::WrongSize)
+        );
+        assert_eq!(
+            format_target(&drives, "/dev/sdb", "29.8 GB").err(),
+            Some(FormatRefusal::Gone)
+        );
+        assert_eq!(
+            format_target(&[], "/dev/sda", "29.8 GB").err(),
+            Some(FormatRefusal::Gone)
+        );
+        let wrong = FormatRefusal::WrongSize.answer("/dev/sda");
+        assert_eq!(wrong.format_refused.unwrap().0, "/dev/sda");
+        assert_eq!(
+            FormatRefusal::Gone.answer("/dev/sda").flash.unwrap().at,
+            "drive"
+        );
+    }
+
+    /// The page with a backup and a USB drive (which a test machine has neither of): every form
+    /// lands on its own group, the deletes and the format are confirms, a refused format opens its
+    /// confirm; every [Done] code reads back to itself and shows in a group the page has.
+    #[test]
+    fn the_page_with_a_backup_and_a_drive() {
+        let page = |format_refused: Option<(String, &'static str)>, flash: Option<Flash>| {
+            BackupsTemplate {
+                title: "Backups".to_string(),
+                backups: vec![BackupRow {
+                    filename: "backup-20261013-030000.zip".to_string(),
+                    size_display: "1.2 MB".to_string(),
+                    when: "03:00".to_string(),
+                    exact: String::new(),
+                }],
+                flash,
+                restore_refused: None,
+                format_refused,
+                schedule: BackupScheduleConfig::defaults(),
+                weekdays: &WEEKDAYS,
+                external_mount: EXTERNAL_MOUNT.to_string(),
+                external_drive_mounted: false,
+                removable_drives: vec![drive()],
+                docker: false,
+            }
+            .render()
+            .unwrap()
+        };
+        let html = page(None, None);
+        crate::tests::settings_pages::check_forms("/backups", &html);
+        assert!(html.contains("<summary class=\"row\">Format /dev/sda (29.8 GB)…</summary>"));
+        assert!(!html.contains("data-drive=\"/dev/sda\" open"));
+        let refused = page(
+            Some(("/dev/sda".to_string(), "That isn't the drive's size.")),
+            None,
+        );
+        assert!(refused.contains("data-drive=\"/dev/sda\" open"));
+        assert!(refused.contains("id=\"format-error\""));
+        for done in Done::ALL {
+            assert_eq!(Done::parse(done.code()), Some(done));
+            let html = page(None, Some(done.flash(false)));
+            assert!(
+                html.contains(&format!("id=\"{}\"", done.group())),
+                "{done:?}"
+            );
+            assert!(
+                html.contains(&format!("data-flash=\"{}\"", done.group())),
+                "{done:?}"
+            );
+            assert!(!done.flash(true).title.contains("open this page again"));
+        }
+        assert_eq!(Done::parse("nonsense"), None);
+    }
 }

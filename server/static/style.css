@@ -1800,3 +1800,418 @@ code.key {
         color: CanvasText;
     }
 }
+
+/* ---- Lock Screen & PINs (design 31 step 4) ---- */
+
+/* A row that opens its form under it (Child PIN, Parent PIN): a PIN is typed and saved, not
+   toggled, so it gets a field and a Save button instead of a picker. */
+details.edit > summary {
+    list-style: none;
+    cursor: pointer;
+}
+
+details.edit > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.edit > summary .chev {
+    transition: transform 0.2s;
+}
+
+details.edit[open] > summary .chev {
+    -webkit-transform: rotate(90deg);
+    transform: rotate(90deg);
+}
+
+.edit-body {
+    padding: 4px 16px 16px;
+}
+
+.edit-body .checkbox-row {
+    margin: 0 4px 16px;
+}
+
+.field-hint {
+    margin: -10px 4px 16px;
+    font-size: 0.8125rem;
+    color: var(--label-2);
+    line-height: 1.35;
+}
+
+.edit-body > .field-hint:first-child {
+    margin-top: 0;
+}
+
+/* A warning's expert fix (an adb command): its ⓘ follows the sentence, the panel opens under it. */
+.attention-sub details.info {
+    display: inline;
+}
+
+.attention-sub details.info > summary:not(.row) {
+    min-width: 44px;
+    min-height: 44px;
+    margin: -12px -10px;
+    color: inherit;
+}
+
+.attention-sub .info-icon {
+    color: inherit;
+}
+
+.attention-sub .info-panel {
+    margin: 8px 0 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* ---- A tab's title action ("Edit"), a row that discloses a form, a switch in a form (design 31 step 12) ---- */
+
+.title-bar { display: flex; justify-content: flex-end; min-height: 44px; }
+.title-action { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--tint); font-size: 1.0625rem; text-decoration: none; }
+.tile-orange { background: #C2410C; }
+details.disclosure > summary { list-style: none; cursor: pointer; }
+details.disclosure > summary::-webkit-details-marker { display: none; }
+details.disclosure[open] > summary .section-chev,
+details.info[open] > summary .section-chev { -webkit-transform: rotate(90deg); transform: rotate(90deg); }
+.form-group > .field-switch { padding: 0; margin: 0 0 16px; }
+.form-group select { width: 100%; }
+
+/* ---- The Music tab (design 31 step 12): library rows, categories, an entry, the import, the shelf ---- */
+
+.group-music { --avatar-inset: 72px; }
+.music-card { position: relative; }
+.group-music > .music-card ~ .music-card::before { content: ""; position: absolute; top: 0; left: 72px; right: 0; border-top: 1px solid var(--sep-light); pointer-events: none; }
+.music-cover, .music-tile { flex: none; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+.music-tile { display: flex; align-items: center; justify-content: center; }
+.music-tile img { width: 26px; height: 26px; }
+.music-tile-small { width: 29px; height: 29px; border-radius: 7px; }
+.music-tile-small img { width: 18px; height: 18px; }
+.music-row .row-label { min-width: 0; }
+.music-name { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-missing { color: var(--red-text); font-weight: 600; }
+.music-status { margin: 2px 0 0; font-size: 0.8125rem; line-height: 1.3; color: var(--label-2); overflow-wrap: anywhere; }
+.music-status-busy { color: var(--orange-text); }
+.music-status-error { color: var(--red-text); }
+.group-music .music-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.music-actions { display: flex; flex-wrap: wrap; align-items: center; padding: 0 16px 10px 72px; margin-top: -4px; }
+.music-actions > * { margin: 4px 16px 0 0; }
+.music-actions form { display: flex; align-items: center; }
+.music-actions .button-small { margin: 0; }
+.music-actions label { margin: 0 8px 0 0; font-size: 0.9375rem; font-weight: 400; color: var(--label-2); }
+.music-actions select.pick { max-width: 12rem; color: var(--tint); font-size: 0.9375rem; }
+.music-after { font-size: 0.8125rem; color: var(--label-2); }
+details.category-block > summary { list-style: none; cursor: pointer; }
+details.category-block > summary::-webkit-details-marker { display: none; }
+details.category-block[open] > summary .section-chev { -webkit-transform: rotate(90deg); transform: rotate(90deg); }
+.category-body { padding: 0 16px 16px; }
+.category-body .admin-actions { margin-top: 12px; }
+.category-body .confirm-body { padding: 8px 0 0; }
+.cover-row { display: flex; align-items: center; padding: 12px 16px; }
+.cover-row > * + * { margin-left: 16px; }
+.cover-big { width: 96px; height: 96px; border-radius: 16px; object-fit: cover; flex: none; }
+.music-art { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex: none; }
+.file-cell > summary { list-style: none; cursor: pointer; }
+.file-cell > summary::-webkit-details-marker { display: none; }
+.file-delete { color: var(--red); }
+.import-section { padding: 0 0 4px; }
+.import-row, .st-row { display: flex; align-items: flex-start; }
+.import-row input[type="checkbox"], .st-row input[type="checkbox"] { flex: none; width: 22px; height: 22px; margin: 1px 12px 0 0; }
+.import-skip { color: var(--red-text); }
+.st-books { list-style: none; padding: 0; margin: 0; }
+.st-books li { overflow-wrap: anywhere; padding: 2px 0; }
+
+/* ---- The Locate tab (design 31 step 13): the phone switcher, the map, the fix, the actions, Recent ---- */
+
+/* One link per phone, its state as a dot (and in its aria-label); wraps on a narrow screen. */
+.phone-switch { display: flex; flex-wrap: wrap; margin: 0 0 14px; padding: 2px; border-radius: 9px; background: var(--grey-bg); }
+.phone-switch a { flex: 1 1 30%; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 44px; margin: 0; padding: 0 8px; border-radius: 7px; color: var(--label); font-size: 0.9375rem; font-weight: 600; text-decoration: none; }
+.phone-switch a[aria-current="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.phone-switch .dot { width: 8px; height: 8px; margin-right: 6px; }
+.phone-switch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Its own stacking context: Leaflet's panes (z-index up to 1000) stay under the tab bar. */
+.map-box { position: relative; z-index: 0; overflow: hidden; height: 300px; margin: 0 0 12px; border-radius: 14px; background: var(--grey-bg); }
+.map-box #map { height: 100%; }
+.fix-age { display: block; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+/* Ring, Stop Ringing, Lock: three tiles, as the mockup draws them. */
+.act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
+.act-grid form { margin: 0; }
+.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; }
+.act:hover { background: var(--row-active); color: var(--tint); }
+.act svg { width: 24px; height: 24px; margin-bottom: 5px; }
+.tone-green { color: var(--green); font-weight: 600; }
+.tone-orange { color: var(--orange); font-weight: 600; }
+.tone-red { color: var(--red-text); font-weight: 600; }
+.tone-grey { color: var(--label-2); font-weight: 600; }
+/* Cancel at the end of a Recent row. */
+.row-form { flex: none; margin: 0; }
+.row-action { min-height: 44px; margin: -11px -8px -11px 0; padding: 0 8px; border: 0; background: none; color: var(--tint); font: inherit; font-size: 1rem; cursor: pointer; }
+.confirm-body input[type="text"] { margin-bottom: 12px; }
+.confirm-body .field-error { margin: -4px 4px 12px; }
+
+/* ---- Design 31 step 5: Home Screen and Web Filter ---- */
+
+/* A text button at a row's end (a domain's Remove, an add row's Block); a form around it is the
+   flex item (`form.row-end`). The base button's fill is reset; the 44px target fills the row's height. */
+.row > form.row-end {
+    flex: none;
+    margin: -11px -16px -11px 12px;
+}
+
+.row-action {
+    flex: none;
+    min-height: 44px;
+    margin: -11px -16px -11px 12px;
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--tint);
+    font-size: 1rem;
+    font-weight: 400;
+}
+
+.row > form.row-end > .row-action {
+    margin: 0;
+}
+
+.row-action:hover {
+    background: var(--row-active);
+    color: var(--tint);
+}
+
+.row-action.row-danger,
+.row-action.row-danger:hover {
+    color: var(--red);
+}
+
+/* A text field that is the row (add a domain): no box of its own. */
+input.row-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font-size: 1.0625rem;
+}
+
+/* The wallpapers a phone may use: a thumbnail and a checkbox each (no flex gap: Safari 14.0). */
+.wallpaper-grid {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 12px 8px 0;
+}
+
+.wallpaper-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 76px;
+    margin: 0 4px 12px;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    text-align: center;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.wallpaper-thumb {
+    display: block;
+    width: 45px;
+    height: 80px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.wallpaper-choice input {
+    width: 22px;
+    height: 22px;
+    margin: 0 0 4px;
+}
+
+/* ---- Device › Apps (design 31 step 6) ---- */
+
+/* An allowed app's Name and icon: a line under its row, indented to the name (the row's 16px, the
+   36px tile and 12px); open, its form under it at the group's width. */
+.group-apps > .cell > details.app-display {
+    border-top: 0;
+    padding: 0 16px;
+}
+
+.group-apps > .cell > details.app-display > summary {
+    min-height: 44px;
+    padding: 2px 0 12px 48px;
+    font-size: 0.8125rem;
+    color: var(--tint);
+}
+
+.group-apps > .cell > details.app-display > form {
+    padding: 0 0 16px;
+}
+
+.group-apps > .cell > .flash {
+    padding-left: 64px;
+
+/* ---- Design 31 step 14: the rest of Settings ---- */
+
+/* A form's result at the top of its form group (the schedules): flush with the group's edges. */
+.form-group > .flash:first-child,
+.form-group > details.info:first-child {
+    margin: -16px -16px 16px;
+}
+
+/* Wallpapers: a thumbnail in the row, and hairlines between a photo's own rows. */
+.row > .wallpaper-thumb {
+    flex: none;
+    margin-bottom: 0;
+}
+
+.wallpaper-item > .cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 73px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+/* Backups: Download above the backup's two confirms. */
+.edit-body > .button-small {
+    display: inline-block;
+    margin-bottom: 8px;
+}
+
+/* ---- Device › Music (design 31 step 7) ---- */
+
+/* The Music row on the phone page (the DeviceSummary mockup tile). */
+.tile-pink { background: #FF375F; }
+
+/* ---- Calls & Contacts (design 31 step 8) ---- */
+
+/* A contact's photo in its row, cropped like the initial's circle. */
+.avatar-photo {
+    object-fit: cover;
+}
+
+/* A contact's form, open under its row: its rows indented to the name (the row's 16px, the 36px
+   avatar and 12px), a hairline above each. */
+.contact-body {
+    padding-left: 48px;
+}
+
+.contact-body .row::before,
+.contact-body .contact-field::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+.contact-field {
+    position: relative;
+    padding: 11px 16px 0;
+}
+
+.contact-body input[type="file"] {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 55%;
+    font: inherit;
+    font-size: 0.875rem;
+}
+
+.contact-body .contact-photo-error {
+    margin: 0 16px 12px;
+}
+
+.contact-body .confirm-body {
+    padding-left: 16px;
+}
+
+/* ---- Design 31 step 9: Time Rules and Device › Time ---- */
+
+/* The rule editor's top bar: the back link on the left, Save on the right (the RuleEditor mockup). */
+.title-bar-split { justify-content: space-between; align-items: center; }
+button.title-action { margin: 0; border: 0; background: none; font: inherit; font-size: 1.0625rem; font-weight: 600; color: var(--tint); cursor: pointer; }
+/* A field that is the row's value (the rule's name), right-aligned like a value. */
+input.row-input-end { text-align: right; }
+/* A day's from and until, and a day's limit in minutes: small fields at the row's end. */
+input.row-time,
+input.row-num {
+    flex: none;
+    width: auto;
+    margin: 0;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: var(--field-bg);
+    font-size: 1rem;
+}
+input.row-num { width: 6.5em; text-align: right; }
+.row > .day-dash { margin-left: 6px; color: var(--label-2); }
+.row > .day-dash + input.row-time { margin-left: 6px; }
+.row-unit { flex: none; color: var(--label-2); font-size: 1rem; }
+/* A footer under the extra-time tiles (no group above it to tuck under). */
+.group-footer-after { margin-top: 0; }
+
+/* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
+   reach after editing a lower field, and a save's flash or a refusal's reason under it. */
+.editor-bar { position: -webkit-sticky; position: sticky; top: 0; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
+.editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
+
+/* ---- Design 31 step 10: the phone's summary ---- */
+
+/* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
+   the lock badge and today's bar, centred. */
+.summary-head { display: flex; flex-direction: column; align-items: center; margin: 4px 0 20px; text-align: center; }
+.avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
+.avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
+.summary-name { margin: 10px 0 0; font-size: 1.75rem; font-weight: 700; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
+.summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+.summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
+.summary-lock { margin-top: 10px; }
+.summary-meter { width: 220px; max-width: 100%; height: 6px; margin-top: 14px; border-radius: 3px; }
+.summary-meter > i { border-radius: 3px; }
+.summary-screen { margin-top: 6px; color: var(--label-2); font-size: 0.8125rem; }
+/* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
+a.act, a.act:hover { text-decoration: none; }
+.act-strong, .act-strong:hover { background: var(--strong); color: #FFFFFF; }
+/* Pause a rule… and Unlock for 2 h…: a tile that opens its sheet under it, across the grid. */
+.act-sheet { margin: 0; }
+.act-sheet[open] { grid-column: 1 / -1; }
+.act-sheet > summary.act { list-style: none; }
+.act-sheet > summary.act::-webkit-details-marker { display: none; }
+.act-sheet-body { margin: 8px 0 0; border-radius: 12px; background: var(--surface); }
+.act-sheet > .confirm-body { padding-top: 16px; }
+/* The foreign-app warning's steps, inside its Attention block. */
+.attention-steps { margin: 8px 0 0; padding-left: 20px; font-size: 0.875rem; font-weight: 400; }
+.attention-steps li + li { margin-top: 4px; }
+.attention-steps a { color: inherit; text-decoration: underline; }
+
+/* ---- Design 31 step 15: Add Phone, sign-in, the tab pages without the brand bar ---- */
+
+/* A tab's landing page opens on its large title under a 44px bar (the mockups): Devices, Apps and
+   Music put an action in it (.title-bar); Settings and Locate start with the title itself. */
+.container > .page-title:first-child { margin-top: 48px; }
+.title-add { justify-content: center; min-width: 44px; margin-right: -11px; padding: 0; }
+.title-add svg { width: 22px; height: 22px; }
+/* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
+.choice-title { margin: 28px 4px 8px; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+.choice-sub { display: block; margin-top: 2px; font-size: 0.9375rem; font-weight: 400; color: var(--label-2); }
+.group > .qr-code { margin: 0; padding: 16px; }
+.qr-code svg { max-width: 100%; height: auto; border-radius: 8px; }
+.code-cell { padding: 4px 16px; text-align: center; }
+/* The sign-in pages: one column, the app's name, the title, then the form's group. */
+.auth-card { width: 100%; max-width: 400px; }
+.auth-brand { margin: 0 4px 4px; font-size: 0.9375rem; font-weight: 600; color: var(--label-2); }
+.auth-title { margin: 0 4px 8px; font-size: 2.125rem; font-weight: 700; line-height: 1.15; }
+.auth-sub { margin: 0 4px 20px; font-size: 1rem; line-height: 1.35; color: var(--label-2); }
+.auth-error { margin: 0 0 20px; border-radius: 12px; }

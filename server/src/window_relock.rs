@@ -1,12 +1,19 @@
 //! Parent-PIN windows that lock again (design 24b, `docs/design/24b-override-relock.md` at the
 //! monorepo root): an override or a pause the parent PIN opened on the phone ends by itself, and
 //! the phone's `relock` report says what it reset when it locked again and what it couldn't undo.
-//! The device page shows it, can end a window ("Lock the phone again now", `end_windows`) and can
-//! let apps the relock blocked back (`allow_blocked`). Pure, unit-tested; the handlers live in
-//! `handlers::window_relock`.
+//! The phone's summary shows it typed (design 31 step 10: the words are the template's), can end
+//! a window ("Lock again", `end_windows`), open one ("Unlock for 2 h…", `start_pause`) and let
+//! blocked apps back ("Allow these apps…", `allow_blocked`). Pure, unit-tested; the handlers live
+//! in `handlers::window_relock`. Times are in the Phone Setup zone (`display_time`); the security
+//! log's lines stay UTC.
 
+use std::collections::{HashMap, HashSet};
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::display_time::Zone;
 
 /// The launcher reports `relock` and handles the two commands.
 pub const WINDOW_RELOCK_CAPABILITY: &str = "window_relock_v1";
@@ -20,7 +27,8 @@ pub const OWN_INSERT_COMMANDS: [&str; 3] = [END_WINDOWS, ALLOW_BLOCKED, START_PA
 
 /// At most this many package names per list (the launcher's `RELOCK_LIST_MAX`).
 pub const LIST_MAX: usize = 8;
-/// The device page shows a relock's findings this long.
+/// The summary shows a relock's findings, an older launcher's blocked apps and the commands'
+/// answers this long.
 pub const WARN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 /// Phone-supplied times are kept within 1970..2100, counts within 0..1000.
 const MAX_MS: i64 = 4_102_444_800_000;
@@ -211,7 +219,7 @@ pub fn parse_foreign_access(json: Option<&str>) -> Option<ForeignAccess> {
 }
 
 /// One entry of `StatusReportRequest.relock_blocks` (fix of 2026-10-12), as stored
-/// (`device_status.relock_blocks_json`): an app the phone keeps hidden whatever its tick under Apps
+/// (`device_status.relock_blocks_json`): an app the phone keeps hidden even when allowed under Apps
 /// until "Allow these apps" - set by a relock, or by the install check outside windows.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RelockBlock {
@@ -227,7 +235,7 @@ pub struct RelockBlock {
 }
 
 /// One app "Allow these apps" lets out (QA of cmd-expiry, Low 1): the package and the signing key
-/// the Status card showed for it (`None` = the phone couldn't read it). Sent with the command
+/// the summary showed for it (`None` = the phone couldn't read it). Sent with the command
 /// (`PendingCommand.allow`); the phone lets out only a listed block whose key is still that one -
 /// never a block that came after the parent looked, nor an app replaced since.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -236,7 +244,7 @@ pub struct AllowedBlock {
     pub signer: Option<String>,
 }
 
-/// The Status card's hidden form value for "Allow these apps": `package:key` (the key empty when
+/// The summary's hidden form value for "Allow these apps…": `package:key` (the key empty when
 /// unknown), comma-separated - [parse_allow_form] reads it back.
 pub fn allow_form_value(allow: &[AllowedBlock]) -> String {
     allow
@@ -324,135 +332,245 @@ pub fn parse_relock_blocks(json: Option<&str>) -> Option<Vec<RelockBlock>> {
     json.and_then(|j| serde_json::from_str(j).ok())
 }
 
-/// The Status card's list of what the phone blocks now ([blocks_note]).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct BlocksNote {
-    /// The heading, `None` without blocks.
-    pub text: Option<String>,
-    /// One line per app: its key, why and when, and whether it is ticked under Apps.
-    pub items: Vec<BlockItem>,
-    /// "Allow these apps" lets at least one of them out (not one with another key than the
-    /// catalog's pin).
-    pub allow_button: bool,
-    /// What it sends: the listed blocks it may let out, with the keys shown (Low 1).
-    pub allow: Vec<AllowedBlock>,
-    /// The phone has more than it lists ([more_blocks_line], Low 2).
-    pub more: Option<String>,
+/// The names the phone reports for its apps (`installed_apps_json`): package -> label. The
+/// summary names an app by it, and by its package name when the phone reported no label (the
+/// server knows no other name; the package is behind the row's ⓘ either way).
+pub fn app_names(installed_json: Option<&str>) -> HashMap<String, String> {
+    installed_json
+        .and_then(|json| serde_json::from_str::<Vec<crate::models::InstalledApp>>(json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|app| !app.label.trim().is_empty())
+        .map(|app| {
+            (
+                app.package_name,
+                app.label.trim().chars().take(60).collect(),
+            )
+        })
+        .collect()
 }
 
-/// One app of [BlocksNote::items].
+fn name_of(package: &str, names: &HashMap<String, String>) -> String {
+    names
+        .get(package)
+        .cloned()
+        .unwrap_or_else(|| package.to_string())
+}
+
+/// A time the phone reported, as the summary shows it: "10:12 · 3 h ago" today, "yesterday
+/// 21:40", "12 Oct" - in the Phone Setup zone, with its age (design 31 M4).
+fn reported_when(zone: &Zone, at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    // Today the clock and the age say different things; on another day `when` is already the
+    // day and time (or the date), as `relative` would be.
+    if zone.is_today(at, now) {
+        format!("{} · {}", zone.when(at, now), zone.relative(at, now))
+    } else {
+        zone.when(at, now)
+    }
+}
+
+/// Why the phone keeps an app hidden (typed; [BlockWhy::text] words it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockWhy {
+    /// Installed from outside Play (a download or adb).
+    OutsidePlay,
+    /// Replaced by an app signed with another key while the phone was open.
+    OtherKey,
+    /// Signed with another key than the catalog's pin (M10): not the catalog's app whatever its
+    /// name, so it stays blocked through "Allow these apps".
+    NotCatalogs,
+    /// Blocked when the phone locked again; why is unknown (or an older launcher's relock).
+    Relock,
+}
+
+impl BlockWhy {
+    pub fn text(self) -> &'static str {
+        match self {
+            BlockWhy::OutsidePlay => "From outside Play",
+            BlockWhy::OtherKey => "Replaced while the phone was open",
+            BlockWhy::NotCatalogs => "Not the catalog's app: uninstall it",
+            BlockWhy::Relock => "Blocked when the phone locked again",
+        }
+    }
+
+    pub fn imposter(self) -> bool {
+        self == BlockWhy::NotCatalogs
+    }
+}
+
+/// One app the phone keeps hidden even when allowed under Apps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockItem {
     pub package_name: String,
-    /// Its key, why and when.
-    pub text: String,
-    /// Ticked under Apps - it shows after "Allow these apps" - or not, so it stays hidden until
-    /// it is ticked too (QA of cmd-expiry, Low 3). `None`: apps aren't managed, or it stays
-    /// blocked anyway (another key than the catalog's).
+    /// The phone's label for it, else its package name ([app_names]).
+    pub name: String,
+    /// Its signing key, shortened ("3f2a0000…0000c0de"); `None` = the phone couldn't read it.
+    pub key: Option<String>,
+    /// The catalog's pinned key, shortened, when it differs ([BlockWhy::NotCatalogs]).
+    pub pin: Option<String>,
+    pub why: BlockWhy,
+    /// Noticed at its install (outside a window), else when the phone locked again.
+    pub at_install: bool,
+    /// When, in the Phone Setup zone with its age, and the exact time; empty when unknown.
+    pub when: String,
+    pub exact: String,
+    /// Allowed under Apps - it shows after "Allow these apps" - or not, so it stays hidden until
+    /// it is turned on there too (QA of cmd-expiry, Low 3). `None`: apps aren't managed, or it
+    /// stays blocked anyway (an imposter).
     pub ticked: Option<bool>,
 }
 
-/// [pins]: the catalog's pinned signers (M10). An app whose key differs from its pin - by the
-/// server's pin or the phone's reason - stays blocked through "Allow these apps". [allowed]: the
-/// ticked apps, `None` when apps aren't managed.
-pub fn blocks_note(
-    blocks: &[RelockBlock],
-    pins: &std::collections::HashMap<String, String>,
-    now_ms: i64,
-    allowed: Option<&std::collections::HashSet<String>>,
-) -> BlocksNote {
-    if blocks.is_empty() {
-        return BlocksNote::default();
-    }
-    let not_catalogs = |b: &RelockBlock| {
-        b.reason == "catalog_key"
-            || matches!((pins.get(&b.package_name), &b.signer), (Some(pin), Some(key)) if pin != key)
-    };
-    let items = blocks
-        .iter()
-        .map(|b| {
-            let key = b
-                .signer
-                .as_deref()
-                .map(|k| format!(" (signing key {})", short_key(k)))
-                .unwrap_or_default();
-            let why = if not_catalogs(b) {
-                match pins.get(&b.package_name) {
-                    Some(pin) => format!(
-                        "signed with another key than the catalog's ({}), so it isn't the \
-                         catalog's app and stays blocked: uninstall it",
-                        short_key(pin)
-                    ),
-                    None => "signed with another key than the catalog's, so it isn't the \
-                             catalog's app and stays blocked: uninstall it"
-                        .to_string(),
-                }
-            } else {
-                match b.reason.as_str() {
-                    "outside_play" => "installed from outside Play (a download or adb)".to_string(),
-                    "other_key" => {
-                        "replaced by an app signed with another key while the phone was open"
-                            .to_string()
-                    }
-                    _ => "blocked when the phone locked again".to_string(),
-                }
-            };
-            let when = match (b.found.as_str(), b.at_ms) {
-                ("install", Some(at)) => format!(
-                    " - noticed at its install, {}",
-                    crate::parent_pin::when_text(at, now_ms)
-                ),
-                (_, Some(at)) => format!(
-                    " - when the phone locked again, {}",
-                    crate::parent_pin::when_text(at, now_ms)
-                ),
-                _ => String::new(),
-            };
-            BlockItem {
-                package_name: b.package_name.clone(),
-                text: format!("{}{key}: {why}{when}.", b.package_name),
-                ticked: allowed
-                    .filter(|_| !not_catalogs(b))
-                    .map(|a| a.contains(&b.package_name)),
-            }
-        })
-        .collect();
-    let allow: Vec<AllowedBlock> = blocks
-        .iter()
-        .filter(|b| !not_catalogs(b))
-        .map(|b| AllowedBlock {
-            package_name: b.package_name.clone(),
-            signer: b.signer.clone(),
-        })
-        .collect();
-    let allow_button = !allow.is_empty();
-    let mut text = "Blocked on the phone - hidden whatever its tick under Apps:".to_string();
-    if allow_button {
-        text =
-            "Blocked on the phone - hidden whatever its tick under Apps. If one is yours and its \
-                key is the one you expect, press \"Allow these apps\" (a ticked app shows again):"
-                .to_string();
-    }
-    BlocksNote {
-        text: Some(text),
-        items,
-        allow_button,
-        allow,
-        more: None,
+/// What the phone blocks now: the summary's Blocked Apps group and its Attention row.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Blocks {
+    pub items: Vec<BlockItem>,
+    /// What "Allow these apps…" sends: the listed blocks it may let out, with the keys shown (QA of
+    /// cmd-expiry, Low 1). Empty: no button.
+    pub allow: Vec<AllowedBlock>,
+    /// How many more the phone has than it lists (QA of cmd-expiry, Low 2).
+    pub more: Option<i64>,
+    /// The Attention row's count ("2 blocked apps wait"): every listed block - or, from an older
+    /// launcher's relock, the ones "Allow these apps" still lets out.
+    pub waiting: usize,
+}
+
+impl Blocks {
+    /// The apps "Allow these apps…" lets out, by name, for its confirm: "Chat and org.example.a".
+    pub fn allow_names(&self) -> String {
+        and_list(
+            &self
+                .items
+                .iter()
+                .filter(|i| self.allow.iter().any(|a| a.package_name == i.package_name))
+                .map(|i| i.name.clone())
+                .collect::<Vec<_>>(),
+        )
     }
 }
 
-/// The line under the list when the phone has more blocks than it lists (QA of cmd-expiry, Low 2):
-/// [listed] shown, [total] in all (the phone's `relock_blocks_total`).
-pub fn more_blocks_line(listed: usize, total: Option<i64>) -> Option<String> {
-    let more = total? - i64::try_from(listed).ok()?;
-    (more > 0).then(|| {
-        format!(
-            "And {more} more - the phone lists at most {BLOCKS_MAX}. Look for them on the phone \
-             (Settings -> Apps) and uninstall what you don't know; \"Allow these apps\" lets out \
-             only the ones listed here."
-        )
-    })
+/// What [blocks] and [relock_blocked] read besides the phone's list.
+pub struct BlockContext<'a> {
+    /// The catalog's pinned signers (M10): package -> key.
+    pub pins: &'a HashMap<String, String>,
+    /// The apps allowed under Apps; `None` when apps aren't managed.
+    pub allowed: Option<&'a HashSet<String>>,
+    pub names: &'a HashMap<String, String>,
+    pub zone: &'a Zone,
+    pub now: DateTime<Utc>,
+}
+
+impl BlockContext<'_> {
+    /// The catalog pins another key than the one the phone reports.
+    fn differs(&self, package: &str, signer: Option<&str>) -> bool {
+        matches!((self.pins.get(package), signer), (Some(pin), Some(key)) if pin != key)
+    }
+
+    fn item(
+        &self,
+        package: &str,
+        signer: Option<&str>,
+        why: BlockWhy,
+        at_install: bool,
+        at_ms: Option<i64>,
+    ) -> BlockItem {
+        let at = at_ms.and_then(DateTime::from_timestamp_millis);
+        BlockItem {
+            package_name: package.to_string(),
+            name: name_of(package, self.names),
+            key: signer.map(short_key),
+            pin: why
+                .imposter()
+                .then(|| self.pins.get(package).map(|pin| short_key(pin)))
+                .flatten(),
+            why,
+            at_install,
+            when: at
+                .map(|t| reported_when(self.zone, t, self.now))
+                .unwrap_or_default(),
+            exact: at.map(|t| self.zone.exact(t)).unwrap_or_default(),
+            ticked: self
+                .allowed
+                .filter(|_| !why.imposter())
+                .map(|a| a.contains(package)),
+        }
+    }
+}
+
+/// The phone's current blocks (`relock_blocks`, fix of 2026-10-12): each with its key, why and
+/// when; an app whose key differs from the catalog's pin - by the server's pin or the phone's
+/// reason - stays blocked, so "Allow these apps" sends only the others. [total]: the phone's
+/// `relock_blocks_total`.
+pub fn blocks(list: &[RelockBlock], total: Option<i64>, ctx: &BlockContext) -> Blocks {
+    let mut items = Vec::new();
+    let mut allow = Vec::new();
+    for b in list {
+        let why = if b.reason == "catalog_key" || ctx.differs(&b.package_name, b.signer.as_deref())
+        {
+            BlockWhy::NotCatalogs
+        } else {
+            match b.reason.as_str() {
+                "outside_play" => BlockWhy::OutsidePlay,
+                "other_key" => BlockWhy::OtherKey,
+                _ => BlockWhy::Relock,
+            }
+        };
+        if !why.imposter() {
+            allow.push(AllowedBlock {
+                package_name: b.package_name.clone(),
+                signer: b.signer.clone(),
+            });
+        }
+        items.push(ctx.item(
+            &b.package_name,
+            b.signer.as_deref(),
+            why,
+            b.found == "install",
+            b.at_ms,
+        ));
+    }
+    let more = total
+        .zip(i64::try_from(list.len()).ok())
+        .map(|(total, listed)| total - listed)
+        .filter(|more| *more > 0);
+    Blocks {
+        waiting: items.len(),
+        items,
+        allow,
+        more,
+    }
+}
+
+/// An older launcher (no `relock_blocks`): its last relock's `blocked` apps, for a week. "Allow
+/// these apps" lets out the ones that aren't imposters, until the phone has answered one pressed
+/// after that relock ([allowed_since_relock], QA Low 10) - then they are gone and only the list
+/// stays.
+pub fn relock_blocked(r: &RelockReport, allowed_since: bool, ctx: &BlockContext) -> Blocks {
+    if ctx.now.timestamp_millis() - r.at_ms > WARN_MS {
+        return Blocks::default();
+    }
+    let mut items = Vec::new();
+    let mut allow = Vec::new();
+    for p in &r.blocked {
+        let signer = r.blocked_signers.get(p).map(String::as_str);
+        let why = if ctx.differs(p, signer) {
+            BlockWhy::NotCatalogs
+        } else {
+            BlockWhy::Relock
+        };
+        if !why.imposter() && !allowed_since {
+            allow.push(AllowedBlock {
+                package_name: p.clone(),
+                signer: signer.map(str::to_string),
+            });
+        }
+        items.push(ctx.item(p, signer, why, false, Some(r.at_ms)));
+    }
+    Blocks {
+        waiting: allow.len(),
+        items,
+        allow,
+        more: None,
+    }
 }
 
 /// The security log's line for apps the phone newly reports as blocked (`phone_app_blocked`):
@@ -473,74 +591,55 @@ pub fn blocks_log_line(
     (!new.is_empty()).then(|| format!("device {device_id}: blocked {}", new.join("; ")))
 }
 
-/// The Status card's red warning: what was found, then the steps (the template adds the last
-/// one, "Change the parent PIN", with its link).
+/// The summary's red warning while the phone refuses the Parent PIN (the fix round, QA High 1
+/// (b)): the apps by name, their packages for the ⓘ, and whether the first step (a pause) is done.
+/// The template words the steps.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ForeignNote {
-    pub text: String,
-    pub steps: Vec<String>,
+pub struct ForeignView {
+    /// The device admins by name ("Spy Kit"), empty when none.
+    pub admins: String,
+    /// The accessibility services by name, empty when none.
+    pub accessibility: String,
+    /// Every app once: "Spy Kit and com.evil.reader".
+    pub apps: String,
+    /// More than one app ("they" rather than "it").
+    pub many: bool,
+    /// "Device admin: com.evil.admin. Accessibility: com.evil.reader." - for the ⓘ.
+    pub packages: String,
+    /// The latest report has a pause on: the phone is open without the Parent PIN.
+    pub paused: bool,
 }
 
-/// [paused]: the latest report has a pause on - step 1 is done.
-pub fn foreign_note(found: &ForeignAccess, paused: bool) -> ForeignNote {
-    let mut what = Vec::new();
-    what.extend(found.admins.iter().map(|p| format!("device admin {p}")));
-    what.extend(
-        found
-            .accessibility
-            .iter()
-            .map(|p| format!("accessibility service {p}")),
-    );
+pub fn foreign_view(
+    found: &ForeignAccess,
+    paused: bool,
+    names: &HashMap<String, String>,
+) -> ForeignView {
+    let named =
+        |list: &[String]| and_list(&list.iter().map(|p| name_of(p, names)).collect::<Vec<_>>());
     let mut apps: Vec<String> = found.admins.clone();
     for p in &found.accessibility {
         if !apps.contains(p) {
             apps.push(p.clone());
         }
     }
-    let mut remove = Vec::new();
+    let mut packages = Vec::new();
     if !found.admins.is_empty() {
-        remove.push(format!(
-            "Security > Device admin apps: turn {} off",
-            and_list(&found.admins)
-        ));
+        packages.push(format!("Device admin: {}.", found.admins.join(", ")));
     }
     if !found.accessibility.is_empty() {
-        remove.push(format!(
-            "Accessibility: turn {} off",
-            and_list(&found.accessibility)
+        packages.push(format!(
+            "Accessibility: {}.",
+            found.accessibility.join(", ")
         ));
     }
-    let (from, it) = if apps.len() == 1 {
-        ("an app you haven't allowed. It can", "it's")
-    } else {
-        ("apps you haven't allowed. They can", "they're")
-    };
-    ForeignNote {
-        text: format!(
-            "The phone refuses the parent PIN because of {}, from {from} control the phone or read \
-             its screen - the parent PIN too - and the phone can't hide or stop them. Don't type \
-             the parent PIN on the phone until {it} gone:",
-            and_list(&what)
-        ),
-        steps: vec![
-            if paused {
-                "The phone's restrictions are paused (the last report): it is open without the \
-                 parent PIN."
-                    .to_string()
-            } else {
-                "Press \"Pause restrictions for 2 hours\" below: the phone opens without the \
-                 parent PIN."
-                    .to_string()
-            },
-            format!(
-                "On the phone, in Settings: {}. Then uninstall {} (Settings > Apps).",
-                remove.join("; "),
-                and_list(&apps)
-            ),
-            "Press \"Lock the phone again now\" below. The phone takes the parent PIN again once \
-             nothing unknown is on."
-                .to_string(),
-        ],
+    ForeignView {
+        admins: named(&found.admins),
+        accessibility: named(&found.accessibility),
+        many: apps.len() > 1,
+        apps: named(&apps),
+        packages: packages.join(" "),
+        paused,
     }
 }
 
@@ -582,16 +681,12 @@ pub fn found_anything(r: &RelockReport) -> bool {
         || !r.failures.is_empty()
 }
 
-fn trigger_text(trigger: &str) -> &'static str {
-    match trigger {
-        "timer" => "because its time was up",
-        "lock_again" => "after \"Lock again\" on the phone",
-        "command" => "after \"Lock the phone again now\" here",
-        "sync" => "when it reached this server",
-        "boot" => "after a restart",
-        "screen_on" => "when the screen came on",
-        "settings" => "after the pause was switched off in Settings",
-        _ => "",
+/// "a, b and c".
+fn and_list(parts: &[String]) -> String {
+    match parts {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -603,42 +698,65 @@ fn count(n: i64, one: &str, many: &str) -> String {
     }
 }
 
-/// "a, b and c".
-fn and_list(parts: &[String]) -> String {
-    match parts {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+/// The last relock's findings (§1.7), typed for the summary's Locked Again group: only while the
+/// relock is under 7 days old and found something. Its blocked apps are [Blocks]'.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Findings {
+    /// When it locked again, in the Phone Setup zone with its age, and the exact time.
+    pub when: String,
+    pub exact: String,
+    /// Why it locked again ("Its time was up"); `None` when the phone didn't say.
+    pub trigger: Option<&'static str>,
+    /// What it removed: "2 Wi-Fi proxies", "1 certificate", "an Android screen lock".
+    pub removed: Vec<String>,
+    /// What it couldn't undo, by name: "Accessibility: Spy Kit", "a proxy on a network".
+    pub still_on: Vec<String>,
+    /// Apps turned off that can't be turned back on remotely, by name.
+    pub turned_off: Vec<String>,
+    pub own_notifications_off: bool,
+    /// The steps that failed, in words ("Certificates").
+    pub failures: Vec<&'static str>,
+}
+
+fn trigger_text(trigger: &str) -> Option<&'static str> {
+    Some(match trigger {
+        "timer" => "Its time was up",
+        "lock_again" => "Lock again on the phone",
+        "command" => "Lock again from here",
+        "sync" => "When it reached this server",
+        "boot" => "After a restart",
+        "screen_on" => "When the screen came on",
+        "settings" => "Pause switched off in Settings",
+        _ => return None,
+    })
+}
+
+/// A failed step's words (the codes are the sanitized [FAILURES] only).
+fn failure_text(code: &str) -> &'static str {
+    match code {
+        "credential" => "Screen lock",
+        "signer_check" => "Signing-key check",
+        "apply" => "Restrictions",
+        "permitted_lists" => "Allowed keyboards and services",
+        "proxies" => "Proxies",
+        "ca_certs" => "Certificates",
+        "notifications" => "Notifications",
+        "detections" => "App checks",
+        "finish" => "Finishing up",
+        _ => "Another step",
     }
 }
 
-/// The device page's lines about the last relock (§1.7), each a warning, only while it is under
-/// 7 days old and something was found. [pins]: the catalog's pinned signers (M10, package -> key);
-/// a blocked app signed with another key stays blocked, so "Allow these apps" is shown only for the
-/// others ([RelockNotes::allow_button]).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RelockNotes {
-    pub lines: Vec<String>,
-    /// Some blocked app is on the allowed list: "Allow these apps" brings it back.
-    pub allow_button: bool,
-    /// What it sends: the listed apps it may let out, with their keys (QA of cmd-expiry, Low 1).
-    pub allow: Vec<AllowedBlock>,
-}
-
-pub fn relock_notes(
+pub fn findings(
     r: &RelockReport,
-    now_ms: i64,
-    pins: &std::collections::HashMap<String, String>,
-) -> RelockNotes {
-    if now_ms - r.at_ms > WARN_MS || !found_anything(r) {
-        return RelockNotes::default();
+    names: &HashMap<String, String>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<Findings> {
+    if now.timestamp_millis() - r.at_ms > WARN_MS || !found_anything(r) {
+        return None;
     }
-    let mut lines = Vec::new();
-    let when = crate::parent_pin::when_text(r.at_ms, now_ms);
-    let how = match trigger_text(&r.trigger) {
-        "" => String::new(),
-        text => format!(", {text}"),
-    };
+    let at = DateTime::from_timestamp_millis(r.at_ms)?;
     let mut removed = Vec::new();
     if r.proxies_cleared > 0 {
         removed.push(count(r.proxies_cleared, "Wi-Fi proxy", "Wi-Fi proxies"));
@@ -647,99 +765,33 @@ pub fn relock_notes(
         removed.push(count(r.ca_certs_removed, "certificate", "certificates"));
     }
     if r.credential_removed {
-        removed.push("an Android screen lock the child had set".to_string());
+        removed.push("an Android screen lock".to_string());
     }
-    lines.push(if removed.is_empty() {
-        format!("The phone locked again at {when}{how}.")
-    } else {
-        format!(
-            "When the phone locked again at {when}{how}, it removed {}.",
-            and_list(&removed)
-        )
-    });
-    // Signed with another key than the catalog pinned: not the catalog's app, whatever its name.
-    let not_catalogs = |p: &String| matches!((pins.get(p), r.blocked_signers.get(p)), (Some(pin), Some(key)) if pin != key);
-    let allow: Vec<AllowedBlock> = r
-        .blocked
-        .iter()
-        .filter(|p| !not_catalogs(p))
-        .map(|p| AllowedBlock {
-            package_name: p.clone(),
-            signer: r.blocked_signers.get(p).cloned(),
-        })
-        .collect();
-    let allow_button = !allow.is_empty();
-    if !r.blocked.is_empty() {
-        let apps: Vec<String> = r
-            .blocked
-            .iter()
-            .map(|p| match r.blocked_signers.get(p) {
-                Some(key) => format!("{p} (signing key {})", short_key(key)),
-                None => p.clone(),
-            })
-            .collect();
-        let mut line = format!(
-            "Blocked: {} - installed or replaced from outside Play while it was open, or signed \
-             with another key, so ticking it under Apps doesn't show it.",
-            apps.join(", ")
-        );
-        for p in r.blocked.iter().filter(|p| not_catalogs(p)) {
-            line.push_str(&format!(
-                " {p} is signed with another key than the catalog's ({}), so it stays blocked: \
-                 uninstall it.",
-                short_key(&pins[p])
-            ));
-        }
-        if allow_button {
-            line.push_str(
-                " If one is yours and its key is the one you expect, tick it under Apps and press \
-                 \"Allow these apps\".",
-            );
-        }
-        lines.push(line);
-    }
-    let mut still = Vec::new();
-    still.extend(
-        r.accessibility_enabled
-            .iter()
-            .map(|p| format!("accessibility service {p}")),
-    );
-    still.extend(
-        r.notification_listeners
-            .iter()
-            .map(|p| format!("notification access {p}")),
-    );
-    still.extend(r.admins_enabled.iter().map(|p| format!("device admin {p}")));
+    let mut still_on = Vec::new();
+    let named = |label: &str, list: &[String]| {
+        list.iter()
+            .map(|p| format!("{label}: {}", name_of(p, names)))
+            .collect::<Vec<_>>()
+    };
+    still_on.extend(named("Accessibility", &r.accessibility_enabled));
+    still_on.extend(named("Notification access", &r.notification_listeners));
+    still_on.extend(named("Device admin", &r.admins_enabled));
     if r.proxy_left {
-        still.push("a proxy on a network (mobile data or Wi-Fi)".to_string());
+        still_on.push("a proxy on a network".to_string());
     }
     if r.credential_left {
-        still.push("an Android screen lock the child set (it couldn't be removed)".to_string());
+        still_on.push("an Android screen lock".to_string());
     }
-    if !still.is_empty() {
-        lines.push(format!("Still on: {}.", still.join("; ")));
-    }
-    if !r.apps_disabled.is_empty() {
-        lines.push(format!(
-            "Turned off and can't be turned back on remotely: {} - turn them on in the phone's \
-             Settings during a pause.",
-            r.apps_disabled.join(", ")
-        ));
-    }
-    if r.own_notifications_off {
-        lines.push("The launcher's notifications are off.".to_string());
-    }
-    if !r.failures.is_empty() {
-        lines.push(format!(
-            "Steps that failed on the phone: {}.",
-            r.failures.join(", ")
-        ));
-    }
-    RelockNotes {
-        lines,
-        allow_button,
-        allow,
-    }
+    Some(Findings {
+        when: reported_when(zone, at, now),
+        exact: zone.exact(at),
+        trigger: trigger_text(&r.trigger),
+        removed,
+        still_on,
+        turned_off: r.apps_disabled.iter().map(|p| name_of(p, names)).collect(),
+        own_notifications_off: r.own_notifications_off,
+        failures: r.failures.iter().map(|f| failure_text(f)).collect(),
+    })
 }
 
 /// The security log's line for a new relock with findings (`phone_relock_findings`): when it
@@ -806,44 +858,92 @@ pub struct CommandAnswer {
     pub cancelled: bool,
 }
 
+/// Where the phone's answer to one of this design's commands stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnswerState {
+    Answered,
+    /// Cancelled before it reached the phone (by the parent, or by an enrollment).
+    Cancelled,
+    /// A pause the phone didn't fetch within the hour: never sent (the user's decision,
+    /// 2026-10-12).
+    Expired,
+    /// No answer yet - so a command the phone never ran doesn't look like one that worked.
+    Waiting,
+}
+
+impl AnswerState {
+    pub fn text(self) -> &'static str {
+        match self {
+            AnswerState::Answered => "Answered",
+            AnswerState::Cancelled => "Cancelled",
+            AnswerState::Expired => "Expired",
+            AnswerState::Waiting => "No answer yet",
+        }
+    }
+}
+
+/// The summary's Today row for the newest of one of this design's commands, while it is under 7
+/// days old (QA Low 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answer {
+    /// The quick action's name: "Lock again", "Unlock for 2 h", "Allow these apps".
+    pub label: &'static str,
+    /// When it was pressed (the server's clock): the summary's Today keeps today's.
+    pub at: DateTime<Utc>,
+    /// The same, local, and the exact time.
+    pub when: String,
+    pub exact: String,
+    pub state: AnswerState,
+    /// For the ⓘ: what the phone said, or why it was never sent.
+    pub detail: Option<String>,
+}
+
 fn command_label(command: &str) -> Option<&'static str> {
     match command {
-        END_WINDOWS => Some("Lock the phone again now"),
+        END_WINDOWS => Some("Lock again"),
         ALLOW_BLOCKED => Some("Allow these apps"),
-        START_PAUSE => Some("Pause restrictions for 2 hours"),
+        START_PAUSE => Some("Unlock for 2 h"),
         _ => None,
     }
 }
 
-/// The Status card's line for [answer] while it is under 7 days old: what was pressed when, and
-/// the phone's answer or that there is none yet - so a command the phone never ran doesn't look
-/// like one that worked.
-pub fn answer_line(answer: &CommandAnswer, now_ms: i64) -> Option<String> {
+pub fn answer(answer: &CommandAnswer, zone: &Zone, now: DateTime<Utc>) -> Option<Answer> {
     let label = command_label(&answer.command)?;
+    let now_ms = now.timestamp_millis();
     if now_ms - answer.requested_ms > WARN_MS {
         return None;
     }
-    let when = crate::parent_pin::when_text(answer.requested_ms, now_ms);
-    let said = match (answer.acknowledged_ms, answer.result.as_deref()) {
-        (Some(_), Some(result)) => {
-            let result: String = result.chars().take(120).collect();
-            format!("the phone answered \"{result}\"")
-        }
-        (Some(_), None) => "the phone answered".to_string(),
-        (None, _) if answer.cancelled => "cancelled before it reached the phone".to_string(),
-        // Expiry (the user's decision, 2026-10-12): a pause the phone didn't fetch within the hour
-        // is never sent.
+    let at = DateTime::from_timestamp_millis(answer.requested_ms)?;
+    let (state, detail) = match (answer.acknowledged_ms, answer.result.as_deref()) {
+        (Some(_), result) => (
+            AnswerState::Answered,
+            result.map(|r| {
+                let r: String = r.chars().take(120).collect();
+                format!("The phone said: \"{r}\".")
+            }),
+        ),
+        (None, _) if answer.cancelled => (AnswerState::Cancelled, None),
         (None, _)
             if !answer.delivered
                 && crate::models::command_expires(&answer.command)
                 && now_ms - answer.requested_ms
                     >= crate::models::COMMAND_EXPIRY_MINUTES * 60 * 1000 =>
         {
-            "expired - the phone didn't check in within an hour, so it was never sent".to_string()
+            (
+                AnswerState::Expired,
+                Some("The phone didn't check in within an hour, so it was never sent.".to_string()),
+            )
         }
-        (None, _) => "no answer from the phone yet".to_string(),
+        (None, _) => (AnswerState::Waiting, None),
     };
-    Some(format!("\"{label}\" pressed {when}: {said}."))
+    Some(Answer {
+        label,
+        at,
+        when: zone.when(at, now),
+        exact: zone.exact(at),
+        state,
+        detail,
+    })
 }
 
 /// "Allow these apps" stays only until the phone has answered one pressed after the relock - the
@@ -852,29 +952,31 @@ pub fn allowed_since_relock(answer: Option<&CommandAnswer>, relock_at_ms: i64) -
     answer.is_some_and(|a| a.acknowledged_ms.is_some() && a.requested_ms > relock_at_ms)
 }
 
-/// The one-shot message after a command was queued (`?notice=`), shown in the Status card.
-pub fn flash_text(code: &str) -> Option<&'static str> {
-    match code {
-        "end_windows_sent" => {
-            Some("Sent: the phone locks again as soon as it gets this (usually within seconds).")
-        }
-        "allow_blocked_sent" => Some(
-            "Sent: the phone shows the blocked apps again as soon as it gets this - the ones \
-             ticked under Apps.",
+/// The one-shot flash after a command was queued (`?notice=`): the summary group its form is in
+/// (where the redirect lands, design 31 §3.0), and the text.
+pub fn flash(code: &str) -> Option<(&'static str, &'static str)> {
+    Some(match code {
+        "end_windows_sent" => (
+            "quick",
+            "Sent. The phone locks again within seconds when online.",
         ),
-        "start_pause_sent" => Some(
-            "Sent: the phone pauses its restrictions for 2 hours as soon as it gets this (usually \
-             within seconds).",
+        "start_pause_sent" => (
+            "quick",
+            "Sent. The phone unlocks for 2 hours within seconds when online.",
         ),
-        _ => None,
-    }
+        "allow_blocked_sent" => (
+            "blocked-apps",
+            "Sent. The apps allowed under Apps show again within seconds when online.",
+        ),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     /// Design 24b §1.7's literal, as the launcher sends it.
     pub(crate) fn literal() -> Value {
@@ -924,204 +1026,6 @@ mod tests {
     }
 
     const NOW: i64 = 1_760_100_000_000 + 3 * 60 * 60 * 1000;
-
-    #[test]
-    fn every_line_of_the_warning() {
-        let r = RelockReport {
-            proxies_cleared: 2,
-            ca_certs_removed: 1,
-            credential_removed: true,
-            proxy_left: true,
-            credential_left: false,
-            blocked: vec!["com.example.app".into(), "com.example.game".into()],
-            accessibility_enabled: vec!["com.evil.ally".into()],
-            admins_enabled: vec!["com.evil.admin".into()],
-            apps_disabled: vec!["com.android.inputmethod.latin".into()],
-            notification_listeners: vec!["com.evil.reader".into()],
-            own_notifications_off: true,
-            failures: vec!["ca_certs".into()],
-            ..report()
-        };
-        let notes = relock_notes(&r, NOW, &HashMap::new());
-        assert!(notes.allow_button);
-        assert_eq!(
-            notes.lines,
-            vec![
-                "When the phone locked again at 2025-10-10 12:40 UTC (3 h ago), because its time was up, it removed 2 Wi-Fi proxies, 1 certificate and an Android screen lock the child had set.",
-                "Blocked: com.example.app (signing key 3f2a0000…0000c0de), com.example.game - installed or replaced from outside Play while it was open, or signed with another key, so ticking it under Apps doesn't show it. If one is yours and its key is the one you expect, tick it under Apps and press \"Allow these apps\".",
-                "Still on: accessibility service com.evil.ally; notification access com.evil.reader; device admin com.evil.admin; a proxy on a network (mobile data or Wi-Fi).",
-                "Turned off and can't be turned back on remotely: com.android.inputmethod.latin - turn them on in the phone's Settings during a pause.",
-                "The launcher's notifications are off.",
-                "Steps that failed on the phone: ca_certs.",
-            ]
-        );
-    }
-
-    #[test]
-    fn the_first_line_and_the_triggers() {
-        let mut r = report();
-        r.proxies_cleared = 0;
-        r.blocked.clear();
-        r.credential_left = true;
-        for (trigger, text) in [
-            ("timer", "because its time was up"),
-            ("lock_again", "after \"Lock again\" on the phone"),
-            ("command", "after \"Lock the phone again now\" here"),
-            ("sync", "when it reached this server"),
-            ("boot", "after a restart"),
-            ("screen_on", "when the screen came on"),
-            ("settings", "after the pause was switched off in Settings"),
-        ] {
-            r.trigger = trigger.into();
-            let notes = relock_notes(&r, NOW, &HashMap::new());
-            assert_eq!(
-                notes.lines[0],
-                format!("The phone locked again at 2025-10-10 12:40 UTC (3 h ago), {text}.")
-            );
-            assert_eq!(
-                notes.lines[1],
-                "Still on: an Android screen lock the child set (it couldn't be removed)."
-            );
-            assert!(!notes.allow_button);
-        }
-        r.trigger = String::new();
-        assert_eq!(
-            relock_notes(&r, NOW, &HashMap::new()).lines[0],
-            "The phone locked again at 2025-10-10 12:40 UTC (3 h ago)."
-        );
-    }
-
-    #[test]
-    fn nothing_found_or_older_than_a_week_shows_nothing() {
-        let mut quiet = report();
-        quiet.proxies_cleared = 0;
-        quiet.blocked.clear();
-        assert!(!found_anything(&quiet));
-        assert_eq!(
-            relock_notes(&quiet, NOW, &HashMap::new()),
-            RelockNotes::default()
-        );
-        let old = report();
-        assert!(
-            !relock_notes(&old, old.at_ms + WARN_MS, &HashMap::new())
-                .lines
-                .is_empty()
-        );
-        assert_eq!(
-            relock_notes(&old, old.at_ms + WARN_MS + 1, &HashMap::new()),
-            RelockNotes::default()
-        );
-    }
-
-    #[test]
-    fn an_app_with_another_key_than_the_catalogs_stays_blocked() {
-        let r = report();
-        let mut pins = HashMap::new();
-        pins.insert("com.example.app".to_string(), "9".repeat(64));
-        let notes = relock_notes(&r, NOW, &pins);
-        // Its only blocked app isn't the catalog's: no button, and why.
-        assert!(!notes.allow_button);
-        assert!(
-            notes.lines[1].ends_with(
-                " com.example.app is signed with another key than the catalog's (99999999…99999999), so it stays blocked: uninstall it."
-            ),
-            "{}",
-            notes.lines[1]
-        );
-        // The catalog's own key: the button.
-        pins.insert(
-            "com.example.app".to_string(),
-            r.blocked_signers["com.example.app"].clone(),
-        );
-        assert!(relock_notes(&r, NOW, &pins).allow_button);
-    }
-
-    #[test]
-    fn the_log_line_and_the_flash_texts() {
-        assert_eq!(
-            log_line(3, &report()),
-            "device 3, 2025-10-10 12:40 UTC: locked again (timer) - Wi-Fi proxies removed: 1; blocked: com.example.app."
-        );
-        assert!(flash_text("end_windows_sent").is_some());
-        assert!(flash_text("allow_blocked_sent").is_some());
-        assert!(flash_text("start_pause_sent").is_some());
-        assert_eq!(flash_text("parent_pin_saved"), None);
-    }
-
-    #[test]
-    fn command_answers_say_what_the_phone_said_or_that_it_said_nothing() {
-        let answer = |ack: Option<i64>, result: Option<&str>| CommandAnswer {
-            command: END_WINDOWS.to_string(),
-            requested_ms: NOW - 2 * 60 * 60 * 1000,
-            acknowledged_ms: ack,
-            result: result.map(str::to_string),
-            delivered: ack.is_some(),
-            cancelled: false,
-        };
-        assert_eq!(
-            answer_line(&answer(Some(NOW), Some("ended: pause")), NOW).unwrap(),
-            "\"Lock the phone again now\" pressed 2025-10-10 13:40 UTC (2 h ago): the phone \
-             answered \"ended: pause\"."
-        );
-        assert!(
-            answer_line(&answer(None, None), NOW)
-                .unwrap()
-                .ends_with("no answer from the phone yet.")
-        );
-        // A week later: gone. Another command: no line.
-        assert_eq!(answer_line(&answer(Some(NOW), None), NOW + WARN_MS), None);
-        let ring = CommandAnswer {
-            command: "ring".to_string(),
-            ..answer(None, None)
-        };
-        assert_eq!(answer_line(&ring, NOW), None);
-        // "Allow these apps" goes once an answered one is newer than the relock.
-        let allowed = CommandAnswer {
-            command: ALLOW_BLOCKED.to_string(),
-            ..answer(Some(NOW), Some("allowed: 1 apps"))
-        };
-        assert!(allowed_since_relock(
-            Some(&allowed),
-            NOW - 3 * 60 * 60 * 1000
-        ));
-        assert!(!allowed_since_relock(Some(&allowed), NOW - 60 * 60 * 1000));
-        let unanswered = CommandAnswer {
-            command: ALLOW_BLOCKED.to_string(),
-            ..answer(None, None)
-        };
-        assert!(!allowed_since_relock(Some(&unanswered), 0));
-        assert!(!allowed_since_relock(None, 0));
-        // Expiry and cancel (2026-10-12): a pause never fetched within the hour expired; "Lock
-        // again" waits however long it takes; a cancelled one says so.
-        let pause = |minutes: i64| CommandAnswer {
-            command: START_PAUSE.to_string(),
-            requested_ms: NOW - minutes * 60 * 1000,
-            ..answer(None, None)
-        };
-        assert!(answer_line(&pause(61), NOW).unwrap().ends_with(
-            "expired - the phone didn't check in within an hour, so it was never sent."
-        ));
-        assert!(
-            answer_line(&pause(59), NOW)
-                .unwrap()
-                .ends_with("no answer from the phone yet.")
-        );
-        assert!(
-            answer_line(&answer(None, None), NOW)
-                .unwrap()
-                .ends_with("no answer from the phone yet."),
-            "2 h old, but it doesn't expire"
-        );
-        let cancelled = CommandAnswer {
-            cancelled: true,
-            ..pause(5)
-        };
-        assert!(
-            answer_line(&cancelled, NOW)
-                .unwrap()
-                .ends_with("cancelled before it reached the phone.")
-        );
-    }
 
     /// The launcher's `relock_blocks` literal (PolicyResponseCompatTest).
     fn blocks_literal() -> Value {
@@ -1173,112 +1077,6 @@ mod tests {
     }
 
     #[test]
-    fn every_block_is_listed_with_its_key_and_why_and_a_catalog_imposter_stays() {
-        let blocks: Vec<RelockBlock> =
-            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
-        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
-        assert!(note.allow_button);
-        assert_eq!(note.items[0].ticked, None);
-        assert_eq!(
-            note.items[0].text,
-            "me.vibb.music.debug (signing key 3f2a0000…0000c0de): installed from outside Play (a \
-             download or adb) - noticed at its install, 2025-10-10 12:40 UTC (3 h ago)."
-        );
-        assert_eq!(
-            note.items[1].text,
-            "org.example.old: blocked when the phone locked again."
-        );
-        assert!(note.text.unwrap().contains("press \"Allow these apps\""));
-        // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
-        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
-        let note = blocks_note(&blocks[..1], &pins, NOW, None);
-        assert!(!note.allow_button);
-        assert!(note.items[0].text.contains(
-            "signed with another key than the catalog's (99999999…99999999), so it isn't the \
-             catalog's app and stays blocked: uninstall it"
-        ));
-        assert!(!note.text.unwrap().contains("Allow these apps"));
-        // The phone's own reason says so too (its pin, kept from the app list).
-        let mut imposter = blocks[0].clone();
-        imposter.reason = "catalog_key".to_string();
-        assert!(!blocks_note(&[imposter.clone()], &HashMap::new(), NOW, None).allow_button);
-        // None: nothing.
-        assert_eq!(
-            blocks_note(&[], &HashMap::new(), NOW, None),
-            BlocksNote::default()
-        );
-        // Ticked or not under Apps, each (QA of cmd-expiry, Low 3); an imposter stays anyway.
-        let ticked = std::collections::HashSet::from(["org.example.old".to_string()]);
-        let note = blocks_note(&blocks, &HashMap::new(), NOW, Some(&ticked));
-        assert_eq!(note.items[0].ticked, Some(false));
-        assert_eq!(note.items[1].ticked, Some(true));
-        let note = blocks_note(&[imposter], &HashMap::new(), NOW, Some(&ticked));
-        assert_eq!(note.items[0].ticked, None);
-    }
-
-    /// QA of cmd-expiry, Low 1: "Allow these apps" sends the listed apps it may let out, with the
-    /// keys shown - not a catalog imposter - and reads back only valid entries.
-    #[test]
-    fn allow_sends_the_listed_apps_and_their_keys() {
-        let blocks =
-            parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
-        let note = blocks_note(&blocks, &HashMap::new(), NOW, None);
-        let value = allow_form_value(&note.allow);
-        let key = blocks[0].signer.clone().unwrap();
-        assert_eq!(value, format!("me.vibb.music.debug:{key},org.example.old:"));
-        assert_eq!(parse_allow_form(&value), note.allow);
-        assert_eq!(note.allow[1].signer, None);
-        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
-        let note = blocks_note(&blocks, &pins, NOW, None);
-        assert_eq!(allow_form_value(&note.allow), "org.example.old:");
-        // Junk, repeats and bad keys go; at most BLOCKS_MAX.
-        assert_eq!(
-            parse_allow_form("x y:, org.example.a:XYZ,org.example.b:,org.example.b:,nocolon"),
-            vec![AllowedBlock {
-                package_name: "org.example.b".to_string(),
-                signer: None
-            }]
-        );
-        let many: Vec<String> = (0..30).map(|i| format!("org.example.app{i}:")).collect();
-        assert_eq!(parse_allow_form(&many.join(",")).len(), BLOCKS_MAX);
-        // An older launcher's relock line: its allowable apps, with their keys.
-        let mut r = RelockReport {
-            at_ms: NOW - 60_000,
-            blocked: vec!["org.example.a".to_string(), "org.example.b".to_string()],
-            ..Default::default()
-        };
-        r.blocked_signers
-            .insert("org.example.a".to_string(), "a".repeat(64));
-        r.blocked_signers
-            .insert("org.example.b".to_string(), "b".repeat(64));
-        let pins = HashMap::from([("org.example.b".to_string(), "9".repeat(64))]);
-        assert_eq!(
-            relock_notes(&r, NOW, &pins).allow,
-            vec![AllowedBlock {
-                package_name: "org.example.a".to_string(),
-                signer: Some("a".repeat(64))
-            }]
-        );
-    }
-
-    /// QA of cmd-expiry, Low 2: more blocks than listed say so.
-    #[test]
-    fn more_blocks_than_listed_say_so() {
-        assert_eq!(more_blocks_line(16, None), None);
-        assert_eq!(more_blocks_line(16, Some(16)), None);
-        assert_eq!(more_blocks_line(2, Some(1)), None);
-        let line = more_blocks_line(16, Some(19)).unwrap();
-        assert!(
-            line.starts_with("And 3 more - the phone lists at most 16."),
-            "{line}"
-        );
-        assert!(
-            line.contains("lets out only the ones listed here"),
-            "{line}"
-        );
-    }
-
-    #[test]
     fn a_new_block_is_logged_once() {
         let blocks =
             parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap();
@@ -1313,33 +1111,432 @@ mod tests {
         assert_eq!(parse_foreign_access(Some("garbage")), None);
     }
 
+    fn oslo() -> Zone {
+        Zone::from_setting("Europe/Oslo")
+    }
+
+    fn now() -> DateTime<Utc> {
+        DateTime::from_timestamp_millis(NOW).unwrap()
+    }
+
+    /// The relock happened at 12:40 UTC, 14:40 in Oslo (CEST): never the UTC clock.
     #[test]
-    fn the_foreign_access_warning_names_it_and_gives_the_steps() {
+    fn every_finding_is_typed_in_local_time() {
+        let r = RelockReport {
+            proxies_cleared: 2,
+            ca_certs_removed: 1,
+            credential_removed: true,
+            proxy_left: true,
+            credential_left: false,
+            blocked: vec!["com.example.app".into()],
+            accessibility_enabled: vec!["com.evil.ally".into()],
+            admins_enabled: vec!["com.evil.admin".into()],
+            apps_disabled: vec!["com.android.inputmethod.latin".into()],
+            notification_listeners: vec!["com.evil.reader".into()],
+            own_notifications_off: true,
+            failures: vec!["ca_certs".into(), "signer_check".into()],
+            ..report()
+        };
+        let names = HashMap::from([("com.evil.ally".to_string(), "Ally <b>".to_string())]);
+        let f = findings(&r, &names, &oslo(), now()).unwrap();
+        assert_eq!(f.when, "14:40 · 3 h ago");
+        assert!(f.exact.starts_with("2025-10-10 14:40:00"), "{}", f.exact);
+        assert_eq!(f.trigger, Some("Its time was up"));
+        assert_eq!(
+            f.removed,
+            ["2 Wi-Fi proxies", "1 certificate", "an Android screen lock"]
+        );
+        // By the phone's name where it reported one; the package otherwise.
+        assert_eq!(
+            f.still_on,
+            [
+                "Accessibility: Ally <b>",
+                "Notification access: com.evil.reader",
+                "Device admin: com.evil.admin",
+                "a proxy on a network",
+            ]
+        );
+        assert_eq!(f.turned_off, ["com.android.inputmethod.latin"]);
+        assert!(f.own_notifications_off);
+        // Words, never the codes.
+        assert_eq!(f.failures, ["Certificates", "Signing-key check"]);
+        // An empty Phone Setup zone says UTC.
+        let utc = findings(&r, &names, &Zone::utc_fallback(), now()).unwrap();
+        assert_eq!(utc.when, "12:40 UTC · 3 h ago");
+    }
+
+    #[test]
+    fn the_triggers_and_a_screen_lock_left_on() {
+        let mut r = report();
+        r.proxies_cleared = 0;
+        r.blocked.clear();
+        r.credential_left = true;
+        for (trigger, text) in [
+            ("timer", "Its time was up"),
+            ("lock_again", "Lock again on the phone"),
+            ("command", "Lock again from here"),
+            ("sync", "When it reached this server"),
+            ("boot", "After a restart"),
+            ("screen_on", "When the screen came on"),
+            ("settings", "Pause switched off in Settings"),
+        ] {
+            r.trigger = trigger.into();
+            let f = findings(&r, &HashMap::new(), &oslo(), now()).unwrap();
+            assert_eq!(f.trigger, Some(text));
+            assert_eq!(f.still_on, ["an Android screen lock"]);
+            assert!(f.removed.is_empty());
+        }
+        r.trigger = String::new();
+        assert_eq!(
+            findings(&r, &HashMap::new(), &oslo(), now())
+                .unwrap()
+                .trigger,
+            None
+        );
+    }
+
+    #[test]
+    fn nothing_found_or_older_than_a_week_shows_nothing() {
+        let mut quiet = report();
+        quiet.proxies_cleared = 0;
+        quiet.blocked.clear();
+        assert!(!found_anything(&quiet));
+        assert_eq!(findings(&quiet, &HashMap::new(), &oslo(), now()), None);
+        let old = report();
+        let at = |ms: i64| DateTime::from_timestamp_millis(ms).unwrap();
+        assert!(findings(&old, &HashMap::new(), &oslo(), at(old.at_ms + WARN_MS)).is_some());
+        assert_eq!(
+            findings(&old, &HashMap::new(), &oslo(), at(old.at_ms + WARN_MS + 1)),
+            None
+        );
+    }
+
+    fn ctx<'a>(
+        pins: &'a HashMap<String, String>,
+        allowed: Option<&'a HashSet<String>>,
+        names: &'a HashMap<String, String>,
+        zone: &'a Zone,
+    ) -> BlockContext<'a> {
+        BlockContext {
+            pins,
+            allowed,
+            names,
+            zone,
+            now: now(),
+        }
+    }
+
+    /// An older launcher (no `relock_blocks`): the relock's blocked apps, a catalog imposter kept
+    /// with no button, and the button gone once an "Allow" pressed after the relock was answered.
+    #[test]
+    fn an_older_launchers_relock_lists_its_blocked_apps() {
+        let r = report();
+        let (none, zone) = (HashMap::new(), oslo());
+        let b = relock_blocked(&r, false, &ctx(&none, None, &none, &zone));
+        assert_eq!(b.items.len(), 1);
+        assert_eq!(b.items[0].why, BlockWhy::Relock);
+        assert_eq!(b.items[0].key.as_deref(), Some("3f2a0000…0000c0de"));
+        assert_eq!(b.items[0].when, "14:40 · 3 h ago");
+        assert_eq!(b.waiting, 1);
+        assert_eq!(
+            allow_form_value(&b.allow),
+            format!("com.example.app:{}", r.blocked_signers["com.example.app"])
+        );
+        // The catalog pins another key: not the catalog's app - it stays, and alone it gets no button.
+        let pins = HashMap::from([("com.example.app".to_string(), "9".repeat(64))]);
+        let b = relock_blocked(&r, false, &ctx(&pins, None, &none, &zone));
+        assert_eq!(b.items[0].why, BlockWhy::NotCatalogs);
+        assert_eq!(b.items[0].pin.as_deref(), Some("99999999…99999999"));
+        assert!(b.allow.is_empty());
+        assert_eq!(b.waiting, 0);
+        // The catalog's own key: the button.
+        let pins = HashMap::from([(
+            "com.example.app".to_string(),
+            r.blocked_signers["com.example.app"].clone(),
+        )]);
+        assert_eq!(
+            relock_blocked(&r, false, &ctx(&pins, None, &none, &zone))
+                .allow
+                .len(),
+            1
+        );
+        // Answered since the relock: the list stays, the button and the count go.
+        let b = relock_blocked(&r, true, &ctx(&none, None, &none, &zone));
+        assert_eq!((b.items.len(), b.allow.len(), b.waiting), (1, 0, 0));
+        // A week later: nothing.
+        let late = BlockContext {
+            now: DateTime::from_timestamp_millis(r.at_ms + WARN_MS + 1).unwrap(),
+            ..ctx(&none, None, &none, &zone)
+        };
+        assert_eq!(relock_blocked(&r, false, &late), Blocks::default());
+    }
+
+    #[test]
+    fn the_log_line_and_the_flashes() {
+        assert_eq!(
+            log_line(3, &report()),
+            "device 3, 2025-10-10 12:40 UTC: locked again (timer) - Wi-Fi proxies removed: 1; blocked: com.example.app."
+        );
+        assert_eq!(flash("end_windows_sent").unwrap().0, "quick");
+        assert_eq!(flash("start_pause_sent").unwrap().0, "quick");
+        assert_eq!(flash("allow_blocked_sent").unwrap().0, "blocked-apps");
+        assert_eq!(flash("parent_pin_saved"), None);
+    }
+
+    #[test]
+    fn command_answers_say_what_the_phone_said_or_that_it_said_nothing() {
+        let zone = oslo();
+        let answer_of = |ack: Option<i64>, result: Option<&str>| CommandAnswer {
+            command: END_WINDOWS.to_string(),
+            requested_ms: NOW - 2 * 60 * 60 * 1000,
+            acknowledged_ms: ack,
+            result: result.map(str::to_string),
+            delivered: ack.is_some(),
+            cancelled: false,
+        };
+        let a = answer(&answer_of(Some(NOW), Some("ended: pause")), &zone, now()).unwrap();
+        // Pressed 13:40 UTC = 15:40 in Oslo.
+        assert_eq!(
+            (a.label, a.when.as_str(), a.state),
+            ("Lock again", "15:40", AnswerState::Answered)
+        );
+        assert_eq!(
+            a.detail.as_deref(),
+            Some("The phone said: \"ended: pause\".")
+        );
+        assert!(a.exact.starts_with("2025-10-10 15:40:00"), "{}", a.exact);
+        assert_eq!(
+            answer(&answer_of(Some(NOW), None), &zone, now())
+                .unwrap()
+                .detail,
+            None
+        );
+        let waiting = answer(&answer_of(None, None), &zone, now()).unwrap();
+        assert_eq!(waiting.state, AnswerState::Waiting);
+        assert_eq!(waiting.state.text(), "No answer yet");
+        // A week later: gone. Another command: no row.
+        let later = DateTime::from_timestamp_millis(NOW + WARN_MS).unwrap();
+        assert_eq!(answer(&answer_of(Some(NOW), None), &zone, later), None);
+        let ring = CommandAnswer {
+            command: "ring".to_string(),
+            ..answer_of(None, None)
+        };
+        assert_eq!(answer(&ring, &zone, now()), None);
+        // "Allow these apps" goes once an answered one is newer than the relock.
+        let allowed = CommandAnswer {
+            command: ALLOW_BLOCKED.to_string(),
+            ..answer_of(Some(NOW), Some("allowed: 1 apps"))
+        };
+        assert_eq!(
+            answer(&allowed, &zone, now()).unwrap().label,
+            "Allow these apps"
+        );
+        assert!(allowed_since_relock(
+            Some(&allowed),
+            NOW - 3 * 60 * 60 * 1000
+        ));
+        assert!(!allowed_since_relock(Some(&allowed), NOW - 60 * 60 * 1000));
+        let unanswered = CommandAnswer {
+            command: ALLOW_BLOCKED.to_string(),
+            ..answer_of(None, None)
+        };
+        assert!(!allowed_since_relock(Some(&unanswered), 0));
+        assert!(!allowed_since_relock(None, 0));
+        // Expiry and cancel (2026-10-12): a pause never fetched within the hour expired; "Lock
+        // again" waits however long it takes; a cancelled one says so.
+        let pause = |minutes: i64| CommandAnswer {
+            command: START_PAUSE.to_string(),
+            requested_ms: NOW - minutes * 60 * 1000,
+            ..answer_of(None, None)
+        };
+        let expired = answer(&pause(61), &zone, now()).unwrap();
+        assert_eq!(
+            (expired.label, expired.state),
+            ("Unlock for 2 h", AnswerState::Expired)
+        );
+        assert!(expired.detail.unwrap().contains("never sent"));
+        assert_eq!(
+            answer(&pause(59), &zone, now()).unwrap().state,
+            AnswerState::Waiting
+        );
+        assert_eq!(
+            answer(&answer_of(None, None), &zone, now()).unwrap().state,
+            AnswerState::Waiting,
+            "2 h old, but it doesn't expire"
+        );
+        let cancelled = CommandAnswer {
+            cancelled: true,
+            ..pause(5)
+        };
+        assert_eq!(
+            answer(&cancelled, &zone, now()).unwrap().state,
+            AnswerState::Cancelled
+        );
+    }
+
+    fn literal_blocks() -> Vec<RelockBlock> {
+        parse_relock_blocks(Some(&sanitize_relock_blocks(&blocks_literal()).unwrap())).unwrap()
+    }
+
+    #[test]
+    fn every_block_is_listed_with_its_key_and_why_and_a_catalog_imposter_stays() {
+        let blocks_now = literal_blocks();
+        let (none, zone) = (HashMap::new(), oslo());
+        let names = HashMap::from([("me.vibb.music.debug".to_string(), "Vibb Music".to_string())]);
+        let b = blocks(&blocks_now, None, &ctx(&none, None, &names, &zone));
+        assert_eq!(b.waiting, 2);
+        assert_eq!(b.allow_names(), "Vibb Music and org.example.old");
+        let first = &b.items[0];
+        assert_eq!(first.name, "Vibb Music");
+        assert_eq!(first.key.as_deref(), Some("3f2a0000…0000c0de"));
+        assert_eq!(first.why, BlockWhy::OutsidePlay);
+        assert_eq!(first.why.text(), "From outside Play");
+        assert!(first.at_install);
+        assert_eq!(first.when, "14:40 · 3 h ago");
+        assert_eq!(first.ticked, None);
+        let second = &b.items[1];
+        assert_eq!(
+            (
+                second.name.as_str(),
+                second.why,
+                second.at_install,
+                second.when.as_str()
+            ),
+            ("org.example.old", BlockWhy::Relock, false, "")
+        );
+        // The catalog pins another key: not the catalog's app - it stays, and alone it gets no
+        // button; it still waits (the Attention row counts it).
+        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
+        let b = blocks(&blocks_now[..1], None, &ctx(&pins, None, &none, &zone));
+        assert_eq!(b.items[0].why, BlockWhy::NotCatalogs);
+        assert_eq!(b.items[0].pin.as_deref(), Some("99999999…99999999"));
+        assert!(b.allow.is_empty());
+        assert_eq!(b.waiting, 1);
+        // The phone's own reason says so too (its pin, kept from the app list).
+        let mut imposter = blocks_now[0].clone();
+        imposter.reason = "catalog_key".to_string();
+        let b = blocks(
+            std::slice::from_ref(&imposter),
+            None,
+            &ctx(&none, None, &none, &zone),
+        );
+        assert!(b.allow.is_empty());
+        assert_eq!(b.items[0].pin, None);
+        // None: nothing.
+        assert_eq!(
+            blocks(&[], None, &ctx(&none, None, &none, &zone)),
+            Blocks::default()
+        );
+        // Ticked or not under Apps, each (QA of cmd-expiry, Low 3); an imposter stays anyway.
+        let ticked = HashSet::from(["org.example.old".to_string()]);
+        let b = blocks(&blocks_now, None, &ctx(&none, Some(&ticked), &none, &zone));
+        assert_eq!(b.items[0].ticked, Some(false));
+        assert_eq!(b.items[1].ticked, Some(true));
+        let b = blocks(&[imposter], None, &ctx(&none, Some(&ticked), &none, &zone));
+        assert_eq!(b.items[0].ticked, None);
+    }
+
+    /// QA of cmd-expiry, Low 1: "Allow these apps" sends the listed apps it may let out, with the
+    /// keys shown - not a catalog imposter - and reads back only valid entries.
+    #[test]
+    fn allow_sends_the_listed_apps_and_their_keys() {
+        let blocks_now = literal_blocks();
+        let (none, zone) = (HashMap::new(), oslo());
+        let b = blocks(&blocks_now, None, &ctx(&none, None, &none, &zone));
+        let value = allow_form_value(&b.allow);
+        let key = blocks_now[0].signer.clone().unwrap();
+        assert_eq!(value, format!("me.vibb.music.debug:{key},org.example.old:"));
+        assert_eq!(parse_allow_form(&value), b.allow);
+        assert_eq!(b.allow[1].signer, None);
+        let pins = HashMap::from([("me.vibb.music.debug".to_string(), "9".repeat(64))]);
+        let b = blocks(&blocks_now, None, &ctx(&pins, None, &none, &zone));
+        assert_eq!(allow_form_value(&b.allow), "org.example.old:");
+        // Junk, repeats and bad keys go; at most BLOCKS_MAX.
+        assert_eq!(
+            parse_allow_form("x y:, org.example.a:XYZ,org.example.b:,org.example.b:,nocolon"),
+            vec![AllowedBlock {
+                package_name: "org.example.b".to_string(),
+                signer: None
+            }]
+        );
+        let many: Vec<String> = (0..30).map(|i| format!("org.example.app{i}:")).collect();
+        assert_eq!(parse_allow_form(&many.join(",")).len(), BLOCKS_MAX);
+        // An older launcher's relock: its allowable apps, with their keys.
+        let mut r = RelockReport {
+            at_ms: NOW - 60_000,
+            blocked: vec!["org.example.a".to_string(), "org.example.b".to_string()],
+            ..Default::default()
+        };
+        r.blocked_signers
+            .insert("org.example.a".to_string(), "a".repeat(64));
+        r.blocked_signers
+            .insert("org.example.b".to_string(), "b".repeat(64));
+        let pins = HashMap::from([("org.example.b".to_string(), "9".repeat(64))]);
+        assert_eq!(
+            relock_blocked(&r, false, &ctx(&pins, None, &none, &zone)).allow,
+            vec![AllowedBlock {
+                package_name: "org.example.a".to_string(),
+                signer: Some("a".repeat(64))
+            }]
+        );
+    }
+
+    /// QA of cmd-expiry, Low 2: more blocks than listed say so.
+    #[test]
+    fn more_blocks_than_listed_say_so() {
+        let blocks_now = literal_blocks();
+        let (none, zone) = (HashMap::new(), oslo());
+        let more =
+            |total: Option<i64>| blocks(&blocks_now, total, &ctx(&none, None, &none, &zone)).more;
+        assert_eq!(more(None), None);
+        assert_eq!(more(Some(2)), None);
+        assert_eq!(more(Some(1)), None);
+        assert_eq!(more(Some(19)), Some(17));
+    }
+
+    #[test]
+    fn the_phones_names_for_its_apps() {
+        let names = app_names(Some(
+            r#"[{"package_name":"com.a","label":" Chat "},{"package_name":"com.b","label":"  "},
+                {"package_name":"com.c","label":"<b>Spy</b>"}]"#,
+        ));
+        assert_eq!(names.get("com.a").map(String::as_str), Some("Chat"));
+        assert_eq!(names.get("com.b"), None);
+        // Kept as the phone sent it; the template escapes it.
+        assert_eq!(names.get("com.c").map(String::as_str), Some("<b>Spy</b>"));
+        assert!(app_names(Some("garbage")).is_empty());
+        assert!(app_names(None).is_empty());
+    }
+
+    #[test]
+    fn the_foreign_access_warning_names_the_apps() {
         let found = ForeignAccess {
             admins: vec!["com.evil.admin".to_string()],
             accessibility: vec!["com.evil.admin".to_string(), "com.evil.reader".to_string()],
         };
-        assert!(
-            foreign_note(&found, true).steps[0].starts_with("The phone's restrictions are paused")
-        );
-        let note = foreign_note(&found, false);
+        let names = HashMap::from([("com.evil.admin".to_string(), "Spy Kit".to_string())]);
+        let view = foreign_view(&found, false, &names);
         assert_eq!(
-            note.text,
-            "The phone refuses the parent PIN because of device admin com.evil.admin, \
-             accessibility service com.evil.admin and accessibility service com.evil.reader, from \
-             apps you haven't allowed. They can control the phone or read its screen - the parent \
-             PIN too - and the phone can't hide or stop them. Don't type the parent PIN on the \
-             phone until they're gone:"
+            view,
+            ForeignView {
+                admins: "Spy Kit".to_string(),
+                accessibility: "Spy Kit and com.evil.reader".to_string(),
+                apps: "Spy Kit and com.evil.reader".to_string(),
+                many: true,
+                packages: "Device admin: com.evil.admin. Accessibility: com.evil.admin, \
+                           com.evil.reader."
+                    .to_string(),
+                paused: false,
+            }
         );
-        assert_eq!(note.steps.len(), 3);
-        assert!(note.steps[0].contains("Pause restrictions for 2 hours"));
-        assert_eq!(
-            note.steps[1],
-            "On the phone, in Settings: Security > Device admin apps: turn com.evil.admin off; \
-             Accessibility: turn com.evil.admin and com.evil.reader off. Then uninstall \
-             com.evil.admin and com.evil.reader (Settings > Apps)."
-        );
-        assert!(note.steps[2].contains("Lock the phone again now"));
+        assert!(foreign_view(&found, true, &names).paused);
+        let one = ForeignAccess {
+            admins: Vec::new(),
+            accessibility: vec!["com.evil.reader".to_string()],
+        };
+        let view = foreign_view(&one, false, &HashMap::new());
+        assert_eq!((view.admins.as_str(), view.many), ("", false));
+        assert_eq!(view.packages, "Accessibility: com.evil.reader.");
         assert_eq!(
             foreign_log_line(4, Some(&found)),
             "device 4: the parent PIN is refused on the phone - device admin: com.evil.admin; \

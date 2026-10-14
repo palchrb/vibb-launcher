@@ -328,12 +328,16 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     )));
     assert!(anna_page.contains(">Do Not Disturb is on</span>"));
     assert!(anna_page.contains(&format!(
-        "<a class=\"attention attention-action\" href=\"/devices/{anna}#time\" data-attention=\"launcher-without-rules\">"
+        "<a class=\"attention attention-action\" href=\"/devices/{anna}/time\" data-attention=\"launcher-without-rules\">"
     )));
-    // The targets exist on their pages.
-    for anchor in ["status", "parent-pin", "time"] {
-        assert!(anna_page.contains(&format!("id=\"{anchor}\"")), "{anchor}");
-    }
+    // The targets exist on their pages (the summary's own: the quick actions).
+    assert!(anna_page.contains("<section id=\"quick\""));
+    // Device › Time's warnings sit at its top: the page answers.
+    let time = app
+        .get_page(&format!("/devices/{anna}/time"), &cookie)
+        .await;
+    assert_eq!(time.status, axum::http::StatusCode::OK);
+    assert!(time.text().contains("Vibb too old for time rules"));
     for (page, anchor) in [
         ("about", "sound"),
         ("about", "software"),
@@ -341,6 +345,9 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         ("advanced", "restrictions"),
         ("advanced", "app-screens"),
         ("advanced", "connection"),
+        ("lock", "parent-pin"),
+        ("lock", "child-pin"),
+        ("home", "layout"),
     ] {
         let html = app
             .get_page(&format!("/devices/{anna}/{page}"), &cookie)
@@ -411,5 +418,5 @@ async fn no_phones_yet() {
     // The setup explanation moved into the add flow.
     assert!(!html.contains("provision it by QR code or adb"));
     let add = app.get_page("/devices/new", &cookie).await.text();
-    assert!(add.contains("Settings › Phone Setup"), "{add}");
+    assert!(add.contains("a QR code or a setup code"), "{add}");
 }

@@ -42,9 +42,9 @@ add `ADMIN_PUBLIC=on` for such a dev setup. The startup warning about `0.0.0.0` 
 expected here. With `INSECURE_COOKIES` the session cookie is a plain `handy` (`__Host-handy` needs https).
 
 In the PWA, **before** enrolling the phone:
-1. Devices → New device, then "New code" on its page (shown once, valid 15 minutes).
-2. On the device page: turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
-3. Set a parent PIN (the "Parent PIN" card, 6-10 digits).
+1. Devices → Add Phone, name it, then under "Code" on Connect: **New Setup Code** (shown once, valid 15 minutes).
+2. On the phone's Advanced page (Restrictions): turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
+3. Set a Parent PIN (the phone's Lock Screen & PINs page, 6-10 digits).
 
 ## 3. Emulator: fresh start and snapshot
 
@@ -85,15 +85,15 @@ Language and time zone (fix round 2026-10-06): adb provisioning doesn't set them
 Android's language (e.g. Norsk bokmål) and time zone in Settings **before** `set-device-owner`/
 enrolling; once managed, the system language is locked (`DISALLOW_CONFIG_LOCALE`, hardening switch
 "Lock the phone's language", on by default - only the server lifts it). The QR setup sets both
-from the provisioning page (`PROVISIONING_LOCALE` default `nb_NO`, `PROVISIONING_TIME_ZONE`
+from Settings › Phone Setup ("Phone language", `PROVISIONING_LOCALE` default `nb_NO`; "Time zone", `PROVISIONING_TIME_ZONE`
 default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android 12+
 `GET_PROVISIONING_MODE`/`ADMIN_POLICY_COMPLIANCE` activities) is **[needs device test]** on the
 Jelly Star and stock GMS phones; adb above stays the fallback.
 
 Screen lock: since step 10 the phone has **no Android screen lock** - handy's own PIN lock
-replaces it (set the kid's PIN on the device page, "Screen lock" card; the parent PIN must be set
-first). An Android PIN keeps handy's lock off (no double lock) and the device page says "Remove
-the Android screen lock". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
+replaces it (set the Child PIN on the phone's Lock Screen & PINs page; the Parent PIN must be set
+first). An Android PIN keeps handy's lock off (no double lock) and Lock Screen & PINs says
+"Android's screen lock is still on". Remove one with `adb shell locksettings clear --old <PIN>` (or Settings ->
 Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
 `KEYGUARD_DISABLE_SECURE_CAMERA`) set an Android PIN on purpose, and remove it afterwards.
 
@@ -112,12 +112,13 @@ adb emu gsm cancel +4791234567   # caller hangs up
 adb shell am start -a android.intent.action.CALL -d tel:112   # (emergency; the emulator fakes it)
 ```
 
-Add contacts with matching numbers in the PWA calls page (+47 9123 4567).
+Add contacts with matching numbers on the phone's Calls & Contacts page in the PWA (Add Contact, +47 9123 4567;
+the default country code is on Settings › Phone Setup).
 
 SMS (emulator console): `adb emu sms send <number> <text>`, e.g.
 `adb emu sms send 4791234567 hello` or a named sender `adb emu sms send Vipps kode 1234`.
 Step 9 keeps SMS **on/off only** (the SMS allowlist, part A, is postponed): with SMS off on the
-calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every message.
+Calls & Contacts page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every message.
 
 ## 5b. Smoke-test script
 
@@ -253,7 +254,7 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
 5. Add a school rule for "now" in the PWA → lock screen with the rule name; calls blocked.
 6. Badges: post a notification from an allowed app → count on its icon.
 
-7. Step 9: manage calls ON -> the calls page says "Waiting for the phone to confirm" and
+7. Step 9: manage calls ON -> Calls & Contacts shows the row "Waiting for the phone to confirm" and
    reloads itself until the next report, then shows the real state (never "waiting" for more
    than 5 minutes). `adb logcat -b events | grep -E "am_kill|wm_create_activity"` shows no
    `am_kill` of our package when calls go ON -> OFF -> ON.
@@ -275,8 +276,8 @@ Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d b
 
 ## 6c. Step 10: handy's own PIN lock and the call screens
 
-Setup: device page -> set a parent PIN ("Parent PIN" card, 6-10 digits), then "Screen lock" ->
-kid's PIN (4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
+Setup: device page -> Lock Screen & PINs -> set the Parent PIN (6-10 digits), then the Child PIN
+(4-6 digits; the first one also turns "Block safe mode" on). Sync (or wait for the
 nudge). The emulator must have no Android screen lock:
 
 ```sh
@@ -292,8 +293,8 @@ the lock comes up on its glance page (clock, date, the music tile, missed calls 
 while the glance page covers it.
 
 1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
-   back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: device page
-   allowlist cleared or kiosk unpinned on a test server).
+   back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: the phone's
+   Apps page with every app off or kiosk unpinned on a test server).
 2. **Nothing reachable while locked** (kiosk on and off): pull the shade, Home, Recents
    (`adb shell input keyevent KEYCODE_HOME`, `KEYCODE_APP_SWITCH`), `adb shell input keyevent
    KEYCODE_ASSIST`, the power-button camera gesture, `adb shell am start -a
@@ -316,13 +317,13 @@ while the glance page covers it.
    Never test 112 on a real phone outside its emergency test mode.
 6. **Process death**: in an app with the screen on, `adb shell am crash $P` (or `am kill`) -> the
    lock comes back at once; with a bedtime rule active the lock and then the bedtime screen.
-7. **Remote lock**: Locate page -> Lock -> lock shown, screen off, command result "locked (handy
-   lock)".
-8. **Migration**: set an Android PIN -> next sync: device page "Remove the Android screen lock",
+7. **Remote lock**: Locate tab -> Lock -> lock shown, screen off, the Recent row "Lock · Done" with "Locked with
+   the Child PIN" under it (the phone's answer "locked (handy lock)" in its `title`).
+8. **Migration**: set an Android PIN -> next sync: Lock Screen & PINs "Android's screen lock is still on",
    our lock off. `adb shell locksettings clear --old <PIN>` -> our lock active within seconds
    (onPasswordChanged), without a sync.
 9. **Crash guard** (debug only): three crashes of the lock screen within 2 minutes (`adb shell am
-   crash $P` right after each screen-on) -> lock off, device page "crashed several times".
+   crash $P` right after each screen-on) -> lock off, Lock Screen & PINs "Lock turned off after crashes".
 10. Screenshots (320x568 dp and 411 dp, nb + en): the lock's window is `FLAG_SECURE` since design 25,
     so `adb exec-out screencap` (and a screen recording) shows it black. Take them with the emulator
     console instead - `adb emu screenrecord screenshot /path/on/the/emulator/host/lock.png` (the file is
@@ -428,7 +429,7 @@ Camera lock follow-ups (qa-11b-code #5, after the fixes of #1-#4):
 - [ ] **Restart while LOCKED**: screen off (LOCKED), `adb reboot` and, separately, `adb shell am crash $P` ->
   after the restart `dumpsys package com.android.camera2 | grep suspended` is true again while the lock shows,
   false after the right PIN.
-- [ ] **Lock switched off while LOCKED**: with the screen off, remove the kid PIN on the device page (sync), or set
+- [ ] **Lock switched off while LOCKED**: with the screen off, remove the Child PIN on Lock Screen & PINs (sync), or set
   an Android PIN (`adb shell locksettings set-pin 1234`) -> the camera is unsuspended without an unlock (logcat
   `CameraLock` "Unlocked: camera apps unsuspended"); `locksettings clear --old 1234` afterwards.
 - [ ] **Sync during the unlock**: save something on the device page (it nudges the phone) and type the PIN right
@@ -523,7 +524,7 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
 **Mobile data, the stream saved as it plays, the storage limit (design 30 §8)**, with the debug feed's
-`config.json` (above) or the launcher's bridge and the device page's Music card. Tools:
+`config.json` (above) or the launcher's bridge and the phone's Music page (`/devices/{id}/music`). Tools:
 - network: Wi-Fi is unmetered (through the launcher's VPN on a managed phone); `adb shell svc wifi disable` leaves the
   emulated LTE (metered); `adb emu gsm data roaming` / `adb emu gsm data home` for roaming;
 - the audio cache: `adb shell run-as me.vibb.music.debug du -s no_backup/media`; the report's `audio_bytes` and
@@ -607,26 +608,27 @@ after a parent's test play counts as "1 ny" (design 29 §8.4, qa-29-code L5).
 Not run yet: no emulator in the build sandbox. Use a snapshot you can restore - the wipe is real.
 
 1. **Remote wipe (M8)**, API 34 and API 36 images, launcher as device owner and enrolled, with `adb logcat -s
-   LocateCommands DevicePolicyManagerService` running: Locate page -> Wipe. Expect the emulator to reboot into the
+   LocateCommands DevicePolicyManagerService` running: Locate tab -> Erase Phone… (type the name). Expect the emulator to reboot into the
    factory reset (the AVD comes back at the setup wizard) and no "Failed to wipe device" in the log. If a wipe is
-   ever refused, the phone keeps running and the Locate page must say "Failed ...: wipe failed, the phone keeps its
-   data: <the exception>" - never "Done". Restore the snapshot after each run.
+   ever refused, the phone keeps running and the Recent row must say "Erase Phone · Failed" with "Not erased: the
+   phone keeps its data" (the exception in its `title`) - never "Done". Restore the snapshot after each run.
    On API 34 also the update path (QA of the launcher wave, Low 4): install the build before this wave, make it device
-   owner and enroll, update it in place to this build *without a reboot*: the Locate page says "Remote wipe works after
-   the phone restarts once" (the report's `remote_wipe_ready` is false) and a Wipe comes back "Failed ...
-   SecurityException"; after one restart the warning is gone and the wipe works.
+   owner and enroll, update it in place to this build *without a reboot*: the Locate tab says "Erasing works after
+   the phone restarts once" (the report's `remote_wipe_ready` is false) and an erase comes back "Failed" (the
+   SecurityException in the row's `title`); after one restart the warning is gone and the wipe works.
    **Admin policies after an update** (the keyguard camera switch on an Android 16 emulator): with the build before
    this fix as device owner, update in place to this one without a reboot. `adb logcat -s AppEnforcer` may still show
    "Failed to set the keyguard camera feature" (on versions that check the admin's declared policy), and the device
    page's Attention and Advanced › App screens say "Restart the phone once" (the report's `admin_policies_pending`). Restart:
    the log line is gone, the warning goes with the next report, and `adb shell dumpsys device_policy | grep -i
    keyguard` shows the camera feature disabled. A fresh install with this build has nothing pending.
-2. **Command receipts (L12)**: Locate page -> Lock. The Recent commands row goes "Delivered ..., not confirmed yet" ->
-   "Done ... (locked ...)" within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
-   wipe (snapshot!) reads "Received ... - the phone is wiping now" before the emulator reboots. A lost answer: on the
+2. **Command receipts (L12)**: Locate tab -> Lock. The Recent row goes "Sent" ("Not confirmed yet.") ->
+   "Done" (its answer under it) within seconds; `adb logcat -s CommandAnswers MdmSyncWorker` shows no "Couldn't send". A
+   wipe (snapshot!) reads "Erasing" ("The phone got it (10:58). An erased phone stops reporting.") before the emulator
+   reboots. A lost answer: on the
    server, `UPDATE device_commands SET received_at = NULL, acknowledged_at = NULL, result = NULL, delivered_at =
    datetime('now', '-3 minutes') WHERE id = <the lock's id>`, then "Sync now" on the phone: the log says "delivered
-   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received ...".
+   again - confirmed, not run twice", the screen doesn't lock again, and the row reads "Received".
 3. **Catalog APK check (M10)**: a catalog app from a manual upload (Apps page), checked for the phone: it installs.
    The server refuses a release with another key itself, so to see the phone's check, change the pin under the cached
    release (no "Check now" - that would re-check the file): `UPDATE tracked_apps SET signer_sha256 = '<64 other hex>'`
@@ -713,8 +715,8 @@ t+15 volume 60
   before `SetAVTransportURI`; with `--group Stua+Kjøkken` both rooms get it), a call (`gsm call <number>` in the
   emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell dumpsys power |
   grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
-  the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
-  Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
+  the phone's Music page (Sonos speakers) shows "No speakers seen yet." before the first report with rooms, then
+  Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken switched off -> after the next sync the sheet lists only
   Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
   tillatt"); with `--group Kjøkken+Stua` (or `Stua+Kjøkken`) and only Stua allowed the sheet shows no group row (a
   group needs every member allowed); a `group` script line putting Kjøkken under a playing, allowed Stua stops the
@@ -1103,8 +1105,8 @@ SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731 SPOTIFY_API_BASE=http://127.0.0.1:87
 - [ ] **The kid's login**: `curl -s 'http://127.0.0.1:8731/fake/as?user=kid'` (the fake logs `the next login consents
   as kid`), then the same login and paste (`authorize: consented as kid -> FAKE-CODE-2`, `token: code exchanged for
   fakekid: …`): `fakekid` is listed too.
-- [ ] **Plays as**: the device page's Music card, "Spotify plays as": `fakekid`. The DNS note shows; the next sync's
-  policy has `music.spotify` true.
+- [ ] **Plays as**: the phone's Music page (Devices › the phone › Music), the Spotify group's "Plays as": `fakekid`. The
+  phone's Web Filter page shows the DNS note; the next sync's policy has `music.spotify` true.
 - [ ] **Links**, each with the phone ticked on the add form, then "Check now" on its card:
   `https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=x` (list mode: the fake logs `GET
   /v1/playlists/0FakePlaylistKveld0001/items: 200 (fakeparent)` - the path without its query; the card lists 3 tracks - the fixture's episode,

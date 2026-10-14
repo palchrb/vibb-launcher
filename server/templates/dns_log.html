@@ -5,59 +5,28 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Blocked activity</h1>
-    </div>
-    <p class="subtitle">What the on-device filter has blocked recently, so you can see if something's worth a conversation. The log is off for every phone until you switch it on for that phone here; while it's on, entries are kept {{ retention_days }} days.</p>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
+    <h1 class="page-title">Blocked Activity</h1>
 
-    {% if devices.is_empty() %}
-    <p class="empty-state">No devices yet.</p>
+    {#- Each phone's log (its switch and the list) is on its Web Filter page (design 31 step 5);
+        this page is the entrance. -#}
+    {% if phones.is_empty() %}
+    <div class="group">
+        <p class="row row-note">No phones yet.</p>
+    </div>
     {% else %}
-    <div class="card">
-        <label for="device_select">Device</label>
-        <select id="device_select" onchange="if (this.value) location.href='/dns/log?device=' + this.value;" style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
-            <option value="">Choose a device&hellip;</option>
-            {% for d in devices %}
-            <option value="{{ d.id }}" {% if d.id == selected_id %}selected{% endif %}>{{ d.name }}</option>
-            {% endfor %}
-        </select>
+    <div class="group">
+        {% for p in phones %}
+        <a class="row" href="/devices/{{ p.id }}/filter#log" data-phone="{{ p.id }}">
+            <span class="row-label">{{ p.name }}</span>
+            <span class="row-value">{{ p.value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        {% endfor %}
     </div>
-
-    {% if let Some(device) = selected %}
-    <form method="post" action="/dns/log/{{ device.id }}" class="card" id="dns-log-switch">
-        <h2>Blocked-domain log for {{ device.name }}</h2>
-        <label class="checkbox-row">
-            <input type="checkbox" name="dns_log_enabled" value="on" {% if log_enabled %}checked{% endif %} data-autosave>
-            Keep a log of blocked domains for this phone
-        </label>
-        <p class="subtitle">Off by default. When on, the phone reports each blocked domain (at most once per 10 minutes per domain) and the server keeps it for {{ retention_days }} days. Switching it off deletes this phone's log right away. Filtering works the same either way.</p>
-        <noscript><button type="submit">Save</button></noscript>
-    </form>
-
-    <div class="card">
-        <h2>Recent blocks for {{ device.name }}</h2>
-        {% if !log_enabled %}
-        <p class="subtitle">The log is off for this phone.</p>
-        {% else if events.is_empty() %}
-        <p class="subtitle">Nothing blocked yet.</p>
-        {% else %}
-        <table>
-            <thead><tr><th>Domain</th><th>Category</th><th>When</th></tr></thead>
-            <tbody>
-            {% for e in events %}
-            <tr>
-                <td>{{ e.domain }}</td>
-                <td>{{ e.category }}</td>
-                <td>{{ e.blocked_at }}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-        {% endif %}
-    </div>
-    {% endif %}
+    <p class="group-footer">The log is off until you turn it on for a phone. Kept {{ retention_days }} days.</p>
     {% endif %}
 </main>
 </body>

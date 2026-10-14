@@ -23,6 +23,7 @@ mod hardening;
 mod intake_limits;
 mod launcher_ui;
 mod listeners;
+mod locate_page;
 mod locations;
 mod lock_glance;
 mod music;
@@ -33,11 +34,14 @@ mod music_sweep;
 mod parent_pin;
 mod play;
 mod provisioning;
+pub(crate) mod settings_pages;
 mod shell;
 mod sound_mode;
 mod step10;
 mod step11;
 mod step9;
+mod summary;
+mod time_pages;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
@@ -159,6 +163,7 @@ impl TestApp {
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
+            data_dir: std::sync::Arc::new(dir.path().join("data")),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
@@ -582,6 +587,25 @@ pub enum Section {
     Summary,
     /// `/devices/{id}/calls`: Calls & Contacts.
     Calls,
+    /// `/devices/{id}/apps`: Apps (design 31 step 6) - Allowed and Not allowed, each app's switch
+    /// and Name and icon, Download apps on Wi-Fi only.
+    Apps,
+    /// `/devices/{id}/music`: Music (design 31 step 7) - the music app, the library's switches,
+    /// the settings form (mobile data, storage limit, volume cap, Storytel), Sonos, what the phone
+    /// reported.
+    Music,
+    /// `/devices/{id}/time`: Time (design 31 step 9) - what the phone last said, extra time, Pause
+    /// a rule, the recent lifts, the own-rules switch, the phone's own rules and daily limits.
+    Time,
+    /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
+    /// the screen timeout, the lock's background and notifications.
+    Lock,
+    /// `/devices/{id}/home`: Home Screen (design 31 step 5) - language and apps per row, the
+    /// wallpapers, the quick controls.
+    Home,
+    /// `/devices/{id}/filter`: Web Filter (step 5) - the filter switch, this phone's lists and
+    /// domains, the blocked-domain log.
+    Filter,
     /// `/devices/{id}/about`: About This Phone (design 31 step 3) - the connection, sound,
     /// software, crash reports, starts without Vibb and the time lock.
     About,
@@ -594,6 +618,12 @@ pub fn device_page(id: i64, section: Section) -> String {
     match section {
         Section::Summary => format!("/devices/{id}"),
         Section::Calls => format!("/devices/{id}/calls"),
+        Section::Apps => format!("/devices/{id}/apps"),
+        Section::Music => format!("/devices/{id}/music"),
+        Section::Time => format!("/devices/{id}/time"),
+        Section::Lock => format!("/devices/{id}/lock"),
+        Section::Home => format!("/devices/{id}/home"),
+        Section::Filter => format!("/devices/{id}/filter"),
         Section::About => format!("/devices/{id}/about"),
         Section::Advanced => format!("/devices/{id}/advanced"),
     }

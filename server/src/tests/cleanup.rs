@@ -226,10 +226,8 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
         )
         .await;
     // Not signed in: sent to the login page, nothing written.
-    assert_ne!(
-        res.location(),
-        Some(format!("/dns/log?device={id}").as_str())
-    );
+    let filter = super::device_page(id, super::Section::Filter);
+    assert_ne!(res.location(), Some(filter.as_str()));
     assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
 
     let cookie = app.admin_cookie().await;
@@ -241,10 +239,8 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
             &[("dns_log_enabled", "on")],
         )
         .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/dns/log?device={id}").as_str())
-    );
+    // Back to the phone's Web Filter page (design 31 step 5), no fragment.
+    super::assert_redirect(&res, &filter, None);
     assert_eq!(policy(&app, &token).await["dns_log_enabled"], true);
     app.request(
         Method::POST,
@@ -257,20 +253,17 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
         count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
         1
     );
-    let page = app
-        .get_page(&format!("/dns/log?device={id}"), &cookie)
-        .await;
-    assert!(page.text().contains("ads.example"));
-    assert!(page.text().contains("keeps it for 7 days"));
+    let page = app.get_page(&filter, &cookie).await.text();
+    assert!(page.contains("ads.example"));
+    assert!(page.contains("Kept 7 days."));
+    // The phone's time in local time, never the raw text it sent.
+    assert!(!page.contains("2026-10-06T10:00:00Z"));
 
     // Off again: the phone's log is deleted at once.
     let res = app
         .request_form(Method::POST, &format!("/dns/log/{id}"), Some(&cookie), &[])
         .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/dns/log?device={id}").as_str())
-    );
+    super::assert_redirect(&res, &filter, None);
     assert_eq!(
         count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
         0
@@ -455,7 +448,7 @@ async fn location_retention_is_chosen_per_phone_and_applied_at_once() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/devices/locate?device={id}").as_str())
+        Some(format!("/devices/locate?device={id}#location-settings").as_str())
     );
     assert_eq!(
         count(&app.db, "SELECT COUNT(*) FROM device_locations").await,
@@ -647,8 +640,11 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
     // A launcher that stopped enforcing calls still reads as a downgrade, not "not yet".
     let cookie = app.admin_cookie().await;
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(page.contains("stopped reporting that it enforces calls"));
+    assert!(
+        page.contains("stopped reporting that it screens calls"),
+        "{page}"
+    );
 }

@@ -1,6 +1,6 @@
-{# "Name and icon" for one app (design 14): the device page's Apps card and the catalog page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview; the form works without it. #}
+{# "Name and icon" for one app (design 14): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview; the form works without it. #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
-    <summary><strong>{{ form.app_label }}</strong> <span class="subtitle">- {{ form.summary }}</span></summary>
+    <summary>Name and icon: <span class="subtitle">{{ form.summary }}</span></summary>
     <form method="post" action="{{ form.action }}" class="app-display-form">
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
@@ -34,7 +34,7 @@
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.key }}</label>
             {% endfor %}
         </fieldset>
-        <p class="hint">Shown on the home screen, in the app list, on the lock screen and in the contact card. The app's own notifications, its screens and Android's settings and permission dialogs still use the app's own name - Android doesn't let a launcher change those.</p>
+        <p class="hint">Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
         <button type="submit" name="action" value="save">Save</button>
         <button type="submit" name="action" value="own" class="button-secondary">Use the app's own</button>
         {% if form.own_row && form.catalog_default.is_some() %}

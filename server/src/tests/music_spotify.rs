@@ -2793,9 +2793,9 @@ mod entries {
     async fn from_spotify(app: &TestApp, cookie: &str) -> String {
         let page = app.get_page("/music", cookie).await.text();
         let row = &page[page.find("data-row=\"from-spotify\"").expect("the row")..];
-        assert!(
-            page.contains("<a class=\"row\" href=\"/music/spotify\" data-row=\"from-spotify\">")
-        );
+        assert!(page.contains(
+            "<a class=\"row\" href=\"/music/spotify\" id=\"spotify\" data-row=\"from-spotify\">"
+        ));
         let value = &row[row.find("class=\"row-value\">").unwrap() + 18..];
         value[..value.find('<').unwrap()].to_string()
     }
@@ -3155,7 +3155,7 @@ mod entries {
              playlist in your child's Spotify account, or invite your child to collaborate on \
              yours and join from your child's account."
         ));
-        assert!(page.contains("Turn it on for a phone on that phone's Music card."));
+        assert!(page.contains("Turn it on for a phone on that phone's Music page."));
 
         // A short link: two hops, then the album.
         app.fetch.redirect(
@@ -3406,6 +3406,12 @@ mod entries {
             let app = &app;
             async move { page_text(&app.get_page("/music", &cookie).await) }
         };
+        // The entry's page holds the card's details and the phones' lines (design 31 step 12).
+        let entry_page = || {
+            let cookie = cookie.clone();
+            let app = &app;
+            async move { page_text(&app.get_page(&format!("/music/entries/{id}"), &cookie).await) }
+        };
         // Not listed yet: waiting for the first check; Check now asks for it.
         let page = music().await;
         assert!(page.contains("Spotify playlist"), "{page}");
@@ -3438,18 +3444,29 @@ mod entries {
                      "item": super::listing::TRACK_A, "error": "unplayable"}]}),
         )
         .await;
+        // The library row: the count and the phones the gate lets through, the link back, no
+        // offline select.
         let page = music().await;
-        assert!(page.contains("3 tracks · read as Ella"), "{page}");
-        assert!(page.contains("4 left out: not playable here, local files or podcast episodes"));
-        assert!(page.contains("on 1 phone"), "{page}");
-        assert!(page.contains(
-            "Ella: plays as Ella · 1 failing (Spotify couldn't play this track on the phone)"
-        ));
-        assert!(page.contains("Ola: not sent - Spotify is off on this phone"));
+        assert!(
+            page.contains("Spotify playlist · 3 tracks · 1 phone"),
+            "{page}"
+        );
         assert!(page.contains(&format!(
             "href=\"https://open.spotify.com/playlist/{PLAYLIST}\" rel=\"noopener noreferrer\""
         )));
         assert!(!page.contains(&format!("/music/entries/{id}/offline")));
+        // The entry page: the line with the reader, what was left out, each phone's line.
+        let page = entry_page().await;
+        assert!(page.contains("3 tracks · read as Ella"), "{page}");
+        assert!(page.contains("4 left out: not playable here, local files or podcast episodes"));
+        assert_eq!(
+            super::super::music::phone_line(&page, "Ella").as_deref(),
+            Some("Plays as Ella · 1 failing (Spotify couldn't play this track on the phone)")
+        );
+        assert_eq!(
+            super::super::music::phone_line(&page, "Ola").as_deref(),
+            Some("Not sent - Spotify is off on this phone")
+        );
         // The in-place status.
         let res = app
             .get_page(&format!("/music/cards?ids={id}"), &cookie)
@@ -3488,12 +3505,14 @@ mod entries {
         let later = now + TimeDelta::hours(1);
         sweep::request_check(&app.db, id, later).await.unwrap();
         assert_eq!(check(&app, id, later).await.error, None);
-        let page = music().await;
+        let page = entry_page().await;
         assert!(
             page.contains("Spotify picks the order · read as Ella"),
             "{page}"
         );
         assert!(page.contains("No logged-in account owns this playlist or collaborates on it"));
+        // The row: no track count in context mode.
+        assert!(music().await.contains("Spotify playlist · 1 phone"));
         assert!(page.contains(
             "make the playlist in your child's Spotify account, or invite your child to \
              collaborate on yours and join from your child's account."
@@ -3507,13 +3526,16 @@ mod entries {
             .await
             .unwrap();
         assert!(in_library(&app, &ella_token, id).await.is_some());
-        let page = music().await;
-        assert!(
-            page.contains("Ella: plays as Ella - no Spotify app is set up, so it can't play"),
-            "{page}"
+        let page = entry_page().await;
+        assert_eq!(
+            super::super::music::phone_line(&page, "Ella").as_deref(),
+            Some("Plays as Ella - no Spotify app is set up, so it can't play")
         );
-        assert!(page.contains("Ola: not sent - no Spotify app is set up"));
-        assert!(page.contains("on 1 phone"));
+        assert_eq!(
+            super::super::music::phone_line(&page, "Ola").as_deref(),
+            Some("Not sent - no Spotify app is set up")
+        );
+        assert!(music().await.contains("Spotify playlist · 1 phone"));
     }
 
     /// The entry page (§3.6): the kind, the link back to Spotify, no offline choice; in context
@@ -3532,7 +3554,7 @@ mod entries {
         assert!(page.contains("Open in Spotify"));
         assert!(page.contains("name=\"order\""));
         assert!(!page.contains("name=\"cache\""), "{page}");
-        assert!(page.contains("Check now"));
+        assert!(page.contains("Check Now"));
         let res = app
             .request_form(
                 Method::POST,
@@ -3708,7 +3730,23 @@ mod entries {
         let card = |device: i64| {
             let cookie = cookie.clone();
             let app = &app;
-            async move { page_text(&app.get_page(&format!("/devices/{device}"), &cookie).await) }
+            async move {
+                page_text(
+                    &app.get_page(&format!("/devices/{device}/music"), &cookie)
+                        .await,
+                )
+            }
+        };
+        // The phone's Web Filter page carries the DNS note (design 31 step 5).
+        let filter = |device: i64| {
+            let cookie = cookie.clone();
+            let app = &app;
+            async move {
+                page_text(
+                    &app.get_page(&format!("/devices/{device}/filter"), &cookie)
+                        .await,
+                )
+            }
         };
         let page = card(ella).await;
         assert!(
@@ -3720,11 +3758,11 @@ mod entries {
             "This includes Spotify, which streams (about 60-150 MB an hour) and is never saved on the phone."
         ));
         let streaming = page
-            .find("Streaming may use mobile data")
-            .expect("the streaming switch");
+            .find("<p>Streaming:")
+            .expect("the streaming switch's ⓘ");
         let downloads = page
-            .find("Downloads may use mobile data")
-            .expect("the downloads switch");
+            .find("<p>Downloads:")
+            .expect("the downloads switch's ⓘ");
         let spotify = page.find("This includes Spotify").unwrap();
         assert!(
             streaming < spotify && spotify < downloads,
@@ -3736,13 +3774,17 @@ mod entries {
         let page = card(ella).await;
         assert!(page.contains("id=\"music-spotify\""));
         assert!(
-            page.contains(&format!("<option value=\"{kid}\" >Ella</option>")),
+            page.contains(&format!("<option value=\"{kid}\">Ella</option>")),
             "{page}"
         );
         assert!(
             page.contains("One account per phone: this child's own Premium account, never yours.")
         );
-        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
+        assert!(
+            !filter(ella)
+                .await
+                .contains("Spotify's hosts are allowed on this phone")
+        );
         let save = |device: i64, account: String| {
             let cookie = cookie.clone();
             let app = &app;
@@ -3762,7 +3804,7 @@ mod entries {
         assert_eq!(res.status, StatusCode::SEE_OTHER);
         assert_eq!(
             res.location(),
-            Some(format!("/devices/{ella}#music-spotify").as_str())
+            Some(format!("/devices/{ella}/music#music-spotify").as_str())
         );
         assert_eq!(binding(&app, ella).await, Some(kid));
         assert!(revision(&app).await > before);
@@ -3779,21 +3821,26 @@ mod entries {
         );
         // The DNS note, now that step 3 makes it true (qa-26c-step2b-code L3): the delivered list
         // and the launcher's filter leave Spotify's hosts out while the phone is bound.
-        assert!(page.contains("Spotify's hosts are allowed on this phone while Spotify is on"));
+        assert!(
+            filter(ella)
+                .await
+                .contains("Spotify's hosts are allowed on this phone while Spotify is on")
+        );
         // An account that isn't logged in here, or junk: refused, nothing changed.
         for junk in ["999".to_string(), "x".to_string()] {
             let res = save(ella, junk).await;
             assert_eq!(
                 res.location(),
                 Some(
-                    format!("/devices/{ella}?music_notice=spotify_unknown#music-spotify").as_str()
+                    format!("/devices/{ella}/music?music_notice=spotify_unknown#music-spotify")
+                        .as_str()
                 )
             );
             assert_eq!(binding(&app, ella).await, Some(kid));
         }
         let page = page_text(
             &app.get_page(
-                &format!("/devices/{ella}?music_notice=spotify_unknown"),
+                &format!("/devices/{ella}/music?music_notice=spotify_unknown"),
                 &cookie,
             )
             .await,
@@ -3859,6 +3906,18 @@ mod entries {
             "On the phone: Spotify says this account has no Premium - the phone can't play \
              Spotify."
         ));
+        // ... and an Attention row on the phone's summary (design 31 §3.8, as the music warnings):
+        // to Device › Music's Spotify group.
+        let summary = page_text(&app.get_page(&format!("/devices/{ella}"), &cookie).await);
+        assert!(
+            summary.contains("Spotify can't play on this phone"),
+            "{summary}"
+        );
+        assert!(summary.contains(&format!("/devices/{ella}/music#music-spotify")));
+        report(&app, ella, json!({"spotify": "ok"})).await;
+        let summary = page_text(&app.get_page(&format!("/devices/{ella}"), &cookie).await);
+        assert!(!summary.contains("Spotify can't play on this phone"));
+        report(&app, ella, json!({"spotify": "not_premium"})).await;
         sqlx::query("UPDATE music_spotify_accounts SET needs_login = 1 WHERE id = ?")
             .bind(kid)
             .execute(&app.db)
@@ -3875,7 +3934,14 @@ mod entries {
         assert_eq!(binding(&app, ella).await, None);
         let page = card(ella).await;
         assert!(page.contains("Spotify is off on this phone: its Spotify entry isn't sent."));
-        assert!(!page.contains("Spotify's hosts are allowed on this phone"));
+        assert!(
+            !filter(ella)
+                .await
+                .contains("Spotify's hosts are allowed on this phone")
+        );
+        // Unbound, its outcome no longer raises the row.
+        let summary = page_text(&app.get_page(&format!("/devices/{ella}"), &cookie).await);
+        assert!(!summary.contains("Spotify can't play on this phone"));
         assert_eq!(
             events(&app, "music_spotify_binding_changed")
                 .await
@@ -4007,7 +4073,7 @@ mod entries {
         .unwrap();
         assert_eq!(ticked, ["rss"]);
         assert!(app.fetch.calls.lock().unwrap().is_empty());
-        let page = page_text(&app.get_page("/music", &cookie).await);
+        let page = page_text(&app.get_page("/music/import", &cookie).await);
         assert!(
             page.contains("a Spotify short link - resolve it by adding it on the Spotify page"),
             "{page}"
@@ -4340,9 +4406,10 @@ mod phones {
         assert_eq!(blocked(token).await, everything);
     }
 
-    /// qa-26c-step3-code L5: where the parent types a block (`/dns?device=`), a block of one of
-    /// Spotify's hosts says it isn't applied while the phone plays Spotify - its own and a site-wide
-    /// one - and nothing else is marked; an unbound phone's page marks nothing.
+    /// qa-26c-step3-code L5: where the parent types a block (the phone's Web Filter page,
+    /// `/devices/{id}/filter`, since design 31 step 5), a block of one of Spotify's hosts says it
+    /// isn't applied while the phone plays Spotify - its own and a site-wide one - and nothing else
+    /// is marked; an unbound phone's page marks nothing.
     #[tokio::test]
     async fn the_web_filter_page_says_what_spotify_overrides() {
         let app = TestApp::new().await;
@@ -4367,7 +4434,9 @@ mod phones {
             let app = &app;
             let cookie = cookie.clone();
             async move {
-                let res = app.get_page(&format!("/dns?device={ella}"), &cookie).await;
+                let res = app
+                    .get_page(&format!("/devices/{ella}/filter"), &cookie)
+                    .await;
                 assert_eq!(res.status, StatusCode::OK);
                 res.text()
             }
@@ -4375,27 +4444,32 @@ mod phones {
         let unbound = page().await;
         assert!(unbound.contains("spotify.com"));
         assert!(
-            !unbound.contains("not applied while Spotify is on"),
+            !unbound.contains("Not applied while Spotify is on"),
             "{unbound}"
         );
         assert!(!unbound.contains("while Spotify is on for this phone"));
+        assert!(!unbound.contains("Spotify's hosts are allowed"));
 
         let account = ready(&app).await;
         bind(&app, ella, account).await;
         let bound = page().await;
         assert!(
             bound.contains(
-                "spotify.com <span class=\"hint\">- not applied while Spotify is on for this phone</span>"
+                "spotify.com<span class=\"row-sub\" data-spotify-override>Not applied while Spotify is on for this phone</span>"
             ),
             "{bound}"
         );
-        assert!(bound.contains("<span>ads.example</span>"), "{bound}");
-        assert_eq!(
-            bound.matches("- not applied while Spotify is on").count(),
-            1
-        );
+        assert!(bound.contains("ads.example</span>"), "{bound}");
+        assert_eq!(bound.matches("data-spotify-override").count(), 1);
         assert!(bound.contains(
-            "Not applied on Ella while Spotify is on for this phone (its Music card): i.scdn.co."
+            "Not applied on Ella while Spotify is on for this phone (its Music page): i.scdn.co."
         ));
+        assert!(bound.contains("Spotify's hosts are allowed on this phone while Spotify is on"));
+        // `/dns?device=` (an old link) goes to that page.
+        let res = app.get_page(&format!("/dns?device={ella}"), &cookie).await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/devices/{ella}/filter").as_str())
+        );
     }
 }

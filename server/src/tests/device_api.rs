@@ -617,7 +617,10 @@ async fn status_report_stores_policy_state_and_pause() {
         page.contains("Phone can&#39;t apply its settings"),
         "{page}"
     );
-    assert!(page.contains("All restrictions are paused"));
+    assert!(
+        page.contains("data-attention=\"restrictions-paused\""),
+        "{page}"
+    );
     let about = about_page(&app, id).await;
     assert!(about.contains("Saved settings unreadable"), "{about}");
     assert!(about.contains("read its saved settings"), "{about}");
@@ -683,15 +686,26 @@ async fn allowlist_json(app: &TestApp, id: i64) -> Option<String> {
 async fn toggle_app_adds_and_removes() {
     let app = TestApp::new().await;
     let (id, _) = app.enrolled_device("phone").await;
-    set_allowlist_json(&app, id, Some(r#"["a"]"#)).await;
+    set_allowlist_json(&app, id, Some(r#"["org.example.a"]"#)).await;
 
-    assert!(toggle(&app, id, "b", true).await.is_redirection());
+    assert!(
+        toggle(&app, id, "org.example.b", true)
+            .await
+            .is_redirection()
+    );
     assert_eq!(
         allowlist_json(&app, id).await.as_deref(),
-        Some(r#"["a","b"]"#)
+        Some(r#"["org.example.a","org.example.b"]"#)
     );
-    assert!(toggle(&app, id, "a", false).await.is_redirection());
-    assert_eq!(allowlist_json(&app, id).await.as_deref(), Some(r#"["b"]"#));
+    assert!(
+        toggle(&app, id, "org.example.a", false)
+            .await
+            .is_redirection()
+    );
+    assert_eq!(
+        allowlist_json(&app, id).await.as_deref(),
+        Some(r#"["org.example.b"]"#)
+    );
 }
 
 /// A corrupt stored allowlist used to be read as `[]`: unchecking then silently did nothing (the
@@ -703,11 +717,11 @@ async fn toggle_app_with_corrupt_allowlist_fails_without_writing() {
     set_allowlist_json(&app, id, Some("not json")).await;
 
     assert_eq!(
-        toggle(&app, id, "a", false).await,
+        toggle(&app, id, "org.example.a", false).await,
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(
-        toggle(&app, id, "a", true).await,
+        toggle(&app, id, "org.example.a", true).await,
         StatusCode::INTERNAL_SERVER_ERROR
     );
     assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("not json"));
@@ -756,7 +770,8 @@ async fn timeout(app: &TestApp, token: String) -> serde_json::Value {
 }
 
 /// Auto-lock (migrations/0032, emulator run 2026-10-06): the parent's screen timeout reaches the
-/// policy, only the offered values are accepted, and the phone's applied value is shown.
+/// policy, only the offered values are accepted, and the phone's applied value is shown when it
+/// differs (Lock Screen & PINs › Screen, design 31 step 4).
 #[tokio::test]
 async fn screen_timeout_policy_form_and_report() {
     let app = TestApp::new().await;
@@ -773,7 +788,8 @@ async fn screen_timeout_policy_form_and_report() {
             &[("screen_timeout_seconds", "300")],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to the page, no fragment: scroll-restore.js keeps the place.
+    super::assert_redirect(&res, &super::device_page(id, super::Section::Lock), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(timeout(&app, token.clone()).await, json!(300));
 
@@ -807,23 +823,33 @@ async fn screen_timeout_policy_form_and_report() {
         .unwrap();
     assert_eq!(timeout(&app, token.clone()).await, json!(60));
 
-    let page = device_page(&app, id).await;
-    assert!(page.contains("action=\"/devices/"));
-    assert!(page.contains("<option value=\"60\" selected>1 minute</option>"));
-    assert!(!page.contains("The phone last reported"));
-    post_status(&app, &token, json!({ "screen_timeout_seconds": 120 })).await;
-    assert!(
-        device_page(&app, id)
+    let lock = || async {
+        app.get_page(&super::device_page(id, super::Section::Lock), &cookie)
             .await
-            .contains("The phone last reported: 2 minutes.")
+            .text()
+    };
+    let page = lock().await;
+    assert_eq!(
+        super::form_action_of(&page, "screen_timeout_seconds"),
+        Some(format!("/devices/{id}/screen-timeout").as_str())
     );
+    assert!(super::autosaves(&page, "screen_timeout_seconds"));
+    assert!(page.contains("<option value=\"60\" selected>1 minute</option>"));
+    assert!(!page.contains("data-row=\"timeout-applied\""));
+    // The phone runs another value (it takes the new one at its next sync): shown.
+    post_status(&app, &token, json!({ "screen_timeout_seconds": 120 })).await;
+    let page = lock().await;
+    let applied = &page[page.find("data-row=\"timeout-applied\"").expect("the row")..];
+    assert!(
+        applied.contains("<span class=\"row-value\">2 minutes</span>"),
+        "{page}"
+    );
+    // The same value: nothing to say.
+    post_status(&app, &token, json!({ "screen_timeout_seconds": 60 })).await;
+    assert!(!lock().await.contains("timeout-applied"));
     // An implausible report isn't stored.
     post_status(&app, &token, json!({ "screen_timeout_seconds": -5 })).await;
-    assert!(
-        !device_page(&app, id)
-            .await
-            .contains("The phone last reported")
-    );
+    assert!(!lock().await.contains("timeout-applied"));
 }
 
 /// Every page template under `templates/`, subfolders included; `partials/` holds pieces of

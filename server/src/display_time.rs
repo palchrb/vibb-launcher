@@ -14,12 +14,10 @@
 //! - **The exact time** ("2026-10-13 10:59:13 CEST") is for a `title=` and the ⓘ panels, never
 //!   the visible value.
 //!
-//! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its callers
-//! (the Status card's notices, the PIN events, the relock notes) move here as the steps that
-//! rebuild their pages switch them to typed values (design 31 §8, steps 4 and 10; step 3 moved
-//! the boot notes).
+//! Every page time goes through here since design 31 step 10 (the relock findings were the last;
+//! `parent_pin::when_text` is gone). The security log keeps its UTC lines.
 
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
@@ -88,6 +86,24 @@ impl Zone {
         self.local(now).date_naive()
     }
 
+    /// The local day of `t` is the local today.
+    pub fn is_today(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        self.local(t).date_naive() == self.today(now)
+    }
+
+    /// When the local today began, in UTC (the earliest midnight on a DST day; a day whose
+    /// midnight doesn't exist starts at the first hour that does).
+    pub fn start_of_today(&self, now: DateTime<Utc>) -> DateTime<Utc> {
+        let today = self.today(now);
+        (0..24)
+            .find_map(|hour| {
+                self.tz
+                    .from_local_datetime(&today.and_hms_opt(hour, 0, 0)?)
+                    .earliest()
+            })
+            .map_or(now, |t| t.with_timezone(&Utc))
+    }
+
     pub fn local(&self, t: DateTime<Utc>) -> DateTime<Tz> {
         t.with_timezone(&self.tz)
     }
@@ -154,6 +170,14 @@ impl Zone {
         } else {
             self.date(t, now)
         }
+    }
+
+    /// [until] for a stored time (`datetime('now')` text, UTC); a text that doesn't parse is shown
+    /// as stored, labelled "UTC".
+    pub fn until_db(&self, stored: &str, now: DateTime<Utc>) -> String {
+        parse_db_utc(stored)
+            .map(|t| self.until(t, now))
+            .unwrap_or_else(|| format!("{stored} UTC"))
     }
 
     /// When something ends, for "until …": "14:05" today, "00:05 tomorrow" (the lock badge's

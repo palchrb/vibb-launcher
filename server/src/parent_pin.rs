@@ -5,8 +5,10 @@
 //! Status card's notices. Pure apart from [run_easy_sweep]; the card, the save and the endpoint
 //! are `handlers::parent_pin`.
 
+use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
+use crate::display_time::Zone;
 use crate::security;
 
 /// A parent PIN is 6 to 10 ASCII digits.
@@ -166,8 +168,8 @@ pub async fn run_easy_sweep(db: SqlitePool, candidates: Vec<String>) {
     }
 }
 
-/// The one-shot message after a parent-PIN save (`?notice=`), shown at the top of the
-/// `#parent-pin` card; `true` = a warning or refusal (error style).
+/// The flash after a Parent PIN save (`?notice=`), inside the Parent PIN group on Lock Screen &
+/// PINs (design 31 §3.0); `true` = a warning or refusal.
 pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
     Some(match code {
         "parent_pin_saved" => (
@@ -176,19 +178,19 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
             false,
         ),
         "parent_pin_saved_easy" => (
-            "Parent PIN saved, but it is easy to guess (all one digit, a run like 123456, or a \
-             common PIN). The phone uses it as soon as it checks in.",
+            "Parent PIN saved, but it is easy to guess. The phone uses it as soon as it checks \
+             in.",
             true,
         ),
         "parent_pin_cleared" => ("Parent PIN removed.", false),
         "parent_pin_invalid" => ("Parent PIN not changed: it must be 6 to 10 digits.", true),
         "override_is_kid_pin" => (
-            "Parent PIN not changed: it must not be the kid's PIN.",
+            "Parent PIN not changed: it must differ from the Child PIN.",
             true,
         ),
         "override_needed_by_lock" => (
-            "Parent PIN not removed: the kid's lock needs it (it is the parent code on the lock \
-             screen). Remove the kid's PIN first.",
+            "Parent PIN not removed: the Child PIN needs it to open the lock. Remove the Child \
+             PIN first.",
             true,
         ),
         _ => return None,
@@ -293,6 +295,17 @@ impl Entry {
         }
     }
 
+    /// The same in the PWA's words (design 31 §4.3), for a "Recent use" row.
+    fn where_(self) -> &'static str {
+        match self {
+            Entry::Override => "on the time-lock screen",
+            Entry::PinLock => "on the lock screen",
+            Entry::Settings => "for Vibb's Settings",
+            Entry::Pause => "for a pause",
+            Entry::InstallMode => "for Play install mode",
+        }
+    }
+
     /// Screens the kid uses: the parent may have been watched typing.
     fn kid_screen(self) -> bool {
         matches!(self, Entry::Override | Entry::PinLock)
@@ -356,19 +369,15 @@ pub fn clean_event(event: &serde_json::Value, received_ms: i64) -> Result<PinEve
     })
 }
 
-fn utc(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::from_timestamp_millis(ms)
+fn utc(ms: i64) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp_millis(ms)
 }
 
-/// "14:02 UTC" when on the same UTC day as `at_ms` (and not `dated`), else "10 Oct 14:02 UTC".
-fn until_text(until_ms: i64, at_ms: i64, dated: bool) -> String {
-    match (utc(until_ms), utc(at_ms)) {
-        (Some(until), Some(at)) if !dated && until.date_naive() == at.date_naive() => {
-            until.format("%H:%M UTC").to_string()
-        }
-        (Some(until), _) => until.format("%-d %b %H:%M UTC").to_string(),
-        _ => "unknown".to_string(),
-    }
+/// "10 Oct 14:02 UTC", for the security log.
+fn until_text(until_ms: i64) -> String {
+    utc(until_ms)
+        .map(|until| until.format("%-d %b %H:%M UTC").to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// The lockout of `level` (the launcher's `parentLockoutMs`): "15 minutes" .. "24 hours".
@@ -381,36 +390,18 @@ fn lockout_text(level: i64) -> String {
     }
 }
 
-/// "just now", "5 min ago", "3 h ago", "2 days ago".
-fn ago(ms: i64, now_ms: i64) -> String {
-    let minutes = ((now_ms - ms) / 60_000).max(0);
-    match minutes {
-        0 => "just now".to_string(),
-        1..=59 => format!("{minutes} min ago"),
-        60..=2879 => format!("{} h ago", minutes / 60),
-        _ => format!("{} days ago", minutes / 1440),
-    }
-}
-
-/// What the phone reported, as a sentence - built only from the checked enums and numbers.
-pub fn event_line(event: &PinEvent) -> String {
-    line(event, false)
-}
-
 /// The security log's detail for a use or lockout (qa-24-code Low 2): its row's own time is when
 /// it arrived, so the line says when it happened on the phone and dates the window's end -
-/// `device 3, 2026-10-09 14:02 UTC: ...`.
+/// `device 3, 2026-10-09 14:02 UTC: ...`. Built only from the checked enums and numbers.
 pub fn log_line(device_id: i64, event: &PinEvent) -> String {
     let at = utc(event.occurred_at_ms)
         .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    format!("device {device_id}, {at}: {}", line(event, true))
+    format!("device {device_id}, {at}: {}", line(event))
 }
 
-fn line(event: &PinEvent, dated: bool) -> String {
-    let until = event
-        .until_ms
-        .map(|until| until_text(until, event.occurred_at_ms, dated));
+fn line(event: &PinEvent) -> String {
+    let until = event.until_ms.map(until_text);
     let mut out = match event.kind {
         Kind::Unlocked => match (event.entry, until) {
             (Entry::Override, Some(until)) => {
@@ -458,26 +449,120 @@ fn line(event: &PinEvent, dated: bool) -> String {
     out
 }
 
-/// "2026-10-09 14:02 UTC (3 h ago)".
-pub fn when_text(ms: i64, now_ms: i64) -> String {
-    let at = utc(ms)
-        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    format!("{at} ({})", ago(ms, now_ms))
+/// One reported event as a row of Lock Screen & PINs' "Recent use" (design 31 step 4): a short
+/// title, the details under it, the local time as the value. Built only from the checked enums
+/// and numbers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventRow {
+    pub title: &'static str,
+    pub sub: Option<String>,
+    /// A lockout: the title is red.
+    pub alarm: bool,
+    /// "07:58", "yesterday 21:40", "12 Oct".
+    pub when: String,
+    /// The exact local time, for `title=`.
+    pub exact: String,
 }
 
-/// A status-card notice: `child_tail` ends it with "Typed where your child could see? Change the
-/// parent PIN." (a link to the card).
+/// When a window that started at `at_ms` ends: its clock time on the same local day, else with
+/// the date ("10 Oct 08:53") - never without the time (qa-31-s3-code M2).
+fn end_text(zone: &Zone, until_ms: i64, at_ms: i64) -> String {
+    match (utc(until_ms), utc(at_ms)) {
+        (Some(until), Some(at))
+            if zone.local(until).date_naive() == zone.local(at).date_naive() =>
+        {
+            zone.clock(until)
+        }
+        (Some(until), _) => format!(
+            "{} {}",
+            zone.local(until).format("%-d %b"),
+            zone.clock(until)
+        ),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// "On the lock screen" from "on the lock screen".
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+pub fn event_row(event: &PinEvent, zone: &Zone, now: DateTime<Utc>) -> EventRow {
+    let until = event
+        .until_ms
+        .map(|until| end_text(zone, until, event.occurred_at_ms));
+    let (title, mut parts): (&'static str, Vec<String>) = match event.kind {
+        Kind::Unlocked => (
+            match event.entry {
+                Entry::Override => "Time lock lifted",
+                Entry::PinLock => "Lock screen opened",
+                Entry::Settings => "Vibb's Settings opened",
+                Entry::Pause => "Restrictions paused",
+                Entry::InstallMode => "Play install mode",
+            },
+            until
+                .map(|until| match event.entry {
+                    Entry::Override => format!("Until {until} at the latest"),
+                    _ => format!("Until {until}"),
+                })
+                .into_iter()
+                .collect(),
+        ),
+        Kind::Wrong => (
+            "Wrong Parent PIN",
+            std::iter::once(capitalized(event.entry.where_()))
+                .chain(event.failures.map(|n| format!("{n} in a row")))
+                .collect(),
+        ),
+        Kind::Lockout => {
+            let mut lock = String::from("Locked");
+            if let Some(level) = event.level {
+                lock.push_str(&format!(" for {}", lockout_text(level)));
+            }
+            if let Some(until) = until {
+                lock.push_str(&format!(", until {until}"));
+            }
+            (
+                "Parent PIN locked",
+                vec![
+                    format!("5 wrong in a row, the last {}", event.entry.where_()),
+                    lock,
+                ],
+            )
+        }
+    };
+    if event.clock_off {
+        parts.push("The phone's clock was off: time of arrival".to_string());
+    }
+    let at = utc(event.occurred_at_ms);
+    EventRow {
+        title,
+        sub: (!parts.is_empty()).then(|| parts.join(" · ")),
+        alarm: event.kind == Kind::Lockout,
+        when: at.map(|t| zone.when(t, now)).unwrap_or_default(),
+        exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+    }
+}
+
+/// A Parent PIN notice in the summary's Today group (design 24 §5, design 31 step 10): a short
+/// title, the line under it, red for a lockout or wrong tries; `child_tail` adds "Typed where your
+/// child could see?" (each row links to Lock Screen & PINs).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notice {
-    pub text: String,
+    pub title: String,
+    pub sub: String,
     pub error: bool,
     pub child_tail: bool,
 }
 
-/// The status card's notices from the last 24 hours (design 24 §5), at most two: the latest use,
-/// then a lockout or else the wrong tries. `events` newest first.
-pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
+/// The notices from the last 24 hours (design 24 §5), at most two: the latest use, then a lockout
+/// or else the wrong tries. `events` newest first. Times are local.
+pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Notice> {
+    let now_ms = now.timestamp_millis();
     let recent: Vec<&PinEvent> = events
         .iter()
         .filter(|e| e.occurred_at_ms > now_ms - DAY_MS)
@@ -485,19 +570,19 @@ pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
     let mut out = Vec::new();
     let uses: Vec<&&PinEvent> = recent.iter().filter(|e| e.kind == Kind::Unlocked).collect();
     if let Some(latest) = uses.first() {
-        let mut text = format!(
-            "The parent PIN was used on the phone {}: {}",
-            ago(latest.occurred_at_ms, now_ms),
-            event_line(latest)
+        let mut sub = format!(
+            "{} · {}",
+            event_row(latest, zone, now).title,
+            utc(latest.occurred_at_ms)
+                .map(|t| zone.relative(t, now))
+                .unwrap_or_default()
         );
         if uses.len() > 1 {
-            text.push_str(&format!(
-                " ({} more in the last 24 hours - see Parent PIN)",
-                uses.len() - 1
-            ));
+            sub.push_str(&format!(" · {} more in 24 h", uses.len() - 1));
         }
         out.push(Notice {
-            text,
+            title: "Parent PIN used".to_string(),
+            sub,
             error: false,
             child_tail: latest.entry.kid_screen(),
         });
@@ -505,12 +590,13 @@ pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
     if let Some(lockout) = recent.iter().find(|e| e.kind == Kind::Lockout) {
         let until = lockout
             .until_ms
-            .map(|until| format!(" (until {})", until_text(until, now_ms, false)))
+            .and_then(utc)
+            .map(|until| format!(" until {}", zone.until(until, now)))
             .unwrap_or_default();
         out.push(Notice {
-            text: format!(
-                "The parent PIN was locked on the phone after repeated wrong tries{until}. If \
-                 that wasn't you, your child may be guessing it - save a new parent PIN to stop it."
+            title: "Parent PIN locked".to_string(),
+            sub: format!(
+                "After repeated wrong tries{until}. If that wasn't you, save a new Parent PIN."
             ),
             error: true,
             child_tail: false,
@@ -518,18 +604,13 @@ pub fn notices(events: &[PinEvent], now_ms: i64) -> Vec<Notice> {
     } else {
         let wrong = recent.iter().filter(|e| e.kind == Kind::Wrong).count();
         if wrong > 0 {
-            let text = if wrong == 1 {
-                "1 wrong parent PIN was typed on the phone in the last 24 hours. If that wasn't \
-                 you, consider changing the PIN."
-                    .to_string()
-            } else {
-                format!(
-                    "{wrong} wrong parent PINs were typed on the phone in the last 24 hours. If \
-                     that wasn't you, consider changing the PIN."
-                )
-            };
             out.push(Notice {
-                text,
+                title: if wrong == 1 {
+                    "1 wrong Parent PIN".to_string()
+                } else {
+                    format!("{wrong} wrong Parent PINs")
+                },
+                sub: "In the last 24 hours. If that wasn't you, change it.".to_string(),
                 error: true,
                 child_tail: false,
             });
@@ -713,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn every_event_line() {
+    fn every_log_line() {
         let until = Some(NOW + 2 * H); // 10:53 UTC, the same day
         let unlocked = |entry, until| PinEvent {
             until_ms: until,
@@ -722,7 +803,7 @@ mod tests {
         let cases = [
             (
                 unlocked(Entry::Override, until),
-                "Restrictions lifted on the time-lock screen, until 10:53 UTC at the latest.",
+                "Restrictions lifted on the time-lock screen, until 9 Oct 10:53 UTC at the latest.",
             ),
             (
                 unlocked(Entry::Override, None),
@@ -738,11 +819,11 @@ mod tests {
             ),
             (
                 unlocked(Entry::Pause, until),
-                "All restrictions paused from Settings, until 10:53 UTC.",
+                "All restrictions paused from Settings, until 9 Oct 10:53 UTC.",
             ),
             (
                 unlocked(Entry::InstallMode, Some(NOW + 15 * 60_000)),
-                "Play install mode started, until 09:08 UTC.",
+                "Play install mode started, until 9 Oct 09:08 UTC.",
             ),
             (
                 PinEvent {
@@ -757,16 +838,6 @@ mod tests {
             ),
             (
                 PinEvent {
-                    level: Some(1),
-                    until_ms: Some(NOW + 15 * 60_000),
-                    ..ev(Kind::Lockout, Entry::Settings, NOW)
-                },
-                "5 wrong parent PINs in a row (the last for Settings): the parent PIN is locked on the \
-                 phone for 15 minutes, until 09:08 UTC. Saving a new parent PIN ends it once the \
-                 phone checks in.",
-            ),
-            (
-                PinEvent {
                     level: Some(8),
                     until_ms: Some(NOW + 24 * H),
                     ..ev(Kind::Lockout, Entry::Pause, NOW)
@@ -778,50 +849,141 @@ mod tests {
             (
                 PinEvent {
                     clock_off: true,
-                    ..ev(Kind::Wrong, Entry::Override, NOW)
+                    ..ev(Kind::Unlocked, Entry::Settings, NOW)
                 },
-                "Wrong parent PIN on the time-lock screen (the phone's clock was off; time of \
-                 arrival shown).",
+                "The launcher's Settings opened (the phone's clock was off; time of arrival \
+                 shown).",
             ),
         ];
-        for (event, line) in cases {
-            assert_eq!(event_line(&event), line);
-        }
         // The security log says when it happened and dates the window's end (qa-24-code Low 2).
-        let override_use = unlocked(Entry::Override, until);
-        assert_eq!(
-            log_line(3, &override_use),
-            "device 3, 2025-10-09 08:53 UTC: Restrictions lifted on the time-lock screen, until 9 \
-             Oct 10:53 UTC at the latest."
-        );
-        let late = PinEvent {
-            clock_off: true,
-            ..ev(Kind::Unlocked, Entry::Settings, NOW)
-        };
-        assert_eq!(
-            log_line(3, &late),
-            "device 3, 2025-10-09 08:53 UTC: The launcher's Settings opened (the phone's clock was \
-             off; time of arrival shown)."
-        );
+        for (event, line) in cases {
+            assert_eq!(
+                log_line(3, &event),
+                format!("device 3, 2025-10-09 08:53 UTC: {line}")
+            );
+        }
         assert_eq!(lockout_text(3), "1 hour");
         assert_eq!(lockout_text(5), "4 hours");
         assert_eq!(lockout_text(2), "30 minutes");
+    }
+
+    /// Oslo, as Phone Setup has it: 08:53 UTC is 10:53 local (CEST).
+    fn oslo() -> Zone {
+        Zone::from_setting("Europe/Oslo")
+    }
+
+    fn at(ms: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp_millis(ms).unwrap()
+    }
+
+    #[test]
+    fn every_event_row_in_local_time() {
+        let zone = oslo();
+        let now = at(NOW);
+        let row = |event: PinEvent| {
+            let row = event_row(&event, &zone, now);
+            (row.title, row.sub, row.alarm)
+        };
+        let unlocked = |entry, until| PinEvent {
+            until_ms: until,
+            ..ev(Kind::Unlocked, entry, NOW)
+        };
         assert_eq!(
-            when_text(NOW - 3 * H, NOW),
-            "2025-10-09 05:53 UTC (3 h ago)"
+            row(unlocked(Entry::Override, Some(NOW + 2 * H))),
+            (
+                "Time lock lifted",
+                Some("Until 12:53 at the latest".to_string()),
+                false
+            )
         );
-        assert_eq!(when_text(NOW, NOW), "2025-10-09 08:53 UTC (just now)");
         assert_eq!(
-            when_text(NOW - 50 * H, NOW),
-            "2025-10-07 06:53 UTC (2 days ago)"
+            row(unlocked(Entry::PinLock, None)),
+            ("Lock screen opened", None, false)
         );
+        assert_eq!(
+            row(unlocked(Entry::Settings, None)),
+            ("Vibb's Settings opened", None, false)
+        );
+        assert_eq!(
+            row(unlocked(Entry::Pause, Some(NOW + 2 * H))),
+            (
+                "Restrictions paused",
+                Some("Until 12:53".to_string()),
+                false
+            )
+        );
+        assert_eq!(
+            row(unlocked(Entry::InstallMode, Some(NOW + 15 * 60_000))),
+            ("Play install mode", Some("Until 11:08".to_string()), false)
+        );
+        assert_eq!(
+            row(PinEvent {
+                failures: Some(3),
+                ..ev(Kind::Wrong, Entry::PinLock, NOW)
+            }),
+            (
+                "Wrong Parent PIN",
+                Some("On the lock screen · 3 in a row".to_string()),
+                false
+            )
+        );
+        assert_eq!(
+            row(ev(Kind::Wrong, Entry::Settings, NOW)),
+            (
+                "Wrong Parent PIN",
+                Some("For Vibb's Settings".to_string()),
+                false
+            )
+        );
+        // A lockout past midnight keeps its clock time, with the date.
+        assert_eq!(
+            row(PinEvent {
+                level: Some(8),
+                until_ms: Some(NOW + 24 * H),
+                ..ev(Kind::Lockout, Entry::Pause, NOW)
+            }),
+            (
+                "Parent PIN locked",
+                Some(
+                    "5 wrong in a row, the last for a pause · Locked for 24 hours, until 10 Oct \
+                     10:53"
+                        .to_string()
+                ),
+                true
+            )
+        );
+        assert_eq!(
+            row(PinEvent {
+                clock_off: true,
+                ..ev(Kind::Unlocked, Entry::Settings, NOW)
+            })
+            .1
+            .as_deref(),
+            Some("The phone's clock was off: time of arrival")
+        );
+        // The time: local, the exact one for `title=`.
+        let event = ev(Kind::Wrong, Entry::Override, NOW - 3 * H);
+        let row = event_row(&event, &zone, now);
+        assert_eq!(row.when, "07:53");
+        assert_eq!(row.exact, "2025-10-09 07:53:20 CEST");
+        // Nothing says UTC once Phone Setup has a zone.
+        assert!(!format!("{row:?}").contains("UTC"));
     }
 
     #[test]
     fn notices_from_the_last_24_hours() {
-        assert!(notices(&[], NOW).is_empty());
+        let zone = oslo();
+        let now = at(NOW);
+        assert!(notices(&[], &zone, now).is_empty());
         // Older than 24 h: nothing.
-        assert!(notices(&[ev(Kind::Lockout, Entry::Override, NOW - 25 * H)], NOW).is_empty());
+        assert!(
+            notices(
+                &[ev(Kind::Lockout, Entry::Override, NOW - 25 * H)],
+                &zone,
+                now
+            )
+            .is_empty()
+        );
 
         // Newest first: the latest use, with the watched-typing tail on a kid's screen.
         let events = [
@@ -830,22 +992,21 @@ mod tests {
             ev(Kind::Unlocked, Entry::Settings, NOW - 2 * H),
             ev(Kind::Wrong, Entry::Settings, NOW - 3 * H),
         ];
-        let out = notices(&events, NOW);
+        let out = notices(&events, &zone, now);
         assert_eq!(out.len(), 2);
         assert_eq!(
             out[0],
             Notice {
-                text: "The parent PIN was used on the phone 5 min ago: Restrictions lifted on the \
-                       time-lock screen. (1 more in the last 24 hours - see Parent PIN)"
-                    .to_string(),
+                title: "Parent PIN used".to_string(),
+                sub: "Time lock lifted · 5 min ago · 1 more in 24 h".to_string(),
                 error: false,
                 child_tail: true,
             }
         );
+        assert_eq!(out[1].title, "2 wrong Parent PINs");
         assert_eq!(
-            out[1].text,
-            "2 wrong parent PINs were typed on the phone in the last 24 hours. If that wasn't \
-             you, consider changing the PIN."
+            out[1].sub,
+            "In the last 24 hours. If that wasn't you, change it."
         );
         assert!(out[1].error);
 
@@ -859,24 +1020,25 @@ mod tests {
             ev(Kind::Wrong, Entry::PinLock, NOW - 6 * 60_000),
             ev(Kind::Unlocked, Entry::Settings, NOW - H),
         ];
-        let out = notices(&events, NOW);
+        let out = notices(&events, &zone, now);
         assert_eq!(out.len(), 2);
         assert!(!out[0].child_tail);
-        assert!(out[0].text.ends_with("The launcher's Settings opened."));
+        assert_eq!(out[0].sub, "Vibb's Settings opened · 1 h ago");
+        // 09:03 UTC is 11:03 in Oslo: never the UTC clock.
         assert_eq!(
             out[1],
             Notice {
-                text: "The parent PIN was locked on the phone after repeated wrong tries (until \
-                       09:03 UTC). If that wasn't you, your child may be guessing it - save a new \
-                       parent PIN to stop it."
+                title: "Parent PIN locked".to_string(),
+                sub: "After repeated wrong tries until 11:03. If that wasn't you, save a new \
+                      Parent PIN."
                     .to_string(),
                 error: true,
                 child_tail: false,
             }
         );
         // One wrong try, no use.
-        let out = notices(&[ev(Kind::Wrong, Entry::Pause, NOW - H)], NOW);
+        let out = notices(&[ev(Kind::Wrong, Entry::Pause, NOW - H)], &zone, now);
         assert_eq!(out.len(), 1);
-        assert!(out[0].text.starts_with("1 wrong parent PIN was typed"));
+        assert_eq!(out[0].title, "1 wrong Parent PIN");
     }
 }

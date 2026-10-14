@@ -72,7 +72,7 @@ async fn compile(app: &TestApp) {
 async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (_, token) = app.enrolled_device("phone").await;
+    let (phone, token) = app.enrolled_device("phone").await;
     let (url, mode) = feed_server().await;
     add_feed(&app, "Ads", &url).await;
 
@@ -131,6 +131,46 @@ async fn a_failing_feed_keeps_its_domains_and_one_never_loaded_is_left_out() {
     );
     let page = app.get_page("/dns", &cookie).await.text();
     assert!(page.contains("Not loaded yet ("), "{page}");
+    // The phone's Web Filter page (design 31 step 5): the list's problem as a short title under
+    // its name, the download error only on the global page.
+    let page = app
+        .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
+        .await
+        .text();
+    let broken = &page[page.find(">Broken<").expect("the list's row")..];
+    let broken = &broken[..broken.find("</label>").unwrap()];
+    assert!(
+        broken.contains("<span class=\"row-sub text-alarm\">Not loaded yet</span>"),
+        "{broken}"
+    );
+    assert!(!page.contains("127.0.0.1:9"), "{page}");
+    let ads = &page[page.find(">Ads<").expect("the list's row")..];
+    assert!(!ads[..ads.find("</label>").unwrap()].contains("row-sub"));
+}
+
+/// A failing list on a phone's Web Filter page: "Last download failed", not the raw error.
+#[tokio::test]
+async fn a_phones_filter_page_names_a_failing_list_without_the_error() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (phone, _) = app.enrolled_device("phone").await;
+    let (url, mode) = feed_server().await;
+    add_feed(&app, "Ads", &url).await;
+    compile(&app).await;
+    mode.store(SERVER_ERROR, Ordering::SeqCst);
+    compile(&app).await;
+    let page = app
+        .get_page(&super::device_page(phone, super::Section::Filter), &cookie)
+        .await
+        .text();
+    let ads = &page[page.find(">Ads<").expect("the list's row")..];
+    let ads = &ads[..ads.find("</label>").unwrap()];
+    assert!(
+        ads.contains("<span class=\"row-sub text-alarm\">Last download failed</span>"),
+        "{ads}"
+    );
+    assert!(!ads.contains("500"), "{ads}");
+    assert!(!page.contains("The last download failed"));
 }
 
 /// QA of the security wave, Low 8: a feed's last good domains survive a restart without

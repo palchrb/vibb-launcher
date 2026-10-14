@@ -77,6 +77,10 @@ pub struct AppState {
     /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
     /// `config::ForkConfig`.
     pub config: std::sync::Arc<config::ForkConfig>,
+    /// `data/` (a temp dir in tests): the backups and their schedule, the update and system
+    /// schedules and the root helper's request file (`handlers::backups`, `system_update`,
+    /// `system_maintenance`), so a test can drive them without touching the working directory.
+    pub data_dir: std::sync::Arc<std::path::PathBuf>,
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
@@ -374,6 +378,7 @@ async fn main() {
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
+        data_dir: std::sync::Arc::new(std::path::PathBuf::from("data")),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
@@ -410,7 +415,7 @@ async fn main() {
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
-    photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
+    photos::recover_missing(&state, &state.data_dir.join(handlers::backups::BACKUP_DIR)).await;
     // Own music files are never backed up: one that isn't on disk is listed as missing (design 21,
     // QA #3), and an upload a crash interrupted leaves no temp file.
     music::remove_partial_uploads(&state.music_files_dir).await;
@@ -723,6 +728,10 @@ pub fn build_admin_router(
         .route("/devices", get(handlers::devices::list_devices))
         .route("/schedules", get(handlers::schedules::show_schedules))
         .route(
+            "/schedules/screen-time",
+            get(handlers::schedules::show_budget),
+        )
+        .route(
             "/schedules/global",
             post(handlers::schedules::save_global_schedule),
         )
@@ -731,13 +740,18 @@ pub fn build_admin_router(
             post(handlers::schedules::save_device_schedule),
         )
         .route("/schedules/rules", post(handlers::schedules::create_rule))
+        .route("/schedules/rules/new", get(handlers::schedules::new_rule))
         .route(
             "/schedules/rules/{rule_id}",
-            post(handlers::schedules::update_rule),
+            get(handlers::schedules::show_rule).post(handlers::schedules::update_rule),
         )
         .route(
             "/schedules/rules/{rule_id}/delete",
             post(handlers::schedules::delete_rule),
+        )
+        .route(
+            "/devices/{id}/time",
+            get(handlers::schedules::view_device_time),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(
@@ -773,6 +787,16 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/advanced",
             get(handlers::device_pages::view_advanced),
+        )
+        // Step 4: Lock Screen & PINs.
+        .route("/devices/{id}/lock", get(handlers::device_pages::view_lock))
+        // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`).
+        .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
+        // Step 5: Home Screen and Web Filter.
+        .route("/devices/{id}/home", get(handlers::device_pages::view_home))
+        .route(
+            "/devices/{id}/filter",
+            get(handlers::device_pages::view_filter),
         )
         .route(
             "/devices/{id}/policy",
@@ -880,7 +904,10 @@ pub fn build_admin_router(
             "/wallpaper-images/{hash}",
             get(handlers::wallpapers::view_image),
         )
-        .route("/settings/calls", post(handlers::calls::save_call_settings))
+        .route(
+            "/settings/calls",
+            post(handlers::settings::save_country_code),
+        )
         .route("/devices/locate", get(handlers::locate::show_locate))
         .route(
             "/devices/{id}/locations.json",
@@ -979,6 +1006,7 @@ pub fn build_admin_router(
         )
         .route("/music/own", post(handlers::music::add_own))
         .route("/music/sweep", post(handlers::music::save_sweep))
+        .route("/music/settings", get(handlers::music::show_settings))
         .route("/music/cards", get(handlers::music::cards))
         .route(
             "/music/entries/{id}/check",
@@ -994,9 +1022,11 @@ pub fn build_admin_router(
         )
         .route(
             "/music/import",
-            post(handlers::music_import::preview).layer(DefaultBodyLimit::max(
-                music_import::MAX_IMPORT_BYTES + 64 * 1024,
-            )),
+            get(handlers::music::show_import)
+                .post(handlers::music_import::preview)
+                .layer(DefaultBodyLimit::max(
+                    music_import::MAX_IMPORT_BYTES + 64 * 1024,
+                )),
         )
         .route(
             "/music/import/confirm",
@@ -1005,7 +1035,10 @@ pub fn build_admin_router(
                 .layer(DefaultBodyLimit::max(4 * music_import::MAX_IMPORT_BYTES)),
         )
         .route("/music/catalog-row", post(handlers::music::add_catalog_row))
-        .route("/music/categories", post(handlers::music::add_category))
+        .route(
+            "/music/categories",
+            get(handlers::music::show_categories).post(handlers::music::add_category),
+        )
         .route(
             "/music/categories/{id}",
             post(handlers::music::save_category),
@@ -1076,9 +1109,10 @@ pub fn build_admin_router(
             post(handlers::music::delete_file),
         )
         .route("/music-covers/{hash}", get(handlers::music::view_cover))
+        // Design 31 step 7: Device › Music, the GET chained with its settings form's POST (L5).
         .route(
             "/devices/{id}/music",
-            post(handlers::music::save_device_settings),
+            get(handlers::device_pages::view_music).post(handlers::music::save_device_settings),
         )
         .route(
             "/devices/{id}/music/entries/{entry_id}",

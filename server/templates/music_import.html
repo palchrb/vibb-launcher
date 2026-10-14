@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "music" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/music"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Music</a>
+    <h1 class="page-title">Import from Vibb</h1>
+
+    <form method="post" action="/music/import#import-preview" enctype="multipart/form-data" class="group form-group" id="import">
+        {#- Without a preview, a refused file lands here (the form posts to #import-preview). -#}
+        <div class="field"{% if import.preview.is_none() %} id="import-preview"{% endif %}>
+            <label class="field-label" for="import_file">The library file</label>
+            <input type="file" id="import_file" name="library" accept=".json,application/json" required{% if import.error.is_some() && import.preview.is_none() %} aria-invalid="true" aria-describedby="import-error" autofocus{% endif %}>
+            {% if import.preview.is_none() %}{% if let Some(error) = import.error %}<p class="field-error" id="import-error">{{ error }}</p>{% endif %}{% endif %}
+        </div>
+        {% if let Some(result) = import.result %}
+        <div class="form-flash" data-flash="import">
+            <p class="flash" role="status">{{ result.summary }}</p>
+            {% if !result.lines.is_empty() %}
+            <ul class="row-note" style="margin: 0; padding: 8px 16px 8px 32px;">
+                {% for line in result.lines %}<li>{{ line }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+        {% endif %}
+        <button type="submit" class="button-wide{% if import.preview.is_some() %} button-secondary{% endif %}">Preview</button>
+    </form>
+    <div class="group-footer">A Vibb box's library.json, at most 1 MB. Nothing is saved before you confirm. <details class="info"><summary aria-label="About the import"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Its podcasts and NRK series become entries here, each Vibb section a category. Copy the file from the box first, for example with <code>scp &lt;pi&gt;:/etc/vibb/library.json .</code> (the box's <code>GET /library</code> answer works too).</p><p>Nothing is fetched while importing. Storytel and Spotify entries come over too (Spotify ones on no phone yet); Spotify short links and profiles, the box's own folders, positions and downloads don't.</p></div></details></div>
+
+    {% if let Some(preview) = import.preview %}
+    <form method="post" action="/music/import/confirm#import-preview" id="import-preview">
+        <input type="hidden" name="doc" value="{{ preview.doc }}">
+        <h2 class="group-header">Preview</h2>
+        <div class="group">
+            <p class="row row-note" data-row="summary"><span class="row-label"><strong>{{ preview.importable }}</strong> entr{% if preview.importable == 1 %}y{% else %}ies{% endif %} can be added{% if preview.skipped > 0 %}, {{ preview.skipped }} can't (the reason is on each){% endif %}. Untick what you don't want.</span></p>
+            {% if let Some(error) = import.error %}
+            <p class="row text-alarm" data-flash="import-preview">{{ error }}</p>
+            {% endif %}
+        </div>
+        {% for section in preview.sections %}
+        <h2 class="group-header">{{ section.name }}</h2>
+        <div class="group import-section">
+            {% if section.importable > 0 %}
+            <label class="row" for="import_category_{{ section.index }}">
+                <span class="row-label">Category on the phones</span>
+                <select id="import_category_{{ section.index }}" name="category_{{ section.index }}" class="pick">
+                    {% for (id, name) in category_options %}
+                    <option value="{{ id }}"{% if section.selected == id.to_string() %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                    <option value="new"{% if section.selected == "new" %} selected{% endif %}>New: {{ section.new_name }}</option>
+                </select>
+                <svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            {% endif %}
+            {% if section.rows.is_empty() %}
+            <p class="row row-note">No entries in this section.</p>
+            {% endif %}
+            {% for row in section.rows %}
+            {% if row.reason.is_none() %}
+            <label class="row import-row"><input type="checkbox" name="row" value="{{ row.value }}" checked><span class="row-label">{{ row.name }}<span class="row-sub">{{ row.settings }}</span></span></label>
+            {% else %}
+            <div class="row import-row"><span class="row-label">{{ row.name }}{% if let Some(reason) = row.reason %}<span class="row-sub import-skip">Not added: {{ reason }}</span>{% endif %}{% if !row.target.is_empty() %}<span class="row-sub">{{ row.target }}</span>{% endif %}</span></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endfor %}
+        {% if preview.importable > 0 %}
+        <h2 class="group-header">Tick them on these phones</h2>
+        <div class="group">
+            {% if preview.phones.is_empty() %}
+            <p class="row row-note">No phones yet - tick the entries on a phone's page later.</p>
+            {% endif %}
+            {% for (id, name) in preview.phones %}
+            <label class="row import-row"><input type="checkbox" name="phone" value="{{ id }}" checked><span class="row-label">{{ name }}</span></label>
+            {% endfor %}
+        </div>
+        <p class="group-footer">A phone whose music library would grow past 3 MB gets only what fits.</p>
+        <button type="submit" class="button-wide"{% if import.error.is_some() %} autofocus{% endif %}>Import Ticked Entries</button>
+        {% else %}
+        <div class="group"><p class="row row-note">Nothing here can be added{% if preview.skipped > 0 %} - see the reasons above{% endif %}.</p></div>
+        {% endif %}
+    </form>
+    {% endif %}
+</main>
+</body>
+</html>

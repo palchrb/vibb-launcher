@@ -24,14 +24,14 @@ async fn wallpapers(app: &TestApp, token: &str) -> Vec<serde_json::Value> {
         .clone()
 }
 
-fn encode(image: &DynamicImage, format: ImageFormat) -> Vec<u8> {
+pub(super) fn encode(image: &DynamicImage, format: ImageFormat) -> Vec<u8> {
     let mut out = Cursor::new(Vec::new());
     image.write_to(&mut out, format).unwrap();
     out.into_inner()
 }
 
 /// `w`×`h`, the top half black and the bottom half white.
-fn top_black(w: u32, h: u32) -> DynamicImage {
+pub(super) fn top_black(w: u32, h: u32) -> DynamicImage {
     DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |_, y| {
         if y < h / 2 {
             Rgb([0, 0, 0])
@@ -74,7 +74,7 @@ fn jpeg_with_orientation_6(image: &DynamicImage) -> Vec<u8> {
     out
 }
 
-async fn upload(
+pub(super) async fn upload(
     app: &TestApp,
     cookie: &str,
     label: &str,
@@ -233,8 +233,10 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
         &jpeg_with_orientation_6(&left_black(2400, 1600)),
     )
     .await;
-    assert_eq!(res.location(), Some("/wallpapers"), "{}", res.text());
     let (portrait, hash) = newest(&app).await;
+    // Back to the new photo's row (design 31 §5.1).
+    let back = format!("wallpaper-{portrait}");
+    super::assert_redirect(&res, "/wallpapers", Some(back.as_str()));
     assert_eq!(files(&app.state.wallpaper_dir), [format!("{hash}.jpg")]);
     // Nothing reached the contact-photo store.
     assert!(files(&app.state.photo_dir).is_empty());
@@ -254,7 +256,8 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
     // Ticked on this phone (with navy): in its policy, fetchable, upright, no metadata.
     let mut nudges = app.state.command_notify.subscribe();
     let res = tick(&app, &cookie, id, &[1, portrait]).await;
-    assert_eq!(res.location(), Some(format!("/devices/{id}").as_str()));
+    // Back to Home Screen (design 31 step 5) with no fragment: scroll-restore keeps the place.
+    super::assert_redirect(&res, &super::device_page(id, super::Section::Home), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let list = wallpapers(&app, &token).await;
     assert_eq!(list.len(), 2);
@@ -345,11 +348,26 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
     assert!(page.contains(&format!("src=\"/wallpaper-images/{hash}\"")));
     assert!(page.contains("Hytta"));
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Home), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!("action=\"/devices/{id}/wallpapers\"")));
-    assert!(page.contains(&format!("value=\"{portrait}\" checked")));
+    assert_eq!(
+        super::form_action_of(&page, "wallpaper"),
+        Some(format!("/devices/{id}/wallpapers").as_str())
+    );
+    assert!(page.contains(&format!("src=\"/wallpaper-images/{hash}\"")));
+    assert_eq!(
+        super::input_checked(&page, "wallpaper", &portrait.to_string()),
+        Some(true)
+    );
+    assert!(super::autosaves(&page, "wallpaper"));
+    // The device page keeps a row, not the grid.
+    let summary = app
+        .get_page(&super::device_page(id, super::Section::Summary), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("name=\"wallpaper\""));
+    assert!(summary.contains(&format!("href=\"/devices/{id}/home\"")));
     assert_eq!(
         app.get_page(&format!("/wallpaper-images/{hash}"), &cookie)
             .await
@@ -434,7 +452,7 @@ async fn unticking_or_deleting_takes_it_off_the_phone_and_prunes_only_wallpapers
             &[],
         )
         .await;
-    assert_eq!(res.location(), Some("/wallpapers"));
+    super::assert_redirect(&res, "/wallpapers", Some("all"));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert!(files(&app.state.wallpaper_dir).is_empty());
     assert_eq!(files(&app.state.photo_dir), [stray]);
@@ -499,7 +517,8 @@ async fn lock_screen_choice_reaches_the_phone() {
             &[("lock_screen", "on")],
         )
         .await;
-    assert_eq!(res.location(), Some("/wallpapers"));
+    let back = format!("wallpaper-{a}");
+    super::assert_redirect(&res, "/wallpapers", Some(back.as_str()));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         wallpapers(&app, &token).await[0]["lock_screen"],
@@ -642,10 +661,8 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     let mut nudges = app.state.command_notify.subscribe();
     let res = lock_choice(&app, &cookie, id, "1").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-    assert_eq!(
-        res.location().map(str::to_string),
-        Some(format!("/devices/{id}"))
-    );
+    // Back to Lock Screen & PINs, no fragment: scroll-restore.js keeps the place.
+    super::assert_redirect(&res, &super::device_page(id, super::Section::Lock), None);
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
     let logged: Vec<String> = sqlx::query_scalar(
@@ -659,10 +676,14 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
         [format!("device {id}: lock screen background: wallpaper 1")]
     );
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Lock), &cookie)
         .await
         .text();
-    assert!(page.contains("Lock screen background"));
+    assert_eq!(
+        super::form_action_of(&page, "wallpaper"),
+        Some(format!("/devices/{id}/lock-wallpaper").as_str())
+    );
+    assert!(super::autosaves(&page, "wallpaper"));
     assert!(
         page.contains(r#"<option value="1" selected>Navy</option>"#),
         "{page}"
@@ -725,7 +746,7 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     lock_choice(&app, &cookie, id, "").await;
     assert_eq!(lock_wallpaper(&app, &token).await, json!(null));
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Lock), &cookie)
         .await
         .text();
     assert!(
