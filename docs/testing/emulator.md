@@ -523,7 +523,7 @@ adb shell cmd locale set-app-locales me.vibb.music.debug --locales nb
   `adb shell run-as me.vibb.music.debug cat files/music/report.json`.
 
 **Mobile data, the stream saved as it plays, the storage limit (design 30 §8)**, with the debug feed's
-`config.json` (above) or the launcher's bridge and the device page's Music card. Tools:
+`config.json` (above) or the launcher's bridge and the phone's Music page (`/devices/{id}/music`). Tools:
 - network: Wi-Fi is unmetered (through the launcher's VPN on a managed phone); `adb shell svc wifi disable` leaves the
   emulated LTE (metered); `adb emu gsm data roaming` / `adb emu gsm data home` for roaming;
 - the audio cache: `adb shell run-as me.vibb.music.debug du -s no_backup/media`; the report's `audio_bytes` and
@@ -714,8 +714,8 @@ t+15 volume 60
   before `SetAVTransportURI`; with `--group Stua+Kjøkken` both rooms get it), a call (`gsm call <number>` in the
   emulator console: Pause, and Play after `gsm cancel` only when it played) and the locks (`adb shell dumpsys power |
   grep vibb:sonos` while playing, gone 30 s after a pause). With step 3c (the parent's room scope):
-  the device page's Music card shows "The phone hasn't seen any speakers yet" before the first report with rooms, then
-  Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken unticked -> after the next sync the sheet lists only
+  the phone's Music page (Sonos speakers) shows "No speakers seen yet." before the first report with rooms, then
+  Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken switched off -> after the next sync the sheet lists only
   Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
   tillatt"); with `--group Kjøkken+Stua` (or `Stua+Kjøkken`) and only Stua allowed the sheet shows no group row (a
   group needs every member allowed); a `group` script line putting Kjøkken under a playing, allowed Stua stops the

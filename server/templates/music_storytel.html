@@ -12,7 +12,7 @@
     <div class="group-footer" style="margin: -8px 4px 20px;">Add a series or a book, then tick it on a phone's page. <details class="info"><summary aria-label="About the Storytel shelf"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The family's Storytel bookshelf. The phone downloads the books itself, in reading order; this server only reads the shelf.</p><p>Single books out of a series can't be picked - the entry's "first N books" setting limits what is downloaded. Durations are hours:minutes.</p></div></details></div>
 
     {% if let Some(count) = added %}
-    <div class="group" id="added"><p class="flash" role="status">Added {{ count }} - tick them for a phone on its Music card.{% if full %} The library is full ({{ max_entries }} entries), so the rest wasn't added.{% endif %}</p></div>
+    <div class="group" id="added"><p class="flash" role="status">Added {{ count }} - turn them on for a phone on its Music page.{% if full %} The library is full ({{ max_entries }} entries), so the rest wasn't added.{% endif %}</p></div>
     {% endif %}
 
     {% if no_login %}

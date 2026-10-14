@@ -2246,3 +2246,428 @@ async fn the_apps_row_says_when_the_list_couldnt_be_read() {
     assert!(row.contains("Couldn"), "{row}");
     assert!(!row.contains("List unreadable"), "{row}");
 }
+
+// ---- Step 7: Device › Music --------------------------------------------------------------------
+
+const STUA: &str = "RINCON_000E58A0B1C201400";
+const KJOKKEN: &str = "RINCON_000E58A0B1C301400";
+
+/// A phone with everything Device › Music shows: the music app in the catalog, two own-files
+/// entries (the first on), two Sonos rooms reported. Returns the phone, its token, the entries and
+/// the music app's catalog id.
+async fn music_phone(app: &TestApp, cookie: &str) -> (i64, String, [i64; 2], i64) {
+    let (id, token) = app.enrolled_device("Anna").await;
+    let a = super::music::add_own(app, cookie, "Eventyr").await;
+    let b = super::music::add_own(app, cookie, "Sanger").await;
+    super::music::tick(app, cookie, id, a, true).await;
+    let res = app
+        .request_form(Method::POST, "/music/catalog-row", Some(cookie), &[])
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    let music_app: i64 =
+        sqlx::query_scalar("SELECT id FROM tracked_apps WHERE package_name = 'me.vibb.music'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    report(
+        app,
+        &token,
+        json!({
+            "capabilities": ["music_v1"],
+            "music_state": {"package": "me.vibb.music", "bridge": "bound",
+                            "sonos_rooms": [{"uid": STUA, "name": "Stua"}, {"uid": KJOKKEN, "name": "Kjøkken"}]}
+        }),
+    )
+    .await;
+    (id, token, [a, b], music_app)
+}
+
+#[tokio::test]
+async fn music_holds_the_moved_card() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, [a, _], _) = music_phone(&app, &cookie).await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+
+    // The device page: a row with the entries on, none of the card's forms.
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary
+        .find(&format!("href=\"/devices/{id}/music\""))
+        .expect("the row")..];
+    let row = &row[..row.find("</a>").unwrap()];
+    assert!(row.contains("data-row=\"music\""), "{row}");
+    assert!(
+        row.contains("<span class=\"row-value\">1 in library</span>"),
+        "{row}"
+    );
+    for gone in [
+        "/music/entries/",
+        "id=\"music-settings\"",
+        "/music/sonos-rooms",
+        "name=\"storage_limit\"",
+        "value=\"music\"",
+    ] {
+        assert!(!summary.contains(gone), "{gone}");
+    }
+    // After the Apps row, as the mockup orders them.
+    assert!(summary.find("data-row=\"apps\"") < summary.find("data-row=\"music\""));
+    let emil_summary = app
+        .get_page(&device_page(emil, Section::Summary), &cookie)
+        .await
+        .text();
+    let emil_row = &emil_summary[emil_summary.find("data-row=\"music\"").unwrap()..];
+    assert!(emil_row[..emil_row.find("</a>").unwrap()].contains(">None<"));
+
+    // The page: the sub-page header, the groups in order, every save without JS too.
+    let html = app
+        .get_page(&device_page(id, Section::Music), &cookie)
+        .await
+        .text();
+    assert_eq!(nav_current(&html), "devices");
+    assert!(html.contains(&format!("<a class=\"nav-back\" href=\"/devices/{id}\">")));
+    assert!(html.contains("<h1 class=\"page-title\">Music</h1>"));
+    assert!(!html.contains("class=\"app-header\""));
+    let order: Vec<usize> = [
+        "id=\"music-app\"",
+        "id=\"library\"",
+        "id=\"music-settings\"",
+        "id=\"music-sonos\"",
+        "id=\"on-phone\"",
+    ]
+    .iter()
+    .map(|g| html.find(g).expect(g))
+    .collect();
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+    every_auto_save_has_a_save_without_js(&html);
+    for name in [
+        "selected",
+        "stream_mobile_data",
+        "download_mobile_data",
+        "storage_limit",
+        "volume_cap",
+        "storytel",
+        "all",
+    ] {
+        assert!(autosaves(&html, name), "{name}");
+    }
+    // The 5-field form is one form with `v=2` (§5.6, M7).
+    let settings = form_action_of(&html, "v");
+    assert!(settings.is_some());
+    for name in [
+        "stream_mobile_data",
+        "download_mobile_data",
+        "storage_limit",
+        "volume_cap",
+        "storytel",
+    ] {
+        assert_eq!(form_action_of(&html, name), settings, "{name}");
+    }
+    // The entry on is on; the app switch off.
+    assert_eq!(
+        input_checked(section(&html, "music-app"), "selected", ""),
+        Some(false)
+    );
+    let at = html.find(&format!("id=\"music-entry-{a}\"")).unwrap();
+    let entry = &html[at..at + html[at..].find("</form>").unwrap()];
+    assert_eq!(input_checked(entry, "selected", ""), Some(true));
+    // Its links: the library to the Music tab, no login yet to Music › Settings.
+    assert!(html.contains("href=\"/music\""));
+    assert!(html.contains("href=\"/music/settings#storytel\""));
+    // Never a room's code as text (§4.2): with "All rooms" on they are hidden fields.
+    assert!(section(&html, "music-sonos").contains(&format!("value=\"{STUA}\"")));
+    assert!(!html.contains(&format!(">{STUA}<")));
+    // An unknown phone.
+    assert_eq!(
+        app.get_page(&device_page(9999, Section::Music), &cookie)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// §5.1's redirect table for Device › Music, built from the rendered forms: the music app's switch
+/// returns to the page without a fragment (its first group: scroll-restore keeps the place), an
+/// entry's switch to its row (`#music-entry-<id>`, a long list), the settings form and Sonos to
+/// their groups lower on the page - without JS a save never lands at the top. Each fragment names
+/// the element that holds the form (§5.1.4, qa-31-s14-code L4), and an action's own fragment is
+/// the same; then each did what it says, on Anna only (the phone from the path).
+#[tokio::test]
+async fn music_forms_return_to_their_groups() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token, [a, b], music_app) = music_phone(&app, &cookie).await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let page = device_page(id, Section::Music);
+    let html = app.get_page(&page, &cookie).await.text();
+    let mut seen = Vec::new();
+    for form in tags(&html, "form") {
+        let action = form.attr("action").unwrap().to_string();
+        let end = form.start + html[form.start..].find("</form>").unwrap();
+        let hidden: Vec<(String, String)> = tags(&html[form.start..end], "input")
+            .into_iter()
+            .filter(|input| input.attr("type") == Some("hidden"))
+            .map(|input| {
+                (
+                    input.attr("name").unwrap().to_string(),
+                    input.attr("value").unwrap().to_string(),
+                )
+            })
+            .collect();
+        let (target, action_fragment) = match action.split_once('#') {
+            Some((target, fragment)) => (target.to_string(), Some(fragment.to_string())),
+            None => (action.clone(), None),
+        };
+        let mut sent: Vec<(String, String)> = hidden.clone();
+        let on = |name: &str| (name.to_string(), "on".to_string());
+        let expected: Option<String> = if target == format!("/devices/{id}/apps/toggle") {
+            assert!(hidden.contains(&("back".to_string(), "music".to_string())));
+            sent.push(on("selected"));
+            None
+        } else if let Some(entry) = target
+            .strip_prefix(&format!("/devices/{id}/music/entries/"))
+            .and_then(|e| e.parse::<i64>().ok())
+        {
+            // Flip it.
+            if entry == b {
+                sent.push(on("selected"));
+            }
+            Some(format!("music-entry-{entry}"))
+        } else if target == format!("/devices/{id}/music") {
+            sent.extend([
+                on("stream_mobile_data"),
+                on("storytel"),
+                ("storage_limit".to_string(), "5".to_string()),
+                ("volume_cap".to_string(), "70".to_string()),
+            ]);
+            Some("music-settings".to_string())
+        } else if target == format!("/devices/{id}/music/sonos-rooms") {
+            // "All rooms" off: the hidden rooms keep both allowed.
+            Some("music-sonos".to_string())
+        } else {
+            panic!("a form the table doesn't know: {action}");
+        };
+        if let Some(fragment) = &expected {
+            // The element with that id holds the form (or is it).
+            let at = html
+                .find(&format!("id=\"{fragment}\""))
+                .unwrap_or_else(|| panic!("{fragment} names nothing on the page"));
+            let open = html[..at].rfind('<').unwrap();
+            let tag: String = html[open + 1..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
+            assert!(open <= form.start, "{fragment} is after its form");
+            assert!(
+                !html[open..form.start].contains(&format!("</{tag}>")),
+                "{fragment} closes before its form ({action})"
+            );
+        }
+        assert!(
+            action_fragment.is_none() || action_fragment == expected,
+            "{action}: the action's fragment is the redirect's"
+        );
+        let fields: Vec<(&str, &str)> =
+            sent.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let res = app
+            .request_form(Method::POST, &target, Some(&cookie), &fields)
+            .await;
+        assert_redirect(&res, &page, expected.as_deref());
+        seen.push(target);
+    }
+    assert_eq!(
+        seen,
+        [
+            format!("/devices/{id}/apps/toggle"),
+            format!("/devices/{id}/music/entries/{a}"),
+            format!("/devices/{id}/music/entries/{b}"),
+            format!("/devices/{id}/music"),
+            format!("/devices/{id}/music/sonos-rooms"),
+        ],
+        "every form on the page is in the table, in page order"
+    );
+
+    // Each did what it says, on Anna only.
+    let chosen: Vec<i64> =
+        sqlx::query_scalar("SELECT tracked_app_id FROM device_tracked_apps WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(chosen, [music_app]);
+    let ticks: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT device_id, entry_id FROM device_music_entries ORDER BY device_id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(ticks, [(id, b)]);
+    type Settings = (bool, bool, Option<i64>, Option<i64>, bool, Option<String>);
+    let settings = |device: i64| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, Settings>(
+                "SELECT music_stream_mobile_data, music_download_mobile_data, \
+                 music_storage_limit_gb, music_volume_cap_pct, music_storytel, \
+                 music_sonos_rooms_json FROM device_policy WHERE device_id = ?",
+            )
+            .bind(device)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        settings(id).await,
+        (
+            true,
+            false,
+            Some(5),
+            Some(70),
+            true,
+            Some(format!("[\"{STUA}\",\"{KJOKKEN}\"]"))
+        )
+    );
+    assert_eq!(
+        settings(emil).await,
+        (false, false, Some(2), None, false, None)
+    );
+    let music = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json()["music"]
+        .clone();
+    assert_eq!(music["stream_mobile_data"], json!(true));
+    assert_eq!(music["storage_limit_gb"], json!(5));
+}
+
+/// A refused music app switch lands in its group with the reason, once; a catalog row deleted
+/// since the page loaded lands there too, with nothing written. A failed read is a 500, never an
+/// empty library or default settings; the device page's row says it couldn't count.
+#[tokio::test]
+async fn music_refusals_land_in_their_group_and_the_page_fails_loudly() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token, _, music_app) = music_phone(&app, &cookie).await;
+    let page = device_page(id, Section::Music);
+    // The music app came from the Play Store: one source per package.
+    report(
+        &app,
+        &token,
+        json!({
+            "capabilities": ["music_v1"],
+            "installed_apps": [{"package_name": "me.vibb.music", "label": "Musikk",
+                                "installer": "com.android.vending"}]
+        }),
+    )
+    .await;
+    let toggle = |tracked: i64| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            let tracked = tracked.to_string();
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{id}/apps/toggle"),
+                Some(cookie),
+                &[
+                    ("tracked_app_id", tracked.as_str()),
+                    ("package_name", "me.vibb.music"),
+                    ("back", "music"),
+                    ("selected", "on"),
+                ],
+            )
+            .await
+        }
+    };
+    let res = toggle(music_app).await;
+    let refused = format!("{page}?music_notice=from_play");
+    assert_redirect(&res, &refused, Some("music-app"));
+    let html = app.get_page(&refused, &cookie).await.text();
+    assert!(section(&html, "music-app").contains("Installed from the Play Store"));
+    assert_eq!(html.matches("Installed from the Play Store").count(), 1);
+    // A catalog row that is gone.
+    let res = toggle(9999).await;
+    assert_redirect(&res, &page, Some("music-app"));
+    let chosen: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_tracked_apps")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(chosen, 0, "nothing written");
+
+    // Every read the page needs.
+    for table in [
+        "music_entries",
+        "music_storytel",
+        "device_status",
+        "device_policy",
+    ] {
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let res = app.get_page(&page, &cookie).await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR, "{table}");
+        assert!(res.text().contains("Couldn't read this phone"), "{table}");
+        sqlx::query(&format!("ALTER TABLE {table}_gone RENAME TO {table}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    sqlx::query("ALTER TABLE device_music_entries RENAME TO device_music_entries_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"music\"").unwrap()..];
+    assert!(row[..row.find("</a>").unwrap()].contains("Couldn"));
+}
+
+/// A phone not set up has its Music page: what is saved reaches it with its first settings.
+#[tokio::test]
+async fn a_phone_not_set_up_has_its_music_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Mia").await;
+    let res = app
+        .get_page(&device_page(id, Section::Music), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let html = res.text();
+    assert!(html.contains(&format!("action=\"/devices/{id}/music#music-settings\"")));
+    assert!(html.contains("Nothing in the library yet."));
+    assert!(html.contains("No speakers seen yet."));
+    assert!(!html.contains("At the last report"));
+}
+
+/// The Music tab and an entry's page link each phone to its Music page - the entry's page to that
+/// entry's row there (step 12's `phone_music_href`, repointed here).
+#[tokio::test]
+async fn the_music_pages_link_to_the_phones_music_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, [a, _], _) = music_phone(&app, &cookie).await;
+    let tab = app.get_page("/music", &cookie).await.text();
+    assert!(tab.contains(&format!("href=\"/devices/{id}/music\"")));
+    let entry = app
+        .get_page(&format!("/music/entries/{a}"), &cookie)
+        .await
+        .text();
+    assert!(entry.contains(&format!("href=\"/devices/{id}/music#music-entry-{a}\"")));
+    // A downloading entry's offline ⓘ names the switch and where it is (M7).
+    let nrk = super::music::add_nrk(&app, &cookie, "abels_taarn", "Abels tårn").await;
+    let entry = app
+        .get_page(&format!("/music/entries/{nrk}"), &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(entry.contains("'Download on mobile data' is on (the phone's Music page)"));
+    let html = app
+        .get_page(&device_page(id, Section::Music), &cookie)
+        .await
+        .text();
+    assert!(html.contains(&format!("id=\"music-entry-{a}\"")));
+}

@@ -2,12 +2,14 @@
 //! Add, On phones) and its sub-pages `/music/settings` (new episodes, Storytel, the music app's
 //! catalog row, files no entry uses), `/music/categories`, `/music/import`, `/music/storytel` (the
 //! shelf) and `/music/entries/{id}` (an entry's cover, episodes, settings, own files, phones), and
-//! the device page's Music card (`#music`: the app, the ticks, mobile data, the volume cap,
-//! Storytel, what the phone reports).
+//! a phone's Device › Music parts and saves (`/devices/{id}/music`, design 31 step 7: the app,
+//! the library's switches, mobile data, the storage limit, the volume cap, Storytel, Sonos, what
+//! the phone reports; the page itself is `device_pages::view_music`).
 //!
 //! No form makes the page jump to the top (design 31 §5.1, server/CLAUDE.md): every save
 //! redirects to the page its form is on - to the row or group's anchor where the list is long or
-//! the result is in a group (`#entry-<id>`, `#category-<id>`, `#storytel`, `#music`, ...), else
+//! the result is in a group (`#entry-<id>`, `#category-<id>`, `#storytel`, `#music-entry-<id>`,
+//! `#music-settings`, ...), else
 //! without one so `scroll-restore.js` keeps the place; a refused one (400) shows the page again
 //! with the values as entered and the error by the field, which is `autofocus`ed. Every change
 //! nudges the phones it reaches (SSE) and is in the security log (`music_*`,
@@ -27,6 +29,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
+use crate::handlers::device_pages::{Note, Row};
 use crate::models::{DevicePolicy, DeviceStatus, InstalledApp};
 use crate::music::{
     self, CACHE_CHOICES, MAX_CATEGORY_NAME_CHARS, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES_PER_ENTRY,
@@ -189,22 +192,26 @@ pub struct PhoneRow {
 }
 
 impl PhoneRow {
-    fn new(device: &crate::models::Device, value: String) -> Self {
+    /// `entry`: the row links to that entry's switch on the phone's page (from an entry's page).
+    fn new(device: &crate::models::Device, value: String, entry: Option<i64>) -> Self {
         PhoneRow {
             id: device.id,
             name: device.name.clone(),
             initial: crate::handlers::devices::initial(&device.name),
             avatar: crate::handlers::devices::avatar_class(device),
             value,
-            href: phone_music_href(device.id),
+            href: phone_music_href(device.id, entry),
         }
     }
 }
 
-/// Where a phone's music is set: until design 31 step 7 builds `/devices/{id}/music`, the device
-/// page's Music card.
-fn phone_music_href(device_id: i64) -> String {
-    format!("/devices/{device_id}#music")
+/// Where a phone's music is set: Device › Music (design 31 step 7), at an entry's switch when one
+/// is named.
+fn phone_music_href(device_id: i64, entry: Option<i64>) -> String {
+    match entry {
+        Some(entry) => format!("/devices/{device_id}/music#music-entry-{entry}"),
+        None => format!("/devices/{device_id}/music"),
+    }
 }
 
 pub struct CategoryView {
@@ -462,7 +469,7 @@ async fn music_page(
         .iter()
         .map(|d| {
             let ticked = ticks.get(&d.id).copied().unwrap_or(0);
-            PhoneRow::new(d, format!("{ticked} of {count}"))
+            PhoneRow::new(d, format!("{ticked} of {count}"), None)
         })
         .collect();
 
@@ -1965,7 +1972,7 @@ async fn render_entry(
         let mut lines: HashMap<i64, String> = view.phone_lines(&entry).into_iter().collect();
         let phones = devices
             .iter()
-            .map(|d| PhoneRow::new(d, lines.remove(&d.id).unwrap_or_default()))
+            .map(|d| PhoneRow::new(d, lines.remove(&d.id).unwrap_or_default(), Some(entry.id)))
             .collect();
         let storytel = entry.source == "storytel";
         let form = entered.form.unwrap_or_else(|| EntryForm {
@@ -3517,26 +3524,32 @@ pub async fn cards(
 }
 
 // ------------------------------------------------------------------------------------------------
-// The device page's Music card
+// Device › Music (design 31 step 7): the phone's music page
 // ------------------------------------------------------------------------------------------------
 
+/// One library entry on Device › Music: a switch, its own form (`#music-entry-<id>`).
 pub struct MusicTick {
     pub id: i64,
     pub name: String,
+    /// "NRK series · Podkast".
     pub detail: String,
     pub checked: bool,
-    /// A refused tick of this entry (`?music_notice=...&music_entry=<id>`), shown by its row.
+    /// What the phone reported wrong with this entry ("not found at the source"), under its name.
+    pub error: Option<String>,
+    /// A refused tick of this entry (`?music_notice=too_big&music_entry=<id>`), under its row.
     pub notice: Option<&'static str>,
 }
 
+/// The music app's switch (`/apps/toggle` with `back=music`).
 pub struct MusicAppSwitch {
     pub tracked_app_id: i64,
     pub package_name: String,
     pub checked: bool,
-    pub status: String,
+    /// "Installed", "Waiting for the phone", "Not installed", "No release yet".
+    pub status: &'static str,
 }
 
-/// One Sonos room on the Music card (design 26a §5.5).
+/// One Sonos room on Device › Music (design 26a §5.5).
 pub struct SonosRoomRow {
     pub uid: String,
     /// The room's name as the phone reported it, else its uid.
@@ -3546,8 +3559,8 @@ pub struct SonosRoomRow {
     pub reported: bool,
 }
 
-/// The Music card's Sonos rooms (`#music-sonos`, design 26a §5.5): the "All rooms" switch and,
-/// when it is off, one tick per room the phone reported (and any still in the stored scope).
+/// Device › Music's Sonos rooms (`#music-sonos`, design 26a §5.5): the "All rooms" switch and,
+/// when it is off, one switch per room the phone reported (and any still in the stored scope).
 pub struct SonosRoomsCard {
     pub all: bool,
     pub rows: Vec<SonosRoomRow>,
@@ -3595,15 +3608,20 @@ impl SonosRoomsCard {
     }
 }
 
-/// The device page's "Music" card (`#music`).
+/// Device › Music's parts (`device_pages::view_music`, design 31 step 7): the music app, the
+/// library's switches, the one settings form, Sonos and what the phone reported - typed, worded as
+/// rows and short warnings (§4).
 pub struct MusicCard {
     pub app: Option<MusicAppSwitch>,
+    /// A refused music app switch (`toggle_app` with `back=music`, `?music_notice=from_play`), in
+    /// its group.
+    pub app_refused: Option<&'static str>,
     pub ticks: Vec<MusicTick>,
     /// Streaming and downloads on mobile data (design 30 §1.1).
     pub stream_mobile_data: bool,
     pub download_mobile_data: bool,
-    /// When the switches differ and the phone still runs on the old one (design 30 §1.3).
-    pub data_note: Option<&'static str>,
+    /// The switches differ and the phone still runs on the old one (design 30 §1.3): above them.
+    pub older_phone: Option<Note>,
     pub volume_cap: Option<i64>,
     /// Every choice and whether it is the current one.
     pub volume_caps: Vec<(i64, bool)>,
@@ -3611,32 +3629,48 @@ pub struct MusicCard {
     pub storage_limit: Option<i64>,
     /// Every choice and whether it is the current one ("No limit" is `storage_limit.is_none()`).
     pub storage_limits: Vec<(i64, bool)>,
+    /// The kept items alone pass the limit (design 30 §1.10): above the picker.
+    pub over_limit: Option<Note>,
     pub storytel: bool,
     pub storytel_stored: bool,
-    /// Why this phone's ticked Storytel entries aren't sent (design 26b §2.3, §2.7), by the switch.
-    pub storytel_note: Option<String>,
-    /// The library this phone gets: "3 entries · 12.3 kB", or none.
-    pub library: Option<String>,
-    pub lines: Vec<String>,
-    pub warnings: Vec<String>,
-    /// One-shot message after a refused tick (`?music_notice=`).
-    pub notice: Option<&'static str>,
+    /// "2 Storytel entries aren't sent": ticked, but the switch is off or no login is saved
+    /// (design 26b §2.3, §2.7). Under the switch.
+    pub storytel_unsent: Option<String>,
+    /// The phone's own Storytel login was refused (design 26b §4.5): above the switch.
+    pub storytel_refused: Option<Note>,
+    /// Above the first group: Vibb can't deliver music yet, or can't reach the music app.
+    pub warnings: Vec<Note>,
+    /// What the phone reported: the music app, the library, downloads, storage, Storytel.
+    pub on_phone: Vec<Row>,
     pub sonos: SonosRoomsCard,
 }
 
-/// `?music_notice=` codes.
+/// `?music_notice=` codes of a tick or a Sonos save (the music app's switch uses
+/// `devices::toggle_refusal`'s).
 pub fn notice_text(code: &str) -> Option<&'static str> {
     Some(match code {
         "too_big" => {
-            "Not ticked: with that entry this phone's music library would be bigger than 3 MB. \
-             Untick another entry first."
+            "Not added: this phone's library would pass 3 MB. Turn another entry off first."
         }
-        "sonos_too_many" => "Not saved: at most 32 speakers can be ticked. Untick one first.",
+        "sonos_too_many" => "Not saved: at most 32 speakers can be on. Turn one off first.",
         "sonos_unknown" => "Not saved: that isn't a Sonos speaker.",
         _ => return None,
     })
 }
 
+fn warning(title: &str, detail: String) -> Note {
+    Note {
+        warning: true,
+        title: title.to_string(),
+        value: None,
+        detail: Some(detail),
+        fix: None,
+    }
+}
+
+/// Device › Music's parts for the phone of `policy`; `notice` and `notice_entry` are the page's
+/// `?music_notice=` and `&music_entry=` (a refused save, shown in its group). A DB error is the
+/// caller's 500.
 pub(crate) async fn device_card(
     state: &AppState,
     policy: &DevicePolicy,
@@ -3644,18 +3678,17 @@ pub(crate) async fn device_card(
     notice: Option<&str>,
     notice_entry: Option<i64>,
 ) -> Result<MusicCard, sqlx::Error> {
-    // A refused Sonos save goes by the Sonos rooms (qa-26a-step3c-code L4).
-    let (sonos_notice, notice) = match notice {
-        Some(code) if code.starts_with("sonos_") => (notice_text(code), None),
-        other => (None, other),
-    };
-    let notice = notice.and_then(notice_text);
-    // A notice about one entry goes by its row; otherwise at the card's top.
-    let (row_notice, notice) = match notice_entry {
-        Some(entry) => (Some((entry, notice)), None),
-        None => (None, notice),
-    };
     let device_id = policy.device_id;
+    let state_report =
+        music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
+    // What the phone reported wrong with an entry, by its row; an entry no longer in the library
+    // has no row and nothing to fix.
+    let errors: HashMap<i64, String> = state_report
+        .iter()
+        .flat_map(|report| &report.entry_errors)
+        .map(|e| (e.entry, music::entry_error_text(&e.error)))
+        .collect();
+    let row_notice = notice_entry.zip(notice.filter(|c| *c == "too_big").and_then(notice_text));
     let entries: Vec<(i64, String, String, Option<String>, String, bool)> = sqlx::query_as(
         "SELECT e.id, e.name, e.source, e.target, COALESCE(c.name, ''), \
          EXISTS(SELECT 1 FROM device_music_entries d WHERE d.device_id = ? AND d.entry_id = e.id) \
@@ -3665,10 +3698,6 @@ pub(crate) async fn device_card(
     .bind(device_id)
     .fetch_all(&state.db)
     .await?;
-    let names: HashMap<i64, String> = entries
-        .iter()
-        .map(|(id, name, ..)| (*id, name.clone()))
-        .collect();
     let storytel_ticked = entries
         .iter()
         .filter(|(_, _, source, _, _, checked)| *checked && source == "storytel")
@@ -3683,9 +3712,10 @@ pub(crate) async fn device_card(
                 music::kind_label(&source, target.as_deref())
             ),
             checked,
+            error: errors.get(&id).cloned(),
             notice: row_notice
                 .filter(|(entry, _)| *entry == id)
-                .and_then(|(_, notice)| notice),
+                .map(|(_, text)| text),
         })
         .collect();
 
@@ -3707,10 +3737,10 @@ pub(crate) async fn device_card(
                 .iter()
                 .any(|a| a.package_name == row.package_name && !row.package_name.is_empty());
             let status = match (on_phone, &row.latest_release_tag) {
-                (true, _) => "Installed".to_string(),
-                (false, None) => "No release yet".to_string(),
-                (false, Some(_)) if checked => "Waiting for the phone".to_string(),
-                (false, Some(_)) => "Not installed".to_string(),
+                (true, _) => "Installed",
+                (false, None) => "No release yet",
+                (false, Some(_)) if checked => "Waiting for the phone",
+                (false, Some(_)) => "Not installed",
             };
             Some(MusicAppSwitch {
                 tracked_app_id: row.id,
@@ -3734,15 +3764,15 @@ pub(crate) async fn device_card(
     .fetch_one(&state.db)
     .await?;
 
-    let mut lines = Vec::new();
+    let mut on_phone = Vec::new();
     let mut warnings = Vec::new();
+    let mut over_limit = None;
+    let mut storytel_refused = None;
     let storage_limit = music::storage_limit(policy.music_storage_limit_gb);
     let capable = latest_status
         .and_then(|s| s.capabilities_json.as_deref())
         .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
         .is_some_and(|caps| caps.iter().any(|c| c == "music_v1"));
-    let state_report =
-        music::parse_music_state(latest_status.and_then(|s| s.music_state_json.as_deref()));
     let stored_rooms: Option<String> =
         sqlx::query_scalar("SELECT music_sonos_rooms_json FROM device_policy WHERE device_id = ?")
             .bind(device_id)
@@ -3756,104 +3786,163 @@ pub(crate) async fn device_card(
             .as_ref()
             .map_or(&[][..], |report| &report.sonos_rooms),
     );
-    sonos.notice = sonos_notice;
+    sonos.notice = notice
+        .filter(|code| code.starts_with("sonos_"))
+        .and_then(notice_text);
+    // What this phone gets: "3 entries · 12.3 kB".
+    let size = library.as_ref().map(|l| {
+        format!(
+            "{entry_count} entr{} · {:.1} kB",
+            if entry_count == 1 { "y" } else { "ies" },
+            l.json.len() as f64 / 1000.0
+        )
+    });
     match &state_report {
         Some(report) => {
             if let Some(package) = &report.package {
-                lines.push(match report.version_code {
-                    Some(code) => format!("Music app: {package} (version code {code})"),
-                    None => format!("Music app: {package}"),
-                });
+                let version = report
+                    .version_code
+                    .and_then(crate::handlers::device_pages::version_of_code);
+                on_phone.push(
+                    Row::new(
+                        "app",
+                        "Music app",
+                        version.unwrap_or_else(|| "Installed".into()),
+                    )
+                    .detail(Some(match report.version_code {
+                        Some(code) => format!("{package}, version code {code}."),
+                        None => format!("{package}."),
+                    })),
+                );
             }
-            if let Some(bridge) = &report.bridge
-                && bridge != "bound"
-            {
-                warnings.push(format!(
-                    "The launcher can't reach the music app ({}).",
-                    bridge.replace('_', " ")
+            if report.bridge.as_deref().is_some_and(|b| b != "bound") {
+                warnings.push(warning(
+                    "Music app not reachable",
+                    "Vibb on the phone can't reach the music app.".to_string(),
                 ));
             }
             let current = library.as_ref().map(|l| l.version.as_str());
-            match (&report.library_version, current) {
-                (Some(applied), Some(current)) if applied == current => {
-                    lines.push("Library: up to date on the phone".to_string())
-                }
-                (Some(_), Some(_)) => lines.push(
-                    "Library: the phone has an older one - it updates at its next sync".to_string(),
-                ),
-                (None, Some(_)) => lines.push("Library: not on the phone yet".to_string()),
-                (_, None) => {}
+            let library_state = match (&report.library_version, current) {
+                (Some(applied), Some(current)) if applied == current => Some("Up to date"),
+                (Some(_), Some(_)) => Some("Update waiting"),
+                (None, Some(_)) => Some("Not there yet"),
+                (_, None) => None,
+            };
+            if let Some(value) = library_state {
+                on_phone.push(
+                    Row::new("library", "Library", value).detail(
+                        size.as_ref()
+                            .map(|size| format!("This phone's library: {size}.")),
+                    ),
+                );
             }
             if let Some(waiting) = report.downloads_waiting.filter(|n| *n > 0) {
-                lines.push(format!("Downloads waiting: {waiting}"));
+                on_phone.push(Row::new(
+                    "waiting",
+                    "Waiting to download",
+                    waiting.to_string(),
+                ));
             }
             if let Some(bytes) = report.cache_bytes {
-                // An app from before design 30 step 3a sends no `audio_bytes`: today's line (§1.10).
-                let (line, warning) = music::storage_line(
-                    bytes,
-                    report.audio_bytes,
-                    report.extra_bytes,
-                    storage_limit,
-                );
-                lines.push(line);
-                warnings.extend(warning);
+                // An app from before design 30 step 3a sends no `audio_bytes`: only what it stores.
+                let stored =
+                    music::storage(bytes, report.audio_bytes, report.extra_bytes, storage_limit);
+                on_phone.push(Row::new("stored", "Stored on the phone", stored.stored));
+                if let Some(downloads) = stored.downloads {
+                    on_phone.push(Row::new("downloads", "Music downloads", downloads));
+                }
+                if let Some(extras) = stored.extras {
+                    on_phone.push(
+                        Row::new("extras", "Played, kept for now", extras).detail(Some(
+                            "Played beyond the offline depth, kept while there is room: removed \
+                         first when the limit is reached.",
+                        )),
+                    );
+                }
+                over_limit = stored.over_limit.map(|(used, gb)| {
+                    warning(
+                        "Over the storage limit",
+                        format!(
+                            "Kept episodes and books alone use {used} of the {gb} GB limit. \
+                             Lower an entry's offline depth or raise the limit."
+                        ),
+                    )
+                });
             }
             // The phone's own Storytel login (design 26b §2.3, §4.5): `ok`, `none` or `refused`.
             match report.storytel.as_deref() {
-                Some("none") => lines.push("Storytel: no login on the phone".to_string()),
-                Some("refused") => warnings.push(
-                    "Storytel refused the phone's login - it waits an hour; saving the password \
-                     again retries at once."
-                        .to_string(),
-                ),
-                Some(other) => lines.push(format!(
-                    "Storytel on the phone: {}",
-                    other.replace('_', " ")
+                Some("ok") => on_phone.push(Row::new("storytel", "Storytel login", "Logged in")),
+                Some("none") => on_phone.push(Row::new("storytel", "Storytel login", "None")),
+                Some("refused") => {
+                    on_phone.push(
+                        Row::new("storytel", "Storytel login", "Refused").class("row-value-alarm"),
+                    );
+                    storytel_refused = Some(warning(
+                        "Storytel refused the phone's login",
+                        "The phone tries again in an hour, or at once when you save the password \
+                         again in Music › Settings."
+                            .to_string(),
+                    ));
+                }
+                Some(other) => on_phone.push(Row::new(
+                    "storytel",
+                    "Storytel login",
+                    other.replace('_', " "),
                 )),
                 None => {}
             }
-            for error in &report.entry_errors {
-                let entry = names
-                    .get(&error.entry)
-                    .map(|name| format!("\"{name}\""))
-                    .unwrap_or_else(|| format!("Entry {}", error.entry));
-                warnings.push(format!(
-                    "{entry} on the phone: {}",
-                    music::entry_error_text(&error.error)
-                ));
-            }
         }
         // A launcher with the bridge sends no `music_state` without the music app (qa-21-step3-code L13).
-        None if capable
-            && !installed
+        None if capable => on_phone.push(Row::new(
+            "app",
+            "Music app",
+            if installed
                 .iter()
-                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str())) =>
-        {
-            lines.push("Music app not installed.".to_string())
-        }
-        None if capable => lines.push("The phone hasn't reported on music yet.".to_string()),
+                .any(|a| crate::music::MUSIC_PACKAGES.contains(&a.package_name.as_str()))
+            {
+                "No report yet"
+            } else {
+                "Not installed"
+            },
+        )),
         None => {}
     }
-    if latest_status.is_some() && !capable && entry_count > 0 {
-        warnings.push(
-            "The launcher on this phone doesn't handle music yet - update it to deliver the \
-             library."
-                .to_string(),
+    // Before the phone's first music report, what it gets.
+    if !on_phone.iter().any(|row| row.key == "library")
+        && let Some(size) = size
+    {
+        on_phone.insert(
+            on_phone.iter().take_while(|row| row.key == "app").count(),
+            Row::new("library", "Library", size),
         );
+    }
+    if latest_status.is_some() && !capable && entry_count > 0 {
+        warnings.push(warning(
+            "Vibb can't deliver music yet",
+            "Update Vibb on this phone to send it the library.".to_string(),
+        ));
     }
 
     Ok(MusicCard {
         app,
+        app_refused: notice.and_then(crate::handlers::devices::toggle_refusal),
         ticks,
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
         // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
-        data_note: music::older_phone_note(
+        older_phone: music::older_phone(
             policy.music_stream_mobile_data,
             policy.music_download_mobile_data,
             state_report.as_ref().and_then(|report| report.cache_bytes),
             state_report.as_ref().and_then(|report| report.extra_bytes),
-        ),
+        )
+        .then(|| {
+            warning(
+                "Update Vibb and the music app",
+                "Until then this phone uses mobile data for music only when both switches are on."
+                    .to_string(),
+            )
+        }),
         volume_cap: music::volume_cap(policy.music_volume_cap_pct),
         volume_caps: VOLUME_CAPS
             .iter()
@@ -3869,36 +3958,27 @@ pub(crate) async fn device_card(
             .iter()
             .map(|gb| (*gb, storage_limit == Some(*gb)))
             .collect(),
+        over_limit,
         storytel: policy.music_storytel,
         storytel_stored,
-        storytel_note: {
-            let entries = |n: usize| match n {
-                1 => "its Storytel entry isn't sent".to_string(),
-                n => format!("its {n} Storytel entries aren't sent"),
-            };
-            match (storytel_ticked, policy.music_storytel, storytel_stored) {
-                (0, _, _) => None,
-                (n, false, _) => Some(format!("Storytel is off on this phone: {}.", entries(n))),
-                (n, true, false) => Some(format!("No Storytel login is saved: {}.", entries(n))),
-                _ => None,
-            }
-        },
-        library: library.map(|l| {
-            format!(
-                "{entry_count} entr{} · {:.1} kB",
-                if entry_count == 1 { "y" } else { "ies" },
-                l.json.len() as f64 / 1000.0
-            )
-        }),
-        lines,
+        storytel_unsent: (storytel_ticked > 0 && !(policy.music_storytel && storytel_stored)).then(
+            || match storytel_ticked {
+                1 => "1 Storytel entry isn't sent".to_string(),
+                n => format!("{n} Storytel entries aren't sent"),
+            },
+        ),
+        storytel_refused,
         warnings,
-        notice,
+        on_phone,
         sonos,
     })
 }
 
-/// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving tick.
-/// Ticking is refused when the phone's library would pass the limit (QA #4).
+/// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving switch on
+/// Device › Music, back to its row (`/devices/{id}/music#music-entry-<id>`). Ticking is refused when
+/// the phone's library would pass the limit (QA #4): back to the row with `?music_notice=too_big`.
+/// An entry deleted since the page loaded returns to the list (`#library`), an unknown phone is a
+/// 404.
 pub async fn set_device_entry(
     State(state): State<AppState>,
     Path((id, entry_id)): Path<(i64, i64)>,
@@ -3921,7 +4001,12 @@ pub async fn set_device_entry(
     .await;
     let name = match found {
         Ok((true, Some(name))) => name,
-        Ok(_) => return (StatusCode::NOT_FOUND, "No such phone or entry").into_response(),
+        // Deleted since the page loaded (another tab, a double tap): back to the list, nothing
+        // written - never an error page for a row that is simply gone.
+        Ok((true, None)) => {
+            return Redirect::to(&format!("/devices/{id}/music#library")).into_response();
+        }
+        Ok((false, _)) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => return server_error(err, "music tick lookup failed"),
     };
     if selected {
@@ -3947,7 +4032,7 @@ pub async fn set_device_entry(
             Ok(true) => {}
             Ok(false) => {
                 return Redirect::to(&format!(
-                    "/devices/{id}?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
+                    "/devices/{id}/music?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
                 ))
                 .into_response();
             }
@@ -3975,8 +4060,8 @@ pub async fn set_device_entry(
         ),
     )
     .await;
-    // Back to that row, not the card's top (qa-21-step1-code #8).
-    Redirect::to(&format!("/devices/{id}#music-entry-{entry_id}")).into_response()
+    // Back to that row, not the page's top (qa-21-step1-code #8).
+    Redirect::to(&format!("/devices/{id}/music#music-entry-{entry_id}")).into_response()
 }
 
 /// The two mobile-data switches of a `POST /devices/{id}/music` (design 30 §3, QA L6): today's
@@ -3997,7 +4082,9 @@ pub fn mobile_switches(form: &FormMap) -> (bool, bool) {
 /// `POST /devices/{id}/music`: the mobile-data switches ([mobile_switches]), the volume cap
 /// (`volume_cap`: "off" or one of [VOLUME_CAPS]), the music storage limit (`storage_limit`: "none"
 /// or one of [STORAGE_LIMITS]; missing - a page from before design 30 - keeps the stored one) and
-/// Storytel on this phone (`storytel`). One auto-saving form: a missing checkbox is off.
+/// Storytel on this phone (`storytel`). One auto-saving form (Device ›
+/// Music's settings, design 31 §5.6: one group): a missing checkbox is off; back to
+/// `/devices/{id}/music#music-settings`.
 pub async fn save_device_settings(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4055,14 +4142,14 @@ pub async fn save_device_settings(
         ),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music-settings")).into_response()
+    Redirect::to(&format!("/devices/{id}/music#music-settings")).into_response()
 }
 
 /// `POST /devices/{id}/music/sonos-rooms` (design 26a §5.5): the "All rooms" switch (`all`) or the
 /// ticked rooms (`room`, repeated: speaker uids). With the switch on the stored scope is NULL (every
 /// room); off, it is the ticked rooms - none ticked is none allowed. While the switch is on the card
 /// sends every room as a hidden field, so turning it off keeps them all ticked until the parent
-/// unticks one. One auto-saving form; back to `#music-sonos`.
+/// unticks one. One auto-saving form; back to Device › Music's `#music-sonos`.
 pub async fn save_device_sonos_rooms(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4140,7 +4227,7 @@ pub async fn save_device_sonos_rooms(
         crate::audit::clip(&detail, MAX_ROOMS_EVENT_CHARS),
     )
     .await;
-    Redirect::to(&format!("/devices/{id}#music-sonos")).into_response()
+    Redirect::to(&format!("/devices/{id}/music#music-sonos")).into_response()
 }
 
 /// The security event's detail is cut to this many characters.
@@ -4149,7 +4236,10 @@ const MAX_ROOMS_EVENT_CHARS: usize = 300;
 /// A refused Sonos save: back to the rooms with the reason by them, nothing stored (qa-26a-step3c-code
 /// L4; the form is a row of auto-saving ticks, so the page as it was is the values as entered).
 fn refused_rooms(id: i64, code: &str) -> Response {
-    Redirect::to(&format!("/devices/{id}?music_notice={code}#music-sonos")).into_response()
+    Redirect::to(&format!(
+        "/devices/{id}/music?music_notice={code}#music-sonos"
+    ))
+    .into_response()
 }
 
 #[cfg(test)]

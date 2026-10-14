@@ -2751,3 +2751,79 @@ Deferred, with the reason:
 | N4 | The reload script drops `?notice=…` from the address once the page shows it (`history.replaceState`, the row's fragment kept), so a reload doesn't show the refusal again; jstest-pinned. |
 | N5 | The Status card's blocked apps say "Allowed under Apps" / "Not allowed under Apps … until you turn it on there too", and `window_relock`'s lines "hidden even when allowed under Apps", "turn it on under Apps", "the ones allowed under Apps". |
 | Checks | `cargo test` 791 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 7 implementation status (2026-10-14)
+
+Built on branch `design-31-s7` (from `main` at `9d19277f`: steps 1-6, 11, 12 and 13 merged, design 30 with step 3 in
+it); server only, no migration, no new crate, no API change (the policy JSON, `server/testdata/music_*.json` and
+`music_state.json` are byte-identical; the launcher and the music app are untouched), `style.css?v=20` (step 14 takes
+19).
+- **M7's condition is met:** design 30 step 3 (3a and 3b) is in `main`, so the music texts on the page follow §4 -
+  moved, restyled **and** reworded, the sentences typed (M5).
+- **Route:** `GET /devices/{id}/music`, chained with the settings form's POST on one route (L5;
+  `device_pages::view_music`, `device_music.html`; the parts are `handlers::music::device_card`'s). Unknown phone 404;
+  every read is a 500 on a DB error ("Couldn't read this phone": the phone, its settings, its last report, the
+  library, the catalog row, the Storytel row, the rooms), never an empty library or the defaults.
+- **The page**, top to bottom: warnings (`device_pages::Note`: "Vibb can't deliver music yet" for a launcher without
+  `music_v1` while entries are on, "Music app not reachable" for a bridge that isn't bound - its raw state no longer
+  shown); **Music app** (the catalog switch, `/apps/toggle` with `back=music`, its state as the sub-line; without a
+  catalog row "Music app · Not in the catalog ›" to `/music/settings#app`); **Library** (one switch per entry, its
+  own form, `#music-entry-<id>`; "NRK series · Podkast" under the name and, red, what the phone reported wrong with
+  the entry - it used to be a warning list at the card's top); the **settings form** `#music-settings` (one form,
+  `v=2`, the handler writes all five values - §5.6: Mobile data with "Stream on mobile data" / "Download on mobile
+  data", Storage with the Storage limit and Volume cap pickers, Storytel; the groups inside are only for their
+  footers, the warnings "Update Vibb and the music app" (an older phone, design 30 §1.3), "Over the storage limit" and
+  "Storytel refused the phone's login" above their groups); **Sonos speakers** (`#music-sonos`; a room no longer
+  reported is "A speaker not seen lately", its code only in `title`); **On the phone** (the report as rows: Music app
+  "1.2.3" with the package and version code behind ⓘ, Library "Up to date" / "Update waiting" / "Not there yet" - or
+  what the phone gets before its first report -, Waiting to download, Stored on the phone, Music downloads "980.0 MB of
+  2 GB", "Played, kept for now", Storytel login; the report's age under the group, the exact time in `title`).
+- **Typed (M5):** `music::storage` (`Storage`: stored, downloads, extras, `over_limit`) replaces `storage_line`'s
+  sentence, `music::older_phone` (a bool) `older_phone_note`'s; the card's `lines`/`warnings` became `Row`s and
+  `Note`s (`device_pages::Row::new`/`detail`/`class` are `pub(crate)` for it). Their unit tests moved with them.
+- **Redirects** (§5.1, pinned by `tests::device_pages::music_forms_return_to_their_groups`, built from the rendered
+  forms; each fragment is checked to be the element that holds its form, and an action's own fragment to be the
+  redirect's): the app switch → `/devices/{id}/music` **without a fragment** (the first group); refused →
+  `?music_notice=from_play|not_an_app#music-app`, a catalog row deleted since → `#music-app` (both landed on Device ›
+  Apps before); an entry → `#music-entry-<id>`, refused `?music_notice=too_big&music_entry=<id>#music-entry-<id>`, an
+  entry deleted since the page loaded → `#library` (a 404 before); the settings form → `#music-settings`; Sonos →
+  `#music-sonos`, refused `?music_notice=sonos_*#music-sonos`.
+- **Links:** `phone_music_href` → `/devices/{id}/music` (the Music tab's On phones), an entry page's phone rows →
+  `/devices/{id}/music#music-entry-<id>`; the entry page's hint says "'Download on mobile data' is on (the phone's
+  Music page)" (M7); "Music card" → "Music page" in Music › Settings' Storytel ⓘ, the shelf's "Added" flash and the
+  import's result.
+- **The device page:** the Music card is gone; a row **Music · 6 in library** ("None" with nothing on, "Couldn't
+  read" on a failed count) right after Apps, as the DeviceSummary mockup orders them, with its pink note tile.
+- **CSS** `?v=20`: `.tile-pink` only (one section at the end); the page uses the existing components.
+- **Docs (L8):** `server/CLAUDE.md` (the music library's PWA bullet, the Storytel bullet, Device › Apps, the Music tab,
+  a "Device › Music" section), `server/DEPLOY.md` (the Music page), `docs/testing/emulator.md` (§6f, §6h),
+  `music/CLAUDE.md` (the switches' names). `docs/setup/google-account.md`, `launcher/CLAUDE.md` and `PLAN.md` name
+  none of the moved parts.
+- **Tests:** `tests/device_pages.rs` (`music_holds_the_moved_card`, `music_forms_return_to_their_groups`,
+  `music_refusals_land_in_their_group_and_the_page_fails_loudly`, `a_phone_not_set_up_has_its_music_page`,
+  `the_music_pages_link_to_the_phones_music_page`), repointed through `device_page(id, Section::Music)` (new):
+  `music.rs` (QA-30's settings form, older-phone and storage tests on the page's rows and warnings, the ticks and the
+  app switch, the 3 MB refusal by its row, Sonos, the report's rows, the library cache), `music_storytel.rs` (the
+  Storytel switch's note and warning, the phone's Music page in the no-secret sweep), `music::tests`.
+
+Choices made while building:
+1. **The app switch returns without a fragment**, its refusals with `#music-app`: it is the page's first group, so a
+   save lands where it was with and without JS; a refusal's reason sits in that group.
+2. **The settings form keeps `#music-settings`** (design 30's anchor): it sits below a library of up to 200 entries,
+   so without JS a fragment-less redirect would land at the top. With JS it lands on the form's top, as Device ›
+   Apps' `#downloads` and Locate's `#location-settings` do.
+3. **Storage, volume cap and Storytel stay in the one form**, shown as groups with their own headers and footers
+   (Advanced › Restrictions' precedent), not split - the handler writes all five values.
+4. **An entry's error is under its row**, not a list at the top; errors for entries no longer in the library are
+   dropped (nothing to fix).
+5. **The bridge's raw state is not shown** (§4.2); the warning says the music app isn't reachable.
+6. **A refused app switch with `back=music` returns to Device › Music**, not Device › Apps (it used to): a refusal
+   lands on its own group.
+7. **The tick of an entry deleted since the page loaded returns to the list** (`#library`) with nothing written,
+   instead of a 404 page (the double-submit rule); an unknown phone stays a 404.
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses step 1-6
+  components plus `.tile-pink`.
+
+Checks: `cargo test` 796 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings.

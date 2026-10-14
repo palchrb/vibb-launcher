@@ -2056,3 +2056,8 @@ input.row-input {
 .group-apps > .cell > .flash {
     padding-left: 64px;
 }
+
+/* ---- Device › Music (design 31 step 7) ---- */
+
+/* The Music row on the phone page (the DeviceSummary mockup tile). */
+.tile-pink { background: #FF375F; }

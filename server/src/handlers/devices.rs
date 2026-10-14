@@ -664,8 +664,8 @@ struct DeviceDetailTemplate {
     parent_pin: crate::handlers::parent_pin::ParentPinCard,
     /// Status card (design 24b): "Lock the phone again now", the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// "Music" card (design 21, `#music`); `None` when it couldn't be read (the card says so).
-    music: Option<crate::handlers::music::MusicCard>,
+    /// The Music row's value (design 31 step 7): "6 in library", the entries this phone has on.
+    music_value: String,
     /// The not-enrolled card's codes (design 22 §3.1); an enrolled phone's are on Advanced.
     access: AccessCard,
 }
@@ -1534,16 +1534,21 @@ async fn render_device(
             .map(|rows| &rows.allowed),
     )
     .await;
-    let music = crate::handlers::music::device_card(
-        &state,
-        &policy,
-        latest_status.as_ref(),
-        query.get("music_notice").map(String::as_str),
-        query.get("music_entry").and_then(|e| e.parse().ok()),
+    // The Music row's value (design 31 step 7): the entries switched on for this phone.
+    let music_value = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM device_music_entries WHERE device_id = ?",
     )
+    .bind(id)
+    .fetch_one(&state.db)
     .await
-    .map_err(|err| tracing::error!(device_id = id, %err, "couldn't load the music card"))
-    .ok();
+    {
+        Ok(0) => "None".to_string(),
+        Ok(n) => format!("{n} in library"),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't count the phone's music");
+            "Couldn't read".to_string()
+        }
+    };
 
     // The same rows the Devices list counts, from the cards built above (not read twice).
     let attention = crate::attention::items(
@@ -1577,7 +1582,7 @@ async fn render_device(
                 .and_then(|s| s.app_version.as_deref())
                 .filter(|v| !v.is_empty())
                 .map(|v| format!("Vibb {}", crate::handlers::device_pages::short_version(v))),
-            music,
+            music_value,
             apps_value,
             time,
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_some() {
@@ -1636,7 +1641,7 @@ pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
     }
 }
 
-/// One app's switch on Device › Apps (and the music app's on the Music card): its own
+/// One app's switch on Device › Apps (and the music app's on Device › Music): its own
 /// auto-saving form, so a parent never has to find a Save button.
 ///
 /// Takes `package_name` and `tracked_app_id` (each optional): a row may be a catalog app with no
@@ -1650,9 +1655,10 @@ pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
 /// preinstalled (a preinstalled app can only be hidden).
 ///
 /// Where it returns (§5.1): `back=music` (or `anchor=music`, a page from before design 31 step 6)
-/// to the Music card (`/devices/{id}#music`, until step 7 builds Device › Music), anything else to
-/// the app's row on Device › Apps (`#app-<package>`): the row moves between Allowed and Not
-/// allowed, and the fragment finds it again, with or without JS.
+/// to Device › Music (`/devices/{id}/music`, no fragment: the switch is its first group; a refusal
+/// to `?music_notice=<code>#music-app`, the reason in that group), anything else to the app's row
+/// on Device › Apps (`#app-<package>`): the row moves between Allowed and Not allowed, and the
+/// fragment finds it again, with or without JS.
 ///
 /// The package must be a package name (the status intake's rule; it goes into the allowlist), or
 /// exactly what the catalog row the post names stores - an older catalog's free text stays
@@ -1722,6 +1728,21 @@ pub async fn toggle_app(
         Err(err) => return failed(err),
     }
     let page = format!("/devices/{id}/apps");
+    // Device › Music's switch (`back=music`, or an older page's `anchor=music`) returns there: the
+    // page on a save, its group with the reason on a refusal (design 31 step 7).
+    let music = form
+        .get("back")
+        .or_else(|| form.get("anchor"))
+        .map(String::as_str)
+        == Some("music");
+    let refused = |code: &str, anchor: &str| {
+        Redirect::to(&if music {
+            format!("/devices/{id}/music?music_notice={code}#music-app")
+        } else {
+            format!("{page}?notice={code}&app={anchor}#{anchor}")
+        })
+        .into_response()
+    };
     // The catalog app's own package: an uninstall queued for it is cancelled too, and an older
     // catalog's free-text package is accepted only as exactly this.
     let catalog_package = match tracked_app_id {
@@ -1737,8 +1758,12 @@ pub async fn toggle_app(
                 // Removed from the catalog since the page loaded (a second tab, a double tap):
                 // back to the group the tap came from, never the top of the page.
                 Ok(None) => {
-                    let group = if checked { "not-allowed" } else { "allowed" };
-                    return Redirect::to(&format!("{page}#{group}")).into_response();
+                    let to = match (music, checked) {
+                        (true, _) => format!("/devices/{id}/music#music-app"),
+                        (false, true) => format!("{page}#not-allowed"),
+                        (false, false) => format!("{page}#allowed"),
+                    };
+                    return Redirect::to(&to).into_response();
                 }
                 Err(err) => return failed(err),
             }
@@ -1753,8 +1778,7 @@ pub async fn toggle_app(
         if tracked_app_id.is_none() {
             return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
         }
-        return Redirect::to(&format!("{page}?notice=not_an_app&app={anchor}#{anchor}"))
-            .into_response();
+        return refused("not_an_app", &anchor);
     }
     let installed = match latest_installed(&state, id).await {
         Ok(installed) => installed,
@@ -1770,8 +1794,7 @@ pub async fn toggle_app(
                     && a.installer.as_deref() == Some(crate::play::PLAY_STORE)
             })
         {
-            return Redirect::to(&format!("{page}?notice=from_play&app={anchor}#{anchor}"))
-                .into_response();
+            return refused("from_play", &anchor);
         }
         if let Some(tid) = tracked_app_id
             && let Err(err) = sqlx::query(
@@ -1842,9 +1865,9 @@ pub async fn toggle_app(
     }
 
     let _ = state.command_notify.send(id);
-    let back = form.get("back").or_else(|| form.get("anchor"));
-    if back.map(String::as_str) == Some("music") {
-        return Redirect::to(&format!("/devices/{id}#music")).into_response();
+    if music {
+        // The switch is the page's first group: no fragment, scroll-restore keeps the place.
+        return Redirect::to(&format!("/devices/{id}/music")).into_response();
     }
     Redirect::to(&format!("{page}#{anchor}")).into_response()
 }

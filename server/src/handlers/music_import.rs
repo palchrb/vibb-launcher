@@ -681,7 +681,7 @@ fn describe(
             ));
         }
         if done.ticked_phones.is_empty() {
-            text.push_str(", on no phone yet - tick them on each phone's Music card.");
+            text.push_str(", on no phone yet - turn them on in each phone's Music page.");
         } else {
             let names: Vec<String> = done.ticked_phones.iter().map(name_of).collect();
             text.push_str(&format!(", ticked on {}.", names.join(", ")));

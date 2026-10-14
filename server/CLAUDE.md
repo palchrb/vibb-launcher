@@ -546,23 +546,24 @@ needed to manage the phone, delete on a schedule, never store notification or me
   a bad row drops only itself.
 - **PWA** (`handlers::music`, `templates/music*.html`; laid out as design 31's Music tab since step 12, below):
   `/music` (add by link - one GET, `AppState.music_fetch`, canned in tests; own-files entries), `/music/categories`,
-  `/music/settings` (Storytel, the music app's catalog row), `/music/entries/{id}` (settings, cover, uploads), device
-  page card `#music` (app switch = `toggle_app` with `anchor=music`, auto-saving
-  ticks, the `#music-settings` form - since design 30 two switches "Streaming may use mobile data" / "Downloads may use
-  mobile data" (a hidden `v=2` marks today's page; a post without it is a page from before the update, and its one
-  `mobile_data` checkbox sets both - `handlers::music::mobile_switches`), the "Music storage limit" select (1/2/5/10
-  GB/No limit, `storage_limit` = a choice or `none`, else 400; missing = the stored one kept), the note "This phone's
-  launcher or music app is older ..." while the switches differ and the phone's app report (`cache_bytes`) has no
-  `extra_bytes` (`music::older_phone_note`), the storage line and its over-the-limit warning (`music::storage_line`;
-  from the report's `audio_bytes`/`extra_bytes`, which a music app from design 30 step 3a on always sends - without
-  them, an older app, today's "Stored on the phone"; `MusicState` keeps and clamps both like `cache_bytes`),
-  event `music_phone_settings` naming both switches and the limit -, volume cap Off/90/80/70/60 - NULL = off,
-  Storytel switch, the Sonos rooms at `#music-sonos`
-  - "All rooms" or one tick per room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event
-  `music_sonos_rooms_changed` (detail clipped to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "The
-  phone hasn't seen any speakers yet" before a report - the phone's `music_state`). Every form
-  redirects to its anchor; a 400 re-renders with the values and the error by the autofocused field. Changes nudge the
-  phones they reach and log `music_*` / `storytel_login_*` events. PWA text is English like the rest.
+  `/music/settings` (Storytel, the music app's catalog row), `/music/entries/{id}` (settings, cover, uploads), and
+  each phone's Music page `/devices/{id}/music` (design 31 step 7, "Device › Music" below; the device page's card
+  `#music` before): the app switch = `toggle_app` with `back=music`, an auto-saving switch per entry, the
+  `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
+  `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
+  sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
+  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb and the music app" while the
+  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`), the storage
+  rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
+  played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
+  design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
+  clamps both like `cache_bytes`), event `music_phone_settings` naming both switches and the limit -, volume cap
+  Off/90/80/70/60 - NULL = off, the Storytel switch, the Sonos rooms at `#music-sonos` - "All rooms" or one switch per
+  room the phone reported, `POST /devices/{id}/music/sonos-rooms`, event `music_sonos_rooms_changed` (detail clipped
+  to 300), refusals back at `#music-sonos` as `music_notice=sonos_*`, "No speakers seen yet." before a report - the
+  phone's `music_state`. Every form redirects to its page and group; a 400 re-renders with the values and the error
+  by the autofocused field. Changes nudge the phones they reach and log `music_*` / `storytel_login_*` events. PWA
+  text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
   volume_cap_pct, storage_limit_gb, storytel_generation}` (always the key; `null` when the library query fails, QA #3;
   `policy_json_keys_snapshot`). Design 30: `mobile_data` stays for an older launcher (it refuses a music object
@@ -724,9 +725,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   entry page's phone row "Not sent - Storytel is off on this phone", `phone_count` counts only phones that get the
   entry; without a login a failed check says "The phones don't get it until a login is saved."); a Storytel entry
   says "N books" (no "newest", no "· N with episode art"); per-phone lines from `music_state.downloads` (`waiting: login`) and `item_errors`
-  (`no_audio` "Storytel gave no audio for this book"). The device card: the phone's `music_state.storytel`
-  (`none`/`ok`/`refused`, refused as a warning), "Storytel is off on this phone: its N Storytel entries aren't sent",
-  and the downloads switch's text "... a Storytel book is often several hundred MB" (design 30).
+  (`no_audio` "Storytel gave no audio for this book"). The phone's Music page: its `music_state.storytel` as the
+  "Storytel login" row (`none`/`ok`/`refused`; refused red, with a warning above the Storytel switch), "N Storytel
+  entries aren't sent" under the switch while it is off or no login is saved, and the mobile-data ⓘ's "A Storytel
+  book is often several hundred MB" (design 30).
 - **The import** (`music_import.rs`, §2.6): a `storytel:` target `parse_target` accepts imports as a Storytel entry
   (name, order, resume; cache 0 -> -1); one it refuses is `Skip::BadLink`. Nothing is fetched: the sweep lists it
   (`not_on_shelf` if the family's shelf lacks it, `storytel_off` without a login).
@@ -1147,7 +1149,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Where the forms return** (§5.1, `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
   forms): a switch (`/apps/toggle`, `back=apps`) to its row, `/devices/{id}/apps#app-<package>` (`#catalog-<id>` for a
   catalog app without a package; `devices::app_anchor`) - the row moves between the groups and the fragment finds it,
-  with or without JS; `back=music` (or a page's old `anchor=music`) to the device page's `#music` until step 7; a Name
+  with or without JS; `back=music` (or a page's old `anchor=music`) to Device › Music (step 7, below); a Name
   and icon save to the same row (the action carries the fragment, for a refusal rendered in the answer);
   `/app-updates` to `#downloads`. The blocked apps' "tick it" and the Apps tab's phone rows link to the rows.
 - **`toggle_app`** takes a package name (the status intake's rule) or exactly what the catalog row it names stores (an
@@ -1161,6 +1163,30 @@ needed to manage the phone, delete on a schedule, never store notification or me
   repointed `app_display.rs`, `tracked_apps.rs` (downloads, the Wi-Fi switch, the tab's links and count),
   `catalog_pins.rs`, `play.rs`, `hardening.rs`, `window_relock.rs`, `device_api.rs`, `music.rs` (`back=music`);
   `app_downloads::tests` (the labels in Oslo time).
+
+## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
+
+- **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
+  `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
+  "None" with nothing on, "Couldn't read" on a failed count): warnings at the top (Vibb can't deliver music yet, the
+  music app not reachable), **Music app** (the catalog switch, "Not in the catalog ›" to `/music/settings#app`
+  without a catalog row), **Library** (one switch per entry, `#music-entry-<id>`, the phone's error for the entry
+  under its name), the **settings form** `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit
+  and Volume cap pickers, Storytel - groups only for their footers), **Sonos speakers** and **On the phone** (the
+  report as rows: the music app's version with its package and code behind ⓘ, the library's state, downloads waiting,
+  the storage rows, the Storytel login; the report's age under the group). A phone not set up has the page. Every
+  read is a 500 on a DB error ("Couldn't read this phone"), never an empty library or default settings.
+- **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
+  rendered forms, each fragment checked to hold its form): the app switch to the page **without a fragment** (its
+  first group), refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
+  deleted since the page loaded to `#music-app`; an entry's switch to `#music-entry-<id>` (refused
+  `?music_notice=too_big&music_entry=<id>#music-entry-<id>`; an entry deleted since to `#library`); the settings form
+  to `#music-settings`, Sonos to `#music-sonos` (refused `?music_notice=sonos_*#music-sonos`). The policy JSON and
+  the music contract files are unchanged.
+- Tests: `src/tests/device_pages.rs` (the row, the groups, the redirect table, refusals and failed reads, a phone not
+  set up, the Music tab's and an entry page's links), repointed `music.rs` (the settings form, the older-phone
+  warning, the storage rows, the ticks and the app switch, Sonos, the report's rows) and `music_storytel.rs` (the
+  Storytel switch's note and warning, no secret on the phone's page).
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 
@@ -1199,7 +1225,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `?edit=1` shows ↑ ↓ instead, the move redirecting to `/music?edit=1#entry-<id>`), Add (Podcast or NRK link and
   Upload your own files as `<details>` forms that open on a refusal, From Storytel › "Signed in"/"No login", Import
   from Vibb ›), On phones ("Anna · 6 of 9": ticks of the whole library, linking through `phone_music_href` to the
-  device page's `#music` until step 7 builds `/devices/{id}/music`), Categories › and Settings ›. Its CSS is in `style.css` (since `?v=14`, the
+  phone's Music page, `/devices/{id}/music` - from an entry's page to its row, `#music-entry-<id>`), Categories › and
+  Settings ›. Its CSS is in `style.css` (since `?v=14`, the
   "Music tab" section; the code QA fix round moved it out of a per-page partial).
 - **Sub-pages** (sub-page header, `partials/tab_bar.html` alone): `/music/settings` (Check for new episodes as an
   inline picker, the Storytel login with its notice and Remove Login…, the music app's catalog row, Files no entry

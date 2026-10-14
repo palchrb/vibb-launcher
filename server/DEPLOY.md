@@ -479,7 +479,8 @@ launcher reconnects after 300 s of silence. `SSE_KEEPALIVE_SECS=120` in `.env` r
 
 ## Vibb music library (server 0.21.0, design 21 step 1)
 
-The Music tab holds the library for the Vibb music app; each phone's page has a Music card.
+The Music tab holds the library for the Vibb music app; each phone has a Music page (`/devices/{id}/music`, the
+Music row on its page).
 
 - **Order**: install this server (`server-v0.21.0` or later) **before any stable `music-v*` release** is published in
   the repo. Older servers don't know the `music-v` tag prefix, and their launcher row (blank asset filter) could pick
