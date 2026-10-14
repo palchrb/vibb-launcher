@@ -1901,6 +1901,9 @@ at `a5d30b9` (merge commit `5d6bd5b`), at `571f86f` (merge commit `e4d4feb`, wit
 `5584772` (merge commit `a023e4d`, design 31 steps 4-15, 2026-10-14, "Merge of main (5584772)" below, with its code QA
 `8ba881b` and fix round `102745b`, which rebuilt `/music/spotify` in design 31's layout). The final head is the
 handover commit on top of `102745b`. `origin/main` is `5584772`, an ancestor: nothing on `main` is missing here.
+A fourth merge, of `main` at `7936e6d` (design 31's CSS clean-up and the PWA browser pass's fix round), is merge commit
+`5d7de47` with its follow-up `d42df69` ("Merge of main (7936e6d)" at the end; server `cargo test` 937 passed, launcher
+1146, music 845); its code QA is owed.
 **The merge into `main` and the releases follow `docs/design/26c-handover.md`**, a self-contained handover for the
 agent doing them (what the branch is and changes, how it was verified, the exact procedure, the decisions taken and
 the open points). Last full runs (the server on `102745b`; the launcher and music on `a023e4d`, untouched since): server `cargo test` 934
@@ -4468,3 +4471,41 @@ Validation (from `server/`): `cargo fmt --check` clean; `cargo clippy --all-targ
 pins inside existing tests); `node --test jstest/*.test.js` 25 passed. `python3 -I
 scripts/fake-{sonos,storytel,spotify,audio}.py --selftest` all four OK. `launcher/` and `music/` untouched (their
 suites not run).
+
+## Merge of main (7936e6d, 2026-10-14)
+
+`main` at `7936e6d` (since `5584772`: design 31's CSS clean-up - 36 unused classes deleted, `style.css?v=25` - and the
+PWA browser pass of 2026-10-14 with its fix round and QA fix round: every form that stays on its page posts to and
+redirects to its own group's `#fragment`, `scroll-restore.js` v3, `TestApp::assert_lands`,
+`tests::shell::every_form_on_every_page_lands_on_its_own_group`, `tests::shell::style_css_has_the_shape_browsers_read`,
+native controls restyled, `style.css?v=26`) merged into `music-3-spotify` (merge commit `5d7de47`). Nothing in
+`launcher/`, `music/`, `migrations/` or the contract files changed on `main`; the branch never touched `static/`, so
+`style.css` is main's (`?v=26`, no Spotify CSS added).
+
+Conflicts (2), main's forms with our Spotify parts:
+- `templates/device_filter.html`, a blocked domain's row: our override mark ("Not applied while this phone plays
+  Spotify") with main's Remove form (`/dns/domains/{id}/delete#blocked`, the hidden `list_type=block`).
+- `templates/partials/music_card.html`, the library row: our "Open in Spotify" link and the Offline select only when
+  `sweep.offline`, with main's action (`/offline#entry-<id>`).
+
+No Spotify template or handler string uses a class the clean-up deleted (the classes used but not defined are the same
+set as on `main`). The Spotify forms already posted to their groups since the last merge's fix round
+(`#app`, `#app-clear`, `#account-<id>`, `#paste`, `#add`, `#music-spotify`), and the Music tab's redirect table
+(`every_form_on_the_music_pages_returns_to_its_page`) now follows each with main's `assert_lands`.
+
+Follow-up `d42df69`: main's `check_forms` (`settings_pages`) failed on `/music/spotify/login` ("has no fragment"): the
+login leaves the page (a 303 to Spotify's authorize page; a refusal renders the page with the button `autofocus`ed),
+so it is in `leaves_the_page` beside `/login`. `every_form_on_every_page_lands_on_its_own_group` now also sets up a
+Spotify app and a child's login bound to a phone, a blocked `spotify.com` on it and a Spotify playlist, and checks
+Device › Music (the Spotify group), Web Filter (the override mark), the playlist's entry page and `/music/spotify` -
+asserting each Spotify part is on the page it checks.
+
+Migrations end `0072_music_storytel.sql`, `0073_music_data_and_storage.sql`, `0074_music_spotify.sql`: 0074 is still
+the highest.
+
+Validation (this worktree, `d42df69`): server `cargo fmt --check` clean, `cargo clippy --all-targets --locked` 13
+warnings - `main`'s 13 (the 12 known plus `storytel.rs:97`'s `chunks_exact`, a file the branch doesn't change),
+`cargo test` **937 passed**, 0 failed, `node --test server/jstest/*.test.js` 30 passed; launcher `assembleDebug
+testDebugUnitTest` BUILD SUCCESSFUL, 1146 tests, 0 failures; music `assembleDebug testDebugUnitTest
+-PwarningsAsErrors=true` BUILD SUCCESSFUL, 845 tests, 0 failures. Owed: a code QA of this merge
+(`qa-26c-merge3-code.md`).
