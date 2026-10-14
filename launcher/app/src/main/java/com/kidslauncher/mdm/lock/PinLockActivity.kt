@@ -7,6 +7,7 @@ import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -558,8 +559,9 @@ class PinLockActivity : AppCompatActivity() {
                         gravity = Gravity.CENTER
                         includeFontPadding = false
                         setTextColor(getColor(R.color.kid_ink))
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-                        setBackgroundResource(R.drawable.bg_pin_key)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.DIGIT_SP)
+                        // Design 34 P7: the translucent key with its 1 px top highlight on top.
+                        background = LayerDrawable(arrayOf(getDrawable(R.drawable.bg_pin_key), PinKeyHighlight()))
                         contentDescription = label
                         setOnClickListener { onDigit(label[0]) }
                     }
@@ -585,12 +587,16 @@ class PinLockActivity : AppCompatActivity() {
         val size = PinKeypadLayout.finalKeySizePx(PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density), density)
         val changed = keys.filter { it.layoutParams.width != size }
         if (changed.isEmpty()) return
+        // A digit never outgrows its key (design 34 P7: at font scale 2.0 the keys give way).
+        val digitPx = PinKeypadLayout.digitTextPx(size,
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.DIGIT_SP, resources.displayMetrics))
         binding.pinKeypad.post {
             for (key in changed) {
                 key.layoutParams = key.layoutParams.apply {
                     width = size
                     height = size
                 }
+                if (key is TextView) key.setTextSize(TypedValue.COMPLEX_UNIT_PX, digitPx)
             }
         }
     }

@@ -7,6 +7,7 @@ import org.junit.Test
 import org.w3c.dom.Element
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.ceil
 
 /**
  * Emulator run 2026-10-06: the PIN keypad must fit 480x854 px at 240 dpi (320x569 dp) with all
@@ -16,8 +17,17 @@ import javax.xml.parsers.DocumentBuilderFactory
  * Since design 25 the keypad stage has no clock or date (the glance page has them), the back arrow
  * is always there and the prompt takes two lines between its columns; since 25b-G (user decision
  * 2026-10-12) it has no music row either - the keypad stage is plain, the music is on the glance page.
+ * Design 34 P7 (QA M6, N1): the text is modelled at font scale 1.0, 1.3 and 2.0 - keys >= 56 dp at 1.0,
+ * >= 48 dp at 1.3, at 2.0 down to the 32 dp floor but never overlapping; Emergency call >= 48 dp and
+ * >= 16 dp below the keypad, Parent code >= 44 dp.
  */
 class PinLockLayoutTest {
+    private companion object {
+        /** Width of a character in em - a generous average for Nunito's bold weights. */
+        const val CHAR_EM = 0.6f
+        const val STATUS_BAR_DP = 48f
+    }
+
     private val ns = "http://schemas.android.com/apk/res/android"
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
 
@@ -27,44 +37,179 @@ class PinLockLayoutTest {
     private fun Element.dim(name: String): Float =
         getAttributeNS(ns, name).removeSuffix("dp").removeSuffix("sp").toFloatOrNull() ?: 0f
 
-    private fun children(): List<Element> =
-        (0 until root.childNodes.length).map { root.childNodes.item(it) }.filterIsInstance<Element>()
+    private fun kids(e: Element): List<Element> =
+        (0 until e.childNodes.length).map { e.childNodes.item(it) }.filterIsInstance<Element>()
+
+    private fun children(): List<Element> = kids(root)
 
     private fun id(e: Element) = e.getAttributeNS(ns, "id").substringAfter("/")
 
-    /** Height of everything but the keypad (dp), margins and the root's padding included. */
-    private fun fixedHeightDp(): Float {
+    private fun byId(name: String): Element = root.getElementsByTagName("*").let { all ->
+        (0 until all.length).map { all.item(it) as Element }.single { id(it) == name }
+    }
+
+    /** The longest translation (nb, en) of a `@string/` text, in characters. */
+    private fun longestText(e: Element): Int {
+        val name = e.getAttributeNS(ns, "text").removePrefix("@string/")
+        return listOf("res/values/strings.xml", "res/values-nb/strings.xml").maxOf { path ->
+            Regex("<string name=\"$name\">([^<]*)</string>").find(file(path).readText())?.groupValues?.get(1)?.length ?: 0
+        }
+    }
+
+    /**
+     * Lines of a text at [scale] in [widthDp]: [CHAR_EM] em a character (Nunito is narrower); the
+     * prompt always two (it wraps between the arrow's columns, QA Low 5).
+     */
+    private fun lines(e: Element, scale: Float, widthDp: Float): Int {
+        if (id(e) == "pin_prompt") return 2
+        val wide = longestText(e) * CHAR_EM * e.dim("textSize") * scale
+        return maxOf(1, ceil(wide / widthDp).toInt())
+    }
+
+    /**
+     * An element's height (dp) at font scale [scale] in [widthDp], margins not included. Text grows
+     * linearly with the scale (Android 14's non-linear scale grows large text less, so this is the
+     * upper bound): `max(minHeight, lines x sp x scale x 1.4 + padding)` (QA M6).
+     */
+    private fun height(e: Element, scale: Float, widthDp: Float): Float {
+        e.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }?.let { return it.removeSuffix("dp").toFloat() }
+        val padding = e.dim("paddingTop") + e.dim("paddingBottom")
+        val inner = widthDp - e.dim("paddingStart") - e.dim("paddingEnd")
+        val content = when (e.tagName) {
+            "TextView" -> lines(e, scale, inner) * e.dim("textSize") * scale * 1.4f
+            "LinearLayout" -> if (e.getAttributeNS(ns, "orientation") == "horizontal") {
+                // A wrapping child gets what its fixed-width siblings and the margins leave.
+                val fixed = kids(e).sumOf { (it.dim("layout_marginStart") + it.dim("layout_marginEnd") + it.dim("layout_width")).toDouble() }
+                kids(e).maxOfOrNull { height(it, scale, inner - fixed.toFloat()) } ?: 0f
+            } else {
+                kids(e).sumOf { (it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it, scale, inner)).toDouble() }.toFloat()
+            }
+            "FrameLayout" -> kids(e).maxOfOrNull {
+                height(it, scale, inner - it.dim("layout_marginStart") - it.dim("layout_marginEnd"))
+            } ?: 0f
+            else -> 0f
+        }
+        return maxOf(padding + content, e.dim("minHeight"))
+    }
+
+    private fun contentWidthDp(screenWidthDp: Float) = screenWidthDp - root.dim("paddingStart") - root.dim("paddingEnd")
+
+    /** Height of everything but the keypad (dp) at [scale], margins and the root's padding included. */
+    private fun fixedHeightDp(scale: Float = 1f, screenWidthDp: Float = 320f): Float {
         var total = root.dim("paddingTop") + root.dim("paddingBottom")
-        for (child in children().filter { it.getAttributeNS(ns, "visibility") != "gone" }) {
+        for (child in children()) {
             total += child.dim("layout_marginTop") + child.dim("layout_marginBottom")
-            if (id(child) == "pin_keypad") continue
-            val explicit = child.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }
-            val text = child.dim("textSize") * 1.4f
-            // The prompt always counts two lines (it wraps between the arrow's columns, QA Low 5).
-            val inner = (0 until child.childNodes.length).map { child.childNodes.item(it) }.filterIsInstance<Element>()
-                .maxOfOrNull { maxOf(it.dim("textSize") * 1.4f * (if (id(it) == "pin_prompt") 2 else 1), it.dim("layout_height")) } ?: 0f
-            total += explicit?.removeSuffix("dp")?.toFloat() ?: maxOf(text, inner, child.dim("minHeight"))
+            if (id(child) != "pin_keypad") total += height(child, scale, contentWidthDp(screenWidthDp))
         }
         return total
     }
 
-    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float): Float {
-        val keypad = screenHeightDp - statusBarDp - navBarDp - fixedHeightDp()
-        val width = screenWidthDp - root.dim("paddingStart") - root.dim("paddingEnd")
-        return PinKeypadLayout.keySizePx(keypad.toInt(), width.toInt(), 1f).toFloat()
+    private fun keypadHeightDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float, scale: Float) =
+        screenHeightDp - statusBarDp - navBarDp - fixedHeightDp(scale, screenWidthDp)
+
+    private fun keySizeDp(screenHeightDp: Float, screenWidthDp: Float, statusBarDp: Float, navBarDp: Float, scale: Float = 1f): Float {
+        val keypad = keypadHeightDp(screenHeightDp, screenWidthDp, statusBarDp, navBarDp, scale)
+        return PinKeypadLayout.keySizePx(keypad.toInt(), contentWidthDp(screenWidthDp).toInt(), 1f).toFloat()
+    }
+
+    /** The keys at [scale] on the Jelly Star (320x569 dp) with gesture (24 dp) and 3-button (48 dp) navigation. */
+    private fun jellyStarKeys(scale: Float): List<Float> = listOf(24f, 48f).map { nav ->
+        val size = keySizeDp(569f, 320f, STATUS_BAR_DP, nav, scale)
+        // Never an overlap: four rows of these keys and their gaps fit in the keypad's height.
+        val keypad = keypadHeightDp(569f, 320f, STATUS_BAR_DP, nav, scale)
+        assertTrue("scale $scale nav $nav: $size dp keys overflow $keypad dp", 4 * size + 3 * PinKeypadLayout.GAP_DP <= keypad)
+        assertTrue("scale $scale nav $nav: $size dp is below the floor", size >= PinKeypadLayout.FLOOR_DP)
+        assertEquals("the floor never has to step in", size.toInt(), PinKeypadLayout.finalKeySizePx(size.toInt(), 1f))
+        size
     }
 
     @Test
-    fun `the keypad fits 320x569 dp with keys of at least 56 dp - no music row any more`() {
+    fun `the keypad fits 320x569 dp with keys of at least 56 dp at font scale 1_0`() {
         // Gesture navigation (24 dp) and 3-button navigation (48 dp) - qa-fixround-2026-10-06 #4.
         // Design 21 step 4 QA #11 kept >= 52 dp with the compact row; without it (25b-G) the keys
-        // get its 64 dp back.
-        for (navBar in listOf(24f, 48f)) {
-            val size = keySizeDp(569f, 320f, statusBarDp = 48f, navBarDp = navBar)
-            assertTrue("nav $navBar: key size $size dp", size >= 56f)
+        // got its 64 dp back. Design 34 P7's 16 dp gap and the taller button and link cost 14 dp:
+        // the 56 dp floor holds (QA N1; measured 65 dp with 3-button navigation, 71 with gestures).
+        val sizes = jellyStarKeys(1f)
+        assertEquals(listOf(71f, 65f), sizes)
+        for (size in sizes) {
+            assertTrue("key size $size dp", size >= 56f)
             assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
             assertTrue(size <= PinKeypadLayout.MAX_DP)
         }
+    }
+
+    @Test
+    fun `at font scale 1_3 the keys stay at least 48 dp (QA M6, N1)`() {
+        for (size in jellyStarKeys(1.3f)) {
+            assertTrue("key size $size dp", size >= 48f)
+            assertTrue(PinKeypadLayout.fits(size.toInt(), 1f))
+        }
+    }
+
+    @Test
+    fun `at font scale 2_0 the keys give way - above the floor, never overlapping (QA M6, N1)`() {
+        val at1 = jellyStarKeys(1f)
+        val at2 = jellyStarKeys(2f)
+        // Accepted at Android 14's maximum: keys may go below 48 dp touch size, down to the 32 dp floor.
+        for ((big, small) in at1.zip(at2)) assertTrue("the keys give way: $big -> $small", small < big)
+        // The text around them grew instead: the prompt, the button (its English label wraps) and the link.
+        assertTrue(fixedHeightDp(2f) > fixedHeightDp(1f) + 60f)
+        val width = contentWidthDp(320f)
+        val emergency = byId("pin_emergency")
+        assertTrue("Emergency call grows with the text", height(emergency, 2f, width) > height(emergency, 1f, width))
+        assertEquals("the English label takes two lines at 2.0", 2, lines(byId("pin_emergency_label"), 2f, width - 40f - 26f))
+    }
+
+    @Test
+    fun `one column, nothing overlaid - the spacing rule (design 34 P7)`() {
+        assertEquals("LinearLayout", root.tagName)
+        assertEquals("vertical", root.getAttributeNS(ns, "orientation"))
+        assertEquals(listOf("pin_prompt_row", "pin_dots", "pin_keypad", "pin_emergency", "pin_parent_code"), children().map(::id))
+        // >= 16 dp between the keys and Emergency call: the keypad has no bottom margin and the keys
+        // never overflow it (jellyStarKeys), so the button's top margin is the least gap there is.
+        assertEquals(0f, byId("pin_keypad").dim("layout_marginBottom"))
+        assertTrue(byId("pin_emergency").dim("layout_marginTop") >= 16f)
+        assertEquals("wrap_content", byId("pin_emergency").getAttributeNS(ns, "layout_height"))
+        assertEquals("wrap_content", byId("pin_parent_code").getAttributeNS(ns, "layout_height"))
+        assertTrue(byId("pin_emergency").dim("minHeight") >= 48f)
+        assertTrue(byId("pin_parent_code").dim("minHeight") >= 44f)
+        for (scale in listOf(1f, 1.3f, 2f)) {
+            val width = contentWidthDp(320f)
+            assertTrue("Emergency call >= 48 dp at $scale", height(byId("pin_emergency"), scale, width) >= 48f)
+            assertTrue("Parent code >= 44 dp at $scale", height(byId("pin_parent_code"), scale, width) >= 44f)
+        }
+        // The label wraps rather than being cut: no line limit, no single line, no ellipsis.
+        val label = byId("pin_emergency_label")
+        for (attr in listOf("maxLines", "singleLine", "lines", "ellipsize")) assertTrue(attr, label.getAttributeNS(ns, attr).isEmpty())
+    }
+
+    @Test
+    fun `the emergency button is the tonal pill, its label and glyph the emergency red (design 34 P7)`() {
+        val emergency = byId("pin_emergency")
+        assertEquals("@drawable/bg_pin_emergency_tonal", emergency.getAttributeNS(ns, "background"))
+        assertTrue(file("res/drawable/bg_pin_emergency_tonal.xml").readText().contains("@color/kid_emergency_tonal"))
+        assertEquals("@color/kid_emergency_text", byId("pin_emergency_icon").getAttributeNS(ns, "tint"))
+        assertEquals("@color/kid_emergency_text", byId("pin_emergency_label").getAttributeNS(ns, "textColor"))
+        // The flow is untouched: the same clickable view, which the glance page's link clicks too.
+        assertEquals("true", emergency.getAttributeNS(ns, "clickable"))
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        assertTrue(activity.contains("binding.pinEmergency.performClick()"))
+        assertTrue(activity.contains("binding.pinEmergency.setOnClickListener"))
+    }
+
+    @Test
+    fun `the keys carry a 1 px top highlight and a digit never outgrows its key (design 34 P7)`() {
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        assertTrue(activity.contains("LayerDrawable(arrayOf(getDrawable(R.drawable.bg_pin_key), PinKeyHighlight()))"))
+        assertTrue(activity.contains("PinKeypadLayout.digitTextPx("))
+        assertEquals(0x33, PinKeypadLayout.HIGHLIGHT_ARGB ushr 24)
+        // The arc is centred on the top of the oval (270 degrees).
+        assertEquals(270f, PinKeypadLayout.HIGHLIGHT_START_DEG + PinKeypadLayout.HIGHLIGHT_SWEEP_DEG / 2, 0f)
+        // 30 sp on a large key stays 30 sp; 60 sp (font scale 2.0, linear) on a 40 dp key is 24 dp.
+        assertEquals(30f, PinKeypadLayout.digitTextPx(65, 30f), 0f)
+        assertEquals(24f, PinKeypadLayout.digitTextPx(40, 60f), 0.001f)
+        // On the Jelly Star at 1.0 the digits keep their size.
+        for (size in jellyStarKeys(1f)) assertEquals(30f, PinKeypadLayout.digitTextPx(size.toInt(), 30f), 0f)
     }
 
     @Test
@@ -98,8 +243,7 @@ class PinLockLayoutTest {
         assertEquals("the arrow sits in the prompt's row", "pin_prompt_row", id(back.parentNode as Element))
         assertTrue("always shown", back.getAttributeNS(ns, "visibility").isEmpty())
         assertEquals("48dp", back.getAttributeNS(ns, "layout_width"))
-        val prompt = (0 until root.getElementsByTagName("TextView").length).map { root.getElementsByTagName("TextView").item(it) as Element }
-            .single { id(it) == "pin_prompt" }
+        val prompt = byId("pin_prompt")
         // Static side margins of the arrow's width (qa-21-step4-code L5) and two lines at most (QA Low 5).
         assertEquals("48dp", prompt.getAttributeNS(ns, "layout_marginStart"))
         assertEquals("48dp", prompt.getAttributeNS(ns, "layout_marginEnd"))

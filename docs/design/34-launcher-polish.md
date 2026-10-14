@@ -670,3 +670,37 @@ no date line, nothing new above the contacts.
 | N5 the music card isn't in the row model | The Jelly Star test also models the music card (12 dp margin, max(72 dp, 2 × 10 dp padding + two 12 sp lines + a 15 sp title at 1.6 em)): a whole row still shows at every scale, columns and navigation mode; the row plus the bottom fade fits up to 1.3. At 2.0 with the card, the fade may reach into the one whole row's labels while more rows are below (stated in the test). |
 
 Tests: `HomeEdgesTest` 10. Mutations re-run against `HomeEdgesTest`/`HomeModelTest`: m5, m5b, m6, m7 and m11 caught.
+
+## Step 8 implementation status (2026-10-14)
+
+P7 built (launcher only, no server or contract change), on branch `design-34-s8`:
+- **The tonal pill** (`activity_pin_lock.xml` `pin_emergency`): new `bg_pin_emergency_tonal` = step 3's
+  `kid_emergency_tonal` `#3A1E24`, 24 dp radius; label and glyph `kid_emergency_text` `#FF8A8A` (6.6:1, `ImageView`
+  `tint` and `textColor`). The view, its click listener and the glance page's `performClick` are untouched, so the
+  emergency flow is exactly as before. Decision: the VoIP ring screen's pill (`view_voip_ring.xml`) keeps the
+  saturated `bg_pin_emergency` - P7 names only the keypad; changing the ring screen is a separate call.
+- **The spacing rule**: the button's top margin is 16 dp (was 8), its `minHeight` 48 dp (was 44) with 6 dp vertical
+  padding, the label wraps (no line limit) so the pill grows with the font scale; "Foreldrekode" `minHeight` 44 dp (was
+  40). One column, nothing overlaid; the keypad has no bottom margin and its keys never overflow it, so the 16 dp margin
+  is the least gap. `PinKeypadLayout`'s rule is unchanged (min(72, (h - 3 × 6) / 4), floor 32).
+- **Digits** (decision): at 2.0 the keys give way but a 30 sp digit would not - 60 sp linear (38 dp with Android 14's
+  non-linear scale) on a 43 dp key is cut. `PinKeypadLayout.digitTextPx` caps the digit at 0.6 × the key (`sizeKeys`),
+  as mockup 05b draws it; at 1.0 and 1.3 on the Jelly Star it doesn't bite.
+- **The key highlight**: the keypad root carries the lock wallpaper under its scrim, so the keys stay the translucent
+  `bg_pin_key` (an opaque key with a highlight under it would change their look over a photo). The 1 px highlight is
+  `lock/PinKeyHighlight`, a white 20 % arc over the top third, layered over the key in `buildKeypad`.
+- **The glance clock**: `@font/nunito_bold` (700), was `nunito_extrabold` (800); size, fit and format untouched (step 6
+  owns the format).
+- **Measured** (`PinLockLayoutTest`'s model, Jelly Star 320×569 dp, 48 dp status bar, gesture 24 dp / 3-button 48 dp):
+  font scale 1.0 -> keys 71 / 65 dp (the 56 dp floor holds - QA N1: it didn't need to drop to 52); 1.3 -> 69 / 63 dp
+  (>= 48); 2.0 -> 49 / 43 dp (above the 32 dp floor; the English "Emergency call" wraps to two lines, the pill is 96 dp,
+  nb "Nødsamtale" stays on one).
+- **Tests**: `PinLockLayoutTest` 13 (was 8; the model now `max(minHeight, lines × sp × scale × 1.4 + padding)` with
+  lines from the longest nb/en string at 0.6 em, linear scale as an upper bound; new: 1.3, 2.0, the spacing rule, the
+  pill, the highlight and digit cap; every scale checks no overflow and no floor), `KidPaletteTest` +1 (the pill's
+  label and glyph from the layout and drawable >= 4.5:1, 6.6:1; the pill < 1.5:1 on the night), `LockGlanceLayoutTest`
+  +1 (the clock is 700, nothing sets its typeface in code).
+- **Check on the emulator** (not done here - shared emulator): the keypad at font scale 1.0, 1.3 and 2.0 in nb and en
+  via the emulator console screenshot (`docs/testing/emulator.md` §6c, the window is `FLAG_SECURE`), against mockups
+  05/05b; the key highlight over a photo wallpaper; Nødsamtale from the keypad and from the glance page (the flow as
+  before); the glance clock.

@@ -8,6 +8,11 @@ package com.kidslauncher.mdm.lock
  * way (the glance page has them), so a keypad that can't fit [MIN_DP] keys shrinks them down to
  * [FLOOR_DP] rather than clip ([finalKeySizePx]) - Emergency call and "Parent code" are outside the
  * keypad and always shown.
+ *
+ * Design 34 P7 (the spacing rule): one column with nothing overlaid - header, dots, keypad, a gap of
+ * at least 16 dp, Emergency call (at least 48 dp, it wraps and grows with the font scale), "Parent
+ * code" (at least 44 dp), the inset. Only the keys give way: min(72, (h - 3 x gap) / 4) dp of the
+ * keypad's measured height h, floor 32 dp. A digit never outgrows its key ([digitTextPx]).
  */
 object PinKeypadLayout {
     const val ROWS = 4
@@ -19,6 +24,16 @@ object PinKeypadLayout {
     const val FLOOR_DP = 32f
     /** Horizontal room a key leaves in its column. */
     const val SIDE_SLACK_DP = 8f
+
+    /** The digits' text size (sp), as the font scale makes it - but see [digitTextPx]. */
+    const val DIGIT_SP = 30f
+    /** The most of a key's height a digit's text size may take (design 34 P7, mockup 05b). */
+    const val DIGIT_SHARE = 0.6f
+
+    /** The key's 1 px top highlight ([PinKeyHighlight]): white at 20 %, an arc over the top third. */
+    const val HIGHLIGHT_ARGB = 0x33FFFFFF
+    const val HIGHLIGHT_START_DEG = 210f
+    const val HIGHLIGHT_SWEEP_DEG = 120f
 
     /** The key size (px) for a keypad of [heightPx] x [widthPx]; may be below [MIN_DP] - see [fits]. */
     fun keySizePx(heightPx: Int, widthPx: Int, density: Float): Int {
@@ -37,4 +52,12 @@ object PinKeypadLayout {
 
     /** The height (px) four rows of [MIN_DP] keys need. */
     fun minHeightPx(density: Float): Int = ((ROWS * MIN_DP + (ROWS - 1) * GAP_DP) * density).toInt()
+
+    /**
+     * The digits' text size (px) on a key of [keySizePx]: the font scale's size ([scaledTextPx], 30 sp)
+     * until it would take more than [DIGIT_SHARE] of the key - at font scale 2.0 the keys give way, and a
+     * 60 sp digit on a 40 dp key would be cut. At 1.0 and 1.3 on the Jelly Star the keys are large
+     * enough that this never bites.
+     */
+    fun digitTextPx(keySizePx: Int, scaledTextPx: Float): Float = minOf(scaledTextPx, keySizePx * DIGIT_SHARE)
 }

@@ -182,4 +182,28 @@ class KidPaletteTest {
         assertEquals(resolve("kid_emergency_text").uppercase(), "#%06X".format(EMERGENCY_AVATAR.ink and 0xFFFFFF))
         assertTrue(contrast("kid_emergency_text", "kid_emergency_tonal") >= 6.6)
     }
+
+    @Test
+    fun `the keypad's tonal emergency pill carries its label and glyph`() {
+        // Design 34 P7: what activity_pin_lock.xml really uses, from the shared resources.
+        val android = "http://schemas.android.com/apk/res/android"
+        val all = parse("layout/activity_pin_lock.xml").getElementsByTagName("*")
+        val views = (0 until all.length).map { all.item(it) as Element }
+            .associateBy { it.getAttributeNS(android, "id").removePrefix("@+id/") }
+        val pill = views.getValue("pin_emergency").getAttributeNS(android, "background").removePrefix("@drawable/")
+        val solid = parse("drawable/$pill.xml").getElementsByTagName("solid").item(0) as Element
+        val ground = solid.getAttributeNS(android, "color")
+        assertEquals("@color/kid_emergency_tonal", ground)
+        val label = views.getValue("pin_emergency_label").getAttributeNS(android, "textColor")
+        val glyph = views.getValue("pin_emergency_icon").getAttributeNS(android, "tint")
+        for (ink in listOf(label, glyph)) {
+            val ratio = contrast(ink, ground)
+            assertTrue("$ink on $ground: $ratio", ratio >= 4.5)
+        }
+        assertEquals(6.6, contrast(label, ground), 0.1)
+        // Muted, never garish: the pill is a quiet field on the night (QA N4: about 1.3:1 - its text
+        // and glyph identify it), and its red reads on the bare night too.
+        assertTrue(contrast("kid_emergency_tonal", "kid_ground") < 1.5)
+        assertTrue(contrast("kid_emergency_text", "kid_ground") >= 4.5)
+    }
 }

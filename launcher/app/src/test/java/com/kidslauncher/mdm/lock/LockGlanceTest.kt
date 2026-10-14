@@ -409,6 +409,16 @@ class LockGlanceLayoutTest {
     }
 
     @Test
+    fun `the clock is the lighter 700 weight (design 34 P7)`() {
+        // It was Nunito 800 (extra-bold), the heaviest thing on the calm lock; the size and fit stay.
+        val clock = root.byId("lock_glance_clock")
+        assertEquals("@font/nunito_bold", clock.getAttributeNS(ns, "fontFamily"))
+        assertTrue(file("res/font/nunito.xml").readText().contains(Regex("""fontWeight="700"[^/]*@font/nunito_bold""")))
+        // Nothing sets the clock's typeface in code, so the XML is what shows.
+        assertFalse(file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().contains(Regex("""lockGlanceClock\.(typeface|setTypeface)""")))
+    }
+
+    @Test
     fun `the expected fits at 473 and 497 dp (§1_2)`() {
         val bars = available(48f)
         fun fit(tile: Boolean, rows: Int, avail: Float = bars) = glanceFit(avail, heights, tile, rows)
