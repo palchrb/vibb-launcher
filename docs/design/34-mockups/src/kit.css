@@ -51,7 +51,7 @@ body { font-family: Nunito, sans-serif; font-weight: 600; color: var(--ink); -we
 .icon .g { width: 32px; height: 32px; }
 .icon.pressed { transform: scale(.94); filter: brightness(.9); }
 .label { font-size: 13px; font-weight: 700; color: var(--ink); max-width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
-.badge { position: absolute; top: -3px; right: -5px; min-width: 22px; height: 22px; border-radius: 11px; background: #C0582E; color: #fff; font-size: 12px; font-weight: 800;
+.badge { position: absolute; top: -3px; right: -5px; min-width: 22px; height: 22px; border-radius: 11px; background: #B4532C; color: #fff; font-size: 12px; font-weight: 800;
   display: flex; align-items: center; justify-content: center; padding: 0 6px; border: 2px solid var(--ground); }
 .avatar { border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--a-ink); font-weight: 700; position: relative;
   box-shadow: 0 2px 6px rgba(0, 0, 0, .4); }
