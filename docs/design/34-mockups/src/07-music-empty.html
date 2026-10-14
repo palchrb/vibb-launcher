@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>34 Music empty after</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.phone { color: var(--core); }
+.bar { height: 56px; display: flex; align-items: center; padding: 0 12px; }
+.rb { width: 44px; height: 44px; border-radius: 50%; background: var(--card); display: flex; align-items: center; justify-content: center; }
+.empty { position: absolute; top: 150px; left: 32px; right: 32px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ring { width: 104px; height: 104px; border-radius: 50%; background: radial-gradient(circle at 50% 40%, #2A2233, #1B1B28 70%); display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 1px rgba(251,228,220,.10), 0 6px 18px rgba(0,0,0,.45); color: var(--accent); }
+.ring svg { width: 46px; height: 46px; }
+.h { font-size: 20px; font-weight: 800; margin-top: 22px; }
+.p { font-size: 15px; color: var(--core-dim); margin-top: 8px; line-height: 1.4; }
+</style></head>
+<body>
+<div class="phone" data-time="16:42">
+  <div class="bar"><span class="rb"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 18l-6-6 6-6" fill="none" stroke="#FBE4DC" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+  <div class="empty">
+    <div class="ring"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="3" y="14" width="4" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="17" y="14" width="4" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></svg></div>
+    <div class="h">Her kommer musikken din</div>
+    <div class="p">Mamma eller pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv.</div>
+  </div>
+</div>
+<script src="glyphs.js"></script><script src="kit.js"></script>
+</body></html>

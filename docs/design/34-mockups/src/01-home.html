@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>34 Home after</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.top { height: 8px; }
+.contacts { display: flex; justify-content: center; gap: 22px; padding: 14px 0 0; }
+.contact { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.contact .avatar { width: 72px; height: 72px; font-size: 30px; }
+.contact .name { font-size: 15px; font-weight: 800; }
+.grid { position: absolute; top: 174px; left: 16px; right: 16px; bottom: 0; display: grid; grid-template-columns: repeat(3, 1fr); row-gap: 16px; align-content: start; padding-top: 4px;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 10px, #000 calc(100% - 46px), transparent calc(100% - 14px)); }
+/* The app's own icon, original colours (approximated): an app without a monochrome layer, or one the parent set to
+   "the app's own logo" in the PWA (Chrome here). Only the soft drop shadow is added. */
+.own { background: #EEF1F6; color: #4A6FB0; background-image: none; }
+.chrome { background: conic-gradient(from -60deg, #DB4437 0 120deg, #F4B400 120deg 240deg, #0F9D58 240deg 360deg); }
+.chrome b { width: 26px; height: 26px; border-radius: 50%; background: #4285F4; border: 5px solid #fff; display: block; }
+.own.yt { background: #FF0033; color: #fff; }
+</style></head>
+<body>
+<div class="phone" data-time="16:42">
+  <div class="top"></div>
+  <div class="contacts">
+    <div class="contact"><div class="avatar" style="background:var(--a-sky)">M<span class="callbadge"><i data-g="kid_phone"></i></span></div><div class="name">Mamma</div></div>
+    <div class="contact"><div class="avatar" style="background:var(--a-sand)">P<span class="callbadge"><i data-g="kid_phone"></i></span></div><div class="name">Pappa</div></div>
+    <div class="contact"><div class="avatar" style="background:var(--a-sage)">M<span class="callbadge"><i data-g="kid_phone"></i></span></div><div class="name">Mormor</div></div>
+  </div>
+  <div class="grid">
+    <div class="tile"><div class="icon" style="background:var(--phonebook)"><i data-g="kid_phone_book"></i></div><div class="label">Telefonbok</div></div>
+    <div class="tile"><div class="icon own chrome"><b></b></div><div class="label">Chrome</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-teal)"><i data-g="play_circle" style="transform:rotate(-90deg)"></i></div><div class="label">Disk</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-plum)"><i data-g="photo_library"></i></div><div class="label">Foto</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-rose)"><i data-g="mail"></i><span class="badge">2</span></div><div class="label">Gmail</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-blue)"><i data-g="calendar_month"></i></div><div class="label">Kalender</div></div>
+    <div class="tile"><div class="icon own"><i data-g="photo_camera"></i></div><div class="label">Kamera</div></div>
+    <div class="tile"><div class="icon own"><i data-g="alarm"></i></div><div class="label">Klokke</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-indigo)"><i data-g="map"></i></div><div class="label">Maps</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-blue)"><i data-g="chat"></i></div><div class="label">Meldinger</div></div>
+    <div class="tile"><div class="icon own yt"><i data-g="play_circle"></i></div><div class="label">YouTube</div></div>
+    <div class="tile"><div class="icon" style="background:var(--t-slate)"><i data-g="kid_settings"></i></div><div class="label">Innstillinger</div></div>
+  </div>
+</div>
+<script src="glyphs.js"></script><script src="kit.js"></script>
+</body></html>
