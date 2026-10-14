@@ -1,6 +1,6 @@
 # 31 - The parent PWA redesign: inventory and information architecture
 
-Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, see the implementation status sections at the end.
+Information architect, 2026-10-13. Status: **buildable**; step 1 (the shell) built on branch `design-31-s1`, step 2 (display helpers + Devices list) on `design-31-s2`, step 3 (About This Phone + Advanced) on `design-31-s3`, step 4 (Lock Screen & PINs) on `design-31-s4`, step 5 (Home Screen + Web Filter) on `design-31-s5`, step 6 (Device › Apps) on `design-31-s6`, step 11 (the Apps tab) on `design-31-s11`, step 12 (the Music tab) on `design-31-s12`, step 13 (the Locate tab) on `design-31-s13`, step 14 (the rest of Settings) on `design-31-s14`, see the implementation status sections at the end.
 - The user approved the mockups (`docs/design/mockups/parent-pwa/`).
 - This revision fixes every finding of the design QA (`docs/design/qa-31-design.md`); what changed per finding is
   listed in §9.
@@ -2751,3 +2751,118 @@ Deferred, with the reason:
 | N4 | The reload script drops `?notice=…` from the address once the page shows it (`history.replaceState`, the row's fragment kept), so a reload doesn't show the refusal again; jstest-pinned. |
 | N5 | The Status card's blocked apps say "Allowed under Apps" / "Not allowed under Apps … until you turn it on there too", and `window_relock`'s lines "hidden even when allowed under Apps", "turn it on under Apps", "the ones allowed under Apps". |
 | Checks | `cargo test` 791 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 14 implementation status (2026-10-13)
+
+Built on branch `design-31-s14` (from `main` at `c8d0ad44`, steps 1-5 and 11-13 in), in parallel with step 6; server
+only, no migration, no new crate, no API change (nothing a phone reads changed), `style.css?v=19` (main is at 17, step
+6 takes 18; appended at the end, resolved at the merge).
+- **The pages** (§3.6), each a Settings sub-page with the §3.0 header ("‹ Settings", the large title, no brand bar):
+  - **Web Filter** (`/dns`): Blocklists (one switch each, the list's size or its problem under the name, the download
+    error behind a "What happened" ⓘ row; Add a List… as a disclosure), Blocked Domains and Allowed Domains (Remove one
+    tap, an add row each), Each Phone (to its Web Filter page), and **DNS Server** at the bottom ("Look-ups go to"
+    Cloudflare / Quad9, an inline picker; the addresses and DNS-over-TLS behind ⓘ). The 37-word intro is gone.
+  - **Blocked Activity** (`/dns/log`): a list of phones, each "Off", "None today" or "12 today" (since local
+    midnight in the Phone Setup zone, as the Settings row counts) › its log on the phone's Web Filter page.
+  - **Wallpapers**: Add a Photo (name, "Also on the lock screen" switch, the photo; the processing and the lock-screen
+    note behind the footer's ⓘ), All Wallpapers (one row per wallpaper with its thumbnail, "Built in · on 2 phones";
+    a photo keeps its per-photo "Also on the lock screen" switch (Q1) and gets **Delete Photo…** as a `<details>`
+    confirm (Q7); no `confirm()` left).
+  - **Phone Setup** (`/settings/provisioning`): one form (§5.6) - Server address, Tailscale key ("Set
+    (tskey-auth-...abcd)", §4.5 #16's footer, tag/pre-approval/DEPLOY.md behind ⓘ), Phone language, Time zone (its ⓘ
+    says the app shows times in it), Save. Step 8 adds the country code as a second form; not done here.
+  - **Account & Password**: the two sign-in warnings as red rows (Dismiss kept); Password (Signed in as, the form);
+    Two-Factor Login (On, **Reset Two-Factor Login…** as a confirm holding the current-password field, the CLI
+    recovery behind the footer's ⓘ); Sessions (**Sign Out Everywhere…** as a confirm, M6).
+  - **Security Log**: Blocked Addresses (address, "Until 14:05 · reason", Unban one tap), Recent / Older Activity
+    (one row per event: label, "parent · 192.0.2.9", local time; the exact time, the stored detail and the raw id
+    behind the row's ⓘ), paging links, the 54-word intro behind the footer's ⓘ.
+  - **Backups**: Back Up Now, then each backup as a row (local time, size) opening Download, **Restore…** (type the
+    file name, unchanged) and **Delete…**; Upload a Backup… as a disclosure; Schedule (one form, the switches for the
+    drive and the live copy on the Pi only); External Drive (Pi only: Connected/Not connected with the mount path
+    behind ⓘ, **Format …** per drive with type-the-size, unchanged).
+  - **Software Updates**: Vibb Phone Server (Version, "Up to date" / "Version 0.25.0 is out" / "Couldn't check",
+    **Update Now…** and **Restart Server…** as confirms; Docker: the `HANDY_VERSION` and `docker compose` commands
+    behind the row's ⓘ); "Run the installer again" as an orange warning with the command behind ⓘ; Raspberry Pi OS
+    (status, Check for Updates, Install Updates…, Restart Pi… while needed, the running-update warning); Tailscale;
+    Automatic Server Updates and Automatic System Updates (one form each).
+- **Where forms return** (§5.1; every action carries its group's fragment, `tests::settings_pages::check_forms` on
+  every page): `/dns#lists|blocked|allowed|server`, a photo's switch `/wallpapers#wallpaper-<id>`, an upload the new
+  photo's row, a delete `#all`, Phone Setup `?saved=1#saved` (the flash under Save), Unban
+  `/security?unbanned=<address>#banned`. Account, Backups and Software Updates keep rendering their answer in the POST's
+  response (a password never goes into a URL; a restore, update or restart takes the server down, so a redirect's
+  GET could fail), each form posting to its group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`,
+  `#drive`, `#app`, `#os`, `#tailscale`, `#app-schedule`, `#os-schedule`) with the result in that group
+  (`settings::Flash` + `partials/group_flash.html`). Pinned by the redirect table built from the rendered forms
+  (`every_form_on_the_settings_pages_returns_to_its_group`) and, for the rendered answers, by the group tests.
+- **Refusals** land in their group with a short message (§3.0): a global domain that isn't one now goes back to its
+  group like the phone page (`/dns?notice=not_a_domain_block|allow#blocked|allowed`, was a plain 400); a list without
+  a name or an http(s) address `?notice=bad_list#lists` with Add a List… open (was: nothing, silently); Phone Setup
+  renders again (400) with what was typed - never the key - and the reason under the field (was a plain 400); a wrong
+  password field, the 2FA reset, Restore's and Format's typed confirms and a refused upload say why under their field,
+  their confirm or disclosure open.
+- **Rust texts (M5):** `admin::event_label` (every event id this server writes, an unknown one as its words - never the
+  raw id outside ⓘ); `auth::live_warning(admin, zone, now)` (the lock's end local, no "UTC"); the backup, update and
+  restore results as short `Flash`es (green, or a red title with the reason behind ⓘ: "Run the installer again
+  first", "Already on the newest version", "Nothing was started"); "not a Vibb Phone backup". The three schedule
+  summaries (`summary()`) and `day_of_week_name` are gone: the forms show the values (`backups::WEEKDAYS` feeds the
+  three day pickers).
+- **Robustness:** every read on Web Filter, Blocked Activity, Phone Setup and the Security Log is a 500 on a DB error,
+  never an empty page; every Web Filter write too (they ignored errors and redirected as if saved); an unknown upstream
+  is a 400 (was silently Cloudflare), an unknown list's toggle a 404. A password change and a 2FA reset write the new
+  hash or cleared TOTP **and** the session epoch in one UPDATE (they were two, the second's failure ignored: another
+  session could survive a change the parent saw succeed); Sign Out Everywhere answers 500 and keeps this session when
+  the epoch can't move (it signed this one out and left the others). Unban's DB error is a 500. A wallpaper deleted
+  twice lands on the list; a backup deleted twice says so.
+- **Docs (L8):** `server/CLAUDE.md` (the admin-auth banner, the Docker Updates page, step 5's `back`, a "The rest of
+  Settings" section), `server/DEPLOY.md` (Sign Out Everywhere…, Software Updates in Docker, "Update Now…", the Backups
+  section), `docs/testing/emulator.md` (Phone Setup's two fields). `launcher/CLAUDE.md`, `docs/setup/google-account.md`
+  and `PLAN.md` name none of these pages' controls.
+- **Tests:** `tests/settings_pages.rs` (new: the redirect table; Web Filter's refusals in their groups, its rows and an
+  unreadable page; Blocked Activity's values; Wallpapers' confirm, switch and refused upload; Phone Setup's refusal and
+  flash; Account's field errors, confirms and local lock time; the Security Log's labels, escaping and local times;
+  Backups' refusals in their groups), `tests::docker` (Software Updates on both kinds: the commands behind ⓘ, the
+  confirms, the installer warning, every result in its own group), `admin::tests::every_event_reads_as_words`;
+  repointed `admin_auth.rs` (Unban's redirect, the reset's refusal), `intake_limits.rs` (paging links with
+  `#activity`), `wallpapers.rs` (the photo's row, `#all`), `device_pages.rs` (Blocked Activity's "Off", the global
+  domain's group). `cargo test` 795 passed; `node --test jstest/*.test.js` 16 passed; fmt clean; clippy:
+  the same 13 warnings, none in the step's files.
+
+Choices made while building:
+1. ~~Account, Backups and Software Updates still render in the POST's answer~~ - reversed in the fix round (M1):
+   every success redirects (a reload must never repeat a restore, update, restart or backup; the 303's GET comes back
+   before the server goes away), and only refusals render in the POST's answer, so a password or typed confirm still
+   never goes into a URL.
+2. **The schedule summaries are gone**: the form shows every value; the day fields say which frequency uses them
+   ("Day (every week)", "Day of the month (every month, 1-28)"). Times are the server's clock ("by the Pi's clock").
+3. **A schedule's result shows at the top of its form**, the rest of a group's results under its rows: the action's
+   fragment lands on the group's top, and a tall form would hide a result under Save.
+4. **Blocked Activity shows today's count** for a phone with its log on (the Settings row's number per phone).
+5. **The security log's stored details are shown as stored**, behind the row's ⓘ: older rows (and today's
+   `device_command_cancelled`, `parent_pin_used` lines) carry "UTC" times; the audit trail is not rewritten. The row's
+   own time is local.
+6. **`/dns/blocklists/{id}/delete` keeps no button** (it had none before); it returns to `#lists`.
+7. **A wallpaper's delete is idempotent** (an already-gone one lands on the list) and a built-in's is a plain 400
+   (the page offers no button for one).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+- **Software Updates' POSTs aren't driven end to end**: every answer renders `/updates`, which asks GitHub (no network
+  in tests); the page itself is tested through `updates::page`, and the schedule's HH:MM refusals stay pinned by
+  `deploy_scripts`. Making a backup, a restore's or a format's request and a schedule save write to `data/` in the
+  working directory, so those success paths aren't posted in tests either (their refusals are).
+
+**Fix round after the code QA** (`qa-31-s14-code.md`: 0 High, 2 Medium, 4 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Post/redirect/get for every success: Account's password change → `/account?changed=password#password`; Backups → `/backups?done=backup\|deleted\|gone\|schedule\|upload\|restore\|format#<group>` (`backups::Done`); Software Updates → `/updates?done=update\|restart\|os_check\|os_upgrade\|tailscale\|reboot\|app_schedule\|os_schedule#<group>` (`updates::Done`; `updates::request_action` replaces the two modules' copies). The GET (a plain render, so it works right after a restart) shows the line in its group; an unknown code shows nothing. Only refusals (nothing happened) render in the POST's answer, so passwords and typed confirms still stay out of URLs. "Open this page again" is gone: the lines say "Reload this page in a minute" - a reload is a GET now. Choice 1 reversed. Tests: `backups_answer_in_their_groups`, `updates_redirect_after_each_request`, `account_answers_in_its_groups`, `admin_auth` (both password changes). |
+| M2 | Labels for all 20 `music_*` events ("Music added", "Music moved", "Unused music files deleted", "Music on a phone changed", "Sonos rooms changed", …). `admin::tests::every_written_event_has_a_label` reads `src/` (not tests): the `snake_case` literals around every writer (`record_security_event`, `log_event`, `log_change`, the audit's `.record`, `request_action`, the raw `INSERT INTO security_events`) and the `let (…event…)` tuples that pick one must each have a label (`label_of`), minus a listed set of non-events (form fields, notice codes, root actions); it checks that it finds `login_failed`, `music_phone_settings`, `backup_restored` and `kid_pin_cleared`. The fallback's example is the made-up `retired_event`. |
+| L1 | `AppState::data_dir` (`data/`, a temp dir in tests) holds the backups, the three schedule files, the last-run markers, the live mirror and the root helper's request file; `ForkConfig::github_api` (a closed local port in tests) lets `/updates` and its POSTs render without the network. Pinned: Back Up Now, the restore's typed name (wrong: 400 with its confirm open and no request file; right: the request file says `restore_backup <name>`), Delete twice, the schedule save, each Updates request's file and redirect; Format's typed size through the pure `backups::format_target` and a render of the page with a backup and a USB drive (`check_forms` sees Restore, Delete and Format); Sign Out Everywhere's 500 by a `RAISE(ABORT)` trigger on `session_epoch` (`sign_out_everywhere_fails_visibly`: 500, this session and the other still work; without the trigger both end). Mutations 2, 4 and 10 re-run: all three fail a test now. |
+| L2 | The first-sign-in password change (`/auth/change-password`) writes the hash, `must_change_password = 0` and `session_epoch + 1` in one UPDATE with `RETURNING`; a failure is a 500 that changed nothing. `signed_out_elsewhere` is gone. |
+| L3 | A refused Phone Setup save that carried a key says under the key field "The new key wasn't saved. Paste it again." (`aria-invalid`), never echoing it; a ticked "Remove the stored key" stays ticked. Pinned in `phone_setup_refuses_under_the_field_and_flashes_a_save`. |
+| L4 | `check_forms` asserts each action's fragment is the element that holds the form (its section, its own id, a photo's row), not just any element. |
+| N1 | Unban redirects with the address only when a ban was lifted (else to `#banned` with no line), and the GET says "… is unbanned." only for an address not blocked now. |
+| N2 | The post-sign-in warning reads "13 wrong two-factor codes were entered before this sign-in (from …). Whoever entered them knew your password - change it now." |
+| N3 | A refused add on Web Filter keeps what was typed: `&typed=` (a domain), `&name=`/`&url=` (Add a List…), URL-encoded, at most 300 characters, escaped back into the field. |
+| Checks | `cargo test` 800 passed; `node --test server/jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. |

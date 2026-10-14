@@ -49,7 +49,13 @@ pub struct HubValues {
 
 pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
     let zone = Zone::load(&state.db).await;
-    let values = hub_values(&state.db, Path::new(BACKUP_DIR), &zone, Utc::now()).await;
+    let values = hub_values(
+        &state.db,
+        &state.data_dir.join(BACKUP_DIR),
+        &zone,
+        Utc::now(),
+    )
+    .await;
     Html(
         SettingsHubTemplate {
             title: "Settings".to_string(),
@@ -130,7 +136,7 @@ fn plural(n: i64, zero: &str, one: &str, many: &str) -> String {
 
 /// Midnight of `now`'s day in its own zone, as the UTC text `received_at` is stored in
 /// (`datetime('now')`).
-fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
+pub(crate) fn utc_start_of_day<Tz: TimeZone>(now: DateTime<Tz>) -> String {
     let zone = now.timezone();
     let midnight = now
         .date_naive()

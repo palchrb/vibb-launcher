@@ -85,7 +85,7 @@ Language and time zone (fix round 2026-10-06): adb provisioning doesn't set them
 Android's language (e.g. Norsk bokmål) and time zone in Settings **before** `set-device-owner`/
 enrolling; once managed, the system language is locked (`DISALLOW_CONFIG_LOCALE`, hardening switch
 "Lock the phone's language", on by default - only the server lifts it). The QR setup sets both
-from the provisioning page (`PROVISIONING_LOCALE` default `nb_NO`, `PROVISIONING_TIME_ZONE`
+from Settings › Phone Setup ("Phone language", `PROVISIONING_LOCALE` default `nb_NO`; "Time zone", `PROVISIONING_TIME_ZONE`
 default `Europe/Oslo`). QR provisioning itself (the launcher now has the Android 12+
 `GET_PROVISIONING_MODE`/`ADMIN_POLICY_COMPLIANCE` activities) is **[needs device test]** on the
 Jelly Star and stock GMS phones; adb above stays the fallback.

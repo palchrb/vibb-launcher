@@ -5,104 +5,138 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>Web Filter</h1>
-    </div>
-    <p class="subtitle">Blocking now happens on-device (each kid's launcher runs its own local filter) - this page manages the shared blocklists/custom domains it uses. Turn filtering on/off for a specific kid on their phone's Web Filter page, below. <a href="/dns/log">See what's been blocked &rarr;</a></p>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
+    <h1 class="page-title">Web Filter</h1>
 
-    <div class="card">
-        <h2>Upstream resolver</h2>
-        <p class="subtitle">Where non-blocked queries get forwarded, encrypted (DNS-over-TLS).</p>
-        <form method="post" action="/dns/upstream">
-            <select name="upstream" data-autosave style="width:100%; padding:10px 12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg); color:var(--color-text);">
-                <option value="cloudflare" {% if settings.upstream == "cloudflare" %}selected{% endif %}>Cloudflare (1.1.1.1)</option>
-                <option value="quad9" {% if settings.upstream == "quad9" %}selected{% endif %}>Quad9 (9.9.9.9)</option>
-            </select>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2>Blocklists</h2>
-        {% for row in blocklists %}
-        <form method="post" action="/dns/blocklists/{{ row.list.id }}/toggle" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-            <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="enabled" value="on" {% if row.list.enabled %}checked{% endif %} data-autosave>
-                {{ row.list.name }}
-            </label>
-        </form>
-        <p class="{% if row.failing %}error{% else %}subtitle{% endif %}">{{ row.status }}</p>
-        {% endfor %}
-
-        <details style="margin-top:16px;">
-            <summary style="cursor:pointer;">Add a custom blocklist URL&hellip;</summary>
-            <form method="post" action="/dns/blocklists/new" style="margin-top:12px;">
-                <label for="bl_name">Name</label>
-                <input type="text" id="bl_name" name="name" placeholder="e.g. My custom list" required>
-                <label for="bl_url">URL (hosts-file format)</label>
-                <input type="text" id="bl_url" name="url" placeholder="https://..." required>
-                <button type="submit" class="button-small">Add</button>
+    {#- Every form returns to its own group (design 31 §5.1), so a save never lands at the top, with
+        or without JS. The switches and the picker save on change (autosave.js), with a <noscript>
+        Save. Remove is one tap: a domain can be added again (§5.6). -#}
+    <section id="lists" aria-labelledby="lists-title">
+        <h2 class="group-header" id="lists-title">Blocklists</h2>
+        <div class="group">
+            {% for row in blocklists %}
+            <form method="post" action="/dns/blocklists/{{ row.list.id }}/toggle#lists" class="cell" data-list="{{ row.list.id }}">
+                <label class="row">
+                    <span class="row-label">{{ row.list.name }}{% if !row.sub.is_empty() %}<span class="row-sub{% if row.failing %} text-alarm{% endif %}">{{ row.sub }}</span>{% endif %}</span>
+                    <input type="checkbox" role="switch" class="sw" name="enabled" value="on"{% if row.list.enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
             </form>
-        </details>
-    </div>
-
-    <div class="card">
-        <h2>Custom blocked domains</h2>
-        {% if blocked_domains.is_empty() %}
-        <p class="subtitle">None yet.</p>
-        {% else %}
-        {% for d in blocked_domains %}
-        <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
-            <span>{{ d.domain }}</span>
-            <form method="post" action="/dns/domains/{{ d.id }}/delete">
-                <button type="submit" class="button-small button-danger">Remove</button>
-            </form>
+            {% if let Some(detail) = row.detail %}
+            <details class="info cell" data-list-problem="{{ row.list.id }}">
+                <summary class="row"><span class="row-label row-label-quiet">What happened</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why {{ row.list.name }} has a problem" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel"><p>{{ detail }}</p></div>
+            </details>
+            {% endif %}
+            {% else %}
+            <p class="row row-note">No lists yet.</p>
+            {% endfor %}
+            <details class="disclosure cell" id="add-list"{% if refused == "lists" %} open{% endif %}>
+                <summary class="row row-button">Add a List…</summary>
+                <form method="post" action="/dns/blocklists/new#lists" class="form-group">
+                    <div class="field">
+                        <label class="field-label" for="bl_name">Name</label>
+                        <input type="text" id="bl_name" name="name" value="{{ typed_name }}" maxlength="100" placeholder="My list" required>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="bl_url">Address</label>
+                        <input type="url" id="bl_url" name="url" value="{{ typed_url }}" placeholder="https://…" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
+                        {% if refused == "lists" %}<p class="field-error" id="list-error">Give it a name and an address starting with https://. Nothing was added.</p>{% else %}<p class="field-hint">A list of domains, one per line, as in a hosts file.</p>{% endif %}
+                    </div>
+                    <button type="submit" class="button-wide">Add List</button>
+                </form>
+            </details>
         </div>
-        {% endfor %}
-        {% endif %}
-        <form method="post" action="/dns/domains/new" style="margin-top:12px;">
-            <input type="hidden" name="list_type" value="block">
-            <input type="text" name="domain" placeholder="e.g. example.com" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-            <button type="submit" class="button-small">Block domain</button>
-        </form>
-    </div>
+        <p class="group-footer">On here, a list is on for every phone; a phone's own page can turn it off.</p>
+    </section>
 
-    <div class="card">
-        <h2>Custom allowed domains</h2>
-        <p class="subtitle">Always let through, even if it's on an enabled blocklist.</p>
-        {% if allowed_domains.is_empty() %}
-        <p class="subtitle">None yet.</p>
-        {% else %}
-        {% for d in allowed_domains %}
-        <div class="checkbox-row" style="display:flex; align-items:center; justify-content:space-between;">
-            <span>{{ d.domain }}</span>
-            <form method="post" action="/dns/domains/{{ d.id }}/delete">
-                <button type="submit" class="button-small button-danger">Remove</button>
+    <section id="blocked" aria-labelledby="blocked-title">
+        <h2 class="group-header" id="blocked-title">Blocked Domains</h2>
+        <div class="group">
+            {% for d in blocked_domains %}
+            <div class="row" data-domain="{{ d.id }}">
+                <span class="row-label">{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete#blocked" class="row-end">
+                    <input type="hidden" name="list_type" value="block">
+                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/dns/domains/new#blocked" class="cell">
+                <input type="hidden" name="list_type" value="block">
+                <div class="row">
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "blocked" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to block on every phone"{% if refused == "blocked" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <button type="submit" class="row-action">Block</button>
+                </div>
             </form>
+            {% if refused == "blocked" %}<p class="flash flash-error" role="status" data-flash="blocked">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
         </div>
-        {% endfor %}
-        {% endif %}
-        <form method="post" action="/dns/domains/new" style="margin-top:12px;">
-            <input type="hidden" name="list_type" value="allow">
-            <input type="text" name="domain" placeholder="e.g. example.com" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
-            <button type="submit" class="button-small">Allow domain</button>
-        </form>
-    </div>
+        <p class="group-footer">Blocked on every phone, also when no list has it.</p>
+    </section>
+
+    <section id="allowed" aria-labelledby="allowed-title">
+        <h2 class="group-header" id="allowed-title">Allowed Domains</h2>
+        <div class="group">
+            {% for d in allowed_domains %}
+            <div class="row" data-domain="{{ d.id }}">
+                <span class="row-label">{{ d.domain }}</span>
+                <form method="post" action="/dns/domains/{{ d.id }}/delete#allowed" class="row-end">
+                    <input type="hidden" name="list_type" value="allow">
+                    <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
+                </form>
+            </div>
+            {% endfor %}
+            <form method="post" action="/dns/domains/new#allowed" class="cell">
+                <input type="hidden" name="list_type" value="allow">
+                <div class="row">
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "allowed" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to allow on every phone"{% if refused == "allowed" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <button type="submit" class="row-action">Allow</button>
+                </div>
+            </form>
+            {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+        </div>
+        <p class="group-footer">Let through even when a list blocks it.</p>
+    </section>
 
     {#- Design 31 step 5: a phone's own lists, domains and log are on its Web Filter page. -#}
     {% if !devices.is_empty() %}
-    <h2 class="group-header" id="phones-title">Each phone</h2>
-    <div class="group" aria-labelledby="phones-title">
-        {% for d in devices %}
-        <a class="row" href="/devices/{{ d.id }}/filter" data-phone="{{ d.id }}">
-            <span class="row-label">{{ d.name }}</span>
-            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </a>
-        {% endfor %}
-    </div>
-    <p class="group-footer">Lists off for one phone, its own domains and its log.</p>
+    <section id="phones" aria-labelledby="phones-title">
+        <h2 class="group-header" id="phones-title">Each Phone</h2>
+        <div class="group">
+            {% for d in devices %}
+            <a class="row" href="/devices/{{ d.id }}/filter" data-phone="{{ d.id }}">
+                <span class="row-label">{{ d.name }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endfor %}
+        </div>
+        <p class="group-footer">A list off for one phone, its own domains, and its log.</p>
+    </section>
     {% endif %}
+
+    <section id="server" aria-labelledby="server-title">
+        <h2 class="group-header" id="server-title">DNS Server</h2>
+        <form method="post" action="/dns/upstream#server" class="group">
+            <label class="row" for="upstream">
+                <span class="row-label">Look-ups go to</span>
+                <select id="upstream" name="upstream" class="pick" data-autosave>
+                    <option value="cloudflare"{% if settings.upstream == "cloudflare" %} selected{% endif %}>Cloudflare</option>
+                    <option value="quad9"{% if settings.upstream == "quad9" %} selected{% endif %}>Quad9</option>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">Where the phones look up sites that aren't blocked, encrypted.
+            <details class="info">
+                <summary aria-label="About the DNS server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Cloudflare is 1.1.1.1, Quad9 is 9.9.9.9, both over DNS-over-TLS. Each phone filters by itself, on any network; this is where it asks about everything it lets through.</p>
+                </div>
+            </details>
+        </div>
+    </section>
 </main>
 </body>
 </html>

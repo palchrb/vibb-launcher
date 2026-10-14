@@ -5,64 +5,106 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
+{% import "partials/group_flash.html" as group_flash %}
 <main class="container container-narrow">
-    <div class="page-header">
-        <h1>Account</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
+    <h1 class="page-title">Account &amp; Password</h1>
+
+    {% if let Some(warning) = live_warning %}
+    <div class="attention attention-alarm" id="live-warning">
+        <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <span class="attention-text">Wrong two-factor codes<span class="attention-sub">{{ warning }}</span></span>
     </div>
-
-    {% include "partials/login_warning.html" %}
-
-    {% if let Some(s) = success %}
-    <div class="success">{{ s }}</div>
     {% endif %}
-    {% if let Some(e) = error %}
-    <div class="error">{{ e }}</div>
-    {% endif %}
-
-    <div class="card">
-        <h2>Change password</h2>
-        <p class="subtitle">Signed in as <strong>{{ username }}</strong>.</p>
-        <form method="post" action="/account/password">
-            <label for="current_password">Current password</label>
-            <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
-
-            <label for="new_password">New password</label>
-            <input type="password" id="new_password" name="new_password" autocomplete="new-password" minlength="12" required>
-
-            <label for="confirm_password">Confirm new password</label>
-            <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="12" required>
-
-            <button type="submit">Change password</button>
+    {% if let Some(warning) = login_warning %}
+    <div class="attention attention-alarm" id="login-warning">
+        <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+        <span class="attention-text">Wrong codes before this sign-in<span class="attention-sub">{{ warning }}</span></span>
+        <form method="post" action="/account/dismiss-warning">
+            <input type="hidden" name="back" value="/account">
+            <button type="submit" class="attention-dismiss">Dismiss</button>
         </form>
     </div>
+    {% endif %}
 
-    <div class="card">
-        <h2>Two-factor login</h2>
-        {% if totp_enabled %}
-        <p class="subtitle">Two-factor login is turned on.</p>
-        <details>
-            <summary class="button-danger" style="display:inline-block; cursor:pointer; list-style:none;">Reset two-factor login&hellip;</summary>
-            <form method="post" action="/account/reset-2fa" style="margin-top:12px;">
-                <div class="error">If you've lost access to your authenticator app, resetting starts over with a brand-new QR code — you'll be sent straight to scan and verify it, and won't be able to use the rest of the site until you do. Every other browser and phone is signed out.</div>
-                <label for="reset_current_password">Current password</label>
-                <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required>
-                <button type="submit" class="button-danger">Reset two-factor login</button>
+    {#- Each form renders its answer in the POST's response at its own group (a password never goes
+        into a URL). -#}
+    <section id="password" aria-labelledby="password-title">
+        <h2 class="group-header" id="password-title">Password</h2>
+        <div class="group">
+            <div class="row" data-row="username">
+                <span class="row-label">Signed in as</span>
+                <span class="row-value">{{ username }}</span>
+            </div>
+            <form method="post" action="/account/password#password" class="cell form-group">
+                <div class="field">
+                    <label class="field-label" for="current_password">Current password</label>
+                    <input type="password" id="current_password" name="current_password" autocomplete="current-password" required{% if password_field == "current_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
+                    {% if password_field == "current_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
+                </div>
+                <div class="field">
+                    <label class="field-label" for="new_password">New password</label>
+                    <input type="password" id="new_password" name="new_password" autocomplete="new-password" minlength="12" required{% if password_field == "new_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
+                    {% if password_field == "new_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% else %}<p class="field-hint">At least 12 characters.</p>{% endif %}
+                </div>
+                <div class="field">
+                    <label class="field-label" for="confirm_password">New password again</label>
+                    <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="12" required{% if password_field == "confirm_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
+                    {% if password_field == "confirm_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
+                </div>
+                <button type="submit" class="button-wide">Change Password</button>
             </form>
-        </details>
-        {% else %}
-        <p class="subtitle">Two-factor login isn't set up yet.</p>
-        {% endif %}
-        <p class="subtitle">Locked out of the authenticator and signed out? On the server: <code>kid_phone_server reset-2fa {{ username }}</code> - it also replaces the password with a new one in <code>data/initial-admin-password</code> (DEPLOY.md, "Signing in and recovery").</p>
-    </div>
+            {% if password_field.is_empty() %}{% call group_flash::show(flash, "password") %}{% endcall %}{% endif %}
+        </div>
+        <p class="group-footer">A new password signs out every other browser and phone.</p>
+    </section>
 
-    <div class="card" id="sessions">
-        <h2>Sessions</h2>
-        <p class="subtitle">Changing the password or resetting two-factor login signs out every other browser and phone. To sign out everywhere, this one included (a lost phone with the admin open):</p>
-        <form method="post" action="/account/sign-out-everywhere">
-            <button type="submit" class="button-secondary">Sign out everywhere</button>
-        </form>
-    </div>
+    <section id="two-factor" aria-labelledby="two-factor-title">
+        <h2 class="group-header" id="two-factor-title">Two-Factor Login</h2>
+        <div class="group">
+            <div class="row" data-row="two-factor">
+                <span class="row-label">Two-factor login</span>
+                <span class="row-value">{% if totp_enabled %}On{% else %}Not set up{% endif %}</span>
+            </div>
+            {% if totp_enabled %}
+            <details class="confirm cell" id="reset-2fa"{% if reset_error.is_some() %} open{% endif %}>
+                <summary class="row">Reset Two-Factor Login…</summary>
+                <form method="post" action="/account/reset-2fa#two-factor" class="confirm-body">
+                    <p>For a lost authenticator app: you scan a new QR code next, and every other browser and phone is signed out.</p>
+                    <label class="field-label" for="reset_current_password">Current password</label>
+                    <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
+                    {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}
+                    <button type="submit" class="button-destructive">Reset Two-Factor Login</button>
+                </form>
+            </details>
+            {% endif %}
+        </div>
+        <div class="group-footer">Locked out and signed out? It can be reset on the server.
+            <details class="info">
+                <summary aria-label="How to reset two-factor login on the server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>On the server, run:</p>
+                    <pre><code>kid_phone_server reset-2fa {{ username }}</code></pre>
+                    <p>It also replaces the password with a new one in data/initial-admin-password. DEPLOY.md, "Signing in and recovery", has the steps.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <section id="sessions" aria-labelledby="sessions-title">
+        <h2 class="group-header" id="sessions-title">Sessions</h2>
+        <div class="group">
+            <details class="confirm cell" id="sign-out-everywhere">
+                <summary class="row">Sign Out Everywhere…</summary>
+                <form method="post" action="/account/sign-out-everywhere" class="confirm-body">
+                    <p>Sign out every browser and phone that has Vibb Phone open, this one too?</p>
+                    <button type="submit" class="button-destructive">Sign Out Everywhere</button>
+                </form>
+            </details>
+        </div>
+        <p class="group-footer">For a lost phone or computer that is still signed in.</p>
+    </section>
 </main>
 </body>
 </html>

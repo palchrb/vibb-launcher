@@ -33,6 +33,7 @@ mod music_sweep;
 mod parent_pin;
 mod play;
 mod provisioning;
+pub(crate) mod settings_pages;
 mod shell;
 mod sound_mode;
 mod step10;
@@ -159,6 +160,7 @@ impl TestApp {
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
+            data_dir: std::sync::Arc::new(dir.path().join("data")),
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),

@@ -34,7 +34,8 @@ pub struct WallpaperView {
 #[template(path = "wallpapers.html")]
 struct WallpapersTemplate {
     title: String,
-    error: Option<String>,
+    /// Why the last upload was refused: under the photo field, the Add a Photo group open.
+    upload_error: Option<String>,
     wallpapers: Vec<WallpaperView>,
 }
 
@@ -69,7 +70,7 @@ async fn page(state: &AppState, status: StatusCode, error: Option<String>) -> Re
         .collect();
     let template = WallpapersTemplate {
         title: "Wallpapers".to_string(),
-        error,
+        upload_error: error,
         wallpapers,
     };
     (status, Html(template.render().unwrap())).into_response()
@@ -169,7 +170,12 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
         .await
     };
     match result {
-        Ok(_) => Redirect::to("/wallpapers").into_response(),
+        // The new photo is the last in the list: land on it (design 31 §5.1).
+        Ok(done) => Redirect::to(&format!(
+            "/wallpapers#wallpaper-{}",
+            done.last_insert_rowid()
+        ))
+        .into_response(),
         Err(err) => {
             WALLPAPERS.prune(&state.db, &state.wallpaper_dir).await;
             db_error(err)
@@ -211,7 +217,8 @@ pub async fn set_lock_screen(
     match result {
         Ok(devices) => {
             nudge(&state, &devices);
-            Redirect::to("/wallpapers").into_response()
+            // Back to the photo's own row: a long list must not land at the top without JS.
+            Redirect::to(&format!("/wallpapers#wallpaper-{wallpaper_id}")).into_response()
         }
         Err(err) => db_error(err),
     }
@@ -222,18 +229,16 @@ pub async fn set_lock_screen(
 pub async fn delete(State(state): State<AppState>, Path(wallpaper_id): Path<i64>) -> Response {
     match wallpaper(&state, wallpaper_id).await {
         Ok(Some(w)) if w.builtin_key.is_none() => {}
+        // The page offers no Delete for these; only a hand-made post gets here.
         Ok(Some(_)) => {
-            return page(
-                &state,
+            return (
                 StatusCode::BAD_REQUEST,
-                Some(
-                    "Built-in wallpapers can't be deleted - untick them on a phone's page instead."
-                        .into(),
-                ),
+                "Built-in wallpapers can't be deleted - untick them on a phone's Home Screen.",
             )
-            .await;
+                .into_response();
         }
-        Ok(None) => return (StatusCode::NOT_FOUND, "No such wallpaper").into_response(),
+        // Already gone (a second tab): nothing to do, back to the list.
+        Ok(None) => return Redirect::to("/wallpapers#all").into_response(),
         Err(err) => return db_error(err),
     }
     let result = async {
@@ -250,7 +255,7 @@ pub async fn delete(State(state): State<AppState>, Path(wallpaper_id): Path<i64>
         Ok(devices) => {
             WALLPAPERS.prune(&state.db, &state.wallpaper_dir).await;
             nudge(&state, &devices);
-            Redirect::to("/wallpapers").into_response()
+            Redirect::to("/wallpapers#all").into_response()
         }
         Err(err) => db_error(err),
     }
