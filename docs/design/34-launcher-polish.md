@@ -880,3 +880,52 @@ P8 is built: server migration 0076 and the launcher's names, in one commit.
   - `TranslationsTest` covers the strings.
 
 **Check on the emulator** (not done here): kid Settings' wallpaper picker in nb and en with the three new names, Home, and the lock over Fjord, Evening sky and Dusk.
+
+## Step 10 implementation status (2026-10-14)
+
+P9 built (launcher only, no server or contract change), on branch `design-34-s10`:
+- **The control** (`activity_kid_settings.xml`): the sound row's `RadioGroup` is the track - `bg_kid_segment_track`,
+  white 8 % (`#14FFFFFF`, the card's alpha; the mockup's `.07` rounded to it), radius 14 dp, 3 dp inside. The two
+  `RadioButton`s are equal halves (`0dp` + weight 1, no 8 dp gap any more, `match_parent` height so a wrapped label
+  makes both taller), >= 48 dp, 6/8 dp padding, Nunito 800 14 sp as the mockup, radius 11 dp (concentric with the
+  track). No `maxLines`/`ellipsize`: the labels wrap and the control grows.
+- **States** (`KidSettingsActivity.styleSegment`): chosen = `kid_accent` with `kid_ground` text, as P9 and mockup 06
+  say (decision: the brief's "quiet, not saturated" is read as this - the one muted accent, not a new colour);
+  the other = no fill, the wallpaper's ink (full, not the mockup's dim ink, so it reaches 4.5:1 on every built-in). The
+  old outlined pill next to a filled one is gone. A ripple in the ink at 12 %, clipped to the half, is the press.
+  Read-only (DND, unknown) keeps the 50 % alpha on both halves.
+- **Behaviour unchanged**: `renderSound` reads the checked half and the enabled state from the pure `soundSegments(state)`
+  (`ui/kidsettings/SoundSegments.kt`), which only restates `soundRowState`; the clicks still call
+  `QuickControls.setSound`, and `soundTapMode` decides as in design 18.
+- **TalkBack** (QA L7): still two `RadioButton`s in a horizontal `RadioGroup`, so the framework gives the radio role,
+  the selected state and the group (single selection, two items) - TalkBack reads "Lyd, valgt" as the design asks.
+  The group's content description names it; the visible label "Lyd på telefonen" is now
+  `importantForAccessibility="no"` so it isn't read twice.
+- **Tests** (`SoundSegmentsTest`, 9): the layout (equal halves, the `SOUND_SEGMENTS` order, the minimums and paddings,
+  no line limit), the track drawable, the width/lines model at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en
+  (`segmentLayout`, an upper bound like `PinLockLayoutTest`'s: at 2.0 on the Jelly Star "Lydløs (vibrerer)" wraps and
+  the control grows past 48 dp; at 411 dp and 1.0 both fit one line at 48 dp), the selection mapping for Normal,
+  Vibrate, Silent and DND with design 18's taps, the TalkBack structure (no delegate or role override on the halves),
+  and contrast: the chosen half 9.87:1; the other half's ink on track + card + scrim >= 4.5:1 over every built-in
+  wallpaper and two light grounds (lowest 6.2:1, Fjord).
+- **Found, not changed in step 10** (fixed in the QA fix round, M1 below): `WallpaperInk` brings a ground to 4.5:1 for the bare
+  wallpaper, so with white ink on a mid-tone ground at the edge of that (a photo, or a bright colour such as `#1C7ED6`)
+  every label on Kid Settings' white 8 % card is already under 4.5:1 (~3.9:1), and the segment's track takes it to
+  ~3.5:1. Fixing it means judging the card's composite in the ink rule (all kid screens), not this step.
+- **Check on the emulator** (not done here - no emulator): Kid Settings at 320/360/411 dp (`wm size`/`wm density`) and
+  font scale 1.0/1.3/2.0, nb and en, against mockup 06; TalkBack on both halves ("Lyd, valgt", "Lydløs (vibrerer), ikke
+  valgt", the group) and under DND (read-only); a tap switching Normal/Vibrate with the volume keys still working.
+
+### Step 10 code QA fix round (`qa-34-s10-code.md`, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| M1 white ink under 4.5:1 on the card | Its own commit. `WallpaperInk.scrimFor` judges white ink on the ground under the scrim at the 8-bit alpha drawn (`drawnScrimAlpha`, as `lockScrim`) plus the card and the track (`underKidSurfaces`: two white 8 % layers, each rounded to 8 bits - without the rounding the edge grey came out 4.48:1); dark ink on the bare ground, also at the drawn alpha. Built-ins and light grounds keep 0; `#1C7ED6` goes 0.05 -> ~0.24, the edge grey 0 -> ~0.21 (on Home and the phone book too - one shared scrim). The card's manage links take the ink (`renderInk`), not peach. `WallpaperInkTest` +5: mid-tone colours, edge greys and a photo on bare/card/track per channel at 8 bits, the built-ins, the surfaces' alpha against both drawables, no truncation gap; `SoundSegmentsTest`'s contrast case takes mid-tone grounds and pins the links. |
+| L1 light ground: the chosen half only ~2:1 | `segmentColours`: on dark ink the chosen half gets a 1 dp outline in the ink (`SEGMENT_STROKE_DP`; 17:1 on white, >= 3:1 to the track and the peach). Tested on white, `#FFF3B0`, `#F4F1EA`; none on the night. |
+| L2 chosen look and role unpinned | The pure `segmentColours(ink, accent, night)` holds every state's colour; the test pins it, the `state_checked` spec, and that the checked items come before the default in both the text colours and the fills (no `state_selected`/`state_activated`). The TalkBack scan covers the whole activity (`accessibilityDelegate`, `AccessibilityDelegate`, `ButtonRole`, `accessibilityClassName`, `AccessibilityNodeInfo`). Mutations 3 (`button.accessibilityDelegate = ButtonRole` in `styleSegment`) and 4 (`state_checked` -> `state_selected`) re-run: both caught now. |
+| L3 test-only model in production | `SegmentLayout`, `segmentLayout`, `linesFor` and the six mirror constants moved into `SoundSegmentsTest` (checked against the XML there). `SoundSegments.kt` keeps `SEGMENT_RADIUS_DP`, the stroke/ring widths, `SOUND_SEGMENTS` and `segmentColours`. |
+| N1 "(vibrerer)" cut between letters at 2.0 | `hyphenationFrequency="normal"` on both halves; the layout test checks it. |
+| N2 focus nearly invisible | A `state_focused` 2 dp ring as the half's foreground: night on the peach half, peach on the other (the dark ink on a light ground); >= 3:1 on both, tested with the state order. |
+| N3 `soundSegments` restated `soundRowState` | Dropped with `SoundSegment`; `renderSound` reads `state.selected`/`state.enabled` as before step 10. The test keeps the halves' order and design 18's taps. |
+
+Tests: `SoundSegmentsTest` 12 (was 9), `WallpaperInkTest` +5.

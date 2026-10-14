@@ -115,7 +115,7 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 - **Wallpapers** (`ui/wallpaper/`, pure `Wallpapers.kt`/`WallpaperInk.kt`/`WallpaperApplyPlan.kt` with tests): `launcher_ui.wallpapers` (DTO `PolicyWallpaper`; missing = navy) is the parent's allowed list; the kid's pick is CE prefs `wallpaper_state.kid_wallpaper_id`; `effectiveWallpaper` = pick if allowed and cached, else the first usable, else navy. `WallpaperStore` (one background thread, everything caught) holds the shown wallpaper, its ink and **one** decoded photo (RGB_565, sampled, ≤ 1080×2400 checked first); `WallpaperStore.sync` runs after every accepted sync (after `ContactPhotos.sync`): downloads allowed images (`GET api/devices/wallpapers/{hash}`, ≤ 3 MB, hash checked, temp + rename, `filesDir/wallpapers`), deletes every image no longer allowed, then applies at once. Nothing wallpaper-related in DE storage.
 - **System wallpaper** (`WallpaperApplier`, `SET_WALLPAPER` permission): pure `wallpaperApplyPlan` - only while managed, as device owner, when `isWallpaperSupported`/`isSetWallpaperAllowed`, only when the wanted key (home fill, lock fill, size) isn't in place, at most one attempt per key per day (`setBitmap` returning 0 is a failure, logged, no fight), never on the main thread, never on resume - only after a sync or a pick. **Photos go on the home screen only**: the lock screen gets navy unless the parent ticked "also on the lock screen" for that photo (`lockScreenFill`). Android keeps its own copy of a set wallpaper in system storage. Unmanaged: `resetIfOurs` puts navy back before `AppEnforcer` lifts the restriction.
 - **`HardeningRestriction.SET_WALLPAPER`** (`DISALLOW_SET_WALLPAPER`): launcher-only, no server switch (`value()` null, default on) - set while managed, cleared when unmanaged, not lifted by override/pause; the device owner is exempt (AOSP `isSetWallpaperAllowed`).
-- **Drawing**: Home, the phone book and kid Settings show the system wallpaper behind their window (`UIObject.showsSystemWallpaper`); when it is ours and current (`systemShowsOurs`) the root is transparent, otherwise `WallpaperGround` draws the fill (colour, 160° gradient, the shared photo) - never two of our full-screen bitmaps. `WallpaperInk`: white or #1B1B1F (the worst stop per ink; photos: mean ± sd of a 32×57 render in linear light, once per hash), a black or white scrim up to 0.45 (photos ≥ 0.15) to reach 4.5:1, a label shadow when the cap can't; the ink also sets the status/navigation-bar icons.
+- **Drawing**: Home, the phone book and kid Settings show the system wallpaper behind their window (`UIObject.showsSystemWallpaper`); when it is ours and current (`systemShowsOurs`) the root is transparent, otherwise `WallpaperGround` draws the fill (colour, 160° gradient, the shared photo) - never two of our full-screen bitmaps. `WallpaperInk`: white or #1B1B1F (the worst stop per ink; photos: mean ± sd of a 32×57 render in linear light, once per hash), a black or white scrim up to 0.45 (photos ≥ 0.15) to reach 4.5:1 (white ink judged on Kid Settings' card + track since qa-34-s10-code M1), a label shadow when the cap can't; the ink also sets the status/navigation-bar icons.
 - **Fix round (qa-08-code.md)**: `AppEnforcer.clearHardening` lifts the off restrictions in `hardeningClearSteps` order - `WallpaperApplier.resetIfOurs` (navy, else `WallpaperManager.clear`) right before `DISALLOW_SET_WALLPAPER`, which stays set until the reset worked; each step caught. `setBoth` sets the lock wallpaper before the home one; a half-applied key is kept as `partial_key`, a failed reset keeps the record (retried every pass). A photo of ours that is no longer allowed or cached (`revokedImageShows`) is replaced on every sync, not once a day, with a reset as fallback. Picker thumbnails are tile-sized squares, decoded once (pending/failed sets, 8 MB LRU), and only redraw the picker; `State.systemShowsOurs` is worked out on the store thread (no binder call per render). Home icons are rendered from `constantState.newDrawable().mutate()` (the drawer's cached drawable is never touched off-thread). `KidScreensEscapeTest` also covers `HomeActivity`, `ui/home`, `PhoneBookActivity`/`Adapter` and plain-string actions.
 - **Not device-tested**: the screenshot checklist and device checks in `08-ui-polish.md` ("Implementation status") - in particular `setBitmap` under `DISALLOW_SET_WALLPAPER` on the Jelly Star, the lock screen showing navy for a photo, recents matching Home, the Quick Controls "no switches" root cause on the emulator, frame times and heap.
 
@@ -536,6 +536,43 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   white ink with no scrim (>= 9.5:1 on the lightest stop), and the lock's inks reach 4.5:1 on every built-in's stops
   (the red emergency link needs a light scrim on all three softened lighter stops - 4.22-4.43:1 without it - which `lockScrimForColours` gives). The old
   bright sky/sunset stay in the test as generic bright grounds.
+
+## Kid Settings' sound choice as one segmented control (design 34 step 10, P9, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Visual only**: design 18's two choices, what a tap sets (`soundTapMode`), the read-only DND state and its notes are
+  unchanged; so are the gestures and Kid Settings' other rows. Mockup `06-kid-settings-after`.
+- **The control** (`activity_kid_settings.xml`, pure `ui/kidsettings/SoundSegments.kt`, `SoundSegmentsTest`): the
+  `RadioGroup` is the track (`bg_kid_segment_track`, white 8 % `#14FFFFFF`, radius 14 dp, 3 dp padding); its two
+  `RadioButton`s are equal halves (`0dp` + weight 1, no gap, `match_parent` height so both take the taller one), each
+  >= 48 dp, Nunito 800 14 sp, radius 11 dp (`SEGMENT_RADIUS_DP`), `hyphenationFrequency="normal"`. No line limit or
+  ellipsis: a label wraps and the control grows with the font scale. `KidSettingsActivity.styleSegment` draws the pure
+  `segmentColours(ink, accent, night)`: the chosen half `kid_accent` with `kid_ground` text (9.9:1) - outlined 1 dp in
+  the ink on a light ground (dark ink), where the peach is only ~2:1 to the track (qa-34-s10-code L1) -, the other no
+  fill with the wallpaper's ink, a ripple in the ink at 12 % clipped to the half, and a 2 dp focus ring as the
+  foreground (night on the chosen half, peach - the ink on a light ground - on the other; N2). The `state_checked`
+  items come first. `renderSound` reads `state.selected`/`state.enabled` directly (no wrapper); read-only halves keep
+  their 50 % alpha.
+- **TalkBack** (QA L7): still two `RadioButton`s in a horizontal `RadioGroup` - the role, the checked state ("valgt")
+  and the group of two come from the framework; nothing anywhere in the activity sets a delegate, role or class name
+  (`SoundSegmentsTest` scans it whole, qa-34-s10-code L2). The group carries the name ("Lyd på telefonen"); the
+  visible label is `importantForAccessibility="no"`, so it is read once.
+- **`SoundSegmentsTest`** (12): the layout against the test's own mirror of its values and width/lines model (0.6 em a
+  character, linear scale, 1.4 x line - an upper bound; L3) at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en,
+  the track, design 18's taps, the TalkBack structure, `segmentColours` and the state order (mutations of the role and
+  of `state_checked` are caught), the light-ground outline (>= 3:1), the focus ring, the manage links in the ink, and
+  contrast: the chosen half 9.9:1; the other's ink on track + card + scrim over every built-in (>= 6.2:1) and over
+  mid-tone grounds.
+- **White ink is judged on the card and the track** (qa-34-s10-code M1, `WallpaperInk`): `scrimFor` judges white ink
+  on the ground under the scrim (at the 8-bit alpha drawn, `drawnScrimAlpha`, as `lockScrim`) plus the two white 8 %
+  layers Kid Settings puts under it (`underKidSurfaces`: `KID_SURFACE_ALPHA`, `KID_SURFACE_LAYERS` = card + track, each
+  rounded to 8 bits); dark ink only gains from white layers and is judged on the bare ground (also at the drawn alpha).
+  The one shared scrim gets a little stronger on mid-tone grounds only (`#1C7ED6` 0.05 -> ~0.24, the edge grey 0 ->
+  ~0.21; built-ins and light grounds keep 0, the 0.45 cap is never reached before dark ink takes over) - on Home and
+  the phone book too. The card's "Manage networks/devices" links are drawn in the ink (`renderInk`), no longer peach
+  (~2:1 on the card over a light ground). `WallpaperInkTest` checks mid-tone colours, the edge greys and a photo on
+  bare, card and card + track, per channel at 8 bits.
+- Not emulator-checked yet: Kid Settings at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en, TalkBack on the
+  halves (read-only under DND too), the press.
 
 ## Building without tsnet.aar
 

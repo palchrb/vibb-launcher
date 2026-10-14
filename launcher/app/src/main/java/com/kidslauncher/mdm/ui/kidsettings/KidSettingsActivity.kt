@@ -10,6 +10,8 @@ import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
@@ -255,6 +257,8 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         binding.kidSettingsSoundRow.visibility = if (state != null) View.VISIBLE else View.GONE
         if (state == null) return false
+        // The halves (design 34 P9): the phone's mode is the checked one - none while fully silent
+        // or unknown -, both read-only together while Do Not Disturb is on (design 18).
         when (state.selected) {
             SoundChoice.SOUND -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_on)
             SoundChoice.SILENT_VIBRATE -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_vibrate)
@@ -286,6 +290,9 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote,
+            // The card's links in the ink too: peach on the card over a light or mid-tone ground
+            // was ~2:1 (qa-34-s10-code M1). Bold, as before.
+            binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,
         )) {
             KidInk.label(view, ink)
         }
@@ -296,24 +303,48 @@ class KidSettingsActivity : UIObjectActivity() {
     }
 
     /**
-     * One choice of the sound row: the chosen one filled with the accent and night text (9.9:1),
-     * the other a thin ring in the ink with ink text - like the wallpaper tiles.
+     * One half of the sound row's segmented control (design 34 P9, the pure `segmentColours`): the
+     * chosen one the accent with night text (9.9:1), outlined in the ink on a light ground; the
+     * other no fill with the wallpaper's ink on the white 8 % track (the group's background in the
+     * layout). A quiet ripple in the ink, clipped to the half, is the press; a focused half gets a
+     * 2 dp ring (night on the peach, else peach or the dark ink). The `state_checked` items come
+     * first: a StateListDrawable takes the first match. The radio role stays the RadioButton's.
      */
     private fun styleSegment(button: RadioButton, ink: InkChoice) {
         KidInk.label(button, ink)
+        val colours = segmentColours(ink, getColor(R.color.kid_accent), getColor(R.color.kid_ground))
         val checked = intArrayOf(android.R.attr.state_checked)
+        val focusedChecked = intArrayOf(android.R.attr.state_focused, android.R.attr.state_checked)
+        val focused = intArrayOf(android.R.attr.state_focused)
         button.setTextColor(
-            ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(getColor(R.color.kid_ground), ink.ink)),
+            ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(colours.checkedText, colours.uncheckedText)),
         )
-        val radius = KidAvatars.dp(this, 12f).toFloat()
-        button.background = StateListDrawable().apply {
+        val radius = KidAvatars.dp(this, SEGMENT_RADIUS_DP).toFloat()
+        val fills = StateListDrawable().apply {
             addState(checked, GradientDrawable().apply {
                 cornerRadius = radius
-                setColor(getColor(R.color.kid_accent))
+                setColor(colours.checkedFill)
+                colours.checkedStroke?.let { setStroke(KidAvatars.dp(this@KidSettingsActivity, SEGMENT_STROKE_DP), it) }
             })
             addState(intArrayOf(), GradientDrawable().apply {
                 cornerRadius = radius
-                setStroke(KidAvatars.dp(this@KidSettingsActivity, 1f), (0x66 shl 24) or (ink.ink and 0xFFFFFF))
+                setColor(Color.TRANSPARENT)
+            })
+        }
+        val mask = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.WHITE)
+        }
+        button.background = RippleDrawable(ColorStateList.valueOf(colours.press), fills, mask)
+        val ring = KidAvatars.dp(this, SEGMENT_FOCUS_RING_DP)
+        button.foreground = StateListDrawable().apply {
+            addState(focusedChecked, GradientDrawable().apply {
+                cornerRadius = radius
+                setStroke(ring, colours.focusRingChecked)
+            })
+            addState(focused, GradientDrawable().apply {
+                cornerRadius = radius
+                setStroke(ring, colours.focusRingUnchecked)
             })
         }
     }
