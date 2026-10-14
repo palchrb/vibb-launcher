@@ -49,7 +49,13 @@ pub struct HubValues {
 
 pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
     let zone = Zone::load(&state.db).await;
-    let values = hub_values(&state.db, Path::new(BACKUP_DIR), &zone, Utc::now()).await;
+    let values = hub_values(
+        &state.db,
+        &state.data_dir.join(BACKUP_DIR),
+        &zone,
+        Utc::now(),
+    )
+    .await;
     Html(
         SettingsHubTemplate {
             title: "Settings".to_string(),

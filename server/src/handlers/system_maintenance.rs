@@ -28,8 +28,8 @@ use crate::handlers::settings::Flash;
 use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
-const FLAG_FILE: &str = "data/update_requested";
-const SCHEDULE_FILE: &str = "data/schedule.conf";
+/// In `AppState::data_dir`.
+const SCHEDULE_FILE: &str = "schedule.conf";
 const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runs a command with a timeout - a stuck subprocess (e.g. `apt` blocked
@@ -124,8 +124,8 @@ impl ScheduleConfig {
         }
     }
 
-    async fn load() -> Self {
-        let Ok(contents) = tokio::fs::read_to_string(SCHEDULE_FILE).await else {
+    async fn load(data: &std::path::Path) -> Self {
+        let Ok(contents) = tokio::fs::read_to_string(data.join(SCHEDULE_FILE)).await else {
             return Self::defaults();
         };
         let mut config = Self::defaults();
@@ -187,7 +187,7 @@ pub(crate) fn not_managed() -> OsUpdateData {
     }
 }
 
-pub(crate) async fn gather() -> OsUpdateData {
+pub(crate) async fn gather(data: &std::path::Path) -> OsUpdateData {
     let busy = watcher_busy().await;
 
     // Skip calling apt/tailscale entirely while the watcher is busy - apt
@@ -222,98 +222,40 @@ pub(crate) async fn gather() -> OsUpdateData {
         tailscale_current,
         tailscale_upstream,
         tailscale_update_available,
-        schedule: ScheduleConfig::load().await,
+        schedule: ScheduleConfig::load(data).await,
     }
-}
-
-/// Asks the root helper for `action`; the page renders with `started` in its group, or with why
-/// nothing started when the request file can't be written.
-async fn request_action(
-    state: &AppState,
-    admin: &crate::models::AdminUser,
-    action: &str,
-    event_type: &str,
-    started: Flash,
-) -> Response {
-    let flash = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
-        security::record_security_event(&state.db, event_type, Some(&admin.username), None, None)
-            .await;
-        started
-    } else {
-        updates::not_requested(started.at)
-    };
-    updates::render_page(state, Some(flash))
-        .await
-        .into_response()
 }
 
 pub async fn trigger_os_check(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    request_action(
-        &state,
-        &admin,
-        "os_check",
-        "os_check_triggered",
-        Flash::done(
-            "os",
-            "Checking for updates. Open this page again in a few seconds.",
-        ),
-    )
-    .await
+    let done = updates::Done::OsCheck;
+    updates::request_action(&state, &admin, "os_check", "os_check_triggered", done).await
 }
 
 pub async fn trigger_os_upgrade(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    request_action(
-        &state,
-        &admin,
-        "os_upgrade",
-        "os_upgrade_triggered",
-        Flash::done(
-            "os",
-            "Installing updates. This can take a long time on a Pi's first upgrade; open this \
-             page again later.",
-        ),
-    )
-    .await
+    let done = updates::Done::OsUpgrade;
+    updates::request_action(&state, &admin, "os_upgrade", "os_upgrade_triggered", done).await
 }
 
 pub async fn trigger_tailscale_update(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    request_action(
-        &state,
-        &admin,
-        "tailscale_update",
-        "tailscale_update_triggered",
-        Flash::done(
-            "tailscale",
-            "Updating Tailscale. Open this page again in a few seconds.",
-        ),
-    )
-    .await
+    let (action, event) = ("tailscale_update", "tailscale_update_triggered");
+    updates::request_action(&state, &admin, action, event, updates::Done::Tailscale).await
 }
 
 pub async fn trigger_reboot(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    request_action(
-        &state,
-        &admin,
-        "reboot",
-        "reboot_triggered",
-        Flash::done(
-            "os",
-            "Restarting the Pi. Vibb Phone is back in about a minute.",
-        ),
-    )
-    .await
+    let done = updates::Done::Reboot;
+    updates::request_action(&state, &admin, "reboot", "reboot_triggered", done).await
 }
 
 #[derive(Deserialize)]
@@ -365,23 +307,23 @@ pub async fn save_schedule(
         auto_reboot: form.auto_reboot.is_some(),
     };
 
-    let flash = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
-        .await
-        .is_ok()
+    if tokio::fs::write(
+        state.data_dir.join(SCHEDULE_FILE),
+        config.to_file_contents(),
+    )
+    .await
+    .is_err()
     {
-        security::record_security_event(
-            &state.db,
-            "update_schedule_changed",
-            Some(&admin.username),
-            None,
-            None,
-        )
-        .await;
-        Flash::done("os-schedule", "Schedule saved.")
-    } else {
-        refuse("Couldn't save the schedule.")
-    };
-    updates::render_page(&state, Some(flash))
-        .await
-        .into_response()
+        let page = updates::render_page(&state, Some(refuse("Couldn't save the schedule."))).await;
+        return (http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
+    }
+    security::record_security_event(
+        &state.db,
+        "update_schedule_changed",
+        Some(&admin.username),
+        None,
+        None,
+    )
+    .await;
+    updates::Done::OsSchedule.redirect()
 }

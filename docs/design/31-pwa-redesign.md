@@ -2727,9 +2727,10 @@ only, no migration, no new crate, no API change (nothing a phone reads changed),
   the same 13 warnings, none in the step's files.
 
 Choices made while building:
-1. **Account, Backups and Software Updates still render in the POST's answer** (not a redirect): a password or a
-   typed confirm never goes into a URL, and after a restore, an update or a restart the server goes away, so a
-   redirect's GET could land on an error page. The answer lands on the posting group by the action's fragment.
+1. ~~Account, Backups and Software Updates still render in the POST's answer~~ - reversed in the fix round (M1):
+   every success redirects (a reload must never repeat a restore, update, restart or backup; the 303's GET comes back
+   before the server goes away), and only refusals render in the POST's answer, so a password or typed confirm still
+   never goes into a URL.
 2. **The schedule summaries are gone**: the form shows every value; the day fields say which frequency uses them
    ("Day (every week)", "Day of the month (every month, 1-28)"). Times are the server's clock ("by the Pi's clock").
 3. **A schedule's result shows at the top of its form**, the rest of a group's results under its rows: the action's
@@ -2748,3 +2749,18 @@ Deferred, with the reason:
   in tests); the page itself is tested through `updates::page`, and the schedule's HH:MM refusals stay pinned by
   `deploy_scripts`. Making a backup, a restore's or a format's request and a schedule save write to `data/` in the
   working directory, so those success paths aren't posted in tests either (their refusals are).
+
+**Fix round after the code QA** (`qa-31-s14-code.md`: 0 High, 2 Medium, 4 Low, 3 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | Post/redirect/get for every success: Account's password change → `/account?changed=password#password`; Backups → `/backups?done=backup\|deleted\|gone\|schedule\|upload\|restore\|format#<group>` (`backups::Done`); Software Updates → `/updates?done=update\|restart\|os_check\|os_upgrade\|tailscale\|reboot\|app_schedule\|os_schedule#<group>` (`updates::Done`; `updates::request_action` replaces the two modules' copies). The GET (a plain render, so it works right after a restart) shows the line in its group; an unknown code shows nothing. Only refusals (nothing happened) render in the POST's answer, so passwords and typed confirms still stay out of URLs. "Open this page again" is gone: the lines say "Reload this page in a minute" - a reload is a GET now. Choice 1 reversed. Tests: `backups_answer_in_their_groups`, `updates_redirect_after_each_request`, `account_answers_in_its_groups`, `admin_auth` (both password changes). |
+| M2 | Labels for all 20 `music_*` events ("Music added", "Music moved", "Unused music files deleted", "Music on a phone changed", "Sonos rooms changed", …). `admin::tests::every_written_event_has_a_label` reads `src/` (not tests): the `snake_case` literals around every writer (`record_security_event`, `log_event`, `log_change`, the audit's `.record`, `request_action`, the raw `INSERT INTO security_events`) and the `let (…event…)` tuples that pick one must each have a label (`label_of`), minus a listed set of non-events (form fields, notice codes, root actions); it checks that it finds `login_failed`, `music_phone_settings`, `backup_restored` and `kid_pin_cleared`. The fallback's example is the made-up `retired_event`. |
+| L1 | `AppState::data_dir` (`data/`, a temp dir in tests) holds the backups, the three schedule files, the last-run markers, the live mirror and the root helper's request file; `ForkConfig::github_api` (a closed local port in tests) lets `/updates` and its POSTs render without the network. Pinned: Back Up Now, the restore's typed name (wrong: 400 with its confirm open and no request file; right: the request file says `restore_backup <name>`), Delete twice, the schedule save, each Updates request's file and redirect; Format's typed size through the pure `backups::format_target` and a render of the page with a backup and a USB drive (`check_forms` sees Restore, Delete and Format); Sign Out Everywhere's 500 by a `RAISE(ABORT)` trigger on `session_epoch` (`sign_out_everywhere_fails_visibly`: 500, this session and the other still work; without the trigger both end). Mutations 2, 4 and 10 re-run: all three fail a test now. |
+| L2 | The first-sign-in password change (`/auth/change-password`) writes the hash, `must_change_password = 0` and `session_epoch + 1` in one UPDATE with `RETURNING`; a failure is a 500 that changed nothing. `signed_out_elsewhere` is gone. |
+| L3 | A refused Phone Setup save that carried a key says under the key field "The new key wasn't saved. Paste it again." (`aria-invalid`), never echoing it; a ticked "Remove the stored key" stays ticked. Pinned in `phone_setup_refuses_under_the_field_and_flashes_a_save`. |
+| L4 | `check_forms` asserts each action's fragment is the element that holds the form (its section, its own id, a photo's row), not just any element. |
+| N1 | Unban redirects with the address only when a ban was lifted (else to `#banned` with no line), and the GET says "… is unbanned." only for an address not blocked now. |
+| N2 | The post-sign-in warning reads "13 wrong two-factor codes were entered before this sign-in (from …). Whoever entered them knew your password - change it now." |
+| N3 | A refused add on Web Filter keeps what was typed: `&typed=` (a domain), `&name=`/`&url=` (Add a List…), URL-encoded, at most 300 characters, escaped back into the field. |
+| Checks | `cargo test` 800 passed; `node --test server/jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. |

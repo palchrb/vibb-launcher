@@ -432,11 +432,12 @@ async fn the_settings_hub_makes_no_network_call() {
     }
     let uses: Vec<&str> = source
         .match_indices("state.")
-        .map(|(i, _)| &source[i..i + 8])
+        .map(|(i, _)| &source[i..i + 14])
         .collect();
     assert!(
-        uses.iter().all(|u| *u == "state.db"),
-        "the hub reads only state.db: {uses:?}"
+        uses.iter()
+            .all(|u| u.starts_with("state.db") || *u == "state.data_dir"),
+        "the hub reads only state.db and the backups in state.data_dir: {uses:?}"
     );
 
     let app = TestApp::new().await;

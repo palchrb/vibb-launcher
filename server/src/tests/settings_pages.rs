@@ -31,12 +31,47 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
         .collect()
 }
 
-/// Every action's fragment names an element of the page and every action has one (a form far
-/// down a long page must not land at the top without JS - §5.1.4), every auto-saving form has a
-/// `<noscript>` Save, and nothing asks with `confirm()`. Sign Out Everywhere (to the sign-in page)
-/// and Dismiss (the warning is at the top) are the two that leave without one.
+/// Whether the element with `id` holds the position `at` (from its start tag to its matching end
+/// tag, nested tags of the same name counted).
+fn encloses(html: &str, id: &str, at: usize) -> bool {
+    let Some(attr) = html.find(&format!("id=\"{id}\"")) else {
+        return false;
+    };
+    let open = html[..attr].rfind('<').unwrap();
+    let name: String = html[open + 1..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let (start_tag, end_tag) = (format!("<{name}"), format!("</{name}>"));
+    let mut depth = 0;
+    let mut from = open;
+    loop {
+        let next_open = html[from..].find(&start_tag).map(|i| from + i);
+        let next_close = html[from..].find(&end_tag).map(|i| from + i);
+        match (next_open, next_close) {
+            (Some(o), Some(c)) if o < c => {
+                depth += 1;
+                from = o + start_tag.len();
+            }
+            (_, Some(c)) => {
+                depth -= 1;
+                if depth == 0 {
+                    return open <= at && at < c;
+                }
+                from = c + end_tag.len();
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Every action's fragment names **the form's own group** - the element holding it (qa-31-s14-code
+/// L4) - and every action has one (a form far down a long page must not land at the top without
+/// JS - §5.1.4); every auto-saving form has a `<noscript>` Save, and nothing asks with
+/// `confirm()`. Sign Out Everywhere (to the sign-in page) and Dismiss (the warning is at the top)
+/// are the two that leave without one.
 #[track_caller]
-pub(super) fn check_forms(page: &str, html: &str) {
+pub(crate) fn check_forms(page: &str, html: &str) {
     assert!(!html.contains("confirm("), "{page} uses confirm()");
     for form in tags(html, "form") {
         let body = &html[form.start..];
@@ -49,8 +84,8 @@ pub(super) fn check_forms(page: &str, html: &str) {
             .split_once('#')
             .unwrap_or_else(|| panic!("{page}: {action} has no fragment"));
         assert!(
-            html.contains(&format!("id=\"{fragment}\"")),
-            "{page}: {action} lands on no element"
+            encloses(html, fragment, form.start),
+            "{page}: {action} lands on #{fragment}, which isn't the form's own group"
         );
         if body.contains("data-autosave") {
             let noscript = body
@@ -321,18 +356,21 @@ async fn the_web_filter_refuses_in_its_groups() {
                 Method::POST,
                 "/dns/domains/new",
                 Some(&cookie),
-                &[("list_type", list_type), ("domain", "not a domain")],
+                &[("list_type", list_type), ("domain", "not <a> domain")],
             )
             .await;
-        let path = format!("/dns?notice=not_a_domain_{list_type}");
+        // What was typed comes back in its field (qa-31-s14-code N3), escaped.
+        let path = format!("/dns?notice=not_a_domain_{list_type}&typed=not+%3Ca%3E+domain");
         assert_redirect(&res, &path, Some(group));
         let page = app.get_page(&path, &cookie).await.text();
         let section = part(&page, &format!("<section id=\"{group}\""), "</section>");
         assert!(
             section.contains(&format!("data-flash=\"{group}\""))
-                && section.contains("isn't a domain name"),
+                && section.contains("isn't a domain name")
+                && section.contains("value=\"not &#60;a&#62; domain\""),
             "{section}"
         );
+        assert!(!page.contains("<a> domain"));
         assert_eq!(page.matches("isn't a domain name").count(), 1);
     }
     assert_eq!(
@@ -349,8 +387,22 @@ async fn the_web_filter_refuses_in_its_groups() {
         let res = app
             .request_form(Method::POST, "/dns/blocklists/new", Some(&cookie), &fields)
             .await;
-        assert_redirect(&res, "/dns?notice=bad_list", Some("lists"));
+        let location = res.location().unwrap_or_default();
+        assert!(
+            location.starts_with("/dns?notice=bad_list&name="),
+            "{location}"
+        );
+        assert!(location.ends_with("#lists"), "{location}");
     }
+    let page = app
+        .get_page(
+            "/dns?notice=bad_list&name=Mine&url=ftp%3A%2F%2Flists.example%2Fhosts",
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(page.contains("value=\"Mine\""));
+    assert!(page.contains("value=\"ftp://lists.example/hosts\""));
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM dns_blocklists").await,
         lists
@@ -584,8 +636,45 @@ async fn phone_setup_refuses_under_the_field_and_flashes_a_save() {
             input.contains("aria-invalid=\"true\"") && input.contains("Nothing was saved."),
             "{input}"
         );
-        assert_eq!(html.matches("aria-invalid").count(), 1);
+        // The pasted key isn't kept, and the page says so under its field (qa-31-s14-code L3).
+        let key_field = part(&html, "id=\"tailscale_auth_key\"", "</p>");
+        assert!(
+            key_field.contains("The new key wasn't saved. Paste it again."),
+            "{key_field}"
+        );
+        assert_eq!(html.matches("aria-invalid").count(), 2);
     }
+    // Without a pasted key nothing is said about it; a ticked "Remove the stored key" stays ticked.
+    sqlx::query("UPDATE provisioning_settings SET tailscale_auth_key = ?")
+        .bind(&key)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            "/settings/provisioning",
+            Some(&cookie),
+            &[
+                ("server_url", ""),
+                ("tailscale_auth_key", ""),
+                ("clear_tailscale_auth_key", "on"),
+                ("locale", "nb_NO"),
+                ("time_zone", "Europe Oslo"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    assert!(!html.contains("Paste it again"));
+    assert_eq!(
+        super::input_checked(&html, "clear_tailscale_auth_key", "on"),
+        Some(true)
+    );
+    sqlx::query("UPDATE provisioning_settings SET tailscale_auth_key = ''")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let stored: (String, String) =
         sqlx::query_as("SELECT server_url, tailscale_auth_key FROM provisioning_settings")
             .fetch_one(&app.db)
@@ -724,8 +813,12 @@ async fn account_answers_in_its_groups() {
             ],
         )
         .await;
-    assert_eq!(res.status, StatusCode::OK);
-    let html = res.text();
+    // Post/redirect/get (qa-31-s14-code M1): a reload of the result asks nothing again.
+    assert_redirect(&res, "/account?changed=password", Some("password"));
+    let html = app
+        .get_page("/account?changed=password", &cookie)
+        .await
+        .text();
     let group = part(&html, "<section id=\"password\"", "</section>");
     assert!(
         group.contains("data-flash=\"password\"") && group.contains("Password changed."),
@@ -736,6 +829,62 @@ async fn account_answers_in_its_groups() {
         "a new password lifts the lock"
     );
     assert_ne!(hash().await, before);
+    let html = app.get_page("/account?changed=other", &cookie).await.text();
+    assert!(!html.contains("data-flash"));
+}
+
+/// Sign Out Everywhere that can't move the epoch (here a trigger makes the UPDATE abort) signs out
+/// nobody and says so: 500, and this session still works (qa-31-s14-code L1). Then, working, it
+/// ends this session too.
+#[tokio::test]
+async fn sign_out_everywhere_fails_visibly() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let other = app.admin_cookie().await;
+    sqlx::query(
+        "CREATE TRIGGER no_epoch BEFORE UPDATE OF session_epoch ON admin_users \
+         BEGIN SELECT RAISE(ABORT, 'test: no epoch'); END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/sign-out-everywhere",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(res.text().contains("nothing was changed"));
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.get_page("/devices", &other).await.status,
+        StatusCode::OK
+    );
+    sqlx::query("DROP TRIGGER no_epoch")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/sign-out-everywhere",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    for session in [&cookie, &other] {
+        assert_eq!(
+            app.get_page("/devices", session).await.location(),
+            Some("/login")
+        );
+    }
 }
 
 /// Security Log: labels, never the raw id outside the ⓘ; local times, no "UTC"; the detail
@@ -777,7 +926,7 @@ async fn the_security_log_reads_as_labelled_rows() {
     );
     assert!(panel.contains("device_command_queued"));
     assert!(panel.contains("&#60;img src=x") && !page.contains("<img src=x"));
-    assert!(rows[0].contains("Music entry moved"));
+    assert!(rows[0].contains("Music moved"));
     assert!(!page.contains("UTC"), "local times (Oslo), not UTC");
     let ban = part(&page, "data-ban", "</form>");
     assert!(
@@ -787,11 +936,36 @@ async fn the_security_log_reads_as_labelled_rows() {
         "{ban}"
     );
 
+    // "Unbanned" only for an address that isn't blocked (qa-31-s14-code N1).
+    let page = app
+        .get_page("/security?unbanned=192.0.2.7", &cookie)
+        .await
+        .text();
+    assert!(!page.contains("is unbanned."), "it is still blocked");
+    let res = app
+        .request_form(
+            Method::POST,
+            "/security/unban",
+            Some(&cookie),
+            &[("ip", "192.0.2.7")],
+        )
+        .await;
+    assert_redirect(&res, "/security?unbanned=192.0.2.7", Some("banned"));
     let page = app
         .get_page("/security?unbanned=192.0.2.7", &cookie)
         .await
         .text();
     assert!(part(&page, "<section id=\"banned\"", "</section>").contains("192.0.2.7 is unbanned."));
+    // An address that wasn't blocked: back to the group, no message.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/security/unban",
+            Some(&cookie),
+            &[("ip", "192.0.2.8")],
+        )
+        .await;
+    assert_redirect(&res, "/security", Some("banned"));
 
     sqlx::query("ALTER TABLE security_events RENAME TO broken")
         .execute(&app.db)
@@ -801,26 +975,87 @@ async fn the_security_log_reads_as_labelled_rows() {
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// Backups: the confirms, every action with its group's fragment, and the refusals that write
-/// nothing render in their group - a restore of a backup that isn't there, a schedule time that
-/// isn't HH:MM. Nothing here makes a backup or
-/// writes a schedule: those touch `data/` in the working directory.
+/// Backups, in the test's own data dir (`AppState::data_dir`, qa-31-s14-code L1): Back Up Now, the
+/// restore's typed name (wrong: 400, its confirm open, nothing asked; right: the request file), the
+/// schedule (a refusal in its group, a save), Delete twice - every success a redirect to its group.
 #[tokio::test]
 async fn backups_answer_in_their_groups() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let page = app.get_page("/backups", &cookie).await.text();
-    check_forms("/backups", &page);
-    for confirm in ["Restore…", "Delete…"] {
-        // Every backup's two (if this checkout has any); the page offers them only that way.
-        assert_eq!(
-            page.matches(&format!("<summary class=\"row\">{confirm}</summary>"))
-                .count(),
-            page.matches("data-backup=").count(),
-        );
-    }
-    assert!(page.contains("Back Up Now"));
+    let data = app.state.data_dir.as_path().to_path_buf();
+    let backups = data.join("backups");
+    let names = || {
+        let mut names: Vec<String> = std::fs::read_dir(&backups)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
 
+    // Back Up Now: a backup in the temp data dir, then post/redirect/get (qa-31-s14-code M1).
+    let res = app
+        .request_form(Method::POST, "/backups/create", Some(&cookie), &[])
+        .await;
+    assert_redirect(&res, "/backups?done=backup", Some("backups"));
+    let made = names();
+    assert_eq!(made.len(), 1, "{made:?}");
+    let file = made[0].clone();
+    let page = app.get_page("/backups?done=backup", &cookie).await.text();
+    check_forms("/backups", &page);
+    let group = part(&page, "<section id=\"backups\"", "</section>");
+    assert!(group.contains("data-flash=\"backups\"") && group.contains("Backup made."));
+    behind_a_confirm(&page, &format!("/backups/{file}/restore#backups"));
+    behind_a_confirm(&page, &format!("/backups/{file}/delete#backups"));
+    let page = app.get_page("/backups?done=nonsense", &cookie).await.text();
+    assert!(!page.contains("data-flash"));
+
+    // Restore: the typed name must be the file's; a wrong one asks nothing of the helper.
+    let flag = data.join("update_requested");
+    let restore = format!("/backups/{file}/restore");
+    let res = app
+        .request_form(
+            Method::POST,
+            &restore,
+            Some(&cookie),
+            &[("confirm_filename", "backup-x.zip")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    let item = part(
+        &html,
+        &format!("data-backup=\"{file}\""),
+        "</details>\n            </details>",
+    );
+    assert!(
+        item.contains(" open>"),
+        "the backup and its confirm open: {item}"
+    );
+    assert!(
+        item.contains(
+            "id=\"restore-error\">That isn&#39;t the file&#39;s name - nothing was restored."
+        ),
+        "{item}"
+    );
+    assert!(!flag.exists(), "nothing asked of the root helper");
+    let res = app
+        .request_form(
+            Method::POST,
+            &restore,
+            Some(&cookie),
+            &[("confirm_filename", file.as_str())],
+        )
+        .await;
+    assert_redirect(&res, "/backups?done=restore", Some("backups"));
+    assert_eq!(
+        std::fs::read_to_string(&flag).unwrap(),
+        format!("restore_backup {file}")
+    );
+    // A backup that isn't there (any more): nothing restored, said in the group.
     let res = app
         .request_form(
             Method::POST,
@@ -837,18 +1072,23 @@ async fn backups_answer_in_their_groups() {
         "{group}"
     );
 
+    // The schedule: a refusal in its group (400, nothing written), a save redirects.
+    let schedule = data.join("backup_schedule.conf");
+    let fields = |time: &'static str| {
+        vec![
+            ("frequency", "weekly"),
+            ("day_of_week", "3"),
+            ("day_of_month", "1"),
+            ("backup_time", time),
+            ("retention_count", "14"),
+        ]
+    };
     let res = app
         .request_form(
             Method::POST,
             "/backups/schedule",
             Some(&cookie),
-            &[
-                ("frequency", "daily"),
-                ("day_of_week", "0"),
-                ("day_of_month", "1"),
-                ("backup_time", "3am"),
-                ("retention_count", "14"),
-            ],
+            &fields("3am"),
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
@@ -858,4 +1098,102 @@ async fn backups_answer_in_their_groups() {
         group.contains("data-flash=\"schedule\"") && group.contains("nothing was saved"),
         "{group}"
     );
+    assert!(!schedule.exists());
+    let res = app
+        .request_form(
+            Method::POST,
+            "/backups/schedule",
+            Some(&cookie),
+            &fields("03:30"),
+        )
+        .await;
+    assert_redirect(&res, "/backups?done=schedule", Some("schedule"));
+    let saved = std::fs::read_to_string(&schedule).unwrap();
+    assert!(
+        saved.contains("BACKUP_TIME=03:30") && saved.contains("DAY_OF_WEEK=3"),
+        "{saved}"
+    );
+    let page = app.get_page("/backups?done=schedule", &cookie).await.text();
+    assert!(part(&page, "<section id=\"schedule\"", "</section>").contains("Schedule saved."));
+    assert!(page.contains("<option value=\"3\" selected>Wednesday</option>"));
+
+    // Delete, twice (a second tab): each a redirect, the second says it was gone.
+    let delete = format!("/backups/{file}/delete");
+    let res = app
+        .request_form(Method::POST, &delete, Some(&cookie), &[])
+        .await;
+    assert_redirect(&res, "/backups?done=deleted", Some("backups"));
+    assert!(names().is_empty());
+    let res = app
+        .request_form(Method::POST, &delete, Some(&cookie), &[])
+        .await;
+    assert_redirect(&res, "/backups?done=gone", Some("backups"));
+}
+
+/// Software Updates: every request that worked redirects to its group with its line (a reload asks
+/// the helper nothing again, qa-31-s14-code M1), the request file says what was asked, and the
+/// page renders without the network (the GitHub check fails at once in tests).
+#[tokio::test]
+async fn updates_redirect_after_each_request() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let flag = app.state.data_dir.join("update_requested");
+    std::fs::create_dir_all(app.state.data_dir.as_path()).unwrap();
+    for (route, action, done, group) in [
+        ("/update/restart", "restart", "restart", "app"),
+        ("/system/os/check", "os_check", "os_check", "os"),
+        ("/system/os/upgrade", "os_upgrade", "os_upgrade", "os"),
+        (
+            "/system/tailscale/update",
+            "tailscale_update",
+            "tailscale",
+            "tailscale",
+        ),
+        ("/system/reboot", "reboot", "reboot", "os"),
+    ] {
+        let res = app
+            .request_form(Method::POST, route, Some(&cookie), &[])
+            .await;
+        assert_redirect(&res, &format!("/updates?done={done}"), Some(group));
+        assert_eq!(std::fs::read_to_string(&flag).unwrap(), action, "{route}");
+    }
+    for (route, file, done, group) in [
+        (
+            "/update/schedule",
+            "app_update_schedule.conf",
+            "app_schedule",
+            "app-schedule",
+        ),
+        (
+            "/system/schedule",
+            "schedule.conf",
+            "os_schedule",
+            "os-schedule",
+        ),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                route,
+                Some(&cookie),
+                &[
+                    ("frequency", "daily"),
+                    ("day_of_week", "0"),
+                    ("day_of_month", "1"),
+                    ("check_time", "04:15"),
+                ],
+            )
+            .await;
+        assert_redirect(&res, &format!("/updates?done={done}"), Some(group));
+        let saved = std::fs::read_to_string(app.state.data_dir.join(file)).unwrap();
+        assert!(saved.contains("CHECK_TIME=04:15"), "{saved}");
+    }
+    let page = app.get_page("/updates?done=reboot", &cookie).await.text();
+    check_forms("/updates", &page);
+    let group = part(&page, "<section id=\"os\"", "</section>");
+    assert!(
+        group.contains("data-flash=\"os\"") && group.contains("The Pi is restarting."),
+        "{group}"
+    );
+    assert!(!page.contains("open this page again"));
 }

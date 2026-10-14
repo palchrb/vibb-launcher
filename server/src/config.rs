@@ -72,6 +72,10 @@ pub struct ForkConfig {
     /// reopen the stream every 5 minutes. Each keepalive wakes the phone's radio, so the longest
     /// safe interval is the default; `SSE_KEEPALIVE_SECS=120` in `.env` reverts it.
     pub sse_keepalive_secs: u64,
+    /// Where the server's own update check asks GitHub (`handlers::system_update`): always
+    /// `https://api.github.com`, a closed local port in tests so Software Updates renders
+    /// without the network.
+    pub github_api: String,
 }
 
 pub const DEFAULT_SSE_KEEPALIVE_SECS: u64 = 240;
@@ -139,6 +143,7 @@ impl ForkConfig {
             sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_SSE_KEEPALIVE_SECS),
+            github_api: "https://api.github.com".to_string(),
         }
     }
 
@@ -148,6 +153,8 @@ impl ForkConfig {
     pub fn for_tests() -> Self {
         let mut config = Self::from_vars(&HashMap::new());
         config.launcher_signature_checksum = Some("A".repeat(43));
+        // Port 9 (discard) on loopback: refused at once, so a check "fails" without the network.
+        config.github_api = "http://127.0.0.1:9".to_string();
         config
     }
 }

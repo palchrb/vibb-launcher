@@ -24,11 +24,11 @@
                 <label class="field-label" for="tailscale_auth_key">Tailscale key</label>
                 <details class="info field-info"><summary aria-label="About the Tailscale key"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>A one-time, pre-approved auth key tagged tag:kid, from the Tailscale admin console. One key sets up one phone, so a photo of a used setup QR code is worth nothing.</p><p>It is never shown again here; leave the field empty to keep it. Without one, you enter it on each phone by hand. DEPLOY.md, "Tailscale keys for the phones", has the steps.</p></div></details>
                 <p class="field-hint" data-row="key">{% if let Some(hint) = tailscale_key_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-                <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Paste a new key to replace it{% else %}Paste the key{% endif %}" autocomplete="off">
-                <p class="field-hint">Make a new one-time key before each phone setup.</p>
+                <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Paste a new key to replace it{% else %}Paste the key{% endif %}" autocomplete="off"{% if entered.key_dropped %} aria-invalid="true" aria-describedby="key-error"{% endif %}>
+                {% if entered.key_dropped %}<p class="field-error" id="key-error">The new key wasn't saved. Paste it again.</p>{% else %}<p class="field-hint">Make a new one-time key before each phone setup.</p>{% endif %}
                 {% if tailscale_key_hint.is_some() %}
                 <label class="checkbox-row">
-                    <input type="checkbox" name="clear_tailscale_auth_key" value="on">
+                    <input type="checkbox" name="clear_tailscale_auth_key" value="on"{% if entered.clear_key %} checked{% endif %}>
                     <span>Remove the stored key</span>
                 </label>
                 {% endif %}

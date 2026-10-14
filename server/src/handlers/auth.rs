@@ -426,18 +426,28 @@ pub async fn change_password(
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
 
-    sqlx::query("UPDATE admin_users SET password_hash = ?, must_change_password = 0 WHERE id = ?")
-        .bind(&new_hash)
-        .bind(admin.id)
-        .execute(&state.db)
-        .await
-        .ok();
-    signed_out_elsewhere(&state, &session, admin.id).await;
-    // A generated first password (design 22 §6) is spent now.
-    let _ = tokio::fs::remove_file(
-        std::path::Path::new("data").join(crate::startup::INITIAL_PASSWORD_FILE),
+    // The new hash and the session epoch in one statement (qa-31-s14-code L2): every other session
+    // is signed out exactly when the change is stored; a failure changes nothing and says so.
+    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "UPDATE admin_users SET password_hash = ?, must_change_password = 0, \
+         session_epoch = session_epoch + 1 WHERE id = ? RETURNING session_epoch",
     )
+    .bind(&new_hash)
+    .bind(admin.id)
+    .fetch_optional(&state.db)
     .await;
+    let Ok(Some(epoch)) = epoch else {
+        tracing::error!(?epoch, "couldn't save the first password");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't save the new password - nothing was changed. Check the server log.",
+        )
+            .into_response();
+    };
+    session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
+    // A generated first password (design 22 §6) is spent now.
+    let _ =
+        tokio::fs::remove_file(state.data_dir.join(crate::startup::INITIAL_PASSWORD_FILE)).await;
     security::record_security_event(
         &state.db,
         "password_changed",
@@ -448,14 +458,6 @@ pub async fn change_password(
     .await;
 
     Redirect::to("/").into_response()
-}
-
-/// After a password change or a 2FA reset: every other session ends (design 22 QA a), this one
-/// stays.
-async fn signed_out_elsewhere(state: &AppState, session: &Session, admin_id: i64) {
-    if let Some(epoch) = admin_auth::bump_epoch(&state.db, admin_id).await {
-        session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
-    }
 }
 
 #[derive(Template)]
@@ -619,19 +621,24 @@ pub async fn login_warning_of(session: &Session) -> Option<String> {
         .flatten()
 }
 
+/// The page; `?changed=password` (after a change, post/redirect/get - qa-31-s14-code M1) shows
+/// the result in the Password group.
 pub async fn account_page(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_account(
-        &state,
-        &session,
-        &admin,
-        StatusCode::OK,
-        AccountAnswer::default(),
-    )
-    .await
+    let answer = AccountAnswer {
+        flash: (query.get("changed").map(String::as_str) == Some("password")).then(|| {
+            crate::handlers::settings::Flash::done(
+                "password",
+                "Password changed. Every other browser and phone is signed out.",
+            )
+        }),
+        ..AccountAnswer::default()
+    };
+    render_account(&state, &session, &admin, StatusCode::OK, answer).await
 }
 
 #[derive(Deserialize)]
@@ -728,19 +735,8 @@ pub async fn update_account_password(
     )
     .await;
 
-    let admin = AdminUser {
-        failed_login_attempts: 0,
-        locked_until: None,
-        ..admin
-    };
-    let answer = AccountAnswer {
-        flash: Some(Flash::done(
-            "password",
-            "Password changed. Every other browser and phone is signed out.",
-        )),
-        ..AccountAnswer::default()
-    };
-    render_account(&state, &session, &admin, StatusCode::OK, answer).await
+    // Post/redirect/get: the password stays in this POST's body, and a reload asks nothing again.
+    Redirect::to("/account?changed=password#password").into_response()
 }
 
 /// The "Reset two-factor login" form: the current password.

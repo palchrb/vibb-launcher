@@ -289,9 +289,9 @@ pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64)
         format!(" (from {})", ips.join(", "))
     };
     Some(format!(
-        "{failures} failed 2FA attempt{} since your last sign-in{from}. Whoever tried knew your \
-         password - change it now.",
-        if failures == 1 { "" } else { "s" }
+        "{failures} wrong two-factor code{} entered before this sign-in{from}. Whoever entered \
+         them knew your password - change it now.",
+        if failures == 1 { " was" } else { "s were" }
     ))
 }
 

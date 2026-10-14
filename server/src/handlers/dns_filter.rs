@@ -137,6 +137,19 @@ struct DnsFilterTemplate {
     /// The group whose add was refused ("blocked", "allowed", "lists"): its refusal under it, and
     /// Add a List… open.
     refused: &'static str,
+    /// What a refused add sent (`typed`, `name`, `url` in the query, qa-31-s14-code N3): back in
+    /// its field, so one wrong character needs no retyping.
+    typed: String,
+    typed_name: String,
+    typed_url: String,
+}
+
+/// A typed value for a refusal's query: URL-encoded, at most 300 characters.
+fn query_value(value: Option<&String>) -> String {
+    let value: String = value
+        .map(|v| v.chars().take(300).collect())
+        .unwrap_or_default();
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// `?device=X` (an old bookmark or link): the phone's parts are on its Web Filter page now
@@ -220,6 +233,13 @@ pub async fn show_dns_filter(
         Some("bad_list") => "lists",
         _ => "",
     };
+    let typed = |key: &str| {
+        params
+            .get(key)
+            .filter(|_| !refused.is_empty())
+            .cloned()
+            .unwrap_or_default()
+    };
 
     Html(
         DnsFilterTemplate {
@@ -230,6 +250,9 @@ pub async fn show_dns_filter(
             allowed_domains,
             devices,
             refused,
+            typed: typed("typed"),
+            typed_name: typed("name"),
+            typed_url: typed("url"),
         }
         .render()
         .unwrap(),
@@ -289,7 +312,12 @@ pub async fn create_blocklist(
     let url = form.get("url").map(|s| s.trim()).unwrap_or_default();
     let web = url.starts_with("https://") || url.starts_with("http://");
     if name.is_empty() || !web || url.len() > 2000 || name.chars().count() > 100 {
-        return Redirect::to("/dns?notice=bad_list#lists").into_response();
+        return Redirect::to(&format!(
+            "/dns?notice=bad_list&name={}&url={}#lists",
+            query_value(form.get("name")),
+            query_value(form.get("url")),
+        ))
+        .into_response();
     }
     let result = sqlx::query("INSERT INTO dns_blocklists (name, url, enabled) VALUES (?, ?, 1)")
         .bind(name)
@@ -371,8 +399,16 @@ pub async fn create_custom_domain(
         // Back to the group, with the refusal there (qa-31-s5-code L1).
         let page = back_to(&form, device_id, group);
         let path = page.split('#').next().unwrap_or("/dns");
-        return Redirect::to(&format!("{path}?notice=not_a_domain_{list_type}#{group}"))
-            .into_response();
+        // The global page gets what was typed back in its field; a phone's page doesn't take it.
+        let typed = if path == "/dns" {
+            format!("&typed={}", query_value(form.get("domain")))
+        } else {
+            String::new()
+        };
+        return Redirect::to(&format!(
+            "{path}?notice=not_a_domain_{list_type}{typed}#{group}"
+        ))
+        .into_response();
     }
     // The same domain twice in one list is stored once (qa-31-s5-code N4).
     let result = sqlx::query(

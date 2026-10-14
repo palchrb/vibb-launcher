@@ -52,11 +52,17 @@ struct SecurityTemplate {
 /// sign-in attempt out of reach).
 const EVENTS_PER_PAGE: i64 = 200;
 
-/// What a parent reads for an event id. Every id this server writes has its label; anything else
-/// (an id from an older version) reads as its words ("music_entry_moved" -> "Music entry moved"),
-/// never as the raw id - that stays in the row's ⓘ.
+/// What a parent reads for an event id. Every id this server writes has its label (pinned by
+/// `tests::every_written_event_has_a_label`, which reads the writers in `src/`); anything else
+/// (an id from an older version) reads as its words ("retired_event" -> "Retired event"), never
+/// as the raw id - that stays in the row's ⓘ.
 pub(crate) fn event_label(kind: &str) -> String {
-    let label = match kind {
+    label_of(kind).map_or_else(|| words_of(kind), str::to_string)
+}
+
+/// The label of an id this server writes; `None` for any other.
+fn label_of(kind: &str) -> Option<&'static str> {
+    Some(match kind {
         "login_success" => "Signed in",
         "login_failed" => "Wrong password",
         "login_locked" => "Sign-in while locked",
@@ -118,9 +124,28 @@ pub(crate) fn event_label(kind: &str) -> String {
         "storytel_login_cleared" => "Storytel login removed",
         "storytel_login_refused" => "Storytel refused the login",
         "storytel_login_sent" => "Storytel login sent to phone",
-        _ => return words_of(kind),
-    };
-    label.to_string()
+        "music_entry_added" => "Music added",
+        "music_entry_changed" => "Music changed",
+        "music_entry_saved" => "Music offline choice changed",
+        "music_entry_deleted" => "Music deleted",
+        "music_entry_moved" => "Music moved",
+        "music_cover_changed" => "Music cover changed",
+        "music_files_added" => "Music files added",
+        "music_file_deleted" => "Music file deleted",
+        "music_orphans_deleted" => "Unused music files deleted",
+        "music_category_added" => "Music category added",
+        "music_category_changed" => "Music category changed",
+        "music_category_moved" => "Music category moved",
+        "music_category_deleted" => "Music category deleted",
+        "music_check_requested" => "Music check started",
+        "music_sweep_saved" => "New-episode check changed",
+        "music_library_imported" => "Music library imported",
+        "music_app_catalog_added" => "Music app added to Apps",
+        "music_phone_entry" => "Music on a phone changed",
+        "music_phone_settings" => "Phone's music settings changed",
+        "music_sonos_rooms_changed" => "Sonos rooms changed",
+        _ => return None,
+    })
 }
 
 /// "music_entry_moved" -> "Music entry moved"; an empty id reads "Event".
@@ -204,7 +229,7 @@ pub async fn security_log(
 
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
-    let bans = bans
+    let bans: Vec<BanRow> = bans
         .into_iter()
         .map(|ban| {
             let until = parse_db_utc(&ban.banned_until);
@@ -216,6 +241,10 @@ pub async fn security_log(
             }
         })
         .collect();
+    // Only an address that isn't blocked now reads as unbanned (qa-31-s14-code N1).
+    let unbanned = query
+        .unbanned
+        .filter(|ip| !ip.is_empty() && !bans.iter().any(|ban| &ban.ip == ip));
     let page = SecurityTemplate {
         title: "Security Log".to_string(),
         events: events
@@ -223,7 +252,7 @@ pub async fn security_log(
             .map(|event| event_row(event, &zone, now))
             .collect(),
         bans,
-        unbanned: query.unbanned.filter(|ip| !ip.is_empty()),
+        unbanned,
         paged: before.is_some(),
         older_than,
     };
@@ -236,19 +265,26 @@ pub struct UnbanForm {
 }
 
 /// A form field, not a path segment: a ban's key may be an IPv6 /64 ("2001:db8:1:2::/64"). Back
-/// to Blocked Addresses with the address in the flash (`#banned`); a DB error is a 500.
+/// to Blocked Addresses (`#banned`), with the address in the flash only when a ban was lifted; a
+/// DB error is a 500.
 pub async fn unban_ip(State(state): State<AppState>, Form(form): Form<UnbanForm>) -> Response {
     let result = sqlx::query("DELETE FROM banned_ips WHERE ip_address = ?")
         .bind(&form.ip)
         .execute(&state.db)
         .await;
-    if let Err(err) = result {
-        tracing::error!(%err, "couldn't unban an address");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't unban it - nothing was changed. Check the server log.",
-        )
-            .into_response();
+    let lifted = match result {
+        Ok(done) => done.rows_affected() > 0,
+        Err(err) => {
+            tracing::error!(%err, "couldn't unban an address");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't unban it - nothing was changed. Check the server log.",
+            )
+                .into_response();
+        }
+    };
+    if !lifted {
+        return Redirect::to("/security#banned").into_response();
     }
     let ip: String = form_urlencoded::byte_serialize(form.ip.as_bytes()).collect();
     Redirect::to(&format!("/security?unbanned={ip}#banned")).into_response()
@@ -265,10 +301,105 @@ mod tests {
             event_label("device_command_queued"),
             "Command sent to phone"
         );
-        assert_eq!(event_label("music_entry_moved"), "Music entry moved");
+        assert_eq!(event_label("music_entry_moved"), "Music moved");
+        assert_eq!(event_label("retired_event"), "Retired event");
         assert_eq!(event_label("probe"), "Probe");
         assert_eq!(event_label(""), "Event");
         assert_eq!(event_label("__"), "Event");
         assert_eq!(event_label("ÿes_no"), "Ÿes no");
+    }
+
+    /// Literals near a security-event writer that are not event ids: form fields, notice codes,
+    /// root-helper actions and command names.
+    const NOT_EVENTS: [&str; 21] = [
+        "admin_id",
+        "clear_kid_pin",
+        "clear_pin",
+        "music_entries",
+        "music_note",
+        "new_kid_pin",
+        "new_pin",
+        "not_a_domain_allow",
+        "not_a_domain_block",
+        "os_check",
+        "os_upgrade",
+        "override_is_kid_pin",
+        "override_needed_by_lock",
+        "parent_pin_cleared",
+        "parent_pin_invalid",
+        "parent_pin_saved",
+        "parent_pin_saved_easy",
+        "saved_safe_boot",
+        "show_text",
+        "stop_ring",
+        "tailscale_update",
+    ];
+
+    /// Every event id the server writes has a label (qa-31-s14-code M2): the `snake_case` literals
+    /// around each writer in `src/` (outside tests) - `record_security_event`, `log_event`,
+    /// `log_change`, the audit's `.record`, `request_action`, the raw `INSERT INTO
+    /// security_events`, and the `let (…event…)` tuples that pick one - are ids, unless listed in
+    /// [NOT_EVENTS]. A new event without a label fails here.
+    #[test]
+    fn every_written_event_has_a_label() {
+        let writer = regex::Regex::new(
+            r"record_security_event\(|log_event\(|log_change\(|\.record\(|request_action\(|INSERT INTO security_events",
+        )
+        .unwrap();
+        let picker = regex::Regex::new(r"let \(?[a-z_, ]*event").unwrap();
+        let literal = regex::Regex::new(r#"["']([a-z][a-z0-9]*(?:_[a-z0-9]+)+)["']"#).unwrap();
+        let mut files = Vec::new();
+        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n != "tests") {
+                        dirs.push(path);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).unwrap();
+            let text = text
+                .find("#[cfg(test)]\nmod tests {")
+                .map_or(text.as_str(), |cut| &text[..cut]);
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let span = if writer.is_match(line) && !line.contains("fn ") {
+                    i.saturating_sub(15)..(i + 12).min(lines.len())
+                } else if picker.is_match(line) {
+                    i..(i + 70).min(lines.len())
+                } else {
+                    continue;
+                };
+                for near in &lines[span] {
+                    for found in literal.captures_iter(near) {
+                        ids.insert(found[1].to_string());
+                    }
+                }
+            }
+        }
+        for known in [
+            "login_failed",
+            "music_phone_settings",
+            "backup_restored",
+            "kid_pin_cleared",
+        ] {
+            assert!(ids.contains(known), "the scan misses {known}: {ids:?}");
+        }
+        let unlabelled: Vec<&String> = ids
+            .iter()
+            .filter(|id| !NOT_EVENTS.contains(&id.as_str()))
+            .filter(|id| label_of(id).is_none())
+            .collect();
+        assert!(
+            unlabelled.is_empty(),
+            "events without a label: {unlabelled:?}"
+        );
     }
 }

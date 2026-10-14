@@ -51,6 +51,11 @@ struct Entered {
     server_url: String,
     locale: String,
     time_zone: String,
+    /// A refused save carried a new Tailscale key: it isn't sent back (it is a secret), so the
+    /// page says it wasn't saved and must be pasted again (qa-31-s14-code L3).
+    key_dropped: bool,
+    /// "Remove the stored key" was ticked in the refused save: kept ticked.
+    clear_key: bool,
 }
 
 #[derive(Template)]
@@ -143,6 +148,8 @@ pub async fn provisioning_settings_form(
         server_url: settings.server_url.clone(),
         locale: settings.locale.clone(),
         time_zone: settings.time_zone.clone(),
+        key_dropped: false,
+        clear_key: false,
     };
     let saved = query.get("saved").is_some_and(|v| v == "1");
     render(StatusCode::OK, &settings, entered, saved, None)
@@ -185,6 +192,8 @@ pub async fn update_provisioning_settings(
             server_url: server_url.to_string(),
             locale: locale.to_string(),
             time_zone: time_zone.to_string(),
+            key_dropped: !new_key.is_empty(),
+            clear_key,
         };
         return render(StatusCode::BAD_REQUEST, &settings, entered, false, error);
     }

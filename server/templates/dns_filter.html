@@ -38,11 +38,11 @@
                 <form method="post" action="/dns/blocklists/new#lists" class="form-group">
                     <div class="field">
                         <label class="field-label" for="bl_name">Name</label>
-                        <input type="text" id="bl_name" name="name" maxlength="100" placeholder="My list" required>
+                        <input type="text" id="bl_name" name="name" value="{{ typed_name }}" maxlength="100" placeholder="My list" required>
                     </div>
                     <div class="field">
                         <label class="field-label" for="bl_url">Address</label>
-                        <input type="url" id="bl_url" name="url" placeholder="https://…" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
+                        <input type="url" id="bl_url" name="url" value="{{ typed_url }}" placeholder="https://…" required autocapitalize="none" spellcheck="false"{% if refused == "lists" %} aria-invalid="true" aria-describedby="list-error" autofocus{% endif %}>
                         {% if refused == "lists" %}<p class="field-error" id="list-error">Give it a name and an address starting with https://. Nothing was added.</p>{% else %}<p class="field-hint">A list of domains, one per line, as in a hosts file.</p>{% endif %}
                     </div>
                     <button type="submit" class="button-wide">Add List</button>
@@ -67,7 +67,7 @@
             <form method="post" action="/dns/domains/new#blocked" class="cell">
                 <input type="hidden" name="list_type" value="block">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to block on every phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "blocked" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to block on every phone"{% if refused == "blocked" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
                     <button type="submit" class="row-action">Block</button>
                 </div>
             </form>
@@ -91,7 +91,7 @@
             <form method="post" action="/dns/domains/new#allowed" class="cell">
                 <input type="hidden" name="list_type" value="allow">
                 <div class="row">
-                    <input type="text" class="row-input" name="domain" placeholder="example.com" aria-label="Domain to allow on every phone" required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
+                    <input type="text" class="row-input" name="domain" value="{% if refused == "allowed" %}{{ typed }}{% endif %}" placeholder="example.com" aria-label="Domain to allow on every phone"{% if refused == "allowed" %} aria-invalid="true" autofocus{% endif %} required autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" pattern="\s*[A-Za-z0-9_\-]+(\.[A-Za-z0-9_\-]+)+\.?\s*" title="A domain name, like example.com">
                     <button type="submit" class="row-action">Allow</button>
                 </div>
             </form>

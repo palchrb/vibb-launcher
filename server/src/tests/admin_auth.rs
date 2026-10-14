@@ -123,7 +123,9 @@ async fn totp_failures_survive_a_correct_password_and_the_lock_doubles() {
     // The full sentence on Account; a short orange row on Devices (design 31 §3.2).
     let page = app.get_page("/account", &session).await.text();
     assert!(
-        page.contains("13 failed 2FA attempts since your last sign-in (from 127.0.0.1)"),
+        page.contains(
+            "13 wrong two-factor codes were entered before this sign-in (from 127.0.0.1)"
+        ),
         "{page}"
     );
     let page = app.get_page("/devices", &session).await.text();
@@ -142,7 +144,7 @@ async fn totp_failures_survive_a_correct_password_and_the_lock_doubles() {
     let page = app.get_page("/devices", &session).await.text();
     assert!(!page.contains("id=\"login-warning\""));
     let page = app.get_page("/account", &session).await.text();
-    assert!(!page.contains("failed 2FA attempts"));
+    assert!(!page.contains("wrong two-factor codes were entered before"));
 }
 
 #[tokio::test]
@@ -225,7 +227,8 @@ async fn a_password_change_signs_out_every_other_session() {
             ],
         )
         .await;
-    assert!(res.text().contains("Password changed."), "{}", res.text());
+    // Post/redirect/get (qa-31-s14-code M1): the result is on the GET.
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
     // This one stays, the other is signed out.
     assert_eq!(
         app.get_page("/devices", &first).await.status,
@@ -902,7 +905,7 @@ async fn a_live_session_sees_wrong_codes_and_the_lock() {
             ],
         )
         .await;
-    assert!(res.text().contains("Password changed."));
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
     assert_eq!(counters(&app).await, (0, 0, false));
     assert!(
         !app.get_page("/devices", &session)

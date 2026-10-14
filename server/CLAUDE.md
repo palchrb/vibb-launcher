@@ -1236,20 +1236,31 @@ needed to manage the phone, delete on a schedule, never store notification or me
   the group the form's hidden `list_type` names); a photo's switch → `/wallpapers#wallpaper-<id>`, an upload to the new
   photo's row, a delete (a `<details>` confirm, idempotent) → `#all`, a refused upload renders at `#add` with the reason
   under the field; Phone Setup → `?saved=1#saved` (a refusal renders the form again, 400, with what was typed - never the
-  key - and the reason under the field); Unban → `/security?unbanned=<address>#banned`. Account, Backups and Software
-  Updates render their answer in the POST's response (a password never goes into a URL; a restore or an update restarts
-  the server) and post to their group (`#password`, `#two-factor`; `#backups`, `#upload`, `#schedule`, `#drive`; `#app`,
-  `#os`, `#tailscale`, `#app-schedule`, `#os-schedule`), the result inside that group (`settings::Flash` +
-  `partials/group_flash.html`: green, or red with the reason behind ⓘ). A refused Restore… or Format renders with that
-  confirm open and the reason under the typed field.
+  key - and the reason under the field, a pasted key not kept and said so, the remove tick kept); Unban →
+  `/security?unbanned=<address>#banned` (the line only for an address no longer blocked). **Every success redirects**
+  (post/redirect/get, qa-31-s14-code M1: a reload never restores, updates, restarts or backs up again):
+  `/account?changed=password#password`, `/backups?done=backup|deleted|gone|schedule|upload|restore|format#<group>`
+  (`backups::Done`), `/updates?done=update|restart|os_check|os_upgrade|tailscale|reboot|app_schedule|os_schedule#<group>`
+  (`updates::Done`, `updates::request_action` writes the root helper's request file); the GET shows the line in that
+  group (`settings::Flash` + `partials/group_flash.html`). Only refusals render in the POST's answer, posting to their
+  group (`#password`, `#two-factor`, `#backups`, `#upload`, `#schedule`, `#drive`, `#app`, `#os`, `#tailscale`,
+  `#app-schedule`, `#os-schedule`): a password or typed confirm never goes into a URL; a refused Restore… or Format
+  renders with that confirm open and the reason under the typed field. `check_forms` asserts each fragment is the
+  form's own group. A refused Web Filter add keeps what was typed (`&typed=`, `&name=`, `&url=`).
+- **Testable without the working directory or the network**: `AppState::data_dir` (`data/`, a temp dir in tests)
+  holds the backups, the schedules and the root helper's request file; `ForkConfig::github_api` is a closed local port
+  in tests, so Software Updates renders at once.
 - **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a photo's Delete Photo…, a backup's Restore… and
   Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
   Updates and Update Tailscale stay one tap.
 - **Robust**: every page read is a 500 on a DB error, never an empty page (Web Filter, Blocked Activity, Phone Setup,
   Security Log); every Web Filter write too (it used to redirect as if saved); a password change and a 2FA reset move
-  the hash or TOTP and the session epoch in one UPDATE, so another session is signed out exactly when the change is
+  the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
+  out exactly when the change is
   stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
-- **Texts (M5)**: the security log's event ids are labels (`admin::event_label`, an unknown id as its words), the row
+- **Texts (M5)**: the security log's event ids are labels (`admin::event_label`; every id the server writes has one,
+  pinned by `admin::tests::every_written_event_has_a_label`, which reads the writers in `src/` - a new event needs its
+  label there; an unknown id reads as its words), the row
   says who and from where, the time local (`Zone::when`, the exact one in `title`), the stored detail and the id behind
   the row's ⓘ; a ban's end with `Zone::until`; the live sign-in warning's lock end local (`auth::live_warning(admin,
   zone, now)`); a backup's time local. The schedule summaries are gone (the forms show the values); the update, backup

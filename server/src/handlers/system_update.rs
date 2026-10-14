@@ -17,7 +17,7 @@
 
 use axum::Extension;
 use axum::extract::State;
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -27,9 +27,10 @@ use crate::handlers::settings::Flash;
 use crate::handlers::updates;
 use crate::security::{self, CurrentAdmin};
 
-const FLAG_FILE: &str = "data/update_requested";
-const SCHEDULE_FILE: &str = "data/app_update_schedule.conf";
-const LAST_CHECK_FILE: &str = "data/app_update_last_check";
+use crate::handlers::backups::FLAG_FILE;
+/// In `AppState::data_dir`.
+const SCHEDULE_FILE: &str = "app_update_schedule.conf";
+const LAST_CHECK_FILE: &str = "app_update_last_check";
 
 #[derive(Deserialize)]
 struct Release {
@@ -98,13 +99,16 @@ async fn update_blocked_reason(state: &AppState) -> Option<String> {
 }
 
 /// `repo` is `config::ForkConfig::server_release_repo` (`owner/repo`).
-async fn latest_release_tag(repo: &str) -> Option<String> {
+async fn latest_release_tag(config: &crate::config::ForkConfig) -> Option<String> {
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .timeout(Duration::from_secs(8))
         .build()
         .ok()?;
-    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=100");
+    let url = format!(
+        "{}/repos/{}/releases?per_page=100",
+        config.github_api, config.server_release_repo
+    );
     let response = client.get(url).send().await.ok()?;
     if !response.status().is_success() {
         return None;
@@ -133,8 +137,8 @@ impl AppUpdateScheduleConfig {
         }
     }
 
-    async fn load() -> Self {
-        let Ok(contents) = tokio::fs::read_to_string(SCHEDULE_FILE).await else {
+    async fn load(data: &std::path::Path) -> Self {
+        let Ok(contents) = tokio::fs::read_to_string(data.join(SCHEDULE_FILE)).await else {
             return Self::defaults();
         };
         let mut config = Self::defaults();
@@ -182,7 +186,7 @@ pub(crate) struct AppUpdateData {
 
 pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
     let current_version = crate::APP_VERSION.to_string();
-    let latest_version = latest_release_tag(&state.config.server_release_repo).await;
+    let latest_version = latest_release_tag(&state.config).await;
     let check_failed = latest_version.is_none();
     let update_available = latest_version
         .as_deref()
@@ -196,27 +200,8 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
         watcher_version: security::installed_watcher_version().await,
         watcher_needs_update: security::watcher_needs_update().await,
         reinstall_hint: security::reinstall_hint(&state.config.server_release_repo),
-        schedule: AppUpdateScheduleConfig::load().await,
+        schedule: AppUpdateScheduleConfig::load(&state.data_dir).await,
     }
-}
-
-/// Asks the root helper for `action`; the page renders with `started` in its group, or with why
-/// nothing started when the request file can't be written.
-async fn request_action(
-    state: &AppState,
-    admin: &crate::models::AdminUser,
-    action: &str,
-    event_type: &str,
-    started: Flash,
-) -> Html<String> {
-    let flash = if tokio::fs::write(FLAG_FILE, action).await.is_ok() {
-        security::record_security_event(&state.db, event_type, Some(&admin.username), None, None)
-            .await;
-        started
-    } else {
-        updates::not_requested(started.at)
-    };
-    updates::render_page(state, Some(flash)).await
 }
 
 pub async fn trigger_update(
@@ -225,29 +210,29 @@ pub async fn trigger_update(
 ) -> impl IntoResponse {
     if let Some(reason) = update_blocked_reason(&state).await {
         let flash = Flash::refused("app", "Run the installer again first").because(reason);
-        return updates::render_page(&state, Some(flash)).await;
+        return updates::render_page(&state, Some(flash))
+            .await
+            .into_response();
     }
     // A failed check doesn't block the button (update.sh refuses a downgrade on its own), but a
     // known release that isn't newer does.
-    if let Some(latest) = latest_release_tag(&state.config.server_release_repo).await
+    if let Some(latest) = latest_release_tag(&state.config).await
         && !is_newer(&latest, crate::APP_VERSION)
     {
         let flash = Flash::refused("app", "Already on the newest version").because(format!(
             "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
             crate::APP_VERSION
         ));
-        return updates::render_page(&state, Some(flash)).await;
+        return updates::render_page(&state, Some(flash))
+            .await
+            .into_response();
     }
-    request_action(
+    updates::request_action(
         &state,
         &admin,
         "update",
         "system_update_triggered",
-        Flash::done(
-            "app",
-            "Updating. The server downloads the new version and restarts by itself; open this \
-             page again in a minute.",
-        ),
+        updates::Done::Update,
     )
     .await
 }
@@ -256,12 +241,12 @@ pub async fn trigger_restart(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    request_action(
+    updates::request_action(
         &state,
         &admin,
         "restart",
         "system_restart_triggered",
-        Flash::done("app", "Restarting. Open this page again in a few seconds."),
+        updates::Done::Restart,
     )
     .await
 }
@@ -316,26 +301,26 @@ pub async fn save_app_update_schedule(
         auto_install_enabled: form.auto_install_enabled.is_some(),
     };
 
-    let flash = if tokio::fs::write(SCHEDULE_FILE, config.to_file_contents())
-        .await
-        .is_ok()
+    if tokio::fs::write(
+        state.data_dir.join(SCHEDULE_FILE),
+        config.to_file_contents(),
+    )
+    .await
+    .is_err()
     {
-        security::record_security_event(
-            &state.db,
-            "app_update_schedule_changed",
-            Some(&admin.username),
-            None,
-            None,
-        )
-        .await;
-        Flash::done("app-schedule", "Schedule saved.")
-    } else {
-        Flash::refused("app-schedule", "Couldn't save the schedule.")
-    };
-
-    updates::render_page(&state, Some(flash))
-        .await
-        .into_response()
+        let flash = Flash::refused("app-schedule", "Couldn't save the schedule.");
+        let page = updates::render_page(&state, Some(flash)).await;
+        return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
+    }
+    security::record_security_event(
+        &state.db,
+        "app_update_schedule_changed",
+        Some(&admin.username),
+        None,
+        None,
+    )
+    .await;
+    updates::Done::AppSchedule.redirect()
 }
 
 /// Background task: checks for a new app release on the configured
@@ -348,16 +333,19 @@ pub async fn run_scheduled_app_update_check(state: AppState) {
     loop {
         interval.tick().await;
 
-        let schedule = AppUpdateScheduleConfig::load().await;
+        let schedule = AppUpdateScheduleConfig::load(&state.data_dir).await;
         if !schedule.auto_install_enabled {
             continue;
         }
-        if !is_due(&schedule).await {
+        if !is_due(&state.data_dir, &schedule).await {
             continue;
         }
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        if tokio::fs::write(LAST_CHECK_FILE, &today).await.is_err() {
+        if tokio::fs::write(state.data_dir.join(LAST_CHECK_FILE), &today)
+            .await
+            .is_err()
+        {
             tracing::warn!("couldn't write app-update last-check marker, skipping this cycle");
             continue;
         }
@@ -366,21 +354,21 @@ pub async fn run_scheduled_app_update_check(state: AppState) {
             tracing::warn!("auto-update skipped: {reason}");
             continue;
         }
-        let Some(latest) = latest_release_tag(&state.config.server_release_repo).await else {
+        let Some(latest) = latest_release_tag(&state.config).await else {
             continue;
         };
         if is_newer(&latest, crate::APP_VERSION) {
             tracing::info!("auto-update: new version {latest} found, triggering update");
-            let _ = tokio::fs::write(FLAG_FILE, "update").await;
+            let _ = tokio::fs::write(state.data_dir.join(FLAG_FILE), "update").await;
         }
     }
 }
 
 /// Mirrors the same daily/weekly/monthly + time-window + once-per-day-guard
 /// logic as the backup scheduler's `is_due` in handlers/backups.rs.
-async fn is_due(schedule: &AppUpdateScheduleConfig) -> bool {
+async fn is_due(data: &std::path::Path, schedule: &AppUpdateScheduleConfig) -> bool {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let last_check = tokio::fs::read_to_string(LAST_CHECK_FILE)
+    let last_check = tokio::fs::read_to_string(data.join(LAST_CHECK_FILE))
         .await
         .unwrap_or_default();
     if last_check.trim() == today {
