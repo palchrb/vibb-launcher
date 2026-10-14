@@ -1126,6 +1126,11 @@ SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731 SPOTIFY_API_BASE=http://127.0.0.1:87
   ADMIN_PASSWORD='change-me' BIND_ADDR=0.0.0.0:3100 INSECURE_COOKIES=true cargo run 2>&1 | tee /tmp/server.log
 ```
 
+**The music app's language on a managed phone** is Vibb's language from the launcher (the PWA: the phone's page,
+Launcher; the managed config's `language`, applied at every start of the app): set it to Norsk there. `adb shell cmd
+locale set-app-locales me.vibb.music.debug --locales nb` holds only until the app's next start (a force-stop, a
+suspension), as the 2026-10-14 run found.
+
 - [ ] **Not configured**: Musikk → Spotify (`/music/spotify`) shows the registration text (one account per phone,
   the child's own, never the parent's; how a playlist gets its track list) and no add form; the
   library snapshot and the device's policy are unchanged (`music.spotify` false).
@@ -1134,8 +1139,10 @@ SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731 SPOTIFY_API_BASE=http://127.0.0.1:87
 - [ ] **The first login (`fakeparent`)**: the fake's owner of the fixture playlist. In a family's setup the parent's own
   account is never logged in (design 26c step 8: one account per phone, the child's own) - read `fakeparent` as a second
   child's account that owns the playlist; the server can't tell the two apart. "Log in with Spotify" → the fake logs
-  `authorize: consented as parent -> FAKE-CODE-1`; the browser lands on
-  `http://127.0.0.1:43117/callback?code=FAKE-CODE-1&state=…` ("can't connect"). Copy that whole address into "Paste the
+  `authorize: the consent page (FAKE-CONSENT-1, as parent)` and, as the page submits itself (Spotify's own consent
+  page has a button; the fake's presses it), `authorize: consented as parent -> FAKE-CODE-1`; the browser lands on
+  `http://127.0.0.1:43117/callback?code=FAKE-CODE-1&state=…` ("can't connect"). (Before the fix of 2026-10-14's F4 the
+  fake answered a 302 straight on, which Chromium refused under the PWA's `form-action` CSP.) Copy that whole address into "Paste the
   address your browser shows after logging in" → the fake logs `token: code exchanged for fakeparent`; the accounts card
   lists `fakeparent` with "log in again before <date>".
 - [ ] **The kid's login**: `curl -s 'http://127.0.0.1:8731/fake/as?user=kid'` (the fake logs `the next login consents
@@ -1173,7 +1180,10 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   natt — Ola Fjell, Kari Li", "Spor 1 av 3" and nothing under it (no source line); logcat `spotify: the web player is
   ready` and `spotify: wake and Wi-Fi locks held` (a `spotify: permission asked by …` line only if the page asks for
   protected media - the stub plays no DRM; part B's line is the one that counts). `report.json` after the next sync:
-  `"spotify": "ok"`.
+  `"spotify": "ok"`. **The tone keeps sounding** (2026-10-14's F2): the audio focus is the WebView's own - `adb shell
+  dumpsys audio | grep -A4 'Audio Focus stack'` shows `org.chromium.content.browser.AudioFocusDelegate` of the music
+  app's uid on top and no request of `AndroidSpotifyPorts`; logcat has no `spotify: audio focus` line (design 26c
+  §5.6 answered).
 - [ ] **Pause, resume, seek**: no new `play:` line in the fake's log (the SDK's own calls). A seek past what the
   player has buffered shows `audio …: 206 Range bytes=<n>-` (the debug proxy forwards `Range`) and the tone jumps.
 - [ ] **Next, a mashed next**: next once → one `play:` from track 2; next three times quickly → **one** `play:` line,
@@ -1203,8 +1213,13 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   within a second, logcat `spotify: web player destroyed`; the headset's play (`adb shell input keyevent MEDIA_PLAY`)
   and the app's play start nothing (no `play:` line); `adb shell pm unsuspend me.vibb.music.debug` - still paused
   until a tap.
-- [ ] **A call**: in the emulator console `gsm call 4799999999` while it plays → paused (the launcher's `CALL_HOLD`, or
-  the focus loss); `gsm cancel` → it plays on (only what we paused). A VoIP call's `CALL_HOLD` (Element X) is a device
+- [ ] **A call**: in the emulator console `gsm call 4799999999` while it plays → paused (the launcher's `CALL_HOLD`, and
+  the WebView's media session loses the focus to the ringtone); `gsm cancel` → it plays on (only what we paused; or
+  Chromium's own resume after the transient loss - either way one tone, no `play:` line).
+- [ ] **Another app's audio** (design 26c §5.6 answered, F2): while it plays, an alarm a minute ahead in the emulator's
+  Clock app - while it rings the tone pauses and the player shows paused (the WebView's media session's transient
+  loss), after Dismiss it plays on by itself and the player follows; then a video in the emulator's Chrome - the tone
+  pauses and stays paused (a permanent loss), the player shows paused, no `play:` line either time. A VoIP call's `CALL_HOLD` (Element X) is a device
   check (QA checklist item 10).
 - [ ] **Design 28**: while it plays, Home's "Spilles nå" card and the lock's tile show it (title, playing); pause: both
   show paused and go 10 minutes later (§6j's checks with Spotify playing).
@@ -1228,12 +1243,15 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
   with **the second track's title** and the fake's log shows nothing; play: one `play: context
   spotify:playlist:0FakePlaylistKveld0001 from spotify:track:<the second track> (track 2 of 3) at <the place> ms` - it
   goes on there. `adb shell run-as me.vibb.music.debug cat no_backup/spotify_context.json` holds `{"<entry key>":
-  {"uri": "spotify:track:…", "title": "…"}}` only. Log `fakeparent` in again (the paste) and "Check now": list mode
+  {"uri": "spotify:track:…", "title": "…"}}` only. Log `fakeparent` in again (the paste) and "Check Now" - **not before 15 minutes after the 403 check**:
+  until then the entry page has no "Check Now", only "Check again after <time>" (the check's cooldown): list mode
   again, the tile "Musikk · fortsetter der du slapp".
 - [ ] **A refused refresh** (the last A1 check): stop the fake, start it with `--expire-refresh`, restart the server
   (it then has no access token and must refresh), force-stop the music app; a cover tap: the fake logs `token: 400
   invalid_grant …`; "Spør en voksen" on the player's line and on **every** Spotify tile; the report's
-  `"spotify": "reauthorize"`; the phone's Music page (its Spotify group: "Spotify login needs renewing") and the
+  `"spotify": "reauthorize"` - the changed word makes the music app run its own sync (15 s later), which hands the
+  report to the launcher, so a launcher "Sync now" about 20 s after the tap delivers it (2026-10-14's F7); the phone's
+  Music page (its Spotify group: "Spotify login needs renewing") and the
   Spotify page's accounts say the account must log in again, and the phone's summary shows the Attention row "Spotify
   login needs renewing". Restart the fake without the flag, log both accounts in again, force-stop the music app (its
   token cache holds the `reauthorize` answer for 10 minutes), then play: `"spotify": "ok"` after the next sync, the
@@ -1241,7 +1259,7 @@ adb shell run-as me.vibb.music.debug cat files/music/report.json    # "spotify":
 - [ ] **No secrets** (none of these may match): `adb logcat -d | grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|Bearer '`,
   `adb shell run-as me.vibb.music.debug sh -c 'grep -raE -l "FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE" .'` (Room, the
   report, `no_backup/` with `spotify_state.json` - `{"outcome":…,"at":…}` only - and `spotify_page_account` -
-  `<id>:<generation>` only - and the WebView's own folders), and `grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|verifier'
+  `<id>:<generation>` only - and the WebView's own folders), and `grep -E 'FAKE-ACCESS|FAKE-REFRESH|FAKE-CODE|code_verifier'
   /tmp/server.log` (the server's lines carry ids and statuses only).
 
 ### Part A2. The phone alone: the debug feed, the fake's options
