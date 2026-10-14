@@ -83,6 +83,46 @@ class KidPaletteTest {
     }
 
     @Test
+    fun `the drawer and the parent Settings are Vibb night with the peach accent`() {
+        // Design 34 P5: the default colour theme's colours are the kid palette's, not the upstream grey and blue.
+        val theme: Map<String, String> = run {
+            val nodes = parse("values/colors.xml").getElementsByTagName("color")
+            (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+        }
+        val background = theme.getValue("finnmglasTheme_background_color")
+        val accent = theme.getValue("finnmglasTheme_accent_color")
+        val text = theme.getValue("finnmglasTheme_text_color")
+        assertEquals("@color/kid_ground", background)
+        assertEquals("@color/kid_accent", accent)
+        assertEquals("@color/kid_ink", text)
+        for (top in listOf(text, accent)) {
+            val ratio = contrast(top, background)
+            assertTrue("$top on $background: $ratio", ratio >= 4.5)
+        }
+        // Both the base theme and the default colour theme (applied over it in UIObject) use them.
+        val styles = parse("values/styles.xml").getElementsByTagName("style")
+        fun items(name: String): Map<String, String> {
+            val style = (0 until styles.length).map { styles.item(it) as Element }.first { it.getAttribute("name") == name }
+            val nodes = style.getElementsByTagName("item")
+            return (0 until nodes.length).map { nodes.item(it) as Element }.associate { it.getAttribute("name") to it.textContent.trim() }
+        }
+        for (name in listOf("launcherBaseTheme", "colorThemeDefault")) {
+            val style = items(name)
+            assertEquals(name, "@color/finnmglasTheme_background_color", style["android:colorBackground"])
+            assertEquals(name, "@color/finnmglasTheme_accent_color", style["colorAccent"])
+            assertEquals(name, "@color/finnmglasTheme_text_color", style["android:textColor"])
+        }
+        // A plain Button sits on the accent: its text is the night ink, not the theme's white.
+        assertEquals("@style/accentButton", items("launcherBaseTheme")["android:buttonStyle"])
+        val buttonText = items("accentButton").getValue("android:textColor")
+        val onAccent = contrast(buttonText, accent)
+        assertTrue("$buttonText on $accent: $onAccent", onAccent >= 4.5)
+        // The drawer's rows take the theme's text colour (text only, no colour of their own).
+        val row = parse("layout/list_apps_row_variant_text.xml").getElementsByTagName("TextView").item(0) as Element
+        assertEquals("", row.getAttributeNS("http://schemas.android.com/apk/res/android", "textColor"))
+    }
+
+    @Test
     fun `the contact sheet is night, never a white surface`() {
         // Design 34 P3 (QA M4): the sheet and its badge ring are the lifted night.
         assertEquals("@color/kid_ground_lift", colours.getValue("kid_sheet"))

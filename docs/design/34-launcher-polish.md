@@ -988,3 +988,32 @@ Counts: server `cargo test` 954 passed (951 + `an_end_that_isnt_one_instant_show
 `the_zone_is_kept_only_as_a_short_non_empty_string`, `the_time_report_contract_matches_the_launchers_copy`), `cargo fmt
 --check` clean, clippy 13 (as on the base), node jstests 30/30; launcher 1260 tests, 0 failures (`TimeStateZoneTest` 5,
 was 4).
+
+## Step 5 implementation status (2026-10-14)
+
+P5: the drawer in Vibb night with the peach accent, text only, without Vibb itself. Launcher only, one commit; no
+behaviour, gesture or policy change.
+
+- **Colours by resource, not code** (QA L2): the drawer is the MIT `ui/list/` and gets no new code. `res/values/colors.xml`
+  (not an MIT directory) points the default colour theme at the kid palette: `finnmglasTheme_background_color` ->
+  `@color/kid_ground`, `finnmglasTheme_accent_color` -> `@color/kid_accent`, `finnmglasTheme_text_color` ->
+  `@color/kid_ink` (was `#252827`/`#5555ff`/`#fff`). `launcherBaseTheme` and `colorThemeDefault` both read them, so the
+  drawer and the parent Settings share the night (as §3 says): white 19:1, peach 9.9:1 on `#0C0C14`.
+- **One knock-on fixed**: the base theme's plain `Button` (`Widget.AppCompat.Button.Colored`, filled with the accent)
+  had the theme's white text - readable on the old blue, 1.9:1 on peach. The new `accentButton` style (the base
+  theme's `android:buttonStyle`) gives it `kid_ground` text (9.9:1). Its one user today is `PlayLinkBlockedActivity`'s
+  OK; XML `<Button>`s inflate as `AppCompatButton` and don't take it.
+- **Text only**: the row layout and the adapter are unchanged (the icon view stays `gone`); the rows take the theme's
+  text colour. The mockup's card behind the rows and the round header buttons are not built - P5's text names only the
+  colours and the filter, and both would need layout or code in the MIT drawer.
+- **Without Vibb itself**: one condition in `AppFilter.kidListable` (`apps/AppFilter.kt`, MIT like the file),
+  `packageName !in OWN_PACKAGES` = `me.vibb.launcher` and `me.vibb.launcher.debug` (both, so a debug build beside a
+  release one lists neither). Home already dropped its own package; that filter stays.
+- **Tests**: `AppFilterTest` +2 (both own ids refused in and out of install mode, the music app, a near-miss id and the
+  old `com.kidslauncher.mdm` still listed; `OWN_PACKAGES` equals the Gradle `applicationId` and its debug suffix),
+  `KidPaletteTest` +1 (the theme colours are the palette's, text and accent >= 4.5:1 on the ground, both styles read
+  them, `accentButton` on the accent >= 4.5:1, the drawer's row sets no colour of its own).
+- **Not emulator-checked yet**: the drawer (the swipe-up, a long-press menu, a launch) and the parent Settings with a
+  dialog and a switch, at `wm density 240`, nb and en.
+
+Counts: launcher `assembleDebug testDebugUnitTest --rerun -PwarningsAsErrors=true` 1263 tests, 0 failures (was 1260).
