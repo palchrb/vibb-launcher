@@ -24,7 +24,7 @@
                     <span class="row-value" data-value="child-pin">{% if child.pin_set %}On · {{ child.pin_length }} digits{% else %}Off{% endif %}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
-                <form method="post" action="/devices/{{ device.id }}/kid-lock" class="edit-body">
+                <form method="post" action="/devices/{{ device.id }}/kid-lock#child-pin" class="edit-body">
                     {% if !parent.pin_set %}
                     <p class="field-hint">Set a Parent PIN first: it opens the lock if the Child PIN is forgotten.</p>
                     {% endif %}
@@ -40,7 +40,7 @@
             {% if child.pin_set %}
             <details class="confirm cell">
                 <summary class="row">Remove Child PIN&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/kid-lock" class="confirm-body">
+                <form method="post" action="/devices/{{ device.id }}/kid-lock#child-pin" class="confirm-body">
                     <input type="hidden" name="clear_kid_pin" value="on">
                     <p>Remove {{ device.name }}'s Child PIN? The phone then opens without a code.</p>
                     <button type="submit" class="button-destructive">Remove Child PIN</button>
@@ -86,7 +86,7 @@
                     <span class="row-value" data-value="parent-pin">{% if parent.pin_set %}Set{% else %}Not set{% endif %}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
-                <form method="post" action="/devices/{{ device.id }}/parent-pin" class="edit-body">
+                <form method="post" action="/devices/{{ device.id }}/parent-pin#parent-pin" class="edit-body">
                     <label class="field-label" for="new_pin">New Parent PIN</label>
                     <input type="password" id="new_pin" name="new_pin" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" autocomplete="new-password" aria-describedby="new_pin-hint">
                     <p class="field-hint" id="new_pin-hint">6 to 10 digits, not the Child PIN. 8 or more are much harder to crack; birthdays and years are easy to guess.</p>
@@ -127,11 +127,13 @@
         </div>
     </section>
 
-    {#- The pickers save on change (autosave.js) and return here without a fragment, so
-        scroll-restore.js keeps the place; <noscript> Save without JS. -#}
+    {#- The pickers and switches save on change (autosave.js) and return to their group or row
+        (#screen, #lock-wallpaper, #lock-screen-text, #lock-screen-app-<package>): without JS the
+        answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4);
+        <noscript> Save without JS. -#}
     <section id="screen" aria-labelledby="screen-title">
         <h2 class="group-header" id="screen-title">Screen</h2>
-        <form method="post" action="/devices/{{ device.id }}/screen-timeout" class="group">
+        <form method="post" action="/devices/{{ device.id }}/screen-timeout#screen" class="group">
             <label class="row">
                 <span class="row-label">Turn off after</span>
                 <select class="pick" name="screen_timeout_seconds" data-autosave>
@@ -154,7 +156,7 @@
     <section id="lock-screen" aria-labelledby="lock-screen-title">
         <h2 class="group-header" id="lock-screen-title">Lock screen</h2>
         <div class="group">
-            <form method="post" action="/devices/{{ device.id }}/lock-wallpaper" class="cell" id="lock-wallpaper">
+            <form method="post" action="/devices/{{ device.id }}/lock-wallpaper#lock-wallpaper" class="cell" id="lock-wallpaper">
                 <label class="row">
                     <span class="row-label">Background</span>
                     <select class="pick" name="wallpaper" data-autosave>
@@ -166,7 +168,7 @@
                 </label>
                 <noscript><button type="submit" class="row row-button">Save Background</button></noscript>
             </form>
-            <form method="post" action="/devices/{{ device.id }}/lock-screen" class="cell" id="lock-screen-text">
+            <form method="post" action="/devices/{{ device.id }}/lock-screen#lock-screen-text" class="cell" id="lock-screen-text">
                 <label class="row">
                     <span class="row-label">Show message text</span>
                     <input type="checkbox" role="switch" class="sw" name="show_text" value="on"{% if lock_screen.show_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -196,8 +198,11 @@
             <p class="row text-alarm" data-row="lock-screen-unreadable">The apps couldn't be read. Check the server log.</p>
             {% else %}
             {% for app in lock_screen.apps %}
-            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps" class="cell" id="lock-screen-app-{{ app.package_name }}">
+            {#- A row listed only because it is ticked goes with its tick: its save lands on the group
+                (qa-browser-fixes-code L1). -#}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps#{% if app.note.is_some() %}notifications{% else %}lock-screen-app-{{ app.package_name }}{% endif %}" class="cell" id="lock-screen-app-{{ app.package_name }}">
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
                     <span class="row-label">{{ app.label }}{% if let Some(note) = app.note %}<span class="row-sub">{{ note }}</span>{% endif %}</span>
                     <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if app.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

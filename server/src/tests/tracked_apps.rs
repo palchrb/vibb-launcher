@@ -155,7 +155,7 @@ async fn an_invalid_asset_regex_is_refused_on_edit_with_the_values_kept() {
     assert!(!html.contains("autofocus"));
     // The Details form posts to the page's own path (qa-catalog #3): a refused save comes back
     // at the same path, so scroll-restore keeps the position and later forms redirect right.
-    let page_path = format!("/apps/tracked/{id}");
+    let page_path = format!("/apps/tracked/{id}#details");
     assert_eq!(
         form_action_of(&html, "asset_pattern"),
         Some(page_path.as_str())
@@ -214,7 +214,7 @@ async fn an_invalid_asset_regex_is_refused_on_edit_with_the_values_kept() {
         .await;
     assert_eq!(
         saved.location(),
-        Some(format!("/apps/tracked/{id}").as_str())
+        Some(format!("/apps/tracked/{id}?open=source#details").as_str())
     );
 }
 
@@ -457,7 +457,10 @@ async fn check_now_while_a_sync_runs_says_so() {
             &[],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/apps/tracked/{id}").as_str()));
+    assert_eq!(
+        res.location(),
+        Some(format!("/apps/tracked/{id}#check").as_str())
+    );
     let html = app
         .get_page(&format!("/apps/tracked/{id}"), &cookie)
         .await
@@ -838,7 +841,7 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    assert!(page.contains(&format!(r#"action="/devices/{id}/app-updates""#)));
+    assert!(page.contains(&format!(r#"action="/devices/{id}/app-updates#downloads""#)));
     assert!(page.contains(r#"name="app_updates_wifi_only" value="on" checked"#));
 
     let mut nudges = app.state.command_notify.subscribe();
@@ -1361,7 +1364,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
         "a sub-page has no brand bar"
     );
     assert!(html.contains(r#"class="nav-back" href="/apps""#));
-    assert!(html.contains(&format!(r#"action="/apps/tracked/{element}/check""#)));
+    assert!(html.contains(&format!(r#"action="/apps/tracked/{element}/check#check""#)));
     let phone = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
         phone.contains(&format!(
@@ -1376,7 +1379,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
         ("is_launcher", "is-launcher"),
     ] {
         assert!(autosaves(&html, name), "{name}");
-        let action = format!("/apps/tracked/{element}/{route}");
+        let action = format!("/apps/tracked/{element}/{route}#updates");
         assert_eq!(form_action_of(&html, name), Some(action.as_str()));
     }
     assert_eq!(input_checked(&html, "enabled", "on"), Some(true));
@@ -1394,7 +1397,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
         );
         let confirm = &html[at..at + html[at..].find("</details>").unwrap()];
         let form = confirm
-            .find(&format!(r#"action="/apps/tracked/{element}/{route}""#))
+            .find(&format!(r#"action="/apps/tracked/{element}/{route}"#))
             .unwrap_or_else(|| panic!("{id}: the form is outside its confirm"));
         assert!(confirm.find("</summary>").unwrap() < form, "{id}");
         assert!(confirm.contains(button), "{id}");
@@ -1484,8 +1487,10 @@ async fn add_app_keeps_the_extras_under_more_options() {
 }
 
 /// §5.1's redirect table for the Apps pages: every form the app pages render posts back to its
-/// own page (Remove to the catalog, Add to the new app's page), so a save never jumps. Built from
-/// the rendered actions: a new form without a row here fails.
+/// own group on its page - the fragment its action carries too - and a form in a `<details>`
+/// (Show on phones as, Source & Signing) comes back with it open (`?open=`), so a save never
+/// jumps or folds up (§5.1.4, the browser pass of 2026-10-14, 6f); Remove goes to the catalog, Add
+/// to the new app's page. Built from the rendered actions: a new form without a row here fails.
 #[tokio::test]
 async fn every_form_on_the_app_pages_returns_to_its_page() {
     let app = TestApp::new().await;
@@ -1549,20 +1554,28 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 .strip_prefix(&page)
                 .unwrap_or_else(|| panic!("{action}"));
             seen.insert(route.to_string());
-            let expected_fragment = match route {
-                "/upload" => Some("upload"),
-                "/confirm-package" => Some("release"),
-                _ => None,
+            // (the action's fragment = the group, the `?open=` the page comes back with)
+            let (group, open) = match route {
+                "" => (Some("details"), Some("source")),
+                "/display" => (Some("display"), Some("display")),
+                "/enabled" | "/include-prereleases" | "/is-launcher" => {
+                    (Some("updates"), Some("source"))
+                }
+                "/forget-package-name" => (Some("release"), Some("source")),
+                "/upload" => (Some("upload"), None),
+                "/confirm-package" => (Some("release"), None),
+                "/check" => (Some("check"), None),
+                "/delete" => (None, None),
+                other => panic!("a form without a row in the redirect table: {other}"),
             };
-            assert_eq!(fragment, expected_fragment, "{action}");
+            assert_eq!(fragment, group, "{action}");
             let fields: &[(&str, &str)] = match route {
                 "" => &[("name", "Renamed"), ("github_repo", "owner/repo")],
                 "/display" => &[("label", "Chat"), ("icon", "chat"), ("color", "peach")],
                 "/enabled" => &[("enabled", "on")],
                 "/include-prereleases" => &[("include_prereleases", "on")],
                 "/confirm-package" => &[("package", "me.vibb.testfixture")],
-                "/is-launcher" | "/check" | "/forget-package-name" | "/delete" | "/upload" => &[],
-                other => panic!("a form without a row in the redirect table: {other}"),
+                _ => &[],
             };
             let res = if route == "/upload" {
                 let boundary = "XBOUNDARYX";
@@ -1591,19 +1604,29 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
                 app.request_form(Method::POST, &target, Some(&cookie), fields)
                     .await
             };
-            match route {
-                "/delete" => assert_redirect(&res, "/apps", None),
-                "/display" => assert_redirect(&res, &page, Some("display")),
-                "/upload" => {
+            match (route, open) {
+                ("/delete", _) => assert_redirect(&res, "/apps", None),
+                ("/upload", _) => {
                     assert_redirect(&res, &format!("{page}?notice=uploaded"), Some("upload"))
                 }
-                "/confirm-package" => assert_redirect(
+                ("/confirm-package", _) => assert_redirect(
                     &res,
                     &format!("{page}?notice=package_confirmed"),
                     Some("release"),
                 ),
-                _ => assert_redirect(&res, &page, None),
+                (_, Some(open)) => {
+                    assert_redirect(&res, &format!("{page}?open={open}"), group);
+                    // The page comes back with that <details> open.
+                    let back = app.get_page(res.location().unwrap(), &cookie).await.text();
+                    let tag = tags(&back, "details")
+                        .into_iter()
+                        .find(|t| t.attr("id") == Some(open))
+                        .unwrap_or_else(|| panic!("{action}: no #{open}"));
+                    assert!(tag.has("open"), "{action}: #{open} comes back closed");
+                }
+                (_, None) => assert_redirect(&res, &page, group),
             }
+            app.assert_lands(&res, &cookie).await;
         }
     }
     for route in [

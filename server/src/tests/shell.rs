@@ -1,7 +1,7 @@
 //! Design 31 step 1, the shell: the 5-tab bar set per template, the Settings hub, the "Vibb Phone"
 //! name, `autosave.js` instead of inline `onchange`, and the page-markup helpers in `tests/mod.rs`.
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 
 use super::{
     Section, TestApp, assert_redirect, autosaves, device_page, form_action_of, input_checked,
@@ -198,7 +198,7 @@ async fn auto_saving_controls_use_the_static_script() {
     assert!(autosaves(&advanced, "disallow_factory_reset"));
     assert_eq!(
         form_action_of(&advanced, "disallow_factory_reset"),
-        Some(format!("/devices/{id}/hardening").as_str())
+        Some(format!("/devices/{id}/hardening#restrictions").as_str())
     );
     let html = app
         .get_page(&device_page(id, Section::Lock), &cookie)
@@ -248,7 +248,7 @@ async fn redirects_are_checked_by_path_and_fragment() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let res = app
-        .request_form(axum::http::Method::POST, "/logout", Some(&cookie), &[])
+        .request_form(Method::POST, "/logout", Some(&cookie), &[])
         .await;
     assert_redirect(&res, "/login", None);
 }
@@ -490,5 +490,221 @@ async fn the_tab_pages_open_on_their_large_title() {
                 "{page}: the bar's +"
             );
         }
+    }
+}
+
+/// A save never jumps to the top (§5.1.4, the browser pass of 2026-10-14): on every page of the
+/// PWA - with a phone that has apps, a contact, a rule, a catalog app and a music entry, so the
+/// row forms render too - every form's action names the form's own group, which is also where its
+/// redirect lands (each area's redirect table posts its forms); only the forms that leave the page
+/// have none (`settings_pages::check_forms`).
+#[tokio::test]
+async fn every_form_on_every_page_lands_on_its_own_group() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let (not_set_up, _) = app.create_device("Ola").await;
+    super::app_display::report_installed(&app, &token, &["org.example.one", "org.example.two"])
+        .await;
+    let entry = super::music::add_own(&app, &cookie, "Bilturen").await;
+    for (path, fields) in [
+        (
+            format!("/devices/{id}/contacts"),
+            vec![("name", "Mamma"), ("number", "91234567")],
+        ),
+        (
+            "/schedules/rules".to_string(),
+            vec![("scope", ""), ("name", "Skole"), ("kind", "school")],
+        ),
+        (
+            format!("/schedules/rules?device={id}"),
+            vec![("scope", "1"), ("name", "Egen"), ("kind", "custom")],
+        ),
+        (
+            "/apps/tracked/new".to_string(),
+            vec![("name", "Notes"), ("source_type", "manual")],
+        ),
+    ] {
+        let res = app
+            .request_form(Method::POST, &path, Some(&cookie), &fields)
+            .await;
+        assert!(res.status.is_redirection(), "{path}: {}", res.text());
+    }
+    let mut pages = vec![
+        "/devices".to_string(),
+        "/devices/new".to_string(),
+        "/apps".to_string(),
+        "/apps/tracked/new".to_string(),
+        "/apps/tracked/1".to_string(),
+        "/devices/locate".to_string(),
+        format!("/devices/locate?device={id}"),
+        "/music".to_string(),
+        "/music?edit=1".to_string(),
+        format!("/music/entries/{entry}"),
+        "/music/settings".to_string(),
+        "/music/categories".to_string(),
+        "/music/import".to_string(),
+        "/settings".to_string(),
+        "/schedules".to_string(),
+        "/schedules/screen-time".to_string(),
+        "/schedules/rules/new".to_string(),
+        "/schedules/rules/1".to_string(),
+        "/schedules/rules/2".to_string(),
+        "/dns".to_string(),
+        "/dns/log".to_string(),
+        "/wallpapers".to_string(),
+        "/settings/provisioning".to_string(),
+        "/account".to_string(),
+        "/security".to_string(),
+        "/backups".to_string(),
+    ];
+    for phone in [id, not_set_up] {
+        for section in [
+            Section::Summary,
+            Section::Calls,
+            Section::Apps,
+            Section::Music,
+            Section::Time,
+            Section::Lock,
+            Section::Home,
+            Section::Filter,
+            Section::About,
+            Section::Advanced,
+        ] {
+            pages.push(device_page(phone, section));
+        }
+        pages.push(format!("/devices/{phone}/provision"));
+    }
+    let mut forms = 0;
+    for page in pages {
+        let res = app.get_page(&page, &cookie).await;
+        assert_eq!(res.status, StatusCode::OK, "{page}");
+        let html = res.text();
+        super::settings_pages::check_forms(&page, &html);
+        forms += html.matches("<form").count();
+    }
+    assert!(forms > 150, "{forms} forms checked");
+}
+
+/// Where `style.css` breaks the shape every browser on the floor reads the same way (§5.7: no CSS
+/// nesting): a `{` while a declaration block is open, a `}` with nothing open, a block, comment or
+/// string still open at the end. A tiny tokenizer (comments, strings, braces), not a parser. One
+/// lost `}` once turned the last 160 lines into nested rules that never applied (the browser pass
+/// of 2026-10-14, Finding 1).
+fn css_shape_error(css: &str) -> Option<String> {
+    // The at-rules whose block holds rules; every other block holds declarations.
+    const RULE_LISTS: [&str; 6] = [
+        "@media",
+        "@supports",
+        "@keyframes",
+        "@-webkit-keyframes",
+        "@container",
+        "@layer",
+    ];
+    let line = |at: usize| css[..at].matches('\n').count() + 1;
+    // Each open block: whether it holds declarations, and the line it opened on.
+    let mut open: Vec<(bool, usize)> = Vec::new();
+    let mut prelude = String::new();
+    let bytes = css.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let c = bytes[at];
+        match c {
+            b'/' if bytes.get(at + 1) == Some(&b'*') => {
+                let Some(end) = css[at + 2..].find("*/") else {
+                    return Some(format!("line {}: a comment is never closed", line(at)));
+                };
+                at += 2 + end + 2;
+                continue;
+            }
+            b'"' | b'\'' => {
+                let start = at;
+                at += 1;
+                loop {
+                    match bytes.get(at) {
+                        Some(b'\\') => at += 2,
+                        Some(&q) if q == c => break,
+                        Some(b'\n') | None => {
+                            return Some(format!("line {}: a string is never closed", line(start)));
+                        }
+                        Some(_) => at += 1,
+                    }
+                }
+                prelude.push_str(&css[start..=at]);
+            }
+            b'{' => {
+                if let Some(&(true, opened)) = open.last() {
+                    return Some(format!(
+                        "line {}: `{}` opens a rule inside the declaration block of line {opened} \
+                         (a missing `}}`?)",
+                        line(at),
+                        prelude.trim()
+                    ));
+                }
+                // The at-rule's name ends at a space or a `(`: `@media(min-width: 600px)` is valid.
+                let head = prelude.trim_start();
+                let name = &head[..head
+                    .find(|c: char| c.is_whitespace() || c == '(')
+                    .unwrap_or(head.len())];
+                open.push((!RULE_LISTS.contains(&name), line(at)));
+                prelude.clear();
+            }
+            b'}' => {
+                if open.pop().is_none() {
+                    return Some(format!("line {}: a `}}` with no block open", line(at)));
+                }
+                prelude.clear();
+            }
+            b';' => prelude.clear(),
+            _ => {
+                let len = css[at..].chars().next().map_or(1, char::len_utf8);
+                prelude.push_str(&css[at..at + len]);
+                at += len;
+                continue;
+            }
+        }
+        at += 1;
+    }
+    open.last()
+        .map(|(_, opened)| format!("the block of line {opened} is never closed"))
+}
+
+#[test]
+fn style_css_has_the_shape_browsers_read() {
+    let css = std::fs::read_to_string("static/style.css").unwrap();
+    assert_eq!(css_shape_error(&css), None);
+
+    // The guard catches what it is for, and reads comments and strings as what they are.
+    let fine = "@media (x) {\n a { content: \"}{\"; /* } { */ }\n}\n@font-face { src: url('a;b') }";
+    assert_eq!(css_shape_error(fine), None);
+    // Valid CSS it must not flag (qa-browser-fixes-code N1): an at-rule's condition with no space
+    // before it, and the other at-rules that hold rules.
+    for fine in [
+        "@media(min-width: 600px) { a { b: c } }",
+        "@supports(display: grid) { a { b: c } }",
+        "@container card (min-width: 400px) { a { b: c } }",
+        "@layer base { a { b: c } }\n@layer base, extra;",
+    ] {
+        assert_eq!(css_shape_error(fine), None, "{fine}");
+    }
+    let lost_brace =
+        ".a {\n    padding-left: 64px;\n\n/* step 14 */\n.b,\n.c {\n    margin: 0;\n}\n";
+    assert_eq!(
+        css_shape_error(lost_brace).as_deref(),
+        Some(
+            "line 6: `.b,\n.c` opens a rule inside the declaration block of line 1 \
+             (a missing `}`?)"
+        )
+    );
+    for (css, error) in [
+        ("a { b: c; }\n}", "line 2: a `}` with no block open"),
+        (
+            "@media (x) {\n a { b: c; }\n",
+            "the block of line 1 is never closed",
+        ),
+        ("a { content: \"x }", "line 1: a string is never closed"),
+        ("a { b: c } /* x", "line 1: a comment is never closed"),
+    ] {
+        assert_eq!(css_shape_error(css).as_deref(), Some(error), "{css}");
     }
 }

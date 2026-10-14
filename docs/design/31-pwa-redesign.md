@@ -1303,12 +1303,21 @@ How it behaves:
 
 ### 5.1 A save never jumps to the top (the user's rule)
 
-How it works today:
-- `scroll-restore.js` (loaded un-deferred from `partials/head.html`) remembers the scroll position on any submit or
-  `form.submit()`.
-- It restores the position when the response lands on the **same path** within 20 s **and without a #fragment**
-  (`restoreTarget`, `scroll-restore.js:14-19`). It compares the path only, so `?notice=` redirects still restore.
-- A redirect with a fragment lands at that anchor instead.
+How it works (amended by the PWA browser pass's fix round, 2026-10-14; `docs/testing/2026-10-14-pwa-browser-pass.md`):
+- `scroll-restore.js` (loaded un-deferred from `partials/head.html`) remembers, on any submit or `form.submit()`, the
+  scroll position and where on the screen the form and each of its ancestors with an id were.
+- When the response lands on the **same path** within 20 s (the path only, so `?notice=` redirects still restore):
+  - without a #fragment it restores the exact position;
+  - with a #fragment inside one of those elements (the form's own group, a row of it - a new contact, the file next
+    to a deleted one) it puts the nearest of them back where it was on the screen: the exact position when nothing
+    above it changed, the row still under the finger when the save moved it (an app switched to the other group);
+  - with a #fragment the form's elements don't hold (another group, a result shown elsewhere) the browser goes to
+    that anchor.
+- Once the page has loaded it gives the history entry back to the browser (`scrollRestoration` "auto"), so
+  Back to it later returns to the place, not the top (qa-browser-fixes-code M1).
+- Before the fix round it never restored over a #fragment: a save that returned to its group's anchor scrolled the
+  group to the top edge (a 360 px jump, Medium 3), and the saves that returned without one landed at the top
+  without JS (High 2).
 
 The rules for the redesign (H3):
 1. **No picker pages for saving.** A single value is an inline `<select>` in its row (§3.0). A navigation row never
@@ -1330,12 +1339,23 @@ The rules for the redesign (H3):
    | `/settings/calls` (as built in step 8: one page posts here, so rule 2 applies and there is no `back` field) | Settings › Phone Setup | - | `/settings/provisioning#country-code` |
    | `/schedules/rules[/{id}]`, `/delete` | the rule editor (everyone's or a phone's own) | the existing `scope` field decides | as §3.5 |
 
-4. **Anchors only where they help.**
-   - Keep a fragment where the redirect lands on a **different** page (a delete that returns to its list).
-   - Keep one where the no-JS path needs it to find the row in a long list: `#app-{pkg}`, `#music-entry-{id}`,
-     `#entry-{id}`.
-   - Same-page auto-saves on short pages redirect without a fragment, so the script restores the exact position.
-   - The flash's group id is the anchor when there is a flash (§3.0).
+4. **Every form returns to its own group's fragment** (amended 2026-10-14, the browser pass's High 2 and Medium 3).
+   - A form that stays on its page redirects to `#<its group>` (or its row in a long list: `#app-{pkg}`,
+     `#music-entry-{id}`, `#entry-{id}`, `#lock-screen-app-{pkg}`), and its `action` carries the same fragment, so a
+     refusal rendered in the POST's answer lands there too. Without JS the answer lands on the form; with JS
+     `scroll-restore.js` keeps the exact place over it (above), so the fragment is only the no-JS fallback.
+   - The flash's group is that group (§3.0).
+   - A form in a closed `<details>` comes back with it open (`?open=`: the app page's "Show on phones as" and
+     Source & Signing, 6f; Calls & Contacts' `?open=<id>`).
+   - A form that leaves its page has no fragment of that page: signing in and out, Dismiss, Add Phone's and Add App's
+     first step, New Setup Code (the code page), the deletes that return to a list (which keep their list's
+     fragment).
+   - The fragment names an element the answer still has: a row that goes with the save (a lock-screen app
+     listed only for its tick) returns to its group, and a group that can empty out keeps its anchor
+     (`#orphans`).
+   - Pinned for every page by `tests::shell::every_form_on_every_page_lands_on_its_own_group` (with
+     `settings_pages::check_forms`) and by each area's redirect table, which follows each redirect
+     (`TestApp::assert_lands`).
 5. **Links that point at today's anchors** move with their targets (L5):
    - `#parent-pin` in `window_relock.rs` → `/devices/{id}/lock#parent-pin`;
    - `#app-{package}` in the blocks list → `/devices/{id}/apps#app-{package}`;
@@ -3455,3 +3475,47 @@ Deferred, with the reason:
 | The brand bar | Step 10's summary already includes `partials/tab_bar.html` alone with its back link ("‹ Devices") and the phone's large header, as §3.0 and the DeviceSummary mockup draw it. Nothing includes `partials/app_header.html` any more, so it is deleted; `shell::every_template_with_the_bar_sets_its_tab` now asserts no template names it and every non-landing page has its back link. The `.app-header` / `.brand` CSS goes with the clean-up. |
 | Back links into the summary | Choice 3 changed: step 10's not-set-up variant has its Connect This Phone group at `#access`, so Back from the code page and from Connect for a phone not set up now goes to `/devices/{id}#access`; Done still goes to the summary's top. Pinned in `enrollment::new_code_is_shown_once_and_replaces_the_last` and `provisioning::every_form_in_the_add_flow_lands_where_it_should`. |
 | Checks | `cargo test` 856 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |
+
+## CSS clean-up (2026-10-14)
+
+Step 15's "the old CSS classes nothing uses are deleted", done after all 15 steps merged. Every class selector in
+`server/static/style.css` (246) was searched for in the Askama templates (`class="..."` values), `server/src/**/*.rs`,
+`server/static/*.js` and `templates/sw.js`, whole-word, and for the dynamic patterns (`dot-{{ connection.css() }}`,
+`tone-{{ c.tone }}`, `music-status-{{ status.tone }}`, `attention-{{ item.level_css() }}`, `state-{{ css }}`, the
+`AVATAR_COLOURS`) against every value the Rust side can produce. `style.css?v=24` became `?v=25`.
+
+**Deleted (36 classes):** `.app-header`, `.brand`, `.page-header`, `.card`, `.card-alarm`, `.success`, `.button`,
+`.button-danger`, `.button-link`, `.badge-green`, `.badge-orange`, `.attention-state`, `.attention-result`,
+`.dot-green`, `.dot-orange`, `.dot-red`, `.contact-row`, `.contact-photo-row`, `.contact-avatar`, `.contact-initial`,
+`.device-card`, `.device-list`, `.device-name`, `.device-status`, `.enrollment-card`, `.app-checkbox-list`,
+`.app-status`, `.schedule-grid`, `.drive-card`, `.release-row`, `.section-title`, `.stat-tile`, `.stat-tiles`,
+`.stat-label`, `.stat-value`, `.table-wrap` - with their `:hover`/`:focus`/descendant/`@media` variants, the
+`.auth-page .card` and `.button-small.button-danger` compounds, the comments that only described them, and the
+`@media` blocks left empty. Selector lists lost only their dead members (`.device-card:focus` out of the focus list).
+
+**Kept on purpose (no plain whole-word hit, but reachable):**
+
+| Class | Why |
+|---|---|
+| `.dot-online`, `.dot-away`, `.dot-offline` | built as `dot-{{ connection.css() }}` (`ConnectionState::css`: online/away/offline) |
+| `.tone-green`, `.tone-orange`, `.tone-red`, `.tone-grey` | `tone-{{ c.tone }}` from `locate::status_words` (red/grey/orange/green) |
+| `.music-status-busy`, `.music-status-error` | `music-status-{{ status.tone }}` (ok/busy/error, `handlers::music`) |
+| `.avatar-indigo/-orange/-teal/-green/-pink/-purple/-grey`, `.badge-red` | set from Rust (`AVATAR_COLOURS`, `"badge badge-red"`) |
+| `.subtitle`, `.hint`, `.error` | still in `partials/app_display_form.html` |
+
+`static/music-cards.js` still queries `".music-card, .card"`; no element carries `.card` any more, so the second
+selector matches nothing (harmless, left alone: the task was CSS only).
+
+Size: `style.css` 2217 -> 1906 lines.
+
+## PWA browser-pass fix round (2026-10-14)
+
+The browser pass (`docs/testing/2026-10-14-pwa-browser-pass.md`) found a lost `}` in `style.css` (since guarded by
+`tests::shell::style_css_has_the_shape_browsers_read`), no-JS saves landing at the top and JS saves to a fragment
+jumping their group to the top edge. §5.1 is amended: every form that stays on its page returns to its own group's
+fragment (§5.1.4), and `scroll-restore.js` keeps the place over a fragment inside the submitted form's elements.
+Where the step sections above say a form returns "with no fragment", it now returns to its group (pinned by each
+redirect table and by `tests::shell::every_form_on_every_page_lands_on_its_own_group`). Also: `--orange` text
+`#A85400` (4.5:1), styled checks, pickers and file buttons, Name and icon as a disclosure row that returns open
+(`?open=`), the 2FA key in blocks of 4; `style.css?v=26`, `scroll-restore.js?v=2`. The fix round's table, with the
+before/after save positions, is at the end of the pass's doc.

@@ -56,8 +56,8 @@ async fn the_sound_bit_saves_and_reaches_the_phone() {
             ],
         )
         .await;
-    // Back to the page without a fragment; scroll-restore keeps the place (no jump to the top).
-    super::assert_redirect(&res, &home, None);
+    // Back to its group (§5.1.4); scroll-restore keeps the place (no jump to the top).
+    super::assert_redirect(&res, &home, Some("quick-controls"));
     assert_eq!(
         policy(&app, &token).await["quick_controls_mask"],
         json!(1 | 8)

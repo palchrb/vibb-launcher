@@ -305,6 +305,33 @@ impl TestApp {
         self.send(request).await
     }
 
+    /// A redirect's `#fragment` is on the page it lands on (qa-browser-fixes-code L1): without JS
+    /// a fragment that names nothing leaves the answer at the top. Follows `response` (a redirect)
+    /// with a GET and checks that page has `id="<fragment>"`; a redirect without one passes.
+    #[track_caller]
+    pub fn assert_lands<'a>(
+        &'a self,
+        response: &'a TestResponse,
+        cookie: &'a str,
+    ) -> impl std::future::Future<Output = ()> + 'a {
+        let location = response
+            .location()
+            .unwrap_or_else(|| panic!("not a redirect: {}", response.status))
+            .to_string();
+        let caller = std::panic::Location::caller();
+        async move {
+            let Some((page, fragment)) = location.split_once('#') else {
+                return;
+            };
+            let landed = self.get_page(page, cookie).await;
+            assert_eq!(landed.status, StatusCode::OK, "{location} (from {caller})");
+            assert!(
+                landed.text().contains(&format!("id=\"{fragment}\"")),
+                "{location} lands on no #{fragment} (from {caller})"
+            );
+        }
+    }
+
     /// Logs in through the real `/login` and `/auth/verify-2fa` forms as a fully onboarded admin
     /// (password changed, TOTP enrolled with a fixed secret) and returns the session cookie
     /// (`name=value`) for `request_form`/`get_page`, so admin routes run behind the real

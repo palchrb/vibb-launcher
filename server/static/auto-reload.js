@@ -45,11 +45,11 @@
             win.location.reload();
         }
 
-        // A reload must keep the place (qa-31-s8-code M1): scroll-restore set this history entry's
-        // scrollRestoration to "manual" after the save that led here, and a reload stays on the
-        // entry, so the browser alone would show the top. Hand the position back to the browser
-        // ("auto": it restores it, also over a #fragment) and leave scroll-restore's own record
-        // (same key and shape), which the reloaded page restores as after a save.
+        // A reload must keep the place (qa-31-s8-code M1). Make sure the entry is the browser's
+        // ("auto": it restores the position, also over a #fragment) - scroll-restore hands it back
+        // at `load`, but a reload can come first - and leave a record under scroll-restore's key
+        // with the path, position and time but no `tops`: with no #fragment the reloaded page
+        // restores that position; over a #fragment scroll-restore leaves it to the browser.
         function keepPlace() {
             try {
                 if (win.history && "scrollRestoration" in win.history) {

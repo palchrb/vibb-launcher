@@ -5,8 +5,8 @@
 //! launcher gets all of this as `PolicyResponse.call_policy` (`device_api::build_policy`). The
 //! global default country code is on Settings › Phone Setup (`handlers::settings`).
 //!
-//! Where the forms return (design 31 §5.1): the switches to the page without a fragment
-//! (scroll-restore keeps the place), a contact's forms to its row, open (`?open=<id>#contact-<id>`),
+//! Where the forms return (design 31 §5.1): the switches to their group (`#settings`), a contact's
+//! forms to its row, open (`?open=<id>#contact-<id>`),
 //! Add Contact to the new row, Remove Contact… to `#contacts`. A refusal renders the page (400)
 //! with that form open, what was typed and the reason under the field; a contact that is already
 //! gone (a second tap, another tab) returns to `#contacts`, saying so when something wasn't saved.
@@ -923,8 +923,9 @@ async fn contact_on_device(
     Ok(device.then_some(contact))
 }
 
-/// One form with every switch, so a missing checkbox really means "off". Back to the page
-/// without a fragment: the group is the page's first, and scroll-restore keeps the place.
+/// One form with every switch, so a missing checkbox really means "off". Back to its group,
+/// `#settings` (§5.1.4: without JS the answer lands on the form, with JS scroll-restore keeps the
+/// exact place).
 pub async fn save_settings(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -964,7 +965,7 @@ pub async fn save_settings(
     .await;
     match result {
         Ok(0) => not_found(),
-        Ok(_) => saved(&state, id, format!("/devices/{id}/calls")),
+        Ok(_) => saved(&state, id, format!("/devices/{id}/calls#settings")),
         Err(err) => db_error(id, err),
     }
 }

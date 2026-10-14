@@ -272,8 +272,12 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
     for _ in 0..2 {
         let res = tick(&app, Some(&cookie), id, "org.thoughtcrime.securesms", true).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        // Exactly the page, no fragment: scroll-restore.js keeps the parent's place.
-        super::assert_redirect(&res, &lock_page(id), None);
+        // Its row (§5.1.4): without JS on the switch in a long list, with JS the exact place.
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some("lock-screen-app-org.thoughtcrime.securesms"),
+        );
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(
@@ -287,7 +291,11 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
 
     for _ in 0..2 {
         let res = tick(&app, Some(&cookie), id, ELEMENT_X, false).await;
-        super::assert_redirect(&res, &lock_page(id), None);
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some(&format!("lock-screen-app-{ELEMENT_X}")),
+        );
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(ticks(&app, id).await, ["org.thoughtcrime.securesms"]);
@@ -316,7 +324,7 @@ async fn the_text_switch_saves_logs_and_nudges() {
     for on in [true, true, false, false] {
         let res = switch(&app, Some(&cookie), id, on).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        super::assert_redirect(&res, &lock_page(id), None);
+        super::assert_redirect(&res, &lock_page(id), Some("lock-screen-text"));
         assert_eq!(nudges.try_recv().ok(), Some(id));
         assert_eq!(text_switch(&app, id).await, on);
         assert_eq!(
@@ -486,7 +494,7 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     assert!(section.contains("Missed calls always show."));
     assert_eq!(
         super::form_action_of(section, "show_text"),
-        Some(format!("/devices/{id}/lock-screen").as_str())
+        Some(format!("/devices/{id}/lock-screen#lock-screen-text").as_str())
     );
     assert!(super::autosaves(section, "show_text"));
     assert_eq!(
@@ -499,7 +507,9 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
         switch_on(&element) && element.contains("Element X"),
         "{element}"
     );
-    assert!(element.contains(&format!(r#"action="/devices/{id}/lock-screen/apps""#)));
+    assert!(element.contains(&format!(
+        r#"action="/devices/{id}/lock-screen/apps#lock-screen-app-{ELEMENT_X}""#
+    )));
     assert!(element.contains(r#"role="switch""#));
     assert!(super::autosaves(&element, "on"));
     let signal = form_of(section, "org.thoughtcrime.securesms").expect("Signal listed");
@@ -667,4 +677,56 @@ async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
     assert!(lock.contains(
         "The lock's first page shows the clock, what's playing and the newest notifications."
     ));
+}
+
+/// qa-browser-fixes-code L1: a row listed only because it is ticked (here the default Element X on
+/// a phone that hasn't reported) goes with its tick, so its untick lands on the group - an anchor
+/// the answer still has -, not on the gone row; a listed app's switch keeps its row.
+#[tokio::test]
+async fn unticking_a_row_listed_only_for_its_tick_lands_on_the_group() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    let (action, hidden) = super::settings_pages::forms(&html)
+        .into_iter()
+        .find(|(action, _)| action.contains("/lock-screen/apps"))
+        .expect("Element X's row");
+    assert_eq!(
+        action,
+        format!("/devices/{id}/lock-screen/apps#notifications")
+    );
+    let fields: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    assert!(fields.contains(&("unlisted", "1")));
+    let res = app
+        .request_form(Method::POST, &action, Some(&cookie), &fields)
+        .await;
+    super::assert_redirect(&res, &lock_page(id), Some("notifications"));
+    app.assert_lands(&res, &cookie).await;
+    assert!(ticks(&app, id).await.is_empty());
+
+    // A listed app (reported and allowed) keeps its row, ticked or not.
+    report(
+        &app,
+        &token,
+        &[("org.thoughtcrime.securesms", "Signal")],
+        json!({}),
+    )
+    .await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = '[\"org.thoughtcrime.securesms\"]'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for on in [true, false] {
+        let res = tick(&app, Some(&cookie), id, "org.thoughtcrime.securesms", on).await;
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some("lock-screen-app-org.thoughtcrime.securesms"),
+        );
+        app.assert_lands(&res, &cookie).await;
+    }
 }

@@ -1053,8 +1053,8 @@ async fn emergency_call_is_shown_on_the_device_page() {
     assert_eq!(warnings(&calls_page(&app, &cookie, id).await), 0);
 }
 
-/// §5.1's table for Calls & Contacts, built from the rendered forms: the switches return to the
-/// page without a fragment (scroll-restore keeps the place), a contact's forms to its row, open,
+/// §5.1's table for Calls & Contacts, built from the rendered forms: the switches return to their
+/// group (`#settings`; scroll-restore keeps the place), a contact's forms to its row, open,
 /// Add Contact to the new row, Remove Contact… to `#contacts`. Every fragment is the form's own
 /// element, every auto-saving form has a `<noscript>` Save, and Remove Contact… is a confirm.
 #[tokio::test]
@@ -1082,9 +1082,9 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
     );
     let table: Vec<Row> = vec![
         (
-            format!("/devices/{id}/calls/settings"),
+            format!("/devices/{id}/calls/settings#settings"),
             vec![("managed", "on"), ("default_message_app", "sms")],
-            Some((calls.as_str(), None)),
+            Some((calls.as_str(), Some("settings"))),
         ),
         (
             format!("/devices/{id}/contacts/{c}#{row}"),
@@ -1168,6 +1168,7 @@ async fn every_form_on_the_calls_page_returns_to_its_place() {
         } else {
             assert_redirect(&res, path, *fragment);
         }
+        app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says: managed, Mamma saved, her photo gone, then her too, Pappa added.
     let managed: bool =

@@ -10,8 +10,8 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">Calls &amp; Contacts</h1>
 
-    {#- Where the forms return (§5.1): the switches to this page without a fragment
-        (scroll-restore keeps the place; the group is the page's first); a contact's forms to its
+    {#- Where the forms return (§5.1): the switches to their group (#settings; scroll-restore
+        keeps the place with JS); a contact's forms to its
         row, open (?open=<id>#contact-<id>), with or without JS; Add Contact to the new row;
         Remove Contact… to #contacts. A refusal renders here (400) with its form open. -#}
     {% for note in warnings %}
@@ -20,7 +20,7 @@
 
     {#- One form (§5.6, H1): the handler writes every switch, a missing one is off. -#}
     <section id="settings" aria-label="Calls and SMS">
-        <form method="post" action="/devices/{{ device.id }}/calls/settings" class="group">
+        <form method="post" action="/devices/{{ device.id }}/calls/settings#settings" class="group">
             <label class="row">
                 <span class="row-label">Manage calls and SMS</span>
                 <input type="checkbox" role="switch" class="sw" name="managed" value="on"{% if managed %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

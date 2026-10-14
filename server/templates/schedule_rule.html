@@ -10,10 +10,10 @@
     {#- One form (§5.6: the handler writes every field). Save sits in a sticky top bar, as the
         RuleEditor mockup's navigation bar, so it is in reach after editing any field, and the
         save's flash or a refusal's reason shows in that bar - in view wherever the page opens, with
-        or without JS (qa-31-s9-code M2, L1). A save returns here without a fragment (scroll-restore
-        keeps the place), a new rule to its own page; a refusal renders this page again (400) as
+        or without JS (qa-31-s9-code M2, L1). A save returns to this form (#rule; scroll-restore
+        keeps the place), a new rule to its own page's; a refusal renders this page again (400) as
         typed, the reason also under its field. -#}
-    <form method="post" action="{% if rule.id == 0 %}/schedules/rules{% else %}/schedules/rules/{{ rule.id }}{% endif %}" id="rule">
+    <form method="post" action="{% if rule.id == 0 %}/schedules/rules{% else %}/schedules/rules/{{ rule.id }}{% endif %}#rule" id="rule">
         <input type="hidden" name="scope" value="{{ scope }}">
         <div class="editor-bar" data-bar="rule">
             <div class="title-bar title-bar-split">

@@ -1,8 +1,10 @@
 //! Lock Screen & PINs' "Show message text" switch and its Notifications group (design 25 §3.3,
 //! `crate::lock_glance`; design 31 step 4): one tick per app. Both are auto-saving forms behind
 //! full admin auth (and the admin listener's CSRF check, as every form); each change is in the
-//! security log, nudges the phone and goes back to `/devices/{id}/lock` without a fragment, so
-//! `scroll-restore.js` keeps the parent's place in a long app list (never a jump to the top).
+//! security log, nudges the phone and goes back to its form's row on `/devices/{id}/lock`
+//! (`#lock-screen-text`, `#lock-screen-app-<package>`; `#notifications` for a row listed only
+//! because it was ticked, which goes with its tick): without JS the answer lands on the switch
+//! in a long app list, with JS `scroll-restore.js` keeps the exact place (design 31 §5.1.4).
 
 use std::collections::HashMap;
 
@@ -15,9 +17,10 @@ use crate::AppState;
 use crate::lock_glance;
 use crate::security::{self, CurrentAdmin};
 
-fn saved(state: &AppState, id: i64) -> Response {
+/// Back to the form's row, `#<form id>`.
+fn saved(state: &AppState, id: i64, form: &str) -> Response {
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}/lock")).into_response()
+    Redirect::to(&format!("/devices/{id}/lock#{form}")).into_response()
 }
 
 fn failed() -> Response {
@@ -59,7 +62,7 @@ pub async fn save_text(
                 Some(&lock_glance::text_log_line(id, on)),
             )
             .await;
-            saved(&state, id)
+            saved(&state, id, "lock-screen-text")
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the lock screen's text switch");
@@ -131,7 +134,13 @@ pub async fn save_app(
                 Some(&lock_glance::log_line(id, &package, on)),
             )
             .await;
-            saved(&state, id)
+            // A row listed only because it was ticked is gone once unticked: back to the group
+            // (qa-browser-fixes-code L1), else to the row.
+            if form.contains_key("unlisted") && !on {
+                saved(&state, id, "notifications")
+            } else {
+                saved(&state, id, &format!("lock-screen-app-{package}"))
+            }
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the lock screen's app");

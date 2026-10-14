@@ -322,8 +322,7 @@ pub async fn device_choices(
 /// and nothing changes; the phone is nudged and, if its current one was unticked, replaces it.
 /// Only the unticked rows are deleted: the lock's own wallpaper (`device_lock_wallpaper`, keyed on
 /// these rows) stays unless it was unticked - then the lock falls back to Home's. Back to Home
-/// Screen (`/devices/{id}/home`, design 31 step 5) without a fragment (scroll-restore keeps the
-/// place).
+/// Screen's Wallpapers group (`/devices/{id}/home#wallpapers`, design 31 §5.1.4).
 pub async fn save_device_wallpapers(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -381,7 +380,7 @@ pub async fn save_device_wallpapers(
     match result {
         Ok(Ok(())) => {
             nudge(&state, &[id]);
-            Redirect::to(&format!("/devices/{id}/home")).into_response()
+            Redirect::to(&format!("/devices/{id}/home#wallpapers")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
             (StatusCode::NOT_FOUND, "Device not found").into_response()
@@ -393,9 +392,8 @@ pub async fn save_device_wallpapers(
 
 /// `POST /devices/{id}/lock-wallpaper` (design 25, "Lock background"): `wallpaper` = `""` (the
 /// lock shows Home's wallpaper) or the id of a wallpaper ticked for this phone (else 400, nothing
-/// changes). 404 for an unknown device. Logged, nudges the phone, back to Lock Screen & PINs
-/// (`/devices/{id}/lock`, design 31 step 4) without a fragment (`scroll-restore.js` keeps the
-/// parent's place).
+/// changes). 404 for an unknown device. Logged, nudges the phone, back to its row on Lock Screen
+/// & PINs (`/devices/{id}/lock#lock-wallpaper`, design 31 §5.1.4).
 pub async fn save_lock_wallpaper(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -462,7 +460,7 @@ pub async fn save_lock_wallpaper(
             )
             .await;
             nudge(&state, &[id]);
-            Redirect::to(&format!("/devices/{id}/lock")).into_response()
+            Redirect::to(&format!("/devices/{id}/lock#lock-wallpaper")).into_response()
         }
         Ok(Err(StatusCode::NOT_FOUND)) => {
             (StatusCode::NOT_FOUND, "Device not found").into_response()

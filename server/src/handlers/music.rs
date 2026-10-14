@@ -7,10 +7,9 @@
 //! the phone reports; the page itself is `device_pages::view_music`).
 //!
 //! No form makes the page jump to the top (design 31 §5.1, server/CLAUDE.md): every save
-//! redirects to the page its form is on - to the row or group's anchor where the list is long or
-//! the result is in a group (`#entry-<id>`, `#category-<id>`, `#storytel`, `#music-entry-<id>`,
-//! `#music-settings`, ...), else
-//! without one so `scroll-restore.js` keeps the place; a refused one (400) shows the page again
+//! redirects to the page its form is on, at its row or group (`#entry-<id>`, `#category-<id>`,
+//! `#storytel`, `#music-entry-<id>`, `#music-settings`, `#sweep`, ...) - without JS the answer
+//! lands on the form, with JS `scroll-restore.js` keeps the place; a refused one (400) shows the page again
 //! with the values as entered and the error by the field, which is `autofocus`ed. Every change
 //! nudges the phones it reaches (SSE) and is in the security log (`music_*`,
 //! `storytel_login_saved/cleared`).
@@ -791,7 +790,7 @@ pub async fn delete_orphans(
         ),
     )
     .await;
-    Redirect::to("/music/settings").into_response()
+    Redirect::to("/music/settings#orphans").into_response()
 }
 
 /// The category for a new entry: the one picked, else the first whose `default_kind` matches the
@@ -1268,7 +1267,7 @@ pub async fn delete_category(
         &format!("category {id}: {}", category.name),
     )
     .await;
-    Redirect::to("/music/categories").into_response()
+    Redirect::to("/music/categories#categories").into_response()
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -3616,7 +3615,7 @@ pub async fn save_sweep(
         &format!("every {hours} hours"),
     )
     .await;
-    Redirect::to("/music/settings").into_response()
+    Redirect::to("/music/settings#sweep").into_response()
 }
 
 /// `POST /music/entries/{id}/check` (`back` = "entry" from the entry's page): Check now, within

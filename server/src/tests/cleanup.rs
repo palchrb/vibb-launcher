@@ -239,8 +239,8 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
             &[("dns_log_enabled", "on")],
         )
         .await;
-    // Back to the phone's Web Filter page (design 31 step 5), no fragment.
-    super::assert_redirect(&res, &filter, None);
+    // Back to its group on the phone's Web Filter page (design 31 §5.1.4).
+    super::assert_redirect(&res, &filter, Some("log"));
     assert_eq!(policy(&app, &token).await["dns_log_enabled"], true);
     app.request(
         Method::POST,
@@ -263,7 +263,7 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
     let res = app
         .request_form(Method::POST, &format!("/dns/log/{id}"), Some(&cookie), &[])
         .await;
-    super::assert_redirect(&res, &filter, None);
+    super::assert_redirect(&res, &filter, Some("log"));
     assert_eq!(
         count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
         0

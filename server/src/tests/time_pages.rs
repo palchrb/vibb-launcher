@@ -270,7 +270,7 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
     assert!(html.contains("<h1 class=\"page-title\">Skole</h1>"));
     let all = forms(&html);
     let actions: Vec<&str> = all.iter().map(|(a, _, _)| a.as_str()).collect();
-    let save = format!("/schedules/rules/{rule}");
+    let save = format!("/schedules/rules/{rule}#rule");
     let delete = format!("/schedules/rules/{rule}/delete");
     assert_eq!(actions, [save.as_str(), delete.as_str()]);
     for name in [
@@ -313,7 +313,7 @@ async fn the_rule_editor_is_one_form_with_a_confirm() {
     // A new rule: the same form, posting to /schedules/rules, no delete.
     let html = app.get_page("/schedules/rules/new", &cookie).await.text();
     assert!(html.contains("<h1 class=\"page-title\">New Rule</h1>"));
-    assert_eq!(form_action_of(&html, "name"), Some("/schedules/rules"));
+    assert_eq!(form_action_of(&html, "name"), Some("/schedules/rules#rule"));
     assert!(!html.contains("/delete"));
     // A phone's own: back to its Time page, its scope posted.
     let html = app
@@ -440,7 +440,7 @@ async fn a_refused_rule_renders_in_place_as_typed() {
 
 /// §5.1's table for the time pages, posted from the rendered forms: each lands on its own group
 /// (Device › Time's `#extra`, `#pause`, `#lifts`, `#rules`, `#screen-time`; Daily Limit's
-/// `#screen-time`), a rule's save on its page with no fragment (Save is at the top), a new rule on
+/// `#screen-time`), a rule's save on its page's form (`#rule`: Save is at the top), a new rule on
 /// its new page, a delete on the list it was in. Each fragment is checked to be the element that
 /// holds its form, the action's fragment to be the redirect's, every auto-save to have a
 /// `<noscript>` Save. A form the table doesn't know fails.
@@ -522,7 +522,7 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                 ] {
                     add(&mut sent, k, v);
                 }
-                (String::new(), None) // the new id, after the post
+                (String::new(), Some("rule")) // the new id, after the post
             } else if target.ends_with("/delete") {
                 if page.ends_with(&format!("/{own}")) {
                     (format!("{time}?notice=deleted"), Some("own-rules"))
@@ -538,7 +538,7 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                 ] {
                     add(&mut sent, k, v);
                 }
-                (format!("{target}?saved=1"), None)
+                (format!("{target}?saved=1"), Some("rule"))
             } else {
                 panic!("{page}: a form the table doesn't know: {action}");
             };
@@ -580,6 +580,7 @@ async fn every_form_on_the_time_pages_returns_to_its_group() {
                 expected.0 = format!("/schedules/rules/{}?saved=added", new_id().await);
             }
             assert_redirect(&res, &expected.0, expected.1);
+            app.assert_lands(&res, &cookie).await;
             seen.push(target);
         }
     }
@@ -1045,7 +1046,11 @@ async fn an_unreadable_rule_says_what_will_be_reset() {
             &[("scope", ""), ("name", "Skole"), ("kind", "school")],
         )
         .await;
-    assert_redirect(&res, &format!("/schedules/rules/{rule}?saved=1"), None);
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{rule}?saved=1"),
+        Some("rule"),
+    );
     let html = app
         .get_page(&format!("/schedules/rules/{rule}"), &cookie)
         .await

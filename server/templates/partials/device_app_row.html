@@ -9,7 +9,7 @@
         <span class="row-value">Always on</span>
     </div>
     {% else %}
-    <form method="post" action="/devices/{{ device.id }}/apps/toggle">
+    <form method="post" action="/devices/{{ device.id }}/apps/toggle#{{ app.anchor }}">
         <input type="hidden" name="package_name" value="{{ app.row.package_name }}">
         {% if let Some(tracked_app_id) = app.row.tracked_app_id %}
         <input type="hidden" name="tracked_app_id" value="{{ tracked_app_id }}">

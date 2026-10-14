@@ -1395,7 +1395,7 @@ async fn changes_wake_the_sweeper() {
             &[("hours", "3")],
         )
         .await;
-    assert_eq!(res.location(), Some("/music/settings"));
+    assert_eq!(res.location(), Some("/music/settings#sweep"));
     assert!(app.state.music_sweep.woken().await, "the setting");
     assert_eq!(events(&app, "music_sweep_saved").await, ["every 3 hours"]);
     assert_eq!(sweep::sweep_hours(&app.db).await.unwrap(), 3);
@@ -2512,7 +2512,10 @@ async fn the_cards_say_what_the_sweep_knows() {
     );
     assert!(settings.contains("value=\"6\" selected"));
     assert!(autosaves(&settings, "hours"));
-    assert_eq!(form_action_of(&settings, "hours"), Some("/music/sweep"));
+    assert_eq!(
+        form_action_of(&settings, "hours"),
+        Some("/music/sweep#sweep")
+    );
     let page = app.get_page("/music", &cookie).await.text();
     assert!(
         page.contains(
