@@ -137,7 +137,7 @@ impl PolicyProblem {
     pub fn detail(&self) -> String {
         match self {
             PolicyProblem::CacheCorrupt => "The phone can't read its saved settings. It enforces \
-                the last app list it had (or nothing but Vibb), and takes no changes until it gets \
+                the last app list it had (or nothing but Vibb One), and takes no changes until it gets \
                 good settings from this server."
                 .to_string(),
             PolicyProblem::ServerError => "This server answered with an error, so the phone keeps \
@@ -148,7 +148,7 @@ impl PolicyProblem {
                 had one). Check the server log and version."
                 .to_string(),
             PolicyProblem::FreshDecodeFailed => "The phone couldn't read the last settings from \
-                this server; Vibb and the server versions probably don't match. It keeps its \
+                this server; Vibb One and the server versions probably don't match. It keeps its \
                 current restrictions."
                 .to_string(),
             PolicyProblem::Other(code) => format!("The phone reported \"{code}\"."),
@@ -201,7 +201,7 @@ impl PlayNote {
                 title: "Restart the phone once".to_string(),
                 value: None,
                 detail: Some(format!(
-                    "After a Vibb update, Android hasn't yet given Vibb what it needs to {}.",
+                    "After a Vibb One update, Android hasn't yet given Vibb One what it needs to {}.",
                     effects.join(", and to ")
                 )),
                 fix: None,
@@ -547,7 +547,7 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
         if let Some(full) = status.app_version.as_deref().filter(|v| !v.is_empty()) {
             let short = short_version(full);
             software.push(
-                Row::new("vibb", "Vibb", short)
+                Row::new("vibb", "Vibb One", short)
                     .detail((short != full).then(|| format!("Full version: {full}."))),
             );
         }
@@ -571,7 +571,7 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
                     .class("row-value-action")
                     .detail(Some(
                         "Changes may arrive late while the phone sleeps. To fix it on the phone: \
-                         Vibb's Settings › Pause all restrictions › Background connection › \
+                         Vibb One's Settings › Pause all restrictions › Background connection › \
                          Allow, then end the pause. Or, with USB debugging allowed: adb shell \
                          dumpsys deviceidle whitelist +me.vibb.launcher",
                     )),
@@ -603,10 +603,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
             )
         });
         diagnostics.push(match boots {
-            Some(boots) => Row::new("starts", "Starts without Vibb", boots.value())
+            Some(boots) => Row::new("starts", "Starts without Vibb One", boots.value())
                 .class("row-value-alarm")
                 .detail(Some(boots.detail(&zone, now))),
-            None => Row::new("starts", "Starts without Vibb", "None"),
+            None => Row::new("starts", "Starts without Vibb One", "None"),
         });
         if let Some(status) = latest.as_ref() {
             let report = status
@@ -932,7 +932,7 @@ pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<
             // The second sentence lives behind the ⓘ (§4.2: a title and one sentence;
             // qa-31-s5-code N2).
             fix: Some(
-                "Android can't turn this on for Vibb. With USB debugging allowed, run: adb shell cmd notification allow_listener \
+                "Android can't turn this on for Vibb One. With USB debugging allowed, run: adb shell cmd notification allow_listener \
                  me.vibb.launcher/com.kidslauncher.mdm.badges.BadgeListenerService (a debug build: \
                  me.vibb.launcher.debug; a launcher from before 2026-10-06: com.kidslauncher.mdm)."
                     .to_string(),
@@ -957,11 +957,11 @@ pub(crate) fn clock_format_note(
         value: None,
         detail: Some("The phone can't change its clock format yet.".to_string()),
         fix: Some(
-            "Vibb needs Android's \"Modify system settings\" access, which a device owner can't \
+            "Vibb One needs Android's \"Modify system settings\" access, which a device owner can't \
              grant. With USB debugging allowed, run: adb shell appops set me.vibb.launcher \
              WRITE_SETTINGS allow (a debug build: me.vibb.launcher.debug). Or, during a pause, on \
-             the phone: Settings › Apps › Special app access › Modify system settings › Kids \
-             Launcher › Allow."
+             the phone: Settings › Apps › Special app access › Modify system settings › Vibb \
+             One › Allow."
                 .to_string(),
         ),
     })

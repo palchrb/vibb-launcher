@@ -300,7 +300,7 @@ impl Entry {
         match self {
             Entry::Override => "on the time-lock screen",
             Entry::PinLock => "on the lock screen",
-            Entry::Settings => "for Vibb's Settings",
+            Entry::Settings => "for Vibb One's Settings",
             Entry::Pause => "for a pause",
             Entry::InstallMode => "for Play install mode",
         }
@@ -409,7 +409,7 @@ fn line(event: &PinEvent) -> String {
             }
             (Entry::Override, None) => "Restrictions lifted on the time-lock screen.".to_string(),
             (Entry::PinLock, _) => "Lock screen opened with the parent code.".to_string(),
-            (Entry::Settings, _) => "The launcher's Settings opened.".to_string(),
+            (Entry::Settings, _) => "Vibb One's Settings opened.".to_string(),
             (Entry::Pause, Some(until)) => {
                 format!("All restrictions paused from Settings, until {until}.")
             }
@@ -500,7 +500,7 @@ pub fn event_row(event: &PinEvent, zone: &Zone, now: DateTime<Utc>) -> EventRow 
             match event.entry {
                 Entry::Override => "Time lock lifted",
                 Entry::PinLock => "Lock screen opened",
-                Entry::Settings => "Vibb's Settings opened",
+                Entry::Settings => "Vibb One's Settings opened",
                 Entry::Pause => "Restrictions paused",
                 Entry::InstallMode => "Play install mode",
             },
@@ -815,7 +815,7 @@ mod tests {
             ),
             (
                 unlocked(Entry::Settings, None),
-                "The launcher's Settings opened.",
+                "Vibb One's Settings opened.",
             ),
             (
                 unlocked(Entry::Pause, until),
@@ -851,7 +851,7 @@ mod tests {
                     clock_off: true,
                     ..ev(Kind::Unlocked, Entry::Settings, NOW)
                 },
-                "The launcher's Settings opened (the phone's clock was off; time of arrival \
+                "Vibb One's Settings opened (the phone's clock was off; time of arrival \
                  shown).",
             ),
         ];
@@ -902,7 +902,7 @@ mod tests {
         );
         assert_eq!(
             row(unlocked(Entry::Settings, None)),
-            ("Vibb's Settings opened", None, false)
+            ("Vibb One's Settings opened", None, false)
         );
         assert_eq!(
             row(unlocked(Entry::Pause, Some(NOW + 2 * H))),
@@ -931,7 +931,7 @@ mod tests {
             row(ev(Kind::Wrong, Entry::Settings, NOW)),
             (
                 "Wrong Parent PIN",
-                Some("For Vibb's Settings".to_string()),
+                Some("For Vibb One's Settings".to_string()),
                 false
             )
         );
@@ -1023,7 +1023,7 @@ mod tests {
         let out = notices(&events, &zone, now);
         assert_eq!(out.len(), 2);
         assert!(!out[0].child_tail);
-        assert_eq!(out[0].sub, "Vibb's Settings opened · 1 h ago");
+        assert_eq!(out[0].sub, "Vibb One's Settings opened · 1 h ago");
         // 09:03 UTC is 11:03 in Oslo: never the UTC clock.
         assert_eq!(
             out[1],

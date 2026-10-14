@@ -1488,7 +1488,7 @@ async fn the_page_says_an_older_phone_uses_mobile_data_only_with_both() {
     let shown = music_page(&app, &cookie, device).await;
     let form = settings_form(&shown);
     assert!(form.contains(NOTE), "{shown}");
-    assert!(form.contains("Update Vibb and the music app"));
+    assert!(form.contains("Update Vibb One and the music app"));
     assert!(form.find(NOTE) < form.find("name=\"stream_mobile_data\""));
     save_switches(&app, &cookie, device, false, true).await;
     assert!(music_page(&app, &cookie, device).await.contains(NOTE));

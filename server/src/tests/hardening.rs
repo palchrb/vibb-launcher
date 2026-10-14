@@ -528,7 +528,7 @@ async fn unseen_boots_are_stored_warned_and_logged() {
     assert_eq!(
         logged().await,
         vec![format!(
-            "device {id}: 1 start(s) without the launcher running noticed (1 in all)"
+            "device {id}: 1 start(s) without Vibb One running noticed (1 in all)"
         )]
     );
     let html = page().await;

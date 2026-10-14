@@ -220,9 +220,10 @@
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>
     <string name="notification_ring_stop_action">Stopp ringingen</string>
     <string name="notification_channel_listener">Finn enheten – bakgrunnstilkobling</string>
-    <string name="notification_listener_title">Kids Device MDM</string>
+    <string name="notification_listener_title">Vibb One</string>
     <string name="notification_listener_text">Klar for kommandoer fra forelderen (ringe, låse, finne).</string>
     <string name="notification_channel_vpn_filter">Innholdsfilter</string>
+    <string name="vpn_session">Vibb One-filter</string>
     <string name="notification_vpn_filter_title">Innholdsfilteret er på</string>
     <string name="notification_vpn_filter_text">Blokkerer reklame og upassende innhold.</string>
     <string name="notification_channel_app_install">Installering og oppdatering av apper</string>

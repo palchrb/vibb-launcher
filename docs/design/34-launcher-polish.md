@@ -1066,3 +1066,51 @@ Re-check on the emulator: Home at 2.0 in nb and en, 3 and 4 columns, with "Mamma
 | N2 `textLocale` asked `LocaleManager` | `ClockFormat.textLocale` is `context.resources.configuration.locales[0]` (the per-app language, or the system's when Vibb follows the phone - the locale "Til" itself was resolved in); `ClockFormatTest` allows exactly that one read of the context's configuration, never for the format. |
 
 Tests: `WholeWordsTest` 9 (was 5), `LockFontScaleTest` 5 (was 4), `ClockFormatTest` 10.
+
+## Step 12 implementation status (2026-10-14)
+
+P11 on main `c1570a95`: the launcher is "Vibb One" (debug "Vibb One (debug)") wherever a user reads its name. Server,
+launcher and docs in one commit.
+
+- **Launcher**: `app_name` "Vibb One" / "Vibb One (debug)" (was "Kids Launcher" / "Kids Launcher [debug]");
+  `notification_listener_title` "Vibb One" in en and nb (was "Kids Device MDM"); `KidVpnService`'s session is the
+  constant `VPN_SESSION` = "Vibb One filter" (was "Kid Phone Filter"). No other launcher string named the app (the
+  channel names are feature names). `ui/VibbOneNameTest` pins the three and scans `src/main`/`src/debug` for the old
+  names.
+- **PWA** (`src/`, `templates/`, `static/` grepped again on this main): every text where "Vibb" means the launcher now
+  says "Vibb One" - beyond §P11's list (About's row and the device page's "Vibb One 0.23.6", "Vibb One's Settings" in
+  `device_pages.rs`, `enroll_code.html`, `device_detail.html`, `device_advanced.html`, `device_lock.html`,
+  `provision_qr.html` and `parent_pin.rs`'s events, "this version of Vibb One", "Vibb One didn't install that app",
+  the clock warning's "› Vibb One ›") also the Attention titles (`attention.rs`: "Phone started without Vibb One",
+  "Vibb One isn't the Home app", "Vibb One too old for time rules", "Vibb One can't deliver music yet", "Update Vibb
+  One and the music app"), the security log's `boot_unseen` label, the calls report, the kid lock, kiosk escapes,
+  the lock glance, Locate, sound mode, music and time-rule warnings, and the footers/ⓘs of About, Advanced, Apps,
+  Home Screen, Locate, Lock Screen & PINs and the catalog app page. Comments were left as they were. **Not renamed**:
+  "Vibb Phone" (the PWA), "Vibb style" (the icon state, P1), "Vibb Musikk" / "Vibb music", "Import from Vibb",
+  "(from Vibb)", the Vibb box/Pi (the vibb music project), "Vibb night", the Vibb logo, the manifest's "family's
+  Vibb phones", the Spotify setup's example app name "Vibb hjemme", and the 2FA issuer "Kids Device MDM" (it only
+  labels new authenticator entries; renaming it would make the next setup look like another account). Tests that
+  quote a text follow.
+- **Migration** `0077_vibb_one.sql` (the lead's name; §P11 said `0077_launcher_row_name.sql`): `UPDATE tracked_apps
+  SET name = 'Vibb One' WHERE is_launcher = 1 AND name IN ('Vibb', 'Kids Launcher')`. Test
+  `tracked_apps::the_launcher_row_becomes_vibb_one_only_from_a_default_name` on an old database (migrated to 76):
+  both defaults on the launcher row renamed; a parent's name, "vibb" (another case) and both defaults on a
+  non-launcher row kept. `migrations_73_to_77_in_order` (was `_73_to_76_`) pins 0077 after 0076.
+- **Unchanged**: packages, the Kotlin namespace, the admin component, the `kids-launcher-mdm.apk` asset and the QR's
+  URL and checksum, every form and redirect (a save still returns to its group - no form changed), the policy JSON.
+- **Docs**: root `README.md` and `CLAUDE.md`, `launcher/README.md`, `launcher/CLAUDE.md` (title and "The name Vibb
+  One"), `server/CLAUDE.md` ("The launcher is Vibb One", the migration list), `server/DEPLOY.md` (the catalog row's
+  name). Old design docs stay.
+- **Check on the emulator** (not done here): the permission dialog, a notification header, the VPN dialog, the
+  PWA's About row and the Apps list (a row named "Vibb" before the update reads "Vibb One").
+
+### Step 12 fix round (qa-34-s12-code, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| L1 two renamed PWA texts unpinned (S3, S4 survived) | `provisioning::provision_page_with_checksum_shows_qr` asserts "You type it in Vibb One's settings on the phone.", "make Vibb One the device owner" and no "Vibb's"; `launcher_ui::clock_format_not_applied_is_a_warning` asserts the ⓘ's "Modify system settings › Vibb One › Allow." (the phone's label). Re-run: S3 (provision_qr back to "Vibb's settings") and S4 (the path's label changed) both fail now. |
+| L2 `VibbOneNameTest` skipped `src/debug/java` and the debug manifest (L1b survived) | The old-name scan takes `src/main/res`, `src/main/java`, `src/main/AndroidManifest.xml` and all of `src/debug` (and checks the debug manifest and java dir exist). Re-run: "Kids Launcher [debug]" in `src/debug/java/.../LockTaskDebug.kt` fails it. |
+| N1 the VPN session name not localized | The constant went; `KidVpnService` sets `getString(R.string.vpn_session)`: en "Vibb One filter", nb "Vibb One-filter" (`TranslationsTest` keeps the pair). `VibbOneNameTest` reads both resources and pins the one `setSession` call. |
+| N2 two security-log details said "the launcher" | `parent_pin::log_line`: "Vibb One's Settings opened." (and its clock-off variant); `boot_witness::log_line`: "N start(s) without Vibb One running noticed". Their unit tests and `hardening::unseen_boots_*` follow. |
+
+Counts: server `cargo test` 956 passed, node 30 passed (no new test functions; the asserts went into existing ones); launcher `assembleDebug testDebugUnitTest --rerun -PwarningsAsErrors=true` 1281 tests, 0 failures.

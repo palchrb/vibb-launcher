@@ -17,7 +17,7 @@
         {% match backup_service_enabled %}
         {% when Some(true) %}
         <div class="attention attention-alarm" data-warning="google-backup">
-            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync (Vibb's Settings › Sync now). If it stays on, something on the phone keeps turning it on: report it.</span></span>
+            <span class="attention-text">Backup to Google is on<span class="attention-sub">The phone turns it off at its next sync (Vibb One's Settings › Sync now). If it stays on, something on the phone keeps turning it on: report it.</span></span>
         </div>
         {% when _ %}
         {% endmatch %}
@@ -61,7 +61,7 @@
                     <summary aria-label="About the restrictions"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
                         <p>A reset from the phone's recovery menu can't be blocked; the phone then stops reporting.</p>
-                        <p>Keep location on also locks the location settings: Locate needs it. Airplane mode is allowed by default, for travel. Vibb's own language is set under Launcher, on the phone's page.</p>
+                        <p>Keep location on also locks the location settings: Locate needs it. Airplane mode is allowed by default, for travel. Vibb One's own language is set under Launcher, on the phone's page.</p>
                     </div>
                 </details>
             </div>
@@ -76,7 +76,7 @@
                 <details class="info">
                     <summary aria-label="About USB debugging"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
-                        <p>It also hides the developer options. While it is blocked, a computer can't repair the phone: if Vibb ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again.</p>
+                        <p>It also hides the developer options. While it is blocked, a computer can't repair the phone: if Vibb One ever breaks so badly that it can't reach this server, the only way back is a reset from the recovery menu and setting the phone up again.</p>
                     </div>
                 </details>
             </div>
@@ -91,8 +91,8 @@
                 <details class="info">
                     <summary aria-label="About safe mode"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                     <div class="info-panel">
-                        <p>Safe mode starts the phone without Vibb, so your child can use it unfiltered; the restrictions above still apply there. It repairs nothing.</p>
-                        <p>If an update breaks Vibb, the ways back are: this server sending a fixed version (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Turn it on once this version of Vibb has been tested on the phone.</p>
+                        <p>Safe mode starts the phone without Vibb One, so your child can use it unfiltered; the restrictions above still apply there. It repairs nothing.</p>
+                        <p>If an update breaks Vibb One, the ways back are: this server sending a fixed version (if the phone still syncs), adb with USB debugging allowed, or a reset from the recovery menu. Turn it on once this version of Vibb One has been tested on the phone.</p>
                     </div>
                 </details>
             </div>
@@ -105,7 +105,7 @@
                         <span class="row-value{% if on %} row-value-alarm{% endif %}">{% if on %}On{% else %}Off{% endif %}</span>
                         <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
                     </summary>
-                    <div class="info-panel"><p>When on, Android may copy the phone's app data, call history, SMS and settings to its Google account. Vibb keeps it off while the phone is managed; there is no switch for it.</p></div>
+                    <div class="info-panel"><p>When on, Android may copy the phone's app data, call history, SMS and settings to its Google account. Vibb One keeps it off while the phone is managed; there is no switch for it.</p></div>
                 </details>
             </div>
             {% endif %}
@@ -149,7 +149,7 @@
         {% endfor %}
         <form method="post" action="/devices/{{ device.id }}/kiosk-escapes#updates" class="group">
             <label class="row">
-                <span class="row-label">Update fence<span class="row-sub">Hides Android's home screen while Vibb updates.</span></span>
+                <span class="row-label">Update fence<span class="row-sub">Hides Android's home screen while Vibb One updates.</span></span>
                 <input type="checkbox" role="switch" class="sw" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
@@ -165,13 +165,13 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">Save</button></noscript>
         </form>
-        <div class="group-footer">Vibb installs its own updates at night, with the screen off.
+        <div class="group-footer">Vibb One installs its own updates at night, with the screen off.
             <details class="info">
                 <summary aria-label="About these switches"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>Update fence: leave it off until it is checked on this phone model.</p>
                     <p>Notification filter: allowed apps, calls, alarms and emergency alerts always stay. It reads only which app and channel a notification comes from, never its title or text.</p>
-                    <p>Boot cover: from the next restart. Test it on this phone first: restart it twice and check that Vibb comes up both times.</p>
+                    <p>Boot cover: from the next restart. Test it on this phone first: restart it twice and check that Vibb One comes up both times.</p>
                 </div>
             </details>
         </div>

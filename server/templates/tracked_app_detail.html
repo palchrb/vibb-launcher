@@ -38,7 +38,7 @@
         {% endif %}
     </div>
     {% if app.is_launcher %}
-    <p class="group-footer">Vibb itself: on every phone, and it can't be removed.</p>
+    <p class="group-footer">Vibb One itself: on every phone, and it can't be removed.</p>
     {% endif %}
 
     <h2 class="group-header">Show on phones as</h2>
@@ -90,7 +90,7 @@
                 <div class="info-panel"><p>Android's name for the app. It is read from the first release's APK, or confirmed by you - never typed in. A release of another package is refused.</p></div>
             </details>
             {% if app.package_name.is_empty() && !package_candidates.is_empty() %}
-            <p class="row row-note">The release didn't say which app it is. Vibb installed these on a phone that has it - pick the one that is this app.</p>
+            <p class="row row-note">The release didn't say which app it is. Vibb One installed these on a phone that has it - pick the one that is this app.</p>
             {% for candidate in package_candidates %}
             <form method="post" action="/apps/tracked/{{ app.id }}/confirm-package#release" class="cell">
                 <input type="hidden" name="package" value="{{ candidate }}">
@@ -178,7 +178,7 @@
             </form>
             <details class="info cell">
                 <summary class="row"><span class="row-label row-label-quiet">About these switches</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About Enabled and the launcher app"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Enabled: {% if app.source_type == "github" %}checked for a new release every hour, and{% else %}its uploads go{% endif %} to the phones that have it. Off: phones get nothing new.</p><p>The launcher app is Vibb itself: on every phone, it can't be turned off there or removed here. Mark exactly one app.</p></div>
+                <div class="info-panel"><p>Enabled: {% if app.source_type == "github" %}checked for a new release every hour, and{% else %}its uploads go{% endif %} to the phones that have it. Off: phones get nothing new.</p><p>The launcher app is Vibb One itself: on every phone, it can't be turned off there or removed here. Mark exactly one app.</p></div>
             </details>
         </div>
 

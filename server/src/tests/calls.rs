@@ -881,7 +881,7 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
     let anyone = "Anyone can call this phone";
-    let not_phone_app = "Vibb isn&#39;t the phone app";
+    let not_phone_app = "Vibb One isn&#39;t the phone app";
     let screening = "Call screening";
     for (dialer, held, present, absent) in [
         (false, None, vec![anyone], vec![not_phone_app, screening]),

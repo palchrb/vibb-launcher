@@ -605,7 +605,7 @@ async fn time_state_is_stored_and_shown() {
     )
     .await;
     let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
-    assert!(page.text().contains("Vibb too old for time rules"));
+    assert!(page.text().contains("Vibb One too old for time rules"));
     let today = chrono::Utc::now()
         .with_timezone(&chrono_tz::Europe::Oslo)
         .date_naive()
@@ -646,7 +646,7 @@ async fn time_state_is_stored_and_shown() {
     );
     assert!(text.contains(">42 of 90 min today<"), "{text}");
     assert!(text.contains("Includes 30 min extra"));
-    assert!(!text.contains("Vibb too old for time rules"));
+    assert!(!text.contains("Vibb One too old for time rules"));
 
     // Not an object, or too big: not stored.
     for bad in [json!("SCHOOL"), json!({"x": "y".repeat(5000)})] {

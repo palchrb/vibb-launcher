@@ -110,7 +110,9 @@ pub fn log_line(device_id: i64, previous: Option<i64>, count: Option<i64>) -> Op
     let count = count?;
     let rose = count - previous.unwrap_or(0);
     (rose > 0).then(|| {
-        format!("device {device_id}: {rose} start(s) without the launcher running noticed ({count} in all)")
+        format!(
+            "device {device_id}: {rose} start(s) without Vibb One running noticed ({count} in all)"
+        )
     })
 }
 
@@ -198,7 +200,7 @@ mod tests {
     fn the_log_line_only_when_the_count_rose() {
         assert_eq!(
             log_line(3, Some(1), Some(2)).as_deref(),
-            Some("device 3: 1 start(s) without the launcher running noticed (2 in all)")
+            Some("device 3: 1 start(s) without Vibb One running noticed (2 in all)")
         );
         assert_eq!(log_line(3, Some(2), Some(2)), None);
         assert_eq!(log_line(3, None, Some(0)), None);

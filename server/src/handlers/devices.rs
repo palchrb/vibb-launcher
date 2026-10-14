@@ -1590,7 +1590,12 @@ async fn render_device(
                 .as_ref()
                 .and_then(|s| s.app_version.as_deref())
                 .filter(|v| !v.is_empty())
-                .map(|v| format!("Vibb {}", crate::handlers::device_pages::short_version(v))),
+                .map(|v| {
+                    format!(
+                        "Vibb One {}",
+                        crate::handlers::device_pages::short_version(v)
+                    )
+                }),
             calls_value,
             apps_value,
             music_value,
@@ -1689,7 +1694,7 @@ pub async fn toggle_app(
     if crate::play::is_play_core(&package_name) {
         return (
             StatusCode::BAD_REQUEST,
-            "The Play Store, Play services and Google Services Framework are managed by Vibb \
+            "The Play Store, Play services and Google Services Framework are managed by Vibb One \
              itself and can't be allowed or removed here.",
         )
             .into_response();
@@ -1726,7 +1731,7 @@ pub async fn toggle_app(
     .await
     {
         Ok(0) => {}
-        Ok(_) => return (StatusCode::BAD_REQUEST, "Vibb is always on.").into_response(),
+        Ok(_) => return (StatusCode::BAD_REQUEST, "Vibb One is always on.").into_response(),
         Err(err) => return failed(err),
     }
     let page = format!("/devices/{id}/apps");

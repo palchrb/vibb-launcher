@@ -1,9 +1,9 @@
 <!-- Shields from shields.io -->
 [![][shield-license]][license]
 
-# Kids Launcher
+# Vibb One
 
-Kids Launcher is an Android home screen for a kid's phone that doubles as a
+Vibb One (package `me.vibb.launcher`) is an Android home screen for a kid's phone that doubles as a
 [Device Owner](https://developer.android.com/work/dpc/build-dpc) parental-control
 agent. It pairs with [`kid-phone-server`][server-repo], a self-hosted admin web app a
 parent uses to manage allowlisted apps, a bedtime/screen-time schedule, kiosk (lock-task)
@@ -38,7 +38,7 @@ opens a list of allowed apps.
 
 ## License
 
-Kids Launcher is licensed under the [GNU GPLv3 or later][license].
+Vibb One is licensed under the [GNU GPLv3 or later][license].
 
 Its app-list screen originated in [Josia Pietsch's µLauncher][ulauncher-repo]
 (itself descended from [Finn Glas's Launcher][original-repo]); that code remains under

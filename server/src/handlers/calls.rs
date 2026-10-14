@@ -325,7 +325,7 @@ fn screening_note() -> Note {
         title: "Call screening".to_string(),
         value: Some("Not granted".to_string()),
         detail: Some(format!(
-            "Vibb is the phone app and hangs up calls that aren't allowed, but another app could \
+            "Vibb One is the phone app and hangs up calls that aren't allowed, but another app could \
              screen incoming calls first. The phone can't tell which apps can. With USB debugging \
              allowed: adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
              {LAUNCHER_FOR_ADB}"
@@ -460,7 +460,7 @@ impl Finding {
                      been able to answer.",
                     zone.when(*at, now)
                 ),
-                Some("Please report this with Vibb's version (About This Phone).".to_string()),
+                Some("Please report this with Vibb One's version (About This Phone).".to_string()),
             ),
             Finding::Waiting { report } => (
                 match report {
@@ -496,13 +496,13 @@ impl Finding {
                 package(sms_app),
             ),
             Finding::NotEnforced { stopped: true } => (
-                "Vibb on this phone stopped reporting that it screens calls; an older version may \
+                "Vibb One on this phone stopped reporting that it screens calls; an older version may \
                  have been installed."
                     .to_string(),
                 None,
             ),
             Finding::NotEnforced { stopped: false } => (
-                "Vibb on this phone is too old to screen calls. Update it.".to_string(),
+                "Vibb One on this phone is too old to screen calls. Update it.".to_string(),
                 None,
             ),
             Finding::FailClosed => (
@@ -531,8 +531,8 @@ impl Finding {
                 )),
             ),
             Finding::CallLogUnreadable => (
-                "Vibb can't read the call log, so after an emergency call the emergency services \
-                 may not get through. Check that Vibb is the phone app."
+                "Vibb One can't read the call log, so after an emergency call the emergency services \
+                 may not get through. Check that Vibb One is the phone app."
                     .to_string(),
                 None,
             ),
@@ -554,7 +554,7 @@ impl Finding {
                 None,
             ),
             Finding::Reported { error } => (
-                "Vibb on the phone reported an error with the call rules.".to_string(),
+                "Vibb One on the phone reported an error with the call rules.".to_string(),
                 Some(format!("The phone said: {error}")),
             ),
             Finding::SmsAppAllowed { sms_app } => (
@@ -825,7 +825,7 @@ impl CallProblem {
             CallProblem::MessagesHidden => "Messages app is hidden",
             CallProblem::NotEnforced => "Calls aren't screened",
             CallProblem::FailClosed => "Phone can't read its call rules",
-            CallProblem::NotPhoneApp => "Vibb isn't the phone app",
+            CallProblem::NotPhoneApp => "Vibb One isn't the phone app",
             CallProblem::AnyoneCanCall => "Anyone can call this phone",
             CallProblem::NoRedirection => "Blocked numbers may ring briefly",
             CallProblem::CallLogUnreadable => "Emergency callback may not work",

@@ -93,7 +93,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "phone_foreign_access" => "Another app has control",
         "phone_relock_findings" => "Phone locked again: findings",
         "phone_app_blocked" => "App blocked on phone",
-        "boot_unseen" => "Phone started without Vibb",
+        "boot_unseen" => "Phone started without Vibb One",
         "app_installed" => "App installed on phone",
         "play_install_mode" => "Play Store opened for installs",
         "time_lift" => "Time rule paused",

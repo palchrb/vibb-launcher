@@ -84,7 +84,8 @@ class KidVpnService : VpnService() {
     private fun startVpn() {
         try {
             val builder = Builder()
-                .setSession("Kid Phone Filter")
+                // Android's VPN settings and its key dialog show it (design 34 P11; en/nb).
+                .setSession(getString(R.string.vpn_session))
                 .addAddress(VPN_INTERFACE_ADDRESS, 32)
                 .addDnsServer(FAKE_DNS_SERVER)
                 .addRoute(FAKE_DNS_SERVER, 32)

@@ -287,10 +287,10 @@ impl EscapeNote {
         };
         let (title, value, detail): (String, Option<String>, Option<String>) = match self {
             EscapeNote::NeedsUpdate => (
-                "Update Vibb for these switches".into(),
+                "Update Vibb One for these switches".into(),
                 None,
                 Some(
-                    "This phone's Vibb has neither the update fence nor the notification filter \
+                    "This phone's Vibb One has neither the update fence nor the notification filter \
                      yet. Until it updates, an update shows Android's own home screen for about a \
                      minute, and other apps' notifications can open screens outside the allowed \
                      apps."
@@ -308,7 +308,7 @@ impl EscapeNote {
                         .unwrap_or_else(|| "Now".into()),
                 ),
                 Some(
-                    "Other home screens and the notification shade are paused until Vibb is back."
+                    "Other home screens and the notification shade are paused until Vibb One is back."
                         .into(),
                 ),
             ),
@@ -329,11 +329,11 @@ impl EscapeNote {
                 )),
             ),
             EscapeNote::PartialFence => (
-                "Vibb isn't the Home app".into(),
+                "Vibb One isn't the Home app".into(),
                 None,
                 Some(
                     "So the update fence is only partial. Check that the phone is still managed \
-                     by Vibb (device owner)."
+                     by Vibb One (device owner)."
                         .into(),
                 ),
             ),
@@ -342,7 +342,7 @@ impl EscapeNote {
                     Release::Replaced => (
                         "Last update",
                         Some("Installed"),
-                        "It went in; the update fence was lifted once Vibb was back.".to_string(),
+                        "It went in; the update fence was lifted once Vibb One was back.".to_string(),
                     ),
                     Release::InstallFailed => (
                         "Last update failed to install",
@@ -411,7 +411,7 @@ impl EscapeNote {
                 "Filter has no notification access".into(),
                 None,
                 Some(
-                    "Vibb has no notification access (\"App badges\"), so nothing is removed. \
+                    "Vibb One has no notification access (\"App badges\"), so nothing is removed. \
                      Grant it with adb before setting the phone up."
                         .into(),
                 ),
@@ -426,10 +426,10 @@ impl EscapeNote {
                 ),
             ),
             EscapeNote::BootCoverNeedsUpdate => (
-                "Update Vibb for the boot cover".into(),
+                "Update Vibb One for the boot cover".into(),
                 None,
                 Some(
-                    "This phone's Vibb doesn't have it yet; until then the switch does nothing."
+                    "This phone's Vibb One doesn't have it yet; until then the switch does nothing."
                         .into(),
                 ),
             ),
@@ -438,7 +438,7 @@ impl EscapeNote {
                 None,
                 Some(
                     "It crashed twice during one start. Turn the switch off and on to try again \
-                     (after a Vibb update)."
+                     (after a Vibb One update)."
                         .into(),
                 ),
             ),
@@ -456,8 +456,8 @@ impl EscapeNote {
                 Some(format!("Shown {}", when(*at_ms))),
                 handover.map(|h| {
                     match h {
-                        Handover::ByItself => "It handed over to Vibb by itself.",
-                        Handover::WhenVibbStarted => "It handed over when Vibb started.",
+                        Handover::ByItself => "It handed over to Vibb One by itself.",
+                        Handover::WhenVibbStarted => "It handed over when Vibb One started.",
                     }
                     .to_string()
                 }),

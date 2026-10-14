@@ -4322,13 +4322,13 @@ pub(crate) async fn device_card(
     if found.unreachable {
         warnings.push(warning(
             "Music app not reachable",
-            "Vibb on the phone can't reach the music app.".to_string(),
+            "Vibb One on the phone can't reach the music app.".to_string(),
         ));
     }
     if found.cant_deliver {
         warnings.push(warning(
-            "Vibb can't deliver music yet",
-            "Update Vibb on this phone to send it the library.".to_string(),
+            "Vibb One can't deliver music yet",
+            "Update Vibb One on this phone to send it the library.".to_string(),
         ));
     }
 
@@ -4350,7 +4350,7 @@ pub(crate) async fn device_card(
         // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
         older_phone: found.older_phone.then(|| {
             warning(
-                "Update Vibb and the music app",
+                "Update Vibb One and the music app",
                 "Until then this phone uses mobile data for music only when both switches are on."
                     .to_string(),
             )

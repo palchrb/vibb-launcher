@@ -1391,10 +1391,10 @@ async fn render_device_time(
     if crate::handlers::devices::launcher_without_rules(latest.as_ref()) {
         warnings.push(Note {
             warning: true,
-            title: "Vibb too old for time rules".to_string(),
+            title: "Vibb One too old for time rules".to_string(),
             value: None,
             detail: Some(
-                "Until Vibb updates, the phone keeps its old schedule and changes here don't \
+                "Until Vibb One updates, the phone keeps its old schedule and changes here don't \
                  reach it."
                     .to_string(),
             ),

@@ -337,7 +337,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
         .get_page(&format!("/devices/{anna}/time"), &cookie)
         .await;
     assert_eq!(time.status, axum::http::StatusCode::OK);
-    assert!(time.text().contains("Vibb too old for time rules"));
+    assert!(time.text().contains("Vibb One too old for time rules"));
     for (page, anchor) in [
         ("about", "sound"),
         ("about", "software"),

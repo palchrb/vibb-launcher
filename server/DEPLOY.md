@@ -422,6 +422,8 @@ An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and
 
 The launcher updates itself through the Apps catalog, like any other app. Add it once under **Apps > Add App**:
 
+- name: **Vibb One** (the launcher's name on the phone since design 34; migration 0077 renamed a row still called
+  "Vibb" or "Kids Launcher" - any other name is yours and stays)
 - source: GitHub releases, repo `palchrb/vibb-launcher` (the catalog skips the repo's `server-v*` releases and takes
   the newest `launcher-v*` release that carries the APK)
 - under More Options, "File name contains": `kids-launcher-mdm.apk`, and "Tag starts with": `launcher-v`

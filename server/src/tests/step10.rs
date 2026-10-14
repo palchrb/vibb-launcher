@@ -365,7 +365,7 @@ async fn lock_page_warns_about_the_lock_state() {
     post_status(&app, &token, json!({ "capabilities": ["call_policy_v1"] })).await;
     let html = lock_page(&app, &cookie, id).await;
     assert!(
-        child_group(&html).contains("Vibb needs an update"),
+        child_group(&html).contains("Vibb One needs an update"),
         "{html}"
     );
 

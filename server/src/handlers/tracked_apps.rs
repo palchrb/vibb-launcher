@@ -2284,9 +2284,9 @@ pub async fn confirm_package(
                 &state,
                 id,
                 Some(Note::Package(Flash {
-                    title: "Vibb didn't install that app".to_string(),
+                    title: "Vibb One didn't install that app".to_string(),
                     detail: Some(format!(
-                        "{} isn't an app Vibb installed on a phone that has this app. Nothing \
+                        "{} isn't an app Vibb One installed on a phone that has this app. Nothing \
                          was changed.",
                         form.package
                     )),
