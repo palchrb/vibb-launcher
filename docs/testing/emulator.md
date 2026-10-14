@@ -112,12 +112,13 @@ adb emu gsm cancel +4791234567   # caller hangs up
 adb shell am start -a android.intent.action.CALL -d tel:112   # (emergency; the emulator fakes it)
 ```
 
-Add contacts with matching numbers in the PWA calls page (+47 9123 4567).
+Add contacts with matching numbers on the phone's Calls & Contacts page in the PWA (Add Contact, +47 9123 4567;
+the default country code is on Settings › Phone Setup).
 
 SMS (emulator console): `adb emu sms send <number> <text>`, e.g.
 `adb emu sms send 4791234567 hello` or a named sender `adb emu sms send Vipps kode 1234`.
 Step 9 keeps SMS **on/off only** (the SMS allowlist, part A, is postponed): with SMS off on the
-calls page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every message.
+Calls & Contacts page nothing arrives (`DISALLOW_SMS`); with SMS on Messages shows every message.
 
 ## 5b. Smoke-test script
 
@@ -253,7 +254,7 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
 5. Add a school rule for "now" in the PWA → lock screen with the rule name; calls blocked.
 6. Badges: post a notification from an allowed app → count on its icon.
 
-7. Step 9: manage calls ON -> the calls page says "Waiting for the phone to confirm" and
+7. Step 9: manage calls ON -> Calls & Contacts shows the row "Waiting for the phone to confirm" and
    reloads itself until the next report, then shows the real state (never "waiting" for more
    than 5 minutes). `adb logcat -b events | grep -E "am_kill|wm_create_activity"` shows no
    `am_kill` of our package when calls go ON -> OFF -> ON.

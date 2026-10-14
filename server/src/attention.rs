@@ -355,7 +355,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         crate::handlers::window_relock::card(&state.db, id, latest, None, now_ms, allowed.as_ref())
             .await;
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
-        Ok(report) => report.problems,
+        Ok(report) => report.problems(),
         Err(err) => {
             tracing::error!(device_id = id, %err, "attention: can't read the call report");
             Vec::new()

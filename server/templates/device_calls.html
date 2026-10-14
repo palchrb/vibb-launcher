@@ -2,131 +2,164 @@
 <html lang="en">
 <head>
 {% include "partials/head.html" %}
-{% if auto_refresh %}<meta http-equiv="refresh" content="5">{% endif %}
 </head>
 <body>
 {% let tab = "devices" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
-    <div class="page-header">
-        <h1>{{ device.name }}: Calls &amp; SMS</h1>
-        <a href="/devices/{{ device.id }}" class="button-small button-secondary">Back to device</a>
-    </div>
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Calls &amp; Contacts</h1>
 
-    {% if let Some(error) = error %}
-    <div class="card">
-        <div class="error">{{ error }}</div>
-    </div>
-    {% endif %}
+    {#- Where the forms return (§5.1): the switches to this page without a fragment
+        (scroll-restore keeps the place; the group is the page's first); a contact's forms to its
+        row, open (?open=<id>#contact-<id>), with or without JS; Add Contact to the new row;
+        Remove Contact… to #contacts. A refusal renders here (400) with its form open. -#}
+    {% for note in warnings %}
+    {% include "partials/note_warning.html" %}
+    {% endfor %}
 
-    {% if !warnings.is_empty() || !hints.is_empty() %}
-    <div class="card">
-        <h2>{% if warnings.is_empty() %}About this phone{% else %}Check this phone{% endif %}</h2>
-        {% for warning in warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        {% for hint in hints %}
-        <p class="subtitle">{{ hint }}</p>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    <form method="post" action="/devices/{{ device.id }}/calls/settings" class="card">
-        <h2>Settings</h2>
-        <p class="subtitle">Each switch saves itself immediately.</p>
-        <label class="checkbox-row">
-            <input type="checkbox" name="managed" value="on" {% if managed %}checked{% endif %} data-autosave>
-            Manage calls and SMS on this phone
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="calls_enabled" value="on" {% if calls_enabled %}checked{% endif %} data-autosave>
-            Calls on (only with the contacts below)
-        </label>
-        <label class="checkbox-row">
-            <input type="checkbox" name="sms_enabled" value="on" {% if sms_enabled %}checked{% endif %} data-autosave>
-            SMS on (turning it off also blocks the phone's Messages app, because of RCS chat)
-        </label>
-        <label for="default_message_app">Message button opens, unless a contact says otherwise</label>
-        <select id="default_message_app" name="default_message_app" data-autosave>
-            {% for option in default_message_options %}
-            <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
-            {% endfor %}
-        </select>
-        <p class="subtitle">Emergency numbers (112, 110, 113) always work, whether or not they are in the phone book. Add them below if you want buttons for them. The offline-override PIN and "pause all restrictions" do not open calls.</p>
-        <p class="subtitle">Calls from other numbers are rejected, but the carrier may still send them to voicemail: dial <strong>##004#</strong> on the phone once to turn off forwarding to voicemail, and don't allow the voicemail number. Directory and connect services (1881, 1880, ...) can put a call through to any number, so don't add them. A caller can fake a contact's number; the phone rejects calls the network marks as failed verification.</p>
-        <noscript><button type="submit">Save</button></noscript>
-    </form>
-
-    <div class="card">
-        <h2>Contacts</h2>
-        {% if contacts.is_empty() %}
-        <p class="subtitle">No contacts yet. While calls are managed, only emergency numbers work.</p>
-        {% else %}
-        <p class="subtitle">In: may call this phone. Out: in the phone book, the kid can call them. Home: also a call button on the home screen. The name and the photo are shared by every phone that has this number. Photos (JPEG, PNG or WebP, up to 10 MB) are cropped square, made smaller and saved again without any hidden information such as where they were taken.</p>
-        {% for contact in contacts %}
-        <div class="contact-row">
-            <div class="contact-photo-row">
-                {% if let Some(photo) = contact.photo %}
-                <img class="contact-avatar" src="/contact-photos/{{ photo }}" alt="Photo of {{ contact.name }}" width="56" height="56">
-                {% else %}
-                <span class="contact-avatar contact-initial" aria-hidden="true">{{ contact.initial }}</span>
-                {% endif %}
-                <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo" enctype="multipart/form-data">
-                    <label>Photo
-                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave>
-                    </label>
-                    <noscript><button type="submit" class="button-small">Upload</button></noscript>
-                </form>
-                {% if contact.photo.is_some() %}
-                <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo/remove">
-                    <button type="submit" class="button-small button-secondary">Remove photo</button>
-                </form>
-                {% endif %}
-            </div>
-            <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}">
-                <strong>{{ contact.name }}</strong> <span class="subtitle">{{ contact.number }}</span>
-                <label class="checkbox-row">
-                    <input type="checkbox" name="inbound" value="on" {% if contact.inbound %}checked{% endif %} data-autosave> In
-                </label>
-                <label class="checkbox-row">
-                    <input type="checkbox" name="outbound" value="on" {% if contact.outbound %}checked{% endif %} data-autosave> Out
-                </label>
-                <label class="checkbox-row">
-                    <input type="checkbox" name="show_on_home" value="on" {% if contact.show_on_home %}checked{% endif %} data-autosave> Home
-                </label>
-                <select name="message_app" data-autosave>
-                    {% for option in contact.message_options %}
-                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+    {#- One form (§5.6, H1): the handler writes every switch, a missing one is off. -#}
+    <section id="settings" aria-label="Calls and SMS">
+        <form method="post" action="/devices/{{ device.id }}/calls/settings" class="group">
+            <label class="row">
+                <span class="row-label">Manage calls and SMS</span>
+                <input type="checkbox" role="switch" class="sw" name="managed" value="on"{% if managed %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Calls</span>
+                <input type="checkbox" role="switch" class="sw" name="calls_enabled" value="on"{% if calls_enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">SMS</span>
+                <input type="checkbox" role="switch" class="sw" name="sms_enabled" value="on"{% if sms_enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">Message button</span>
+                <select class="pick" name="default_message_app" data-autosave>
+                    {% for option in default_message_options %}
+                    <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
                     {% endfor %}
-                </select>
-                <input type="text" name="message_address" value="{{ contact.message_address }}" placeholder="Matrix ID for Element, e.g. @name:matrix.org" maxlength="255" data-autosave>
-                <noscript><button type="submit" class="button-small">Save</button></noscript>
-            </form>
-            <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/remove">
-                <button type="submit" class="button-small button-danger">Remove</button>
-            </form>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            {% for note in notes %}
+            {% include "partials/note_row.html" %}
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <div class="group-footer">While managed, only the contacts below can call or text. Emergency numbers always work.
+            <details class="info">
+                <summary aria-label="About calls and SMS"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Emergency numbers (112, 110, 113) work without being added. The Parent PIN and a pause don't open other calls. Turning SMS off also hides the Messages app, since it can chat over RCS.</p>
+                    <p>Dial ##004# on the phone once, so rejected calls don't go to voicemail. Don't add the voicemail number or directory services (1881, 1880): they connect any number. A caller can fake a number; the phone rejects calls the network marks as failed verification.</p>
+                </div>
+            </details>
         </div>
-        {% endfor %}
+    </section>
+
+    <section id="contacts" aria-labelledby="contacts-title">
+        <h2 class="group-header" id="contacts-title">Contacts</h2>
+        {#- At the group's top: #contacts lands here, a long list would hide a line under it. -#}
+        {% if let Some(text) = contacts_notice %}
+        <div class="group"><p class="flash flash-error" role="status" data-flash="contacts">{{ text }}</p></div>
         {% endif %}
-    </div>
-
-    <form method="post" action="/devices/{{ device.id }}/contacts" class="card">
-        <h2>Add a contact</h2>
-        <label for="contact_name">Name</label>
-        <input type="text" id="contact_name" name="name" value="{{ form_name }}" maxlength="60" required>
-        <label for="contact_number">Phone number</label>
-        <input type="tel" id="contact_number" name="number" value="{{ form_number }}" required>
-        <p class="subtitle">Without a country code, +{{ default_country_code }} is used.</p>
-        <button type="submit">Add</button>
-    </form>
-
-    <form method="post" action="/settings/calls" class="card">
-        <h2>Default country code</h2>
-        <p class="subtitle">For every phone. Numbers already saved keep the code they were saved with.</p>
-        <input type="hidden" name="device_id" value="{{ device.id }}">
-        <input type="text" name="default_country_code" value="{{ default_country_code }}" inputmode="numeric" pattern="[1-9][0-9]{0,2}" maxlength="3">
-        <button type="submit" class="button-small">Save</button>
-    </form>
+        <div class="group group-avatars group-small">
+            {% for contact in contacts %}
+            {#- One form per contact (§5.6): the row opens it; the switches and the picker save on
+                change, the Matrix ID on Enter or when it loses focus. -#}
+            <div class="cell" id="contact-{{ contact.id }}" data-contact="{{ contact.id }}">
+                <details class="edit"{% if contact.open %} open{% endif %}>
+                    <summary class="row">
+                        {% if let Some(photo) = contact.photo %}
+                        <img class="avatar avatar-small avatar-photo" src="/contact-photos/{{ photo }}" alt="" width="36" height="36">
+                        {% else %}
+                        <span class="avatar avatar-small" aria-hidden="true">{{ contact.initial }}</span>
+                        {% endif %}
+                        <span class="row-label">{{ contact.name }}<span class="row-sub">{{ contact.number }}</span></span>
+                        <span class="row-value" data-value="contact">{{ contact.summary }}</span>
+                        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </summary>
+                    <div class="contact-body">
+                        <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}#contact-{{ contact.id }}">
+                            <label class="row">
+                                <span class="row-label">Can call {{ device.name }}</span>
+                                <input type="checkbox" role="switch" class="sw" name="inbound" value="on"{% if contact.inbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                            </label>
+                            <label class="row">
+                                <span class="row-label">In the phone book</span>
+                                <input type="checkbox" role="switch" class="sw" name="outbound" value="on"{% if contact.outbound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                            </label>
+                            <label class="row">
+                                <span class="row-label">On the home screen</span>
+                                <input type="checkbox" role="switch" class="sw" name="show_on_home" value="on"{% if contact.show_on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                            </label>
+                            <label class="row">
+                                <span class="row-label">Message button</span>
+                                <select class="pick" name="message_app" data-autosave>
+                                    {% for option in contact.message_options %}
+                                    <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+                                    {% endfor %}
+                                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </label>
+                            <div class="field contact-field">
+                                <label class="field-label" for="matrix-{{ contact.id }}">Matrix ID (Element only)</label>
+                                <input type="text" id="matrix-{{ contact.id }}" name="message_address" value="{{ contact.message_address }}" placeholder="@name:matrix.org" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "message_address" %} aria-invalid="true" aria-describedby="matrix-{{ contact.id }}-error" autofocus{% endif %}{% endif %}>
+                                {% if let Some((field, why)) = contact.error %}{% if *field == "message_address" %}<p class="field-error" id="matrix-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% endif %}
+                            </div>
+                            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+                        </form>
+                        <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo#contact-{{ contact.id }}" enctype="multipart/form-data">
+                            <label class="row">
+                                <span class="row-label">{% if contact.photo.is_some() %}New photo{% else %}Add a photo{% endif %}</span>
+                                <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" data-autosave{% if let Some((field, _)) = contact.error %}{% if *field == "photo" %} aria-invalid="true" aria-describedby="photo-{{ contact.id }}-error"{% endif %}{% endif %}>
+                            </label>
+                            {% if let Some((field, why)) = contact.error %}{% if *field == "photo" %}<p class="field-error contact-photo-error" id="photo-{{ contact.id }}-error">{{ why }}</p>{% endif %}{% endif %}
+                            <noscript><button type="submit" class="row row-button">Upload</button></noscript>
+                        </form>
+                        {% if contact.photo.is_some() %}
+                        <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/photo/remove#contact-{{ contact.id }}">
+                            <button type="submit" class="row row-button">Remove Photo</button>
+                        </form>
+                        {% endif %}
+                        <details class="confirm cell">
+                            <summary class="row row-danger">Remove Contact&hellip;</summary>
+                            <form method="post" action="/devices/{{ device.id }}/contacts/{{ contact.id }}/remove#contacts" class="confirm-body">
+                                <p>Remove {{ contact.name }} from {{ device.name }}'s phone? Their calls are then blocked.</p>
+                                <button type="submit" class="button-destructive">Remove Contact</button>
+                            </form>
+                        </details>
+                    </div>
+                </details>
+            </div>
+            {% else %}
+            <p class="row row-note">No contacts yet. While calls are managed, only emergency numbers work.</p>
+            {% endfor %}
+            <details class="edit cell" id="add-contact"{% if add_open %} open{% endif %}>
+                <summary class="row row-button">Add Contact</summary>
+                <form method="post" action="/devices/{{ device.id }}/contacts#add-contact" class="edit-body">
+                    <label class="field-label" for="contact_name">Name</label>
+                    <input type="text" id="contact_name" name="name" value="{{ add_name }}" maxlength="60" required{% if let Some((field, _)) = add_error %}{% if *field == "name" %} aria-invalid="true" aria-describedby="contact_name-error" autofocus{% endif %}{% endif %}>
+                    {% if let Some((field, why)) = add_error %}{% if *field == "name" %}<p class="field-error" id="contact_name-error">{{ why }}</p>{% endif %}{% endif %}
+                    <label class="field-label" for="contact_number">Phone number</label>
+                    <input type="tel" id="contact_number" name="number" value="{{ add_number }}" required{% if let Some((field, _)) = add_error %}{% if *field == "number" %} aria-invalid="true" aria-describedby="contact_number-error" autofocus{% endif %}{% endif %}>
+                    {% if let Some((field, why)) = add_error %}{% if *field == "number" %}<p class="field-error" id="contact_number-error">{{ why }}</p>{% endif %}{% else %}<p class="field-hint">Without a country code, +{{ default_country_code }} is used (Settings › Phone Setup).</p>{% endif %}
+                    <button type="submit" class="button-wide">Add Contact</button>
+                </form>
+            </details>
+        </div>
+        <div class="group-footer">A contact's name and photo are shared by every phone with that number.
+            <details class="info">
+                <summary aria-label="About contacts"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>In the phone book: your child can call them. On the home screen: also a call button there.</p>
+                    <p>Photos (JPEG, PNG or WebP, up to 10 MB) are cropped square, made smaller and saved again without hidden information such as where they were taken.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+    {% if auto_refresh %}
+    <script src="/static/auto-reload.js?v=1" defer></script>
+    {% endif %}
 </main>
 </body>
 </html>

@@ -1,4 +1,6 @@
-//! Settings › Phone Setup (`/settings/provisioning`): the values every phone's setup QR code carries.
+//! Settings › Phone Setup (`/settings/provisioning`): the values every phone's setup QR code carries
+//! (one form), and the default country code every phone's numbers use (a second form, design 31
+//! step 8: `/settings/calls`, which moved here from each phone's Calls & Contacts page).
 //! The Settings tab itself (`/settings`) is `handlers::settings_hub`. Also [Flash], the result line
 //! the Settings pages show inside the group whose form saved (design 31 §3.0).
 
@@ -69,6 +71,16 @@ struct ProvisioningSettingsTemplate {
     saved: bool,
     /// A refused save: the field ("locale" or "time_zone") and why.
     error: Option<(&'static str, &'static str)>,
+    country_code: CountryCode,
+}
+
+/// The second form: the default country code, stored or as a refused save typed it.
+struct CountryCode {
+    value: String,
+    /// `?saved=country-code`: the flash under its Save.
+    saved: bool,
+    /// A refused save's reason, under the field.
+    error: Option<&'static str>,
 }
 
 /// "tskey-auth-...abcd": enough to tell keys apart, never the key.
@@ -107,6 +119,15 @@ async fn load(state: &AppState) -> Option<ProvisioningSettings> {
         .ok()
 }
 
+/// The stored default country code; `None` (logged) on a DB error.
+async fn load_country_code(state: &AppState) -> Option<String> {
+    sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| tracing::error!(%err, "couldn't read the default country code"))
+        .ok()
+}
+
 fn read_failed() -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -121,6 +142,7 @@ fn render(
     entered: Entered,
     saved: bool,
     error: Option<(&'static str, &'static str)>,
+    country_code: CountryCode,
 ) -> Response {
     let page = ProvisioningSettingsTemplate {
         title: "Phone Setup".to_string(),
@@ -128,6 +150,7 @@ fn render(
         tailscale_key_hint: key_hint(&settings.tailscale_auth_key),
         saved,
         error,
+        country_code,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -141,18 +164,34 @@ pub async fn provisioning_settings_form(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let Some(settings) = load(&state).await else {
+    let (Some(settings), Some(code)) = (load(&state).await, load_country_code(&state).await) else {
         return read_failed();
     };
-    let entered = Entered {
+    let saved = query.get("saved").map(String::as_str);
+    let country_code = CountryCode {
+        value: code,
+        saved: saved == Some("country-code"),
+        error: None,
+    };
+    render(
+        StatusCode::OK,
+        &settings,
+        stored(&settings),
+        saved == Some("1"),
+        None,
+        country_code,
+    )
+}
+
+/// The form as stored.
+fn stored(settings: &ProvisioningSettings) -> Entered {
+    Entered {
         server_url: settings.server_url.clone(),
         locale: settings.locale.clone(),
         time_zone: settings.time_zone.clone(),
         key_dropped: false,
         clear_key: false,
-    };
-    let saved = query.get("saved").is_some_and(|v| v == "1");
-    render(StatusCode::OK, &settings, entered, saved, None)
+    }
 }
 
 /// Saves the one form. A malformed language or time zone writes nothing and renders the page
@@ -185,7 +224,8 @@ pub async fn update_provisioning_settings(
         None
     };
     if error.is_some() {
-        let Some(settings) = load(&state).await else {
+        let (Some(settings), Some(code)) = (load(&state).await, load_country_code(&state).await)
+        else {
             return read_failed();
         };
         let entered = Entered {
@@ -195,7 +235,19 @@ pub async fn update_provisioning_settings(
             key_dropped: !new_key.is_empty(),
             clear_key,
         };
-        return render(StatusCode::BAD_REQUEST, &settings, entered, false, error);
+        let country_code = CountryCode {
+            value: code,
+            saved: false,
+            error: None,
+        };
+        return render(
+            StatusCode::BAD_REQUEST,
+            &settings,
+            entered,
+            false,
+            error,
+            country_code,
+        );
     }
 
     let result = sqlx::query(
@@ -221,4 +273,70 @@ pub async fn update_provisioning_settings(
     }
 
     Redirect::to("/settings/provisioning?saved=1#saved").into_response()
+}
+
+/// Saves the default country code (`POST /settings/calls`, Phone Setup's second form). Every
+/// phone's `call_policy` carries it (the launcher reads incoming numbers with it), so every phone
+/// is nudged; numbers already stored keep the code they were saved with. Saved: back to its flash
+/// (`?saved=country-code#country-code`). Anything but 1-3 digits (a leading + is dropped) writes
+/// nothing and renders the page (400) with what was typed and the reason under the field; the form
+/// posts to `#country-code`, so the answer lands on it. One form posts here now, so it always
+/// returns there (an older Calls page's `device_id` is ignored).
+pub async fn save_country_code(
+    State(state): State<AppState>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let typed = form
+        .get("default_country_code")
+        .map(|s| s.trim())
+        .unwrap_or("");
+    let code = typed.strip_prefix('+').unwrap_or(typed);
+    if !crate::phone::valid_country_code(code) {
+        let Some(settings) = load(&state).await else {
+            return read_failed();
+        };
+        let country_code = CountryCode {
+            value: typed.chars().take(16).collect(),
+            saved: false,
+            error: Some("Use 1 to 3 digits, like 47. Nothing was saved."),
+        };
+        return render(
+            StatusCode::BAD_REQUEST,
+            &settings,
+            stored(&settings),
+            false,
+            None,
+            country_code,
+        );
+    }
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        sqlx::query("UPDATE call_settings SET default_country_code = ? WHERE id = 1")
+            .bind(code)
+            .execute(&mut *tx)
+            .await?;
+        let devices: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices")
+            .fetch_all(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok::<_, sqlx::Error>(devices)
+    }
+    .await;
+    match result {
+        Ok(devices) => {
+            for id in devices {
+                // No receivers just means no phone is connected; it syncs on its next poll.
+                let _ = state.command_notify.send(id);
+            }
+            Redirect::to("/settings/provisioning?saved=country-code#country-code").into_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't save the default country code");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
 }

@@ -1,19 +1,29 @@
-//! Calls & SMS admin pages (design 02-calls.md 3.3): per-device switches, the device's contacts
-//! (from the global `contacts` address book) and the global default country code. Every write
-//! runs in a transaction, answers 500 on a database error (nothing half-written), nudges the
-//! device over SSE and redirects back to `/devices/{id}/calls`. The launcher gets all of this as
-//! `PolicyResponse.call_policy` (`device_api::build_policy`).
+//! Calls & Contacts (`/devices/{id}/calls`, design 02-calls.md 3.3, rebuilt in design 31 step 8):
+//! the phone's call switches (one form, `/calls/settings`), its contacts (from the global
+//! `contacts` address book, one form per contact) and Add Contact. Every write runs in a
+//! transaction, answers 500 on a database error (nothing half-written) and nudges the phone. The
+//! launcher gets all of this as `PolicyResponse.call_policy` (`device_api::build_policy`). The
+//! global default country code is on Settings › Phone Setup (`handlers::settings`).
+//!
+//! Where the forms return (design 31 §5.1): the switches to the page without a fragment
+//! (scroll-restore keeps the place), a contact's forms to its row, open (`?open=<id>#contact-<id>`),
+//! Add Contact to the new row, Remove Contact… to `#contacts`. A refusal renders the page (400)
+//! with that form open, what was typed and the reason under the field; a contact that is already
+//! gone (a second tap, another tab) returns to `#contacts`, saying so when something wasn't saved.
 
 use std::collections::HashMap;
 
 use askama::Template;
 use axum::Form;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use chrono::{DateTime, Utc};
 
 use crate::AppState;
+use crate::display_time::{Zone, parse_db_utc};
 use crate::handlers::device_api::device_contacts;
+use crate::handlers::device_pages::Note;
 use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
@@ -24,8 +34,12 @@ const MESSAGE_APP_LABELS: [&str; 4] = ["No message button", "SMS", "Element X", 
 /// How long after a change to `calls_managed` an older status report counts as "waiting for the
 /// phone" rather than as the phone's real state (QA 09 #5).
 const ROLES_PENDING_SECS: i64 = 5 * 60;
-/// The calls page reloads itself every 5 s for this long while it waits.
+/// The calls page reloads itself (`static/auto-reload.js`) for this long while it waits.
 const ROLES_REFRESH_SECS: i64 = 2 * 60;
+
+/// The launcher's package as an adb command names it (behind an ⓘ only, never visible text).
+const LAUNCHER_FOR_ADB: &str = "me.vibb.launcher (a debug build: me.vibb.launcher.debug; a launcher from before 2026-10-06: \
+     com.kidslauncher.mdm)";
 
 struct SelectOption {
     value: String,
@@ -43,7 +57,7 @@ fn message_app_options(current: Option<&str>, with_default: Option<&str>) -> Vec
             .unwrap_or(default);
         options.push(SelectOption {
             value: String::new(),
-            label: format!("Device default ({label})"),
+            label: format!("Phone's default ({label})"),
             selected: current.is_none(),
         });
     }
@@ -69,6 +83,12 @@ struct ContactView {
     /// SHA-256 of the contact's photo (shown via `/contact-photos/{hash}`).
     photo: Option<String>,
     initial: String,
+    /// The row's value: "Both ways · Home".
+    summary: String,
+    /// The row's form is open (`?open=`, or a refusal in it).
+    open: bool,
+    /// A refusal under a field: `message_address` or `photo`, and why.
+    error: Option<(&'static str, String)>,
 }
 
 /// First letter of a name, upper-cased, for the placeholder avatar.
@@ -78,6 +98,21 @@ fn initial_of(name: &str) -> String {
         .next()
         .map(|c| c.to_uppercase().collect())
         .unwrap_or_else(|| "?".to_string())
+}
+
+/// A contact row's value: which way calls go, and the home-screen button.
+fn contact_summary(inbound: bool, outbound: bool, home: bool) -> String {
+    let calls = match (inbound, outbound) {
+        (true, true) => "Both ways",
+        (true, false) => "Calls in only",
+        (false, true) => "Calls out only",
+        (false, false) => "No calls",
+    };
+    if home {
+        format!("{calls} · Home")
+    } else {
+        calls.to_string()
+    }
 }
 
 #[derive(Template)]
@@ -91,42 +126,84 @@ struct DeviceCallsTemplate {
     default_message_options: Vec<SelectOption>,
     contacts: Vec<ContactView>,
     default_country_code: String,
-    warnings: Vec<String>,
-    /// Good to know, nothing wrong (plain lines).
-    hints: Vec<String>,
-    /// Reload every 5 s: waiting for the phone to confirm a role change.
+    /// The call report's problems, as orange rows above the groups.
+    warnings: Vec<Note>,
+    /// The rest of the report (waiting for the phone, the call-screening role): rows in Settings.
+    notes: Vec<Note>,
+    /// Reload (`static/auto-reload.js`) while the phone confirms a change.
     auto_refresh: bool,
-    error: Option<String>,
-    form_name: String,
-    form_number: String,
+    /// The Contacts group's line (`?notice=`, a contact that is gone).
+    contacts_notice: Option<&'static str>,
+    /// Add Contact is open (a refusal), with what was typed and the field's reason.
+    add_open: bool,
+    add_name: String,
+    add_number: String,
+    add_error: Option<(&'static str, String)>,
 }
 
-pub async fn show_calls(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    render(&state, id, StatusCode::OK, None, "", "").await
+/// What a request shows besides the stored state: an open contact, a notice, a refusal.
+#[derive(Default)]
+struct Shown<'a> {
+    /// `?open=<contact id>`: that contact's form is open.
+    open: Option<i64>,
+    /// `?notice=` for the Contacts group.
+    notice: Option<&'static str>,
+    /// A refused Add Contact: the name and number typed, the field and why.
+    add: Option<(&'a str, &'a str, &'static str, String)>,
+    /// A refused contact save or photo.
+    contact: Option<ContactRefusal<'a>>,
 }
 
-/// The page, optionally with a form error (and the rejected input kept in the add form).
-async fn render(
-    state: &AppState,
+/// A refused contact save or photo: the contact, the field and why, and the form it sent (`None`
+/// for a photo), whose values the row shows again.
+struct ContactRefusal<'a> {
     id: i64,
-    status: StatusCode,
-    error: Option<String>,
-    form_name: &str,
-    form_number: &str,
+    field: &'static str,
+    why: String,
+    sent: Option<&'a HashMap<String, String>>,
+}
+
+/// `?notice=` codes for the Contacts group.
+fn contacts_notice(code: &str) -> Option<&'static str> {
+    match code {
+        "contact_gone" => Some("That contact was already removed, so nothing was saved."),
+        _ => None,
+    }
+}
+
+pub async fn show_calls(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    match load_page(state, id, error, form_name, form_number).await {
+    let shown = Shown {
+        open: query.get("open").and_then(|v| v.parse().ok()),
+        notice: query.get("notice").and_then(|code| contacts_notice(code)),
+        ..Default::default()
+    };
+    render(&state, id, StatusCode::OK, shown).await
+}
+
+/// The page; a read that fails is a 500, never an empty list (its saves would read as "off").
+async fn render(state: &AppState, id: i64, status: StatusCode, shown: Shown<'_>) -> Response {
+    match load_page(state, id, shown).await {
         Ok(Some(page)) => (status, Html(page.render().unwrap())).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(err) => db_error(id, err),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the calls page");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response()
+        }
     }
 }
 
 async fn load_page(
     state: &AppState,
     id: i64,
-    error: Option<String>,
-    form_name: &str,
-    form_number: &str,
+    shown: Shown<'_>,
 ) -> Result<Option<DeviceCallsTemplate>, sqlx::Error> {
     let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
@@ -147,57 +224,355 @@ async fn load_page(
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
             .fetch_one(&state.db)
             .await?;
-    let contacts = device_contacts(state, id)
+    let mut contacts_notice = shown.notice;
+    let refused = shown.contact.as_ref().map(|r| r.id);
+    let contacts: Vec<ContactView> = device_contacts(state, id)
         .await?
         .into_iter()
-        .map(|c| ContactView {
-            initial: initial_of(&c.name),
-            id: c.contact_id,
-            name: c.name,
-            number: c.phone_number,
-            inbound: c.allow_inbound,
-            outbound: c.allow_outbound,
-            show_on_home: c.show_on_home,
-            message_options: message_app_options(
-                c.message_app.as_deref(),
-                Some(&policy.default_message_app),
-            ),
-            message_address: c.message_address.unwrap_or_default(),
-            photo: c.photo_hash,
+        .map(|c| {
+            let mut view = ContactView {
+                initial: initial_of(&c.name),
+                id: c.contact_id,
+                summary: contact_summary(c.allow_inbound, c.allow_outbound, c.show_on_home),
+                name: c.name,
+                number: c.phone_number,
+                inbound: c.allow_inbound,
+                outbound: c.allow_outbound,
+                show_on_home: c.show_on_home,
+                message_options: message_app_options(
+                    c.message_app.as_deref(),
+                    Some(&policy.default_message_app),
+                ),
+                message_address: c.message_address.unwrap_or_default(),
+                photo: c.photo_hash,
+                open: shown.open == Some(c.contact_id),
+                error: None,
+            };
+            if let Some(refusal) = &shown.contact
+                && refusal.id == view.id
+            {
+                view.open = true;
+                view.error = Some((refusal.field, refusal.why.clone()));
+                // What the refused form sent, so nothing typed is lost.
+                if let Some(sent) = refusal.sent {
+                    view.inbound = sent.contains_key("inbound");
+                    view.outbound = sent.contains_key("outbound");
+                    view.show_on_home = sent.contains_key("show_on_home");
+                    let app = sent.get("message_app").map(String::as_str);
+                    view.message_options = message_app_options(
+                        app.filter(|a| MESSAGE_APPS.contains(a)),
+                        Some(&policy.default_message_app),
+                    );
+                    view.message_address = sent
+                        .get("message_address")
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                }
+            }
+            view
         })
         .collect();
+    // A refusal for a contact removed meanwhile (another tab): say it's gone.
+    if refused.is_some_and(|cid| !contacts.iter().any(|c| c.id == cid)) {
+        contacts_notice = contacts_notice.or(self::contacts_notice("contact_gone"));
+    }
     let report = call_report(state, &policy).await?;
+    let (zone, now) = (Zone::load(&state.db).await, Utc::now());
+    let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
+        .findings
+        .iter()
+        .map(|f| f.note(&zone, now))
+        .partition(|note| note.warning);
+    if report.screening_hint {
+        notes.push(screening_note());
+    }
+    let (add_open, add_name, add_number, add_error) = match shown.add {
+        Some((name, number, field, why)) => (
+            true,
+            name.to_string(),
+            number.to_string(),
+            Some((field, why)),
+        ),
+        None => (false, String::new(), String::new(), None),
+    };
+    // Never on a refusal's page (the answer to a POST): a reload would send it again, or lose
+    // what was typed (qa-09-code #9).
+    let auto_refresh = report.auto_refresh && add_error.is_none() && refused.is_none();
 
     Ok(Some(DeviceCallsTemplate {
-        title: format!("{} - Calls & SMS", device.name),
+        title: format!("{} - Calls & Contacts", device.name),
         managed: policy.calls_managed,
         calls_enabled: policy.calls_enabled,
         sms_enabled: policy.sms_enabled,
         default_message_options: message_app_options(Some(&policy.default_message_app), None),
         contacts,
         default_country_code,
-        warnings: report.warnings,
-        hints: report.hints,
-        // Never on an error render: a reload would lose the message and the typed contact
-        // (qa-09-code #9).
-        auto_refresh: report.auto_refresh && error.is_none(),
-        error,
-        form_name: form_name.to_string(),
-        form_number: form_number.to_string(),
+        warnings,
+        notes,
+        auto_refresh,
+        contacts_notice,
+        add_open,
+        add_name,
+        add_number,
+        add_error,
         device,
     }))
 }
 
-/// What the calls page and the device page show about a phone's calls.
+/// The call-screening role is missing while Vibb is the phone app: a plain row, not a warning
+/// (the user's emulator, 2026-10-12), with the adb fix behind its ⓘ. No "accept the prompt":
+/// Android refuses exclusive-role prompts under the launcher's DISALLOW_CONFIG_DEFAULT_APPS.
+fn screening_note() -> Note {
+    Note {
+        warning: false,
+        title: "Call screening".to_string(),
+        value: Some("Not granted".to_string()),
+        detail: Some(format!(
+            "Vibb is the phone app and hangs up calls that aren't allowed, but another app could \
+             screen incoming calls first. The phone can't tell which apps can. With USB debugging \
+             allowed: adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
+             {LAUNCHER_FOR_ADB}"
+        )),
+        fix: None,
+    }
+}
+
+/// What the calls page and the device page know about a phone's calls, typed (design 31 M5): the
+/// Attention rows take [CallProblem]s, the calls page words each [Finding] as a [Note].
 pub(crate) struct CallReport {
-    pub warnings: Vec<String>,
-    /// What each warning is about, typed (design 31 M5: the Attention rows' titles), in the same
-    /// order; `Waiting` is the one that isn't a problem.
-    pub problems: Vec<CallProblem>,
-    /// Good to know, nothing wrong (shown as a plain line, not an error).
-    pub hints: Vec<String>,
+    /// In the order the page shows them; [Finding::Waiting] is the one that isn't a problem.
+    pub findings: Vec<Finding>,
+    /// Vibb is the phone app but doesn't hold the call-screening role: good to know, nothing
+    /// wrong (a row, not a warning).
+    pub screening_hint: bool,
     /// Waiting for the phone to confirm a role change (reload the page).
     pub auto_refresh: bool,
+}
+
+impl CallReport {
+    /// What each finding is about (the Attention rows).
+    pub fn problems(&self) -> Vec<CallProblem> {
+        self.findings.iter().map(Finding::problem).collect()
+    }
+}
+
+/// One thing the last report says about calls, with what its words need. Nothing a phone sent is
+/// shown as visible text except as escaped data behind an ⓘ (a package name, the phone's error).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Finding {
+    EmergencyCall {
+        at: DateTime<Utc>,
+    },
+    CallbackWindow {
+        until: DateTime<Utc>,
+    },
+    CallScreenFailed {
+        at: DateTime<Utc>,
+    },
+    /// The last report predates a change made less than 5 minutes ago.
+    Waiting {
+        report: Option<DateTime<Utc>>,
+    },
+    /// The last report predates a change made 5+ minutes ago.
+    Unconfirmed {
+        changed: Option<DateTime<Utc>>,
+        report: Option<DateTime<Utc>>,
+    },
+    DialerNotAllowed {
+        dialer: String,
+    },
+    MessagesHidden {
+        sms_app: String,
+    },
+    /// `stopped`: an earlier report had the capability (an older launcher installed since).
+    NotEnforced {
+        stopped: bool,
+    },
+    FailClosed,
+    NotPhoneApp,
+    AnyoneCanCall,
+    NoRedirection,
+    CallLogUnreadable,
+    /// `unreadable`: the copy can't be read; else it couldn't be written.
+    RulesAfterRestart {
+        unreadable: bool,
+    },
+    Reported {
+        error: String,
+    },
+    SmsAppAllowed {
+        sms_app: String,
+    },
+}
+
+/// "10:58 · 3 min ago": a report's time with its age (one of them when they read the same).
+fn stamp(zone: &Zone, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let (when, ago) = (zone.when(t, now), zone.relative(t, now));
+    if when == ago {
+        when
+    } else {
+        format!("{when} · {ago}")
+    }
+}
+
+impl Finding {
+    pub fn problem(&self) -> CallProblem {
+        match self {
+            Finding::EmergencyCall { .. } => CallProblem::EmergencyCall,
+            Finding::CallbackWindow { .. } => CallProblem::CallbackWindow,
+            Finding::CallScreenFailed { .. } => CallProblem::CallScreenFailed,
+            Finding::Waiting { .. } => CallProblem::Waiting,
+            Finding::Unconfirmed { .. } => CallProblem::Unconfirmed,
+            Finding::DialerNotAllowed { .. } => CallProblem::DialerNotAllowed,
+            Finding::MessagesHidden { .. } => CallProblem::MessagesHidden,
+            Finding::NotEnforced { .. } => CallProblem::NotEnforced,
+            Finding::FailClosed => CallProblem::FailClosed,
+            Finding::NotPhoneApp => CallProblem::NotPhoneApp,
+            Finding::AnyoneCanCall => CallProblem::AnyoneCanCall,
+            Finding::NoRedirection => CallProblem::NoRedirection,
+            Finding::CallLogUnreadable => CallProblem::CallLogUnreadable,
+            Finding::RulesAfterRestart { .. } => CallProblem::RulesAfterRestart,
+            Finding::Reported { .. } => CallProblem::Reported,
+            Finding::SmsAppAllowed { .. } => CallProblem::SmsAppAllowed,
+        }
+    }
+
+    /// The calls page's words (§4.2): the problem's short title and one or two sentences, local
+    /// times, an expert detail (an adb command, a package name, the phone's own error) behind the
+    /// ⓘ only. Everything but [Finding::Waiting] is a warning.
+    pub fn note(&self, zone: &Zone, now: DateTime<Utc>) -> Note {
+        let package = |package: &str| Some(format!("Its package name is {package}."));
+        let (detail, fix): (String, Option<String>) = match self {
+            Finding::EmergencyCall { at } => (
+                format!(
+                    "The phone called an emergency number ({}).",
+                    zone.when(*at, now)
+                ),
+                None,
+            ),
+            Finding::CallbackWindow { until } => (
+                format!(
+                    "Anyone can call this phone until {}, so the emergency services can call back.",
+                    zone.until(*until, now)
+                ),
+                None,
+            ),
+            Finding::CallScreenFailed { at } => (
+                format!(
+                    "A call rang ({}) but couldn't show over the lock, so your child may not have \
+                     been able to answer.",
+                    zone.when(*at, now)
+                ),
+                Some("Please report this with Vibb's version (About This Phone).".to_string()),
+            ),
+            Finding::Waiting { report } => (
+                match report {
+                    Some(t) => format!(
+                        "Its last report ({}) is from before the change. This page reloads until \
+                         it's in.",
+                        stamp(zone, *t, now)
+                    ),
+                    None => "Its last report is from before the change.".to_string(),
+                },
+                None,
+            ),
+            Finding::Unconfirmed { changed, report } => (
+                format!(
+                    "The phone hasn't reported since the change{}; it may be off or offline. The \
+                     notes here are from its last report{}.",
+                    changed.map_or(String::new(), |t| format!(" at {}", zone.when(t, now))),
+                    report.map_or(String::new(), |t| format!(" ({})", stamp(zone, t, now))),
+                ),
+                None,
+            ),
+            Finding::DialerNotAllowed { dialer } => (
+                "The phone app isn't allowed under Apps, and calls aren't managed here. Turn it \
+                 on under Apps, or turn on Manage calls and SMS."
+                    .to_string(),
+                package(dialer),
+            ),
+            Finding::MessagesHidden { sms_app } => (
+                "It isn't allowed under Apps, so texts can't be read or sent. Turn it on there."
+                    .to_string(),
+                package(sms_app),
+            ),
+            Finding::NotEnforced { stopped: true } => (
+                "Vibb on this phone stopped reporting that it screens calls; an older version may \
+                 have been installed."
+                    .to_string(),
+                None,
+            ),
+            Finding::NotEnforced { stopped: false } => (
+                "Vibb on this phone is too old to screen calls. Update it.".to_string(),
+                None,
+            ),
+            Finding::FailClosed => (
+                "Only emergency calls work until it gets good settings from this server."
+                    .to_string(),
+                None,
+            ),
+            Finding::NotPhoneApp => (
+                "It can only call emergency numbers, and withheld numbers may ring through. On \
+                 the phone, open the home screen and accept \"Set as default phone app\"."
+                    .to_string(),
+                None,
+            ),
+            Finding::AnyoneCanCall => (
+                "Incoming calls aren't screened, and only emergency calls go out. On the phone, \
+                 open the home screen and accept \"Set as default phone app\"."
+                    .to_string(),
+                None,
+            ),
+            Finding::NoRedirection => (
+                "Calls to numbers that aren't allowed are hung up only after they start."
+                    .to_string(),
+                Some(format!(
+                    "With USB debugging allowed: adb shell cmd role add-role-holder \
+                     android.app.role.CALL_REDIRECTION {LAUNCHER_FOR_ADB}"
+                )),
+            ),
+            Finding::CallLogUnreadable => (
+                "Vibb can't read the call log, so after an emergency call the emergency services \
+                 may not get through. Check that Vibb is the phone app."
+                    .to_string(),
+                None,
+            ),
+            Finding::RulesAfterRestart { unreadable } => (
+                format!(
+                    "The phone {} its call rules for right after a restart: until it's unlocked \
+                     once, only emergency calls work.{}",
+                    if *unreadable {
+                        "can't read"
+                    } else {
+                        "couldn't save"
+                    },
+                    if *unreadable {
+                        ""
+                    } else {
+                        " It tries again at every sync."
+                    }
+                ),
+                None,
+            ),
+            Finding::Reported { error } => (
+                "Vibb on the phone reported an error with the call rules.".to_string(),
+                Some(format!("The phone said: {error}")),
+            ),
+            Finding::SmsAppAllowed { sms_app } => (
+                "The phone keeps it hidden anyway, since it can chat over RCS. Turn it off under \
+                 Apps."
+                    .to_string(),
+                package(sms_app),
+            ),
+        };
+        Note {
+            warning: self.problem().needs_attention(),
+            title: self.problem().title().to_string(),
+            value: None,
+            detail: Some(detail),
+            fix,
+        }
+    }
 }
 
 /// How far the latest status report can be trusted after the parent changed `calls_managed`
@@ -214,9 +589,9 @@ pub(crate) enum RoleReport {
 }
 
 pub(crate) fn role_report(
-    reported_at: chrono::NaiveDateTime,
-    roles_changed_at: Option<chrono::NaiveDateTime>,
-    now: chrono::NaiveDateTime,
+    reported_at: DateTime<Utc>,
+    roles_changed_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
 ) -> RoleReport {
     match roles_changed_at {
         Some(changed) if reported_at < changed => {
@@ -230,29 +605,23 @@ pub(crate) fn role_report(
     }
 }
 
-/// SQLite `datetime('now')` text (UTC), with or without fractional seconds.
-fn parse_sqlite_time(value: &str) -> Option<chrono::NaiveDateTime> {
-    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f").ok()
-}
-
 /// What the parent should know about this phone's calls, from its latest status report: the
 /// launcher can't enforce calls (or stopped reporting that it can, QA #22), the dialer,
 /// call-redirection or call-screening role isn't ours (security review L7: without the dialer and
-/// the screening role nothing filters incoming calls), an error, the fail-closed state, an allowlisted Messages app
-/// while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and recent emergency calls /
-/// an open callback window (QA #2). Right after the parent changed `calls_managed`, a report from
-/// before the change shows "waiting" instead of the role warnings - for at most 5 minutes; after
-/// that the real warnings plus "not confirmed", and a newer report that still disagrees is always
-/// a warning (B1, QA 09 #5).
+/// the screening role nothing filters incoming calls), an error, the fail-closed state, an
+/// allowlisted Messages app while SMS is off (QA #8), an unreadable call log (QA step 2 #7), and
+/// recent emergency calls / an open callback window (QA #2). Right after the parent changed
+/// `calls_managed`, a report from before the change shows "waiting" instead of the role findings -
+/// for at most 5 minutes; after that the real findings plus "not confirmed", and a newer report
+/// that still disagrees is always a finding (B1, QA 09 #5).
 /// Emergency calls are reported whether or not calls are managed now.
 pub(crate) async fn call_report(
     state: &AppState,
     policy: &DevicePolicy,
 ) -> Result<CallReport, sqlx::Error> {
     let mut report = CallReport {
-        warnings: Vec::new(),
-        problems: Vec::new(),
-        hints: Vec::new(),
+        findings: Vec::new(),
+        screening_hint: false,
         auto_refresh: false,
     };
     let latest: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
@@ -281,73 +650,41 @@ pub(crate) async fn call_report(
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
-    let warnings = &mut report.warnings;
-    let problems = &mut report.problems;
-    let now = chrono::Utc::now();
+    let findings = &mut report.findings;
+    let now = Utc::now();
     if let Some(at) = text("last_emergency_call_at").and_then(|t| parse_time(&t))
         && now - at < chrono::Duration::days(7)
     {
-        warnings.push(format!(
-            "An emergency call was made from this phone at {} (UTC).",
-            at.format("%Y-%m-%d %H:%M")
-        ));
-        problems.push(CallProblem::EmergencyCall);
+        findings.push(Finding::EmergencyCall { at });
     }
     if let Some(until) = text("callback_window_until").and_then(|t| parse_time(&t))
         && until > now
     {
-        warnings.push(format!(
-            "After the emergency call, anyone can call this phone until {} (UTC), so the \
-             emergency services can call back.",
-            until.format("%H:%M")
-        ));
-        problems.push(CallProblem::CallbackWindow);
+        findings.push(Finding::CallbackWindow { until });
     }
     // Handy's lock (step 10, QA 10 #8): the in-call screen didn't come up over the lock for a
     // ringing call - the kid may not have been able to answer.
     if let Some(at) = text("in_call_ui_failed_at").and_then(|t| parse_time(&t))
         && now - at < chrono::Duration::days(7)
     {
-        warnings.push(format!(
-            "At {} (UTC) the phone couldn't show the incoming-call screen over its lock, so a call \
-             may have rung without a way to answer it. Please report this with the launcher \
-             version.",
-            at.format("%Y-%m-%d %H:%M")
-        ));
-        problems.push(CallProblem::CallScreenFailed);
+        findings.push(Finding::CallScreenFailed { at });
     }
 
-    let reported = parse_sqlite_time(&reported_at);
-    let changed = policy
-        .roles_changed_at
-        .as_deref()
-        .and_then(parse_sqlite_time);
+    let reported = parse_db_utc(&reported_at);
+    let changed = policy.roles_changed_at.as_deref().and_then(parse_db_utc);
     let roles = reported
-        .map(|r| role_report(r, changed, now.naive_utc()))
+        .map(|r| role_report(r, changed, now))
         .unwrap_or(RoleReport::Current);
-    let last_report = reported
-        .map(|r| r.format("%H:%M").to_string())
-        .unwrap_or(reported_at);
     match roles {
         RoleReport::Pending => {
-            warnings.push(format!(
-                "Waiting for the phone to confirm the change (last report {last_report} UTC)."
-            ));
-            problems.push(CallProblem::Waiting);
+            findings.push(Finding::Waiting { report: reported });
             report.auto_refresh =
-                changed.is_some_and(|c| (now.naive_utc() - c).num_seconds() < ROLES_REFRESH_SECS);
+                changed.is_some_and(|c| (now - c).num_seconds() < ROLES_REFRESH_SECS);
         }
-        RoleReport::Unconfirmed => {
-            warnings.push(format!(
-                "The phone hasn't confirmed the change made at {} UTC yet (last report \
-                 {last_report} UTC) - it may be off or offline. The warnings below are from that \
-                 last report.",
-                changed
-                    .map(|c| c.format("%H:%M").to_string())
-                    .unwrap_or_default()
-            ));
-            problems.push(CallProblem::Unconfirmed);
-        }
+        RoleReport::Unconfirmed => findings.push(Finding::Unconfirmed {
+            changed,
+            report: reported,
+        }),
         RoleReport::Current => {}
     }
 
@@ -364,29 +701,20 @@ pub(crate) async fn call_report(
             && let Some(dialer) = text("system_dialer")
             && !allowed.contains(&dialer)
         {
-            warnings.push(format!(
-                "Only emergency calls work on this phone: its phone app ({dialer}) isn't allowed \
-                 in Apps, and calls aren't managed by the launcher (Calls & SMS). Allow the phone \
-                 app, or turn call management on."
-            ));
-            problems.push(CallProblem::DialerNotAllowed);
+            findings.push(Finding::DialerNotAllowed { dialer });
         }
         if (!policy.calls_managed || policy.sms_enabled)
             && let Some(sms_app) = text("default_sms_package")
             && !allowed.contains(&sms_app)
         {
-            warnings.push(format!(
-                "The phone hides its Messages app ({sms_app}) because it isn't allowed in Apps, so \
-                 texts can't be read or sent. Allow it there."
-            ));
-            problems.push(CallProblem::MessagesHidden);
+            findings.push(Finding::MessagesHidden { sms_app });
         }
     }
     if !policy.calls_managed {
         return Ok(report);
     }
     if !capable {
-        let had_it: bool = sqlx::query_scalar(
+        let stopped: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM device_status WHERE device_id = ? \
              AND capabilities_json LIKE ?)",
         )
@@ -394,14 +722,7 @@ pub(crate) async fn call_report(
         .bind(format!("%\"{CALL_POLICY_CAPABILITY}\"%"))
         .fetch_one(&state.db)
         .await?;
-        warnings.push(if had_it {
-            "This phone's launcher stopped reporting that it enforces calls - an older launcher \
-             may have been installed. Calls are probably not screened any more."
-                .to_string()
-        } else {
-            "This phone's launcher does not enforce calls yet. Update the launcher.".to_string()
-        });
-        problems.push(CallProblem::NotEnforced);
+        findings.push(Finding::NotEnforced { stopped });
         return Ok(report);
     }
     if roles == RoleReport::Pending {
@@ -409,12 +730,7 @@ pub(crate) async fn call_report(
         return Ok(report);
     }
     if text("state").as_deref() == Some("fail_closed") {
-        warnings.push(
-            "The phone can't read its call rules, so only emergency calls work until it gets a \
-             good policy from this server."
-                .to_string(),
-        );
-        problems.push(CallProblem::FailClosed);
+        findings.push(Finding::FailClosed);
     }
     // Security review L7: Telecom binds one screening service besides the carrier's - the
     // call-screening role's holder, else the default phone app's (CallsManager
@@ -423,98 +739,43 @@ pub(crate) async fn call_report(
     // before the wave doesn't report the screening role (`None`).
     let screening = flag("screening_role_held");
     if flag("dialer_role_held") == Some(false) {
-        problems.push(if screening == Some(true) {
-            CallProblem::NotPhoneApp
+        findings.push(if screening == Some(true) {
+            Finding::NotPhoneApp
         } else {
-            CallProblem::AnyoneCanCall
-        });
-        warnings.push(if screening == Some(true) {
-            "Phone app role not active: the launcher isn't the phone's default phone app, so the \
-             phone can only call emergency numbers. Incoming calls are still filtered (it holds \
-             the call-screening role), though calls from withheld numbers may ring through. Open the \
-             launcher's home screen on the phone and accept the \"default phone app\" prompt."
-                .to_string()
-        } else {
-            "Phone app role not active: the launcher isn't the phone's default phone app, so \
-             incoming calls are not filtered - anyone can call this phone - and it can only call \
-             emergency numbers. Open the launcher's home screen on the phone and accept the \
-             \"default phone app\" prompt."
-                .to_string()
+            Finding::AnyoneCanCall
         });
     } else if screening == Some(false) {
         // A hint, not an error (the user's emulator, 2026-10-12), and nothing it can't know (QA of
         // cmd-expiry, Medium 3): the phone can't read who else holds the role (RoleManager
         // .getRoleHolders is a system API), and another holder screens instead of the launcher.
-        report.hints.push(
-            "The launcher is the phone app and hangs up calls that aren't allowed. Another app \
-             could screen incoming calls first unless the launcher holds the call-screening role: \
-             grant it with `adb shell cmd role add-role-holder android.app.role.CALL_SCREENING \
-             <launcher package>`."
-                .to_string(),
-        );
+        report.screening_hint = true;
     }
     if flag("redirection_role_held") == Some(false) {
-        warnings.push(
-            "Call-redirection role not active: calls to numbers that aren't allowed are only hung \
-             up after they start, so the other phone may ring briefly. Run `adb shell cmd role \
-             add-role-holder android.app.role.CALL_REDIRECTION <launcher package>`."
-                .to_string(),
-        );
-        problems.push(CallProblem::NoRedirection);
+        findings.push(Finding::NoRedirection);
     }
     if flag("call_log_readable") == Some(false) {
-        warnings.push(
-            "The launcher can't read the phone's call log, so after an emergency call the \
-             emergency services may not be able to call back (the callback window can't open). \
-             Check that the launcher is the default phone app."
-                .to_string(),
-        );
-        problems.push(CallProblem::CallLogUnreadable);
+        findings.push(Finding::CallLogUnreadable);
     }
     match text("boot_policy").as_deref() {
-        Some("write_failed") => {
-            problems.push(CallProblem::RulesAfterRestart);
-            warnings.push(
-            "The phone couldn't save its call rules for use right after a restart, so until it's \
-             unlocked once after a reboot it rejects every call except emergency calls. It retries \
-             on every sync."
-                    .to_string(),
-            )
-        }
-        Some("unreadable") => {
-            problems.push(CallProblem::RulesAfterRestart);
-            warnings.push(
-            "The phone's copy of its call rules for use right after a restart can't be read, so \
-             until it's unlocked once after a reboot it rejects every call except emergency calls."
-                    .to_string(),
-            )
-        }
+        Some("write_failed") => findings.push(Finding::RulesAfterRestart { unreadable: false }),
+        Some("unreadable") => findings.push(Finding::RulesAfterRestart { unreadable: true }),
         _ => {}
     }
     if let Some(error) = text("last_error") {
-        warnings.push(format!("The phone reported a calls problem: {error}"));
-        problems.push(CallProblem::Reported);
+        findings.push(Finding::Reported { error });
     }
     if !policy.sms_enabled
         && let Some(sms_app) = text("default_sms_package")
+        && allowlist
+            .as_ref()
+            .is_some_and(|list| list.contains(&sms_app))
     {
-        let allowed = policy
-            .allowlist_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .is_some_and(|list| list.contains(&sms_app));
-        if allowed {
-            warnings.push(format!(
-                "SMS is off, but the Messages app ({sms_app}) is allowed. The phone keeps it \
-                 suspended anyway (RCS chat would bypass the SMS block); uncheck it in Apps."
-            ));
-            problems.push(CallProblem::SmsAppAllowed);
-        }
+        findings.push(Finding::SmsAppAllowed { sms_app });
     }
     Ok(report)
 }
 
-/// What a [CallReport] warning is about (design 31 M5): the Attention row's short title comes from
+/// What a [Finding] is about (design 31 M5): the Attention row's short title comes from
 /// this, never from the warning's first sentence (package names, 40 words).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallProblem {
@@ -605,10 +866,10 @@ impl CallProblem {
 /// Capability the launcher reports when it enforces `call_policy`.
 pub(crate) const CALL_POLICY_CAPABILITY: &str = "call_policy_v1";
 
-fn parse_time(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::parse_from_rfc3339(value)
+fn parse_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
         .ok()
-        .map(|t| t.with_timezone(&chrono::Utc))
+        .map(|t| t.with_timezone(&Utc))
 }
 
 fn db_error(device_id: i64, err: sqlx::Error) -> Response {
@@ -620,17 +881,51 @@ fn db_error(device_id: i64, err: sqlx::Error) -> Response {
         .into_response()
 }
 
-fn back_to_calls(state: &AppState, id: i64) -> Response {
+fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "Device not found").into_response()
+}
+
+/// Nudges the phone and returns to `to` (a path on its calls page).
+fn saved(state: &AppState, id: i64, to: String) -> Response {
     // No receivers just means no phone is connected right now; it syncs on its next poll.
     let _ = state.command_notify.send(id);
-    Redirect::to(&format!("/devices/{id}/calls")).into_response()
+    Redirect::to(&to).into_response()
+}
+
+/// A contact's row, its form open: where its saves return.
+fn contact_row(id: i64, contact_id: i64) -> String {
+    format!("/devices/{id}/calls?open={contact_id}#contact-{contact_id}")
+}
+
+/// The Contacts group, for a contact that is gone: `gone` says nothing was saved.
+fn contacts_group(id: i64, gone: bool) -> Response {
+    let notice = if gone { "?notice=contact_gone" } else { "" };
+    Redirect::to(&format!("/devices/{id}/calls{notice}#contacts")).into_response()
 }
 
 fn bad_request(message: &str) -> Response {
     (StatusCode::BAD_REQUEST, message.to_string()).into_response()
 }
 
-/// One form with every switch, so a missing checkbox really means "off".
+/// Whether the phone exists (`None`: it doesn't) and has this contact.
+async fn contact_on_device(
+    state: &AppState,
+    id: i64,
+    contact_id: i64,
+) -> Result<Option<bool>, sqlx::Error> {
+    let (device, contact): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM device_policy WHERE device_id = ?1), \
+         EXISTS(SELECT 1 FROM device_contacts WHERE device_id = ?1 AND contact_id = ?2)",
+    )
+    .bind(id)
+    .bind(contact_id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(device.then_some(contact))
+}
+
+/// One form with every switch, so a missing checkbox really means "off". Back to the page
+/// without a fragment: the group is the page's first, and scroll-restore keeps the place.
 pub async fn save_settings(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -669,15 +964,16 @@ pub async fn save_settings(
     }
     .await;
     match result {
-        Ok(0) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Ok(_) => back_to_calls(&state, id),
+        Ok(0) => not_found(),
+        Ok(_) => saved(&state, id, format!("/devices/{id}/calls")),
         Err(err) => db_error(id, err),
     }
 }
 
 /// Adds a contact to this device: normalises the number with the default country code, reuses
 /// the global contact with that number (renaming it - the name is shared by every device that
-/// has it) and attaches it at the end of the list with every flag on.
+/// has it) and attaches it at the end of the list with every flag on. Back to its row; a refusal
+/// renders the page (400) with Add Contact open, what was typed and the reason under its field.
 pub async fn add_contact(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -686,21 +982,21 @@ pub async fn add_contact(
     let name = form.get("name").map(|s| s.trim()).unwrap_or("");
     let raw_number = form.get("number").map(String::as_str).unwrap_or("");
     let state = &state;
-    let error = |message: String| async move {
-        render(
-            state,
-            id,
-            StatusCode::BAD_REQUEST,
-            Some(message),
-            name,
-            raw_number,
-        )
-        .await
+    let refuse = |field: &'static str, why: String| async move {
+        let shown = Shown {
+            add: Some((name, raw_number, field, why)),
+            ..Default::default()
+        };
+        render(state, id, StatusCode::BAD_REQUEST, shown).await
     };
 
     let name_len = name.chars().count();
     if name_len == 0 || name_len > 60 {
-        return error("Give the contact a name (at most 60 characters).".to_string()).await;
+        return refuse(
+            "name",
+            "Give the contact a name (at most 60 characters).".into(),
+        )
+        .await;
     }
     let cc: String =
         match sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
@@ -712,7 +1008,7 @@ pub async fn add_contact(
         };
     let number = match phone::normalize(raw_number, &cc) {
         Ok(number) => number,
-        Err(err) => return error(format!("That number can't be used: {err}.")).await,
+        Err(err) => return refuse("number", format!("That number can't be used: {err}.")).await,
     };
 
     let result = async {
@@ -723,7 +1019,7 @@ pub async fn add_contact(
                 .fetch_one(&mut *tx)
                 .await?;
         if !device_exists {
-            return Ok(false);
+            return Ok(None);
         }
         let contact_id: i64 = sqlx::query_scalar(
             "INSERT INTO contacts (name, phone_number) VALUES (?, ?) \
@@ -744,12 +1040,16 @@ pub async fn add_contact(
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok::<_, sqlx::Error>(true)
+        Ok::<_, sqlx::Error>(Some(contact_id))
     }
     .await;
     match result {
-        Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Ok(true) => back_to_calls(state, id),
+        Ok(None) => not_found(),
+        Ok(Some(contact_id)) => saved(
+            state,
+            id,
+            format!("/devices/{id}/calls#contact-{contact_id}"),
+        ),
         Err(err) => db_error(id, err),
     }
 }
@@ -803,8 +1103,10 @@ fn valid_matrix_id(value: &str) -> bool {
     value.len() <= 255 && local_ok && host_ok && port_ok
 }
 
-/// Saves one contact's flags and Message button, scoped to this device: a contact that isn't
-/// attached to it is a 404 (QA #18).
+/// Saves one contact's flags and Message button, scoped to this device. Back to its row, open;
+/// a Matrix ID that isn't one renders the page (400) with the row open, what was sent and the
+/// reason under the field; a contact that isn't on this phone (removed meanwhile) returns to
+/// `#contacts` saying nothing was saved. An unknown phone is a 404.
 pub async fn update_contact(
     State(state): State<AppState>,
     Path((id, contact_id)): Path<(i64, i64)>,
@@ -819,18 +1121,16 @@ pub async fn update_contact(
         None | Some("") => None,
         Some(mxid) if valid_matrix_id(mxid) => Some(mxid),
         Some(_) => {
-            return render(
-                &state,
-                id,
-                StatusCode::BAD_REQUEST,
-                Some(
-                    "A Matrix ID looks like @name:server.org - the contact was not changed."
-                        .to_string(),
-                ),
-                "",
-                "",
-            )
-            .await;
+            let shown = Shown {
+                contact: Some(ContactRefusal {
+                    id: contact_id,
+                    field: "message_address",
+                    why: "A Matrix ID looks like @name:matrix.org. Nothing was saved.".to_string(),
+                    sent: Some(&form),
+                }),
+                ..Default::default()
+            };
+            return render(&state, id, StatusCode::BAD_REQUEST, shown).await;
         }
     };
 
@@ -855,14 +1155,24 @@ pub async fn update_contact(
     }
     .await;
     match result {
-        Ok(0) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
-        Ok(_) => back_to_calls(&state, id),
+        Ok(0) => gone(&state, id, contact_id, true).await,
+        Ok(_) => saved(&state, id, contact_row(id, contact_id)),
+        Err(err) => db_error(id, err),
+    }
+}
+
+/// A form for a contact that isn't on this phone: an unknown phone is a 404, else back to the
+/// Contacts group (`said`: with "nothing was saved"). Nothing was written either way.
+async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool) -> Response {
+    match contact_on_device(state, id, contact_id).await {
+        Ok(None) => not_found(),
+        Ok(Some(_)) => contacts_group(id, said),
         Err(err) => db_error(id, err),
     }
 }
 
 /// Detaches a contact from this device, and deletes it from the address book once no device has
-/// it any more.
+/// it any more. Back to the Contacts group - also when it was already gone (a second tap).
 pub async fn remove_contact(
     State(state): State<AppState>,
     Path((id, contact_id)): Path<(i64, i64)>,
@@ -889,11 +1199,12 @@ pub async fn remove_contact(
     }
     .await;
     match result {
-        Ok(0) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
+        Ok(0) => gone(&state, id, contact_id, false).await,
         Ok(_) => {
             // The address-book entry may be gone, and its photo with it.
             photos::prune(&state).await;
-            back_to_calls(&state, id)
+            let _ = state.command_notify.send(id);
+            contacts_group(id, false)
         }
         Err(err) => db_error(id, err),
     }
@@ -905,20 +1216,6 @@ async fn devices_with_contact(state: &AppState, contact_id: i64) -> Result<Vec<i
         .bind(contact_id)
         .fetch_all(&state.db)
         .await
-}
-
-async fn contact_on_device(
-    state: &AppState,
-    id: i64,
-    contact_id: i64,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM device_contacts WHERE device_id = ? AND contact_id = ?)",
-    )
-    .bind(id)
-    .bind(contact_id)
-    .fetch_one(&state.db)
-    .await
 }
 
 /// Sets (or, with `None`, clears) a contact's photo, prunes files nobody uses any more and nudges
@@ -939,14 +1236,19 @@ async fn commit_photo(
     devices_with_contact(state, contact_id).await
 }
 
-async fn photo_saved(state: &AppState, id: i64, result: Result<Vec<i64>, sqlx::Error>) -> Response {
+async fn photo_saved(
+    state: &AppState,
+    id: i64,
+    contact_id: i64,
+    result: Result<Vec<i64>, sqlx::Error>,
+) -> Response {
     match result {
         Ok(devices) => {
             photos::prune(state).await;
             for device in devices {
                 let _ = state.command_notify.send(device);
             }
-            Redirect::to(&format!("/devices/{id}/calls")).into_response()
+            Redirect::to(&contact_row(id, contact_id)).into_response()
         }
         Err(err) => db_error(id, err),
     }
@@ -954,24 +1256,35 @@ async fn photo_saved(state: &AppState, id: i64, result: Result<Vec<i64>, sqlx::E
 
 /// Uploads a contact's photo (multipart field `photo`). The photo is decoded and re-encoded
 /// (`photos::process`: square JPEG, no metadata) before anything is stored; a file that isn't a
-/// JPEG/PNG/WebP photo, is too big or can't be decoded is a 400 with the page and nothing changes.
-/// The photo belongs to the address-book contact, so every device that has it gets it.
+/// JPEG/PNG/WebP photo, is too big or can't be decoded renders the page (400) with the contact
+/// open and the reason under its photo, and nothing changes. The photo belongs to the
+/// address-book contact, so every device that has it gets it. Back to the contact's row.
 pub async fn upload_photo(
     State(state): State<AppState>,
     Path((id, contact_id)): Path<(i64, i64)>,
     mut multipart: Multipart,
 ) -> Response {
     match contact_on_device(&state, id, contact_id).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response();
-        }
+        Ok(Some(true)) => {}
+        Ok(None) => return not_found(),
+        Ok(Some(false)) => return contacts_group(id, true),
         Err(err) => return db_error(id, err),
     }
     let photo_error = |message: &str| {
         let state = state.clone();
         let message = message.to_string();
-        async move { render(&state, id, StatusCode::BAD_REQUEST, Some(message), "", "").await }
+        async move {
+            let shown = Shown {
+                contact: Some(ContactRefusal {
+                    id: contact_id,
+                    field: "photo",
+                    why: message,
+                    sent: None,
+                }),
+                ..Default::default()
+            };
+            render(&state, id, StatusCode::BAD_REQUEST, shown).await
+        }
     };
 
     let mut upload = None;
@@ -1005,23 +1318,24 @@ pub async fn upload_photo(
         }
         commit_photo(&state, contact_id, Some(&processed.hash)).await
     };
-    photo_saved(&state, id, result).await
+    photo_saved(&state, id, contact_id, result).await
 }
 
-/// Removes a contact's photo (for every device that has the contact).
+/// Removes a contact's photo (for every device that has the contact). Back to the contact's row.
 pub async fn remove_photo(
     State(state): State<AppState>,
     Path((id, contact_id)): Path<(i64, i64)>,
 ) -> Response {
     match contact_on_device(&state, id, contact_id).await {
-        Ok(true) => {
+        Ok(Some(true)) => {
             let result = {
                 let _files = photos::lock_files().await;
                 commit_photo(&state, contact_id, None).await
             };
-            photo_saved(&state, id, result).await
+            photo_saved(&state, id, contact_id, result).await
         }
-        Ok(false) => (StatusCode::NOT_FOUND, "This contact isn't on this device").into_response(),
+        Ok(Some(false)) => contacts_group(id, false),
+        Ok(None) => not_found(),
         Err(err) => db_error(id, err),
     }
 }
@@ -1047,55 +1361,16 @@ pub async fn view_photo(State(state): State<AppState>, Path(hash): Path<String>)
     }
 }
 
-/// The global default country code. Every device's `call_policy` carries it (the launcher uses
-/// it for incoming numbers), so every device is nudged. Numbers already stored keep the code
-/// they were normalised with.
-pub async fn save_call_settings(
-    State(state): State<AppState>,
-    Form(form): Form<HashMap<String, String>>,
-) -> Response {
-    let back = form
-        .get("device_id")
-        .and_then(|id| id.parse::<i64>().ok())
-        .map(|id| format!("/devices/{id}/calls"))
-        .unwrap_or_else(|| "/devices".to_string());
-    let cc = form
-        .get("default_country_code")
-        .map(|s| s.trim().trim_start_matches('+'))
-        .unwrap_or("");
-    if !phone::valid_country_code(cc) {
-        return bad_request("The country code must be 1-3 digits, e.g. 47.");
-    }
-    let result = async {
-        let mut tx = state.db.begin().await?;
-        sqlx::query("UPDATE call_settings SET default_country_code = ? WHERE id = 1")
-            .bind(cc)
-            .execute(&mut *tx)
-            .await?;
-        let devices: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices")
-            .fetch_all(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok::<_, sqlx::Error>(devices)
-    }
-    .await;
-    match result {
-        Ok(devices) => {
-            for id in devices {
-                let _ = state.command_notify.send(id);
-            }
-            Redirect::to(&back).into_response()
-        }
-        Err(err) => db_error(0, err),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{RoleReport, role_report, valid_matrix_id};
+    use super::{Finding, RoleReport, contact_summary, role_report, valid_matrix_id};
+    use crate::display_time::Zone;
+    use chrono::{DateTime, TimeZone, Utc};
 
-    fn t(value: &str) -> chrono::NaiveDateTime {
-        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap()
+    fn t(value: &str) -> DateTime<Utc> {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+            .unwrap()
+            .and_utc()
     }
 
     #[test]
@@ -1147,5 +1422,101 @@ mod tests {
         ] {
             assert!(!valid_matrix_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_contact_row_says_which_way_calls_go() {
+        assert_eq!(contact_summary(true, true, true), "Both ways · Home");
+        assert_eq!(contact_summary(true, false, false), "Calls in only");
+        assert_eq!(contact_summary(false, true, true), "Calls out only · Home");
+        assert_eq!(contact_summary(false, false, false), "No calls");
+    }
+
+    /// Every finding's words (design 31 §2.2b, §4.2): the title is the Attention row's, the
+    /// sentence has no package name, adb command or raw code - those sit behind the ⓘ - and its
+    /// times are local; only "waiting" isn't a warning.
+    #[test]
+    fn findings_read_as_short_local_notes() {
+        let zone = Zone::from_setting("Europe/Oslo");
+        // 12:00 UTC = 14:00 in Oslo (summer time).
+        let now = Utc.with_ymd_and_hms(2026, 7, 1, 12, 0, 0).unwrap();
+        let earlier = Utc.with_ymd_and_hms(2026, 7, 1, 8, 58, 0).unwrap();
+        let later = Utc.with_ymd_and_hms(2026, 7, 1, 12, 55, 0).unwrap();
+        let package = "com.example.dialer";
+        let all = [
+            Finding::EmergencyCall { at: earlier },
+            Finding::CallbackWindow { until: later },
+            Finding::CallScreenFailed { at: earlier },
+            Finding::Waiting {
+                report: Some(earlier),
+            },
+            Finding::Unconfirmed {
+                changed: Some(earlier),
+                report: Some(earlier),
+            },
+            Finding::DialerNotAllowed {
+                dialer: package.to_string(),
+            },
+            Finding::MessagesHidden {
+                sms_app: package.to_string(),
+            },
+            Finding::NotEnforced { stopped: true },
+            Finding::NotEnforced { stopped: false },
+            Finding::FailClosed,
+            Finding::NotPhoneApp,
+            Finding::AnyoneCanCall,
+            Finding::NoRedirection,
+            Finding::CallLogUnreadable,
+            Finding::RulesAfterRestart { unreadable: true },
+            Finding::RulesAfterRestart { unreadable: false },
+            Finding::Reported {
+                error: "setDefaultDialerApplication: IllegalArgumentException".to_string(),
+            },
+            Finding::SmsAppAllowed {
+                sms_app: package.to_string(),
+            },
+        ];
+        let mut kinds: Vec<_> = all.iter().map(Finding::problem).collect();
+        kinds.dedup();
+        assert_eq!(kinds, super::CallProblem::ALL, "one finding per problem");
+        for finding in &all {
+            let note = finding.note(&zone, now);
+            assert_eq!(note.title, finding.problem().title());
+            assert_eq!(
+                note.warning,
+                *finding
+                    != (Finding::Waiting {
+                        report: Some(earlier)
+                    })
+            );
+            let detail = note.detail.unwrap();
+            assert!(detail.split_whitespace().count() <= 40, "{detail}");
+            for raw in [
+                package,
+                "adb",
+                "UTC",
+                "role",
+                "launcher",
+                "Exception",
+                "08:58",
+                "12:55",
+            ] {
+                assert!(!detail.contains(raw), "{raw} in {detail}");
+            }
+        }
+        let detail = |f: &Finding| f.note(&zone, now).detail.unwrap();
+        assert!(detail(&all[0]).contains("(10:58)"), "{}", detail(&all[0]));
+        assert!(detail(&all[1]).contains("until 14:55"));
+        assert!(
+            detail(&all[3]).contains("(10:58 · 3 h ago)"),
+            "{}",
+            detail(&all[3])
+        );
+        assert!(detail(&all[4]).contains("at 10:58"));
+        // The expert parts are behind the ⓘ.
+        let fix = |f: &Finding| f.note(&zone, now).fix.unwrap_or_default();
+        assert!(fix(&all[5]).contains(package));
+        assert!(fix(&all[12]).contains("adb shell cmd role add-role-holder"));
+        assert!(fix(&all[16]).contains("IllegalArgumentException"));
     }
 }

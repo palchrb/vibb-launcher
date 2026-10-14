@@ -1,9 +1,9 @@
-// Behaviour of static/installing-reload.js (design 31 step 6, qa-31-s6-code M1/L1/N4).
-// Run: node --test jstest/installing-reload.test.js
+// Behaviour of static/auto-reload.js (design 31 steps 6 and 8, qa-31-s6-code M1/L1/N4).
+// Run: node --test jstest/auto-reload.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, DELAY } = require("../static/installing-reload.js");
+const { install, DELAY } = require("../static/auto-reload.js");
 
 // A fake window: timers run by hand, listeners fired by hand, reloads and address changes counted.
 function fakeWindow({ search = "", openForm = false } = {}) {
@@ -18,7 +18,7 @@ function fakeWindow({ search = "", openForm = false } = {}) {
                 (listeners["doc:" + type] = listeners["doc:" + type] || []).push(fn);
             },
             querySelector: (selector) =>
-                selector === "details.app-display[open]" && win.openForm ? {} : null,
+                selector === "details[open]" && win.openForm ? {} : null,
         },
         addEventListener: (type, fn) => {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
@@ -98,7 +98,7 @@ test("a change on a control that doesn't save keeps reloading", () => {
     assert.strictEqual(win.reloads, 1);
 });
 
-test("an open Name and icon form pauses the reload until it is closed", () => {
+test("an open disclosure (a Name and icon or a contact's form) pauses the reload until closed", () => {
     const win = fakeWindow({ openForm: true });
     install(win);
     win.advance();

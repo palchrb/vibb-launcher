@@ -275,7 +275,7 @@ async fn a_phone_not_set_up_has_no_count() {
     assert!(!list.contains("data-attention-count"), "{list}");
 }
 
-/// Every warning the call report writes has its typed twin (the Attention rows' titles).
+/// Every finding of the call report is an Attention row.
 #[tokio::test]
 async fn every_call_warning_is_typed() {
     let app = TestApp::new().await;
@@ -318,11 +318,15 @@ async fn every_call_warning_is_typed() {
     let report = crate::handlers::calls::call_report(&app.state, &policy)
         .await
         .unwrap();
-    assert!(report.warnings.len() >= 9, "{:?}", report.warnings);
-    assert_eq!(
-        report.warnings.len(),
-        report.problems.len(),
-        "{:?}",
-        report.problems
+    // One problem per finding, each an Attention row (design 31 step 8: the report is typed; the
+    // calls page words the same findings).
+    assert!(report.findings.len() >= 9, "{:?}", report.findings);
+    let rows = crate::attention::items(
+        id,
+        &crate::attention::Facts {
+            calls: report.problems(),
+            ..Default::default()
+        },
     );
+    assert_eq!(rows.len(), report.findings.len(), "{:?}", report.findings);
 }

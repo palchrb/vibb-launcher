@@ -2866,3 +2866,93 @@ Deferred, with the reason:
 | N2 | The post-sign-in warning reads "13 wrong two-factor codes were entered before this sign-in (from …). Whoever entered them knew your password - change it now." |
 | N3 | A refused add on Web Filter keeps what was typed: `&typed=` (a domain), `&name=`/`&url=` (Add a List…), URL-encoded, at most 300 characters, escaped back into the field. |
 | Checks | `cargo test` 800 passed; `node --test server/jstest/*.test.js` 16 passed; fmt clean; clippy: the same 13 warnings. |
+
+## Step 8 implementation status (2026-10-14)
+
+Built on branch `design-31-s8` (from `main` at `2eee4de1`, steps 1-6 and 11-14 in), in parallel with step 7; server
+only, no migration, no new crate, no API change (the policy JSON, `phone_vectors.json` and the number normalisation are
+untouched; `policy_json_keys_snapshot` passes as it was), `style.css?v=21` (main is at 19, step 7 takes 20; appended at
+the end).
+- **The page** (`/devices/{id}/calls`, the route unchanged; `device_calls.html` with the §3.0 header "‹ Anna" and the
+  large title "Calls & Contacts", no brand bar):
+  - the call report's **warnings** above the groups, orange (`partials/note_warning.html`): the problem's short title
+    (the Attention row's), one or two sentences, and an expert detail behind the ⓘ only - an adb command with the real
+    package, a package name ("Its package name is com.maker.dialer."), the phone's own error ("The phone said: …");
+  - **Calls and SMS**, one form (§5.6, H1): Manage calls and SMS, Calls, SMS (switches), Message button (an inline
+    picker), and two rows from the report - "Waiting for the phone to confirm" and "Call screening · Not granted"
+    (the adb fix behind its ⓘ); the footer "While managed, only the contacts below can call or text. Emergency
+    numbers always work." with the emergency numbers, RCS, ##004#, directory services and spoofing behind its ⓘ;
+  - **Contacts**: one row per contact (the photo or the initial, the name, the number, "Both ways · Home" /
+    "Calls in only" / "No calls"); the row opens its one form (Can call Anna, In the phone book, On the home
+    screen, Message button, Matrix ID), New photo / Remove Photo, and **Remove Contact…** as a `<details>` confirm
+    (M6: "Remove Mamma from Anna's phone? Their calls are then blocked."); **Add Contact** as a disclosure at the end,
+    its hint naming the country code and Settings › Phone Setup. The empty state is one sentence. No country code
+    form here any more.
+- **Where the forms return** (§5.1, `tests::calls::every_form_on_the_calls_page_returns_to_its_place`, built from the
+  rendered forms, each action's fragment checked to be the form's own element, `<noscript>` Saves checked):
+  `/calls/settings` → `/devices/{id}/calls` without a fragment (the page's first group, so the no-JS landing is the
+  group; scroll-restore keeps the exact place); a contact's save, photo upload and photo removal →
+  `?open=<id>#contact-<id>` (its row, open again - the fragment finds it in a long list with or without JS, as step 6's
+  app rows); Add Contact → `#contact-<new>`; Remove Contact… → `#contacts`, also on a second tap. A form for a contact
+  that isn't on the phone any more (another tab) → `?notice=contact_gone#contacts` ("That contact was already removed,
+  so nothing was saved.", at the top of the group); an unknown phone is a 404 (it used to be a 404 for both).
+- **Refusals render in place (400)**, the form open, what was typed kept, the reason under the field
+  (`aria-invalid`, `autofocus`), every form's action carrying its row's fragment so the answer lands there: Add
+  Contact's name or number (was a red box at the top), a contact's Matrix ID (the switches and the picker as sent;
+  was a red box at the top), a photo (was the same). A refusal's page never reloads itself.
+- **Phone Setup's second form** (L6): a Phone Numbers group under the setup form - Country code, Save, "For every
+  phone. Numbers already saved keep theirs." - posting to `/settings/calls#country-code` (now
+  `settings::save_country_code`; the route is unchanged) → `/settings/provisioning?saved=country-code#country-code`,
+  the flash in its group; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code
+  is a 500 on the page; every phone is nudged. The step 14 table (`every_form_on_the_settings_pages_returns_to_its_group`)
+  has its row.
+- **The device page**: the Calls & SMS card is gone; a row **Calls & Contacts · 8 contacts** ("Not managed",
+  "Couldn't read" on a failed count - it was "0 contacts") heads the bottom group. The Attention rows are unchanged
+  (`report.problems()`).
+- **Rust texts (M5)**: `calls::call_report` returns `CallReport { findings, screening_hint, auto_refresh }`; each
+  `Finding` carries what its words need (the times as `DateTime<Utc>`, the phone's package names and error) and gives
+  `problem()` (the `CallProblem` the Attention rows use) and `note(zone, now)` (§4.2: title + sentence, local times in
+  Phone Setup's zone, the report's time with its age, "10:58 · 3 min ago"; no package, adb, role, UTC or raw code in
+  the visible text, §2.2b). The sentences (`warnings`, `hints`) and the device card's `calls_summary` are deleted.
+- **The reload while the phone confirms** is `static/auto-reload.js` (step 6's `installing-reload.js`, renamed and
+  generalised: it holds while any `<details>` is open) instead of a `<meta refresh>`, which could cancel a save on its
+  way or lose a contact being typed. Never on a refusal's page.
+- **CSS** `?v=21` (one section at the end): the contact's photo in the avatar circle, the contact's form indented to
+  the name with its hairlines, the file field.
+- **Docs (L8):** `server/CLAUDE.md` (the Calls & SMS bullets, the pending rule, the reload's name, a "Calls &
+  Contacts" section), `docs/testing/emulator.md` (where contacts are added and SMS is switched), `docs/setup/google-
+  account.md` (the Message button's page). `launcher/CLAUDE.md`, `server/DEPLOY.md` and `PLAN.md` name none of the
+  moved parts.
+- **Tests:** `tests/calls.rs` (the redirect table; Add Contact's refusals in place; a contact's Matrix ID refusal with
+  what was sent; gone contacts and unknown phones; Remove Contact… twice; the country code on Phone Setup with its
+  refusal, flash, nudge and 500; the device page's row; the warnings and the screening row, with the device page's
+  Attention rows; the visible text without packages, adb or UTC; local times; escaping; an unreadable list),
+  `calls::tests` (every finding's words in Oslo time, one per problem, the row values); repointed `launcher_ui.rs`
+  (photo redirects and refusals in the row), `step9.rs` (the reload, never on a refusal), `step10.rs`,
+  `catalog_pins.rs`, `cleanup.rs` (the warnings now on Calls & Contacts), `attention.rs`, `settings_pages.rs`,
+  `device_pages.rs` and `tracked_apps.rs` (the script's name), `jstest/auto-reload.test.js`.
+
+Choices made while building:
+1. **The settings form returns without a fragment**, the contacts' forms with one: the switches are the page's first
+   group (§5.1.4: a same-page auto-save near the top keeps the exact place with JS and lands on its group without),
+   a contact's row can be far down a long list (§5.1.4 keeps a fragment for that, as `#app-{pkg}`).
+2. **A contact's controls sit behind its row** (a `<details class="edit">`, as the PIN rows), reopened by `?open=` after
+   each save, so eight contacts are eight rows, not 60. The Matrix ID stays in the contact's one form (§5.6: "no sheet
+   for the Matrix ID").
+3. **A contact that is already gone is not a 404** (a second tap on Remove, a toggle in a stale tab): back to
+   `#contacts`, saying nothing was saved when the parent tried to change something; Remove says nothing (it is done).
+4. **No `back` field on `/settings/calls`**: one page posts there now, so it always returns to Phone Setup (§5.1's
+   table: `provisioning` was the only value and the default); an older Calls page's `device_id` is ignored.
+5. **The reload holds while any `<details>` is open**, not only Name and icon: a contact's form, Add Contact, a
+   confirm or an ⓘ panel would close under the parent's finger. Its delay is 3 s on both pages (the calls page used
+   5 s; nothing depends on it).
+6. **"Waiting for the phone" and "Call screening" are rows in the Settings group**, not warnings: neither is wrong.
+7. **The device page's row shows the contacts only while calls are managed** ("Not managed" otherwise: the contacts
+   then reach no phone).
+
+Deferred, with the reason:
+- **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+- **The old contact CSS** (`.contact-row`, `.contact-photo-row`, `.contact-avatar`, `.contact-initial`) is unused now
+  and stays for step 15's clean-up (new CSS only at the end, to keep step 7's merge clean).
+- **Checks:** `cargo test` 812 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
+  warnings, none in the step's files.

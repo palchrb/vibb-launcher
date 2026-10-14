@@ -50,6 +50,22 @@
         <p class="group-footer">The setup QR code carries these to each new phone.</p>
         {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="setup" role="status">Saved. Phones set up from now on get these.</p></div>{% endif %}
     </form>
+
+    {#- The second form (design 31 L6): it posts to /settings/calls and comes back to its own
+        flash (#country-code); a refusal renders here (400) with what was typed. -#}
+    <section id="country-code" aria-labelledby="country-code-title">
+        <h2 class="group-header" id="country-code-title">Phone Numbers</h2>
+        <form method="post" action="/settings/calls#country-code" class="group form-group">
+            <div class="field">
+                <label class="field-label" for="default_country_code">Country code</label>
+                <input type="text" id="default_country_code" name="default_country_code" value="{{ country_code.value }}" inputmode="numeric" pattern="\+?[1-9][0-9]{0,2}" maxlength="4" autocomplete="off"{% if country_code.error.is_some() %} aria-invalid="true" aria-describedby="country-code-error" autofocus{% endif %}>
+                {% if let Some(why) = country_code.error %}<p class="field-error" id="country-code-error">{{ why }}</p>{% else %}<p class="field-hint">A number added without one gets +{{ country_code.value }}.</p>{% endif %}
+            </div>
+            <button type="submit" class="button-wide">Save</button>
+        </form>
+        <p class="group-footer">For every phone. Numbers already saved keep theirs.</p>
+        {% if country_code.saved %}<div class="group"><p class="flash" data-flash="country-code" role="status">Saved. Each phone gets it when it is next online.</p></div>{% endif %}
+    </section>
 </main>
 </body>
 </html>

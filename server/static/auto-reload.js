@@ -1,12 +1,14 @@
-// Device › Apps (design 31 step 6): no push reaches this page, so while an app installs it reloads
-// every 3 s for the percentage. The page loads this script only then, so the reloading stops once
-// nothing installs. It never reloads
+// A page that waits for the phone reloads every 3 s: Device › Apps while an app installs (design 31
+// step 6, for the percentage), Calls & Contacts while the phone confirms a change (step 8). No push
+// reaches the page, and the server loads this script only while there is something to wait for,
+// so the reloading stops by itself. It never reloads
 // - once a save has started: a switch saves on `change` (autosave.js calls form.submit(), which
-//   fires no `submit` event), a Name and icon form on `submit` - a reload would cancel the POST on
+//   fires no `submit` event), a form with a button on `submit` - a reload would cancel the POST on
 //   its way (qa-31-s6-code M1);
-// - while a Name and icon form is open: what was typed would be lost.
-// A refused switch's `?notice=` is dropped from the address once shown, so a reload doesn't show
-// it again (N4). Run its tests: node --test jstest/installing-reload.test.js
+// - while a <details> is open (a Name and icon or a contact's form, Add Contact, a confirm, an ⓘ
+//   panel): what was typed or opened would be lost.
+// A refusal's `?notice=` is dropped from the address once shown, so a reload doesn't show it again
+// (N4). Run its tests: node --test jstest/auto-reload.test.js
 (function (root) {
     "use strict";
 
@@ -33,7 +35,7 @@
 
         function tick() {
             if (leaving) return;
-            if (doc.querySelector("details.app-display[open]")) {
+            if (doc.querySelector("details[open]")) {
                 win.setTimeout(tick, DELAY);
                 return;
             }
