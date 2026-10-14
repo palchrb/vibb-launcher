@@ -1,5 +1,5 @@
-//! A phone's Apps, About This Phone, Lock Screen & PINs, Home Screen, Web Filter and Advanced
-//! pages (design 31 §3.2, §8 steps 3-6).
+//! A phone's Apps, Music, About This Phone, Lock Screen & PINs, Home Screen, Web Filter and
+//! Advanced pages (design 31 §3.2, §8 steps 3-7).
 //!
 //! - **About This Phone** (`GET /devices/{id}/about`, `device_about.html`) is read-only, like iOS
 //!   Settings › General › About: the connection (§3.10), the sound, the software, the crash
@@ -14,6 +14,9 @@
 //! - **Apps** (`GET /devices/{id}/apps`, `device_apps.html`, step 6): Allowed and Not allowed,
 //!   each app a switch with its name and icon under it, and the Wi-Fi-only download switch
 //!   ([view_apps]).
+//! - **Music** (`GET /devices/{id}/music`, `device_music.html`, step 7): the music app, the
+//!   library's switches, mobile data, the storage limit, the volume cap, Storytel, Sonos and what
+//!   the phone reported ([view_music]; the parts are `music::device_card`'s).
 //! - **Advanced** (`GET /devices/{id}/advanced`, `device_advanced.html`) holds what a parent sets
 //!   once or never: Restrictions (`/hardening`, one form), App screens (`/kiosk-block` and the Play
 //!   state), Updates & notifications (`/kiosk-escapes`, one form), Connection (`/regenerate-code`,
@@ -66,7 +69,7 @@ pub struct Row {
 }
 
 impl Row {
-    fn new(key: &'static str, label: &str, value: impl Into<String>) -> Row {
+    pub(crate) fn new(key: &'static str, label: &str, value: impl Into<String>) -> Row {
         Row {
             key,
             label: label.to_string(),
@@ -78,7 +81,7 @@ impl Row {
         }
     }
 
-    fn detail(mut self, detail: Option<impl Into<String>>) -> Row {
+    pub(crate) fn detail(mut self, detail: Option<impl Into<String>>) -> Row {
         self.detail = detail.map(Into::into);
         self
     }
@@ -88,7 +91,7 @@ impl Row {
         self
     }
 
-    fn class(mut self, class: &'static str) -> Row {
+    pub(crate) fn class(mut self, class: &'static str) -> Row {
         self.value_class = class;
         self
     }
@@ -293,6 +296,25 @@ pub(crate) fn version_of_code(code: i64) -> Option<String> {
             parts(code)
         }
     })
+}
+
+/// The music app as the phone reported it: its version from the versionCode ("Installed" without
+/// one), the package and the code behind ⓘ (§4.2). About This Phone (`key` "music-app") and
+/// Device › Music ("app") show the same row (qa-31-s7-code N2).
+pub(crate) fn music_app_row(key: &'static str, music: &crate::music::MusicState) -> Option<Row> {
+    let package = music.package.as_deref()?;
+    let version = music.version_code.and_then(version_of_code);
+    Some(
+        Row::new(
+            key,
+            "Music app",
+            version.unwrap_or_else(|| "Installed".to_string()),
+        )
+        .detail(Some(match music.version_code {
+            Some(code) => format!("{package}, version code {code}."),
+            None => format!("{package}."),
+        })),
+    )
 }
 
 /// A crash row's label from the trace's first stored line: the exception's class without its
@@ -523,21 +545,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
                     .detail((short != full).then(|| format!("Full version: {full}."))),
             );
         }
-        if let Some(music) = crate::music::parse_music_state(status.music_state_json.as_deref())
-            && let Some(package) = music.package
+        if let Some(row) = crate::music::parse_music_state(status.music_state_json.as_deref())
+            .and_then(|music| music_app_row("music-app", &music))
         {
-            let version = music.version_code.and_then(version_of_code);
-            software.push(
-                Row::new(
-                    "music-app",
-                    "Music app",
-                    version.unwrap_or_else(|| "Installed".to_string()),
-                )
-                .detail(Some(match music.version_code {
-                    Some(code) => format!("{package}, version code {code}."),
-                    None => format!("{package}."),
-                })),
-            );
+            software.push(row);
         }
         if let Some(policy_state) = status.policy_state.as_deref() {
             software.push(match PolicyProblem::parse(policy_state) {
@@ -1332,6 +1343,72 @@ pub(crate) async fn render_apps(
             installing,
             wifi_only: policy.app_updates_wifi_only,
             network,
+            device,
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+#[derive(Template)]
+#[template(path = "device_music.html")]
+struct MusicTemplate {
+    title: String,
+    device: Device,
+    music: crate::handlers::music::MusicCard,
+    /// When the phone last reported (`On the phone`'s footer): its age, and the exact time for
+    /// `title=`.
+    reported: Option<(String, String)>,
+}
+
+/// GET `/devices/{id}/music`: Device › Music (design 31 §3.2, step 7) - the Music card as design
+/// 30 step 1 left it (M7): the music app's switch (`/apps/toggle`, `back=music`), one switch per
+/// library entry (`/music/entries/{entry}`, back to `#music-entry-<id>`), the one settings form
+/// (`/music`, `v=2`: mobile data, the storage limit, the volume cap, Storytel; back to
+/// `#music-settings`), the Sonos rooms (`/music/sonos-rooms`, back to `#music-sonos`) and what the
+/// phone reported. A refused save shows in its group (`?music_notice=`). A phone not set up has
+/// the page too: what is saved reaches it with its first settings. Every read is a 500 on a DB
+/// error, never an empty library or default settings.
+pub async fn view_music(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(&state, id).await {
+        Ok(policy) => policy,
+        Err(answer) => return answer.into_response(),
+    };
+    let latest = match load_latest(&state, id).await {
+        Ok(latest) => latest,
+        Err(err) => return read_failed(id, "the last report", err),
+    };
+    let music = match crate::handlers::music::device_card(
+        &state,
+        &policy,
+        latest.as_ref(),
+        query.get("music_notice").map(String::as_str),
+        query.get("music_entry").and_then(|e| e.parse().ok()),
+    )
+    .await
+    {
+        Ok(music) => music,
+        Err(err) => return read_failed(id, "the phone's music", err),
+    };
+    let zone = Zone::load(&state.db).await;
+    let reported = latest
+        .as_ref()
+        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
+        .map(|at| (zone.relative(at, Utc::now()), zone.exact(at)));
+    Html(
+        MusicTemplate {
+            title: format!("Music · {}", device.name),
+            music,
+            reported,
             device,
         }
         .render()

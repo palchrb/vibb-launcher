@@ -63,6 +63,16 @@ pub enum Kind {
     Calls(CallProblem),
     LedgerUnreadable,
     LauncherWithoutRules,
+    /// Device › Music's warnings (design 31 step 7 fix round, qa-31-s7-code M1), from
+    /// `music::music_warnings` like the page's: Vibb without music while entries are on, the music
+    /// app not reachable, Storytel's login refused, over the storage limit, the old mobile-data
+    /// switch, entries the phone can't fetch (one row for all).
+    MusicCantDeliver,
+    MusicUnreachable,
+    MusicStorytelRefused,
+    MusicOverLimit,
+    MusicOlderPhone,
+    MusicFailing(usize),
 }
 
 impl Kind {
@@ -125,6 +135,12 @@ impl AttentionItem {
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::LauncherWithoutRules => "launcher-without-rules",
+            Kind::MusicCantDeliver => "music-cant-deliver",
+            Kind::MusicUnreachable => "music-unreachable",
+            Kind::MusicStorytelRefused => "music-storytel-refused",
+            Kind::MusicOverLimit => "music-over-limit",
+            Kind::MusicOlderPhone => "music-older-phone",
+            Kind::MusicFailing(_) => "music-entries",
         }
     }
 }
@@ -163,6 +179,8 @@ pub struct Facts {
     /// Not a row: calls are managed and the launcher screens them, so a no-calls rule really
     /// blocks calls (the lock badge's "calls off", qa-31-s2-code M3).
     pub calls_enforced: bool,
+    /// Device › Music's warnings (qa-31-s7-code M1).
+    pub music: crate::handlers::music::MusicWarnings,
 }
 
 /// The rows for one phone, alarms first.
@@ -205,6 +223,16 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     }
     add(facts.ledger_unreadable, Kind::LedgerUnreadable);
     add(facts.launcher_without_rules, Kind::LauncherWithoutRules);
+    let music = &facts.music;
+    add(music.cant_deliver, Kind::MusicCantDeliver);
+    add(music.unreachable, Kind::MusicUnreachable);
+    add(music.storytel_refused, Kind::MusicStorytelRefused);
+    add(music.over_limit.is_some(), Kind::MusicOverLimit);
+    add(music.older_phone, Kind::MusicOlderPhone);
+    add(
+        music.failing_entries > 0,
+        Kind::MusicFailing(music.failing_entries),
+    );
     kinds
         .into_iter()
         .map(|kind| AttentionItem {
@@ -239,7 +267,13 @@ fn level(kind: Kind) -> Level {
         | Kind::NoNotificationAccess
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
-        | Kind::LauncherWithoutRules => Level::Action,
+        | Kind::LauncherWithoutRules
+        | Kind::MusicCantDeliver
+        | Kind::MusicUnreachable
+        | Kind::MusicStorytelRefused
+        | Kind::MusicOverLimit
+        | Kind::MusicOlderPhone
+        | Kind::MusicFailing(_) => Level::Action,
     }
 }
 
@@ -267,6 +301,13 @@ fn title(kind: Kind) -> String {
         Kind::Calls(problem) => problem.title(),
         Kind::LedgerUnreadable => "Screen-time record unreadable",
         Kind::LauncherWithoutRules => "Vibb too old for time rules",
+        Kind::MusicCantDeliver => "Vibb can't deliver music yet",
+        Kind::MusicUnreachable => "Music app not reachable",
+        Kind::MusicStorytelRefused => "Storytel refused the phone's login",
+        Kind::MusicOverLimit => "Music over the storage limit",
+        Kind::MusicOlderPhone => "Update Vibb and the music app",
+        Kind::MusicFailing(1) => "1 music entry fails on the phone",
+        Kind::MusicFailing(n) => return format!("{n} music entries fail on the phone"),
     }
     .to_string()
 }
@@ -295,6 +336,15 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
         }
+        // Device › Music's warnings at the top of the page: no fragment needed.
+        Kind::MusicCantDeliver | Kind::MusicUnreachable => {
+            return format!("/devices/{id}/music");
+        }
+        // The others above their own group (its header) or by their rows.
+        Kind::MusicStorytelRefused => ("/music", "storytel-title"),
+        Kind::MusicOverLimit => ("/music", "storage-title"),
+        Kind::MusicOlderPhone => ("/music", "music-settings"),
+        Kind::MusicFailing(_) => ("/music", "library"),
     };
     format!("/devices/{id}{page}#{anchor}")
 }
@@ -310,6 +360,8 @@ pub struct Sources<'a> {
     /// Calls aren't managed while a no-calls rule is in force (the Time rules card's warning).
     pub incoming_calls_not_blocked: bool,
     pub connection: ConnectionState,
+    /// The music entries switched on for the phone (`music::ticked_entries`).
+    pub music_ticked: &'a [i64],
 }
 
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
@@ -367,6 +419,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             .unwrap_or_default()
             .iter()
             .any(|rule| !rule.calls_allowed);
+    let music_ticked = crate::handlers::music::ticked_entries(&state.db, id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the music ticks");
+            Vec::new()
+        });
     facts_of(
         &Sources {
             device,
@@ -376,6 +434,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             call_problems: &call_problems,
             incoming_calls_not_blocked,
             connection,
+            music_ticked: &music_ticked,
         },
         now_ms,
     )
@@ -475,6 +534,8 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
                 .call_problems
                 .iter()
                 .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall)),
+        // Device › Music's own warnings, so the rows and the page agree.
+        music: crate::handlers::music::music_warnings(policy, latest, s.music_ticked),
     }
 }
 
@@ -505,6 +566,14 @@ mod tests {
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
+            music: crate::handlers::music::MusicWarnings {
+                cant_deliver: true,
+                unreachable: true,
+                storytel_refused: true,
+                over_limit: Some(("3.2 GB".to_string(), 2)),
+                older_phone: true,
+                failing_entries: 2,
+            },
             ..Default::default()
         }
     }
@@ -587,6 +656,12 @@ mod tests {
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
                 "Vibb too old for time rules",
+                "Vibb can't deliver music yet",
+                "Music app not reachable",
+                "Storytel refused the phone's login",
+                "Music over the storage limit",
+                "Update Vibb and the music app",
+                "2 music entries fail on the phone",
             ]
         );
         let first_action = rows.iter().position(|r| r.level == Level::Action).unwrap();
@@ -614,6 +689,7 @@ mod tests {
             .map(|r| r.kind)
             .collect();
         kinds.push(Kind::BlockedApps(1));
+        kinds.push(Kind::MusicFailing(1));
         kinds.extend(CallProblem::ALL.iter().map(|p| Kind::Calls(*p)));
         for kind in kinds {
             let title = title(kind);
@@ -628,6 +704,10 @@ mod tests {
             }
         }
         assert_eq!(title(Kind::BlockedApps(1)), "1 blocked app waits");
+        assert_eq!(
+            title(Kind::MusicFailing(1)),
+            "1 music entry fails on the phone"
+        );
     }
 
     #[test]
@@ -669,5 +749,19 @@ mod tests {
         assert_eq!(target("screen-time-record"), "/devices/7#time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");
+        // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at
+        // their group.
+        assert_eq!(target("music-cant-deliver"), "/devices/7/music");
+        assert_eq!(target("music-unreachable"), "/devices/7/music");
+        assert_eq!(
+            target("music-storytel-refused"),
+            "/devices/7/music#storytel-title"
+        );
+        assert_eq!(target("music-over-limit"), "/devices/7/music#storage-title");
+        assert_eq!(
+            target("music-older-phone"),
+            "/devices/7/music#music-settings"
+        );
+        assert_eq!(target("music-entries"), "/devices/7/music#library");
     }
 }

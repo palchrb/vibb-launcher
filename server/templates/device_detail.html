@@ -201,142 +201,20 @@
         <a href="/devices/{{ device.id }}/calls" class="button-small">Calls, contacts and SMS</a>
     </div>
 
-    <div class="card" id="music">
-        <h2>Music</h2>
-        <p class="subtitle">The Vibb music app and what's in it on this phone. The library itself - podcasts, NRK, own files, categories - is on the <a href="/music">Music</a> page. Each choice here saves itself immediately.</p>
-        {% if let Some(music) = music %}
-        {% if let Some(notice) = music.notice %}
-        <div class="error">{{ notice }}</div>
-        {% endif %}
-        {% for warning in music.warnings %}
-        <div class="error">{{ warning }}</div>
-        {% endfor %}
-        {% if let Some(app) = music.app %}
-        <form method="post" action="/devices/{{ device.id }}/apps/toggle">
-            <input type="hidden" name="tracked_app_id" value="{{ app.tracked_app_id }}">
-            <input type="hidden" name="package_name" value="{{ app.package_name }}">
-            <input type="hidden" name="back" value="music">
-            <label class="checkbox-row">
-                <input type="checkbox" name="selected" {% if app.checked %}checked{% endif %} data-autosave>
-                <span>The music app on this phone (installed and allowed like any app from the catalog; unticking uninstalls it) <span class="app-status" style="white-space:normal;">{{ app.status }}</span></span>
-            </label>
-            <noscript><button type="submit" class="button-small">Save</button></noscript>
-        </form>
-        {% else %}
-        <p class="subtitle">The music app isn't in the Apps catalog yet - add it in <a href="/music/settings#app">Music › Settings</a>.</p>
-        {% endif %}
-
-        <h3>In the library on this phone</h3>
-        {% if music.ticks.is_empty() %}
-        <p class="subtitle">Nothing in the library yet - add podcasts, NRK series or your own files on the <a href="/music">Music</a> page.</p>
-        {% else %}
-        <div class="app-checkbox-list">
-            {% for tick in music.ticks %}
-            <form method="post" action="/devices/{{ device.id }}/music/entries/{{ tick.id }}" id="music-entry-{{ tick.id }}">
-                {% if let Some(notice) = tick.notice %}
-                <div class="error">{{ notice }}</div>
-                {% endif %}
-                <label class="checkbox-row">
-                    <input type="checkbox" name="selected" {% if tick.checked %}checked{% endif %} data-autosave>
-                    <span>{{ tick.name }} <span class="subtitle">- {{ tick.detail }}</span></span>
-                </label>
-                <noscript><button type="submit" class="button-small">Save</button></noscript>
-            </form>
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% if let Some(library) = music.library %}
-        <p class="subtitle">This phone's library: {{ library }}.</p>
-        {% endif %}
-
-        <form method="post" action="/devices/{{ device.id }}/music" id="music-settings">
-            <input type="hidden" name="v" value="2">
-            <label class="checkbox-row">
-                <input type="checkbox" name="stream_mobile_data" value="on" {% if music.stream_mobile_data %}checked{% endif %} data-autosave>
-                <span><strong>Streaming may use mobile data</strong>: something that isn't downloaded can play off Wi-Fi too. What plays is saved on the phone as it plays, so it isn't fetched twice (not for an entry that keeps nothing).</span>
-            </label>
-            <label class="checkbox-row">
-                <input type="checkbox" name="download_mobile_data" value="on" {% if music.download_mobile_data %}checked{% endif %} data-autosave>
-                <span><strong>Downloads may use mobile data</strong>: the offline episodes and Storytel books also download off Wi-Fi - a Storytel book is often several hundred MB.</span>
-            </label>
-            <p class="subtitle">Never while roaming. On Wi-Fi both always work, and what's downloaded plays anywhere.</p>
-            {% if let Some(note) = music.data_note %}
-            <div class="error">{{ note }}</div>
-            {% endif %}
-            <label for="music_storage_limit">Music storage limit</label>
-            <select id="music_storage_limit" name="storage_limit" data-autosave>
-                {% for (gb, selected) in music.storage_limits %}
-                <option value="{{ gb }}" {% if selected %}selected{% endif %}>{{ gb }} GB</option>
-                {% endfor %}
-                <option value="none" {% if music.storage_limit.is_none() %}selected{% endif %}>No limit</option>
-            </select>
-            <p class="subtitle">Downloads, Storytel books and what was played. Over the limit, episodes played beyond the offline depth are removed first; the offline episodes always stay.</p>
-            <label for="music_volume_cap">Volume cap (speaker and headphones, every app)</label>
-            <select id="music_volume_cap" name="volume_cap" data-autosave>
-                <option value="off" {% if music.volume_cap.is_none() %}selected{% endif %}>Off</option>
-                {% for (cap, selected) in music.volume_caps %}
-                <option value="{{ cap }}" {% if selected %}selected{% endif %}>{{ cap }} %</option>
-                {% endfor %}
-            </select>
-            <label class="checkbox-row" style="margin-top:12px;">
-                <input type="checkbox" name="storytel" value="on" {% if music.storytel %}checked{% endif %} data-autosave>
-                <span>Storytel on this phone: the music app gets the family's Storytel login{% if !music.storytel_stored %} (none saved yet - add it in <a href="/music/settings#storytel">Music › Settings</a>){% endif %}. Off removes it from the phone.</span>
-            </label>
-            {% if let Some(note) = music.storytel_note %}
-            <p class="subtitle">{{ note }}</p>
-            {% endif %}
-            <noscript><button type="submit">Save</button></noscript>
-        </form>
-
-        <h3 id="music-sonos">Sonos speakers</h3>
-        {% if let Some(notice) = music.sonos.notice %}
-        <div class="error">{{ notice }}</div>
-        {% endif %}
-        {% if music.sonos.all && music.sonos.rows.is_empty() %}
-        <p class="subtitle">The phone hasn't seen any speakers yet. Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and the phone can be limited to some of them. Until then every room is allowed - on any Wi-Fi: at a friend's house the phone would list their Sonos speakers too and could play on them.</p>
-        {% else %}
-        <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms">
-            <label class="checkbox-row">
-                <input type="checkbox" name="all" value="on" {% if music.sonos.all %}checked{% endif %} data-autosave>
-                <span>All rooms: the music app may play on every Sonos speaker it finds, on any Wi-Fi - at a friend's house on theirs too. Off: only on the rooms ticked below. Speakers the phone finds later aren't allowed until you tick them, and a group of speakers plays only when every room in it is ticked.</span>
-            </label>
-            {% if music.sonos.all %}
-            {% for room in music.sonos.rows %}
-            <input type="hidden" name="room" value="{{ room.uid }}">
-            {% endfor %}
-            {% else %}
-            <div class="app-checkbox-list">
-                {% for room in music.sonos.rows %}
-                <label class="checkbox-row">
-                    <input type="checkbox" name="room" value="{{ room.uid }}" {% if room.allowed %}checked{% endif %} data-autosave>
-                    <span>{% if room.reported %}{{ room.label }}{% else %}A speaker the phone no longer knows <span class="subtitle" style="font-size:12px;">{{ room.uid }}</span>{% endif %}</span>
-                </label>
-                {% endfor %}
-            </div>
-            {% if music.sonos.none_allowed() %}
-            <p class="subtitle">No room ticked: the music plays only on the phone and headphones.</p>
-            {% endif %}
-            {% endif %}
-            <noscript><button type="submit">Save</button></noscript>
-        </form>
-        {% endif %}
-        {% for line in music.lines %}
-        <p class="subtitle">{{ line }}</p>
-        {% endfor %}
-        {% else %}
-        <div class="error">The music settings couldn't be read - check the server log.</div>
-        {% endif %}
-        <a href="/music" class="button-small" style="margin-top:12px;">Music library</a>
-    </div>
-
-    {#- Design 31 steps 3-6: the Status/Access/Play/crash facts, the set-once controls, the lock
-        and PINs, the home screen, the web filter and the apps moved to their sub-pages; the rows
-        stay where the summary (step 10) has them, at the bottom. -#}
+    {#- Design 31 steps 3-7: the Status/Access/Play/crash facts, the set-once controls, the lock
+        and PINs, the home screen, the web filter, the apps and the music moved to their sub-pages;
+        the rows stay where the summary (step 10) has them, at the bottom. -#}
     <div class="group group-icons" id="more">
         <a class="row" href="/devices/{{ device.id }}/apps" data-row="apps">
             <span class="tile tile-blue"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="2.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="2.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/><rect x="9.5" y="9.5" width="5" height="5" rx="1.2" fill="currentColor"/></svg></span>
             <span class="row-label">Apps</span>
             <span class="row-value">{{ apps_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/devices/{{ device.id }}/music" data-row="music">
+            <span class="tile tile-pink"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M6.5 12.5V3.5l7.5-1.7v9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="4.6" cy="12.7" r="2" fill="currentColor"/><circle cx="12.1" cy="11" r="2" fill="currentColor"/></svg></span>
+            <span class="row-label">Music</span>
+            <span class="row-value{% if music_attention %} row-value-action{% endif %}">{{ music_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">

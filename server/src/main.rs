@@ -1047,9 +1047,10 @@ pub fn build_admin_router(
             post(handlers::music::delete_file),
         )
         .route("/music-covers/{hash}", get(handlers::music::view_cover))
+        // Design 31 step 7: Device › Music, the GET chained with its settings form's POST (L5).
         .route(
             "/devices/{id}/music",
-            post(handlers::music::save_device_settings),
+            get(handlers::device_pages::view_music).post(handlers::music::save_device_settings),
         )
         .route(
             "/devices/{id}/music/entries/{entry_id}",

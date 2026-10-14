@@ -259,6 +259,134 @@ async fn an_offline_phones_report_rows_say_at_last_report() {
     assert!(list.contains("data-attention-count=\"2\""), "{list}");
 }
 
+/// Device › Music's warnings keep a signal on the summary (qa-31-s7-code M1): each raises its own
+/// orange row on an otherwise clean phone, pointing at the place on the Music page that says it;
+/// the Music row says "Needs attention" while any shows, and the list's badge counts the same rows.
+#[tokio::test]
+async fn each_music_warning_raises_its_row_and_marks_the_music_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let entry = super::music::add_own(&app, &cookie, "Eventyr").await;
+    let other = super::music::add_own(&app, &cookie, "Sanger").await;
+    let music =
+        |state: Value| json!({"capabilities": ["time_rules_v1", "music_v1"], "music_state": state});
+    let cases: Vec<(&str, Value)> = vec![
+        // A launcher without music while an entry is on.
+        ("music-cant-deliver", json!({})),
+        (
+            "music-unreachable",
+            music(json!({"package": "me.vibb.music", "bridge": "unbound"})),
+        ),
+        (
+            "music-storytel-refused",
+            music(json!({"package": "me.vibb.music", "bridge": "bound", "storytel": "refused"})),
+        ),
+        (
+            "music-over-limit",
+            music(json!({"package": "me.vibb.music", "bridge": "bound",
+                         "cache_bytes": 3_500_000_000_i64, "audio_bytes": 3_400_000_000_i64,
+                         "extra_bytes": 0})),
+        ),
+        (
+            "music-entries",
+            music(json!({"package": "me.vibb.music", "bridge": "bound",
+                         "entry_errors": [{"entry": entry, "error": "not_found"},
+                                          {"entry": other, "error": "not_found"}]})),
+        ),
+    ];
+    for (key, extra) in cases {
+        let (id, token) = clean_phone(&app, key).await;
+        // Before an entry is on (and with a clean report): nothing, and the row's plain count.
+        let summary = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        assert!(music_row(&summary).contains(">None<"), "{key}");
+        super::music::tick(&app, &cookie, id, entry, true).await;
+        report(&app, &token, extra).await;
+        assert_eq!(rows(&app, &cookie, id).await, [key], "{key}");
+        let summary = app
+            .get_page(&format!("/devices/{id}"), &cookie)
+            .await
+            .text();
+        let attention = &summary[summary.find(&format!("data-attention=\"{key}\"")).unwrap()..];
+        let start = summary[..summary.find(&format!("data-attention=\"{key}\"")).unwrap()]
+            .rfind("<a")
+            .unwrap();
+        assert!(
+            summary[start..].starts_with("<a class=\"attention attention-action\""),
+            "{key}"
+        );
+        let target = tags(&summary[start..], "a")[0]
+            .attr("href")
+            .unwrap()
+            .to_string();
+        // The target is the phone's Music page, at an element it has.
+        assert!(
+            target.starts_with(&format!("/devices/{id}/music")),
+            "{key}: {target}"
+        );
+        let page = app
+            .get_page(&format!("/devices/{id}/music"), &cookie)
+            .await
+            .text();
+        if let Some((_, fragment)) = target.split_once('#') {
+            assert!(
+                page.contains(&format!("id=\"{fragment}\"")),
+                "{key}: {target}"
+            );
+        }
+        assert!(!attention.is_empty());
+        let row = music_row(&summary);
+        assert!(
+            row.contains("row-value-action\">Needs attention<"),
+            "{key}: {row}"
+        );
+        let list = app.get_page("/devices", &cookie).await.text();
+        let list_row = &list[list.find(&format!("data-device=\"{id}\"")).unwrap()..];
+        let list_row = &list_row[..list_row.find("</a>").unwrap()];
+        assert!(
+            list_row.contains("data-attention-count=\"1\""),
+            "{key}: {list_row}"
+        );
+    }
+    // The older-phone warning: the two switches differ while the phone sends no `extra_bytes`.
+    let (id, token) = clean_phone(&app, "older").await;
+    sqlx::query("UPDATE device_policy SET music_stream_mobile_data = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    report(
+        &app,
+        &token,
+        music(json!({"package": "me.vibb.music", "bridge": "bound", "cache_bytes": 1_000_000})),
+    )
+    .await;
+    assert_eq!(rows(&app, &cookie, id).await, ["music-older-phone"]);
+    // An error for an entry that isn't on for the phone is nothing to fix (N3).
+    let (id, token) = clean_phone(&app, "off").await;
+    report(
+        &app,
+        &token,
+        music(json!({"package": "me.vibb.music", "bridge": "bound",
+                     "entry_errors": [{"entry": other, "error": "not_found"}]})),
+    )
+    .await;
+    assert_eq!(rows(&app, &cookie, id).await, Vec::<String>::new());
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!music_row(&summary).contains("Needs attention"));
+}
+
+/// The device page's Music row, up to its end.
+fn music_row(summary: &str) -> &str {
+    let row = &summary[summary.find("data-row=\"music\"").expect("the Music row")..];
+    &row[..row.find("</a>").unwrap()]
+}
+
 #[tokio::test]
 async fn a_phone_not_set_up_has_no_count() {
     let app = TestApp::new().await;

@@ -120,60 +120,63 @@ pub fn mobile_data_wire(stream: bool, download: bool) -> (bool, bool, bool) {
     (stream && download, stream, download)
 }
 
-/// The device card's note when the switches differ but the phone still runs on the one old switch
-/// (design 30 §1.3): an app report (`cache_bytes`, always sent since design 21) without
-/// `extra_bytes` (sent from the music app's step 3a on, passed on by a launcher of the same
-/// step). No app report (a fresh phone, or the launcher's own fields only): no note.
-pub fn older_phone_note(
+/// The phone runs on the one old mobile-data switch while the parent's two differ (design 30
+/// §1.3): an app report (`cache_bytes`, always sent since design 21) without `extra_bytes` (sent
+/// from the music app's step 3a on, passed on by a launcher of the same step). No app report (a
+/// fresh phone, or the launcher's own fields only): nothing to say. Device › Music's warning.
+pub fn older_phone(
     stream: bool,
     download: bool,
     cache_bytes: Option<i64>,
     extra_bytes: Option<i64>,
-) -> Option<&'static str> {
-    (stream != download && cache_bytes.is_some() && extra_bytes.is_none()).then_some(
-        "This phone's launcher or music app is older: it uses mobile data for music only when \
-         both switches are on. Update both.",
-    )
+) -> bool {
+    stream != download && cache_bytes.is_some() && extra_bytes.is_none()
 }
 
-/// The device card's storage line and its warning (design 30 §1.10). Without `audio_bytes` (a
-/// music app from before design 30) the line is today's. With it, the music downloads against the
-/// parent's limit (the server's current one) and the played extras; the warning when the kept
-/// items alone (`audio_bytes - extra_bytes`) pass the limit.
-pub fn storage_line(
+/// What the phone stores for music, as Device › Music's rows (design 30 §1.10; typed in design 31
+/// step 7). Without `audio_bytes` (a music app from before design 30) only what it stores.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Storage {
+    /// Everything the music app keeps: "1234.5 MB".
+    pub stored: String,
+    /// The music downloads against the parent's limit (the server's current one): "980.0 MB of
+    /// 2 GB", "980.0 MB (no limit)"; `None` from an older app.
+    pub downloads: Option<String>,
+    /// The played extras in them, only when there are some: "210.0 MB".
+    pub extras: Option<String>,
+    /// The kept items alone (`audio_bytes - extra_bytes`) pass the limit: what they use, rounded
+    /// up ("3.2 GB"), and the limit in GB.
+    pub over_limit: Option<(String, i64)>,
+}
+
+pub fn storage(
     cache_bytes: i64,
     audio_bytes: Option<i64>,
     extra_bytes: Option<i64>,
     limit_gb: Option<i64>,
-) -> (String, Option<String>) {
-    let stored = format!("Stored on the phone: {}", megabytes(cache_bytes));
+) -> Storage {
+    let stored = megabytes(cache_bytes);
     let Some(audio) = audio_bytes else {
-        return (stored, None);
+        return Storage {
+            stored,
+            downloads: None,
+            extras: None,
+            over_limit: None,
+        };
     };
     let extra = extra_bytes.unwrap_or(0).max(0);
-    let mut line = format!("{stored}. Music downloads: {}", megabytes(audio));
-    match limit_gb {
-        Some(gb) => line.push_str(&format!(" of the {gb} GB limit")),
-        None => line.push_str(" (no limit)"),
-    }
-    if extra > 0 {
-        line.push_str(&format!(
-            ", {} of it played beyond the offline depth (kept while there is room)",
-            megabytes(extra)
-        ));
-    }
-    line.push('.');
     let kept = audio.saturating_sub(extra);
-    let warning = limit_gb
-        .filter(|gb| kept > gb.saturating_mul(1_000_000_000))
-        .map(|gb| {
-            format!(
-                "Kept episodes and books alone use {} of the {gb} GB limit - lower an entry's \
-                 offline depth or raise the limit.",
-                gigabytes_up(kept)
-            )
-        });
-    (line, warning)
+    Storage {
+        stored,
+        downloads: Some(match limit_gb {
+            Some(gb) => format!("{} of {gb} GB", megabytes(audio)),
+            None => format!("{} (no limit)", megabytes(audio)),
+        }),
+        extras: (extra > 0).then(|| megabytes(extra)),
+        over_limit: limit_gb
+            .filter(|gb| kept > gb.saturating_mul(1_000_000_000))
+            .map(|gb| (gigabytes_up(kept), gb)),
+    }
 }
 
 /// Bytes as "2.1 GB", rounded **up** to the tenth (qa-30-s1-code L1): a figure over the limit never
@@ -1025,8 +1028,8 @@ thread_local! {
 }
 
 /// Each phone's built library, kept under the library revision it was built at (migration 0050,
-/// qa-21-step1-code #3): the policy poll, the library route and the device card reuse it until
-/// something a library is built from changes. The revision moves by trigger on every write to
+/// qa-21-step1-code #3): the policy poll, the library route and the phone's Music page reuse it
+/// until something a library is built from changes. The revision moves by trigger on every write to
 /// `music_entries`, `music_categories`, `music_files` and `device_music_entries`, and on a change
 /// of a listing's version, cover or kept end (0051); a new source of library data gets the same
 /// triggers. In memory only, one library per phone.
@@ -1125,7 +1128,7 @@ pub async fn device_library(
 }
 
 /// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) -
-/// the one check for a tick on the device card and for the import's ticks (21a). The episode
+/// the one check for a switch on the phone's Music page and for the import's ticks (21a). The episode
 /// lists aren't counted: a phone with many long feeds gets a few MB of them (21b's status).
 pub async fn tick_fits(
     db: &mut sqlx::SqliteConnection,
@@ -1761,18 +1764,18 @@ mod tests {
     }
 
     #[test]
-    fn older_phone_note_needs_an_app_report_without_extra_bytes() {
+    fn an_older_phone_needs_an_app_report_without_extra_bytes() {
         let app_report = Some(1_000_000);
-        // The switches differ, an app report without `extra_bytes`: the note.
-        assert!(older_phone_note(true, false, app_report, None).is_some());
-        assert!(older_phone_note(false, true, app_report, None).is_some());
+        // The switches differ, an app report without `extra_bytes`: the warning.
+        assert!(older_phone(true, false, app_report, None));
+        assert!(older_phone(false, true, app_report, None));
         // Equal switches: the old switch is the same thing.
-        assert!(older_phone_note(true, true, app_report, None).is_none());
-        assert!(older_phone_note(false, false, app_report, None).is_none());
+        assert!(!older_phone(true, true, app_report, None));
+        assert!(!older_phone(false, false, app_report, None));
         // A phone that sends `extra_bytes` reads both switches (0 counts: always sent).
-        assert!(older_phone_note(true, false, app_report, Some(0)).is_none());
+        assert!(!older_phone(true, false, app_report, Some(0)));
         // No app report (none yet, or the launcher's fields only): nothing to say.
-        assert!(older_phone_note(true, false, None, None).is_none());
+        assert!(!older_phone(true, false, None, None));
     }
 
     #[test]

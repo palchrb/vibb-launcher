@@ -586,6 +586,10 @@ pub enum Section {
     /// `/devices/{id}/apps`: Apps (design 31 step 6) - Allowed and Not allowed, each app's switch
     /// and Name and icon, Download apps on Wi-Fi only.
     Apps,
+    /// `/devices/{id}/music`: Music (design 31 step 7) - the music app, the library's switches,
+    /// the settings form (mobile data, storage limit, volume cap, Storytel), Sonos, what the phone
+    /// reported.
+    Music,
     /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
     /// the screen timeout, the lock's background and notifications.
     Lock,
@@ -608,6 +612,7 @@ pub fn device_page(id: i64, section: Section) -> String {
         Section::Summary => format!("/devices/{id}"),
         Section::Calls => format!("/devices/{id}/calls"),
         Section::Apps => format!("/devices/{id}/apps"),
+        Section::Music => format!("/devices/{id}/music"),
         Section::Lock => format!("/devices/{id}/lock"),
         Section::Home => format!("/devices/{id}/home"),
         Section::Filter => format!("/devices/{id}/filter"),
