@@ -596,7 +596,9 @@ the row (`categoryTileWidthFor`; the row scrolls), so "Musikk" is never "Mu…".
 from the screenshot (the 136 px status bar, Android's nonlinear 2.0 curve): no scroll with gestures, the floor and a
 scroll with three buttons; the old floor overflowed by 65 px. Nytt shows "Fjern alle" only with something to clear
 (N11, `showsClearAll`). Re-check on the emulator: the library full with the bar at 2.0 in both navigation modes (every
-line and the dots shown; with three buttons a vertical swipe on the title scrolls), the tiles' labels whole, Nytt empty.
+line and the dots shown; with three buttons a vertical drag on the title *and* on the cover scrolls the slot -
+qa-26c-emu-music-code L3: write the result here, and if it doesn't scroll the floor gives way once more), the tiles' labels
+whole (measured once per set of names, N2), Nytt empty.
 
 ## Step 4 implementation status (2026-10-14)
 

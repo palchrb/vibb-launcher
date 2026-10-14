@@ -4639,19 +4639,22 @@ The report is `docs/testing/2026-10-14-emulator-round.md` (on `main` 05fd8e3: 59
   item (counted once); mid-track, at the queue's last item or beyond what Spotify knows it is still the current one's.
   The renderer's move-on then plays from the item after it (one play call, as for any unplayable item).
   `sdk_states/unplayable_at_boundary`, a tracker test, a renderer test (the error recorded for item 1, the list going on).
-- **N3, the call rule and Chromium's pause:** music-side only - no launcher or bridge change. (a) The web player hears
-  a system call by the audio mode too: `spotifyInCall(launcherInCall, modeInCall)` sets the renderer's `inCall` wherever
-  either changes and when it is made, and `callOn` lets `callStep` take the mode on the web player as on a room (the
-  phone's own player has its focus). So a play tapped during a call that began while paused starts nothing and nothing
-  plays after it (A1 #19c), and the call rule pauses and plays again a web player whatever paused it first. (b) For its
-  first `SPOTIFY_HELD_SHOWN_MS` (5 s) a play the WebView holds paused (`heldByPage`) still says playing to the session
-  (`spotifySessionPlays`: the player's play-when-ready, not `showsPlaying` - the player's own screen, the locks and
-  `setNowPlaying` show paused), so the launcher's `MusicCalls`, which reads the session 60-220 ms after the ring's pause,
-  sends `CALL_HOLD` for every call kind (VoIP too, where the mode isn't a call). Bounded so a pause Chromium never undoes
-  (another app's playback) doesn't keep the session playing. Residual: a VoIP call that began while paused, with a play
-  tapped during it, is still Chromium's to resume (the launcher sends nothing then; a launcher that sends the call's
-  edges regardless would close it - the bridge contract is unchanged here). Tests: both orders of the ring's pause and
-  the call, the session's window, a tap during the mode's call; `RendererRulesTest`, `GuardsTest`.
+- **N3, the call rule and Chromium's pause** (as revised by the QA's fix round below; the first version's 5 s session
+  window is gone): (a) the web player hears a system call by the audio mode too - `spotifyInCall(launcherInCall,
+  modeInCall)` sets the renderer's `inCall` wherever either changes and when it is made, and `callOn` lets `callStep`
+  take the mode on the web player as on a room (the backstop for a launcher without listener access or an older one).
+  (b) **The launcher sends `CALL_HOLD` at every call's begin while the music app has a session** ("a call began", playing
+  or not; `CALL_RELEASE` at that call's end after a HOLD) - `MusicMediaPlan.callHoldStep(state, inCall, session)`, the
+  session's playing state only in `MusicCalls`' log line. The music app's `callPauseStep` holds nothing for a call that
+  begins while nothing plays, so a pause made before the call stays and nothing plays after it; a play tapped during
+  any call - VoIP included - starts nothing. (c) A page the WebView paused counts as playing for the call rule only
+  within `SPOTIFY_HELD_RECENT_MS` (5 s) of its pause (`heldRecently`): a ring's pause comes just before the call's
+  word; an older hold is another app that took the audio for good. The media session never says playing while
+  nothing plays. `bridge_contract.json` and the AIDL are unchanged (byte-identical checks green); 26a §6.7 and both
+  CLAUDE.md files say the new meaning. Tests: the launcher's `MusicMediaPlanTest` (a HOLD on a call with a paused
+  session, RELEASE only after a HOLD), the music app's renderer (both orders of the ring's pause and the call, a call
+  while paused stays paused after it, a VoIP ring while paused with a play tapped starts nothing, an old hold not played
+  by a call's end), `RendererRulesTest`, `GuardsTest`.
 - **N4, the debug proxy (debug path only):** `DebugProxy` (pure, OkHttp) does the interceptor's fetch: `Content-Length`
   passed back with `Content-Range`, `Accept-Ranges` and the CORS header (OkHttp drops it itself after an unzip), and no
   call timeout - a streamed body has none, only the 45 s read timeout (`callTimeout(45 s)` bounded the whole tone).
@@ -4662,9 +4665,36 @@ The report is `docs/testing/2026-10-14-emulator-round.md` (on `main` 05fd8e3: 59
   queue adds stop with its tracker. A library change alone doesn't end a live play (the kid's tap does). Tests: the pure
   rule, the renderer's switch (one context play, no queue add after it), `GuardsTest`.
 
-No string names Spotify (the new log line says "web player"; `SourceScanTest` green). To re-check on the emulator: A2 #0
-with the fake as it is now and with an old stub that posts the `ended` pause (both: plays on across tracks, locks held);
-A2 #4 (C named alone, D plays); A1 #19, #19b and #19c (the order logged; `CALL_HOLD` now sent on a ring that paused the
-page first; a play tapped during an answered call starts nothing, and nothing after it); A1 #10, #13, #16 through the
-debug proxy (the tone jumps on a seek past the buffer; 30 min of Doze with track changes); A2 #18 (the flip: the tap
-opens the bar with the context playing, no `queue:` lines after it, the leftover add skipped).
+No string names Spotify (the new log line says "web player"; `SourceScanTest` green).
+
+### Fix round after QA's code review (qa-26c-emu-music-code, 2026-10-14)
+
+QA `6c06986d`: 0 High, 2 Medium, 3 Low, 2 Nits; all fixed, none disputed. `main` (c1570a95, the launcher's fixes of the
+emulator round) was merged first with no conflict. M2 takes the QA's recommendation (the coordinator's decision).
+
+| Finding | What changed | Check |
+|---|---|---|
+| M1 | `callStep` counts a held page as playing only within `SPOTIFY_HELD_RECENT_MS` of its pause (`SpotifyRenderer.heldRecently`, pure `spotifyHeldRecently`): another app's takeover is never started again by a later call's end. | `M1 - a hold counts for a call only while fresh...`; `GuardsTest` pins the line. |
+| M2 | The 5 s session window (`spotifySessionPlays`, `SPOTIFY_HELD_SHOWN_MS`) is gone: the session is `pwr && !ended`. The launcher sends `CALL_HOLD` at every call's begin while the music app has a session (`callHoldStep(state, inCall, session)`; `MusicCalls.evaluate` reads the playing state only for its log), `CALL_RELEASE` after a HOLD. Launcher and music in one commit; names and AIDL unchanged. | Launcher `MusicMediaPlanTest`; renderer `N3 - the session never says playing...`, `N3 - a VoIP ring while paused...`. |
+| L1 | At a boundary the tracker emits `ItemChanged(next, auto = true)` before `Unplayable(next)`, so the service marks the played-out item done. | `unplayable_at_boundary`; the N2 renderer test checks the advance before the error. |
+| L2 | A paused-at-its-end state Spotify doesn't follow asks the page again (`Look`); the same state `LOOK_MS` later is the end - a new window from the next item, or the context's end - never the 30 s gap's "trenger internett". A playing state in between starts the wait again. | `L2 - a pause at the end Spotify never follows...` (tracker, list and context) and the renderer test (a new window, no line, no `unreachable`). |
+| L3 | The emulator re-check list (below and design 34 step 11) drags vertically on the title and on the cover at 2.0 with three-button navigation. | - |
+| N1 | The session's play (the bar, the notification, a headset, the lock) and RESUME of a flipped Spotify entry start its new queue through `playEntry` under the switch lock, as a cover tap does (`restartIfStale` from `KidPlayer`, the library's Spotify entries kept from `store.libraries()`). | `GuardsTest`. |
+| N2 | The hold's 5 s timer is gone with M2; the category labels' widths are measured once per set of names and font scale (`remember`). | `FitTest`. |
+
+**To re-check on the emulator** (the final list):
+- A2 #0: across track boundaries with the fake as it is and with an old stub that posts the `ended` pause - plays on, the
+  locks held; a stub stopped at a track's end (no next state) ends in a new window or the end within ~2 s, no "Trenger
+  internett".
+- A2 #4: C named alone (`item_errors`), A marked heard, D plays.
+- A1 #19, #19b, #19c: `MusicCalls: call began: music not playing -> HOLD` on every call with a session; the call pauses
+  and plays again only what it paused; a play tapped during an answered call starts nothing, during or after it; the
+  same with a VoIP ring (a debug VoIP notification) while paused.
+- Another app takes the audio (A1 #20b), then a phone call: after the call Vibb stays paused.
+- A1 #10, #13, #16 through the debug proxy: the tone jumps on a seek past the buffer; 30 min of Doze with track changes.
+- A2 #18: the flip - the cover tap opens the bar with the context playing, no `queue:` lines after it, the leftover add
+  skipped; the same flip resumed from the bar's play button and from a headset's play.
+- Design 34 step 11: the library full with the bar at font scale 2.0, gestures and three-button navigation - every line
+  and the dots shown; with three buttons a vertical drag on the title *and* on the cover scrolls the slot (write the
+  result in 34 step 11's status; if it doesn't scroll, the floor gives way once more); the category labels whole; Nytt
+  empty without "Fjern alle"; the lock screen and Home's card show paused, never playing, during an alarm.
