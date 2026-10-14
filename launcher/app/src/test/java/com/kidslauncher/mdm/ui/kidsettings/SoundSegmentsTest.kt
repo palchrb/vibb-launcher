@@ -258,6 +258,19 @@ class SoundSegmentsTest {
             listOf(0xFF2A4A4F, 0xFF101820), listOf(0xFF34406A, 0xFF14141F), listOf(0xFF5A3A4A, 0xFF1A1420),
             listOf(0xFFFFFFFF), listOf(0xFFFFF3B0),
         ).map { stops -> stops.map { it.toInt() } }
+        // Since qa-34-s10-code M1 the shared ink rule judges white ink on card + track, so mid-tone
+        // grounds a parent may choose get there too (a light scrim), not only the built-ins.
+        val midTones = listOf(listOf(0xFF1C7ED6), listOf(0xFF7048E8), listOf(0xFFC92A2A), listOf(0xFF777777), listOf(0xFFF76707, 0xFF862E9C))
+            .map { stops -> stops.map { it.toInt() } }
+        for (stops in midTones) {
+            val ink = inkForColours(stops)
+            assertFalse(ink.labelShadow)
+            val worst = if (ink.darkInk) stops.minBy(::relativeLuminance) else stops.maxBy(::relativeLuminance)
+            val under = over(SEGMENT_TRACK_ARGB, over(card, over(ink.scrimArgb, worst)))
+            val inkLum = if (ink.darkInk) relativeLuminance(INK_DARK) else 1.0
+            val ratio = contrastRatio(inkLum, relativeLuminance(under))
+            assertTrue("${stops.map { Integer.toHexString(it) }}: $ratio", ratio >= 4.5)
+        }
         var lowest = Double.MAX_VALUE
         for (stops in grounds) {
             val ink = inkForColours(stops)
@@ -271,5 +284,13 @@ class SoundSegmentsTest {
         }
         // Fjord's lighter stop is the lowest, still well above (6.2:1).
         assertTrue("$lowest", lowest >= 6.0)
+    }
+
+    @Test
+    fun `the card's manage links take the wallpaper's ink, not peach`() {
+        val renderInk = activity.substringAfter("private fun renderInk(").substringBefore("\n    }\n")
+        assertTrue(renderInk.contains("binding.kidSettingsWifiManage"))
+        assertTrue(renderInk.contains("binding.kidSettingsBluetoothManage"))
+        assertTrue(renderInk.contains("KidInk.label(view, ink)"))
     }
 }

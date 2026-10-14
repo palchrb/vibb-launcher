@@ -59,13 +59,41 @@ fun underScrim(lum: Double, alpha: Double, towardsWhite: Boolean): Double {
     return toLinear(blended)
 }
 
+/**
+ * The white 8 % surfaces a kid screen lays over the wallpaper under white ink: Kid Settings' card
+ * (`bg_kid_card`, `#14FFFFFF`) and, on it, the sound choice's track (`bg_kid_segment_track`) -
+ * [KID_SURFACE_LAYERS] deep at most. White layers lift the ground, so white ink is judged on top of
+ * both (qa-34-s10-code M1); dark ink only gains from them and is judged on the bare ground.
+ */
+const val KID_SURFACE_ALPHA = 0x14 / 255.0
+const val KID_SURFACE_LAYERS = 2
+
+/** The scrim's alpha as drawn: [InkChoice.scrimArgb]'s 8 bits. */
+fun drawnScrimAlpha(alpha: Double): Double = ((alpha * 255).toInt().coerceIn(0, 255)) / 255.0
+
+/**
+ * The luminance white ink is judged on: [lum] under a black scrim of [alpha] (as drawn), then
+ * [KID_SURFACE_LAYERS] white layers of [KID_SURFACE_ALPHA] - the deepest kid surface. Each layer is
+ * blended in sRGB values and rounded to 8 bits, as the framebuffer holds it (the rounding alone
+ * took an edge grey from 4.50 to 4.48:1).
+ */
+fun underKidSurfaces(lum: Double, alpha: Double): Double {
+    fun eightBit(v: Double): Double = Math.round(v.coerceIn(0.0, 1.0) * 255) / 255.0
+    var v = eightBit(toSrgb(lum) * (1 - drawnScrimAlpha(alpha)))
+    repeat(KID_SURFACE_LAYERS) { v = eightBit(v * (1 - KID_SURFACE_ALPHA) + KID_SURFACE_ALPHA) }
+    return toLinear(v)
+}
+
 private fun scrimFor(worstLum: Double, darkInk: Boolean, minAlpha: Double): Pair<Double, Boolean> {
     val inkLum = if (darkInk) relativeLuminance(INK_DARK) else 1.0
     var alpha = minAlpha
     while (alpha <= MAX_SCRIM + 1e-9) {
-        if (contrastRatio(inkLum, underScrim(worstLum, alpha, towardsWhite = darkInk)) >= LABEL_CONTRAST) {
-            return alpha to false
+        val ground = if (darkInk) {
+            underScrim(worstLum, drawnScrimAlpha(alpha), towardsWhite = true)
+        } else {
+            underKidSurfaces(worstLum, alpha)
         }
+        if (contrastRatio(inkLum, ground) >= LABEL_CONTRAST) return alpha to false
         alpha += 0.01
     }
     return MAX_SCRIM to true

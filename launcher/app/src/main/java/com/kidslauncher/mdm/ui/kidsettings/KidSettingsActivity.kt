@@ -293,6 +293,9 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote,
+            // The card's links in the ink too: peach on the card over a light or mid-tone ground
+            // was ~2:1 (qa-34-s10-code M1). Bold, as before.
+            binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,
         )) {
             KidInk.label(view, ink)
         }
