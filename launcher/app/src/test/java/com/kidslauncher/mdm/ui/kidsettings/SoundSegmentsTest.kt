@@ -11,6 +11,8 @@ import com.kidslauncher.mdm.server.soundTapMode
 import com.kidslauncher.mdm.ui.home.contrastRatio
 import com.kidslauncher.mdm.ui.home.relativeLuminance
 import com.kidslauncher.mdm.ui.wallpaper.INK_DARK
+import com.kidslauncher.mdm.ui.wallpaper.INK_LIGHT
+import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.inkForColours
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,6 +22,9 @@ import org.junit.Test
 import org.w3c.dom.Element
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
@@ -29,6 +34,61 @@ import kotlin.math.roundToInt
  * two radio buttons in a group with the selected state; both states reach 4.5:1.
  */
 class SoundSegmentsTest {
+
+    // The layout's values, mirrored here and checked against the XML below (qa-34-s10-code L3:
+    // the model is the test's, as PinLockLayoutTest's is).
+    private companion object {
+        const val SEGMENT_TRACK_ARGB: Int = 0x14FFFFFF
+        const val SEGMENT_TRACK_RADIUS_DP = 14f
+        const val SEGMENT_TRACK_PADDING_DP = 3f
+        const val SEGMENT_MIN_HEIGHT_DP = 48f
+        const val SEGMENT_TEXT_SP = 14f
+        const val SEGMENT_PADDING_H_DP = 8f
+        const val SEGMENT_PADDING_V_DP = 6f
+    }
+
+    /**
+     * How the control lays out in [rowContentDp] at [fontScale]: each half's width (equal; the
+     * track's padding off both ends), and per label the lines and the half's height. An upper
+     * bound: [charEm] a generous average character width for Nunito's bold weights, the scale
+     * linear, the line 1.4 x the text size. Both halves take the taller height (`match_parent`).
+     */
+    private data class SegmentLayout(val segmentWidthDp: Float, val lines: List<Int>, val segmentHeightDp: Float) {
+        val trackHeightDp: Float get() = segmentHeightDp + 2 * SEGMENT_TRACK_PADDING_DP
+    }
+
+    private fun segmentLayout(rowContentDp: Float, labels: List<String>, fontScale: Float, charEm: Float = 0.6f): SegmentLayout {
+        val width = (rowContentDp - 2 * SEGMENT_TRACK_PADDING_DP) / labels.size
+        val textDp = SEGMENT_TEXT_SP * fontScale
+        val textWidth = width - 2 * SEGMENT_PADDING_H_DP
+        val lines = labels.map { label -> linesFor(label, textWidth, textDp * charEm) }
+        val height = lines.maxOf { max(SEGMENT_MIN_HEIGHT_DP, it * textDp * 1.4f + 2 * SEGMENT_PADDING_V_DP) }
+        return SegmentLayout(width, lines, height)
+    }
+
+    /** Lines at [charDp] a character, breaking at spaces; a word longer than a line breaks inside
+     * it (with `hyphenationFrequency="normal"` Android may hyphenate it there). */
+    private fun linesFor(label: String, widthDp: Float, charDp: Float): Int {
+        val perLine = max(1, floor(widthDp / charDp).toInt())
+        var lines = 1
+        var used = 0
+        for (word in label.split(' ')) {
+            val len = word.length
+            val needed = if (used == 0) len else used + 1 + len
+            if (needed <= perLine) {
+                used = needed
+            } else if (len <= perLine) {
+                lines++
+                used = len
+            } else {
+                if (used > 0) lines++
+                val more = ceil(len / perLine.toDouble()).toInt() - 1
+                lines += more
+                used = len - more * perLine
+            }
+        }
+        return lines
+    }
 
     private val ns = "http://schemas.android.com/apk/res/android"
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
@@ -84,6 +144,8 @@ class SoundSegmentsTest {
                 assertEquals("$limit on ${half.attr("id")}", "", half.attr(limit))
             }
             assertEquals("@null", half.attr("button"))
+            // At 2.0 on 320 dp "(vibrerer)" is wider than a line: hyphenate, don't cut (N1).
+            assertEquals("normal", half.attr("hyphenationFrequency"))
         }
         assertEquals(SEGMENT_TRACK_PADDING_DP, group.dp("padding"), 0f)
         assertEquals("@drawable/bg_kid_segment_track", group.attr("background"))
@@ -157,34 +219,26 @@ class SoundSegmentsTest {
 
     @Test
     fun `the checked half is the phone's ringer mode, and a tap sets the other`() {
+        // The checked half is `state.selected` and both halves take `state.enabled` (renderSound);
+        // SoundModeTest pins the state. Here: the halves' order and design 18's taps, unchanged.
         val sound = soundRowState(RINGER_MODE_NORMAL, INTERRUPTION_FILTER_ALL, hasVibrator = true, policyAccess = true)!!
-        assertEquals(
-            listOf(SoundSegment(SoundChoice.SOUND, true, true), SoundSegment(SoundChoice.SILENT_VIBRATE, false, true)),
-            soundSegments(sound),
-        )
         val vibrate = soundRowState(RINGER_MODE_VIBRATE, INTERRUPTION_FILTER_ALL, hasVibrator = true, policyAccess = true)!!
-        assertEquals(
-            listOf(SoundSegment(SoundChoice.SOUND, false, true), SoundSegment(SoundChoice.SILENT_VIBRATE, true, true)),
-            soundSegments(vibrate),
-        )
-        // Fully silent: neither half is checked; both still change it.
         val silent = soundRowState(RINGER_MODE_SILENT, INTERRUPTION_FILTER_ALL, hasVibrator = true, policyAccess = true)!!
-        assertEquals(listOf(false, false), soundSegments(silent).map { it.checked })
-        assertEquals(listOf(true, true), soundSegments(silent).map { it.enabled })
-        // Do Not Disturb: the mode shows, both halves are read-only together.
         val dnd = soundRowState(RINGER_MODE_VIBRATE, INTERRUPTION_FILTER_PRIORITY, hasVibrator = true, policyAccess = true)!!
-        assertEquals(listOf(false, true), soundSegments(dnd).map { it.checked })
-        assertEquals(listOf(false, false), soundSegments(dnd).map { it.enabled })
-        // What a tap does is design 18's, unchanged: the unchecked half sets its mode, never Silent.
-        for (segment in soundSegments(sound)) {
-            val mode = soundTapMode(sound, segment.choice)
-            if (segment.checked) assertNull(mode) else assertEquals(RINGER_MODE_VIBRATE, mode)
-        }
-        for (segment in soundSegments(vibrate)) {
-            val mode = soundTapMode(vibrate, segment.choice)
-            if (segment.checked) assertNull(mode) else assertEquals(RINGER_MODE_NORMAL, mode)
-        }
-        for (segment in soundSegments(dnd)) assertNull(soundTapMode(dnd, segment.choice))
+        assertEquals(SoundChoice.SOUND, sound.selected)
+        assertEquals(SoundChoice.SILENT_VIBRATE, vibrate.selected)
+        assertNull(silent.selected)
+        assertTrue(silent.enabled)
+        assertEquals(SoundChoice.SILENT_VIBRATE, dnd.selected)
+        assertFalse(dnd.enabled)
+        // A tap on the unchecked half sets its mode, never Silent; the checked half does nothing.
+        assertNull(soundTapMode(sound, SOUND_SEGMENTS[0]))
+        assertEquals(RINGER_MODE_VIBRATE, soundTapMode(sound, SOUND_SEGMENTS[1]))
+        assertEquals(RINGER_MODE_NORMAL, soundTapMode(vibrate, SOUND_SEGMENTS[0]))
+        assertNull(soundTapMode(vibrate, SOUND_SEGMENTS[1]))
+        assertEquals(RINGER_MODE_NORMAL, soundTapMode(silent, SOUND_SEGMENTS[0]))
+        assertEquals(RINGER_MODE_VIBRATE, soundTapMode(silent, SOUND_SEGMENTS[1]))
+        for (choice in SOUND_SEGMENTS) assertNull(soundTapMode(dnd, choice))
     }
 
     private val activity = file("java/com/kidslauncher/mdm/ui/kidsettings/KidSettingsActivity.kt").readText()
@@ -196,7 +250,8 @@ class SoundSegmentsTest {
         assertTrue(activity.contains("R.id.kid_settings_sound_on") && activity.contains("SoundChoice.SOUND -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_on)"))
         assertTrue(activity.contains("SoundChoice.SILENT_VIBRATE -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_vibrate)"))
         assertTrue(activity.contains("QuickControls.setSound(this, choice)"))
-        assertTrue(activity.contains("soundSegments(state)"))
+        assertTrue(activity.contains("when (state.selected) {"))
+        assertTrue(activity.contains("button.isEnabled = state.enabled"))
     }
 
     @Test
@@ -211,13 +266,11 @@ class SoundSegmentsTest {
         }
         // The visible label is the group's name: read once, not twice.
         assertEquals("no", byId("kid_settings_sound_label").attr("importantForAccessibility"))
-        val soundCode = activity.lines().filter { "Sound" in it || "segment" in it.lowercase() }
-        for (line in soundCode) {
-            assertFalse(line, "AccessibilityDelegate" in line || "ButtonRole" in line || "importantForAccessibility" in line)
+        // Nowhere in the activity may a delegate, a role or a class name be set (qa-34-s10-code L2:
+        // `button.accessibilityDelegate = ButtonRole` in styleSegment survived the line filter).
+        for (banned in listOf("accessibilityDelegate", "AccessibilityDelegate", "ButtonRole", "accessibilityClassName", "AccessibilityClassName", "AccessibilityNodeInfo")) {
+            assertFalse(banned, activity.contains(banned))
         }
-        assertFalse(activity.contains("kidSettingsSoundGroup.setAccessibilityDelegate"))
-        assertFalse(activity.contains("kidSettingsSoundOn.setAccessibilityDelegate"))
-        assertFalse(activity.contains("kidSettingsSoundVibrate.setAccessibilityDelegate"))
     }
 
     // Colours, composited as Android draws them (sRGB values, 8-bit).
@@ -244,8 +297,73 @@ class SoundSegmentsTest {
         val ratio = contrastRatio(relativeLuminance(colour("kid_ground")), relativeLuminance(colour("kid_accent")))
         assertTrue("$ratio", ratio >= 4.5)
         assertEquals(9.87, ratio, 0.01)
-        assertTrue(activity.contains("intArrayOf(getColor(R.color.kid_ground), ink.ink)"))
-        assertTrue(activity.contains("setColor(getColor(R.color.kid_accent))"))
+        for (ink in listOf(InkChoice(INK_LIGHT, 0.0, false), InkChoice(INK_DARK, 0.0, false))) {
+            val c = segmentColours(ink, colour("kid_accent"), colour("kid_ground"))
+            assertEquals(colour("kid_accent"), c.checkedFill)
+            assertEquals(colour("kid_ground"), c.checkedText)
+            assertEquals(ink.ink, c.uncheckedText)
+        }
+        // The activity applies them to the checked state, and the checked items come first
+        // (a StateListDrawable and a ColorStateList take the first match).
+        val style = activity.substringAfter("private fun styleSegment(").substringBefore("\n    }\n")
+        assertTrue(style.contains("segmentColours(ink, getColor(R.color.kid_accent), getColor(R.color.kid_ground))"))
+        assertTrue(style.contains("val checked = intArrayOf(android.R.attr.state_checked)"))
+        assertTrue(style.contains("ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(colours.checkedText, colours.uncheckedText))"))
+        val fills = style.substringAfter("val fills = StateListDrawable()")
+        val checkedAt = fills.indexOf("addState(checked,")
+        val defaultAt = fills.indexOf("addState(intArrayOf(),")
+        assertTrue(checkedAt in 0 until defaultAt)
+        assertTrue(fills.substring(checkedAt, defaultAt).contains("setColor(colours.checkedFill)"))
+        assertFalse(style.contains("state_selected"))
+        assertFalse(style.contains("state_activated"))
+    }
+
+    @Test
+    fun `on a light ground the chosen half is outlined in the ink, at least 3 to 1`() {
+        val accent = colour("kid_accent")
+        val night = colour("kid_ground")
+        for (ground in listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFFF4F1EA.toInt())) {
+            val ink = inkForColours(listOf(ground))
+            assertTrue(ink.darkInk)
+            val c = segmentColours(ink, accent, night)
+            val track = over(SEGMENT_TRACK_ARGB, over(card, over(ink.scrimArgb, ground)))
+            // The fill alone is under 3:1 against the track; the outline carries the state.
+            assertTrue(contrastRatio(relativeLuminance(accent), relativeLuminance(track)) < 3.0)
+            val stroke = c.checkedStroke!!
+            assertEquals(INK_DARK, stroke)
+            assertTrue(contrastRatio(relativeLuminance(stroke), relativeLuminance(track)) >= 3.0)
+            assertTrue(contrastRatio(relativeLuminance(stroke), relativeLuminance(accent)) >= 3.0)
+        }
+        // On the night the fill is ~9:1 to the track and needs no outline.
+        val dark = segmentColours(inkForColours(listOf(night)), accent, night)
+        assertNull(dark.checkedStroke)
+        val nightTrack = over(SEGMENT_TRACK_ARGB, over(card, night))
+        assertTrue(contrastRatio(relativeLuminance(accent), relativeLuminance(nightTrack)) >= 3.0)
+        val style = activity.substringAfter("private fun styleSegment(").substringBefore("\n    }\n")
+        assertTrue(style.contains("colours.checkedStroke?.let { setStroke(KidAvatars.dp(this@KidSettingsActivity, SEGMENT_STROKE_DP), it) }"))
+        assertEquals(1f, SEGMENT_STROKE_DP, 0f)
+    }
+
+    @Test
+    fun `a focused half shows a 2 dp ring that stands out`() {
+        val accent = colour("kid_accent")
+        val night = colour("kid_ground")
+        for (ground in listOf(night, 0xFFFFFFFF.toInt())) {
+            val ink = inkForColours(listOf(ground))
+            val c = segmentColours(ink, accent, night)
+            val track = over(SEGMENT_TRACK_ARGB, over(card, over(ink.scrimArgb, ground)))
+            // On the peach half and on the track, >= 3:1.
+            assertTrue(contrastRatio(relativeLuminance(c.focusRingChecked), relativeLuminance(accent)) >= 3.0)
+            assertTrue(contrastRatio(relativeLuminance(c.focusRingUnchecked), relativeLuminance(track)) >= 3.0)
+        }
+        val style = activity.substringAfter("private fun styleSegment(").substringBefore("\n    }\n")
+        val fg = style.substringAfter("button.foreground = StateListDrawable()")
+        val both = fg.indexOf("addState(focusedChecked,")
+        val focused = fg.indexOf("addState(focused,")
+        assertTrue(both in 0 until focused)
+        assertTrue(style.contains("val focusedChecked = intArrayOf(android.R.attr.state_focused, android.R.attr.state_checked)"))
+        assertTrue(style.contains("val focused = intArrayOf(android.R.attr.state_focused)"))
+        assertEquals(2f, SEGMENT_FOCUS_RING_DP, 0f)
     }
 
     @Test

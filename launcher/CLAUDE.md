@@ -544,19 +544,24 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **The control** (`activity_kid_settings.xml`, pure `ui/kidsettings/SoundSegments.kt`, `SoundSegmentsTest`): the
   `RadioGroup` is the track (`bg_kid_segment_track`, white 8 % `#14FFFFFF`, radius 14 dp, 3 dp padding); its two
   `RadioButton`s are equal halves (`0dp` + weight 1, no gap, `match_parent` height so both take the taller one), each
-  >= 48 dp (`SEGMENT_MIN_HEIGHT_DP`), Nunito 800 14 sp, radius 11 dp. No line limit or ellipsis: a label wraps and the
-  control grows with the font scale. `KidSettingsActivity.styleSegment`: the chosen half `kid_accent` with `kid_ground`
-  text (9.9:1), the other no fill with the wallpaper's ink, a quiet ripple in the ink at 12 % clipped to the half.
-  `renderSound` takes the checked half and the enabled state from `soundSegments(state)`; read-only halves keep their
-  50 % alpha.
+  >= 48 dp, Nunito 800 14 sp, radius 11 dp (`SEGMENT_RADIUS_DP`), `hyphenationFrequency="normal"`. No line limit or
+  ellipsis: a label wraps and the control grows with the font scale. `KidSettingsActivity.styleSegment` draws the pure
+  `segmentColours(ink, accent, night)`: the chosen half `kid_accent` with `kid_ground` text (9.9:1) - outlined 1 dp in
+  the ink on a light ground (dark ink), where the peach is only ~2:1 to the track (qa-34-s10-code L1) -, the other no
+  fill with the wallpaper's ink, a ripple in the ink at 12 % clipped to the half, and a 2 dp focus ring as the
+  foreground (night on the chosen half, peach - the ink on a light ground - on the other; N2). The `state_checked`
+  items come first. `renderSound` reads `state.selected`/`state.enabled` directly (no wrapper); read-only halves keep
+  their 50 % alpha.
 - **TalkBack** (QA L7): still two `RadioButton`s in a horizontal `RadioGroup` - the role, the checked state ("valgt")
-  and the group of two come from the framework; nothing replaces the role. The group carries the name ("Lyd på
-  telefonen"); the visible label is `importantForAccessibility="no"`, so it is read once.
-- **`SoundSegmentsTest`**: the layout (equal halves, order = `SOUND_SEGMENTS`, minimums, paddings, no line limits), the
-  track drawable, the width/lines model (`segmentLayout`: 0.6 em a character, linear scale, 1.4 x line - an upper bound)
-  at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en, the selection mapping and design 18's taps, the TalkBack
-  structure, and contrast: the chosen half 9.9:1; the other's ink on track + card + scrim over every built-in wallpaper
-  >= 6.2:1 (Fjord's lighter stop).
+  and the group of two come from the framework; nothing anywhere in the activity sets a delegate, role or class name
+  (`SoundSegmentsTest` scans it whole, qa-34-s10-code L2). The group carries the name ("Lyd på telefonen"); the
+  visible label is `importantForAccessibility="no"`, so it is read once.
+- **`SoundSegmentsTest`** (12): the layout against the test's own mirror of its values and width/lines model (0.6 em a
+  character, linear scale, 1.4 x line - an upper bound; L3) at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en,
+  the track, design 18's taps, the TalkBack structure, `segmentColours` and the state order (mutations of the role and
+  of `state_checked` are caught), the light-ground outline (>= 3:1), the focus ring, the manage links in the ink, and
+  contrast: the chosen half 9.9:1; the other's ink on track + card + scrim over every built-in (>= 6.2:1) and over
+  mid-tone grounds.
 - **White ink is judged on the card and the track** (qa-34-s10-code M1, `WallpaperInk`): `scrimFor` judges white ink
   on the ground under the scrim (at the 8-bit alpha drawn, `drawnScrimAlpha`, as `lockScrim`) plus the two white 8 %
   layers Kid Settings puts under it (`underKidSurfaces`: `KID_SURFACE_ALPHA`, `KID_SURFACE_LAYERS` = card + track, each

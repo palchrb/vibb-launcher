@@ -128,7 +128,7 @@
                  (bg_kid_segment_track), two equal halves (weight 1, no gap) >= 48 dp tall whose
                  labels wrap and grow the control with the font scale (no maxLines, no ellipsize);
                  the chosen half is drawn in code (the accent with night text, the other the
-                 wallpaper's ink - ui/kidsettings/SoundSegments.kt). Still two RadioButtons in a
+                 wallpaper's ink - segmentColours in ui/kidsettings/SoundSegments.kt). Still two RadioButtons in a
                  horizontal RadioGroup, so TalkBack reads radio buttons in a group of two with the
                  selected state (QA L7); the visible label is the group's name, read once. -->
             <LinearLayout
@@ -175,6 +175,7 @@
                             android:button="@null"
                             android:fontFamily="@font/nunito_extrabold"
                             android:gravity="center"
+                            android:hyphenationFrequency="normal"
                             android:minHeight="48dp"
                             android:paddingStart="8dp"
                             android:paddingTop="6dp"
@@ -192,6 +193,7 @@
                             android:button="@null"
                             android:fontFamily="@font/nunito_extrabold"
                             android:gravity="center"
+                            android:hyphenationFrequency="normal"
                             android:minHeight="48dp"
                             android:paddingStart="8dp"
                             android:paddingTop="6dp"

@@ -908,10 +908,24 @@ P9 built (launcher only, no server or contract change), on branch `design-34-s10
   Vibrate, Silent and DND with design 18's taps, the TalkBack structure (no delegate or role override on the halves),
   and contrast: the chosen half 9.87:1; the other half's ink on track + card + scrim >= 4.5:1 over every built-in
   wallpaper and two light grounds (lowest 6.2:1, Fjord).
-- **Found, not changed** (a follow-up for the shared ink rule): `WallpaperInk` brings a ground to 4.5:1 for the bare
+- **Found, not changed in step 10** (fixed in the QA fix round, M1 below): `WallpaperInk` brings a ground to 4.5:1 for the bare
   wallpaper, so with white ink on a mid-tone ground at the edge of that (a photo, or a bright colour such as `#1C7ED6`)
   every label on Kid Settings' white 8 % card is already under 4.5:1 (~3.9:1), and the segment's track takes it to
   ~3.5:1. Fixing it means judging the card's composite in the ink rule (all kid screens), not this step.
 - **Check on the emulator** (not done here - no emulator): Kid Settings at 320/360/411 dp (`wm size`/`wm density`) and
   font scale 1.0/1.3/2.0, nb and en, against mockup 06; TalkBack on both halves ("Lyd, valgt", "Lydløs (vibrerer), ikke
   valgt", the group) and under DND (read-only); a tap switching Normal/Vibrate with the volume keys still working.
+
+### Step 10 code QA fix round (`qa-34-s10-code.md`, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| M1 white ink under 4.5:1 on the card | Its own commit. `WallpaperInk.scrimFor` judges white ink on the ground under the scrim at the 8-bit alpha drawn (`drawnScrimAlpha`, as `lockScrim`) plus the card and the track (`underKidSurfaces`: two white 8 % layers, each rounded to 8 bits - without the rounding the edge grey came out 4.48:1); dark ink on the bare ground, also at the drawn alpha. Built-ins and light grounds keep 0; `#1C7ED6` goes 0.05 -> ~0.24, the edge grey 0 -> ~0.21 (on Home and the phone book too - one shared scrim). The card's manage links take the ink (`renderInk`), not peach. `WallpaperInkTest` +5: mid-tone colours, edge greys and a photo on bare/card/track per channel at 8 bits, the built-ins, the surfaces' alpha against both drawables, no truncation gap; `SoundSegmentsTest`'s contrast case takes mid-tone grounds and pins the links. |
+| L1 light ground: the chosen half only ~2:1 | `segmentColours`: on dark ink the chosen half gets a 1 dp outline in the ink (`SEGMENT_STROKE_DP`; 17:1 on white, >= 3:1 to the track and the peach). Tested on white, `#FFF3B0`, `#F4F1EA`; none on the night. |
+| L2 chosen look and role unpinned | The pure `segmentColours(ink, accent, night)` holds every state's colour; the test pins it, the `state_checked` spec, and that the checked items come before the default in both the text colours and the fills (no `state_selected`/`state_activated`). The TalkBack scan covers the whole activity (`accessibilityDelegate`, `AccessibilityDelegate`, `ButtonRole`, `accessibilityClassName`, `AccessibilityNodeInfo`). Mutations 3 (`button.accessibilityDelegate = ButtonRole` in `styleSegment`) and 4 (`state_checked` -> `state_selected`) re-run: both caught now. |
+| L3 test-only model in production | `SegmentLayout`, `segmentLayout`, `linesFor` and the six mirror constants moved into `SoundSegmentsTest` (checked against the XML there). `SoundSegments.kt` keeps `SEGMENT_RADIUS_DP`, the stroke/ring widths, `SOUND_SEGMENTS` and `segmentColours`. |
+| N1 "(vibrerer)" cut between letters at 2.0 | `hyphenationFrequency="normal"` on both halves; the layout test checks it. |
+| N2 focus nearly invisible | A `state_focused` 2 dp ring as the half's foreground: night on the peach half, peach on the other (the dark ink on a light ground); >= 3:1 on both, tested with the state order. |
+| N3 `soundSegments` restated `soundRowState` | Dropped with `SoundSegment`; `renderSound` reads `state.selected`/`state.enabled` as before step 10. The test keeps the halves' order and design 18's taps. |
+
+Tests: `SoundSegmentsTest` 12 (was 9), `WallpaperInkTest` +5.

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Kid Settings' sound choice (design 34 P9, mockup 06): the segmented control's track, white
-     8 % (SEGMENT_TRACK_ARGB), radius 14 dp (SEGMENT_TRACK_RADIUS_DP); SoundSegmentsTest pins both. -->
+     8 %, radius 14 dp; SoundSegmentsTest and WallpaperInkTest pin it. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <solid android:color="#14FFFFFF" />
     <corners android:radius="14dp" />
