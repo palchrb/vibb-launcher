@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- View tags of design 34 P2's press feedback (ui/home/PressFeedback). -->
+<resources>
+    <item name="press_motion" type="id" />
+    <item name="press_cell_size" type="id" />
+</resources>

@@ -359,6 +359,46 @@ Nothing is open.
 - **N4** `wm density reset` / `font_scale 1.0` in step 0; the pill's 1.3:1 noted - P7.
 - **N5** no open questions left; the numbering is gone with them - §6.
 
+## Step 2 implementation status (2026-10-14)
+
+P2 is built (launcher only, no server change).
+
+**What was built**
+- **Depth** (`ui/home/PressFeedback.depth`): Home's `tile_icon` and the contact avatar (`contact_avatar`, on Home and in the phone book) get an oval `ViewOutlineProvider`, `elevation` 2 dp, and black spot and ambient shadow colours. The bitmap cache, its sizes and the glance/time-rule renders are unchanged. There is no top light. `tile_frame` no longer clips the shadow (`clipChildren=false`). Elevation changes the drawing order among siblings, so the unread/missed badge (the `KidBadge` style) and the green call badge are lifted to the same 2 dp with no outline (no shadow of their own), and they still draw above the icon.
+- **Press** (pure `PressMotion`; the view side is `PressFeedback.attach`): scale 0.94 and a 10 % black oval foreground in 90 ms, back in 140 ms, `DecelerateInterpolator`, no overshoot. It runs from the cell's `setOnTouchListener`, which always returns false and restores on UP and CANCEL. There is no animation when `ValueAnimator.areAnimatorsEnabled()` is false.
+- **Ripple** (`PressFeedback.ovalRipple`): the cell's background is a `RippleDrawable` (`colorControlHighlight`) whose mask is an oval of the icon's size where the icon sits: 4 dp below the grid cell's top, 10 dp below the contact item's. The click stays on the whole cell.
+- **Badge**: `kid_badge` `#B4532C` (white 5.0:1), never animated.
+- **Tests** (`PressFeedbackTest`, plain JUnit): `onAction` returns false for 13 actions in every pair order, with animators on and off and with and without the delay; a source check that the one touch listener returns `onAction`'s answer; the 90/140 ms animations; no `animate` call with animators off; the delayed press (a scroll's CANCEL never presses, a quick tap still presses and releases); the constants; the badge colour and its >= 4.5:1 contrast with white.
+
+**Decisions**
+- **Plain JUnit, not Robolectric**: the launcher has no Robolectric and adding it means new verified dependencies (trust on first use). Instead the press logic is pure (`PressMotion` with a `Host`) and tested directly: it reads `animatorsEnabled` from the host, and the view side reads `ValueAnimator.areAnimatorsEnabled()`. A `MotionEvent` can't be built in a JVM test, so the listener's "always false" is tested on `onAction` plus a source check that the listener returns exactly its answer.
+- **The press waits the tap timeout in scrolling parents** (the grid, the contacts row, the phone book: all of them): this is Android's own pressed-state delay. Without it, every scroll would shrink the icon for a moment before the CANCEL. A tap shorter than the timeout still shows the full press and release on UP. Tap, long-press and swipes are not affected because nothing is consumed.
+- **With animations off** the state jumps instead of animating. A quick tap then shows no scale at all, because it ends at rest; the system ripple follows the animator scale itself.
+- **The ripple sits under the elevated, opaque icon**, as the design says (the cell's background with an oval mask). What shows is a thin ring while the icon is scaled down; the 10 % darkening is the main visible press. Focus does not show through it at all; the fix round gives focus its own ring (below).
+- **The contact sheet's avatar** (`sheet_contact.xml`) gets neither depth nor press: P2 names Home's tiles and the contact avatar, and the sheet is P3's (built in parallel).
+
+**Deferred / not checked**
+- The emulator pass (`wm density 240`, nb and en): screenshots of Home and the phone book, and the gesture check: tap, the long-press menu, swipe-up to the drawer, swipe-left to kid Settings, the contacts row's scroll, the grid's scroll, "Remove animations" on. Frame times with the elevated tiles have not been measured.
+- P10 (c) (the music app's covers and bar get P2's elevation) is the music app's step 11.
+
+### Step 2 code QA fix round (`qa-34-s2-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| M1 the press doesn't follow the finger | The listener passes `PressMotion.inside` (bounds widened by the scaled touch slop, as `View.onTouchEvent`). A MOVE outside releases like a CANCEL and sets `left`, and every MOVE and UP after it is ignored until the next DOWN. So a swipe never carries a pressed icon along, and a lift outside never replays the press. Tests: leaving before the timeout never presses (not even at the lift, not even after coming back in), and leaving a pressed cell releases once. |
+| M2 focus invisible under the icon | `cellBackground` adds the cell's foreground: a `StateListDrawable` whose `state_focused` item is a static 2 dp `kid_accent` oval ring 4 dp outside the icon. It sits above the icon, applies to the grid, Home's contacts and the phone book, and is shown only with keyboard/D-pad focus. The press is unchanged. Both doc claims are corrected. |
+| L1 ripple rebuilt per bind | `cellBackground` (was `ovalRipple`) builds the ripple and the ring once per (icon size, offset), keyed in the view tag `R.id.press_cell_size`. A rebind with the same metrics returns at once. |
+| L2 no reset on recycle | The motion lives in the view tag `R.id.press_motion`. `PressFeedback.reset(cell)` → `PressMotion.reset()` cancels the pending press and jumps to rest. It is called from `onViewRecycled` in `HomeGridAdapter` and `PhoneBookAdapter`, and from the cell's `onViewDetachedFromWindow` (this covers Home's contact row, which is rebuilt with `removeAllViews`). Tested. |
+| L3 wiring and z-order unpinned | The pure `PressMotion.tapDelay(scrolling, timeout)` is tested. Source checks pin the view host's `areAnimatorsEnabled()` and `tapDelay(...)` lines. A resource test pins `KidBadge`'s `elevation` = `ELEVATION_DP` with `outlineProvider none`, and the call badge's code. Another pins `item_kid_tile.xml` (no `selectableItemBackground`, `tile_frame` `clipChildren=false`). A wiring test covers the grid (`depth`, `attach(..., scrolling = true)`, `cellBackground`, `reset`), Home's contacts and the phone book (`contact`, `reset`). Re-run: all 4 surviving mutations are now caught (host animators on, host delay 0, `KidBadge` without elevation, the grid without `attach`), as are 3 new ones (MOVE ignored, the phone book's recycle reset gone, focus ring on the wrong state). One mutation survives: the UP's `left` guard removed. It is equivalent, because the MOVE that set `left` already cancelled the pending press and released, so UP has nothing to do; the guard is kept as defence. |
+| N1 no-op animators | `PressMotion` tracks its `target` and skips a release to rest from rest (a scroll's CANCEL, a stray UP). The host also returns early when it is already at `to`. Tested. |
+| N2 a new DOWN during a quick tap's press | DOWN first releases to rest when `target != 0`, then starts its own (delayed) press. Tested with a fake whose animations don't finish at once. |
+| N3 `ClickableViewAccessibility` | `attach` carries `@SuppressLint("ClickableViewAccessibility")` with the reason in its KDoc: it never consumes, so the click goes through `onTouchEvent` → `performClick`, and accessibility clicks don't use touch. `lintDebug` ran: no issue in the changed files. The two `ClickableViewAccessibility` warnings left are the older `homeContactsScroll` listener in `HomeActivity`. Lint is not a gate (`abortOnError = false`). |
+| N4 the source check's regex | There is a comment on the listener ("Pinned by PressFeedbackTest: keep it one expression"). The test now also rejects `;`, a newline, `\|\|` and `&&` in the body. |
+| N5 the sheet badge | Documented in `launcher/CLAUDE.md`: `kid_badge` also colours `bg_kid_badge_sheet.xml`, so there is one badge colour everywhere. |
+| N6 translucent icon backgrounds | Documented (KDoc of `PressFeedback`, `launcher/CLAUDE.md`). An adaptive icon without a monochrome layer and with a translucent background layer shows the shadow as a faint grey disc. This is rare and accepted, and is on the emulator pass's list. |
+
+Tests: `PressFeedbackTest` 17. The full run (`assembleDebug testDebugUnitTest lintDebug -PwarningsAsErrors=true`) passed with 1146 tests in 121 classes.
+
 ## Step 3 implementation status (2026-10-14)
 
 P3 built (launcher only, no server or contract change), on branch `design-34-s3`:
