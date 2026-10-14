@@ -196,8 +196,28 @@ async fn every_phone_gets_the_builtins_with_every_key() {
             "label": "Navy", "builtin_key": "navy", "lock_screen": false
         })
     );
-    assert_eq!(list[6]["kind"], "gradient");
-    assert_eq!(list[6]["colors"], json!(["#F76707", "#862E9C"]));
+    // Design 34 P8 (migrations/0076): green, sky and sunset softened, ids and keys kept.
+    assert_eq!(
+        list[4],
+        json!({
+            "id": 4, "kind": "gradient", "colors": ["#2A4A4F", "#101820"], "image": null,
+            "label": "Fjord", "builtin_key": "green", "lock_screen": false
+        })
+    );
+    assert_eq!(
+        list[5],
+        json!({
+            "id": 5, "kind": "gradient", "colors": ["#34406A", "#14141F"], "image": null,
+            "label": "Evening sky", "builtin_key": "sky", "lock_screen": false
+        })
+    );
+    assert_eq!(
+        list[6],
+        json!({
+            "id": 6, "kind": "gradient", "colors": ["#5A3A4A", "#1A1420"], "image": null,
+            "label": "Dusk", "builtin_key": "sunset", "lock_screen": false
+        })
+    );
     for w in &list {
         let mut k: Vec<&str> = w.as_object().unwrap().keys().map(String::as_str).collect();
         k.sort_unstable();
@@ -213,6 +233,78 @@ async fn every_phone_gets_the_builtins_with_every_key() {
                 "lock_screen"
             ]
         );
+    }
+}
+
+/// Design 34 P8 (qa-34-design M1): after every migration each built-in row validates and goes into
+/// the policy - a row that didn't (say 0076 giving `green` two colours without `kind = 'gradient'`)
+/// would drop out, and a phone that had it picked would fall back to another wallpaper.
+#[tokio::test]
+async fn every_builtin_row_passes_to_policy_after_all_migrations() {
+    let app = TestApp::new().await;
+    let rows = crate::wallpapers::all(&app.db).await.unwrap();
+    let builtins: Vec<_> = rows.iter().filter(|r| r.builtin_key.is_some()).collect();
+    assert_eq!(builtins.len(), 7);
+    for row in builtins {
+        let policy = row
+            .to_policy()
+            .unwrap_or_else(|| panic!("built-in {:?} doesn't validate", row.builtin_key));
+        assert_ne!(policy.kind, "image");
+        assert_eq!(policy.id, row.id);
+    }
+}
+
+/// 0076 matches the rows by `builtin_key` and keeps their ids, so a phone's ticks
+/// (`device_wallpapers`), its lock choice and the kid's pick (by id on the phone) all stay.
+#[tokio::test]
+async fn the_softened_builtins_keep_their_ids_and_keys() {
+    let app = TestApp::new().await;
+    let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
+        "SELECT id, builtin_key, kind, colors, label FROM wallpapers \
+         WHERE builtin_key IN ('green', 'sky', 'sunset') ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let want = [
+        (4, "green", r##"["#2A4A4F","#101820"]"##, "Fjord"),
+        (5, "sky", r##"["#34406A","#14141F"]"##, "Evening sky"),
+        (6, "sunset", r##"["#5A3A4A","#1A1420"]"##, "Dusk"),
+    ];
+    assert_eq!(rows.len(), want.len());
+    for (row, (id, key, colors, label)) in rows.iter().zip(want) {
+        assert_eq!(
+            (
+                row.0,
+                row.1.as_str(),
+                row.2.as_str(),
+                row.3.as_str(),
+                row.4.as_str()
+            ),
+            (id, key, "gradient", colors, label)
+        );
+    }
+
+    // The PWA's grids show the new colours and names.
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    let home = app
+        .get_page(&super::device_page(id, super::Section::Home), &cookie)
+        .await
+        .text();
+    let all = app.get_page("/wallpapers", &cookie).await.text();
+    for page in [&home, &all] {
+        for (label, swatch) in [
+            ("Fjord", "linear-gradient(160deg, #2A4A4F, #101820)"),
+            ("Evening sky", "linear-gradient(160deg, #34406A, #14141F)"),
+            ("Dusk", "linear-gradient(160deg, #5A3A4A, #1A1420)"),
+        ] {
+            assert!(page.contains(label), "{label}");
+            assert!(page.contains(swatch), "{swatch}");
+        }
+        for old in ["#2B8A3E", "#1C7ED6", "#F76707", ">Sunset<"] {
+            assert!(!page.contains(old), "{old}");
+        }
     }
 }
 

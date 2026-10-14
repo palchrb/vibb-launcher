@@ -851,3 +851,32 @@ Main (design 34 step 6) was merged into `design-34-s8` first; the doc and `launc
 | N5 the glance link at 44 dp | 48 dp; its top margin went from 6 to 2 dp, so "Lås opp" + "Nødsamtale" stay 106 dp and every expected glance fit is unchanged (tested). |
 
 Tests: `PinLockLayoutTest` 17 (was 13), `KidPaletteTest` 8 (the pill test covers both pills, the ripple and the deleted drawable), `LockGlanceLayoutTest` 7 (was 6).
+
+## Step 9 implementation status (2026-10-14)
+
+P8 is built: server migration 0076 and the launcher's names, in one commit.
+
+**What was built**
+- **Server** (`server/migrations/0076_softer_wallpapers.sql`): three UPDATEs matched by `builtin_key`, never by id.
+  - `green` gets `kind = 'gradient'`, `["#2A4A4F","#101820"]` and the label "Fjord". It was a `color` row (QA M1): with two colours and its old kind it would fail `checked_colours()` and drop out of the policy.
+  - `sky` gets `["#34406A","#14141F"]` and "Evening sky".
+  - `sunset` gets `["#5A3A4A","#1A1420"]` and "Dusk".
+  - Ids, keys and sort are kept. So every phone's ticks (`device_wallpapers`), its lock choice (`device_lock_wallpaper`) and the kid's pick (an id on the phone) stay, now softened. That is the user's answer: a phone that has one picked changes with it.
+  - The PWA's two grids (Home Screen › Wallpapers and Settings › Wallpapers) show the new swatches and names straight from the rows (`css_background`, `label`). No template changed.
+- **Launcher**: only the names, since it keeps no built-in colours of its own. `wallpaper_green`/`_sky`/`_sunset` are nb "Fjord", "Kveldshimmel", "Skumring" and en "Fjord", "Evening sky", "Dusk" (N2).
+- **Contract**: the shape of `launcher_ui.wallpapers` is unchanged (keys, kinds and the policy snapshot are untouched). An older launcher draws the new colours from the policy as before; it shows its own old names until it updates.
+
+**Tests**
+- Server:
+  - `wallpapers::every_builtin_row_passes_to_policy_after_all_migrations` (new; M1): every built-in row, all 7, passes `to_policy()` after every migration.
+  - `the_softened_builtins_keep_their_ids_and_keys` (new): ids 4/5/6, the keys, `gradient`, the colours and labels, and both PWA grids showing the new swatches and names with no old colour left.
+  - `every_phone_gets_the_builtins_with_every_key`: now asserts the three rows' whole policy JSON.
+  - `music_spotify::migrations_73_to_76_in_order`: renamed from `migrations_73_74_75_in_order`, now with 76.
+- Launcher:
+  - `WallpaperInkTest`'s built-in list is today's seven.
+  - `the softened built-ins take white ink with no scrim` (new): white ink, no scrim or shadow, and >= 9.5:1 on the lightest stop (the lowest is Fjord at 9.59:1, as the design's 9.6 said; qa-34-s9-code N2).
+  - The lock-ink test also runs on every built-in's stops. All three softened lighter stops need a light lock scrim for the red emergency link (#FF8A8A is 4.22:1 on Fjord, 4.43 on Evening sky, 4.33 on Dusk), and `lockScrimForColours` gives it (qa-34-s9-code N1).
+  - The old bright sky/sunset stay as generic bright grounds.
+  - `TranslationsTest` covers the strings.
+
+**Check on the emulator** (not done here): kid Settings' wallpaper picker in nb and en with the three new names, Home, and the lock over Fjord, Evening sky and Dusk.

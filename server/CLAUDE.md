@@ -137,7 +137,7 @@ No prior programming experience - build features directly rather than explaining
 - **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, clock_format: "system"|"24"|"12", wallpapers: [...]}` (wallpapers since step 8, clock_format since design 34 P12) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
 - **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
-- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_74_75_in_order` (the migration order).
+- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_76_in_order` (the migration order).
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -202,6 +202,14 @@ No prior programming experience - build features directly rather than explaining
   (`wallpaper` = "" or a ticked id, else 400; security event `lock_wallpaper_changed`; back to `/devices/{id}/lock#lock-wallpaper`). The tick save
   deletes only the unticked `device_wallpapers` rows (a delete-all would clear the lock choice by the cascade). Tests:
   `the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen`.
+- **Softer built-ins** (design 34 P8, migration `0076_softer_wallpapers.sql`, qa-34-design M1/N2): `green` is now a
+  `gradient` `["#2A4A4F","#101820"]` "Fjord" (it was a `color` row; `kind` changed in the same UPDATE, since
+  `checked_colours()` wants two colours for a gradient - a `color` row with two drops out of the policy), `sky`
+  `["#34406A","#14141F"]` "Evening sky", `sunset` `["#5A3A4A","#1A1420"]` "Dusk". Rows matched by `builtin_key`, ids,
+  keys and sort kept, so every tick, lock choice and kid's pick stays (softened). The policy's shape is unchanged; an
+  older launcher draws the new colours from the policy (its label strings are its own). Tests:
+  `every_builtin_row_passes_to_policy_after_all_migrations`, `the_softened_builtins_keep_their_ids_and_keys` (also the
+  PWA's two grids), `every_phone_gets_the_builtins_with_every_key`.
 - **Fix round (qa-08-code.md #8)**: a failing wallpaper query is logged and the policy goes out with `wallpapers: []` (never a 500 for time rules/calls); `Store::add_to_zip` skips a file that vanished between `read_dir` and the read (a prune during a backup).
 - **Wire**: `launcher_ui.wallpapers` - always a list, every key always present (`id, kind, colors, image, label, builtin_key, lock_screen`), in `sort` order; a row that doesn't validate is left out with a warning. `GET /api/devices/wallpapers/{hash}` (bearer) only for a wallpaper ticked for *this* device (else 404, like contact photos). Tests: `src/tests/wallpapers.rs`.
 
@@ -365,8 +373,8 @@ branch before that merge holds its old 73 (another checksum) and stops at `Versi
 **A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
 the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
-`0075_clock_format.sql` (design 34 P12) follows 0074; the next free number is 0076 (design 34's wallpapers, then 0077
-the catalog row's name).
+`0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075
+(`migrations_73_to_76_in_order`); the next free number is 0077 (design 34's catalog row name).
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
