@@ -5,56 +5,89 @@
 </head>
 <body>
 {% let tab = "devices" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
-    <div class="page-header">
-        <h1>Provision {{ device.name }}</h1>
-    </div>
-    <p class="subtitle">The QR code carries a fresh enrollment code for this device, plus your server URL and Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a> - scanning it does setup and enrollment in one step. The code is valid for 30 minutes and works once; making a new QR code (or a typed code on the device page) replaces it.</p>
+    {#- Step 2 and 3 of Add Phone (design 31 §3.7): the two ways to connect, then the QR code here
+        or the code on its own page. Also "Set Up with QR Code" on Advanced › Connection. -#}
+    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}Advanced{% else %}{{ device.name }}{% endif %}</a>
+    <h1 class="page-title">Connect {{ device.name }}</h1>
 
-    {% if missing_checksum %}
-    <div class="card card-alarm">
-        <p><strong>Launcher signing checksum not configured (see DEPLOY.md).</strong> Without it, Android can't check that the launcher it downloads is your own build, so no QR code is shown. Set <code>LAUNCHER_SIGNATURE_CHECKSUM</code> in <code>/opt/kid-phone-server/.env</code> and restart the server.</p>
-    </div>
-    {% endif %}
-
-    {% if missing_server_url %}
-    <div class="card card-alarm">
-        <p><strong>No server URL configured yet.</strong> Set one on the <a href="/settings/provisioning">Phone Setup</a> page (under Settings) first, or this QR code won't be able to auto-enroll the device - you'd still need to type it in by hand afterward.</p>
+    {% if enrolled %}
+    <div class="attention attention-alarm" data-warning="replaces">
+        <span class="attention-text">{{ device.name }} is connected now<span class="attention-sub">A phone that uses a new QR code or setup code takes over, and the one connected now is cut off.</span></span>
     </div>
     {% endif %}
 
-    <div class="card">
-        <h2>Two ways to scan it</h2>
-        <ol>
-            <li><strong>Stock Android / most custom ROMs (not GrapheneOS):</strong> factory reset (or use a device fresh out of the box), tap the same spot on the Welcome screen 6 times, then scan. Setup downloads and installs the launcher, sets it as device owner, and applies the server URL/Tailscale key/enrollment code automatically - no other steps.</li>
-            <li><strong>GrapheneOS, or anywhere the flow above isn't available:</strong> set up the device and grant Device Owner via <code>adb shell dpm set-device-owner</code> as usual, then open the launcher's Settings and use "Scan setup QR" - same code, same result, just triggered from inside the app instead of Android's own setup wizard.</li>
-        </ol>
+    {% if missing_checksum || missing_server_url %}
+    <div class="group" id="server-setup">
+        <details class="info cell" data-row="server-setup">
+            <summary class="row"><span class="row-label text-alarm">Server setup needed</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="What is missing" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel">
+                {% if missing_checksum %}<p data-missing="checksum">No QR code can be made: the launcher's signing checksum isn't set, so Android couldn't check the app it downloads. Set LAUNCHER_SIGNATURE_CHECKSUM in the server's .env and restart the server (DEPLOY.md, "Launcher provisioning settings").</p>{% endif %}
+                {% if missing_server_url %}<p data-missing="server-url">No server address yet: set it in <a href="/settings/provisioning">Settings › Phone Setup</a>, or type it on the phone.</p>{% endif %}
+            </div>
+        </details>
     </div>
+    {% endif %}
 
-    <div class="card" id="make-qr">
-        <h2>Make the QR code</h2>
-        <p class="subtitle">Wi-Fi is optional and only used by the stock-Android zero-touch flow, to join a network before the launcher downloads. The in-app scanner ignores it, since the device is already online by then. The password goes into the QR code only - it isn't stored.</p>
-        <form method="post" action="/devices/{{ device.id }}/provision">
-            <label for="wifi_ssid">Network name (SSID)</label>
-            <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" autocomplete="off">
+    {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
+        answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
+    <section id="qr" aria-labelledby="qr-title">
+        <h2 class="choice-title" id="qr-title">QR code<span class="choice-sub">New or reset phone</span></h2>
+        <div class="group">
+            {% if missing_checksum %}
+            <p class="row row-note">Needs the server setup above.</p>
+            {% else %}
+            {% if !qr_svg.is_empty() %}
+            <div class="cell qr-code" data-row="qr">{{ qr_svg|safe }}</div>
+            {% if let Some(until) = until %}
+            <div class="row" data-row="until">
+                <span class="row-label">Works until</span>
+                <span class="row-value">{{ until }}, once</span>
+            </div>
+            <p class="row row-note" data-row="keep-open">Keep this page open until the phone has connected. Reloading it makes a new code.</p>
+            {% endif %}
+            {% endif %}
+            <form method="post" action="/devices/{{ device.id }}/provision#qr" class="cell form-group">
+                <div class="field">
+                    <label class="field-label" for="wifi_ssid">Wi-Fi network</label>
+                    <input type="text" id="wifi_ssid" name="wifi_ssid" value="{{ wifi_ssid }}" placeholder="Optional" autocomplete="off" autocapitalize="none" spellcheck="false"{% if error_field == "wifi_ssid" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
+                    {% if error_field == "wifi_ssid" %}{% if let Some(why) = error %}<p class="field-error" id="wifi-error">{{ why }}</p>{% endif %}{% endif %}
+                </div>
+                <div class="field">
+                    <label class="field-label" for="wifi_password">Wi-Fi password</label>
+                    <input type="password" id="wifi_password" name="wifi_password" value="" autocomplete="off"{% if error_field == "wifi_password" %} aria-invalid="true" aria-describedby="wifi-error" autofocus{% endif %}>
+                    {% if error_field == "wifi_password" %}{% if let Some(why) = error %}<p class="field-error" id="wifi-error">{{ why }}</p>{% endif %}{% else if password_dropped %}<p class="field-error" id="wifi-password-error">Type the password again.</p>{% else %}<p class="field-hint">Only in the QR code, never stored.</p>{% endif %}
+                </div>
+                <button type="submit" class="button-wide">{% if qr_svg.is_empty() %}Make QR Code{% else %}Make a New QR Code{% endif %}</button>
+            </form>
+            {% if !qr_svg.is_empty() && !enrolled %}
+            <a class="row row-button" href="/devices/{{ device.id }}" data-row="done">Done</a>
+            {% endif %}
+            {% endif %}
+        </div>
+        <div class="group-footer">On the phone's welcome screen, tap 6 times in one spot, then scan.
+            <details class="info"><summary aria-label="About the QR code"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The phone then installs Vibb and connects by itself, joining the Wi-Fi first if you gave one. It gets the server address and Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a>.</p><p>GrapheneOS has no 6-tap setup: make Vibb the device owner with adb, then scan from Vibb's Settings › "Scan setup QR".</p><p>The code in it works once, for {{ qr_minutes }} minutes; a new QR code or setup code replaces it.</p></div></details>
+        </div>
+    </section>
 
-            <label for="wifi_password">Password</label>
-            <input type="password" id="wifi_password" name="wifi_password" autocomplete="off">
-
-            <button type="submit">{% if qr_svg.is_empty() %}Make QR code{% else %}Make a new QR code{% endif %}</button>
-        </form>
-    </div>
-
-    {% if !qr_svg.is_empty() %}
-    <div class="card" id="qr">
-        <h2>Scan this</h2>
-        {% if let Some(until) = expires_at %}
-        <p class="subtitle">Valid until {{ until }} UTC, once.</p>
+    <section id="setup-code" aria-labelledby="code-title">
+        <h2 class="choice-title" id="code-title">Code<span class="choice-sub">Phone already set up</span></h2>
+        {% if let Some(until) = paused_until %}
+        <div class="attention attention-action" data-warning="typed-paused">
+            <span class="attention-text">Setup codes paused until {{ until }}<span class="attention-sub">Too many wrong codes were tried this hour. The QR code works now.</span></span>
+        </div>
         {% endif %}
-        <div class="qr-code">{{ qr_svg|safe }}</div>
-    </div>
-    {% endif %}
+        <div class="group">
+            {#- A POST: the code is made now and shown once, on its own page. -#}
+            <form method="post" action="/devices/{{ device.id }}/regenerate-code" class="cell">
+                <button type="submit" class="row row-button">New Setup Code</button>
+            </form>
+        </div>
+        <div class="group-footer">You type it in Vibb's settings on the phone.
+            <details class="info"><summary aria-label="About setup codes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a phone where Vibb is already the device owner, set with adb (docs/testing/emulator.md has the commands).</p><p>The code works once, for {{ code_minutes }} minutes, and is shown only once. It replaces any QR code made before.</p></div></details>
+        </div>
+    </section>
 </main>
 </body>
 </html>

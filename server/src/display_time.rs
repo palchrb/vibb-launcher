@@ -172,6 +172,14 @@ impl Zone {
         }
     }
 
+    /// [until] for a stored time (`datetime('now')` text, UTC); a text that doesn't parse is shown
+    /// as stored, labelled "UTC".
+    pub fn until_db(&self, stored: &str, now: DateTime<Utc>) -> String {
+        parse_db_utc(stored)
+            .map(|t| self.until(t, now))
+            .unwrap_or_else(|| format!("{stored} UTC"))
+    }
+
     /// When something ends, for "until …": "14:05" today, "00:05 tomorrow" (the lock badge's
     /// wording, §3.10), "Mon 14:30" within the week, else "20 Oct 14:30" - always with its clock
     /// time, the one thing an end is for (qa-31-s3-code M2). A time already past reads as [when].

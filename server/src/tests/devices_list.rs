@@ -418,5 +418,5 @@ async fn no_phones_yet() {
     // The setup explanation moved into the add flow.
     assert!(!html.contains("provision it by QR code or adb"));
     let add = app.get_page("/devices/new", &cookie).await.text();
-    assert!(add.contains("Settings › Phone Setup"), "{add}");
+    assert!(add.contains("a QR code or a setup code"), "{add}");
 }

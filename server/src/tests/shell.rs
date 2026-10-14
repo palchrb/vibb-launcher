@@ -69,36 +69,38 @@ async fn every_page_marks_its_own_tab() {
     // The sign-in page has no tab bar.
     let login = app.get_page("/login", "").await.text();
     assert_eq!(nav_current(&login), "");
-    assert!(login.contains("<h1>Vibb Phone</h1>"));
+    assert!(login.contains("<h1 class=\"auth-title\">Vibb Phone</h1>"));
 }
 
+/// The tabs' landing pages: since step 15 they open on their large title, without the brand bar.
+const LANDING_PAGES: [&str; 5] = [
+    "devices_list.html",
+    "apps_list.html",
+    "device_locate.html",
+    "music.html",
+    "settings_hub.html",
+];
+
 /// Every template with the tab bar sets its tab right before including it, to one of the five
-/// (the template decides, not the path - §3.1). A rebuilt sub-page includes the bar alone, without
-/// the brand bar (§3.0: its back link and large title replace it).
+/// (the template decides, not the path - §3.1). There is no brand bar any more (§3.0, steps 10 and
+/// 15): a landing page opens on its large title, every other page on its back link and large title.
 #[test]
 fn every_template_with_the_bar_sets_its_tab() {
     let mut with_bar = 0;
-    let mut bar_alone = 0;
+    assert!(!std::path::Path::new("templates/partials/app_header.html").exists());
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
-        let header = text.find("{% include \"partials/app_header.html\" %}");
-        let alone = text.find("{% include \"partials/tab_bar.html\" %}");
-        assert!(
-            header.is_none() || alone.is_none(),
-            "{}: the bar twice",
-            path.display()
-        );
-        let Some(at) = header.or(alone) else {
+        let file = path.file_name().unwrap().to_str().unwrap();
+        assert!(!text.contains("app_header"), "{file}: the brand bar");
+        let Some(at) = text.find("{% include \"partials/tab_bar.html\" %}") else {
             continue;
         };
-        if alone.is_some() {
-            bar_alone += 1;
-            assert!(
-                text.contains("class=\"nav-back\""),
-                "{}: a sub-page without its back link",
-                path.display()
-            );
-        }
+        let landing = LANDING_PAGES.contains(&file);
+        assert_eq!(
+            text.contains("class=\"nav-back\""),
+            !landing,
+            "{file}: a sub-page has its back link, a landing page none"
+        );
         with_bar += 1;
         let before = text[..at].trim_end();
         let line = before.lines().last().unwrap_or("").trim();
@@ -112,11 +114,7 @@ fn every_template_with_the_bar_sets_its_tab() {
             path.display()
         );
     }
-    assert!(with_bar >= 25, "{with_bar} templates with the bar");
-    assert!(
-        bar_alone >= 4,
-        "About This Phone, Advanced, the app page and Add App"
-    );
+    assert!(with_bar >= 36, "{with_bar} templates with the bar");
     let updates = std::fs::read_to_string("templates/updates.html").unwrap();
     assert!(updates.contains("{% let tab = \"settings\" %}"));
 }
@@ -153,7 +151,6 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
     let html = app.get_page("/devices", &cookie).await.text();
     for needle in [
         "<title>Devices · Vibb Phone</title>",
-        "<a href=\"/\" class=\"brand\">Vibb Phone</a>",
         "<meta name=\"apple-mobile-web-app-title\" content=\"Vibb Phone\">",
         "<meta name=\"color-scheme\" content=\"light dark\">",
         "<meta name=\"theme-color\" content=\"#F9F9FA\" media=\"(prefers-color-scheme: light)\">",
@@ -166,6 +163,8 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         assert!(html.contains(needle), "{needle}");
     }
     assert!(!html.contains("Kids Device MDM") && !html.contains("Kids MDM"));
+    // The brand bar is gone from the tab pages (step 15).
+    assert!(!html.contains("class=\"app-header\""));
     // The script that marked the tab is gone.
     assert!(!html.contains("bottom-nav"));
     // The service worker's registration is ES5 (§5.7).
@@ -449,4 +448,46 @@ async fn the_settings_hub_makes_no_network_call() {
     assert_eq!(res.status, StatusCode::OK);
     assert!(app.fetch.requests.lock().unwrap().is_empty());
     assert!(app.fetch.calls.lock().unwrap().is_empty());
+}
+
+/// The tabs' landing pages open on their large title, as the mockups draw them (design 31 step 15):
+/// no brand bar and no back link; the title comes first, or after the 44px bar that holds the
+/// page's action (Devices and Apps: "+", Music: Edit).
+#[tokio::test]
+async fn the_tab_pages_open_on_their_large_title() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    app.enrolled_device("Anna").await;
+    for (page, title, add) in [
+        ("/devices", "Devices", Some("/devices/new")),
+        ("/apps", "Apps", Some("/apps/tracked/new")),
+        ("/devices/locate", "Locate", None),
+        ("/music", "Music", None),
+        ("/settings", "Settings", None),
+    ] {
+        let html = app.get_page(page, &cookie).await.text();
+        assert!(
+            !html.contains("class=\"app-header\""),
+            "{page}: the brand bar"
+        );
+        assert!(!html.contains("class=\"brand\""), "{page}");
+        assert!(!html.contains("class=\"nav-back\""), "{page}");
+        let main = &html[html.find("<main class=\"container").unwrap()..];
+        let main = &main[main.find('>').unwrap() + 1..];
+        let title_at = main
+            .find(&format!("<h1 class=\"page-title\">{title}</h1>"))
+            .unwrap_or_else(|| panic!("{page}: no large title"));
+        let before = &main[..title_at];
+        assert!(
+            before.trim().is_empty() || before.trim_start().starts_with("<div class=\"title-bar\""),
+            "{page}: something before the title: {before}"
+        );
+        if let Some(href) = add {
+            let bar = &before[before.find("title-bar").unwrap()..];
+            assert!(
+                bar.contains(&format!("href=\"{href}\"")) && bar.contains("aria-label=\"Add "),
+                "{page}: the bar's +"
+            );
+        }
+    }
 }

@@ -42,8 +42,8 @@ add `ADMIN_PUBLIC=on` for such a dev setup. The startup warning about `0.0.0.0` 
 expected here. With `INSECURE_COOKIES` the session cookie is a plain `handy` (`__Host-handy` needs https).
 
 In the PWA, **before** enrolling the phone:
-1. Devices → New device, then "New code" on its page (shown once, valid 15 minutes).
-2. On the device page: turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
+1. Devices → Add Phone, name it, then under "Code" on Connect: **New Setup Code** (shown once, valid 15 minutes).
+2. On the phone's Advanced page (Restrictions): turn **"Block USB debugging" OFF** (otherwise adb dies on the first sync).
 3. Set a Parent PIN (the phone's Lock Screen & PINs page, 6-10 digits).
 
 ## 3. Emulator: fresh start and snapshot

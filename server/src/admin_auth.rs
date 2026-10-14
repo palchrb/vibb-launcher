@@ -614,6 +614,7 @@ mod tests {
             "/devices/3/locations.json",
             "/devices/3/locate-result.json",
             "/devices/3/provision",
+            "/devices/3/regenerate-code",
             "/backups",
             "/backups/backup-1.zip/download",
             "/settings/provisioning",

@@ -1,13 +1,16 @@
 use askama::Template;
 use axum::Form;
 use axum::extract::{Path, State};
-use axum::response::{Html, IntoResponse};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::config::ForkConfig;
+use crate::display_time::Zone;
+use crate::enrollment::Kind;
 use crate::models::{Device, ProvisioningSettings};
 
 /// android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE's contents - Android's own
@@ -87,20 +90,80 @@ pub(crate) fn valid_time_zone(zone: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c))
 }
 
+/// The longest Wi-Fi network name (32 bytes, IEEE 802.11) and the WPA passphrase's length (8-63
+/// characters; or the raw key as 64 hex digits, which Android's provisioning takes as the PSK): a
+/// field outside them can't be a real network, and could overflow the QR code.
+const MAX_SSID_BYTES: usize = 32;
+const MIN_WIFI_PASSWORD_CHARS: usize = 8;
+const MAX_WIFI_PASSWORD_CHARS: usize = 63;
+
+/// Connect (design 31 §3.7): steps 2 and 3 of Add Phone, and "Set Up with QR Code" on Advanced.
 #[derive(Template)]
 #[template(path = "provision_qr.html")]
 struct ProvisionQrTemplate {
     title: String,
     device: Device,
+    /// The phone has connected before: a new code cuts that connection off.
+    enrolled: bool,
     /// Empty until the form is sent (and when `missing_checksum` is set) - no QR is rendered then.
     qr_svg: String,
     missing_server_url: bool,
-    /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: the page shows a banner instead of a QR
-    /// code, rather than falling back to any built-in (upstream's) checksum.
+    /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: "Server setup needed" instead of a QR code,
+    /// rather than falling back to any built-in (upstream's) checksum.
     missing_checksum: bool,
     wifi_ssid: String,
-    /// When the code in the QR expires (UTC), once it is made.
-    expires_at: Option<String>,
+    /// When the code in the QR expires (local, `Zone::until`), once it is made.
+    until: Option<String>,
+    /// Until when typed codes are paused (local), for the Code group's warning.
+    paused_until: Option<String>,
+    /// A refused Wi-Fi field ("wifi_ssid" / "wifi_password") and why; nothing was made then.
+    error_field: &'static str,
+    error: Option<&'static str>,
+    /// A refused form carried a password, which is never echoed back.
+    password_dropped: bool,
+    qr_minutes: i64,
+    code_minutes: i64,
+    /// The Phone Setup zone and the time the page was built, for its "until"s.
+    zone: Zone,
+    now: chrono::DateTime<chrono::Utc>,
+}
+
+impl ProvisionQrTemplate {
+    async fn new(state: &AppState, device: Device, settings: &ProvisioningSettings) -> Self {
+        let zone = Zone::load(&state.db).await;
+        let now = chrono::Utc::now();
+        ProvisionQrTemplate {
+            title: format!("Connect {}", device.name),
+            enrolled: device.enrolled_at.is_some(),
+            device,
+            qr_svg: String::new(),
+            missing_server_url: settings.server_url.is_empty(),
+            missing_checksum: state.config.launcher_signature_checksum.is_none(),
+            wifi_ssid: String::new(),
+            until: None,
+            paused_until: state
+                .enrollment
+                .typed_paused_until(now)
+                .map(|until| zone.until(until, now)),
+            error_field: "",
+            error: None,
+            password_dropped: false,
+            qr_minutes: Kind::Qr.minutes(),
+            code_minutes: Kind::Typed.minutes(),
+            zone,
+            now,
+        }
+    }
+
+    fn page(self, status: StatusCode) -> Response {
+        match self.render() {
+            Ok(html) => (status, Html(html)).into_response(),
+            Err(err) => {
+                tracing::error!(%err, "couldn't render the Connect page");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -111,124 +174,172 @@ pub struct ProvisionForm {
     wifi_password: String,
 }
 
-async fn load_device(state: &AppState, id: i64) -> Option<Device> {
-    sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+/// The device and the provisioning settings: 404 for an unknown phone, 500 (logged) when either
+/// can't be read - never a page or a QR code built on made-up defaults.
+async fn load(state: &AppState, id: i64) -> Result<(Device, ProvisioningSettings), StatusCode> {
+    let failed = |err: sqlx::Error| {
+        tracing::error!(device_id = id, %err, "couldn't read the Connect page's data");
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten()
-}
-
-async fn load_settings(state: &AppState) -> ProvisioningSettings {
-    sqlx::query_as::<_, ProvisioningSettings>("SELECT * FROM provisioning_settings WHERE id = 1")
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default()
-}
-
-/// `GET /devices/{id}/provision`: the form only. No code is made by looking at the page (design
-/// 22 §0 #7); "Make the QR code" posts the form ([provision_qr]).
-pub async fn provision_form(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> axum::response::Response {
-    let Some(device) = load_device(&state, id).await else {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
-    };
-    let settings = load_settings(&state).await;
-    Html(
-        ProvisionQrTemplate {
-            title: format!("Provision {}", device.name),
-            missing_server_url: settings.server_url.is_empty(),
-            missing_checksum: state.config.launcher_signature_checksum.is_none(),
-            wifi_ssid: String::new(),
-            device,
-            qr_svg: String::new(),
-            expires_at: None,
-        }
-        .render()
-        .unwrap(),
+        .map_err(failed)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let settings = sqlx::query_as::<_, ProvisioningSettings>(
+        "SELECT * FROM provisioning_settings WHERE id = 1",
     )
-    .into_response()
+    .fetch_optional(&state.db)
+    .await
+    .map_err(failed)?
+    .unwrap_or_default();
+    Ok((device, settings))
+}
+
+/// `GET /devices/{id}/provision`: the two ways to connect. No code is made by looking at the page
+/// (design 22 §0 #7): "Make QR Code" posts the form ([provision_qr]), "New Setup Code" posts to
+/// `regenerate-code`.
+pub async fn provision_form(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let (device, settings) = match load(&state, id).await {
+        Ok(loaded) => loaded,
+        Err(status) => return status.into_response(),
+    };
+    ProvisionQrTemplate::new(&state, device, &settings)
+        .await
+        .page(StatusCode::OK)
+}
+
+/// A Wi-Fi field that can't go into the QR code: the field and why.
+pub(crate) fn wifi_refusal(ssid: &str, password: &str) -> Option<(&'static str, &'static str)> {
+    if ssid.len() > MAX_SSID_BYTES {
+        return Some((
+            "wifi_ssid",
+            "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count \
+             as two). Nothing was made.",
+        ));
+    }
+    let raw_key = password.len() == 64 && password.chars().all(|c| c.is_ascii_hexdigit());
+    let chars = password.chars().count();
+    if !password.is_empty() && !raw_key && chars < MIN_WIFI_PASSWORD_CHARS {
+        return Some((
+            "wifi_password",
+            "A Wi-Fi password has at least 8 characters. Nothing was made.",
+        ));
+    }
+    if !raw_key && chars > MAX_WIFI_PASSWORD_CHARS {
+        return Some((
+            "wifi_password",
+            "A Wi-Fi password has at most 63 characters (or is a 64-digit key). Nothing was made.",
+        ));
+    }
+    if ssid.is_empty() && !password.is_empty() {
+        return Some((
+            "wifi_ssid",
+            "Add the network's name, or leave the password empty. Nothing was made.",
+        ));
+    }
+    None
 }
 
 /// `POST /devices/{id}/provision`: a fresh setup-QR enrollment code (design 22 §3.1: 130 bits,
 /// valid 30 minutes, once; it replaces the device's live code) in a QR code with the provisioning
-/// settings and the optional Wi-Fi. A POST, so the Wi-Fi password never sits in a URL (proxy
-/// logs, history); the page is `no-store` (`admin_auth::no_store_path`).
+/// settings and the optional Wi-Fi, shown in the QR group (the form posts to `#qr`). A POST, so
+/// the Wi-Fi password never sits in a URL (proxy logs, history); the page is `no-store`
+/// (`admin_auth::no_store_path`). A Wi-Fi field that can't be right is refused before any code
+/// is made (400, the reason under the field, the password never echoed).
 pub async fn provision_qr(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Form(form): Form<ProvisionForm>,
-) -> axum::response::Response {
-    let Some(device) = load_device(&state, id).await else {
-        return axum::http::StatusCode::NOT_FOUND.into_response();
+) -> Response {
+    let (device, settings) = match load(&state, id).await {
+        Ok(loaded) => loaded,
+        Err(status) => return status.into_response(),
     };
-    let settings = load_settings(&state).await;
     let ssid = form.wifi_ssid.trim();
     let password = form.wifi_password.trim();
+    let mut page = ProvisionQrTemplate::new(&state, device, &settings).await;
+
+    if let Some((field, why)) = wifi_refusal(ssid, password) {
+        page.error_field = field;
+        page.error = Some(why);
+        page.password_dropped = !password.is_empty();
+        // The name isn't a secret: typed back (escaped, cut to a sane length) to be shortened.
+        page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
+        return page.page(StatusCode::BAD_REQUEST);
+    }
+    page.wifi_ssid = ssid.to_string();
+    // No code at all without a checksum: there would be no QR code to carry it.
+    if page.missing_checksum {
+        return page.page(StatusCode::OK);
+    }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
+    let payload_for = |code: String| {
+        provisioning_payload(
+            &state.config,
+            AdminExtras {
+                server_url: settings.server_url.clone(),
+                tailscale_auth_key: settings.tailscale_auth_key.clone(),
+                enrollment_code: code,
+            },
+            wifi.clone(),
+            &settings.locale,
+            &settings.time_zone,
+        )
+    };
+    // The fit is checked before a code is made (qa-31-s15-code L1): an overflow must never
+    // replace the phone's live code. A placeholder of the real length in the code's worst case
+    // for the QR's encoder (letters, no digits); a real code is never larger.
+    let fits = |payload: &serde_json::Value| QrCode::new(payload.to_string().as_bytes()).is_ok();
+    if !payload_for("A".repeat(crate::enrollment::QR_LEN)).is_some_and(|p| fits(&p)) {
+        tracing::error!(
+            device_id = id,
+            "the provisioning payload doesn't fit a QR code"
+        );
+        return too_long();
+    }
 
-    // No code at all without a checksum: there would be no QR to carry it.
-    let (code, expires_at) = if state.config.launcher_signature_checksum.is_some() {
-        match crate::enrollment::new_code(&state, id, crate::enrollment::Kind::Qr).await {
-            Ok(made) => made,
-            Err(err) => {
-                tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Couldn't make a code - check the server log.",
-                )
-                    .into_response();
-            }
+    let (code, expires_at) = match crate::enrollment::new_code(&state, id, Kind::Qr).await {
+        Ok(made) => made,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't make an enrollment code");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't make a code - nothing was changed. Check the server log.",
+            )
+                .into_response();
         }
-    } else {
-        (String::new(), String::new())
     };
 
-    let payload = provisioning_payload(
-        &state.config,
-        AdminExtras {
-            server_url: settings.server_url.clone(),
-            tailscale_auth_key: settings.tailscale_auth_key,
-            enrollment_code: code,
-        },
-        wifi,
-        &settings.locale,
-        &settings.time_zone,
-    );
-
-    let qr_svg = match &payload {
-        Some(payload) => {
-            let json = payload.to_string();
-            QrCode::new(json.as_bytes())
-                .expect("provisioning payload always fits a QR code")
-                .render()
-                .min_dimensions(320, 320)
-                .dark_color(svg::Color("#000000"))
-                .light_color(svg::Color("#ffffff"))
-                .build()
-        }
-        None => String::new(),
+    let Some(payload) = payload_for(code) else {
+        return page.page(StatusCode::OK);
     };
-
-    Html(
-        ProvisionQrTemplate {
-            title: format!("Provision {}", device.name),
-            missing_server_url: settings.server_url.is_empty(),
-            missing_checksum: payload.is_none(),
-            wifi_ssid: ssid.to_string(),
-            device,
-            qr_svg,
-            expires_at: (!expires_at.is_empty()).then_some(expires_at),
-        }
+    let Ok(qr) = QrCode::new(payload.to_string().as_bytes()) else {
+        tracing::error!(
+            device_id = id,
+            "the provisioning payload doesn't fit a QR code"
+        );
+        return too_long();
+    };
+    page.qr_svg = qr
         .render()
-        .unwrap(),
+        .min_dimensions(320, 320)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .build();
+    page.until = Some(page.zone.until_db(&expires_at, page.now));
+    page.page(StatusCode::OK)
+}
+
+/// A QR code holds about 2.9 kB: only a very long server address or Tailscale key overflows it.
+fn too_long() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "The setup details are too long for a QR code - check the server address and Tailscale \
+         key in Settings › Phone Setup. Nothing was changed.",
     )
-    .into_response()
+        .into_response()
 }
 
 /// Android's standard zero-touch Device Owner provisioning flow: on a

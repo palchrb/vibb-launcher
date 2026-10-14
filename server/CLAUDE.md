@@ -41,7 +41,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
-- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/app_header.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; a rebuilt inner page with its own back link and large title includes `partials/tab_bar.html` alone instead (no brand bar; design 31 step 3); Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
+- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
 
 ## About the developer
@@ -910,11 +910,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   only as SHA-256 of the normalised code (upper-case, no spaces/dashes) in `devices.enrollment_code_hash` with
   `enrollment_code_kind` - `qr` (26 chars base32, 30 min, only in the setup QR) or `typed` (8 chars of
   `TYPED_ALPHABET`, 15 min, shown as ABCD-EFGH); the plaintext column is cleared and never written (open codes died
-  with the migration). A new device has no code; "New code" (`POST /devices/{id}/regenerate-code`) renders
-  `enroll_code.html` once (`no-store`), the provision page makes a QR code. `enroll`: not code-shaped -> 401;
+  with the migration). A new device has no code; "New Setup Code" (`POST /devices/{id}/regenerate-code`) renders
+  `enroll_code.html` once (`no-store`), Connect (`/devices/{id}/provision`) makes a QR code. `enroll`: not code-shaped -> 401;
   typed-shaped -> 429 while paused or the client's failure bucket is full, 401 uncounted with no typed code live, a
   miss counts toward the bucket and `Enrollment::typed_failed` (20 an hour server-wide while a typed code is live
-  pause typed codes until the hour ends: `enroll_typed_paused`, the summary's Connect This Phone says so and offers the QR); QR-shaped always
+  pause typed codes until the hour ends: `enroll_typed_paused`, the summary's Connect This Phone, Connect and the code
+  page say so and offer the QR); QR-shaped always
   checked. At most 8 enrollments at once (`Enrollment::gate`, taken before the body is read; the body then has 5 s). Use = one `UPDATE ... WHERE
   enrollment_code_hash = ? AND not expired RETURNING`; then the token index, streams, `device_enrolled` (with IP).
   Failures: throttled `enroll_failed`. Advanced › Connection (`/devices/{id}/advanced#connection`, the device page's
@@ -945,7 +946,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
-  Provisioning: `GET /devices/{id}/provision` is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
+  Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
   the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
@@ -1030,7 +1031,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two
   rows at the bottom of the device page ("About This Phone · Vibb 0.23.6", "Advanced"). A rebuilt sub-page has the
   §3.0 header - a back link to the phone (`.nav-back`) and the large title - and includes `partials/tab_bar.html`
-  alone, without the brand bar (`partials/app_header.html` = brand bar + tab bar).
+  alone, without the brand bar (gone since step 15).
 - **About This Phone** (`GET /devices/{id}/about`, read-only): Connection (Status "Online since 08:12" from
   `connection_state`, Last contact, Last full report, Network from `limits::LastAccess`), Sound (`sound_mode::state`),
   Software (Vibb version, the music app's version from its versionCode, "Settings from server" = Applied or a
@@ -1471,6 +1472,37 @@ needed to manage the phone, delete on a schedule, never store notification or me
   labels, escaping and local times; Backups' refusals in their groups), `tests::docker` (Software Updates on both
   kinds, its confirms and where each result shows), `admin::tests`, repointed `admin_auth.rs`, `intake_limits.rs`,
   `provisioning.rs`, `wallpapers.rs`, `dns_blocklist.rs`, `deploy_scripts.rs`.
+
+## Add Phone, sign-in, the tab pages (design 31 step 15, `docs/design/31-pwa-redesign.md` §3.7)
+
+- **Add Phone in 3 steps** on the pages that were there: **Name** (`/devices/new`, `device_add.html`; "Next" makes
+  the phone and redirects to Connect; an empty or > 40-character name (`devices::MAX_DEVICE_NAME_CHARS`) renders the
+  form again, 400, what was typed kept, the reason under the field; the name is trimmed), **Connect**
+  (`/devices/{id}/provision`, `provision_qr.html`: two choices, "QR code · New or reset phone" (the Wi-Fi fields and
+  Make QR Code, the GrapheneOS/adb detail behind the footer's ⓘ) and "Code · Phone already set up" (New Setup Code,
+  the adb detail behind ⓘ)), then **the QR code** (rendered in the POST's answer inside `#qr`, the form posts there, so
+  it lands on the QR with or without JS; its end local, `Zone::until`) or **the code** (`regenerate-code` →
+  `enroll_code.html`, "Setup Code", shown once, `no-store`, its end and the typed-code pause local). Both end on
+  **Done** → the phone's page for a phone not set up; for a connected phone both go back to Advanced › Connection and
+  warn that a new code cuts it off. "Server setup needed" (no `LAUNCHER_SIGNATURE_CHECKSUM` - no QR form then -, no
+  server address) is one red row with the env var / Phone Setup behind its ⓘ.
+- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password under 8 or over 63 characters (a 64-hex-digit raw key passes), or a password without a
+  name renders Connect again (400) with the reason under the field, never the password; nothing was made (the QR
+  code's capacity can't be overflowed by a form). A payload too long for a QR code (a huge server address or key)
+  is a 500 with a reason, checked before the code is made (the live code survives), never a panic; Connect's and the
+  code page's DB reads are 500s, not 404s.
+- **Sign-in pages** (`login.html`, `verify_2fa.html`, `setup_2fa.html`, `change_password.html`): one column
+  (`.auth-card`): the name, a large title, a grouped form, a wide button; a refusal is one red line (`role="alert"`)
+  above the form; the 2FA key shows once behind "Can't scan it?". Templates and titles only: `handlers::auth`'s
+  logic (lockout, pending expiry, session cycling, epoch, CSRF) is unchanged.
+- **The tab pages** (Devices, Apps, Locate, Music, Settings) include `partials/tab_bar.html` alone and open on their
+  large title under a 44px bar (`.title-bar`: "+" on Devices and Apps, Edit on Music; Settings and Locate start with
+  the title). `partials/app_header.html` is gone (the summary, step 10, has its back link); `shell::every_template_with_the_bar_sets_its_tab`
+  asserts no template names it. For a phone not set up, Back from Connect and the code page goes to the summary's
+  Connect This Phone group (`/devices/{id}#access`).
+- Tests: `tests::provisioning` (the add flow's table from the rendered forms, a connected phone, the name and Wi-Fi
+  refusals, "Server setup needed", 404s), `admin_auth::the_sign_in_pages_use_the_new_components`,
+  `shell::the_tab_pages_open_on_their_large_title`, repointed `enrollment.rs`, `devices_list.rs`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 
