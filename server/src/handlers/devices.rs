@@ -1475,20 +1475,22 @@ async fn render_device(
     } else {
         None
     };
+    // Its findings feed Attention; the page itself words them (design 31 step 8). A report that
+    // can't be read says so on the row, so an empty Attention never reads as "all good"
+    // (qa-31-s8-code N4).
+    let call_problems = crate::handlers::calls::call_report(&state, &policy)
+        .await
+        .map(|report| report.problems())
+        .map_err(|err| tracing::error!(device_id = id, %err, "failed to read the call report"))
+        .ok();
     let calls_value = match (policy.calls_managed, contact_count) {
+        _ if call_problems.is_none() => "Couldn't read".to_string(),
         (false, _) => "Not managed".to_string(),
         (true, None) => "Couldn't read".to_string(),
         (true, Some(1)) => "1 contact".to_string(),
         (true, Some(n)) => format!("{n} contacts"),
     };
-    // Its findings feed Attention; the page itself words them (design 31 step 8).
-    let call_problems = match crate::handlers::calls::call_report(&state, &policy).await {
-        Ok(report) => report.problems(),
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "failed to read the call report");
-            Vec::new()
-        }
-    };
+    let call_problems = call_problems.unwrap_or_default();
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.

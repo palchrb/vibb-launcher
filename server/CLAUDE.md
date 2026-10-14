@@ -1189,7 +1189,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `hints` are gone; the device page reads only `problems()`.
 - **The reload** while the phone confirms a change is `static/auto-reload.js` (was a `<meta refresh>`, which could
   cancel a save on its way or lose a typed contact): every 3 s, never once a save started, never while a `<details>` is
-  open, never on a refusal's page.
+  open, never on a refusal's page. It keeps the place (qa-31-s8-code M1): before reloading it sets
+  `history.scrollRestoration = "auto"` (scroll-restore leaves "manual" on the entry after a save) and writes
+  scroll-restore's own record (`handy-scroll`), so the reloaded page restores the position. The Waiting row says
+  "Reload the page in a minute." (true with and without JS).
+- **A contact row's "· Home"** shows only for a phone-book contact (`outbound && show_on_home`, as the launcher's
+  `CallRules.kt` puts it on Home). Every form for a contact that is gone (a save, a refused Matrix ID, a photo, a photo
+  removal) lands on `?notice=contact_gone#contacts`; only Remove Contact… says nothing (it is done). The device page's
+  row says "Couldn't read" when the call report can't be read (its Attention rows would be missing).
 - **Phone Setup's second form** (L6): the default country code (`POST /settings/calls`, `#country-code`, Phone
   Numbers group) → `/settings/provisioning?saved=country-code#country-code` (the flash in its group); 1-3 digits, a
   leading + dropped; a refusal renders Phone Setup (400) with what was typed under the field; an unreadable code is a

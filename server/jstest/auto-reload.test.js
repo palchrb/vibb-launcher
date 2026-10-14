@@ -35,8 +35,17 @@ function fakeWindow({ search = "", openForm = false } = {}) {
             },
         },
         history: {
+            // scroll-restore.js leaves "manual" after the save that led to this page.
+            scrollRestoration: "manual",
             replaceState: (_state, _title, url) => {
                 win.replaced.push(url);
+            },
+        },
+        scrollY: 0,
+        stored: {},
+        sessionStorage: {
+            setItem: (key, value) => {
+                win.stored[key] = value;
             },
         },
     };
@@ -116,4 +125,33 @@ test("a refusal's notice leaves the address once shown, the row's fragment stays
     const quiet = fakeWindow();
     install(quiet);
     assert.deepStrictEqual(quiet.replaced, []);
+});
+
+// qa-31-s8-code M1: a reload keeps the place. After a scroll-restored save the entry's
+// scrollRestoration is "manual", so the browser alone would show the top on reload; the script
+// hands it back ("auto") and leaves scroll-restore's own record, which the reloaded page restores.
+test("a reload keeps the scroll position", () => {
+    const scrollRestore = require("../static/scroll-restore.js");
+    const win = fakeWindow();
+    win.location.hash = "";
+    win.scrollY = 800;
+    install(win);
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(win.history.scrollRestoration, "auto");
+    const saved = JSON.parse(win.stored[scrollRestore.KEY]);
+    assert.strictEqual(saved.path, "/devices/1/apps");
+    assert.strictEqual(saved.y, 800);
+    // The reloaded page (same path, no fragment, just now) restores exactly that.
+    assert.strictEqual(scrollRestore.restoreTarget(saved, "/devices/1/apps", "", saved.t + 50), 800);
+});
+
+test("no record or reload once a save has started", () => {
+    const win = fakeWindow();
+    win.scrollY = 800;
+    install(win);
+    win.fire("doc", "submit", {});
+    win.advance();
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.stored, {});
 });

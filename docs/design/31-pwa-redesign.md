@@ -952,7 +952,7 @@ Every value comes from the database or memory, never from the network (M3):
 | | Web Filter | "3 lists" (count of enabled `dns_blocklists`) | `/dns`: shared blocklists, blocked and allowed domains, and the DNS server at the bottom (Q2: kept). The per-phone parts are on each phone's Web Filter page |
 | | Blocked Activity | "12 today" (a count of today's `device_dns_events`) | `/dns/log`: a list of phones (log on/off) › each phone's Web Filter page |
 | **Content** | Wallpapers | "5" (count) | `/wallpapers`; delete becomes a confirm (Q7); the per-photo "Also on the lock screen" stays (Q1) |
-| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` posts with `back=provisioning` and returns there (H3) |
+| **Server** | Phone Setup | - | `/settings/provisioning`: the provisioning form (one form) and the **default country code** as a **second form** with its own Save (L6). `/settings/calls` returns there (H3; no `back` field - one page posts there, step 8's choice 4) |
 | | Backups | "Today 03:00" (the newest backup file's mtime) | `/backups` |
 | | Software Updates | **No value** | `/updates`. The hub never calls GitHub. No cached result of a check exists today (`data/app_update_last_check` holds only a date), so the row shows nothing (M3) |
 | | Account & Password | - | `/account` (password, two-factor, sign out everywhere) |
@@ -1326,7 +1326,7 @@ The rules for the redesign (H3):
    | `/devices/{id}/end-windows`, `start-pause`, `allow-blocked` (`window_relock.rs:244`) | summary, the blocked-apps target page | `summary`, `apps` | summary |
    | `/devices/{id}/apps/toggle` (today `anchor=music`, `devices.rs:1797`) | Device › Apps, Device › Music | `apps`, `music` | apps |
    | `/dns/domains/new`, `/dns/domains/{id}/delete`, the blocklist override (`dns_filter.rs:292-311,505`) | Settings › Web Filter, Device › Web Filter | `dns`, `filter` (with the device id) | `/dns` |
-   | `/settings/calls` (today → `/devices` without `device_id`, `calls.rs:946-950`) | Settings › Phone Setup | `provisioning` | `/settings/provisioning` |
+   | `/settings/calls` (as built in step 8: one page posts here, so rule 2 applies and there is no `back` field) | Settings › Phone Setup | - | `/settings/provisioning#country-code` |
    | `/schedules/rules[/{id}]`, `/delete` | the rule editor (everyone's or a phone's own) | the existing `scope` field decides | as §3.5 |
 
 4. **Anchors only where they help.**
@@ -1798,7 +1798,7 @@ at a time. Each moved card leaves a navigation row behind until step 10 turns wh
    - **Forms:**
      - `calls/settings` and each contact row stay one form each (H1);
      - Remove Contact… gets a confirm (M6);
-     - the country code moves to Phone Setup as a second form, with `/settings/calls` taking `back=provisioning` (L6).
+     - the country code moves to Phone Setup as a second form, returning there from `/settings/calls` (L6; as built, no `back` field: one page posts there).
    - **Templates:** `device_calls.html` in the new components; `provisioning_settings.html` gains the country code.
    - **Rust texts:** `calls::call_report` typed, with no package names (§2.2b).
    - **Tests:** `calls.rs`.
@@ -2956,3 +2956,17 @@ Deferred, with the reason:
   and stays for step 15's clean-up (new CSS only at the end, to keep step 7's merge clean).
 - **Checks:** `cargo test` 812 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13
   warnings, none in the step's files.
+
+**Fix round after the code QA** (`qa-31-s8-code.md`: 0 High, 1 Medium, 3 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | `static/auto-reload.js` keeps the place on both pages (Device › Apps, Calls & Contacts): just before `location.reload()` it sets `history.scrollRestoration = "auto"` (scroll-restore left "manual" on the entry after the save, so the browser alone would show the top, also over a `#fragment`) and writes scroll-restore's own record (`handy-scroll`: path, `scrollY`, now), which the reloaded page restores like after a save. `?v=2` on both pages. `jstest/auto-reload.test.js`: a page scrolled to 800 with "manual" reloads with "auto" and a record that `scroll-restore.restoreTarget` turns back into 800; nothing is written once a save has started. |
+| L1 | The Waiting row's sentence ends "Reload the page in a minute." (true with and without JS, and while its ⓘ is open), never "This page reloads"; pinned in `calls::tests::findings_read_as_short_local_notes`. |
+| L2 | `contact_summary` adds "· Home" only for a phone-book contact (`home && outbound`, the launcher's `CallRules.kt`); the switch keeps its value. The row test expects "Calls in only"; the unit test has both cases. |
+| L3 | `launcher_ui::bad_uploads_change_nothing` removes the photo of another phone's contact (the photo stays, `?notice=contact_gone#contacts`; an unknown phone 404); `invalid_contact_input_is_400_with_no_row` sends `"><b>x` / `"><b>y` and finds them escaped in the fields. Mutations 12 and 15 re-run: both fail a test now. |
+| N1 | §3.6's table, §5.1's `back` table and §8 step 8's L6 line say what was built: one page posts to `/settings/calls`, no `back` field. |
+| N2 | A refused Matrix ID for a contact that is no longer on the phone redirects to `?notice=contact_gone#contacts` (it rendered a page whose fragment no longer existed, the notice far below); the page's own fallback for that case is gone. Pinned in `contact_flags_are_scoped_to_the_device`. |
+| N3 | Photo removal for a gone contact says "nothing was saved" too, like a save and an upload; only Remove Contact… lands silently (it is done). |
+| N4 | When `call_report` fails, the device page's Calls & Contacts row says "Couldn't read", so an Attention list without call rows never reads as "all good". |
+| Checks | `cargo test` 812 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. |

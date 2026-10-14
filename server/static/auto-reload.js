@@ -13,6 +13,8 @@
     "use strict";
 
     var DELAY = 3000;
+    // static/scroll-restore.js's sessionStorage key (its KEY).
+    var SCROLL_KEY = "handy-scroll";
 
     function install(win) {
         var doc = win.document;
@@ -39,7 +41,28 @@
                 win.setTimeout(tick, DELAY);
                 return;
             }
+            keepPlace();
             win.location.reload();
+        }
+
+        // A reload must keep the place (qa-31-s8-code M1): scroll-restore set this history entry's
+        // scrollRestoration to "manual" after the save that led here, and a reload stays on the
+        // entry, so the browser alone would show the top. Hand the position back to the browser
+        // ("auto": it restores it, also over a #fragment) and leave scroll-restore's own record
+        // (same key and shape), which the reloaded page restores as after a save.
+        function keepPlace() {
+            try {
+                if (win.history && "scrollRestoration" in win.history) {
+                    win.history.scrollRestoration = "auto";
+                }
+            } catch (e) {}
+            try {
+                win.sessionStorage.setItem(SCROLL_KEY, JSON.stringify({
+                    path: win.location.pathname,
+                    y: win.scrollY,
+                    t: Date.now()
+                }));
+            } catch (e) {}
         }
         win.setTimeout(tick, DELAY);
     }

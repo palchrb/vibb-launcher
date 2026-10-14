@@ -350,6 +350,36 @@ async fn bad_uploads_change_nothing() {
     let res = upload(&app, &cookie, 9999, stranger, &png).await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
     assert_eq!(photo_hash(&app, stranger).await, None);
+
+    // Removing the photo of another phone's contact leaves it, and says nothing was saved
+    // (qa-31-s8-code L3, N3); an unknown phone is a 404.
+    upload(&app, &cookie, other, stranger, &png).await;
+    let hash = photo_hash(&app, stranger)
+        .await
+        .expect("the stranger's photo");
+    for (device, expected) in [(id, StatusCode::SEE_OTHER), (9999, StatusCode::NOT_FOUND)] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{device}/contacts/{stranger}/photo/remove"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        if expected == StatusCode::NOT_FOUND {
+            assert_eq!(res.status, expected);
+        } else {
+            assert_redirect(
+                &res,
+                &format!("/devices/{id}/calls?notice=contact_gone"),
+                Some("contacts"),
+            );
+        }
+        assert_eq!(
+            photo_hash(&app, stranger).await.as_deref(),
+            Some(hash.as_str())
+        );
+    }
 }
 
 #[tokio::test]

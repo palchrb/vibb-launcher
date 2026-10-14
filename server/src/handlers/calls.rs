@@ -100,7 +100,9 @@ fn initial_of(name: &str) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
-/// A contact row's value: which way calls go, and the home-screen button.
+/// A contact row's value: which way calls go, and the home-screen button - only for a contact in
+/// the phone book, as the launcher shows it (`CallRules.kt`: `outbound && showOnHome`;
+/// qa-31-s8-code L2). The switch keeps its value for when the contact goes back in the book.
 fn contact_summary(inbound: bool, outbound: bool, home: bool) -> String {
     let calls = match (inbound, outbound) {
         (true, true) => "Both ways",
@@ -108,7 +110,7 @@ fn contact_summary(inbound: bool, outbound: bool, home: bool) -> String {
         (false, true) => "Calls out only",
         (false, false) => "No calls",
     };
-    if home {
+    if home && outbound {
         format!("{calls} · Home")
     } else {
         calls.to_string()
@@ -224,7 +226,6 @@ async fn load_page(
         sqlx::query_scalar("SELECT default_country_code FROM call_settings WHERE id = 1")
             .fetch_one(&state.db)
             .await?;
-    let mut contacts_notice = shown.notice;
     let refused = shown.contact.as_ref().map(|r| r.id);
     let contacts: Vec<ContactView> = device_contacts(state, id)
         .await?
@@ -272,10 +273,6 @@ async fn load_page(
             view
         })
         .collect();
-    // A refusal for a contact removed meanwhile (another tab): say it's gone.
-    if refused.is_some_and(|cid| !contacts.iter().any(|c| c.id == cid)) {
-        contacts_notice = contacts_notice.or(self::contacts_notice("contact_gone"));
-    }
     let report = call_report(state, &policy).await?;
     let (zone, now) = (Zone::load(&state.db).await, Utc::now());
     let (warnings, mut notes): (Vec<Note>, Vec<Note>) = report
@@ -310,7 +307,7 @@ async fn load_page(
         warnings,
         notes,
         auto_refresh,
-        contacts_notice,
+        contacts_notice: shown.notice,
         add_open,
         add_name,
         add_number,
@@ -468,11 +465,13 @@ impl Finding {
             Finding::Waiting { report } => (
                 match report {
                     Some(t) => format!(
-                        "Its last report ({}) is from before the change. This page reloads until \
-                         it's in.",
+                        "Its last report ({}) is from before the change. Reload the page in a \
+                         minute.",
                         stamp(zone, *t, now)
                     ),
-                    None => "Its last report is from before the change.".to_string(),
+                    None => "Its last report is from before the change. Reload the page in a \
+                             minute."
+                        .to_string(),
                 },
                 None,
             ),
@@ -1121,6 +1120,14 @@ pub async fn update_contact(
         None | Some("") => None,
         Some(mxid) if valid_matrix_id(mxid) => Some(mxid),
         Some(_) => {
+            // A contact removed meanwhile (another tab) has no row to open: back to the list,
+            // saying nothing was saved (qa-31-s8-code N2).
+            match contact_on_device(&state, id, contact_id).await {
+                Ok(Some(true)) => {}
+                Ok(Some(false)) => return contacts_group(id, true),
+                Ok(None) => return not_found(),
+                Err(err) => return db_error(id, err),
+            }
             let shown = Shown {
                 contact: Some(ContactRefusal {
                     id: contact_id,
@@ -1334,7 +1341,8 @@ pub async fn remove_photo(
             };
             photo_saved(&state, id, contact_id, result).await
         }
-        Ok(Some(false)) => contacts_group(id, false),
+        // Nothing was removed: say so, as for a save (qa-31-s8-code N3).
+        Ok(Some(false)) => contacts_group(id, true),
         Ok(None) => not_found(),
         Err(err) => db_error(id, err),
     }
@@ -1430,6 +1438,9 @@ mod tests {
         assert_eq!(contact_summary(true, false, false), "Calls in only");
         assert_eq!(contact_summary(false, true, true), "Calls out only · Home");
         assert_eq!(contact_summary(false, false, false), "No calls");
+        // Home only for a contact in the phone book, as the launcher shows it (qa-31-s8-code L2).
+        assert_eq!(contact_summary(true, false, true), "Calls in only");
+        assert_eq!(contact_summary(false, false, true), "No calls");
     }
 
     /// Every finding's words (design 31 §2.2b, §4.2): the title is the Attention row's, the
@@ -1512,6 +1523,9 @@ mod tests {
             "{}",
             detail(&all[3])
         );
+        // True with and without JS, whatever the reload does (qa-31-s8-code L1).
+        assert!(detail(&all[3]).ends_with("Reload the page in a minute."));
+        assert!(!detail(&all[3]).contains("reloads"));
         assert!(detail(&all[4]).contains("at 10:58"));
         // The expert parts are behind the ⓘ.
         let fix = |f: &Finding| f.note(&zone, now).fix.unwrap_or_default();

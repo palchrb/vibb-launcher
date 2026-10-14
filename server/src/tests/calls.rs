@@ -237,6 +237,16 @@ async fn invalid_contact_input_is_400_with_no_row() {
     }
     assert!(contact_rows(&app).await.is_empty());
 
+    // What was typed goes back into the fields escaped (qa-31-s8-code L3).
+    let res = add(&app, &cookie, id, "\"><b>x", "\"><b>y").await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    let form = part(&html, "id=\"add-contact\"", "</details>");
+    assert!(form.contains("value=\"&#34;&#62;&#60;b&#62;x\""), "{form}");
+    assert!(form.contains("value=\"&#34;&#62;&#60;b&#62;y\""), "{form}");
+    assert!(!html.contains("\"><b>"), "{form}");
+    assert!(contact_rows(&app).await.is_empty());
+
     // Unknown device: nothing written either.
     let res = add(&app, &cookie, 9999, "Mamma", "91234567").await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
@@ -337,6 +347,21 @@ async fn contact_flags_are_scoped_to_the_device() {
     assert!(
         part(&html, "id=\"contacts\"", "</section>").contains("already removed"),
         "{html}"
+    );
+    // A refused Matrix ID for a contact not on the phone (removed in another tab) has no row to
+    // open: the same landing, not a page that opens at its top (qa-31-s8-code N2).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{a}/contacts/{contact}"),
+            Some(&cookie),
+            &[("message_address", "not-an-id")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{a}/calls?notice=contact_gone"),
+        Some("contacts"),
     );
     let res = app
         .request_form(
@@ -1214,9 +1239,7 @@ async fn the_calls_page_escapes_what_it_shows() {
     assert!(html.contains("&#60;b&#62;Mor&#60;/b&#62;"), "{html}");
     assert!(!html.contains("<script>x") && !html.contains("<img src=x"));
     // The row's value: which way calls go.
-    assert!(
-        part(&html, &format!("id=\"contact-{c}\""), "</summary>").contains("Calls in only · Home")
-    );
+    assert!(part(&html, &format!("id=\"contact-{c}\""), "</summary>").contains(">Calls in only<"));
 }
 
 /// A read the page needs fails as a 500, never as an empty list (its saves would read as off).
