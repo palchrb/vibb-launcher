@@ -1,6 +1,6 @@
 # 34 - A quiet polish of the launcher and the music app
 
-Status: proposal (2026-10-14), revised with the user's answers the same day (§6), not built. Visual only: no behaviour, rule, gesture or policy change except where a
+Status: proposal (2026-10-14), revised with the user's answers (§6) and the design QA (§7), not built. Visual only: no behaviour, rule, gesture or policy change except where a
 proposal says so (flags in §3). Mockups: `docs/design/34-mockups/` (`NN-<screen>-before.png` is the emulator,
 `NN-<screen>-after.png` the proposal, both 480×854 = 320×569 dp at 1.5×, the Jelly Star).
 
@@ -18,7 +18,7 @@ is 480×854 at 240 dpi = 320×569 dp (what `PinLockLayoutTest`, `FitTest` and `K
 the call screen's Hang up is off the bottom of the screen, the incoming call's buttons are cut in half, the keypad is
 cramped and Home's labels ellipsize ("Telefonb…", "Innstillin…"). At `adb shell wm density 240` all of that fits. All
 "before" PNGs are at 240. Step 0 (§5) puts `wm density 240` into `docs/testing/emulator.md`. The 240×427 dp results
-still matter as a stand-in for a large font scale at 320 dp - see P4 and P7.
+still matter as a stand-in for a large font scale - P4, P7 and P10 are checked up to font scale 2.0.
 
 | Screen | Good | Off |
 |---|---|---|
@@ -43,8 +43,8 @@ still matter as a stand-in for a large font scale at 320 dp - see P4 and P7.
    confetti, bouncing or looping animation. Unread badges stay - a plain number in a small muted terracotta pill (`#B4532C`, white 5.0:1; today's `#D9480F` is
    4.3:1), never animated, never pulsing.
 2. **People and apps read differently.** Contacts are soft, light discs with a dark initial (or their photo); apps
-   are mid-dark tone discs with a white glyph. One icon style everywhere the launcher draws an app.
-3. **Readable on a 3" screen, in sun and at night.** Body text >= 4.5:1, glyphs on tiles >= 4.5:1 (the tones below
+   are mid-dark tone discs with a white glyph, unless the parent chose the app's own logo (P1).
+3. **Readable on a 3" screen, in sun and at night.** Body text >= 4.5:1, glyphs on tiles >= 4.5:1 (the six tones
    reach 5.3:1 with white), a tile against the ground >= 3:1. No white surfaces at night (no glare). Text scale is
    honoured - labels may wrap, never shrink below the user's size.
 4. **Touch targets >= 48 dp**, fixed sizes for round controls (no shrinking buttons).
@@ -55,253 +55,306 @@ still matter as a stand-in for a large font scale at 320 dp - see P4 and P7.
 
 ## 3. Proposals (each small, separately shippable)
 
-Flags: **[G]** touches a gesture, **[L]** touches the lock screens, **[C]** touches the policy contract or a shared
-contract file, **[S]** needs the server. None touches a gesture.
+Flags: **[L]** touches the lock screens, **[C]** a policy contract or a shared contract file, **[S]** needs the server
+(server and launcher in one commit wherever both are named). No proposal touches a gesture (P2's press feedback is
+built so it can't - see there).
 
-**P1 - Calm icon tones (fixes the mustard).** *Why:* the yellow-brown tiles and the random hue spread. *What:* seven
-tones, mid-dark and muted: slate `#606B80`, blue `#496C9C`, teal `#347470`, plum `#805B9A`, rose `#A45166`,
-amber `#866237`, indigo `#6065A9` (white >= 5.3:1, ground >= 3.5:1; no green or red - those mean call and
-hang-up/emergency, as in design 14). A new pure `iconTone(swatches, packageName)` (`ui/home/IconTones.kt`, tested)
-replaces `tileColor(seedColour(..))` in `KidAvatars.renderAppIcon`: the palette's swatches are scored; a single
-dominant hue (Gmail red, Maps…) maps to the nearest tone by hue; a multi-hue icon (Google's four colours: Chrome,
-Drive, Photos, Calendar) or a grey one gets a tone chosen by a stable hash of the package, so it never changes and
-never lands on mustard. The parent's own icon colours (design 14, `auto`) use the same function. The cache key gains
-a version (`|t1`). *Stays:* the monochrome glyph in white, design 14's glyph icons, the 60 dp size, badges. *Risk:*
-low; the palette pass already runs off the main thread in `refreshApps`.
-- **The app's own logo stays a choice, and really is the original [C][S].** Today design 14's "Use the app's own"
-  keeps an empty row only while a catalog default exists, and `app_display`'s `entries` drop such rows - the phone
-  never learns the choice, and draws the white monochrome glyph on a tint. After P1 the PWA choice is stored as the
-  icon key **`own`** (also without a catalog default) and sent as `{"package_name": ..., "label": null, "icon": "own",
-  "color": "auto"}`. The launcher (`appDisplayMap`, `KidAvatars.renderAppIcon`) then draws, whatever the tones say:
-  an adaptive icon's **background and foreground layers** in their own colours, 1.5× and clipped to the circle (the
-  monochrome layer is never used, no tone, no tint, no desaturation); a legacy bitmap icon inset 1/8 on a light
-  neutral disc (`kid_icon_fallback` `#F1F3F5`). P2 adds only the drop shadow, not the top light. The colour key is
-  ignored for `own`. Apps without a monochrome layer (Camera, Clock, YouTube on the emulator) are drawn the same way
-  by default - there is no glyph to tone. An older launcher reads `own` as an unknown icon and drops only that field
-  (design 14 QA #1), i.e. today's look. Server: `icon_known` accepts `own`, `entries` keeps rows with it, the form's
-  "Use the app's own" button stores it, the preview tile says "Its own logo"; `app_icons.json` is unchanged (`own`
-  is no glyph). Tests: server validation + policy shape, launcher `PolicyResponseCompatTest` (`"icon":"own"`) and
-  `appDisplayMap`. Mockup 01: Chrome set to its own logo.
-- **P1b (optional, [C])**: map design 14's six parent colours (used only with a parent's glyph, never with `own`, so
-  the own-logo path is untouched) onto these tones - `server/testdata/app_icons.json` and
-  the launcher copy change their `tile` hexes in one commit (server contrast test, launcher `tileColor` test, the
-  PWA preview).
+**P1 - Calm icon tones and three icon states [C][S].** *Why:* the mustard tiles, the random hue spread, and the
+parent's wish to keep an app's real logo. *Tones:* six, mid-dark and muted - slate `#606B80`, blue `#496C9C`, teal
+`#347470`, plum `#805B9A`, rose `#A45166`, indigo `#6065A9` (white >= 5.3:1, ground >= 3.5:1; no amber - it read as
+brown next to the old mustard; no green or red - those mean call and hang-up/emergency). A new pure
+`ui/home/IconTones.kt` `iconTone(swatches, packageName)` replaces `tileColor(seedColour(..))` in
+`KidAvatars.renderAppIcon`: a single dominant hue maps to the nearest tone by hue; a multi-hue icon (Google's four
+colours) or a grey one gets a tone by a stable hash of the package. The output is always one of the six.
 
-**P2 - Gentle depth and press feedback on app tiles.** *Why:* "flat circles". *What:* the rendered bitmap gains a soft
-shadow (y 2 dp, blur 6 dp, black 45 %) and a faint top light (white 10 % → 0 over the upper half, a 1 px inner
-highlight at 14 %) - drawn once into the cached bitmap in `KidAvatars` (the tile frame grows by the shadow's 4 dp),
-so no elevation or extra views. Pressing: the icon scales to 0.94 and darkens 10 % in 90 ms, back in 140 ms
-(`HomeGridAdapter`, a touch listener on `tile_icon`, skipped when animators are off); the rectangular cell ripple
-(`selectableItemBackground` in `item_kid_tile.xml`) becomes a circular ripple on the icon only. Contacts get the same
-shadow; an `own` icon only the shadow. The unread badge gets the quieter `#B4532C` (`kid_badge`, §2). *Stays:* tap/long-press behaviour, the long-press menu. *Risk:* bitmap size +15 % in the 8 MB LRU.
+*The three states* (the user confirmed this model):
 
-**P3 - Soft contact avatars, a night contact sheet.** *Why:* the brightest colours on Home are people's initials; the
-white sheet glares at night. *What:* `AVATAR_PALETTE` (`HomeModel.kt`) becomes six soft tones with a dark ink
-(`#E8B49A` peach, `#9FC3E3` sky, `#E3CF9A` sand, `#A9CDB0` sage, `#C9B3DE` lilac, `#E6AFB4` rose; ink `#1B1B28`,
->= 8.9:1), photos unchanged. `sheet_contact.xml`/`bg_kid_sheet.xml`: the sheet on `kid_ground_lift` with a 26 dp top
-radius and a 22 % handle; Ring stays call green; Melding becomes a tonal button (white 8 %, peach glyph); the hint at
-`kid_core_dim`. `KidPaletteTest` gains the avatar pairs. *Stays:* the sheet's buttons, order, missed-call text,
-`ContactSheet` logic. The call screens and the phone book follow automatically.
+| State | Stored (`device_app_display` / catalog `display_*`) | Policy `launcher_ui.app_display` entry | Phone draws | PWA control |
+|---|---|---|---|---|
+| **Vibb style** (default) | no row, or `icon` NULL (a label alone is fine) | absent, or `icon: null` (+ label) | the monochrome glyph in white on its tone; an app without a monochrome layer: its own icon (nothing to tone) | Icon radio "Vibb style" (`value=""`, today's "Its own") |
+| **The app's own logo** | `icon = 'own'`, colour ignored (stored `auto`) | `icon: "own"`, `color: "auto"` (+ label if any) | the adaptive icon's background + foreground layers in their original colours, 1.5×, clipped to the circle - never the monochrome layer, no tone, no tint; a legacy bitmap inset 1/8 on `kid_icon_fallback` `#F1F3F5` | Icon radio "The app's own logo" (`value="own"`); the colour fieldset disabled |
+| **A chosen glyph** | `icon` = one of the 16 keys, `color` a key or `auto` | `icon: "<key>"`, `color` | the white glyph at 55 % on the colour's tile (`auto` = the app's tone) | the 16 glyph radios + colours, as design 14 |
 
-**P4 - Home's edges and labels.** *Why:* the hard cut; ellipsized labels at large text. The top stays empty (the
-user's answer; no date line, no clock). *What:* (a) the grid and the contacts row fade at their scrolling edges
-(`requiresFadingEdge`, 12 dp top / 32 dp bottom) instead of cutting icons in half. (b) Tile labels may take two lines
-when the font scale makes one ellipsize (`maxLines = 2` only above `fontScale` 1.0, `gridMetrics` adds the row
-height) - never auto-shrunk below the user's size. (c) The contact row's last call badge is no longer clipped
-(`clipChildren=false` on the row, 4 dp end padding). *Files:* `activity_home.xml`, `HomeModel.gridMetrics`/
-`contactRow` (`HomeModelTest`), `item_kid_tile.xml`. *Stays:* the empty top, swipe-up to the drawer at the grid's
-top/bottom, swipe-left to Kid Settings, `onResume`'s order.
+Existing rows keep their meaning: a stored NULL icon is "Vibb style", nothing is migrated (no CHECK on the column, so
+no migration either). The button "Use the app's own" (`action=own`, `DisplayValues::own()`) becomes **"Reset"**: it
+deletes the phone's row (device form) or clears the catalog default (catalog form). A catalog default may be `own`
+(then every phone with the app shows the logo unless its own row says otherwise).
 
-**P5 - The drawer in Vibb night, without ourselves.** *Why:* the one screen still in µLauncher grey with a bright
-blue accent, and it lists the launcher itself. *What:* `finnmglasTheme_background_color` → `kid_ground`, the accent →
-`kid_accent` (also calms the parent Settings' switches and dialog buttons, which share the theme); the list as one
-`kid_music_tile`-coloured card with 50 dp rows, 16 sp/700, hairline separators; optionally (§6, open question 1) a 30 dp tone icon per
-row from the same render cache as Home. Our own package is filtered out of the drawer's list. *Licence:* `ui/list/` and
-`apps/` are the MIT directories - the colour change is in `res/`; the own-package filter goes into the GPL caller that
-builds the drawer's list, or as a one-line MIT change in `AppFilter` (no new GPL code in those directories). *Stays:*
-how the drawer opens and closes, its PIN-gated gear, the list's content and sort.
+Server (`app_display.rs`, `handlers/devices.rs`, `handlers/tracked_apps.rs`, `partials/app_display_form.html`,
+`static/app-display.js`): a constant `OWN = "own"`; `validate()` and `sanitized()` accept it beside `icon_known` (it is
+**not** added to `ICONS`/`app_icons.json`, so the glyph and licence tests stand); `DisplayValues::is_own()` is renamed
+`is_empty()` (label and icon `None` - "nothing to send") and `keep_row` decides on that; `entries` keeps
+`{label: null, icon: "own"}` with or without a catalog default; `policy_app_display` sends `color: "auto"` for `own`;
+`describe()` says "with the app's own logo"; the preview shows "Its own logo" on `OWN_PREVIEW`. Launcher
+(`appdisplay/AppDisplay.kt`, `KidAvatars.kt`): `appDisplayMap` keeps `own` before the `AppGlyphs.ICONS` filter;
+`renderAppIcon` checks `own` first, before the glyph lookup and the monochrome branch; `appIconKey` gets `g=own`.
+An older launcher drops `own` as an unknown icon (design 14 QA #1) - with no label the entry is gone and it draws today's
+look. Tests: server `validate`/`sanitized` accept `own`, `entries` keeps it without a default, the wire colour is
+`auto`, `describe()`; launcher `appDisplayMap` keeps `own` with and without a label, `appIconKey` contains `g=own`,
+an older-launcher shape (`ICONS` without `own`) drops it, `IconTonesTest` (every output one of the six, Google's four
+colours never between 30° and 60°, stable per package).
 
-**P6 - The time-rule screen as a calm card [L].** *Why:* three alarm-coloured buttons for a rule that is meant to
-calm down the evening. *What:* `activity_lock.xml` / `LockActivity`: the clock in the phone's chosen format (P12; today `H:mm` here,
-`HH:mm` on the lock; 52 sp/700), a small icon in a peach-tinted disc (hourglass for screen time, moon for
-bedtime, book for school, a dot for custom), the title, one sentence ("Du har brukt dagens 1 t 30 min." replaces
-"6 av 1 minutter brukt i dag"; the rule texts are unchanged), then the usable apps (under a budget lock
-the music app is one of them) and the phone book as rows in one card (tone icon, name, chevron), and at the bottom "Nødsamtale" in the
-lock's emergency red as a 48 dp text button and "Skriv inn opplåsingskode" in core-dim - the glance page's pattern.
-*Stays:* every target and its order of preference, the emergency flow (`EmergencyDialer` fallback), the unlock-code
-dialog, Back off, the time-rule logic. Emergency as tonal/red text: approved (§6).
+*Parent colours and the fixed tiles (QA M3; part of this step):* design 14's six colour keys stay (stored rows stay
+valid), their tiles become tones - peach → rose `#A45166`, plum → plum `#805B9A`, sky → blue `#496C9C`, sunset → indigo
+`#6065A9`, night → teal `#347470`, grey → slate `#606B80`, with labels to match in the PWA. `server/testdata/
+app_icons.json` and the launcher's test copy change in one commit, `scripts/material-symbols.sh` regenerates
+`app_icons.rs` and `AppGlyphs.kt`; `AppGlyphsTest`'s `tileColor(seed) == tile` becomes "tile is one of the tones";
+the server's `tiles_carry_white_and_are_neither_green_nor_red` floor goes to 4.5. The Phone book tile
+(`kid_phone_book` `#37B24D`, white 2.75:1) becomes a muted call green `#3A7552` (white 5.5:1, ground 3.6:1), the Settings
+tile slate, and the 112 avatar (`EMERGENCY_AVATAR` `#E03131`) the tonal pair `#3A1E24`/`#FF8A8A` (6.6:1).
 
-**P7 - The keypad's emergency button and the lock's weights [L].** *What:* `activity_pin_lock.xml`: the emergency
-pill becomes tonal (`#3A1E24` with `#FF8A8A` text and phone glyph, 6.6:1; approved); keys get a 1 px top highlight;
-the glance clock goes 800 → 700. **Spacing rule** (no overlap at any size): the page is one vertical column with
-nothing overlaid - header, dots, the keypad, **>= 16 dp gap**, the emergency button (min 48 dp, wraps its text, so it
-grows with the font scale), "Foreldrekode" (min 44 dp), the bottom inset. Only the keypad is elastic:
-`PinKeypadLayout` sizes the keys from the keypad's *measured* height after the other parts have taken theirs -
-`min(72, (h - 3 × row gap) / 4)` dp, floor 32 - so a taller button at a large font scale shrinks the keys, never
-covers them. That is today's rule (`finalKeySizePx`); P7 only adds the 16 dp gap and the button's wrap height to the
-budget `PinLockLayoutTest` reads from the XML, which keeps its guarantee (keys >= 52 dp at 320×569 dp, gesture and
-3-button navigation) and gains a font-scale-1.3 case. Mockups 05 and 05b (scale 1.3); the first draft's overlap was
-the mockup's own absolute positioning. *Stays:* FLAG_SECURE, no transitions (25b), "Foreldrekode", the emergency flow.
+**P2 - Gentle depth and press feedback.** *Depth on the view, not in the bitmap* (QA M2): `tile_icon` and the contact
+avatar get `outlineProvider` OVAL, `elevation` 2 dp and a black `outlineSpotShadowColor`; the bitmap cache, its
+sizes and the glance/time-rule renders are unchanged. No top light (it cost the glyph contrast). *Press:* the click
+stays on the cell (>= 48 dp target); the ripple is the cell's background with an oval mask the icon's size; the icon
+scales to 0.94 and darkens 10 % in 90 ms, back in 140 ms - from the cell's `setOnTouchListener` that **always returns
+false**, never consumes a DOWN, and restores on `UP`/`CANCEL`, so tap, long-press, the swipe-up and the swipe-left
+see the same events as today; no animation when `ValueAnimator.areAnimatorsEnabled()` is false (Robolectric test for
+both). *Badges:* kept, `kid_badge` `#B4532C` (white 5.0:1), never animated. *Risk:* low.
 
-**P8 - Softer built-in wallpapers [S]** (approved). *What:* a server migration updates three built-in rows' colours and labels,
-keeping their ids and `builtin_key`s: green → "Fjord" `#2A4A4F→#101820`, sky → "Kveldshimmel" `#34406A→#14141F`,
-sunset → "Skumring" `#5A3A4A→#1A1420` (gradients at 160° as today); the launcher's `wallpaper_green/_sky/_sunset`
-strings (nb/en) follow in the same commit. A phone that has one picked gets the softened version at its next sync
-(`WallpaperInk` recomputes; all three take white ink). *Stays:* the policy shape (`launcher_ui.wallpapers`), photos,
-Natt as the default. Not [C]: no key or field changes.
+**P3 - Soft contact avatars, a night contact sheet.** `AVATAR_PALETTE` (`HomeModel.kt`): `#E8B49A`, `#9FC3E3`,
+`#E3CF9A`, `#A9CDB0`, `#C9B3DE`, `#E6AFB4` with ink `#1B1B28` (>= 8.9:1); photos unchanged. The sheet
+(`sheet_contact.xml`, `bg_kid_sheet.xml`) on `kid_ground_lift` with a 26 dp top radius. Colours it uses, with where
+else they are used (QA M4):
 
-**P9 - Kid Settings' sound choice.** *What:* Lyd/Lydløs as one segmented control (a white-8 % track, the chosen half
-peach with night text, both halves the same height; `activity_kid_settings.xml`, `QuickControls` rendering only).
-*Stays:* `SoundMode` rules, the rows, the picker.
+| Resource | Today | Night value | Also used by |
+|---|---|---|---|
+| `kid_sheet` | `#FFFFFF` (sheet, badge ring `bg_kid_badge_sheet`) | `kid_ground_lift` `#1C1A2A` | - |
+| `kid_sheet_ink` | `#1B1B1F` (name) | the sheet's name re-pointed to `kid_core` | Home's window banner (`activity_home.xml`, `bg_home_window_lock_again.xml`) - keeps `kid_sheet_ink` |
+| `kid_sheet_muted` | `#495057` (hint, Lukk) | `kid_core_dim` | - |
+| `kid_sheet_handle` | `#CED4DA` | white 22 % | - |
+| `kid_missed_text` | `#C92A2A` | `#FF8A8A` (7.5:1 on the lift) | - |
+| `kid_message_button` | `#1864AB` (Melding) | the sheet's Melding re-pointed to a tonal white 8 % with a peach glyph | the time-rule screen's app buttons (`item_lock_app.xml`) - replaced by P6 anyway |
 
-**P10 - The music app's empty states and its fit.** *What:* (a) `LibraryScreen` without entries: a 104 dp night disc
-with the headphones glyph in peach, "Her kommer musikken din" / "Your music will appear here" and one line "Mamma eller
-pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv." (nb/en; the parent wording follows the
-launcher's "mamma og pappa" captions). Nytt ("Ingenting nytt akkurat nå") and search ("Fant ingenting") get the same
-disc with the bell / search glyph, no extra sentence. (b) **Fit**: the library's carousel cover is sized from the room
-left after the category tiles and the now-playing bar (`Fit.kt`: a `libraryCover(heightDp, hasTiles, hasBar)` between
-the 120 dp floor and today's 180 dp; `FitTest` at 569/640/732 dp tall), so the tiles are never covered. (c) Covers,
-category tiles and the now-playing bar get P2's soft shadow. *Stays:* mockup v12 as the reference (this is a delta,
-recorded in design 20's mockup note), every behaviour (vibb), the player.
+Ring stays call green. Every pair goes into `KidPaletteTest`. *Stays:* the sheet's buttons, order and `ContactSheet`.
 
-**P11 - The name "Vibb One".** *What:* the launcher's label becomes **"Vibb One"** (debug **"Vibb One (debug)"**);
-packages, the Kotlin namespace and the release asset `kids-launcher-mdm.apk` (the provisioning QR's URL) stay. Every
-place the old name shows:
-- Android, from `app_name` (`res/values/donottranslate.xml`, `src/debug/res/values/donottranslate.xml`): Settings ›
-  Apps, the notification-permission dialog and every other permission dialog, the Home-app picker, notification
-  headers (ongoing call, missed calls, installs, install mode), Recents' label.
-- `notification_listener_title` "Kids Device MDM" (`values/strings.xml`, `values-nb/strings.xml`): the title of the
-  anchor service's ongoing notification (`CommandListenerService`) → "Vibb One".
-- The drawer: P5 takes the launcher out of it.
-- The PWA/server, where it means the launcher app: About This Phone's software row "Vibb" (`handlers/device_pages.rs`)
-  → "Vibb One"; "Vibb's Settings" → "Vibb One's Settings" in `templates/enroll_code.html`, `provision_qr.html`,
-  `device_detail.html`, `device_advanced.html`, `device_lock.html` and the event texts in `parent_pin.rs` (their
-  tests follow). Not changed: the catalog row's name (the parent's data), and "Vibb" in `music_import.rs` ("Import
-  from Vibb", the vibb music project - not the launcher).
-- Docs: `launcher/README.md` and `launcher/CLAUDE.md`'s titles, the root `CLAUDE.md` layout line; old design docs stay
-  as history.
+**P4 - Home's edges and labels.** The top stays empty (the user's answer). (a) The grid and the contacts row fade at
+their scrolling edges: a small GPL `ui/home/FadingRecyclerView` overrides `getTopFadingEdgeStrength`/
+`getBottomFadingEdgeStrength` so one `fadingEdgeLength` (32 dp) gives 12 dp at the top and 32 dp at the bottom (QA L6;
+alpha fades, so it works over the system wallpaper). (b) Labels: `maxLines = 2` at every scale (rows wrap, no row
+height to compute). (c) The last call badge isn't clipped (`clipChildren=false`, 4 dp end padding). *Stays:* the
+swipe-up to the drawer, the swipe-left to Kid Settings, `onResume`'s order.
 
-**P12 - A 12/24-hour clock per phone [C][S].** *Why:* the parent's choice, and one format on every clock (fixes
-`6:15` vs `06:15`). *Options:* "Follow the phone" (default), "24 h", "12 h".
-- *Android:* the status bar reads `Settings.System.TIME_12_24` (unset = the locale's default; nb = 24 h). The device
-  owner can't set it through the DPM: `setSystemSetting` allows only screen brightness (+ mode) and the screen-off
-  timeout; `setGlobalSetting`/`setSecureSetting` have their own allowlists, and it is a System setting. An app may
-  write it with `WRITE_SETTINGS` (it is one of `Settings.System`'s public keys), but that is an app-op ("Modify system
-  settings"), not a runtime permission - `setPermissionGrantState` can't grant it. So it needs a one-time
-  `adb shell appops set me.vibb.launcher WRITE_SETTINGS allow` at provisioning (next to the role grants, before adb is
-  blocked), or the parent switching it on in Android's Settings. Whether SettingsProvider refuses the write while
-  `DISALLOW_CONFIG_DATE_TIME` is set (it is, while managed) is a device check. The kid can't change the system value
-  either way (the same restriction locks Date & time).
-- *Launcher clocks* always follow the setting: pure `ui/ClockFormat.kt` (`clockIs24(setting, systemIs24)`,
-  `timePattern` "HH:mm"/"h:mm"; `ClockFormatTest`). Each `TextClock` gets the chosen pattern in **both**
-  `format12Hour` and `format24Hour` (else it picks by the system). Places: the glance clock and its row times
-  (`view_lock_glance.xml`, `GlancePanel`), the time-rule clock (`activity_lock.xml`) and its rule-end texts
-  (`TimeRules.kt`), the missed-call text (`MissedCallText.kt`), Home's window banner (`HomeActivity`), the relock
-  notification (`WindowRelock`). The call screen and Home's call card show only a duration (mm:ss); the music app
-  shows no clock times (positions, durations, "Sov · 15 min") - nothing to do there (if it ever does, the setting goes
-  into its managed config). A stored new policy re-renders the lock screens.
-- *Status bar:* when the app-op is granted, `apply()` writes `TIME_12_24` = "24"/"12" when it differs; "Follow the
-  phone" puts back the value remembered before the first write (the `ScreenTimeout` pattern). Reported as
-  `clock_status_bar`: `follows`/`no_access`/`refused`; the PWA then says "The status bar keeps the phone's own
-  setting" under the control.
-- *Contract (both directories, one commit):* `launcher_ui.clock_format` = `"system"|"24"|"12"`, always sent. Server:
-  `migrations/0074_clock_format.sql` - `device_policy.clock_format TEXT NOT NULL DEFAULT 'system' CHECK (clock_format
-  IN ('system','24','12'))`; a "Clock" select in the Home Screen page's auto-saving launcher form, next to "Phone
-  language" and "Apps per row" (that page holds the launcher's display settings, and the setting reaches beyond the
-  lock; the Lock Screen page is about PINs and the lock's content); 400 on other values; `policy_json_keys_snapshot`'s
-  `ui_keys` gains `clock_format`. Launcher: `LauncherUi.clockFormat: String? = null` read leniently (missing, null or
-  unknown = system: an older server and a newer value never fail the decode - `PolicyResponseCompatTest`).
+**P5 - The drawer in Vibb night, text only, without ourselves.** `finnmglasTheme_background_color` → `kid_ground`,
+the accent → `kid_accent` (`res/values/colors.xml` - not an MIT directory; the parent Settings share it: peach on
+`#252827` is 7.5:1); the list stays text only (the user's default; no per-row icons, so no GPL rendering in the MIT
+adapter and no second cache). Our own package leaves the list by one condition in `AppFilter.kidListable`
+(`apps/AppFilter.kt`, MIT, already palchrb-modified - the precedent), MIT-licensed like the file, with a test on
+`kidListable` (QA L2).
 
-**P13 - The phone's time zone in the status report.** *Why:* design 31 step 9 - the PWA shows a lock's end ("Locked
-until 07:00") only when the phone says its zone and it equals Phone Setup's. *What:* launcher only -
-`TimeState.zone: String? = null` in `server/dto/StatusReportRequest.kt`, set by `TimeRulesRuntime.report` to
-`ZoneId.systemDefault().id`; a test that the report's `time_state.zone` is the zone id. No capability, no policy
-change. Server: nothing to build (`time_state.rs`'s `TimeReport::parse` reads `zone`, `provable_end` checks it); one
-end-to-end test with a launcher-shaped report (snake_case, a rule active, `zone` = Phone Setup's → the end shows;
-another zone → no end). `server/testdata/` pins no status shape (only `music_state.json`, music's part). Both
-directories in one commit.
+**P6 - The time-rule screen as a calm card [L].** `activity_lock.xml` / `LockActivity`: the clock through P12, 52 sp/700;
+a small icon in a peach-tinted disc - hourglass (screen time), moon (bedtime), book (school), a dot (custom); the
+hourglass and moon are new converted Material Symbols (`hourglass_bottom`, `bedtime`; `scripts/material-symbols.sh`,
+"Converted from" lines, Apache-2.0 already shipped) as `lock_glyph_*`. The sentence for screen time: "Du har brukt
+dagens {allowance}." / "You've used today's {allowance}." where allowance = today's budget + today's extra minutes
+(`budgetMinutes` in `TimeState` already includes them), formatted by a pure `durationText(minutes)` ("1 t 30 min",
+"45 min", "2 t" / "1 h 30 min"...; nb/en, `TranslationsTest`) - the same sentence whatever the overrun (today's "6 av 1").
+Then one card of rows - the usable apps (the music app among them under a budget lock) and the phone book - each with a
+tone icon, name, chevron and a content description ("Telefonbok, knapp"); at the bottom "Nødsamtale" as a >= 48 dp
+red text button with its label, and "Skriv inn opplåsingskode" in core-dim. A pure `timeLockRows(...)` builds the rows
+(`LockActivityModelTest`). *Stays:* every target, the emergency flow (`EmergencyDialer` fallback), the code dialog,
+Back off, the rules.
 
-**Motion, across all of the above.** No new screen transitions: the system's stay (predictive back). New motion is only
-the press feedback (P2) and the existing sheet slide (`kid_sheet_in/out`, kept at <= 220 ms decelerate, none when
-animators are off). The lock keeps no transitions; the music carousel keeps its spring (already off with "Remove
-animations").
+**P7 - The keypad's emergency button and the lock's weights [L].** The emergency pill becomes tonal (`#3A1E24` with
+`#FF8A8A`, 6.6:1; the pill is only 1.3:1 against the ground - acceptable, its text and glyph identify it); keys get a
+1 px top highlight; the glance clock 800 → 700. **Spacing rule:** one column, nothing overlaid - header, dots,
+keypad, **>= 16 dp gap**, emergency button (min 48 dp, wraps, grows with the font scale), "Foreldrekode" (min 44 dp),
+the inset. Only the keys give way: `PinKeypadLayout` sizes them from the keypad's measured height, `min(72, (h - 3 ×
+gap) / 4)` dp, floor 32 (today's rule). `PinLockLayoutTest` (QA M6, N1): it models the button and the link as
+`max(minHeight, lines × sp × scale + padding)`; at scale 1.0 and 320×569 dp the keys stay >= 52 dp (the test's 56 dp
+floor drops to 52 only if the 16 dp gap needs it - the step records the measured value); at 1.3 >= 48 dp; at 2.0
+(Android 14's maximum) the keys may go to the 32 dp floor and below 48 dp touch size - accepted - but never overlap.
+Mockups 05 (1.0) and 05b (2.0: the keys give way).
+
+**P8 - Softer built-in wallpapers [S].** Migration `0076_softer_wallpapers.sql`, rows matched by `builtin_key` (never
+id): `green` → `kind = 'gradient'`, `["#2A4A4F","#101820"]`, label "Fjord" (QA M1: a `color` row with two colours
+fails `checked_colours()` and drops out of the policy); `sky` → `["#34406A","#14141F"]`, "Evening sky"; `sunset` →
+`["#5A3A4A","#1A1420"]`, "Dusk". The launcher's `wallpaper_green/_sky/_sunset`: nb "Fjord", "Kveldshimmel",
+"Skumring", en "Fjord", "Evening sky", "Dusk". Server test: every built-in row passes `to_policy()` after all
+migrations; `WallpaperInkTest` gets the new colours (all white ink, 9.6-10.1:1). A phone that picked one keeps it,
+softened. Not [C]: no key or field changes.
+
+**P9 - Kid Settings' sound choice.** One segmented control (white-8 % track, the chosen half peach with night text,
+both halves >= 48 dp) as two `RadioButton`s in a `RadioGroup`, so TalkBack reads "Lyd, valgt" (QA L7). *Stays:*
+`SoundMode`.
+
+**P10 - The music app's empty states and its fit.** (a) Empty library: a 104 dp night disc with the headphones glyph in
+peach (`contentDescription = null`, decorative), "Her kommer musikken din" / "Your music will appear here", "Mamma eller
+pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv."; Nytt and search empty get the disc with
+the bell/search glyph and today's text. (b) Fit (QA L1): a `BoxWithConstraints` around the carousel in the weighted
+area; the cover is `min(180, maxHeight - the measured title, hint and dots)`, floor 120, passed to `carouselSide`,
+`carouselPeek` and `coverDecodePx` (which read `CAROUSEL_COVER_DP` today); below the floor the screen scrolls rather
+than overlap. `FitTest` keeps the pure clamp. (c) Covers and the bar get P2's elevation. *Stays:* mockup v12 as the
+reference, every behaviour (vibb).
+
+**P11 - The name "Vibb One" [S].** Label "Vibb One", debug "Vibb One (debug)"; packages, the namespace, the admin
+component and the `kids-launcher-mdm.apk` asset (the QR's URL and checksum) stay - nothing in provisioning or updates
+reads the label, and the music app names the launcher by package (QA L3). Every place:
+- `app_name` (`res/values/donottranslate.xml`, `src/debug/...`): Settings › Apps, permission dialogs, the Home-app
+  picker, notification headers, Recents.
+- `notification_listener_title` "Kids Device MDM" (en, nb): the anchor's ongoing notification → "Vibb One".
+- `KidVpnService.setSession("Kid Phone Filter")`: Android's VPN settings and dialog → "Vibb One filter".
+- The PWA: About This Phone's row "Vibb" (`device_pages.rs`), "Vibb's Settings" (`device_pages.rs:574`,
+  `enroll_code.html`, `device_detail.html`, `device_advanced.html`, `device_lock.html`, `parent_pin.rs`'s event texts),
+  `provision_qr.html` ("installs Vibb", "make Vibb the device owner", "Vibb's Settings"), `device_detail.html` ("this
+  version of Vibb"), `tracked_apps.rs` ("Vibb didn't install that app") → "Vibb One"; tests follow. The step greps
+  `src/` and `templates/` again on the main it is built on (main has moved, `7936e6d7`).
+- The catalog row: migration `0077_launcher_row_name.sql` - `UPDATE tracked_apps SET name = 'Vibb One' WHERE
+  is_launcher = 1 AND name IN ('Vibb', 'Kids Launcher')`. There is no seed (the parent creates the row), so these two
+  are the "default" names (the mockups' and the old runbook's); any other name is the parent's and stays.
+- Not changed: "Vibb" in `music_import.rs` (the vibb music project). Docs: `launcher/README.md`, `launcher/CLAUDE.md`,
+  the root `CLAUDE.md`; old design docs stay.
+
+**P12 - One clock format on the whole phone, settable from the PWA [C][S].** The user's rule: the status bar and
+Vibb One always show the same format. So:
+- **Vibb One never has a format of its own.** Every clock it draws follows the phone's system format, exactly as the
+  status bar does. A pure `ui/ClockFormat.kt`: `systemIs24(context)` = `Settings.System.TIME_12_24` when it is "24"/"12",
+  else the default of the **system** locale (`Resources.getSystem().configuration.locales[0]` - not Vibb One's per-app
+  language, which can differ from the status bar's); `timePattern()` ("HH:mm"/"h:mm"), `formatTime(ms)`; TextClocks keep
+  `format12Hour="h:mm"`/`format24Hour="HH:mm"` and pick by the system (`ClockFormatTest`). This alone fixes `6:15` vs
+  `06:15`. Every formatter goes through it: the glance clock and row times (`GlancePanel`), the time-rule clock and rule
+  ends (`activity_lock.xml`, `TimeRules.kt`), the missed-call text (`MissedCallText.kt`), Home's window banner
+  (`HomeActivity:656`), the relock notification (`WindowRelock:458`), install mode's "until" (`PlayRuntime:244`), the
+  pause's "until" (`SettingsFragmentLauncher:285`). A source-scan test: only `ui/ClockFormat.kt` may call
+  `getTimeFormat`/`is24HourFormat`/`getTimeInstance` or spell a time pattern. Durations (call screen, Home's call card)
+  and the music app (no clock times) are not clocks.
+- **The PWA sets the phone's format.** Home Screen page, launcher form: "Clock: Follow the phone / 24 h / 12 h"
+  (default Follow; next to "Phone language" and "Apps per row", the launcher's display settings). On every `apply()`
+  (background, `AppEnforcer`'s lock) the launcher writes `Settings.System.TIME_12_24` = "24"/"12" when it differs; with
+  "Follow" it writes nothing, except clearing its own earlier value once (pref `clock_written`) so the phone goes back to
+  its locale's default. The status bar and Vibb One's clocks then change together (TextClocks and the status bar
+  listen to the setting; Vibb One re-renders on `ACTION_TIME_CHANGED`/the next resume).
+- **Android's limit:** the device owner can't write it (`setSystemSetting` allows only brightness and the screen-off
+  timeout); an app may with the **"Modify system settings"** app-op (`WRITE_SETTINGS`; `TIME_12_24` is a public
+  `Settings.System` key), which the device owner can't grant. A one-time grant: `adb shell appops set me.vibb.launcher
+  WRITE_SETTINGS allow` at provisioning, next to the role grants (the provisioning runbook in `04-hardening.md` and
+  `docs/testing/emulator.md` §4), or the parent during a pause: Android Settings › Apps › Special app access › Modify
+  system settings › Vibb One. **Device check:** whether SettingsProvider refuses the write while
+  `DISALLOW_CONFIG_DATE_TIME` (ours, set while managed) is on - the launcher sets no other restriction that touches it.
+  If it is refused, the write fails, the status says `false` and the PWA shows the warning; lifting the restriction
+  around the write is then a separate decision, not part of this step.
+- **Status:** `clock_format_applied`: `true` (the system value matches the choice), `false` (it should be applied but
+  can't: no app-op - `Settings.System.canWrite` - or the write was refused), `null` ("Follow the phone", or an older
+  launcher that doesn't send it). The PWA shows under the control, only when `false`: "The phone can't change its clock
+  format yet." with an ⓘ holding the adb command and the Settings path.
+- **Contract (both directories, one commit):** policy `launcher_ui.clock_format` = `"system"|"24"|"12"`, always sent;
+  status `clock_format_applied` (true/false/null). Server: `migrations/0075_clock_format.sql` (after design 26c's
+  `0074_music_spotify.sql`; sqlx applies them in order, so a server with 0075 carries main's 0074) -
+  `device_policy.clock_format TEXT NOT NULL DEFAULT 'system' CHECK (clock_format IN ('system','24','12'))`; the form (a
+  POST without `clock_format` - an old cached page - keeps the stored value; only a present unknown value is a 400;
+  test); the status field read from the stored report like the other optional fields, with the warning test;
+  `policy_json_keys_snapshot`'s `ui_keys` gains `clock_format`. Launcher: `LauncherUi.clockFormat: String? = null`, read
+  leniently (missing/null/unknown = system; `PolicyResponseCompatTest`); `StatusReportRequest.clockFormatApplied:
+  Boolean? = null` with a JSON test.
+
+**P13 - The phone's time zone in the status report [S].** Launcher: `TimeState.zone: String? = null`
+(`server/dto/StatusReportRequest.kt`), set by `TimeRulesRuntime.report` to `ZoneId.systemDefault().id`; the test
+asserts the **encoded JSON** has `"time_state":{..."zone":"Europe/Oslo"...}` (QA L8; `ServerJson` doesn't encode
+defaults, a set value is encoded). No capability, no policy change. Server: nothing to build (`time_state.rs`'s
+`TimeReport::parse` reads `zone`, `provable_end` shows the end only when it equals Phone Setup's); one end-to-end test
+with a launcher-shaped report (snake_case, a rule active: the zone equal → "Locked until 07:00", another → no end).
+`server/testdata/` pins no status shape. One commit.
+
+**Look and motion, everywhere.** The kid screens and the music app are always dark (night); there is no light mode to
+design (QA N3). No new screen transitions (the system's stay, with predictive back); new motion is only P2's press;
+the sheet slide stays <= 220 ms and off with "Remove animations"; the lock keeps none.
 
 ## 4. Mockups (`docs/design/34-mockups/`)
 
-| # | Screen | Proposals shown |
+| # | Screen | Shows |
 |---|---|---|
-| 01 | Home | P1 tones, P2 depth and the quiet badge, P3 avatars, P4 edge fade, the top empty; Chrome set to its own logo in the PWA (`own`), Kamera/Klokke/YouTube their own icons (no monochrome layer) - original colours, approximated |
-| 02 | Drawer | P5 (with the optional row icons) |
+| 01 | Home | P1 six tones (Chrome as "the app's own logo", Kamera/Klokke/YouTube without a monochrome layer), the muted Phone book green, P2 depth and the quiet badge, P3 avatars, P4 bottom fade; the top empty |
+| 02 | Drawer | P5, text only |
 | 03 | Contact sheet | P3 |
-| 04 | Time-rule screen (screen time) | P6 |
-| 05 | PIN keypad | P7, the spacing rule |
-| 05b | PIN keypad at font scale 1.3 | P7: the button grows, the keys give way |
-| 06 | Kid Settings | P8 wallpapers, P9 |
-| 07 | Music, empty | P10a |
-| 08 | Music, library | P10b-c (tiles above the bar) |
+| 04 | Time-rule screen | P6 |
+| 05 / 05b | PIN keypad at font scale 1.0 / 2.0 | P7's spacing rule; at 2.0 the keys give way |
+| 06 | Kid Settings | P8, P9 |
+| 07 / 08 | Music, empty / library | P10 |
 
-Sources in `34-mockups/src/` (HTML/CSS, Nunito from `launcher/app/src/main/res/font`, the glyphs generated from the
-launcher's vector drawables by `glyphs.py`; Material Symbols, Apache-2.0). Render:
-`NODE_PATH=<playwright>/node_modules node docs/design/34-mockups/src/render.js [chromium]`. Glyphs for Chrome and
-Drive are stand-ins (the real monochrome layers differ); the tones are exact.
+Sources in `34-mockups/src/` (HTML/CSS, Nunito from `launcher/app/src/main/res/font`, glyphs from the launcher's
+drawables by `glyphs.py`; Material Symbols, Apache-2.0). Render: `NODE_PATH=<playwright>/node_modules node
+docs/design/34-mockups/src/render.js [chromium]`. The Chrome/Drive glyphs and the own logos are approximations.
 
-## 5. Build steps (in order; each its own commit and emulator check at `wm density 240`, nb and en)
+## 5. Build steps (in order; one commit each; emulator at `wm density 240`, nb and en)
 
-0. `docs/testing/emulator.md`: `adb shell wm density 240` for Jelly Star screenshots (the AVD default is 240×427 dp).
-   Note there too: an app installed with `adb install` (the debug music app included) is held by the launcher's relock
-   block `outside_play` - hidden and suspended even when allowlisted - until "Allow these apps" on the phone's summary
-   in the PWA; that is expected, not a bug.
-1. **P1** [C][S]: `IconTones.kt` + `IconTonesTest` (each tone white >= 4.5:1 and ground >= 3:1; Google's four-colour
-   seed set never yields a hue between 40° and 60° at low lightness; a single-hue red → rose; stable per package;
-   parent `auto` uses it); the `own` icon key on both sides in one commit (server validation, `entries`, form button,
-   preview; launcher `appDisplayMap`, the original-layer render, compat test); cache key versioned. Check: Home and the
-   glance page's app icons; an app set to "the app's own" in the PWA shows its original logo.
-2. **P2**: shadow/highlight in the render (a pure `tileFrame(sizePx)` for the padded bitmap size, tested), press
-   feedback (Robolectric: no animation with the duration scale 0), circular ripple, `kid_badge` `#B4532C`
-   (`KidPaletteTest`). Check: Home, frame times (`dumpsys gfxinfo`, no frame > 32 ms from icon work - design 08's check).
-3. **P3**: palette + sheet (`KidPaletteTest`: avatar ink >= 4.5:1, sheet texts >= 4.5:1 on `kid_ground_lift`). Check:
-   Home, phone book, sheet, call screens.
-4. **P4**: fading edges, two-line labels (`HomeModelTest`: row height at font scale 1.0/1.3), badge clip. Check: Home
-   at font scale 1.0 and 1.3, with the call card, with 5 contacts.
-5. **P5**: theme colours, list rows, own package filtered (a JVM test on the filter). Check: drawer, parent Settings.
-6. **P6** [L]: `activity_lock.xml`, `LockActivity` (a pure `timeLockRows(...)` for the rows, `LockActivityModelTest`; the
-   new strings in `TranslationsTest`). Check: screen time, bedtime, school, a custom rule with exempt apps; 112 via the
-   emergency row with Telecom refusing (emulator.md §6 item 9).
-7. **P7** [L]: keypad and glance; `PinLockLayoutTest` with the 16 dp gap, the button's height and a font-scale-1.3
-   case, `LockGlanceLayoutTest` unchanged and green. Check via the emulator console screenshot (FLAG_SECURE) at font
-   scale 1.0 and 1.3 (`adb shell settings put system font_scale 1.3`).
-8. **P8** [S]: migration + launcher strings, one commit (server `cargo test` incl. the wallpaper tests; launcher
-   `TranslationsTest`). Check: Kid Settings picker, each on Home and the lock.
-9. **P9**: Kid Settings. Check at 320/360/411 dp.
-10. **P10** (music): strings nb/en, `FitTest` cases, empty-state composables; `./gradlew ... -PwarningsAsErrors=true`.
-    Check: library empty / full with and without the now-playing bar at 569 dp, Nytt and search empty.
-11. **P11** [S]: label, `notification_listener_title`, the PWA texts and their tests, the docs - one commit. Check: the
-    notification-permission dialog, a notification header, the anchor's notification, Settings › Apps, the PWA's
-    About row.
-12. **P12** [C][S]: migration 0074, the form, the policy key and snapshot, the launcher DTO + `ClockFormat` + every clock,
-    the status-bar write behind the app-op - one commit. Check: each option with the system at 24 h and at 12 h; the
-    lock, the glance rows, the time-rule screen, the missed-call text, the Home banner; the status bar with and
-    without `appops set ... WRITE_SETTINGS allow`, and under `DISALLOW_CONFIG_DATE_TIME` (record what Android does).
-13. **P13**: `time_state.zone` + launcher test, the server's end-to-end test - one commit. Check: the PWA's phone
-    summary shows "Locked until …" during a bedtime rule when the emulator's zone is Phone Setup's.
+Server migrations take the next free numbers on the main a step is built on, in this order (0075 clock, 0076
+wallpapers, 0077 the catalog row's name - renumber together if main has moved).
 
-Every step: `./gradlew assembleDebug assembleRelease testDebugUnitTest` (launcher/music as touched) and, for [S]/[C],
-`cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`; screenshots before/after into the step's QA note.
+0. Docs: `docs/testing/emulator.md` - `adb shell wm density 240` (and `wm density reset`, `settings put system
+   font_scale 1.0` after); an `adb install`ed app is held by the relock block `outside_play` until "Allow these apps" on
+   the phone's summary in the PWA (expected); P13's zone recipe: read `adb shell getprop persist.sys.timezone` and set
+   Phone Setup's zone to it (the launcher forces automatic time zone, so the emulator's network zone wins); §4 gains
+   `adb shell appops set $P WRITE_SETTINGS allow` (P12) next to the role grants.
+1. **P1 [S+L]**: tones, the three icon states, the parent colours' tiles (+ `app_icons.json` both sides, the generated
+   tables), the Phone book/Settings/112 tiles; the tests in P1. Check: Home, glance; an app on each of the three states.
+2. **P2 [L]**: elevation, press feedback (tap/long-press/swipes unchanged; animators off), badge colour.
+3. **P3 [L]**: avatars, the sheet and its inks (`KidPaletteTest`). Check: Home, phone book, sheet, call screens.
+4. **P4 [L]**: `FadingRecyclerView`, two-line labels, the badge clip. Check at font scale 1.0, 1.3, 2.0.
+5. **P5 [L]**: drawer colours, `kidListable` (test). Check: drawer, parent Settings.
+6. **P12 [S+L]**: migration 0075, the form (missing field kept), the policy key + snapshot, the status field and the
+   PWA warning, `ClockFormat` and every formatter, the `TIME_12_24` write, the source scan, the runbook lines. Check:
+   each option with and without the app-op; the status bar and every Vibb One clock change together; the device check
+   under `DISALLOW_CONFIG_DATE_TIME` (record the result); Vibb One in nb on an en_US system follows the status bar.
+7. **P6 [L]**: the time-rule screen (`timeLockRows`, `durationText`, glyphs, `TranslationsTest`). Check: each rule
+   kind; 112 with Telecom refusing (emulator.md §6 item 9).
+8. **P7 [L]**: keypad + glance (`PinLockLayoutTest` at 1.0/1.3/2.0, `LockGlanceLayoutTest`). Check via the emulator
+   console screenshot at 1.0, 1.3 and 2.0.
+9. **P8 [S+L]**: migration 0076 + strings (server `to_policy()` test, `WallpaperInkTest`, `TranslationsTest`).
+10. **P9 [L]**: Kid Settings (TalkBack reads the choice). Check at 320/360/411 dp.
+11. **P10 (music)**: empty states, `BoxWithConstraints` fit (`FitTest`). Check: library empty/full, with and without the
+    bar, at 569 dp and font scale 1.0/1.3/2.0; Nytt and search empty.
+12. **P11 [S+L]**: label, `notification_listener_title`, the VPN session name, every PWA text (grep again), migration
+    0077, docs. Check: the permission dialog, a notification header, the VPN dialog, the PWA's About row and app list.
+13. **P13 [S+L]**: `time_state.zone` + JSON test, the server's end-to-end test. Check: "Locked until …" on the phone's
+    summary during a bedtime rule.
 
-## 6. The user's answers (2026-10-14) and what is still open
+Every step: launcher/music `./gradlew assembleDebug assembleRelease testDebugUnitTest` (music with
+`-PwarningsAsErrors=true`); with [S] also `cargo test`, `cargo fmt --check`, `cargo clippy --all-targets`.
 
-Answered:
-1. **Name**: "Vibb One" (debug "Vibb One (debug)") - P11.
-2. **App icons**: option A (calm tones) - P1; the PWA's per-app "the app's own" stays and shows the original logo
-   (`own`, P1).
-3. **Home's top**: stays empty - no date line (P4).
-4. **Emergency**: a tonal/muted red is fine - P6, P7, with P7's spacing rule.
-5. **Wallpapers**: soften green, sky and sunset - P8.
-6. **Unread badges**: kept, quiet, never animated - §2, P2.
-7. **New**: a per-phone 12/24 h clock - P12. **New**: the phone's zone in the status report - P13.
+## 6. The user's answers (2026-10-14)
 
-Open:
-1. **Drawer icons**: small tone icons per row (mockup 02) or text only as today?
-2. **Status bar clock** (Android limit, P12): the device owner can't set Android's 12/24 h; the launcher can only with
-   "Modify system settings", granted once by adb at provisioning (or by hand in Android's Settings). Add that adb line
-   to the provisioning runbook, or accept that only Vibb One's own clocks follow the setting?
+1. Name: "Vibb One" (debug "Vibb One (debug)") - P11; the catalog row renamed when it still has a default name.
+2. Icons: the calm tones, six without amber; three states - Vibb style (default), the app's own logo, a chosen glyph -
+   P1.
+3. Home's top stays empty - P4.
+4. Emergency in a muted red is fine - P6, P7 with the spacing rule.
+5. Soften green, sky and sunset - P8.
+6. Unread badges kept, quiet, never animated - P2.
+7. The status bar and Vibb One always show the same clock format, settable from the PWA (Follow / 24 h / 12 h) - P12. The zone in the status
+   report - P13.
+8. The drawer stays text only - P5.
+
+Nothing is open.
+
+## 7. Design QA (`qa-34-design.md`) - how each finding was handled
+
+- **H1** three icon states as a table (stored, wire, render, control), existing rows keep their meaning, every server
+  function and launcher path named, tests listed - P1.
+- **M1** `green` becomes `kind = 'gradient'`, rows by `builtin_key`, a `to_policy()` test, `WallpaperInkTest` - P8.
+- **M2** depth by `elevation` on the views, the bitmap cache untouched, no top light - P2.
+- **M3** the parent colours' tiles mapped onto the tones inside step 1 (contract files, generated tables, tests), Phone
+  book `#3A7552`, Settings slate, 112 tonal - P1.
+- **M4** the sheet's inks listed with their other uses, night values, the banner keeps `kid_sheet_ink` - P3.
+- **M5** clock migration `0075` after 26c's `0074`, the order note - P12, §5.
+- **M6** font scale 2.0 in steps 4, 8, 11; `PinLockLayoutTest` models text growth; 48 dp at 1.3, the floor accepted at
+  2.0; mockup 05b at 2.0 shows the keys giving way - P7.
+- **M7** replaced by the user's rule (one format on the whole phone): Vibb One's clocks always follow the system, the
+  PWA setting writes `TIME_12_24` through the app-op, a minimal `clock_format_applied` status with a PWA warning, the
+  `DISALLOW_CONFIG_DATE_TIME` device check named; `PlayRuntime` and `SettingsFragmentLauncher` added; a source-scan
+  test - P12.
+- **L1** the cover from a measured slot (`BoxWithConstraints`), scrolling below the floor - P10.
+- **L2** the filter in `AppFilter.kidListable` (MIT, the precedent); the drawer text only - P5.
+- **L3** the VPN session name, `provision_qr.html`, "this version of Vibb", `device_pages.rs:574`, "Vibb didn't
+  install"; grep again on the current main - P11.
+- **L4** hourglass/moon as converted Material Symbols, the sentence's number and formatter, content descriptions - P6.
+- **L5** the touch listener never consumes, the oval-masked cell ripple, the top light dropped - P2.
+- **L6** a `FadingRecyclerView` for unequal edges; `maxLines = 2` always - P4.
+- **L7** radio semantics for the sound choice, the decorative disc, the emergency button's label - P9, P10, P6.
+- **L8** the emulator zone recipe; the test asserts the JSON - step 0, P13.
+- **L9** amber dropped (six tones); the test asserts the output is one of them - P1.
+- **L10** a missing `clock_format` keeps the stored value; test - P12.
+- **N1** the keypad floor stated (52 dp at 1.0, 48 at 1.3, 32 at 2.0) - P7.
+- **N2** en wallpaper names and the DB labels - P8.
+- **N3** always dark, said once - "Look and motion".
+- **N4** `wm density reset` / `font_scale 1.0` in step 0; the pill's 1.3:1 noted - P7.
+- **N5** no open questions left; the numbering is gone with them - §6.

@@ -21,9 +21,10 @@
   --emergency: #E03131;
   --emergency-text: #FF8A8A;
   --emergency-tonal: #3A1E24;
-  /* Proposal 1: the seven icon tones (white glyph >= 5.3:1, tone vs ground >= 3.5:1) */
+  /* Proposal 1: the six icon tones (white glyph >= 5.3:1, tone vs ground >= 3.5:1) */
   --t-slate: #606B80; --t-blue: #496C9C; --t-teal: #347470; --t-plum: #805B9A;
-  --t-rose: #A45166; --t-amber: #866237; --t-indigo: #6065A9;
+  --t-rose: #A45166; --t-indigo: #6065A9;
+  --phonebook: #3A7552; /* muted call green, white 5.5:1 */
   /* Proposal 3: contact avatars without a photo - soft, with a dark ink (>= 8.9:1) */
   --a-peach: #E8B49A; --a-sky: #9FC3E3; --a-sand: #E3CF9A; --a-sage: #A9CDB0; --a-lilac: #C9B3DE; --a-rose: #E6AFB4;
   --a-ink: #1B1B28;
@@ -41,13 +42,12 @@ body { font-family: Nunito, sans-serif; font-weight: 600; color: var(--ink); -we
 .g svg { width: 100%; height: 100%; display: block; }
 .note { position: absolute; left: 8px; right: 8px; bottom: 16px; font-size: 9px; color: #ffd27a; text-align: center; z-index: 9; display: none; }
 
-/* Proposal 2: app tile - tone circle, white glyph, gentle depth (a soft drop shadow and a faint top light),
-   baked into the rendered bitmap; pressed = 96 % and a little darker. */
+/* Proposal 2: app tile - tone circle, white glyph, depth from the view's elevation (2 dp, oval outline);
+   pressed = 94 % and a little darker. */
 .tile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .icon { width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; position: relative;
   box-shadow: 0 2px 6px rgba(0, 0, 0, .45), 0 1px 1px rgba(0, 0, 0, .3);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, .10)); }
-.icon::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14); }
+ }
 .icon .g { width: 32px; height: 32px; }
 .icon.pressed { transform: scale(.94); filter: brightness(.9); }
 .label { font-size: 13px; font-weight: 700; color: var(--ink); max-width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
