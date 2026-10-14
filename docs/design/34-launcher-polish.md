@@ -880,3 +880,38 @@ P8 is built: server migration 0076 and the launcher's names, in one commit.
   - `TranslationsTest` covers the strings.
 
 **Check on the emulator** (not done here): kid Settings' wallpaper picker in nb and en with the three new names, Home, and the lock over Fjord, Evening sky and Dusk.
+
+## Step 10 implementation status (2026-10-14)
+
+P9 built (launcher only, no server or contract change), on branch `design-34-s10`:
+- **The control** (`activity_kid_settings.xml`): the sound row's `RadioGroup` is the track - `bg_kid_segment_track`,
+  white 8 % (`#14FFFFFF`, the card's alpha; the mockup's `.07` rounded to it), radius 14 dp, 3 dp inside. The two
+  `RadioButton`s are equal halves (`0dp` + weight 1, no 8 dp gap any more, `match_parent` height so a wrapped label
+  makes both taller), >= 48 dp, 6/8 dp padding, Nunito 800 14 sp as the mockup, radius 11 dp (concentric with the
+  track). No `maxLines`/`ellipsize`: the labels wrap and the control grows.
+- **States** (`KidSettingsActivity.styleSegment`): chosen = `kid_accent` with `kid_ground` text, as P9 and mockup 06
+  say (decision: the brief's "quiet, not saturated" is read as this - the one muted accent, not a new colour);
+  the other = no fill, the wallpaper's ink (full, not the mockup's dim ink, so it reaches 4.5:1 on every built-in). The
+  old outlined pill next to a filled one is gone. A ripple in the ink at 12 %, clipped to the half, is the press.
+  Read-only (DND, unknown) keeps the 50 % alpha on both halves.
+- **Behaviour unchanged**: `renderSound` reads the checked half and the enabled state from the pure `soundSegments(state)`
+  (`ui/kidsettings/SoundSegments.kt`), which only restates `soundRowState`; the clicks still call
+  `QuickControls.setSound`, and `soundTapMode` decides as in design 18.
+- **TalkBack** (QA L7): still two `RadioButton`s in a horizontal `RadioGroup`, so the framework gives the radio role,
+  the selected state and the group (single selection, two items) - TalkBack reads "Lyd, valgt" as the design asks.
+  The group's content description names it; the visible label "Lyd på telefonen" is now
+  `importantForAccessibility="no"` so it isn't read twice.
+- **Tests** (`SoundSegmentsTest`, 9): the layout (equal halves, the `SOUND_SEGMENTS` order, the minimums and paddings,
+  no line limit), the track drawable, the width/lines model at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en
+  (`segmentLayout`, an upper bound like `PinLockLayoutTest`'s: at 2.0 on the Jelly Star "Lydløs (vibrerer)" wraps and
+  the control grows past 48 dp; at 411 dp and 1.0 both fit one line at 48 dp), the selection mapping for Normal,
+  Vibrate, Silent and DND with design 18's taps, the TalkBack structure (no delegate or role override on the halves),
+  and contrast: the chosen half 9.87:1; the other half's ink on track + card + scrim >= 4.5:1 over every built-in
+  wallpaper and two light grounds (lowest 6.2:1, Fjord).
+- **Found, not changed** (a follow-up for the shared ink rule): `WallpaperInk` brings a ground to 4.5:1 for the bare
+  wallpaper, so with white ink on a mid-tone ground at the edge of that (a photo, or a bright colour such as `#1C7ED6`)
+  every label on Kid Settings' white 8 % card is already under 4.5:1 (~3.9:1), and the segment's track takes it to
+  ~3.5:1. Fixing it means judging the card's composite in the ink rule (all kid screens), not this step.
+- **Check on the emulator** (not done here - no emulator): Kid Settings at 320/360/411 dp (`wm size`/`wm density`) and
+  font scale 1.0/1.3/2.0, nb and en, against mockup 06; TalkBack on both halves ("Lyd, valgt", "Lydløs (vibrerer), ikke
+  valgt", the group) and under DND (read-only); a tap switching Normal/Vibrate with the volume keys still working.

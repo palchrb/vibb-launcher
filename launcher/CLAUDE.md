@@ -537,6 +537,32 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   (the red emergency link needs a light scrim on all three softened lighter stops - 4.22-4.43:1 without it - which `lockScrimForColours` gives). The old
   bright sky/sunset stay in the test as generic bright grounds.
 
+## Kid Settings' sound choice as one segmented control (design 34 step 10, P9, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Visual only**: design 18's two choices, what a tap sets (`soundTapMode`), the read-only DND state and its notes are
+  unchanged; so are the gestures and Kid Settings' other rows. Mockup `06-kid-settings-after`.
+- **The control** (`activity_kid_settings.xml`, pure `ui/kidsettings/SoundSegments.kt`, `SoundSegmentsTest`): the
+  `RadioGroup` is the track (`bg_kid_segment_track`, white 8 % `#14FFFFFF`, radius 14 dp, 3 dp padding); its two
+  `RadioButton`s are equal halves (`0dp` + weight 1, no gap, `match_parent` height so both take the taller one), each
+  >= 48 dp (`SEGMENT_MIN_HEIGHT_DP`), Nunito 800 14 sp, radius 11 dp. No line limit or ellipsis: a label wraps and the
+  control grows with the font scale. `KidSettingsActivity.styleSegment`: the chosen half `kid_accent` with `kid_ground`
+  text (9.9:1), the other no fill with the wallpaper's ink, a quiet ripple in the ink at 12 % clipped to the half.
+  `renderSound` takes the checked half and the enabled state from `soundSegments(state)`; read-only halves keep their
+  50 % alpha.
+- **TalkBack** (QA L7): still two `RadioButton`s in a horizontal `RadioGroup` - the role, the checked state ("valgt")
+  and the group of two come from the framework; nothing replaces the role. The group carries the name ("Lyd på
+  telefonen"); the visible label is `importantForAccessibility="no"`, so it is read once.
+- **`SoundSegmentsTest`**: the layout (equal halves, order = `SOUND_SEGMENTS`, minimums, paddings, no line limits), the
+  track drawable, the width/lines model (`segmentLayout`: 0.6 em a character, linear scale, 1.4 x line - an upper bound)
+  at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en, the selection mapping and design 18's taps, the TalkBack
+  structure, and contrast: the chosen half 9.9:1; the other's ink on track + card + scrim over every built-in wallpaper
+  >= 6.2:1 (Fjord's lighter stop).
+- **Known, not changed here**: white ink on a mid-tone ground the scrim lifts to exactly 4.5:1 (a photo, or a bright
+  colour like `#1C7ED6`) drops under 4.5:1 on the white 8 % card already (~3.9:1, every card label) and on the track a
+  little further (~3.5:1) - a property of the shared ink/scrim rule (`WallpaperInk`), which judges the bare ground.
+- Not emulator-checked yet: Kid Settings at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en, TalkBack on the
+  halves (read-only under DND too), the press.
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.

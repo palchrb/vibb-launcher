@@ -10,6 +10,8 @@ import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.RippleDrawable
+import android.graphics.Color
 import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
@@ -255,14 +257,19 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         binding.kidSettingsSoundRow.visibility = if (state != null) View.VISIBLE else View.GONE
         if (state == null) return false
-        when (state.selected) {
+        // The halves (design 34 P9, `soundSegments`): the phone's mode is the checked one - none
+        // while fully silent or unknown -, both read-only together while Do Not Disturb is on.
+        val segments = soundSegments(state)
+        val checked = segments.firstOrNull { it.checked }?.choice
+        when (checked) {
             SoundChoice.SOUND -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_on)
             SoundChoice.SILENT_VIBRATE -> binding.kidSettingsSoundGroup.check(R.id.kid_settings_sound_vibrate)
             null -> binding.kidSettingsSoundGroup.clearCheck()
         }
-        for ((button, _) in soundButtons()) {
-            button.isEnabled = state.enabled
-            button.alpha = if (state.enabled) 1.0f else 0.5f
+        for ((button, choice) in soundButtons()) {
+            val enabled = segments.first { it.choice == choice }.enabled
+            button.isEnabled = enabled
+            button.alpha = if (enabled) 1.0f else 0.5f
         }
         val note = when (state.note) {
             SoundNote.DND_ON -> R.string.kid_settings_sound_dnd
@@ -296,8 +303,10 @@ class KidSettingsActivity : UIObjectActivity() {
     }
 
     /**
-     * One choice of the sound row: the chosen one filled with the accent and night text (9.9:1),
-     * the other a thin ring in the ink with ink text - like the wallpaper tiles.
+     * One half of the sound row's segmented control (design 34 P9, `SoundSegments.kt`): the chosen
+     * one the accent with night text (9.9:1), the other no fill with the wallpaper's ink on the
+     * white 8 % track (the track is the group's background in the layout). A quiet ripple in the
+     * ink, clipped to the half's corners, is the press; the halves never move.
      */
     private fun styleSegment(button: RadioButton, ink: InkChoice) {
         KidInk.label(button, ink)
@@ -305,17 +314,23 @@ class KidSettingsActivity : UIObjectActivity() {
         button.setTextColor(
             ColorStateList(arrayOf(checked, intArrayOf()), intArrayOf(getColor(R.color.kid_ground), ink.ink)),
         )
-        val radius = KidAvatars.dp(this, 12f).toFloat()
-        button.background = StateListDrawable().apply {
+        val radius = KidAvatars.dp(this, SEGMENT_RADIUS_DP).toFloat()
+        val fills = StateListDrawable().apply {
             addState(checked, GradientDrawable().apply {
                 cornerRadius = radius
                 setColor(getColor(R.color.kid_accent))
             })
             addState(intArrayOf(), GradientDrawable().apply {
                 cornerRadius = radius
-                setStroke(KidAvatars.dp(this@KidSettingsActivity, 1f), (0x66 shl 24) or (ink.ink and 0xFFFFFF))
+                setColor(Color.TRANSPARENT)
             })
         }
+        val mask = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(Color.WHITE)
+        }
+        val press = ColorStateList.valueOf((0x1F shl 24) or (ink.ink and 0xFFFFFF))
+        button.background = RippleDrawable(press, fills, mask)
     }
 
     /**

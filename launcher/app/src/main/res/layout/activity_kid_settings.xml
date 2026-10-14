@@ -124,7 +124,13 @@
 
             <!-- Sound (design 18): two choices, Sound = ringer Normal and "Silent (vibrate)" =
                  ringer Vibrate - never Android's Silent, which is Do Not Disturb. Read-only with a
-                 note while DND is on. Colours are set in code (the wallpaper's ink). -->
+                 note while DND is on. Design 34 P9: one even segmented control - a white 8 % track
+                 (bg_kid_segment_track), two equal halves (weight 1, no gap) >= 48 dp tall whose
+                 labels wrap and grow the control with the font scale (no maxLines, no ellipsize);
+                 the chosen half is drawn in code (the accent with night text, the other the
+                 wallpaper's ink - ui/kidsettings/SoundSegments.kt). Still two RadioButtons in a
+                 horizontal RadioGroup, so TalkBack reads radio buttons in a group of two with the
+                 selected state (QA L7); the visible label is the group's name, read once. -->
             <LinearLayout
                 android:id="@+id/kid_settings_sound_row"
                 android:layout_width="match_parent"
@@ -139,13 +145,14 @@
                     android:paddingStart="14dp"
                     android:paddingTop="10dp"
                     android:paddingEnd="14dp"
-                    android:paddingBottom="10dp">
+                    android:paddingBottom="12dp">
 
                     <TextView
                         android:id="@+id/kid_settings_sound_label"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:fontFamily="@font/nunito_bold"
+                        android:importantForAccessibility="no"
                         android:text="@string/kid_settings_sound"
                         android:textColor="@color/kid_ink"
                         android:textSize="16sp" />
@@ -155,20 +162,24 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_kid_segment_track"
                         android:contentDescription="@string/kid_settings_sound"
-                        android:orientation="horizontal">
+                        android:orientation="horizontal"
+                        android:padding="3dp">
 
                         <RadioButton
                             android:id="@+id/kid_settings_sound_on"
                             android:layout_width="0dp"
-                            android:layout_height="wrap_content"
+                            android:layout_height="match_parent"
                             android:layout_weight="1"
                             android:button="@null"
-                            android:fontFamily="@font/nunito_bold"
+                            android:fontFamily="@font/nunito_extrabold"
                             android:gravity="center"
                             android:minHeight="48dp"
                             android:paddingStart="8dp"
+                            android:paddingTop="6dp"
                             android:paddingEnd="8dp"
+                            android:paddingBottom="6dp"
                             android:text="@string/kid_settings_sound_on"
                             android:textColor="@color/kid_ink"
                             android:textSize="14sp" />
@@ -176,15 +187,16 @@
                         <RadioButton
                             android:id="@+id/kid_settings_sound_vibrate"
                             android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="8dp"
+                            android:layout_height="match_parent"
                             android:layout_weight="1"
                             android:button="@null"
-                            android:fontFamily="@font/nunito_bold"
+                            android:fontFamily="@font/nunito_extrabold"
                             android:gravity="center"
                             android:minHeight="48dp"
                             android:paddingStart="8dp"
+                            android:paddingTop="6dp"
                             android:paddingEnd="8dp"
+                            android:paddingBottom="6dp"
                             android:text="@string/kid_settings_sound_vibrate"
                             android:textColor="@color/kid_ink"
                             android:textSize="14sp" />
