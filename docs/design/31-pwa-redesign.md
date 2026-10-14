@@ -2942,3 +2942,18 @@ Deferred, with the reason:
   components plus `.tile-pink`.
 
 Checks: `cargo test` 796 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings.
+
+**Fix round after the code QA** (`qa-31-s7-code.md`: 0 High, 1 Medium, 3 Low, 4 Nits; all fixed; on `main` at
+`2eee4de1` merged in - step 14 - with `style.css?v=20`):
+
+| # | Fix |
+|---|---|
+| M1 | The music warnings are Attention rows again. `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both Device › Music's warnings and six orange rows (`attention::Kind::Music*`): "Vibb can't deliver music yet" and "Music app not reachable" → `/devices/{id}/music` (the warnings sit at the top), "Storytel refused the phone's login" → `#storytel-title`, "Music over the storage limit" → `#storage-title`, "Update Vibb and the music app" → `#music-settings`, "N music entries fail on the phone" (one row for every entry that is on and reported failing) → `#library`. `attention::Sources::music_ticked` (`music::ticked_entries`) carries the entries on; the list's badge and the summary count the same rows. The Music row says "Needs attention" in orange while any shows. Pinned by `tests::attention::each_music_warning_raises_its_row_and_marks_the_music_row` (each row on a clean phone, its level, its target an element of the page, the row's value, the badge) and `attention::tests`. |
+| L1 | `music_holds_the_moved_card`'s entry is `Eventyr <b>`: escaped, never raw. Mutation 6 (`|safe`) now fails it. |
+| L2 | `the_phone_reports_music_state_with_known_fields_only` sets Phone Setup to Europe/Oslo and the report to yesterday 10:00 UTC, and asserts the footer's relative time and the local exact time ("12:00:00 CEST") in its `title`. Mutation 9 (UTC) now fails it. |
+| L3 | No JSON size as a value: before the phone's first music report "On the phone" has no Library row (a phone that never reported, or isn't set up, has no group at all); with a report the size is only behind the Library row's ⓘ. |
+| N1 | A Storytel state the music app doesn't send (`ok`/`none`/`refused`) shows no row, never its code. |
+| N2 | One builder for the Music app row: `device_pages::music_app_row(key, &MusicState)`, used by About This Phone (`music-app`) and Device › Music (`app`). |
+| N3 | An entry's reported error shows under its row only while the entry is on for the phone, and only those count for the Attention row. |
+| N4 | "device card" → "the phone's Music page" in `server/CLAUDE.md` (the library cache) and `music.rs`'s doc comments. |
+| Checks | `cargo test` 813 passed; `node --test server/jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |

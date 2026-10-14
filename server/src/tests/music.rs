@@ -3062,11 +3062,9 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
     assert_eq!(input_checked(&ticked, "selected", ""), Some(true), "on");
     assert!(autosaves(&ticked, "selected"), "auto-saving");
     assert!(ticked.contains("<noscript>"), "a Save without JS");
-    assert!(
-        row_value(&page, "library")
-            .unwrap()
-            .starts_with("1 entry · ")
-    );
+    // No report yet: no "On the phone" group, never the library's size (qa-31-s7-code L3).
+    assert!(!page.contains("id=\"on-phone\""));
+    assert!(!page.contains(" kB"));
     let other_page = music_page(&app, &cookie, other).await;
     assert_eq!(
         input_checked(&tick_form_of(&other_page, entry), "selected", ""),
@@ -3399,13 +3397,45 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
         row.contains("On the phone: the source answered 503"),
         "{row}"
     );
-    // The report's age under the group, the exact time in its `title`.
+    // The library's size only behind the row's ⓘ (qa-31-s7-code L3).
+    assert!(page.contains("This phone&#39;s library: 1 entry, "));
+    // ... and the error goes with the switch: off, it no longer shows (N3).
+    tick(&app, &cookie, device, entry, false).await;
+    let off = music_page(&app, &cookie, device).await;
+    assert!(!tick_form_of(&off, entry).contains("On the phone:"));
+    tick(&app, &cookie, device, entry, true).await;
+    // The report's age under the group, in Phone Setup's zone, the exact local time in its
+    // `title` (qa-31-s7-code L2): yesterday 10:00 UTC is 12:00 in Oslo in October.
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-1 day', 'start of day', \
+         '+10 hours') WHERE device_id = ?",
+    )
+    .bind(device)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let reported_at = (chrono::Utc::now() - chrono::Duration::days(1))
+        .date_naive()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_utc();
+    let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
+    let page = music_page(&app, &cookie, device).await;
     let on_phone = &page[page.find("id=\"on-phone\"").unwrap()..];
+    let age = oslo.relative(reported_at, chrono::Utc::now());
+    assert!(!age.contains("10:00"), "{age}");
     assert!(
-        on_phone.contains("At the last report, <span title=\""),
+        on_phone.contains(&format!(
+            "At the last report, <span title=\"{}\">{age}</span>.",
+            oslo.exact(reported_at)
+        )),
         "{on_phone}"
     );
-    assert!(on_phone.contains(">just now</span>"), "{on_phone}");
+    assert!(oslo.exact(reported_at).contains("12:00:00"));
 
     // The phone's library is older, or not there yet.
     for (applied, value) in [
@@ -3425,7 +3455,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     report_music_state(
         &app,
         &token,
-        json!({"package": "me.vibb.music", "bridge": "not_bound"}),
+        json!({"package": "me.vibb.music", "bridge": "not_bound", "storytel": "login_failed"}),
     )
     .await;
     let page = music_page(&app, &cookie, device).await;
@@ -3434,6 +3464,9 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
             < page.find("id=\"music-app\"").unwrap()
     );
     assert!(!page.contains("not bound") && !page.contains("not_bound"));
+    // A Storytel state the music app doesn't send shows no row, never its code (N1).
+    assert_eq!(row_value(&page, "storytel"), None);
+    assert!(!page.contains("login failed") && !page.contains("login_failed"));
 
     // A launcher with the bridge but no music app: it sends no music_state (qa-21-step3-code L13).
     let report_without_state = |apps: serde_json::Value| json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["music_v1"], "installed_apps": apps});
@@ -3459,12 +3492,10 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     .await;
     let page = music_page(&app, &cookie, device).await;
     assert_eq!(row_value(&page, "app").as_deref(), Some("No report yet"));
-    // Before the phone's music report, the library row says what it gets.
-    assert!(
-        row_value(&page, "library")
-            .unwrap()
-            .starts_with("1 entry · ")
-    );
+    // Before the phone's music report, no library row: nothing is on the phone yet, and its size
+    // is no value for a parent (qa-31-s7-code L3).
+    assert_eq!(row_value(&page, "library"), None);
+    assert!(!page.contains(" kB"));
 
     // A launcher without music_v1 while entries are on: a warning at the top.
     app.request(

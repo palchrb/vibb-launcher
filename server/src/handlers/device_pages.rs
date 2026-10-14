@@ -298,6 +298,25 @@ pub(crate) fn version_of_code(code: i64) -> Option<String> {
     })
 }
 
+/// The music app as the phone reported it: its version from the versionCode ("Installed" without
+/// one), the package and the code behind ⓘ (§4.2). About This Phone (`key` "music-app") and
+/// Device › Music ("app") show the same row (qa-31-s7-code N2).
+pub(crate) fn music_app_row(key: &'static str, music: &crate::music::MusicState) -> Option<Row> {
+    let package = music.package.as_deref()?;
+    let version = music.version_code.and_then(version_of_code);
+    Some(
+        Row::new(
+            key,
+            "Music app",
+            version.unwrap_or_else(|| "Installed".to_string()),
+        )
+        .detail(Some(match music.version_code {
+            Some(code) => format!("{package}, version code {code}."),
+            None => format!("{package}."),
+        })),
+    )
+}
+
 /// A crash row's label from the trace's first stored line: the exception's class without its
 /// package ("IllegalStateException"). When `crashes::sanitize` dropped the exception line (a
 /// message with spaces), the trace starts with a frame or a cause: then the whole line, trimmed
@@ -526,21 +545,10 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
                     .detail((short != full).then(|| format!("Full version: {full}."))),
             );
         }
-        if let Some(music) = crate::music::parse_music_state(status.music_state_json.as_deref())
-            && let Some(package) = music.package
+        if let Some(row) = crate::music::parse_music_state(status.music_state_json.as_deref())
+            .and_then(|music| music_app_row("music-app", &music))
         {
-            let version = music.version_code.and_then(version_of_code);
-            software.push(
-                Row::new(
-                    "music-app",
-                    "Music app",
-                    version.unwrap_or_else(|| "Installed".to_string()),
-                )
-                .detail(Some(match music.version_code {
-                    Some(code) => format!("{package}, version code {code}."),
-                    None => format!("{package}."),
-                })),
-            );
+            software.push(row);
         }
         if let Some(policy_state) = status.policy_state.as_deref() {
             software.push(match PolicyProblem::parse(policy_state) {

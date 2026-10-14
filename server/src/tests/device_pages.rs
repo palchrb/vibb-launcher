@@ -2257,7 +2257,7 @@ const KJOKKEN: &str = "RINCON_000E58A0B1C301400";
 /// the music app's catalog id.
 async fn music_phone(app: &TestApp, cookie: &str) -> (i64, String, [i64; 2], i64) {
     let (id, token) = app.enrolled_device("Anna").await;
-    let a = super::music::add_own(app, cookie, "Eventyr").await;
+    let a = super::music::add_own(app, cookie, "Eventyr <b>").await;
     let b = super::music::add_own(app, cookie, "Sanger").await;
     super::music::tick(app, cookie, id, a, true).await;
     let res = app
@@ -2376,6 +2376,9 @@ async fn music_holds_the_moved_card() {
     // Its links: the library to the Music tab, no login yet to Music › Settings.
     assert!(html.contains("href=\"/music\""));
     assert!(html.contains("href=\"/music/settings#storytel\""));
+    // Third-party titles are escaped (qa-31-s7-code L1: a feed or Storytel names the entry).
+    assert!(html.contains("Eventyr &#60;b&#62;") || html.contains("Eventyr &lt;b&gt;"));
+    assert!(!html.contains("Eventyr <b>"));
     // Never a room's code as text (§4.2): with "All rooms" on they are hidden fields.
     assert!(section(&html, "music-sonos").contains(&format!("value=\"{STUA}\"")));
     assert!(!html.contains(&format!(">{STUA}<")));
@@ -2641,6 +2644,8 @@ async fn a_phone_not_set_up_has_its_music_page() {
     assert!(html.contains("Nothing in the library yet."));
     assert!(html.contains("No speakers seen yet."));
     assert!(!html.contains("At the last report"));
+    // Nothing is on the phone yet: no "On the phone" group at all (qa-31-s7-code L3).
+    assert!(!html.contains("id=\"on-phone\""));
 }
 
 /// The Music tab and an entry's page link each phone to its Music page - the entry's page to that

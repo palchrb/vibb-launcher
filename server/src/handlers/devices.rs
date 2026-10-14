@@ -666,6 +666,8 @@ struct DeviceDetailTemplate {
     relock: crate::handlers::window_relock::RelockCard,
     /// The Music row's value (design 31 step 7): "6 in library", the entries this phone has on.
     music_value: String,
+    /// Device › Music shows a warning: the value in orange ("Needs attention").
+    music_attention: bool,
     /// The not-enrolled card's codes (design 22 §3.1); an enrolled phone's are on Advanced.
     access: AccessCard,
 }
@@ -1534,38 +1536,35 @@ async fn render_device(
             .map(|rows| &rows.allowed),
     )
     .await;
-    // The Music row's value (design 31 step 7): the entries switched on for this phone.
-    let music_value = match sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM device_music_entries WHERE device_id = ?",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    {
-        Ok(0) => "None".to_string(),
-        Ok(n) => format!("{n} in library"),
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "can't count the phone's music");
-            "Couldn't read".to_string()
-        }
-    };
+    // The Music row (design 31 step 7): the entries switched on for this phone.
+    let music_ticked = crate::handlers::music::ticked_entries(&state.db, id).await;
+    if let Err(err) = &music_ticked {
+        tracing::error!(device_id = id, %err, "can't read the phone's music");
+    }
 
     // The same rows the Devices list counts, from the cards built above (not read twice).
-    let attention = crate::attention::items(
-        id,
-        &crate::attention::facts_of(
-            &crate::attention::Sources {
-                device: &device,
-                policy: &policy,
-                latest: latest_status.as_ref(),
-                relock: &relock,
-                call_problems: &call_problems,
-                incoming_calls_not_blocked: time.incoming_calls_unblocked,
-                connection: connection_of(&state, &device, chrono::Utc::now()),
-            },
-            chrono::Utc::now().timestamp_millis(),
-        ),
+    let facts = crate::attention::facts_of(
+        &crate::attention::Sources {
+            device: &device,
+            policy: &policy,
+            latest: latest_status.as_ref(),
+            relock: &relock,
+            call_problems: &call_problems,
+            incoming_calls_not_blocked: time.incoming_calls_unblocked,
+            connection: connection_of(&state, &device, chrono::Utc::now()),
+            music_ticked: music_ticked.as_deref().unwrap_or(&[]),
+        },
+        chrono::Utc::now().timestamp_millis(),
     );
+    let attention = crate::attention::items(id, &facts);
+    // "Needs attention" while Device › Music shows a warning (qa-31-s7-code M1), as the Apps row
+    // says "List unreadable".
+    let (music_value, music_attention) = match &music_ticked {
+        Err(_) => ("Couldn't read".to_string(), false),
+        Ok(_) if facts.music.any() => ("Needs attention".to_string(), true),
+        Ok(ticked) if ticked.is_empty() => ("None".to_string(), false),
+        Ok(ticked) => (format!("{} in library", ticked.len()), false),
+    };
 
     Html(
         DeviceDetailTemplate {
@@ -1583,6 +1582,7 @@ async fn render_device(
                 .filter(|v| !v.is_empty())
                 .map(|v| format!("Vibb {}", crate::handlers::device_pages::short_version(v))),
             music_value,
+            music_attention,
             apps_value,
             time,
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_some() {

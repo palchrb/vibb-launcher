@@ -214,7 +214,7 @@
         <a class="row" href="/devices/{{ device.id }}/music" data-row="music">
             <span class="tile tile-pink"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M6.5 12.5V3.5l7.5-1.7v9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="4.6" cy="12.7" r="2" fill="currentColor"/><circle cx="12.1" cy="11" r="2" fill="currentColor"/></svg></span>
             <span class="row-label">Music</span>
-            <span class="row-value">{{ music_value }}</span>
+            <span class="row-value{% if music_attention %} row-value-action{% endif %}">{{ music_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">

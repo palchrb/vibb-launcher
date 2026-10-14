@@ -1028,8 +1028,8 @@ thread_local! {
 }
 
 /// Each phone's built library, kept under the library revision it was built at (migration 0050,
-/// qa-21-step1-code #3): the policy poll, the library route and the device card reuse it until
-/// something a library is built from changes. The revision moves by trigger on every write to
+/// qa-21-step1-code #3): the policy poll, the library route and the phone's Music page reuse it
+/// until something a library is built from changes. The revision moves by trigger on every write to
 /// `music_entries`, `music_categories`, `music_files` and `device_music_entries`, and on a change
 /// of a listing's version, cover or kept end (0051); a new source of library data gets the same
 /// triggers. In memory only, one library per phone.
@@ -1128,7 +1128,7 @@ pub async fn device_library(
 }
 
 /// Whether ticking `entry_id` keeps `device_id`'s library within [MAX_LIBRARY_BYTES] (QA #4) -
-/// the one check for a tick on the device card and for the import's ticks (21a). The episode
+/// the one check for a switch on the phone's Music page and for the import's ticks (21a). The episode
 /// lists aren't counted: a phone with many long feeds gets a few MB of them (21b's status).
 pub async fn tick_fits(
     db: &mut sqlx::SqliteConnection,

@@ -584,7 +584,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   backup restored) show in Music › Settings behind Delete Files…, never removed by themselves.
 - **Library cache** (migration `0050`): triggers on `music_entries`, `music_categories`, `music_files` and
   `device_music_entries` move `music_library_revision`; `music::cached_library` (`AppState.music_libraries`) keeps each
-  phone's built library under it, so the policy poll, the library route and the device card build once per change. A
+  phone's built library under it, so the policy poll, the library route and the phone's Music page build once per change. A
   new table that feeds the library needs the same triggers (or `music::bump_library_revision`). Covers are checked
   with one scoped query; the import builds each phone's library once plus once to confirm.
 - **Add check**: through the sweep's client (`music_net`, below): psapi's catalog root (public only) or the feed
@@ -1170,14 +1170,21 @@ needed to manage the phone, delete on a schedule, never store notification or me
 
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
   `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
-  "None" with nothing on, "Couldn't read" on a failed count): warnings at the top (Vibb can't deliver music yet, the
-  music app not reachable), **Music app** (the catalog switch, "Not in the catalog ›" to `/music/settings#app`
-  without a catalog row), **Library** (one switch per entry, `#music-entry-<id>`, the phone's error for the entry
-  under its name), the **settings form** `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit
-  and Volume cap pickers, Storytel - groups only for their footers), **Sonos speakers** and **On the phone** (the
-  report as rows: the music app's version with its package and code behind ⓘ, the library's state, downloads waiting,
-  the storage rows, the Storytel login; the report's age under the group). A phone not set up has the page. Every
-  read is a 500 on a DB error ("Couldn't read this phone"), never an empty library or default settings.
+  "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
+  read): warnings at the top (Vibb can't deliver music yet, the music app not reachable), **Music app** (the catalog
+  switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
+  `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
+  `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups
+  only for their footers), **Sonos speakers** and **On the phone** (only once the phone reported on music: the music
+  app's version with its package and code behind ⓘ - `device_pages::music_app_row`, About's too -, the library's
+  state with its size behind ⓘ, downloads waiting, the storage rows, the Storytel login; the report's age under the
+  group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
+  never an empty library or default settings.
+- **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
+  warnings and six orange rows - "Vibb can't deliver music yet" and "Music app not reachable" (→ the page),
+  "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
+  "Update Vibb and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to the page **without a fragment** (its
   first group), refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
