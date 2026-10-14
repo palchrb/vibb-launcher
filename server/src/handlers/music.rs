@@ -3161,8 +3161,8 @@ impl SweepView {
                         .to_string(),
                     _ => "No logged-in account owns this playlist or collaborates on it, so the \
                           phones can't show its tracks: they play it in Spotify's order. For the \
-                          track list, make the playlist in your child's Spotify account, or make \
-                          yours collaborative and invite your child."
+                          track list, make the playlist in your child's Spotify account, or invite \
+                          your child to collaborate on yours and join from your child's account."
                         .to_string(),
                 });
             } else {

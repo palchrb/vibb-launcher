@@ -306,15 +306,17 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`; `none` from the token's `off` and from `forget()`)
   is `noBackupFilesDir/spotify_state.json`, written only on a change, shown on **every** Spotify tile and sent as the
   report's `spotify`.
-- **No source on the kid's screens** (26c step 8, the user's decision of 2026-10-14): a Spotify entry is a tile like
-  any other. No string value says "Spotify" (`SourceScanTest` pins both languages and the `ui/` sources' literals;
-  string *names* like `renderer_spotify_*` and `hint_spotify_picks` are code and stay). The kind is the content's:
-  `kindOf` gives a Spotify show or episode `Kind.PODCAST` ("Podkast", episodes) and a playlist, album, track or artist
-  `Kind.MUSIC` (`kind_music` "Musikk", tracks) - there is no `Kind.SPOTIFY`. The player has no source line under the
-  title, "Liste" shows nothing in the offline summary's place (a context: "Musikk · rekkefølgen velges for deg"), and
-  the web player's lines are plain ("Trenger Wi-Fi", "Trenger internett", "Ikke tilgjengelig nå", "Spør en voksen",
-  "Virker ikke på telefonen", "Spilles et annet sted", "Stoppet - trykk spill"). This is a stated deviation from
-  Spotify's Developer Policy II (attribution where its content is shown; 26c §7.3): the attribution is the parent's
+- **No source on the kid's screens** (26c step 8, the user's decision of 2026-10-14): a Spotify entry is a tile like any
+  other. No string value says "Spotify" (`SourceScanTest` pins both languages, the `ui/` sources' literals, and those of
+  `playback/`, `bridge/` and `sync/` - the notification, the lock screen and Home's card - with two allowlisted non-kid
+  literals; it also pins the session's metadata, `setNowPlaying` and the web player's live title to the entry's name and
+  the titles; string *names* like `renderer_spotify_*` and `hint_spotify_picks` are code and stay). The kind is the
+  content's: `kindOf` gives a Spotify show or episode `Kind.PODCAST` ("Podkast", episodes) and a playlist, album, track
+  or artist `Kind.MUSIC` (`kind_music` "Musikk", tracks) - there is no `Kind.SPOTIFY`. The player has no source line
+  under the title, "Liste" shows nothing in the offline summary's place (a context: "Musikk · rekkefølgen velges for
+  deg"), and the web player's lines are plain ("Trenger Wi-Fi", "Trenger internett", "Ikke tilgjengelig nå", "Spør en
+  voksen", "Virker ikke på telefonen", "Spilles et annet sted", "Stoppet - trykk spill"). This is a stated deviation
+  from Spotify's Developer Policy II (attribution where its content is shown; 26c §7.3): the attribution is the parent's
   PWA's only. Don't add the word, a logo or a source line back without the user.
 - **The web player's WebView** (26c §5.2, §7.2): one WebView in the process, `SpotifyWebHost`'s, made with the
   application context by the service and **never attached to a window** (`SourceScanTest`: `WebView(`,

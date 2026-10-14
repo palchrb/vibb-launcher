@@ -782,11 +782,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
   Spotify page's intro ("your children's Spotify accounts: one account per phone, the child's own. Your own Spotify
   account is never logged in here - you paste the links."), its setup steps (User Management: "each child's Spotify
   account - one per phone, the child's own, never yours"; a sixth step on playlists: a playlist lists only when a
-  child's account owns it or collaborates on it - made in the child's account, or the parent's made collaborative -,
+  child's account owns it or collaborates on it - made in the child's account, or the parent's with the child invited to collaborate and joined from the child's
+  account (the invite link opened as the child) -,
   else it plays in Spotify's order without a track list), the login hint ("Log in each child's own account - one per
   phone, never yours ..."), the context notice ("... For the track list, make the playlist in your child's Spotify
-  account, or make yours collaborative and invite your child.", card and add), and the device card's binding hint
-  ("One account per phone: this child's own Premium account, never yours."). The two-phones-one-account warning and
+  account, or invite your child to collaborate on yours and join from your child's account.", card and add), and the device card's binding hint
+  ("One account per phone: this child's own Premium account, never yours."). A Spotify entry without a name from
+  Spotify (a playlist's is optional) is named `LinkKind::plain_name` ("Playlist" ...), never `kind_label`'s "Spotify
+  playlist": the name is the kid's tile and lock screen. The two-phones-one-account warning and
   the card's "read as <name>" (which child's account listed it) stay. The PWA is also where Spotify's attribution lives:
   the music app shows no Spotify word at all (step 8, 26c §7.3) - keep "Spotify" in the PWA's labels and "Open in
   Spotify".

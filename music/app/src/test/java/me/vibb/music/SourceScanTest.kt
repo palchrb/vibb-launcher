@@ -472,6 +472,60 @@ class SourceScanTest {
             // no string literal on a screen names it (identifiers like isSpotify are code, not words)
             assertFalse("${file.name}: no \"Spotify\" literal", Regex("\"[^\"\n]*Spotify[^\"\n]*\"").containsMatchIn(text))
         }
+        // qa-26c-step8-code L1: the notification, the lock screen and Home's card are built outside ui/ - the session's
+        // metadata and setNowPlaying in playback/, the bridge's now-playing in bridge/, Nytt's notification in sync/.
+        // No literal there names Spotify (any case) but these two, which never reach a screen.
+        val allowed = setOf(
+            "PlaybackService.kt" to "\"VibbSpotify\"", // SPOTIFY_LOG_TAG, a debug build's log tag
+            "PlaybackService.kt" to "\"playing on Spotify\"", // the resumption future's exception, Media3's only
+        )
+        val literal = Regex("\"[^\"\n]*\"")
+        for (dir in listOf("playback", "bridge", "sync")) {
+            for (file in sources("src/main/java/me/vibb/music/$dir")) {
+                for (m in literal.findAll(code(file))) {
+                    if (!m.value.contains("spotify", ignoreCase = true)) continue
+                    assertTrue("$dir/${file.name}: ${m.value} reaches no screen?", (file.name to m.value) in allowed)
+                }
+            }
+        }
+        // ...and the three sites that put text there take only the entry's name and the item's (or live track's) title
+        val service = code(moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt"))
+        val meta = service.substringAfter("val meta = MediaMetadata.Builder()").substringBefore(".setIsPlayable(true)")
+        assertEquals(
+            "the session's text: the title, the entry as artist and album",
+            listOf(".setTitle(item.title)", ".setArtist(a.entry.name)", ".setAlbumTitle(a.entry.name)"),
+            meta.lines().map { it.trim() }.filter { it.isNotEmpty() },
+        )
+        val now = service.substringAfter("private fun reportNowPlaying(").substringBefore("LiveBridge.setNowPlaying(\n            Bundle()")
+        val bundle = service.substringAfter("LiveBridge.setNowPlaying(\n            Bundle().apply {").substringBefore("\n            },")
+        assertTrue(now.isNotEmpty())
+        assertEquals(
+            "Home's card and the lock's tile: the entry's name and the title",
+            listOf("putString(NowPlayingKeys.ENTRY, a.entry.name)", "putString(NowPlayingKeys.ITEM, title)"),
+            bundle.lines().map { it.trim() }.filter { it.startsWith("putString(") },
+        )
+        val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))
+        assertTrue(
+            "a context's live title is the only text the web player puts in the session",
+            renderer.contains("private fun titled(item: MediaItem, title: String): MediaItem =\n        item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setTitle(title).build()).build()"),
+        )
+        // titled's text is always the live title: showTitle's, the stored live track's, or the kept liveTitle
+        assertEquals(
+            listOf("titled(mi, t)", "titled(item, live)", "titled(mi, title)"),
+            Regex("""titled\([^)]*\)""").findAll(renderer).map { it.value }.filter { !it.startsWith("titled(item:") }.toList(),
+        )
+        assertTrue(renderer.contains("liveTitle?.let { t -> mediaItems = items.mapIndexed { i, mi -> if (i == 0) titled(mi, t) else mi } }"))
+        assertTrue(renderer.contains("val live = liveTitle?.takeIf { contextUri != null }"))
+        assertEquals(
+            "liveTitle: the stored live track's title, the SDK's track title (else the entry's name), or none",
+            listOf("liveTitle = stored?.title", "liveTitle = null", "liveTitle = t"),
+            Regex("""liveTitle = [^\n]*""").findAll(renderer).map { it.value.trim() }.toList(),
+        )
+        assertEquals("showTitle: the SDK's track title, else the entry's name", listOf("showTitle(t)"), Regex("""showTitle\([^)]*\)""").findAll(renderer).map { it.value }.filter { it != "showTitle(title: String)" }.toList())
+        assertTrue(renderer.contains("val t = title ?: contextName ?: return"))
+        assertTrue(renderer.contains("contextName = a?.entry?.name?.takeIf { contextUri != null }"))
+        // the live title the service reports is that session title, else the item's
+        assertTrue(service.contains("val title = live ?: item?.title"))
     }
 
     /** qa-26c-step5b-code M2: the WebView's console never reaches logcat; L2: the debug switch never meets a real token. */

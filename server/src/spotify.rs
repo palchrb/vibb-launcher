@@ -193,6 +193,21 @@ impl LinkKind {
         }
     }
 
+    /// An entry's name when Spotify gives it none (only a playlist's is optional): the kind's
+    /// word without the source's, because the name is the kid's tile, notification and lock
+    /// screen, which never name Spotify (design 26c step 8, qa-26c-step8-code L2). The PWA's
+    /// labels stay `music::kind_label`'s ("Spotify playlist" ...).
+    pub fn plain_name(self) -> &'static str {
+        match self {
+            LinkKind::Playlist => "Playlist",
+            LinkKind::Album => "Album",
+            LinkKind::Track => "Track",
+            LinkKind::Artist => "Artist",
+            LinkKind::Show => "Podcast",
+            LinkKind::Episode => "Episode",
+        }
+    }
+
     fn parse(text: &str) -> Option<Self> {
         Some(match text {
             "playlist" => LinkKind::Playlist,

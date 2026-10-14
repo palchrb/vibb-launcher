@@ -91,7 +91,7 @@ input, select { max-width: 100%; }
                 <li>User Management: add each child's Spotify account - one per phone, the child's own, never yours - by name and e-mail. <strong>At most {{ dev_mode_users }} accounts can use a Development-mode app</strong>; Spotify only grants more to organisations with 250k monthly users.</li>
                 <li>Copy the <strong>Client ID</strong> (not the Client secret: this server doesn't need it) into the field above and save.</li>
                 <li>The limits are your app's own: logins have to be renewed every 6 months (this page reminds you), a playlist's tracks list only for its owner or a collaborator, Spotify's own editorial playlists aren't available to developer apps, and Spotify's Developer Policy forbids apps "targeted to children" - using this for your child is at your own risk; Spotify may switch the app off.</li>
-                <li>Playlists: a phone shows a playlist's tracks only when a child's account here owns it or collaborates on it - make it in the Spotify app while logged in as the child, or make your own playlist collaborative and invite the child. Any other playlist plays in Spotify's order without a track list, and only if the child's account can open it (public, or shared with the child). Albums, tracks, artists and podcasts need nothing.</li>
+                <li>Playlists: a phone shows a playlist's tracks only when a child's account here owns it or collaborates on it - make it in the Spotify app while logged in as the child, or invite the child to collaborate on yours (in Spotify, the playlist's ⋯ › Invite collaborators; then open the invite link while logged in as the child - the private window you logged the child in from - and join). Then "Check now" on its card lists it. Any other playlist plays in Spotify's order without a track list, and only if the child's account can open it (public, or shared with the child). Albums, tracks, artists and podcasts need nothing.</li>
             </ol>
         </details>
 
@@ -166,7 +166,7 @@ input, select { max-width: 100%; }
             Added <a href="/music#entry-{{ added.id }}">{{ added.name }}</a>. {% if added.ticked.is_empty() %}Turn it on for a phone on that phone's Music card.{% else %}On {{ added.ticked.join(", ") }} within a few minutes.{% endif %}
             {% if added.context || !added.skipped.is_empty() %}
             <ul class="sp-notes">
-                {% if added.context %}<li>No logged-in account owns this playlist or collaborates on it, so the phones can't show its tracks: they play it in Spotify's order. For the track list, make the playlist in your child's Spotify account, or make yours collaborative and invite your child.</li>{% endif %}
+                {% if added.context %}<li>No logged-in account owns this playlist or collaborates on it, so the phones can't show its tracks: they play it in Spotify's order. For the track list, make the playlist in your child's Spotify account, or invite your child to collaborate on yours and join from your child's account.</li>{% endif %}
                 {% for line in added.skipped %}<li>{{ line }}</li>{% endfor %}
             </ul>
             {% endif %}

@@ -70,8 +70,10 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
    Spotify has no downloads and nothing of it is cached (design 30's played extras and cache-through never see it).
 4. **A playlist lists only when a child's account owns it or collaborates on it** (dev mode lists a playlist's items
    only to its owner or a collaborator, and only the children's accounts are logged in): the parent makes the playlist
-   while logged into the child's account in the Spotify app, or makes their own playlist collaborative and invites
-   the child. Any other playlist plays in **context mode** (§3.3, §5.9): Spotify's order, no track list, no order
+   while logged into the child's account in the Spotify app, or invites the child to collaborate on their own (in
+   Spotify, the playlist's ⋯ › Invite collaborators) and opens the invite link **logged in as the child** (the private
+   window the child was logged in from) to join - until the child's account has joined, it is no collaborator and the
+   playlist stays a context (qa-26c-step8-code L3). Any other playlist plays in **context mode** (§3.3, §5.9): Spotify's order, no track list, no order
    setting, no NY, and only if the child's account can open it (public, shared by link or followed [device check]); it
    resumes at the last track while that track is still in the playlist (§5.9's offset), an artist never. Albums,
    tracks, shows and episodes list with any account.
@@ -258,8 +260,9 @@ decision after the spike): Spotify's Web Playback SDK in a headless WebView in t
      Developer Policy forbids apps "targeted to children" - using this for your child is at your own risk; Spotify may
      switch the app off.
   6. (Step 8.) Playlists: a phone shows a playlist's tracks only when a child's account here owns it or collaborates
-     on it - make it in the Spotify app while logged in as the child, or make your own playlist collaborative and
-     invite the child. Any other playlist plays in Spotify's order without a track list, and only if the child's
+     on it - make it in the Spotify app while logged in as the child, or invite the child to collaborate on yours (in
+     Spotify, the playlist's ⋯ › Invite collaborators; then open the invite link while logged in as the child - the
+     private window you logged the child in from - and join). Then "Check now" on its card lists it. Any other playlist plays in Spotify's order without a track list, and only if the child's
      account can open it (public, or shared with the child). Albums, tracks, artists and podcasts need nothing.
   The page's intro says the model in one line: "your children's Spotify accounts: one account per phone, the child's
   own. Your own Spotify account is never logged in here - you paste the links."
@@ -397,7 +400,8 @@ replaces its row's token and bumps `generation`, keeping the row id and every ph
 ### 2.5 Which account a phone plays as (`device_policy.music_spotify_account`)
 - NULL = Spotify is off on this phone (the default; design 20's opt-in). Set on the device page's music card: "Spotify
   plays as: [Off | Ella | Ola ...]" (auto-saving select, `POST /devices/{id}/music/spotify`, event
-  `music_spotify_binding_changed`), only accounts that exist; refused for an unknown id (a 400 back at `#music-spotify`).
+  `music_spotify_binding_changed`), only accounts that exist; refused for an unknown id (a 303 back to `#music-spotify` with the notice
+  `music_notice=spotify_unknown`, step 2b's deviation 3).
   Its hint (step 8): "One account per phone: this child's own Premium account, never yours."
 - Beside it: the account's state ("logged in, log in again before ..." / "needs a new login" / "Spotify says this
   account has no Premium" from the phone's `music_state.spotify` = `not_premium`), and **one account bound to two
@@ -455,13 +459,12 @@ hash of the same URI, so a Pi bookmark file and our entry key match).
 | album | list | `GET /albums/{id}` (name, artists, images, the first 50 tracks) + `GET /albums/{id}/tracks?limit=50&offset=50..` | daily (immutable: vibb's daily re-ask) | Musikk · spor N av M |
 | track | list (one item) | `GET /tracks/{id}` | daily | Musikk |
 | artist | context (default); **option**: list as its albums' tracks | context: `GET /artists/{id}` (name, images) - top tracks are removed in dev mode [verified 2026-10-13]. Option: `GET /artists/{id}/albums?include_groups=album,single&limit=10` (not on the removed list; the reference's `limit` is at most 10, default 5 [verified 2026-10-13, qa-26c-step2a-code M2]; dev-mode paging [unverified]) then each album as the album row, newest album first, at most 20 albums and 500 tracks | daily | context: Musikk · rekkefølgen velges for deg; option: Musikk · spor N av M |
-
 | show | list | `GET /shows/{id}` + `GET /shows/{id}/episodes?limit=50` newest first, the newest 100 kept | the interval | Podkast · episode N av M |
 | episode | list (one item) | `GET /episodes/{id}` | daily | Podkast |
 | audiobook, chapter | refused: "Spotify audiobooks can't be played here." | | | |
+| `spotify:user:<id>:collection` (Liked Songs), user profiles | refused: "Liked Songs and Spotify profiles can't be added - make a playlist instead." | | | |
 
 (The tile column is step 8's: the kind is what the entry holds, never the source, §4.3.)
-| `spotify:user:<id>:collection` (Liked Songs), user profiles | refused: "Liked Songs and Spotify profiles can't be added - make a playlist instead." | | | |
 
 - **Episodes in the `uris` array** are not documented (the reference says "track URIs") [unverified]: shows and
   episodes are built, and step 5b's device check plays one; if the SDK refuses them, the parser refuses `show` and
@@ -484,10 +487,12 @@ Fields: `link`, `category`, `device` (repeated; read as `Form<Vec<(String, Strin
    again". For a playlist, also the first items page with each account in turn until one isn't 403: none -> the entry is
    added in **context mode** with the notice "No logged-in account owns this playlist or collaborates on it, so the
    phones can't show its tracks: they play it in Spotify's order. For the track list, make the playlist in your
-   child's Spotify account, or make yours collaborative and invite your child." (step 8's wording; it said "Log in as
-   its owner" before, which would log the parent in)
+   child's Spotify account, or invite your child to collaborate on yours and join from your child's account." (step 8's
+   wording and its fix round's, L3; it said "Log in as its owner" before, which would log the parent in)
 3. Insert (within `MAX_ENTRIES`, the INSERT's own `WHERE`): source `spotify`, the canonical target, the key, name = the
-   metadata's (a playlist's or show's name; an album "<album> — <first artist>"; a track "<name> — <artists>"; an
+   metadata's - a playlist without one (Spotify's name is optional only there) is named by its kind's word,
+   `LinkKind::plain_name` "Playlist", never the PWA's "Spotify playlist" (the name is the kid's tile and lock screen;
+   qa-26c-step8-code L2) - (a playlist's or show's name; an album "<album> — <first artist>"; a track "<name> — <artists>"; an
    artist's name) cut to `MAX_NAME_CHARS`, the category from a new kind-aware `music::default_kind_for(source,
    target)` - `podcast` for a Spotify show or episode, `music` for every other Spotify kind, `default_kind(source)` for
    every other source (today's `default_kind` is per source only, `music.rs:319-325`) - through `default_category` (the
@@ -512,7 +517,7 @@ Spotify page"), audiobook/collection targets skip with §3.1's sentence, `spotif
   then by id. Album, track, artist, show and episode reads take the first that answers; a playlist's items try each in
   turn on 403 and remember the one that worked. So each child's account lists the playlists it owns or collaborates
   on, for every phone that has the entry, without the parent saying which (the parent's own account is never logged in,
-  step 8: a playlist only the parent owns is a context unless it is collaborative with a child).
+  step 8: a playlist only the parent owns is a context until a child's account has joined it as a collaborator).
 - **List mode** (`spotify_mode = 'list'`, the primary): the listing is ours; the phone plays its items by track URI
   (§5.4). Every order setting works; resume, done marks, NY and design 27's art work as for a podcast.
 - **Context mode** (`spotify_mode = 'context'`, the fallback): an artist always; a playlist when every reader gets 403
@@ -1336,8 +1341,8 @@ with the Spotify entries (the courier carries their listings like any other).
 ### 7.3 Spotify's Developer Policy and Terms (15 May 2025) - what the design does
 | Clause (the Policy's text verified 2026-10-13; the Terms' as read for spike §1 on 2026-10-12) | Here |
 |---|---|
-| II "Attribution ... by using the Spotify Marks"; "Display metadata and cover art when streaming" | **Not met on the kid's screens - a deliberate deviation** (step 8, the user's decision of 2026-10-14 for private use: "vi ikke trenger noe spor av spotify noe sted i appen"). Policy II.4 asks for attribution wherever Spotify content is shown; the kid's app shows Spotify content (titles, cover art, audio) with **no** attribution: no logo, no word "Spotify" on a tile, a hint, the player, the list or a line (`SourceScanTest` pins it). Steps 5b-7 had the word on the tile, the hints and under the player's title; step 8 removed it. **The attribution lives only in the parent's PWA**: the Spotify page (its name, the accounts), each library card's kind label ("Spotify playlist" ...) and "Open in Spotify", the device card's "Spotify plays as" and its lines. Cover art and metadata are still shown while streaming (every playback has a title and a picture). Inside the risk the user accepted on 2026-10-06 (III below); the sanction is the same revoked client ID |
-| II "Metadata, cover art ... must be accompanied by a link back" | the PWA's card ("Open in Spotify") and entry page link each entry to `open.spotify.com`; the kid's screens open no links (design 20's kiosk rule) and, since step 8, name no source either - a deviation inside the accepted risk |
+| II "Attribution ... by using the Spotify Marks"; "Display metadata and cover art when streaming" | **Not met on the kid's screens - a deliberate deviation** (step 8, the user's decision of 2026-10-14 for private use: "vi ikke trenger noe spor av spotify noe sted i appen"). Policy II.4 asks for attribution wherever Spotify content is shown; the kid's app shows Spotify content (titles, cover art, audio) with **no** attribution: no logo, no word "Spotify" on a tile, a hint, the player, the list or a line (`SourceScanTest` pins it). Steps 5b-7 had the word on the tile, the hints and under the player's title; step 8 removed it. **The attribution lives only in the parent's PWA**: the Spotify page (its name, the accounts), each library card's kind label ("Spotify playlist" ...) and "Open in Spotify", the device card's "Spotify plays as" and its lines. Cover art and metadata are still shown while streaming (every playback has a title and a picture). **This is a second deviation, separate from the one accepted on 2026-10-06**: that acceptance was III's ("targeted to children", below), on a design that met II with the word on the tiles (`vibb-spotify-options.md`); dropping the word breaks II too, decided by the user on 2026-10-14 ("vi ikke trenger noe spor av spotify noe sted i appen? For barna skal jo dette bare være en tile til? Samme hvilke kilde?"). The sanction is the same: Spotify may switch the family's app off (a revoked client ID), and the tiles then say "Spør en voksen" (qa-26c-step8-code L5) |
+| II "Metadata, cover art ... must be accompanied by a link back" | the PWA's card ("Open in Spotify") and entry page link each entry to `open.spotify.com`; the kid's screens open no links (design 20's kiosk rule) and, since step 8, name no source either - part of the second deviation above (II, the user's decision of 2026-10-14), not of the 2026-10-06 acceptance (III) |
 | III "Do not build products and services which are targeted to children" | **this is a child's player**. Private use, the family's own dev-mode app, the risk the user accepted on 2026-10-06; the PWA's setup text says it plainly to every self-hoster (§2.1). The sanction is a revoked client ID: every refresh then fails `invalid_client`, the tiles say "Spør en voksen", nothing else breaks |
 | III "Do not create any product or service which is integrated with streams or content from another service" | Vibb plays NRK, RSS, Storytel and own files in the same player (spike §1's "new finding"): the same accepted risk |
 | III "Do not ... segue, mix, re-mix, or overlap any Spotify Content with any other audio" | one entry plays at a time; a switch pauses the old renderer before the new one starts (`attach`); the sleep fade only lowers the volume |
@@ -1519,8 +1524,9 @@ fake's options, each a fake restart.
   `CALL_HOLD` (paused and resumed), Home's card and the lock's tile following design 28's window, a restart (paused at
   the bookmark, no request), the output picker with a room (Spotify isn't offered there). The secrets grep: logcat, the
   app's data folder and the server's journal hold no `FAKE-ACCESS`, `FAKE-REFRESH`, `FAKE-CODE` or verifier.
-- **Part B, the real SDK** (the user's account, the spike's emulator image): the real login on the PWA (https or the
-  paste), a real playlist the parent owns, play, pause, skip, resume after a restart; the debug log's permission line
+- **Part B, the real SDK** (the kid's Premium account, the spike's emulator image): the real login of the kid's
+  account on the PWA (https or the paste; the parent's is never logged in, step 8), a real playlist the kid's account
+  owns (or the parent's, made collaborative and joined by the kid), play, pause, skip, resume after a restart; the debug log's permission line
   (which origin asked for protected media), the blocked-hosts counter (should stay 0; a redirect's target never shows
   there, so the parent's DNS log is read for hosts outside the list, L2), no `csp` error line in the debug
   log (the page's CSP admits what the real SDK's loader needs; qa-26c-step4-code L6), no token in logcat after a Wi-Fi
@@ -1689,7 +1695,7 @@ is owed before step 5b's acceptance closes.
    hasn't landed yet, the three `spotify_hosts.json` copies with their constants (it hadn't: they stay provisional). Tests: `SpotifyTrackerTest`'s context
    sequences, `SpotifyRendererTest`, a snapshot test (a context entry shows as a tile; a restart restores it paused at
    the live track). Acceptance: the suites; §6l's artist and 403-playlist lines. Owed [device check]: a real artist, a
-   playlist the parent doesn't own; QA checklist item 18 (the artist option's dev-mode check).
+   playlist the kid's account doesn't own or collaborate on (the parent's own, say); QA checklist item 18 (the artist option's dev-mode check).
 7. **Docs and release.** `music/CLAUDE.md` (the `spotify/` package, the renderer, the WebView rules, the token, the
    secrets rule, the debug switch, the fake), `server/CLAUDE.md` (the Spotify section: app, accounts, PKCE, the
    callback's exemption, the token endpoint, the listing modes, the gate, 0074), `launcher/CLAUDE.md` (the token
@@ -1789,9 +1795,12 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 
 **Settled (from the docs, the code, the brief's rules; listed so nothing is lost):**
 4. Shuffle: off for Spotify - the phone's rule (`canShuffle`), a §12 deviation, not a question (QA L14).
-5. Attribution: **none on the kid's screens** (step 8, the user's decision of 2026-10-14: "ingen spor av spotify noe
-   sted i appen") - no logo, no word; the attribution and the link-back are the PWA's only (§7.3), inside the accepted
-   Policy risk. (Through step 7 it was the word "Spotify" on the tiles and the player.)
+5. Attribution: **none on the kid's screens** (step 8, the user's decision of 2026-10-14: "vi ikke trenger noe spor av
+   spotify noe sted i appen") - no logo, no word; the attribution and the link-back are the PWA's only (§7.3). This is a
+   **second departure** from Spotify's Developer Policy - its attribution clause (II) - beside the "targeted to
+   children" one (III) the user accepted on 2026-10-06 on a design that still carried the word; the sanction is the
+   same (Spotify may switch the family's app off; the tiles then say "Spør en voksen"). (Through step 7 it was the
+   word "Spotify" on the tiles and the player.)
 6. The wake lock while playing: kept; dropped only if the Jelly Star's run A shows an hour of stream and page without it.
    The Wi-Fi lock stays but is inactive with the screen off on API 34+ (every Wi-Fi lock is LOW_LATENCY there; step
    5a's fix round, L1 - SonosLocks' too): whether Wi-Fi power save stalls the stream with the screen off is what the
@@ -1887,11 +1896,12 @@ Final (step 7, 2026-10-13; it replaces the drafts written with the design and at
 (2026-10-14, "Step 8 implementation status" below), and
 two merges of `main` - at `a5d30b9` (merge commit `5d6bd5b`) and at `571f86f` (merge commit `e4d4feb`, with its own
 code QA and fix round). `origin/main` is still `571f86f`, an
-ancestor: nothing on `main` is missing here. Last full runs: server `cargo test` 827 passed (the merge; the flaky
-`parent_pin` test below aside), `cargo fmt --check` clean, clippy's 12 known warnings; launcher `assembleDebug
-testDebugUnitTest` 1145 tests (the merge; its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds);
-music `assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true` 843 JVM tests (step 6's fix
-round); the four fakes' `--selftest`s OK. Step 7 changed docs only.
+ancestor: nothing on `main` is missing here. Last full runs: server `cargo test` 827 passed with `parent_pin` green (step 8's fix round), `cargo fmt --check`
+clean, clippy's 12 known warnings (step 7's run); launcher `assembleDebug testDebugUnitTest` 1146 tests (step 7's fix
+round; its `assembleRelease` needs `app/libs/tsnet.aar`, which only CI builds); music `assembleDebug assembleRelease
+testDebugUnitTest lintDebug -PwarningsAsErrors=true` 845 JVM tests (step 8's fix round); the four fakes'
+`--selftest`s OK. Step 7 changed docs only; step 8 changed the music app's strings and words, the server's copy and one
+fallback name, and their tests (`launcher/` untouched).
 
 **Facts on 2026-10-13** (tags from `git ls-remote`, releases and runs from the GitHub REST API):
 - `server/Cargo.toml` says **0.24.0** here and on `main`. `server-v0.24.0` **is tagged** - on `6ae54e8`, a `main`
@@ -1986,11 +1996,12 @@ read literally):
 - The `parent_pin` test green or re-run (open point 6): `server-v*` runs the tests before it builds.
 
 **Owed before the stable `music-v0.4.0`** (none could run where this was built):
-- **§6l part B** on the emulator with the user's Premium account (the spike's recipe): the real PWA login (https or
-  the paste), a playlist the parent owns, play, pause, skip, resume after a restart; the protected-media origin line;
+- **§6l part B** on the emulator with the kid's Premium account (the spike's recipe; the parent's is never logged in,
+  step 8): the real PWA login (https or the paste), a playlist the kid's account owns (or the parent's, made
+  collaborative and joined by the kid), play, pause, skip, resume after a restart; the protected-media origin line;
   the blocked-hosts counter at 0 and the parent's DNS log for hosts outside the list (redirect targets); no `csp`
   line; no token in logcat after a Wi-Fi drop; **the state recorder's real sequences** (an artist, a playlist the
-  parent doesn't own, a context's end with Autoplay on and off, the `context` field around track changes, a paused
+  kid's account doesn't own or collaborate on, a context's end with Autoplay on and off, the `context` field around track changes, a paused
   `nextTrack`, an offset no longer in the playlist) turned into `sdk_states/*.json` for `SpotifyTrackerTest` (the
   main session's follow-up); and a cold start's `needToken` -> `vibb.token` -> `ready` order against the scripted
   page's (qa-26c-step5a-code, "Owed by step 5b").
@@ -2019,8 +2030,9 @@ read literally):
    guard pauses it either way).
 3. **The wake lock** (§14 item 6): kept; dropped only if the Doze run shows an hour of stream and page without it.
 4. **Attribution** (closed 2026-10-14, step 8): none on the kid's screens - no logo, no word (the user's decision,
-   a stated deviation from Developer Policy II, §7.3); the PWA carries it (the Spotify page, the cards, "Open in
-   Spotify").
+   a second deviation from the Developer Policy - II, attribution - beside III's accepted on 2026-10-06, with the same
+   sanction: the family's app switched off, the tiles saying "Spør en voksen"; §7.3); the PWA carries it (the Spotify
+   page, the cards, "Open in Spotify").
 5. **Spotify on Sonos** (§11 step 9): a later architect pass (the household's Spotify account in the Sonos app, the
    `sn` service number).
 6. **For the main session**: `tests::parent_pin::a_new_pin_ends_the_notices_but_not_the_list` is timing-dependent
@@ -4227,8 +4239,8 @@ Deviations from the brief (each with its reason):
    and the tests exercise readers in turn; §6l says to read `fakeparent` as a second child's account. No test was
    renamed.
 
-Found, not changed: the §2.5 text says an unknown binding id is "a 400 back at `#music-spotify`" while step 2b built a
-303 with a notice (its deviation 3) - unrelated to this step.
+Found: the §2.5 text said an unknown binding id is "a 400 back at `#music-spotify`" while step 2b built a 303 with a
+notice (its deviation 3) - fixed in the fix round (L6).
 
 Validation: music (from `music/`) `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug
 -PwarningsAsErrors=true` BUILD SUCCESSFUL, 845 JVM tests (844 + the new no-Spotify scan), 0 failed; lint 0 errors, 42
@@ -4240,3 +4252,46 @@ are byte-identical as step 3 left them), `launcher/` untouched, so its suite was
 Owed: QA's review of this step. The user's look at the words on a phone ("Musikk" on a Spotify playlist's cover,
 "rekkefølgen velges for deg"). §6l parts A and B and the Jelly Star checks as before (QA checklist items 1-4 now with
 the children's own accounts only). The Developer Policy deviation is the user's accepted risk, recorded in §7.3.
+
+### Fix round after QA's code review (qa-26c-step8-code, 2026-10-14)
+
+All six findings fixed; none disputed. No contract file, no migration, `launcher/` untouched.
+- **L1** (the scan guarded `ui/` only): `SourceScanTest`'s step 8 test also reads every string literal of `playback/`,
+  `bridge/` and `sync/` (where the notification, the lock screen and Home's card get their text): none may contain
+  "spotify" in any case except an allowlist of two that never reach a screen - `PlaybackService.kt`'s
+  `SPOTIFY_LOG_TAG` "VibbSpotify" and the resumption future's `UnsupportedOperationException("playing on Spotify")`.
+  It pins the three sites that put text there: the session's `MediaMetadata` sets exactly `.setTitle(item.title)`,
+  `.setArtist(a.entry.name)`, `.setAlbumTitle(a.entry.name)`; `reportNowPlaying`'s bundle puts exactly
+  `NowPlayingKeys.ENTRY` = `a.entry.name` and `ITEM` = `title` (`live ?: item?.title`); the web player's `titled`
+  takes only the live title (its three callers, and `liveTitle` assigned only the stored live track's title, the
+  SDK's track title or the entry's name, or null). Mutation: `.setAlbumTitle("Spotify")` turns the test red.
+- **L2** (a nameless playlist named "Spotify playlist"): `spotify::LinkKind::plain_name` ("Playlist", "Album",
+  "Track", "Artist", "Podcast", "Episode") is the add's fallback name (`handlers::music_spotify`); `kind_label`
+  stays the PWA's label. `context_playlists_short_links_and_kinds` adds a playlist whose metadata name is blank: the
+  entry is named "Playlist", and no `plain_name` holds the word. §3.2 step 3 says it.
+- **L3** (the collaborative route omitted the join): setup step 6 - "invite the child to collaborate on yours (in
+  Spotify, the playlist's ⋯ › Invite collaborators; then open the invite link while logged in as the child - the
+  private window you logged the child in from - and join). Then "Check now" on its card lists it." - and the context
+  notice (card and add) - "... or invite your child to collaborate on yours and join from your child's account." The
+  three server tests pin the new text; §0.2 item 4, §2.1 step 6, §3.2, §3.3 and `server/CLAUDE.md` follow. Whether a
+  joined collaborator's account reads the items in dev mode stays QA checklist item 3's device check.
+- **L4** (owed checks in the old account model): §9.4 part B, §11 step 6's device check, the Release's part B line
+  and `docs/testing/emulator.md` part B (heading and the context-mode check) name the kid's Premium account, a
+  playlist the kid's account owns (or the parent's, made collaborative and joined) for list mode, and a playlist the
+  kid's account doesn't own or collaborate on (the parent's own, say) for context mode.
+- **L5** (the deviation filed under the wrong acceptance): §7.3's attribution row says it plainly - dropping the word
+  is a **second** departure from the Developer Policy, its attribution clause (II), beside the "targeted to children"
+  one (III) the user accepted on 2026-10-06 on a design that still carried the word; decided by the user on
+  2026-10-14, quoted exactly ("vi ikke trenger noe spor av spotify noe sted i appen? For barna skal jo dette bare være
+  en tile til? Samme hvilke kilde?"); the same sanction: Spotify may switch the family's app off, and the tiles then
+  say "Spør en voksen". The link-back row, §14 item 5 (its quote corrected to the user's words) and the Release's open
+  point 4 say the same.
+- **L6**: §2.5 says the unknown binding id's 303 back to `#music-spotify` with `music_notice=spotify_unknown` (step
+  2b's deviation 3); the status's finding above is closed. The Release's "Last full runs" carries step 8's numbers
+  and what step 8 changed. §3.1's table is one table again (the blank line after the artist row and the note between
+  the rows removed; the note under the table).
+- **Validation**: music `./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug -PwarningsAsErrors=true`
+  BUILD SUCCESSFUL, 845 JVM tests, 0 failed (L1's pins inside the existing step 8 test; the `.setAlbumTitle("Spotify")`
+  mutation red, reverted); lint 0 errors, 42 warnings, none in a touched file. Server `cargo fmt --check` clean, `cargo
+  test` 827 passed, 0 failed (L2's case inside `context_playlists_short_links_and_kinds`), `cargo clippy --all-targets`
+  the 12 known warnings, none new. `python3 -I scripts/fake-spotify.py --selftest` OK.

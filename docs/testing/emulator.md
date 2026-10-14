@@ -1307,7 +1307,7 @@ Each check below restarts the fake with its option (`python3 -I scripts/fake-spo
   tiles go, the report's `"spotify"` is `"none"` after the next broadcast, logcat `spotify: web player's cookies, storage and cache cleared`, and
   `adb shell run-as me.vibb.music.debug ls no_backup/` has no `spotify_page_account`.
 
-### Part B. The real SDK (the user's account, the spike's emulator image)
+### Part B. The real SDK (the kid's Premium account, the spike's emulator image)
 
 The spike's image (WebView with Widevine L3), the debug launcher and music app, the server **without** the two base
 variables, and no `spotify_base` in the debug feed: push a `config.json` without the key and broadcast (logcat `spotify:
@@ -1329,7 +1329,7 @@ on https, or the paste; the parent's account is never logged in, design 26c step
   <level> from <host>` lines name a level and a host only.
 - [ ] **Real state sequences** (design 26c §9.4, step 6's recorder): `{"record_spotify_states": true}` in
   `config.json` (no `spotify_base`), push and broadcast; play the real playlist, a pause, next, a pick; then **an artist**
-  and **a playlist the parent doesn't own** (context mode, design 26c §5.9: Spotify's order; the SDK reference says a
+  and **a playlist the kid's account doesn't own or collaborate on** (the parent's own, say; context mode, design 26c §5.9: Spotify's order; the SDK reference says a
   state's `context` uri "can be null" - note every recorded state with `"context":null` and which track it names: our
   live track and the track the last state named next are read as ours, any other as a uri list, paused), next and
   previous in them (also while paused: whether the SDK's `nextTrack` plays a paused player - the phone pauses it again),

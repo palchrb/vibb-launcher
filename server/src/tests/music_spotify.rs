@@ -297,8 +297,10 @@ async fn not_configured_shows_the_steps() {
     ));
     assert!(page.contains(
         "a phone shows a playlist's tracks only when a child's account here owns it or \
-         collaborates on it - make it in the Spotify app while logged in as the child, or make \
-         your own playlist collaborative and invite the child."
+         collaborates on it - make it in the Spotify app while logged in as the child, or \
+         invite the child to collaborate on yours (in Spotify, the playlist's ⋯ › Invite \
+         collaborators; then open the invite link while logged in as the child - the private \
+         window you logged the child in from - and join)."
     ));
     assert!(!page.contains("yours (if it reads your playlists)"));
     assert!(
@@ -2776,7 +2778,7 @@ mod entries {
     use super::{bind, binding, revision};
     use crate::music_sweep::{self as sweep, stamp};
     use crate::spotify::tests::{fixture, save_app, store_account};
-    use crate::spotify::{LOOPBACK_REDIRECT, Read};
+    use crate::spotify::{LOOPBACK_REDIRECT, LinkKind, Read};
 
     fn page_text(res: &TestResponse) -> String {
         res.text().replace("&#39;", "'").replace("&quot;", "\"")
@@ -3150,8 +3152,8 @@ mod entries {
         assert!(page.contains(
             "No logged-in account owns this playlist or collaborates on it, so the phones can't \
              show its tracks: they play it in Spotify's order. For the track list, make the \
-             playlist in your child's Spotify account, or make yours collaborative and invite \
-             your child."
+             playlist in your child's Spotify account, or invite your child to collaborate on \
+             yours and join from your child's account."
         ));
         assert!(page.contains("Turn it on for a phone on that phone's Music card."));
 
@@ -3236,6 +3238,48 @@ mod entries {
                 .unwrap();
         assert_eq!(category, 2);
         assert_eq!(entry_count(&app).await, 4);
+
+        // A playlist Spotify gives no name (blank): named by its kind's word, never the source's -
+        // the name is the kid's tile and lock screen (design 26c step 8, qa-26c-step8-code L2).
+        const NAMELESS: &str = "0FakePlaylistBlank001";
+        let meta = String::from_utf8(fixture("playlist.json"))
+            .unwrap()
+            .replace("\"Kveldsmusikk\"", "\"  \"");
+        assert!(!meta.contains("Kveldsmusikk"));
+        app.fetch
+            .answer(&url(&app, Read::Playlist(NAMELESS)), 200, meta);
+        app.fetch.answer(
+            &url(&app, Read::PlaylistItems(NAMELESS, 0)),
+            403,
+            fixture("forbidden.json"),
+        );
+        let res = add(
+            &app,
+            &cookie,
+            &[("link", format!("spotify:playlist:{NAMELESS}").as_str())],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", page_text(&res));
+        let name: String = sqlx::query_scalar("SELECT name FROM music_entries WHERE target = ?")
+            .bind(format!("spotify:playlist:{NAMELESS}"))
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(name, "Playlist");
+        assert!(!name.to_lowercase().contains("spotify"));
+        for kind in [
+            LinkKind::Playlist,
+            LinkKind::Album,
+            LinkKind::Track,
+            LinkKind::Artist,
+            LinkKind::Show,
+            LinkKind::Episode,
+        ] {
+            assert!(
+                !kind.plain_name().to_lowercase().contains("spotify"),
+                "{kind:?}"
+            );
+        }
     }
 
     /// The library's gate (§3.6) on the library, the listing, the cover and the art routes: a
@@ -3450,7 +3494,10 @@ mod entries {
             "{page}"
         );
         assert!(page.contains("No logged-in account owns this playlist or collaborates on it"));
-        assert!(page.contains("make the playlist in your child's Spotify account"));
+        assert!(page.contains(
+            "make the playlist in your child's Spotify account, or invite your child to \
+             collaborate on yours and join from your child's account."
+        ));
         assert!(!page.contains("Log in as its owner"));
         // No app (an environment client ID gone after a restart, bindings left): the card says
         // what the gate does (qa-26c-step2b-code L1) - the bound phone still gets the entry and
