@@ -73,6 +73,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     let html = page().await;
     let head = header(&html);
     assert!(head.contains("Anna &#60;b&#62;"), "{head}");
+    assert!(!head.contains("seen seen"), "{head}");
     assert!(!head.contains("Anna <b>"), "{head}");
     assert!(
         head.contains("<span class=\"state-offline\">Not seen yet</span></p>"),
@@ -232,7 +233,7 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     let (id, token) = app.enrolled_device("Anna").await;
     let rule = add_rule(&app, "Skole").await;
     // A pause running (End now), a launcher that takes the commands with Play install mode open
-    // (Lock again and Unlock), and a blocked app (Allow These Apps…).
+    // (Lock again and Unlock), and a blocked app (Allow these apps…).
     sqlx::query(
         "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at) \
          VALUES (?, 'rule', ?, 'Skole', 30, datetime('now', '+30 minutes'))",
@@ -451,6 +452,96 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
         assert!(html.contains(&format!("data-row=\"{row}\"")), "{row}");
     }
     assert!(html.contains(&format!("href=\"/devices/{id}/lock\" data-row=\"lock\"")));
+    // Managed without a Parent PIN: said above Connect This Phone, since there are no Attention
+    // rows yet (qa-31-s10-code L1); gone once a PIN is set.
+    let warning = format!("href=\"/devices/{id}/lock#parent-pin\" data-warning=\"no-parent-pin\"");
+    assert!(!html.contains(&warning), "{html}");
+    sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(&warning), "{html}");
+    assert!(html.find(&warning) < html.find("<section id=\"access\""));
+    sqlx::query(
+        "UPDATE device_policy SET override_pin_hash = 'aa', override_pin_salt = 'bb' \
+         WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains(&warning), "{html}");
+}
+
+/// Today keeps today's command answers and any still waiting (qa-31-s10-code N2), and a pause
+/// still running behind more than ten newer lifts keeps its End now (N3).
+#[tokio::test]
+async fn today_is_today_and_keeps_running_pauses() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    for (command, acknowledged) in [
+        ("end_windows", "NULL"),
+        ("allow_blocked", "datetime('now', '-2 days')"),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO device_commands (device_id, command, requested_at, acknowledged_at) \
+             VALUES (?, ?, datetime('now', '-2 days'), {acknowledged})"
+        ))
+        .bind(id)
+        .bind(command)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at) \
+         VALUES (?, 'rule', 'Skole', 120, datetime('now', '-1 minute'), datetime('now', '+2 hours'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let pause: i64 = sqlx::query_scalar("SELECT MAX(id) FROM time_lifts")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    for _ in 0..11 {
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, minutes, expires_at) \
+             VALUES (?, 'budget', 15, datetime('now', '+12 hours'))",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let today = group(&html, "today");
+    assert!(
+        today.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#today\"")),
+        "{today}"
+    );
+    assert_eq!(today.matches("+15 min screen time").count(), 11, "{today}");
+    // The waiting Lock again stays; the Allow answered two days ago is gone.
+    assert!(today.contains("data-answer=\"Lock again\""), "{today}");
+    assert!(today.contains("No answer yet"), "{today}");
+    assert!(
+        !today.contains("data-answer=\"Allow these apps\""),
+        "{today}"
+    );
 }
 
 /// The phone, its settings, its last report and its lifts are a 500 on a DB error - never an
@@ -460,7 +551,15 @@ async fn the_summary_fails_loudly_on_a_db_error() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    for table in ["time_lifts", "device_status", "device_policy"] {
+    // The catalog's pins and the commands' answers too: without them an imposter or an answered
+    // Allow would be offered (qa-31-s10-code L4).
+    for table in [
+        "time_lifts",
+        "device_status",
+        "device_policy",
+        "tracked_apps",
+        "device_commands",
+    ] {
         sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
             .execute(&app.db)
             .await

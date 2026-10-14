@@ -19,6 +19,7 @@ use crate::window_relock::{
 };
 
 /// What the summary shows for design 24b, typed (the words are the template's).
+#[derive(Default)]
 pub struct RelockCard {
     /// "Lock again": the launcher takes the commands (`window_relock_v1`) and a pause or Play
     /// install mode is open at the last report.
@@ -50,7 +51,9 @@ impl RelockCard {
 }
 
 /// [allowed]: the apps allowed under Apps, `None` when apps aren't managed. A failed read of the
-/// answers or the catalog's pins is logged and reads as none (no answer yet, no pin).
+/// answers or the catalog's pins is the caller's error (qa-31-s10-code L4): without the pins an
+/// imposter would be offered to "Allow these apps…", without the answers an Allow already answered
+/// would be offered again.
 pub async fn card(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -59,7 +62,7 @@ pub async fn card(
     zone: &Zone,
     now: DateTime<Utc>,
     allowed: Option<&std::collections::HashSet<String>>,
-) -> RelockCard {
+) -> Result<RelockCard, sqlx::Error> {
     let now_ms = now.timestamp_millis();
     let capable = latest.is_some_and(|s| {
         s.capabilities_json
@@ -69,8 +72,8 @@ pub async fn card(
     let open = latest.is_some_and(|s| {
         s.restrictions_paused || s.install_mode_until_ms.is_some_and(|until| until > now_ms)
     });
-    let answers = last_answers(db, device_id).await;
-    let pins = catalog_pins(db).await;
+    let answers = last_answers(db, device_id).await?;
+    let pins = catalog_pins(db).await?;
     let names = window_relock::app_names(latest.and_then(|s| s.installed_apps_json.as_deref()));
     let ctx = BlockContext {
         pins: &pins,
@@ -102,7 +105,7 @@ pub async fn card(
         },
     };
     let paused = latest.is_some_and(|s| s.restrictions_paused);
-    RelockCard {
+    Ok(RelockCard {
         lock_again: capable && open,
         pause_button: capable && !paused,
         notice: notice.and_then(window_relock::flash),
@@ -119,15 +122,17 @@ pub async fn card(
             .collect(),
         allow_value: window_relock::allow_form_value(&blocks.allow),
         blocks,
-    }
+    })
 }
 
 /// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled.
 type AnswerRow = (String, String, Option<String>, Option<String>, bool, bool);
 
-/// The newest of each of this design's commands for [device_id], with the phone's answer. Empty on
-/// a database error.
-async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_relock::CommandAnswer> {
+/// The newest of each of this design's commands for [device_id], with the phone's answer.
+async fn last_answers(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Vec<window_relock::CommandAnswer>, sqlx::Error> {
     let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
     let rows: Vec<AnswerRow> = sqlx::query_as(
         "SELECT command, requested_at, acknowledged_at, result, delivered_at IS NOT NULL, \
@@ -141,18 +146,15 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
     .bind(allow_blocked)
     .bind(start_pause)
     .fetch_all(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(device_id, %err, "can't read the window commands");
-        Vec::new()
-    });
+    .await?;
     // SQLite's datetime('now'): UTC, "YYYY-MM-DD HH:MM:SS".
     let ms = |text: &str| {
         chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
             .ok()
             .map(|t| t.and_utc().timestamp_millis())
     };
-    rows.into_iter()
+    Ok(rows
+        .into_iter()
         .filter_map(
             |(command, requested, acknowledged, result, delivered, cancelled)| {
                 Some(window_relock::CommandAnswer {
@@ -165,24 +167,21 @@ async fn last_answers(db: &sqlx::SqlitePool, device_id: i64) -> Vec<window_reloc
                 })
             },
         )
-        .collect()
+        .collect())
 }
 
-/// The catalog's pinned signers (M10): package -> signing key. Empty on a database error (then no
-/// app is called "not the catalog's").
-async fn catalog_pins(db: &sqlx::SqlitePool) -> std::collections::HashMap<String, String> {
-    sqlx::query_as::<_, (String, String)>(
+/// The catalog's pinned signers (M10): package -> signing key.
+async fn catalog_pins(
+    db: &sqlx::SqlitePool,
+) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String)>(
         "SELECT package_name, signer_sha256 FROM tracked_apps \
          WHERE signer_sha256 IS NOT NULL AND package_name != ''",
     )
     .fetch_all(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(%err, "can't read the catalog's pinned signers");
-        Vec::new()
-    })
+    .await?
     .into_iter()
-    .collect()
+    .collect())
 }
 
 /// One of this design's commands: its own insert, never deleted by another command and deleting

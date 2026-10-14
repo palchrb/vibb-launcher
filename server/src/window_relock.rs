@@ -360,11 +360,12 @@ fn name_of(package: &str, names: &HashMap<String, String>) -> String {
 /// A time the phone reported, as the summary shows it: "10:12 · 3 h ago" today, "yesterday
 /// 21:40", "12 Oct" - in the Phone Setup zone, with its age (design 31 M4).
 fn reported_when(zone: &Zone, at: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let (when, age) = (zone.when(at, now), zone.relative(at, now));
-    if age.contains(&when) {
-        age
+    // Today the clock and the age say different things; on another day `when` is already the
+    // day and time (or the date), as `relative` would be.
+    if zone.is_today(at, now) {
+        format!("{} · {}", zone.when(at, now), zone.relative(at, now))
     } else {
-        format!("{when} · {age}")
+        zone.when(at, now)
     }
 }
 
@@ -887,7 +888,9 @@ impl AnswerState {
 pub struct Answer {
     /// The quick action's name: "Lock again", "Unlock for 2 h", "Allow these apps".
     pub label: &'static str,
-    /// When it was pressed (the server's clock), local, and the exact time.
+    /// When it was pressed (the server's clock): the summary's Today keeps today's.
+    pub at: DateTime<Utc>,
+    /// The same, local, and the exact time.
     pub when: String,
     pub exact: String,
     pub state: AnswerState,
@@ -935,6 +938,7 @@ pub fn answer(answer: &CommandAnswer, zone: &Zone, now: DateTime<Utc>) -> Option
     };
     Some(Answer {
         label,
+        at,
         when: zone.when(at, now),
         exact: zone.exact(at),
         state,

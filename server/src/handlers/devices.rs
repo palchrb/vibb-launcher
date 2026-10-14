@@ -680,6 +680,12 @@ struct DeviceDetailTemplate {
     pause_rules: Vec<(i64, String)>,
     /// A lift form's flash (`?done=`): the summary group ("quick", "today"), text, refused.
     done: Option<(&'static str, &'static str, bool)>,
+    /// The last report has the phone's restrictions paused: said at the top of Quick actions,
+    /// where the Attention row lands (qa-31-s10-code M1).
+    paused: bool,
+    /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
+    /// qa-31-s10-code L1).
+    no_parent_pin: bool,
     /// Today: the lifts made today and the pauses still running, with End now.
     lifts: Vec<crate::handlers::lifts::LiftView>,
     /// Today: the Parent PIN's notices from the last 24 hours (design 24 §5).
@@ -1297,7 +1303,7 @@ async fn render_device(
     let zone = crate::display_time::Zone::load(&state.db).await;
     let now = chrono::Utc::now();
     let lifts =
-        match crate::handlers::lifts::recent(&state.db, id, latest.as_ref(), &zone, now).await {
+        match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now).await {
             Ok(lifts) => lifts,
             Err(err) => {
                 tracing::error!(device_id = id, %err, "can't read the lifts");
@@ -1388,6 +1394,19 @@ async fn render_device(
             .map(|rows| &rows.allowed),
     )
     .await;
+    // Without the catalog's pins or the answers it would offer an imposter or an answered Allow
+    // (qa-31-s10-code L4).
+    let mut relock = match relock {
+        Ok(relock) => relock,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the relock parts");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response();
+        }
+    };
     // The Music row (design 31 step 7): the entries switched on for this phone.
     let music_ticked = crate::handlers::music::ticked_entries(&state.db, id).await;
     if let Err(err) = &music_ticked {
@@ -1441,7 +1460,7 @@ async fn render_device(
     use crate::streams::ConnectionState;
     let seen = connection
         .last_contact()
-        .map(|at| (format!("seen {}", zone.relative(at, now)), zone.exact(at)));
+        .map(|at| (zone.relative(at, now), zone.exact(at)));
     let seen_tail = match connection {
         ConnectionState::Away { .. } => Some("changes may be delayed"),
         ConnectionState::Offline { .. } => Some("changes wait until it's back"),
@@ -1462,7 +1481,7 @@ async fn render_device(
                 now,
             );
             let lock = badge.map(|badge| match &seen {
-                Some((seen, _)) => badge.text_beside(seen.trim_start_matches("seen ")),
+                Some((seen, _)) => badge.text_beside(seen),
                 None => badge.text(),
             });
             (lock, screen)
@@ -1470,7 +1489,12 @@ async fn render_device(
         _ => (None, None),
     };
 
-    let today = zone.today(now);
+    // Today keeps today's answers and any still waiting (qa-31-s10-code N2); older ones are on
+    // the Locate tab's Recent.
+    relock.answers.retain(|a| {
+        a.state == crate::window_relock::AnswerState::Waiting || zone.is_today(a.at, now)
+    });
+    let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
     let done = query
         .get("done")
         .and_then(|code| crate::handlers::lifts::done_flash(code))
@@ -1495,14 +1519,9 @@ async fn render_device(
                 .map(|r| (r.id, r.name.clone()))
                 .collect(),
             done,
-            lifts: lifts
-                .into_iter()
-                .filter(|l| {
-                    l.can_end
-                        || l.created
-                            .is_some_and(|t| zone.local(t).date_naive() == today)
-                })
-                .collect(),
+            lifts,
+            paused,
+            no_parent_pin: managed_without_pin(&policy),
             pin_notices: parent_pin.notices,
             relock,
             access: access_card(

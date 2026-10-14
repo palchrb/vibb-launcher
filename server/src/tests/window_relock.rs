@@ -95,7 +95,11 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
     let found = group(&html, "relock");
     assert!(found.contains("Its time was up"), "{found}");
     assert!(found.contains("1 h ago"), "{found}");
-    assert!(found.contains("1 Wi-Fi proxy"), "{found}");
+    // Removed is a warning too (24b §1.7, qa-31-s10-code L2).
+    assert!(
+        found.contains("<span class=\"row-label text-alarm\">Removed<span class=\"row-sub\">1 Wi-Fi proxy</span>"),
+        "{found}"
+    );
     // By the phone's name, escaped; the package where it reported none.
     assert!(found.contains("Accessibility: Ally &#60;b&#62;"), "{found}");
     assert!(!found.contains("Ally <b>"), "{found}");
@@ -107,7 +111,7 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
     // Words, never the step's code.
     assert!(found.contains("Certificates"), "{found}");
     assert!(!found.contains("ca_certs"), "{found}");
-    // An older launcher's relock blocks: listed with Allow These Apps….
+    // An older launcher's relock blocks: listed with Allow these apps….
     let blocked = group(&html, "blocked-apps");
     assert!(
         blocked.contains("data-block=\"com.example.app\""),
@@ -217,13 +221,24 @@ async fn lock_again_follows_the_status_and_the_capability() {
     }
     let button = format!("action=\"/devices/{id}/end-windows#quick\"");
 
-    // Nothing open: no button.
+    let paused = "data-warning=\"restrictions-paused\"";
+
+    // Nothing open: no button, no word of a pause.
     post_status(&app, &token, json!({})).await;
-    assert!(!page(&app, id, &cookie).await.contains(&button));
-    // A pause: the button among the quick actions, and the Attention row lands there.
+    let html = page(&app, id, &cookie).await;
+    assert!(!html.contains(&button) && !html.contains(paused), "{html}");
+    // A pause: the button among the quick actions, the pause said there - where the Attention row
+    // lands - with what Lock again does (qa-31-s10-code M1).
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
     let html = page(&app, id, &cookie).await;
-    assert!(group(&html, "quick").contains(&button), "{html}");
+    let quick = group(&html, "quick");
+    assert!(quick.contains(&button), "{html}");
+    assert!(quick.contains(paused), "{quick}");
+    assert!(quick.contains("Unlocked on the phone"), "{quick}");
+    assert!(
+        quick.contains("It ends by itself, or tap Lock again to end it now."),
+        "{quick}"
+    );
     assert!(
         html.contains(&format!(
             "href=\"/devices/{id}#quick\" data-attention=\"restrictions-paused\""
@@ -262,6 +277,13 @@ async fn lock_again_follows_the_status_and_the_capability() {
     let html = page(&app, id, &cookie).await;
     assert!(!html.contains(&button));
     assert!(!html.contains("start-pause"), "{html}");
+    // ... and its quick actions still say the phone is paused, and that it ends by itself.
+    let quick = group(&html, "quick");
+    assert!(quick.contains(paused), "{quick}");
+    assert!(
+        quick.contains("It ends by itself; this version of Vibb can't be locked again from here."),
+        "{quick}"
+    );
     assert!(
         html.contains("data-attention=\"restrictions-paused\""),
         "{html}"
@@ -445,7 +467,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         &app,
         &token,
         json!({ "relock_blocks": [music.clone()], "relock_blocks_total": 18,
-                "installed_apps": [{ "package_name": "me.vibb.music.debug", "label": "Music" }] }),
+                "installed_apps": [{ "package_name": "me.vibb.music.debug", "label": "Mus<i>ic" }] }),
     )
     .await;
     let html = app
@@ -457,7 +479,13 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         blocked.contains("And 17 more the phone doesn't list"),
         "{blocked}"
     );
-    assert!(blocked.contains("Show Music again"), "{blocked}");
+    // The phone's label, escaped in the row and in the confirm (qa-31-s10-code L3).
+    assert!(
+        blocked.contains("<span class=\"row-label\">Mus&#60;i&#62;ic<span"),
+        "{blocked}"
+    );
+    assert!(blocked.contains("Show Mus&#60;i&#62;ic again"), "{blocked}");
+    assert!(!blocked.contains("<i>"), "{blocked}");
     // Ticked under Apps or not, per app (QA of cmd-expiry, Low 3).
     for (allowlist, value, says) in [
         (
@@ -468,7 +496,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         (
             "[\"me.vibb.music.debug\"]",
             "Allowed",
-            "Allowed under Apps: it shows again after Allow These Apps.",
+            "Allowed under Apps: it shows again after Allow these apps.",
         ),
     ] {
         sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")

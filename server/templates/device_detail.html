@@ -18,7 +18,7 @@
         <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
         <h1 class="summary-name">{{ device.name }}</h1>
         <p class="summary-state" data-status="{{ connection.css() }}"><span class="state-{{ connection.css() }}">{{ connection.word() }}</span>
-            {%- if let Some((seen, exact)) = seen %} · <span title="{{ exact }}" data-seen>{{ seen }}</span>{% endif %}
+            {%- if let Some((seen, exact)) = seen %} · <span title="{{ exact }}" data-seen>seen {{ seen }}</span>{% endif %}
             {%- if self.disconnected() %} · access removed{% endif %}
             {%- if let Some(tail) = seen_tail %} · {{ tail }}{% endif %}</p>
         {% if self.disconnected() %}<a class="summary-link" href="/devices/{{ device.id }}/advanced#connection" data-connect-again>Connect again &rsaquo;</a>{% endif %}
@@ -30,6 +30,14 @@
     </header>
 
     {% if device.enrolled_at.is_none() %}
+    {#- A phone not set up has no Attention rows; a managed one without a Parent PIN still needs it
+        before setup (qa-31-s10-code L1). -#}
+    {% if no_parent_pin %}
+    <a class="attention attention-action" href="/devices/{{ device.id }}/lock#parent-pin" data-warning="no-parent-pin">
+        <span class="attention-text">Set a Parent PIN before setup<span class="attention-sub">Without one, nothing can be opened or lifted on the phone itself.</span></span>
+        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    {% endif %}
     <section id="access" aria-labelledby="access-title">
         <h2 class="group-header" id="access-title">Connect This Phone</h2>
         {% if let Some(until) = access.typed_paused_until %}
@@ -95,6 +103,13 @@
         grid's width. -#}
     <section id="quick" aria-labelledby="quick-title">
         <h2 class="group-header" id="quick-title">Quick Actions</h2>
+        {#- Where the "Restrictions paused" alarm lands: what it means and what ends it, for an older
+            launcher too (qa-31-s10-code M1). -#}
+        {% if paused %}
+        <div class="attention attention-alarm" data-warning="restrictions-paused">
+            <span class="attention-text">Unlocked on the phone<span class="attention-sub">Restrictions are paused (from here, or with the Parent PIN in Vibb's Settings): apps, Settings and the Play Store are open. {% if relock.lock_again %}It ends by itself, or tap Lock again to end it now.{% else %}It ends by itself; this version of Vibb can't be locked again from here.{% endif %}</span></span>
+        </div>
+        {% endif %}
         <div class="act-grid">
             {% for minutes in [15, 30, 60] %}
             <form method="post" action="/devices/{{ device.id }}/lifts#quick">
@@ -196,7 +211,7 @@
     {% endif %}
 
     {#- Apps the phone keeps hidden even when allowed under Apps (design 24b): each with why and
-        when, its package and key behind the row's ⓘ; Allow These Apps… names them (M6) and sends
+        when, its package and key behind the row's ⓘ; Allow these apps… names them (M6) and sends
         the keys shown. Shown for its flash too, so the redirect always finds its group. -#}
     {% if !relock.blocks.items.is_empty() || self.flash("blocked-apps").is_some() %}
     <section id="blocked-apps" aria-labelledby="blocked-apps-title">
@@ -211,13 +226,13 @@
                 </summary>
                 <div class="info-panel">
                     <p>{{ b.package_name }}, signing key {% if let Some(key) = b.key %}{{ key }}{% else %}unknown{% endif %}.{% if let Some(pin) = b.pin %} The catalog's app has key {{ pin }}, so this isn't it: it stays blocked.{% endif %} {% if b.at_install %}Noticed when it was installed.{% else %}Blocked when the phone locked again.{% endif %}</p>
-                    {% if let Some(ticked) = b.ticked %}{% if ticked %}<p>Allowed under Apps: it shows again after Allow These Apps.</p>{% else %}<p>Not allowed under Apps: it stays hidden until you <a href="/devices/{{ device.id }}/apps#app-{{ b.package_name }}">turn it on there</a> too.</p>{% endif %}{% endif %}
+                    {% if let Some(ticked) = b.ticked %}{% if ticked %}<p>Allowed under Apps: it shows again after Allow these apps.</p>{% else %}<p>Not allowed under Apps: it stays hidden until you <a href="/devices/{{ device.id }}/apps#app-{{ b.package_name }}">turn it on there</a> too.</p>{% endif %}{% endif %}
                 </div>
             </details>
             {% endfor %}
             {% if !relock.blocks.allow.is_empty() %}
             <details class="confirm cell" id="allow-apps">
-                <summary class="row">Allow These Apps&hellip;</summary>
+                <summary class="row">Allow these apps&hellip;</summary>
                 <form method="post" action="/devices/{{ device.id }}/allow-blocked#blocked-apps" class="confirm-body">
                     <input type="hidden" name="blocks" value="{{ relock.allow_value }}">
                     <p>Show {{ relock.blocks.allow_names() }} again on {{ device.name }}'s phone? Only if you know {% if relock.blocks.allow.len() == 1 %}it and its key is{% else %}them and their keys are{% endif %} the one you expect (under ⓘ).</p>
@@ -242,7 +257,7 @@
                 <span class="row-value" title="{{ f.exact }}">{{ f.when }}</span>
             </div>
             {% if !f.removed.is_empty() %}
-            <div class="row" data-row="relock-removed"><span class="row-label">Removed<span class="row-sub">{{ f.removed|join(", ") }}</span></span></div>
+            <div class="row" data-row="relock-removed"><span class="row-label text-alarm">Removed<span class="row-sub">{{ f.removed|join(", ") }}</span></span></div>
             {% endif %}
             {% if !f.still_on.is_empty() %}
             <div class="row" data-row="relock-still-on"><span class="row-label text-alarm">Still on<span class="row-sub">{{ f.still_on|join("; ") }}</span></span></div>

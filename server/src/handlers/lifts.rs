@@ -318,9 +318,6 @@ pub(crate) struct LiftView {
     pub status: String,
     /// A rule pause the server still sends: "End now".
     pub can_end: bool,
-    /// When it was made: the summary's Today shows the lifts of the local today (and a pause
-    /// that still runs).
-    pub created: Option<DateTime<Utc>>,
 }
 
 /// The newest 10 lifts of the phone, with their state (a DB error is the caller's 500).
@@ -331,19 +328,61 @@ pub(crate) async fn recent(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<Vec<LiftView>, sqlx::Error> {
+    views(db, device_id, None, latest, zone, now).await
+}
+
+/// The summary's Today (qa-31-s10-code N3): the lifts made since the local midnight, and every
+/// pause still running however many lifts came after it (at most 50).
+pub(crate) async fn today(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Vec<LiftView>, sqlx::Error> {
+    let since = zone.start_of_today(now);
+    views(db, device_id, Some(since), latest, zone, now).await
+}
+
+/// [since]: `None` the newest 10, else the lifts made since then and the running pauses.
+async fn views(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    since: Option<DateTime<Utc>>,
+    latest: Option<&DeviceStatus>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Vec<LiftView>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct LiftWithState {
         #[sqlx(flatten)]
         lift: TimeLiftRow,
         active: bool,
     }
-    let lifts = sqlx::query_as::<_, LiftWithState>(
-        "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
-         FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
-    )
-    .bind(device_id)
-    .fetch_all(db)
-    .await?;
+    let lifts = match since {
+        None => {
+            sqlx::query_as::<_, LiftWithState>(
+                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+                 FROM time_lifts WHERE device_id = ? ORDER BY id DESC LIMIT 10",
+            )
+            .bind(device_id)
+            .fetch_all(db)
+            .await?
+        }
+        // `created_at` is `datetime('now')` text, so it compares as text.
+        Some(since) => {
+            sqlx::query_as::<_, LiftWithState>(
+                "SELECT *, (ended_early_at IS NULL AND expires_at > datetime('now')) AS active \
+                 FROM time_lifts WHERE device_id = ? AND (created_at >= ? OR (target = 'rule' \
+                 AND ended_early_at IS NULL AND expires_at > datetime('now'))) \
+                 ORDER BY id DESC LIMIT 50",
+            )
+            .bind(device_id)
+            .bind(since.format("%Y-%m-%d %H:%M:%S").to_string())
+            .fetch_all(db)
+            .await?
+        }
+    };
     // What the phone last said it runs, and when.
     let reported: Option<(DateTime<Utc>, Vec<i64>)> = latest.and_then(|s| {
         let at = parse_db_utc(&s.reported_at)?;
@@ -395,7 +434,6 @@ pub(crate) async fn recent(
                 by: lift.created_by.unwrap_or_default(),
                 status: state.text(expires, zone, now),
                 can_end: lift.target == "rule" && active,
-                created,
             }
         })
         .collect())

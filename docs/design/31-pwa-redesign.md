@@ -3231,7 +3231,7 @@ the 24b commands' payloads are untouched; the launcher is untouched), `style.css
   (`#today`: the lifts made on the local today and the pauses still running, with End now; the newest answer to each 24b
   command for a week; the Parent PIN notices of the last 24 h, each a row to `/lock#parent-pin`; shown only when it has
   something or its flash); **Blocked Apps** (`#blocked-apps`: one row per app with why and when, its package, key and
-  "allowed under Apps" behind the row's ⓘ, "Allowed" / "Not allowed" as the value; **Allow These Apps…** a `<details>`
+  "allowed under Apps" behind the row's ⓘ, "Allowed" / "Not allowed" as the value; **Allow these apps…** a `<details>`
   confirm naming the apps; the "N more" footer); **Locked Again** (`#relock`, the last relock's findings for a week);
   **Settings** (Calls & Contacts, Apps, Music, Time, Lock Screen & PINs, Home Screen, Web Filter; then About This Phone
   and Advanced in their own group, as the mockup has them).
@@ -3242,7 +3242,7 @@ the 24b commands' payloads are untouched; the launcher is untouched), `style.css
   rendered forms; each action carries its group's fragment, each Location's fragment is checked, and the group it names
   holds the flash): the tiles and Pause a rule… (`lifts`, `back=summary`) → `/devices/{id}?done=extra|pause|gone#quick`;
   End now → `?done=ended|over#today` (`lifts::summary_group` maps Device › Time's groups); Lock again and Unlock →
-  `?notice=end_windows_sent|start_pause_sent#quick`; Allow These Apps… → `?notice=allow_blocked_sent#blocked-apps` (the
+  `?notice=end_windows_sent|start_pause_sent#quick`; Allow these apps… → `?notice=allow_blocked_sent#blocked-apps` (the
   group shows for its flash even when the list is already gone). A lift without `back` (an older tab) lands on the
   summary too, a refused pause with its reason there (qa-31-s9-code N4 sent it to Device › Time while the summary had no
   word for it). No auto-saving form on the page (so no `<noscript>` Save needed); every answer is a redirect (PRG).
@@ -3319,3 +3319,18 @@ Deferred, with the reason:
   `.button-secondary` are still used by other templates.
 - **The lock badge's end** still needs the launcher's `time_state.zone` (step 9's deferred item); the summary header
   shows it the day it comes, through `badge_and_screen`.
+
+**Fix round after the code QA** (`qa-31-s10-code.md`: 0 High, 1 Medium, 4 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | While the last report has the restrictions paused, Quick Actions (where the Attention row lands) opens with a red "Unlocked on the phone": paused from here or with the Parent PIN, apps, Settings and Play open, "It ends by itself, or tap Lock again to end it now." - for an older launcher (no Lock again) "It ends by itself; this version of Vibb can't be locked again from here." No launcher reports the pause's end, so no time. Pinned for both in `window_relock::lock_again_follows_the_status_and_the_capability`. |
+| L1 | A phone not set up that is managed without a Parent PIN shows an orange "Set a Parent PIN before setup ›" (to `/lock#parent-pin`) above Connect This Phone; gone once a PIN is set (`summary::a_phone_not_set_up_shows_connect_this_phone`). |
+| L2 | The Locked Again group's "Removed" row is red, as Still on and the failed steps (24b §1.7); pinned in `the_last_relock_shows_on_the_summary_for_a_week`. |
+| L3 | `an_install_time_block_is_listed_allowed_and_cleared` reports the label `Mus<i>ic` and finds it escaped in the row and in the Allow confirm, no `<i>`. Mutations 9 and 13 (`|safe`) re-run: both fail it now. |
+| L4 | `handlers::window_relock::card` returns a `Result`: a failed read of the catalog's pins or of the commands' answers is the summary's 500 (never an imposter in the Allow list, never an answered Allow offered again); the Devices list's badge keeps the lenient read (`attention::facts`, logged, `RelockCard::default()`). Pinned in `summary::the_summary_fails_loudly_on_a_db_error` (`tracked_apps`, `device_commands`). |
+| N1 | `reported_when` decides by the local day (`Zone::is_today`, new), not by comparing strings; the header passes the relative time and the template adds "seen ". |
+| N2 | Today keeps the answers from the local today and any still waiting; older ones are on the Locate tab's Recent (choice 7 changed). `window_relock::Answer` carries its time (`at`). Test: `summary::today_is_today_and_keeps_running_pauses`; `command_expiry`'s expired pause picks a zone where two hours ago is today. |
+| N3 | Today's lifts come from their own query (`lifts::today`: made since the local midnight - `Zone::start_of_today`, new - or a pause still running, at most 50), not the newest 10 filtered; the same test has a running pause behind 11 newer lifts. |
+| N4 | One case for the actions: "Allow these apps…" (as "Lock again", "Unlock for 2 h…", "Pause a rule…"); the answers' labels match. |
+| Checks | `cargo test` 846 passed; `node --test server/jstest/*.test.js` 25 passed; fmt clean; clippy: the same 13 warnings. Mutations 9 and 13 re-run: both fail a test. |

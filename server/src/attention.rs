@@ -425,7 +425,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         chrono::Utc::now(),
         allowed.as_ref(),
     )
-    .await;
+    .await
+    // The badge only counts; the summary itself fails on this (qa-31-s10-code L4).
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "attention: can't read the relock parts");
+        crate::handlers::window_relock::RelockCard::default()
+    });
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
         Ok(report) => report.problems(),
         Err(err) => {
