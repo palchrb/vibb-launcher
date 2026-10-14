@@ -102,6 +102,8 @@
             </select>
             {% if form.error_field == "order" %}{% if let Some(error) = form.error %}<p class="field-error" id="entry-error">{{ error }}</p>{% endif %}{% endif %}
         </div>
+        {% else if spotify_artist %}
+        <p class="field-hint" data-hint="spotify-order">Spotify picks the order: an artist plays as Spotify does.</p>
         {% else %}
         <p class="field-hint" data-hint="spotify-order">Spotify picks the order: no logged-in account may list this one's tracks, so the phones play it as Spotify does.</p>
         {% endif %}
