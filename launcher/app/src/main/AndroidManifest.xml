@@ -28,6 +28,13 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- The kid's wallpaper on the system wallpaper (ui/wallpaper/WallpaperApplier, design 08). -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- One clock format on the whole phone (design 34 P12, server/ClockFormatSetting): writing
+         Settings.System.TIME_12_24 needs the "Modify system settings" app-op, which the device owner
+         can't grant - `adb shell appops set me.vibb.launcher WRITE_SETTINGS allow` at provisioning,
+         or the parent in Android Settings. Without it nothing is written and the PWA warns. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!-- Self-granted, required for WifiManager.startScan()/getScanResults() on Android 13+ -
          replaces the old ACCESS_FINE_LOCATION scanning requirement. neverForLocation since the

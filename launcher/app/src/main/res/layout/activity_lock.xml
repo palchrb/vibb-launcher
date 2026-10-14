@@ -24,7 +24,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="@font/nunito_extrabold"
             android:format12Hour="h:mm"
-            android:format24Hour="H:mm"
+            android:format24Hour="HH:mm"
             android:gravity="center"
             android:includeFontPadding="false"
             android:textColor="@color/kid_ink"

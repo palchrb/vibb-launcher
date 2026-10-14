@@ -76,8 +76,9 @@ Not in this step: `DISALLOW_USER_SWITCH`, a warning for allowlisted Android Sett
    first. Set an unlock code (PIN) on every managed phone: without one the device page warns, the launcher's Settings
    don't open and there is no offline override.
 2. **New phone:** create the device on the server, turn "Block USB debugging" off if adb work follows, grant
-   `ROLE_CALL_REDIRECTION` with adb (01 §4 runbook) **before enrolling**, then enrol. Turn the switch back on at
-   handover.
+   `ROLE_CALL_REDIRECTION` with adb (01 §4 runbook) **before enrolling**, and the "Modify system settings" app-op
+   for the clock format (design 34 P12: `adb shell appops set me.vibb.launcher WRITE_SETTINGS allow`; without it the
+   PWA's Clock setting can't reach the phone and Home Screen warns), then enrol. Turn the switch back on at handover.
 3. **Recovery** when the phone misbehaves: (a) phone still syncs → fix on the server: push a fixed launcher (catalog
    row, self-update), or switch "Block USB debugging" off and repair with `adb install -r` (higher versionCode);
    (b) server unreachable → the offline PIN lifts app restrictions and the schedule for 2 h (not calls/hardening) and
