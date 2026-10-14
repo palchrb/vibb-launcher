@@ -586,3 +586,55 @@ taller slot.
 | N4 `heightIn(min = maxHeight)` with an unbounded height | In both `EmptyState` and the carousel, `heightIn` (and `EmptyState`'s `verticalScroll`, which would throw too) is applied only when `constraints.hasBoundedHeight`. An unbounded carousel slot counts as `Int.MAX_VALUE`, so the cover is 180 and there is no scroll. |
 | N5 tautological asserts | Gone. The Jelly Star test asserts the numbers: 270 px (180 dp) at 1.0, 250-269 px with no scroll at 1.3, no scroll at 2.0 with gestures, and at 2.0 with three buttons and the bar the 180 px floor with a scroll of 1-30 px (19). |
 | N6 m9 survived; m8 | `EmptyStateTest` parses each `EmptyState(...)` call: the library and Nytt are centred (the default), search is `centred = false`, and `centred` maps to `Arrangement.Center`/`Top`. The font-scale key of `measuredLinesPx` stays. It is harmless, because the activity has no `configChanges` and is recreated on a font-scale change; its KDoc says so. |
+
+## Step 4 implementation status (2026-10-14)
+
+P4 is built (launcher only; no server, policy or contract change), on branch `design-34-s4`. The top stays empty:
+no date line, nothing new above the contacts.
+
+**What was built**
+- **(a) Fading edges** (pure `ui/home/HomeEdges.kt`; view `ui/home/FadingRecyclerView.kt`): Home's grid is a
+  `FadingRecyclerView` with `requiresFadingEdge="vertical"` and the one `fadingEdgeLength` of 32 dp
+  (`FADE_LENGTH_DP`). `getTopFadingEdgeStrength`/`getBottomFadingEdgeStrength` return `fadeStrength(canScroll, edge)`:
+  12/32 at the top (so 12 dp), 1 at the bottom (32 dp), 0 at an edge the grid can't scroll past (QA L6). The grid
+  keeps `clipToPadding=false` with its 16 dp bottom padding, so the view also overrides the padding offsets as
+  AbsListView does. Otherwise View.draw would fade above the padding and the row would show again, unfaded, inside it.
+  It is an alpha fade, so it works over the system wallpaper. The view adds no touch handling. The contacts row (a
+  `HorizontalScrollView`, not a RecyclerView) uses Android's own horizontal fade at 16 dp (`CONTACTS_FADE_DP`), which is
+  0 at an edge it can't scroll past, so a row that fits never fades.
+- **(b) Labels**: `tile_label` `maxLines="2"`, `ellipsize="end"`, at every scale (`GRID_LABEL_MAX_LINES`); no code sets
+  lines. GridLayoutManager makes a row as tall as its tallest tile; the icons stay top-aligned.
+- **(c) The call badge**: the clip was the row's width, not `clipChildren`. Each Home contact was `itemDp` = avatar +
+  gap = 104 dp wide, so three made 312 dp in the Jelly Star's 288 dp content. The `fillViewport` row then scrolled by
+  24 dp, and the third avatar (278-302 dp) and its badge were cut at the edge (mockup 01-before). Now a row that fits
+  gives each item `contactItemDp = min(itemDp, content / count)`, in whole pixels rounded down (`contactItemPx`, used for
+  the item and the name's `maxWidth`): 96 dp on the Jelly Star, which matches mockup 01-after's thirds. The third
+  badge's right edge is at 282 of 288 dp. Wider screens keep 104 dp. `contactRoomDp(avatar)` = avatar + 2 × 4 dp is the
+  badge's 4 dp overhang (frame +12, `marginEnd` 2) and P2's focus ring (`PressFeedback.FOCUS_RING_GAP_DP`, now
+  `internal`). Every item keeps that room, and `contactRow`'s 64 dp centred case also requires it (in practice this
+  only matters for one contact below 72 dp of content). Scrolling rows are unchanged.
+
+**Decisions**
+- **No "4 dp end padding"**: once the row fits, the badge sits inside its item with 6 dp to spare. Padding would only
+  have moved the overflow. `clipChildren=false` was already on the item and its frame (step 2).
+- **A gesture side effect, intended**: with three contacts the row could scroll by 24 dp, so a left swipe that started
+  on it was first a scroll (the rule "a left swipe in a contacts row that can still scroll stays a scroll"). The row no
+  longer scrolls, so that swipe now opens kid Settings like everywhere else on Home - the rule's intent. With more
+  contacts than fit, nothing changed.
+- **The contacts row fades 16 dp, not 32**: its peek is half a 64 dp avatar (32 dp), and a 32 dp fade would make
+  the peek invisible.
+- **Tests are plain JUnit** (`HomeEdgesTest`, 9). They cover the fade strengths and lengths in px at densities 1.5-3,
+  and the layout's fading attributes. A source check confirms the view scales each edge, fades over its padding and
+  touches no touch event. The label rule is checked in the XML and by a scan for line-count code in the adapter. A row
+  height model (`tileHeightDp`) runs at font scale 1.0/1.3/2.0 in 3 and 4 columns at 240/288/360 dp: rows grow with
+  the scale, two lines at most, and the bottom fade is shorter than a tile. On the Jelly Star (both navigation modes,
+  three contacts with two-line names), a whole row plus the bottom fade fits even at 2.0 (row ~140 dp in ~297 dp).
+  The badge is checked as layout math: before (312 > 288) and after (96 dp, 144 px, badge at 282 dp). A sweep runs 1-8
+  contacts over 200-480 dp at four densities: a fitting row never exceeds the content in px, and every item keeps its
+  room. The badge overhang and the focus ring are tied to the layout and to P2's constant. Another source check covers
+  HomeActivity's wiring.
+
+**Not checked on the emulator yet** (shared emulator; the pass comes later): Home at `wm density 240` and font scale
+1.0, 1.3 and 2.0, with 3 and 4 columns; the top fade while scrolled and the bottom fade over a photo wallpaper; three
+contacts (no scroll, badge whole) and five (the scroll and its 16 dp fade); tap, long-press, the swipe-up at the grid's
+end, the swipe-left (also from the contacts row) and the press and focus ring on the new grid class.

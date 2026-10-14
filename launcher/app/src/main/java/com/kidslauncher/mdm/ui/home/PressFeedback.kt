@@ -162,9 +162,10 @@ object PressFeedback {
         }
     }
 
-    /** The focus ring sits this far outside the icon (a 2 dp ring, qa-34-s2-code M2). */
-    private const val FOCUS_RING_GAP_DP = 4f
-    private const val FOCUS_RING_STROKE_DP = 2f
+    /** The focus ring's outer edge sits this far outside the icon (a 2 dp ring drawn inside its
+     * layer, qa-34-s2-code M2); Home's contacts leave room for it (`contactRoomDp`, design 34 P4). */
+    internal const val FOCUS_RING_GAP_DP = 4f
+    internal const val FOCUS_RING_STROKE_DP = 2f
 
     /** An oval outline and a small elevation; the parents must not clip it (`clipChildren=false`). */
     fun depth(target: View) {
