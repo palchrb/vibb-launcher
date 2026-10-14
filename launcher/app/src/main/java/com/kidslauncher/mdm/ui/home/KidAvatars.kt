@@ -98,12 +98,12 @@ object KidAvatars {
         badge.visibility = View.VISIBLE
     }
 
-    /** The coloured ring around the sheet's photo, in the contact's colour. */
+    /** The ring around the sheet's photo, in the contact's colour ([avatarRingColour]). */
     fun ring(context: Context, contact: RuleContact, isEmergency: Boolean): Drawable =
         GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.TRANSPARENT)
-            setStroke(dp(context, 4f), avatarStyle(contact, isEmergency).colors.background.toInt())
+            setStroke(dp(context, 4f), avatarRingColour(avatarStyle(contact, isEmergency).colors, isEmergency).toInt())
         }
 
     /** A badge pill: hidden for 0, else the count (missed calls also get their icon). */

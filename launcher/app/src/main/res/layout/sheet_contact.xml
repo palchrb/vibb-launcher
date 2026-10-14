@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The contact sheet (mockup ContactCard.dc.html): photo with a ring in the contact's colour,
-     missed-call badge, name, missed-call text, Call and Message, which app Message opens, Close. -->
+     missed-call badge, name, missed-call text, Call and Message, which app Message opens, Close.
+     At night since design 34 P3 (mockup 03): the lifted night ground, light inks (colors_kid.xml). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -74,7 +75,7 @@
         android:layout_marginTop="12dp"
         android:fontFamily="@font/nunito_extrabold"
         android:gravity="center"
-        android:textColor="@color/kid_sheet_ink"
+        android:textColor="@color/kid_core"
         android:textSize="26sp" />
 
     <TextView
@@ -105,8 +106,10 @@
             android:id="@+id/sheet_message"
             style="@style/KidSheetButton"
             android:layout_marginStart="10dp"
-            android:backgroundTint="@color/kid_message_button"
+            android:backgroundTint="@color/kid_sheet_button"
             android:text="@string/calls_message"
+            android:textColor="@color/kid_core"
+            app:drawableTint="@color/kid_accent"
             app:drawableTopCompat="@drawable/ic_kid_message" />
     </LinearLayout>
 

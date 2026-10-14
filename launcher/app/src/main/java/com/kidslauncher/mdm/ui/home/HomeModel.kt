@@ -197,25 +197,44 @@ fun badgeText(count: Int): String? = when {
 /** Background and ink of a round avatar without a photo (the mockup's palette). */
 data class AvatarColors(val background: Long, val ink: Long)
 
+/** The contacts' initial ink: a dark night blue, >= 8.9:1 on every [AVATAR_PALETTE] colour. */
+const val AVATAR_INK = 0xFF1B1B28
+
+/**
+ * Soft, light discs with a dark initial (design 34 P3): peach, sky, sand, sage, lilac, rose -
+ * people read differently from the apps' mid-dark tones, and nothing is saturated. The order is
+ * the index [avatarStyle] picks by contact id; append, don't reorder (a contact keeps its colour).
+ */
 val AVATAR_PALETTE = listOf(
-    AvatarColors(0xFFF08C3A, 0xFF2B1606),
-    AvatarColors(0xFF4DABF7, 0xFF08243A),
-    AvatarColors(0xFFFCC419, 0xFF2E2304),
-    AvatarColors(0xFF69DB7C, 0xFF0B2A10),
-    AvatarColors(0xFFDA77F2, 0xFF2B0A33),
-    AvatarColors(0xFFFF8787, 0xFF3A0A0A),
+    AvatarColors(0xFFE8B49A, AVATAR_INK),
+    AvatarColors(0xFF9FC3E3, AVATAR_INK),
+    AvatarColors(0xFFE3CF9A, AVATAR_INK),
+    AvatarColors(0xFFA9CDB0, AVATAR_INK),
+    AvatarColors(0xFFC9B3DE, AVATAR_INK),
+    AvatarColors(0xFFE6AFB4, AVATAR_INK),
 )
 
-/** Emergency numbers are red with white ink, whatever their id. */
-val EMERGENCY_AVATAR = AvatarColors(0xFFE03131, 0xFFFFFFFF)
+/**
+ * Emergency numbers, whatever their id: the tonal emergency red (design 34 P1/QA M3) - a dark red
+ * disc with the number in `kid_emergency_text` #FF8A8A (6.6:1), like the lock's emergency pill.
+ * The text identifies it; the disc is quiet.
+ */
+val EMERGENCY_AVATAR = AvatarColors(0xFF3A1E24, 0xFFFF8A8A)
+
+/**
+ * The contact sheet's ring around the avatar: the contact's colour, but the emergency red's ink
+ * for an emergency number - its dark disc alone would vanish on the night sheet.
+ */
+fun avatarRingColour(colors: AvatarColors, isEmergency: Boolean): Long =
+    if (isEmergency) colors.ink else colors.background
 
 data class AvatarStyle(val text: String, val colors: AvatarColors)
 
 /**
  * A contact's placeholder: the first letter of the name (upper case; a whole surrogate pair or
  * other code point, not half of one) on a colour picked by contact id, so it stays the same
- * across syncs. Emergency numbers show the number itself on red ("112"). No name → the last two
- * digits of the number, or "?".
+ * across syncs. Emergency numbers show the number itself in the tonal red ("112"). No name →
+ * the last two digits of the number, or "?".
  */
 fun avatarStyle(contact: RuleContact, isEmergency: Boolean): AvatarStyle {
     if (isEmergency) return AvatarStyle(contact.number.ifEmpty { "?" }, EMERGENCY_AVATAR)
