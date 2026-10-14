@@ -68,7 +68,8 @@
             app:drawableStartCompat="@drawable/ic_kid_missed_call" />
     </FrameLayout>
 
-    <TextView
+    <!-- A name is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. -->
+    <com.kidslauncher.mdm.ui.WholeWordTextView
         android:id="@+id/contact_name"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
