@@ -1,5 +1,7 @@
 package com.kidslauncher.mdm.lock
 
+import kotlin.math.abs
+
 /**
  * Key sizing for [PinLockActivity]'s keypad (emulator run 2026-10-06: 480x854 px at 240 dpi,
  * about 320x569 dp, cut rows 7-8-9 and 0 off). Four rows of three round keys with [GAP_DP]
@@ -27,11 +29,17 @@ object PinKeypadLayout {
 
     /** The digits' text size (sp), as the font scale makes it - but see [digitTextPx]. */
     const val DIGIT_SP = 30f
-    /** The most of a key's height a digit's text size may take (design 34 P7, mockup 05b). */
-    const val DIGIT_SHARE = 0.6f
+    /**
+     * The most of a key's height a digit's text size may take (design 34 P7). 0.7 keeps the digit's
+     * line box (Nunito's 1.364 em, no font padding) inside the key (0.95 of it), and at font scale 2.0
+     * on the Jelly Star (43 dp keys, modelled) the digits are no smaller than their 30 dp at 1.0
+     * (qa-34-s8-code N2). The mockups draw 0.42 of the key at every scale; the rule here is "never cut".
+     */
+    const val DIGIT_SHARE = 0.7f
 
-    /** The key's 1 px top highlight ([PinKeyHighlight]): white at 20 %, an arc over the top third. */
-    const val HIGHLIGHT_ARGB = 0x33FFFFFF
+    /** The key's top highlight ([PinKeyHighlight]): 1 dp of white at 6 % (the mockups' inset 1px .06), over the top third. */
+    const val HIGHLIGHT_ARGB = 0x0FFFFFFF
+    const val HIGHLIGHT_STROKE_DP = 1f
     const val HIGHLIGHT_START_DEG = 210f
     const val HIGHLIGHT_SWEEP_DEG = 120f
 
@@ -60,4 +68,24 @@ object PinKeypadLayout {
      * enough that this never bites.
      */
     fun digitTextPx(keySizePx: Int, scaledTextPx: Float): Float = minOf(scaledTextPx, keySizePx * DIGIT_SHARE)
+
+    /** A key's size and its digit's text size (px). */
+    data class KeyStyle(val sizePx: Int, val digitPx: Float)
+
+    /**
+     * The keys for a keypad of [heightPx] x [widthPx] with the font scale's digit size [scaledDigitPx]:
+     * the size ([keySizePx], down to the floor) and the digit capped by it ([digitTextPx]).
+     */
+    fun keyStyle(heightPx: Int, widthPx: Int, density: Float, scaledDigitPx: Float): KeyStyle {
+        val size = finalKeySizePx(keySizePx(heightPx, widthPx, density), density)
+        return KeyStyle(size, digitTextPx(size, scaledDigitPx))
+    }
+
+    /**
+     * Whether a key of [sizePx] showing a digit of [textPx] (`null` for the backspace) differs from
+     * [style]. The digit is checked on its own (qa-34-s8-code L1): keys that keep their first 48 dp
+     * still get the capped digit.
+     */
+    fun keyStale(sizePx: Int, textPx: Float?, style: KeyStyle): Boolean =
+        sizePx != style.sizePx || (textPx != null && abs(textPx - style.digitPx) > 0.5f)
 }

@@ -198,18 +198,92 @@ class PinLockLayoutTest {
     }
 
     @Test
-    fun `the keys carry a 1 px top highlight and a digit never outgrows its key (design 34 P7)`() {
+    fun `the VoIP ring card's Nødsamtale follows P7 too (qa-34-s8-code L2)`() {
+        val ring = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(file("res/layout/view_voip_ring.xml")).documentElement
+        val all = ring.getElementsByTagName("*").let { list -> (0 until list.length).map { list.item(it) as Element } }
+        fun ringId(name: String) = all.single { id(it) == name }
+        val pill = ringId("voip_ring_emergency")
+        assertEquals("@drawable/bg_pin_emergency_tonal", pill.getAttributeNS(ns, "background"))
+        assertTrue(pill.dim("minHeight") >= 48f)
+        assertEquals("wrap_content", pill.getAttributeNS(ns, "layout_height"))
+        assertEquals("@color/kid_emergency_text", ringId("voip_ring_emergency_icon").getAttributeNS(ns, "tint"))
+        val label = ringId("voip_ring_emergency_label")
+        assertEquals("@color/kid_emergency_text", label.getAttributeNS(ns, "textColor"))
+        for (attr in listOf("maxLines", "singleLine", "lines", "ellipsize")) assertTrue(attr, label.getAttributeNS(ns, attr).isEmpty())
+        // Same size as the keypad's pill: it grows with the text the same way.
+        val width = contentWidthDp(320f)
+        for (scale in listOf(1f, 1.3f, 2f)) assertEquals(height(byId("pin_emergency"), scale, width), height(pill, scale, width), 0.01f)
+        // Its click path is unchanged.
         val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
-        assertTrue(activity.contains("LayerDrawable(arrayOf(getDrawable(R.drawable.bg_pin_key), PinKeyHighlight()))"))
-        assertTrue(activity.contains("PinKeypadLayout.digitTextPx("))
-        assertEquals(0x33, PinKeypadLayout.HIGHLIGHT_ARGB ushr 24)
+        assertTrue(activity.contains("voipRing.voipRingEmergency.setOnClickListener {\n            trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })"))
+    }
+
+    @Test
+    fun `both Nødsamtale pills announce as a button (qa-34-s8-code L3)`() {
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        assertTrue(activity.contains("binding.pinEmergency.accessibilityDelegate = ButtonRole"))
+        assertTrue(activity.contains("voipRing.voipRingEmergency.accessibilityDelegate = ButtonRole"))
+        val role = file("java/com/kidslauncher/mdm/lock/ButtonRole.kt").readText()
+        assertTrue(role.contains("super.onInitializeAccessibilityNodeInfo(host, info)"))
+        assertTrue(role.contains("info.className = Button::class.java.name"))
+        // Only the role: no click, action or state is touched.
+        assertFalse(role.contains("performAccessibilityAction") || role.contains("addAction") || role.contains("isClickable"))
+    }
+
+    @Test
+    fun `the keys carry a 1 dp top highlight at 6 percent (design 34 P7, qa-34-s8-code N3)`() {
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        assertTrue(activity.contains("LayerDrawable(arrayOf(getDrawable(R.drawable.bg_pin_key), PinKeyHighlight(resources.displayMetrics.density)))"))
+        assertEquals(0x0F, PinKeypadLayout.HIGHLIGHT_ARGB ushr 24)
+        assertEquals(0xFFFFFF, PinKeypadLayout.HIGHLIGHT_ARGB and 0xFFFFFF)
+        assertEquals(1f, PinKeypadLayout.HIGHLIGHT_STROKE_DP, 0f)
+        assertTrue(file("java/com/kidslauncher/mdm/lock/PinKeyHighlight.kt").readText()
+            .contains("PinKeypadLayout.HIGHLIGHT_STROKE_DP * density"))
         // The arc is centred on the top of the oval (270 degrees).
         assertEquals(270f, PinKeypadLayout.HIGHLIGHT_START_DEG + PinKeypadLayout.HIGHLIGHT_SWEEP_DEG / 2, 0f)
-        // 30 sp on a large key stays 30 sp; 60 sp (font scale 2.0, linear) on a 40 dp key is 24 dp.
+    }
+
+    @Test
+    fun `a digit never outgrows its key, and at 2_0 it is no smaller than at 1_0 (qa-34-s8-code N2)`() {
+        // 30 sp on a large key stays 30 sp; 60 sp (font scale 2.0, linear) on a 40 dp key is 28 dp.
         assertEquals(30f, PinKeypadLayout.digitTextPx(65, 30f), 0f)
-        assertEquals(24f, PinKeypadLayout.digitTextPx(40, 60f), 0.001f)
-        // On the Jelly Star at 1.0 the digits keep their size.
+        assertEquals(28f, PinKeypadLayout.digitTextPx(40, 60f), 0.001f)
+        // The line box (1.364 em, no font padding) stays inside the key.
+        assertTrue(PinKeypadLayout.DIGIT_SHARE * 1.364f <= 1f)
+        // On the Jelly Star: 30 dp at 1.0, and at 2.0 (60 sp linear) the capped digit is still >= 30 dp.
         for (size in jellyStarKeys(1f)) assertEquals(30f, PinKeypadLayout.digitTextPx(size.toInt(), 30f), 0f)
+        for (size in jellyStarKeys(2f)) assertTrue("$size dp keys", PinKeypadLayout.digitTextPx(size.toInt(), 60f) >= 30f)
+    }
+
+    @Test
+    fun `the digit cap applies on every layout, also when the keys keep their first 48 dp (qa-34-s8-code L1)`() {
+        val density = 1.5f
+        // A keypad that gives exactly the keys' initial size: 4 x 72 px + 3 x 9 px.
+        val keypad = 4 * 72 + 3 * 9
+        val style = PinKeypadLayout.keyStyle(keypad, 1000, density, scaledDigitPx = 90f)
+        assertEquals((PinKeypadLayout.MIN_DP * density).toInt(), style.sizePx)
+        assertEquals(72 * PinKeypadLayout.DIGIT_SHARE, style.digitPx, 0.001f)
+        // The key keeps its size but still shows the font scale's 90 px digit: stale.
+        assertTrue(PinKeypadLayout.keyStale(72, 90f, style))
+        // Capped: nothing to do. The backspace (no text) of the right size: nothing to do.
+        assertFalse(PinKeypadLayout.keyStale(72, style.digitPx, style))
+        assertFalse(PinKeypadLayout.keyStale(72, null, style))
+        assertTrue(PinKeypadLayout.keyStale(80, null, style))
+        // The floor still holds, and the digit follows the floored key.
+        val tiny = PinKeypadLayout.keyStyle(40, 1000, 1f, 60f)
+        assertEquals(32, tiny.sizePx)
+        assertEquals(32 * PinKeypadLayout.DIGIT_SHARE, tiny.digitPx, 0.001f)
+        // The activity applies it: stale keys from keyStale, the digit set on every stale key, outside the size branch.
+        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
+        assertTrue(activity.contains("PinKeypadLayout.keyStyle(keypadHeight, binding.pinKeypad.width, density,"))
+        assertTrue(activity.contains("keys.filter { PinKeypadLayout.keyStale(it.layoutParams.width, (it as? TextView)?.textSize, style) }"))
+        val lines = activity.lines()
+        val sizeBranch = lines.single { it.trim() == "if (key.layoutParams.width != style.sizePx) {" }
+        val digit = lines.single { it.trim() == "if (key is TextView) key.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.digitPx)" }
+        assertEquals("the digit is set beside the size branch, not inside it",
+            sizeBranch.takeWhile { it == ' ' }.length, digit.takeWhile { it == ' ' }.length)
+        assertTrue(lines.indexOf(digit) > lines.indexOf(sizeBranch))
     }
 
     @Test

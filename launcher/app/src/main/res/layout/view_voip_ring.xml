@@ -133,33 +133,41 @@
                 android:text="@string/calls_answer" />
         </LinearLayout>
     </LinearLayout>
+    <!-- Design 34 P7 (qa-34-s8-code L2): the keypad's tonal pill, so the ring card's one saturated red is
+         Avvis and Nødsamtale looks the same on the whole lock. At least 48 dp; the label wraps. -->
     <LinearLayout
         android:id="@+id/voip_ring_emergency"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:background="@drawable/bg_pin_emergency"
+        android:background="@drawable/bg_pin_emergency_tonal"
         android:clickable="true"
         android:focusable="true"
         android:gravity="center"
-        android:minHeight="44dp"
+        android:minHeight="48dp"
         android:orientation="horizontal"
-        android:paddingStart="18dp"
-        android:paddingEnd="18dp">
+        android:paddingStart="20dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="6dp">
 
         <ImageView
+            android:id="@+id/voip_ring_emergency_icon"
             android:layout_width="18dp"
             android:layout_height="18dp"
             android:importantForAccessibility="no"
-            android:src="@drawable/ic_kid_phone" />
+            android:src="@drawable/ic_kid_phone"
+            android:tint="@color/kid_emergency_text" />
 
         <TextView
+            android:id="@+id/voip_ring_emergency_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
             android:text="@string/pin_lock_emergency"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_emergency_text"
             android:textSize="15sp" />
     </LinearLayout>
 

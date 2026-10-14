@@ -721,24 +721,26 @@ P7 built (launcher only, no server or contract change), on branch `design-34-s8`
 - **The tonal pill** (`activity_pin_lock.xml` `pin_emergency`): new `bg_pin_emergency_tonal` = step 3's
   `kid_emergency_tonal` `#3A1E24`, 24 dp radius; label and glyph `kid_emergency_text` `#FF8A8A` (6.6:1, `ImageView`
   `tint` and `textColor`). The view, its click listener and the glance page's `performClick` are untouched, so the
-  emergency flow is exactly as before. Decision: the VoIP ring screen's pill (`view_voip_ring.xml`) keeps the
-  saturated `bg_pin_emergency` - P7 names only the keypad; changing the ring screen is a separate call.
+  emergency flow is exactly as before. The VoIP ring card's pill follows P7 too since the fix round (L2, below).
 - **The spacing rule**: the button's top margin is 16 dp (was 8), its `minHeight` 48 dp (was 44) with 6 dp vertical
   padding, the label wraps (no line limit) so the pill grows with the font scale; "Foreldrekode" `minHeight` 44 dp (was
   40). One column, nothing overlaid; the keypad has no bottom margin and its keys never overflow it, so the 16 dp margin
   is the least gap. `PinKeypadLayout`'s rule is unchanged (min(72, (h - 3 × 6) / 4), floor 32).
 - **Digits** (decision): at 2.0 the keys give way but a 30 sp digit would not - 60 sp linear (38 dp with Android 14's
-  non-linear scale) on a 43 dp key is cut. `PinKeypadLayout.digitTextPx` caps the digit at 0.6 × the key (`sizeKeys`),
-  as mockup 05b draws it; at 1.0 and 1.3 on the Jelly Star it doesn't bite.
+  non-linear scale) on a 43 dp key is cut. `PinKeypadLayout.digitTextPx` caps the digit at 0.7 × the key (since the
+  fix round, N2: the line box stays inside the key and a 2.0 digit is no smaller than at 1.0; the mockups draw 0.42 at
+  every scale, so they are not the reason); at 1.0 and 1.3 on the Jelly Star it doesn't bite.
 - **The key highlight**: the keypad root carries the lock wallpaper under its scrim, so the keys stay the translucent
-  `bg_pin_key` (an opaque key with a highlight under it would change their look over a photo). The 1 px highlight is
-  `lock/PinKeyHighlight`, a white 20 % arc over the top third, layered over the key in `buildKeypad`.
+  `bg_pin_key` (an opaque key with a highlight under it would change their look over a photo). The highlight is
+  `lock/PinKeyHighlight`, a white arc over the top third, layered over the key in `buildKeypad` - since the fix round 1
+  dp at 6 % as the mockups draw it (N3).
 - **The glance clock**: `@font/nunito_bold` (700), was `nunito_extrabold` (800); size, fit and format untouched (step 6
   owns the format).
-- **Measured** (`PinLockLayoutTest`'s model, Jelly Star 320×569 dp, 48 dp status bar, gesture 24 dp / 3-button 48 dp):
-  font scale 1.0 -> keys 71 / 65 dp (the 56 dp floor holds - QA N1: it didn't need to drop to 52); 1.3 -> 69 / 63 dp
-  (>= 48); 2.0 -> 49 / 43 dp (above the 32 dp floor; the English "Emergency call" wraps to two lines, the pill is 96 dp,
-  nb "Nødsamtale" stays on one).
+- **Modelled (an upper bound, not measured on a screen)** (`PinLockLayoutTest`'s model, Jelly Star 320×569 dp, 48 dp
+  status bar, gesture 24 dp / 3-button 48 dp): font scale 1.0 -> keys 71 / 65 dp (the 56 dp floor holds - QA N1: it
+  didn't need to drop to 52); 1.3 -> 69 / 63 dp (>= 48); 2.0 -> 49 / 43 dp (above the 32 dp floor). The model wraps
+  the English "Emergency call" to two lines (a 96 dp pill); in real Nunito ExtraBold it is 7.21 em and fits one line
+  even at a linear 2.0, so the emulator will show a pill of about 50 dp and larger keys (N1).
 - **Tests**: `PinLockLayoutTest` 13 (was 8; the model now `max(minHeight, lines × sp × scale × 1.4 + padding)` with
   lines from the longest nb/en string at 0.6 em, linear scale as an upper bound; new: 1.3, 2.0, the spacing rule, the
   pill, the highlight and digit cap; every scale checks no overflow and no floor), `KidPaletteTest` +1 (the pill's
@@ -748,3 +750,20 @@ P7 built (launcher only, no server or contract change), on branch `design-34-s8`
   via the emulator console screenshot (`docs/testing/emulator.md` §6c, the window is `FLAG_SECURE`), against mockups
   05/05b; the key highlight over a photo wallpaper; Nødsamtale from the keypad and from the glance page (the flow as
   before); the glance clock.
+
+### Step 8 code QA fix round (`qa-34-s8-code.md`, 2026-10-14)
+
+Main (design 34 step 6) was merged into `design-34-s8` first; the doc and `launcher/CLAUDE.md` conflicts kept both sides.
+
+| Finding | Fix |
+|---|---|
+| L1 the digit cap skipped at an unchanged 48 dp | Pure `PinKeypadLayout.keyStyle` (size + capped digit) and `keyStale` (size and digit checked apart); `sizeKeys` applies the digit to every stale key beside the size branch, not inside it. Tested on the 48 dp case (a key that keeps its size but shows the 90 px digit is stale) and pinned in the activity (the call, its indentation beside the size branch). Mutation m4b (the `setTextSize` call deleted) re-run: now caught. |
+| L2 the VoIP ring card's pill | Follows P7 (coordinator's decision, QA's recommendation): `bg_pin_emergency_tonal`, `kid_emergency_text` label and glyph, `minHeight` 48 dp, 6/20 dp padding, a wrapping label with no line limit; the click path is unchanged. `bg_pin_emergency.xml` had no other user and is deleted. `KidPaletteTest` reads both pills from their layouts; `PinLockLayoutTest` checks the ring pill's resources and that it grows exactly as the keypad's at 1.0/1.3/2.0. |
+| L3 no button role | `lock/ButtonRole`, an accessibility delegate that only sets the class name to `Button`, on both pills (`PinLockActivity.onCreate`); pinned by a source check. |
+| N1 "measured" was the model | Both docs say "modelled (an upper bound)"; the English label fits one line in real Nunito, so the screen will show a smaller pill and larger keys. The test's two-line assertion stays as a model check. |
+| N2 the cap's rationale | `DIGIT_SHARE` 0.7: the line box (1.364 em) stays inside the key (0.95) and a 2.0 digit on the Jelly Star's modelled 43 dp keys is >= 30 dp, as at 1.0 (tested). The mockup claim is gone. |
+| N3 highlight 1 px at 20 % | 1 dp (`HIGHLIGHT_STROKE_DP` × density, passed in) at 6 % (`0x0FFFFFFF`), the mockups' `inset 0 1px 0 rgba(255,255,255,.06)`. |
+| N4 no pressed state | `bg_pin_emergency_tonal` is a `<ripple>` of the label's red at 20 % over the tonal shape (tested: colour and alpha). |
+| N5 the glance link at 44 dp | 48 dp; its top margin went from 6 to 2 dp, so "Lås opp" + "Nødsamtale" stay 106 dp and every expected glance fit is unchanged (tested). |
+
+Tests: `PinLockLayoutTest` 17 (was 13), `KidPaletteTest` 8 (the pill test covers both pills, the ripple and the deleted drawable), `LockGlanceLayoutTest` 7 (was 6).
