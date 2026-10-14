@@ -33,10 +33,12 @@
         android:textColor="@color/kid_ink"
         android:textSize="56sp" />
 
+    <!-- Centred also when it wraps (font scale 2.0: "Wednesday, / October 14", emulator round N8). -->
     <TextClock
         android:id="@+id/lock_glance_date"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
         android:layout_marginTop="6dp"
         android:fontFamily="@font/nunito_bold"
         android:textColor="@color/kid_core_dim"

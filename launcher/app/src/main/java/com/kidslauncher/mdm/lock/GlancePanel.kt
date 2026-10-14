@@ -185,6 +185,15 @@ class GlancePanel(
         glance.root.background = drawable
     }
 
+    /** The font scale changed under the lock (it handles `fontScale` itself, emulator round N8): the
+     * texts were resized by the activity; the fit starts again at the same height. */
+    fun refit() = guarded("refit") {
+        fitFor = 0
+        fit = null
+        fitNow()
+        glance.root.requestLayout()
+    }
+
     /** The keypad's back arrow: the glance page again. */
     fun back() = step(GlanceStageEvent.Back)
 
