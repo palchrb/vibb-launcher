@@ -108,8 +108,8 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 
 ## UI polish: Home, Nunito, kid Settings, wallpapers (handy step 8, design `docs/design/08-ui-polish.md`, at the monorepo root)
 
-- **Home**: no clock/date (the status bar has the time; lock task keeps `SYSTEM_INFO`). Pure `ui/home/HomeModel.kt` (`HomeModelTest`): `showPhoneBookTile` (managed or fail-closed calls always show the tile, even with calls off - only unmanaged hides it), `homeGrid` ends with `GridTile.Settings` (no long-press: only `GridTile.App` has the menu), `gridMetrics(contentWidthDp, cols)` scales the mockup (288 dp content, 60 dp icons, 13 sp labels, gaps 8/14 dp via `GridGapDecoration`), `contactRow` (76 dp/28 dp centred, 64/16 when that doesn't fit, else a scroll with half an avatar peeking), `tileColor` (icon colour darkened until white reaches 3:1). A left swipe that starts in a contacts row that can still scroll stays a scroll.
-- **Icons**: `KidAvatars.renderAppIcon` - monochrome layer (mutated, tinted white) on `tileColor` of the palette seed, else the full adaptive icon, else a legacy icon on its colour. **Rendered only in `refreshApps` on `Dispatchers.Default`** (with the palette pass); `HomeGridAdapter.onBind` only reads the key→bitmap map (grey placeholder). Cache key = app + size + density.
+- **Home**: no clock/date (the status bar has the time; lock task keeps `SYSTEM_INFO`). Pure `ui/home/HomeModel.kt` (`HomeModelTest`): `showPhoneBookTile` (managed or fail-closed calls always show the tile, even with calls off - only unmanaged hides it), `homeGrid` ends with `GridTile.Settings` (no long-press: only `GridTile.App` has the menu), `gridMetrics(contentWidthDp, cols)` scales the mockup (288 dp content, 60 dp icons, 13 sp labels, gaps 8/14 dp via `GridGapDecoration`), `contactRow` (76 dp/28 dp centred, 64/16 when that doesn't fit, else a scroll with half an avatar peeking); the icon tile colour was `tileColor` until design 34 P1 replaced it with the six tones (`IconTones.kt`, below). A left swipe that starts in a contacts row that can still scroll stays a scroll.
+- **Icons**: `KidAvatars.renderAppIcon` - monochrome layer (mutated, tinted white) on the app's tone (design 34 P1, below; was `tileColor` of the palette seed), else the full adaptive icon, else a legacy icon on a light disc. **Rendered only in `refreshApps` on `Dispatchers.Default`** (with the palette pass); `HomeGridAdapter.onBind` only reads the key→bitmap map (slate placeholder). Cache key = app + size + density.
 - **Font**: Nunito 600/700/800 bundled in `res/font` (static instances of the variable v3.602 from google/fonts, pinned commit + SHA-256 in `scripts/nunito-static.sh`; OFL in `assets/licenses/OFL.txt` and in Open Source Licenses; no Reserved Font Name; `FontLicenseTest`). The base theme sets `@font/nunito` (normal = 600, bold = 700); names/titles use `@font/nunito_extrabold`. No `sans-serif*` families in layouts (tested). An APK resource, so the in-call screen gets it before the first unlock too.
 - **Kid Settings** (`ui/kidsettings/KidSettingsActivity`, replaces `QuickControlsActivity`): opened by the Settings tile and the left swipe; the same device-owner switches (`QuickControls`), the wallpaper picker, nothing PIN-gated because nothing changes a rule. Pure `kidSettingsModel`/`controlsSection` (`KidSettingsModelTest`): `NotOwner` / `NoPolicyYet` (no cache, or only the last enforced plan) / `Unreadable` (corrupt cache, fail closed) / `NoneEnabled` (mask 0: no card) / `Rows`, each with its own text and logged (`describe()`, tag `KidSettings`); a rejected or undecodable fresh policy never reaches the cache, so the switches stay those of the last accepted one. Re-renders when a sync stores a new policy. `KidScreensEscapeTest` fails if `ui/kidsettings`, `ui/quickcontrols`, `ui/wallpaper` or `QuickControls.kt` reference `Settings.ACTION_*`, `Settings.Panel`, the system wallpaper pickers, app details or `Intent.createChooser`. Back buttons are 48 dp touch targets (44 dp circle).
 - **Wallpapers** (`ui/wallpaper/`, pure `Wallpapers.kt`/`WallpaperInk.kt`/`WallpaperApplyPlan.kt` with tests): `launcher_ui.wallpapers` (DTO `PolicyWallpaper`; missing = navy) is the parent's allowed list; the kid's pick is CE prefs `wallpaper_state.kid_wallpaper_id`; `effectiveWallpaper` = pick if allowed and cached, else the first usable, else navy. `WallpaperStore` (one background thread, everything caught) holds the shown wallpaper, its ink and **one** decoded photo (RGB_565, sampled, ≤ 1080×2400 checked first); `WallpaperStore.sync` runs after every accepted sync (after `ContactPhotos.sync`): downloads allowed images (`GET api/devices/wallpapers/{hash}`, ≤ 3 MB, hash checked, temp + rename, `filesDir/wallpapers`), deletes every image no longer allowed, then applies at once. Nothing wallpaper-related in DE storage.
@@ -264,16 +264,41 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   Chat" and the install notification (`WantedDownload.name`). Long-press Rename is hidden for an app the parent named
   (`kidMayRename`); the kid's stored rename stays and returns when the parent clears the name.
 - **Icons**: `KidAvatars.renderAppIcon` draws the parent's glyph white at 55 % on the colour's tile (the
-  `AppGlyphs.COLORS` tile, or `tileColor` of the app's own colour for `auto`) - `renderSymbolIcon`; one key for lookup
+  `AppGlyphs.COLORS` tile, or the app's tone for `auto` - design 34 below) - `renderSymbolIcon`; one key for lookup
   and render (`appIconKey`: `|g=<icon>|c=<colour>` when overridden). The drawer is a text list (its icon view is
   `gone`), so only the name applies there. Not applied (Android doesn't let a launcher): the app's own notifications,
   screens and splash, Recents, the chooser, permission and "app paused" dialogs, Settings, Play.
 - **Glyphs**: 16 Material Symbols (Rounded, filled, Apache-2.0) as `res/drawable/app_glyph_<key>.xml`, each with its
   "Converted from" line, and `appdisplay/AppGlyphs.kt` (icon -> drawable, colour -> seed + tile), both generated by
   `scripts/material-symbols.sh` (root) from `server/testdata/app_icons.json` - the test copy in
-  `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks `tileColor(seed) == tile`). The
-  Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
+  `src/test/resources/` must be identical (`AppGlyphsTest`, which also checks that every tile is one of the six
+  tones). The Apache-2.0 text is `assets/licenses/Apache-2.0.txt`, shown on the licences screen (`LegalInfoActivity`).
 - **Not device-tested**: the checks in the 14 doc ("Implementation status").
+
+## Six calm icon tones and three icon states (design 34 P1, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Tones** (pure `ui/home/IconTones.kt`, `IconTonesTest`): six mid-dark, muted tones - slate `#606B80`, blue
+  `#496C9C`, teal `#347470`, plum `#805B9A`, rose `#A45166`, indigo `#6065A9` (`ICON_TONES`; white >= 5.3:1, >= 3.5:1
+  on the night; no amber, green or red). `iconTone(swatches, packageName)` replaced `tileColor(seedColour(..))` (both
+  gone, with `TILE_GREY`): a fixed tone for the known multi-colour apps (`FIXED_TONES`: Chrome, Drive, Photos, Gmail,
+  Calendar, Maps, ... - mockup 01), else one dominant hue -> the nearest chromatic tone (`nearestTone`; slate is never
+  a hue's tone), else (a second hue with >= 25 % of the coloured part, or < 15 % in colour, or nothing) a tone by
+  `String.hashCode` of the package (`hashedTone`, stable; slate without a package). Always one of the six.
+  `KidAvatars.toneOf` feeds it `swatchesOf` - the opaque pixels (alpha >= 128) of a 48 px render of the icon's colour layers, counted per 4-bit colour; never androidx Palette, whose default filter drops orange and brown (qa-34-s1-code L2).
+- **Three states** (QA H1; `appdisplay/AppDisplay.kt`): `AppDisplayEntry.icon` `null` = **Vibb style** (default),
+  `OWN_ICON` = `"own"` = **the app's own logo** (`ownLogo`), else a glyph. `appDisplayMap` accepts `KNOWN_ICONS` (the
+  glyphs + `own`; `own` always with `auto`) - an older launcher's set (the glyphs alone) drops `own` (with no label the
+  entry is gone, today's look). `appIconKey` gives `|g=own|c=auto`.
+- **`renderAppIcon`** follows the pure `iconRender(entry, hasMonochrome)` (`IconRender` OwnLogo / Glyph / VibbMono, `IconTonesTest`, qa-34-s1-code L4), which checks `own` first: `drawOwnLogo` - an adaptive icon's background + foreground in their original
+  colours at 1.5x, never the monochrome layer, no tint; a legacy icon inset 1/8 on `kid_icon_fallback` `#F1F3F5`; both
+  clipped to the circle. Then a parent glyph (`renderSymbolIcon` on the colour's tile, or the app's tone for `auto`).
+  Then Vibb style: a monochrome layer white on the app's tone, any other icon `drawOwnLogo` (nothing to tone - a legacy
+  icon is no longer drawn on its colour).
+- **Parent colours** (QA M3): `app_icons.json`'s keys stay, their tiles are tones (peach rose, plum plum, sky blue,
+  sunset indigo, night teal, grey slate); the generated `AppGlyphs.COLORS` follows. **Fixed tiles**: the Phone book
+  `kid_phone_book` `#3A7552` (white 5.5:1; also the time-rule screen's phone book button), Settings `kid_settings_tile`
+  = slate, the grid's placeholder slate (`KidPaletteTest`). The 112 avatar's tonal pair is step 3's.
+- Not emulator-checked yet: Home and the glance with an app in each state.
 
 ## Soft avatars and the night contact sheet (design 34 P3, `docs/design/34-launcher-polish.md`, at the monorepo root)
 

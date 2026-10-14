@@ -440,6 +440,82 @@ P3 built (launcher only, no server or contract change), on branch `design-34-s3`
 | N3 two homes for the 112 colours | New `kid_emergency_tonal` `#3A1E24` next to `kid_emergency_text`. `KidPaletteTest` keeps `EMERGENCY_AVATAR` equal to that pair, so P7's pill can take the resources |
 | N4 where the 112 avatar shows | `launcher/CLAUDE.md` now says: only on Home's contacts row, in the phone book and on the sheet. The call screens show the silhouette for emergency calls, and the glance rows never pass `isEmergency` |
 
+## Step 0 and step 1 implementation status (2026-10-14)
+
+**Step 0** (docs only, its own commit): `docs/testing/emulator.md` §3b - `wm density 240` (320x569 dp, the Jelly
+Star) with `font_scale` 1.3/2.0 and the resets (`wm density reset`, `font_scale 1.0`), the `outside_play` block of an
+`adb install`ed app and "Allow these apps…" on the phone's summary, the time-zone recipe (`getprop
+persist.sys.timezone` into Phone Setup); §4 gains `appops set $P WRITE_SETTINGS allow` (P12) next to the role grants.
+
+**Step 1** (P1, server and launcher in one commit; no migration, the policy shape unchanged - `policy_json_keys_snapshot`
+and `PolicyResponseCompatTest` untouched, `app_display` is still a list of `{package_name, label, icon, color}`):
+
+- **Server** (`app_display.rs`): `OWN = "own"`; `validate` and `sanitized` accept it beside `icon_known` (not in
+  `ICONS`/`app_icons.json`), always with `auto` (a colour sent or stored with it is dropped); `DisplayValues::own()` is now
+  `empty()`, the old `is_own()` is `is_empty()` (what `keep_row` and `policy_app_display` decide on) and `is_own()`
+  now means the logo; `policy_app_display` sends `color: "auto"` for `own`; `describe()`: "Chat, with the app's own
+  logo", "its own name, with the Vibb-style icon", "the chat icon on rose" / "on the app's tone"; `color_label` names
+  design 14's keys by their tones (Rose, Plum, Blue, Indigo, Teal, Slate). The form: Icon radios "Vibb style" (`""`),
+  "The app's own logo" (`own`) and the 16 glyphs; the colour fieldset `data-colors`, which `app-display.js` (`?v=3`)
+  disables for `own` and which a disabled fieldset then posts nothing for (= `auto`); the preview says "Vibb style" /
+  "Its own logo" on `OWN_PREVIEW`, `auto` previews slate (`AUTO_PREVIEW` `#606B80`, was `#868E96`); a hint line says
+  what each state is and what Reset does here. "Use the app's own" and "Follow the catalog" are one **Reset**
+  (`action=reset`; an older page's `own`/`catalog` do the same): the device form deletes the phone's row (it then follows
+  the catalog default, else Vibb style), the catalog form clears the default. "Vibb style" with no name over a catalog
+  default keeps an empty phone row (Vibb style on that phone) - the way to override a default back to the tone. Every
+  form still posts to its row (`#app-<package>`, `?open=display#display`), so a save lands where it was.
+- **Contract files**: `app_icons.json` (both copies) keeps the six keys and their seeds; the tiles are the tones,
+  the comment says so; `scripts/material-symbols.sh` regenerated `app_icons.rs` and `AppGlyphs.kt` (its comment lines
+  updated; the music tables and glyphs came out unchanged). The server's tile test is at 4.5:1 and checks green/red
+  by hue (the old RGB rule called teal `#347470` green).
+- **Launcher**: `ui/home/IconTones.kt` (pure) - `ICON_TONES`, `iconTone(swatches, packageName)`, `nearestTone`,
+  `hashedTone`, `FIXED_TONES`. `KidAvatars.renderAppIcon` checks `own` first (`drawOwnLogo`: the adaptive layers in
+  their own colours 1.5x, or a legacy icon inset 1/8 on `kid_icon_fallback`, clipped to the circle), then a glyph
+  (the colour's tile or the app's tone), then Vibb style (the monochrome glyph white on the tone; without one
+  `drawOwnLogo`). `tileColor`, the HSL helpers, `seedColour` and `TILE_GREY` are gone. `appDisplayMap` takes
+  `KNOWN_ICONS` (glyphs + `own`), `own` always `auto`; `appIconKey` gives `|g=own|c=auto`. `kid_phone_book` `#3A7552`
+  (also the time-rule screen's phone book button), `kid_settings_tile` slate, the grid's placeholder slate.
+- **Tests**: server `the_apps_own_logo_is_a_third_state`, `every_colour_has_a_tone_name`,
+  `the_form_knows_the_three_states`, the tile floor 4.5, `tests::app_display::the_apps_own_logo_is_stored_sent_and_shown`
+  (kept without a default and with a name, the wire's `auto`, the form, a catalog default of `own`) and the Reset path
+  (incl. an older page's `own`/`catalog`); launcher `IconTonesTest` (six tones, contrast, no amber/green/red, every
+  output one of the six, Google's four colours never 30-60°, the nearest hue, stable per package, the fixed apps, the
+  parent colours are tones), `AppDisplayTest` (`own` with and without a label, an older launcher's shape drops it,
+  `g=own`), `AppGlyphsTest` (tile is a tone), `KidPaletteTest` (Phone book and Settings tiles: white >= 4.5:1, ground
+  >= 3.5:1).
+
+**Decisions**
+- **Fixed tones for the known multi-colour apps** (`FIXED_TONES`, mockup 01's Drive teal, Photos plum, Gmail rose,
+  Calendar blue, Maps indigo; Chrome, the Google app blue; YouTube/YouTube Music rose; Keep indigo). They win over the
+  palette for those packages, so Home doesn't depend on which swatch a palette pass finds first; every other
+  multi-colour or grey icon gets the package's hash tone, as P1 says.
+- **Slate is never a hue's tone** - it is the hash's and the Settings tile's; a blue icon goes to blue or indigo.
+- **Vibb style without a monochrome layer draws the app's own logo**, a legacy bitmap included (on the light neutral
+  disc, no longer on a darkened copy of its colour) - "its own icon (nothing to tone)" in P1's table, and the two
+  states then look the same for such an app.
+- **The colour fieldset is disabled by the script only**: a server-rendered `disabled` would, without JS, keep a parent
+  who switches from the logo to a glyph from picking a colour.
+- **The PWA's own tiles** (Device › Apps, the Apps tab) show a letter for an `own` app, as for Vibb style: the server
+  has no logo to show.
+
+**Not checked on the emulator yet**: Home and the glance page with an app in each state (Vibb style with and without
+a monochrome layer, the app's own logo, a chosen glyph on a colour and on `auto`); the Phone book and Settings tiles.
+
+### Step 1 code QA fix round (`qa-34-s1-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| L1 an older page's "Use the app's own" now reset | The device form's legacy `action=own` keeps its old meaning: `DisplayValues::empty()` through the normal `keep_row` - an empty row over a catalog default (Vibb style on that phone), no row without one. Only `reset` and the old `catalog` delete. The catalog form's old `own` stays "clear the default". `a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it` asserts `[]` for `own` with the default present, the default for `catalog`, and the default again after Reset |
+| L2 Palette's filter drops orange and brown | `KidAvatars.toneOf` no longer uses androidx Palette: the pure `swatchesOf(pixels)` counts the opaque pixels (alpha >= 128) of the 48 px render per 4-bit colour, and `iconTone`'s own lightness and chroma rules judge black, white and grey. Tests: `#E8772E` and a brown map to rose, an orange disc on transparency is one swatch, half-transparent edges don't count, neighbouring shades share a bucket. The palette dependency stays in the build (no other user; removing it is a build change for another day) |
+| L3 the hint promised a white symbol | "Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo)" |
+| L4 the state order untested | The pure `iconRender(entry, hasMonochrome)` in `IconTones.kt` returns `IconRender.OwnLogo` / `Glyph(res, tile or null)` / `VibbMono`; `renderAppIcon` only switches on it. `IconTonesTest` covers nothing and a name only (with and without a monochrome layer), `own` with a monochrome layer and with a name, a glyph on a colour and on `auto`, an unknown glyph both ways |
+| N1 `own_row` dead | Used: `AppDisplayForm::can_reset()` (the phone's own row on the device page, a stored default - the new `has_choice` - on the catalog page) shows Reset and its hint line only when there is something to reset. `reset_is_offered_only_with_something_to_reset` |
+| N2 `.app-tile`'s grey | `.app-tile`'s default background is the slate `#606B80` (`AUTO_PREVIEW`); `style.css?v=28` |
+| N3 red checks don't wrap | Server: red is within 15° of 0° either side (`hue.min(360 - hue) < 15`; rose at 344.8° is 15.2° off); launcher: `hueDistance(h, 0f) < 15f` |
+| N4 the wire's `!is_own()` unreachable | Kept as a guard in a pure `wire_entry`, with `the_wire_sends_auto_for_the_logo_and_vibb_style` building `DisplayValues` directly (`own` and no icon with `sky` go out `auto`, a glyph keeps `sky`) |
+| N5 filters partly pinned | `a near-black colour and a non-positive count are no colour`: a dark violet (lightness 0.10, 80 %) beside a small blue is blue; a near-white wash beside a red is rose; a red with a zero or negative count beside a blue is blue (the negative case is the one the `population > 0` check decides) |
+| N6 emulator.md's WRITE_SETTINGS line | It says the grant is for P12 (step 6, not built yet; harmless now) and why: `TIME_12_24` isn't on `setSystemSetting`'s list. Kid Settings' brightness does **not** use the app-op - it goes through `setSystemSetting` (`QuickControls.setBrightness`), so the report's "the user today is brightness" isn't so; the line says that instead |
+
 ## Step 11 implementation status (2026-10-14)
 
 P10 is built (music app only; no launcher, server or contract change), on branch `design-34-s11`. Visual only: no

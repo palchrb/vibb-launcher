@@ -526,25 +526,41 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Two levels**: a catalog default (`tracked_apps.display_label/display_icon/display_color`, by the row's package
   name; the catalog's admin name is never used) and a per-phone row (`device_app_display`, PK device + package,
   cascades with the device, <= 200 per phone) that replaces the default **as a whole** - also for Play and
-  preinstalled apps outside the catalog. A phone row with neither label nor icon = "the app's own" there; it is kept
-  only while a default exists. Saving exactly the default, or "own" without one, keeps no row.
+  preinstalled apps outside the catalog. A phone row with neither label nor icon = Vibb style there (design 34); it is kept
+  only while a default exists. Saving exactly the default, or nothing without one, keeps no row.
 - **Wire**: `launcher_ui.app_display` - always a list (`policy_json_keys_snapshot`), `{package_name, label|null,
   icon|null, color}` resolved per phone (`app_display::policy_app_display`): unknown icons left out, unknown colours
   `auto`, entries with nothing left dropped; a failing query sends `[]` and logs (cosmetic, like wallpapers).
 - **Forms** (`partials/app_display_form.html`, `AppDisplayForm`): every allowed app with a valid package (not the
   launcher) under its row on the phone's Apps page (`POST /devices/{id}/apps/display#app-<package>`, `action`
-  save/own/catalog, back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `?open=display#display`, open, nudges every
+  save/reset (an older page's own/catalog = reset), back to `/devices/{id}/apps#app-<package>`, nudges) and the catalog page (`POST /apps/tracked/{id}/display`, back to `?open=display#display`, open, nudges every
   phone). Validation (`app_display::validate`): label trimmed, 1-20 chars (`chars().count()`), no control chars;
   icon empty or known; colour `auto` or known; package per Android's grammar, never Play core. Refused: 400 with the
   phone's Apps page (the form's action carries `#app-<package>`, so the answer lands on the row) or the catalog page, that form open, the values kept, the error by the field and that field `autofocus`ed (the
   POST path differs, so scroll-restore can't help - the focus keeps the place). `static/app-display.js` previews
-  live (the tile in the phone's resolved colour; `auto` previews grey).
-- **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with seed **and** the launcher's
-  `tileColor` result), byte-identical to the launcher's test copy; `scripts/material-symbols.sh` (root) fetches the
+  live (the tile in the phone's resolved colour; `auto` previews slate).
+- **Icons and colours**: `testdata/app_icons.json` (16 Material Symbols, 6 colours with design 14's seed and the
+  tile the launcher draws - since design 34 one of its six tones), byte-identical to the launcher's test copy;
+  `scripts/material-symbols.sh` (root) fetches the
   SVGs at a pinned commit with SHA-256s and writes `static/app-icons/<key>.svg` + `LICENSE.txt` (Apache-2.0), the
   launcher's vectors and both tables (`src/app_icons.rs`, generated, rustfmt-clean - don't edit). Tests check the
-  table against the JSON, a glyph per icon with its "Converted from" line, and white >= 3:1 on every tile.
-- Tests: `app_display::tests`, `src/tests/app_display.rs`.
+  table against the JSON, a glyph per icon with its "Converted from" line, and white >= 4.5:1 on every tile, none
+  green or red by hue.
+- **Three icon states** (design 34 P1, `docs/design/34-launcher-polish.md`, QA H1; no migration): **Vibb style** (the
+  default - no row, or `icon` NULL; the phone draws the app's monochrome glyph white on its tone), **the app's own
+  logo** (`icon = 'own'`, `app_display::OWN`, stored and sent with colour `auto`; the phone draws the real icon in its
+  own colours) and **a chosen glyph** (design 14). `own` is not in `ICONS`/`app_icons.json`: `validate` and
+  `sanitized` accept it beside the glyphs. `DisplayValues::is_empty` (label and icon `None`, "nothing to send") is what
+  `keep_row` and `policy_app_display` decide on; `is_own` is the logo. A catalog default may be `own`. The form's Icon
+  radios are "Vibb style" (`value=""`), "The app's own logo" (`value="own"`, `static/app-display.js` disables the colour
+  fieldset; the preview's tile says "Vibb style" / "Its own logo" on `OWN_PREVIEW`) and the 16 glyphs; the colour keys
+  keep their names in the database and read as their tones in the PWA (`color_label`: peach Rose, plum Plum, sky
+  Blue, sunset Indigo, night Teal, grey Slate; `auto` "The app's tone", previewed slate `AUTO_PREVIEW`). The one
+  secondary button is **Reset** (`action=reset`, shown only with something to reset - `can_reset`: the phone's own row, or a stored catalog default; an older page's `catalog` does the same, its `own` keeps its old meaning, an empty row - qa-34-s1-code L1, N1): it deletes the phone's
+  row (the phone then follows the catalog default, else Vibb style) or clears the catalog default. Vibb style with no
+  name on a phone with a catalog default keeps an empty row (Vibb style there). An older launcher drops `own` as an
+  unknown icon (with no label the entry is gone - today's look).
+- Tests: `app_display::tests`, `src/tests/app_display.rs` (`the_apps_own_logo_is_stored_sent_and_shown`).
 
 ## Vibb music library (design 21 step 1, `docs/design/21-vibb-music-phase1.md`, migration `0049_music.sql`, 0.21.0)
 

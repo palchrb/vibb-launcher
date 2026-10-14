@@ -2027,8 +2027,8 @@ pub async fn upload_tracked_app_release(
 }
 
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
-/// kid's phones (by the row's package name; a phone's own choice replaces it). `action` "own"
-/// clears it. Refused input: 400, the page with the entered values, the error by the field and
+/// kid's phones (by the row's package name; a phone's own choice replaces it); it may be any of
+/// design 34's three states. `action` "reset" (an older page's "own") clears it. Refused input: 400, the page with the entered values, the error by the field and
 /// that field focused. Saved: back to the card, open (`?open=display#display`: it doesn't fold up
 /// under the parent, the browser pass of 2026-10-14, 6f); nudges every phone (cosmetic, cheap).
 pub async fn save_display(
@@ -2037,8 +2037,8 @@ pub async fn save_display(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let field = |name: &str| form.get(name).map(String::as_str).unwrap_or("");
-    let values = if field("action") == "own" {
-        crate::app_display::DisplayValues::own()
+    let values = if matches!(field("action"), "reset" | "own") {
+        crate::app_display::DisplayValues::empty()
     } else {
         match crate::app_display::validate(field("label"), field("icon"), field("color")) {
             Ok(values) => values,

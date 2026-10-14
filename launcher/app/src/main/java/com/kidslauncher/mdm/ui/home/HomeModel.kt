@@ -111,9 +111,6 @@ fun contactRow(count: Int, contentWidthDp: Float): ContactRowLayout {
     return ContactRowLayout(64, gap, true)
 }
 
-/** Grey for icons whose colour can't be found (the mockup's Settings tile). */
-const val TILE_GREY: Int = 0xFF868E96.toInt()
-
 /** WCAG relative luminance of an opaque ARGB colour. */
 fun relativeLuminance(argb: Int): Double {
     fun channel(c: Int): Double {
@@ -128,64 +125,6 @@ fun relativeLuminance(argb: Int): Double {
 /** WCAG contrast ratio of two luminances (order doesn't matter). */
 fun contrastRatio(lumA: Double, lumB: Double): Double =
     (max(lumA, lumB) + 0.05) / (min(lumA, lumB) + 0.05)
-
-private fun rgbToHsl(argb: Int): FloatArray {
-    val r = ((argb shr 16) and 0xFF) / 255f
-    val g = ((argb shr 8) and 0xFF) / 255f
-    val b = (argb and 0xFF) / 255f
-    val mx = maxOf(r, g, b)
-    val mn = minOf(r, g, b)
-    val l = (mx + mn) / 2
-    if (mx == mn) return floatArrayOf(0f, 0f, l)
-    val d = mx - mn
-    val s = if (l > 0.5f) d / (2 - mx - mn) else d / (mx + mn)
-    val h = when (mx) {
-        r -> ((g - b) / d + (if (g < b) 6 else 0))
-        g -> ((b - r) / d + 2)
-        else -> ((r - g) / d + 4)
-    } / 6
-    return floatArrayOf(h, s, l)
-}
-
-private fun hslToRgb(h: Float, s: Float, l: Float): Int {
-    fun hue(p: Float, q: Float, tIn: Float): Float {
-        var t = tIn
-        if (t < 0) t += 1
-        if (t > 1) t -= 1
-        return when {
-            t < 1f / 6 -> p + (q - p) * 6 * t
-            t < 1f / 2 -> q
-            t < 2f / 3 -> p + (q - p) * (2f / 3 - t) * 6
-            else -> p
-        }
-    }
-    val (r, g, b) = if (s == 0f) {
-        Triple(l, l, l)
-    } else {
-        val q = if (l < 0.5f) l * (1 + s) else l + s - l * s
-        val p = 2 * l - q
-        Triple(hue(p, q, h + 1f / 3), hue(p, q, h), hue(p, q, h - 1f / 3))
-    }
-    fun byte(v: Float) = (v * 255).roundToInt().coerceIn(0, 255)
-    return (0xFF shl 24) or (byte(r) shl 16) or (byte(g) shl 8) or byte(b)
-}
-
-/**
- * The circle colour behind a white icon glyph, from the icon's own colour [seedArgb]: same hue,
- * saturation at most 0.75, and the HSL lightness lowered in 0.04 steps until white on it reaches
- * 3:1 (WCAG, a glyph is a large graphic) - the mockup's #0DBD8B / #7950F2 / #F76707 family.
- */
-fun tileColor(seedArgb: Int): Int {
-    val (h, sRaw, lRaw) = rgbToHsl(seedArgb)
-    val s = min(sRaw, 0.75f)
-    var l = lRaw
-    var color = hslToRgb(h, s, l)
-    while (contrastRatio(1.0, relativeLuminance(color)) < 3.0 && l > 0f) {
-        l = max(0f, l - 0.04f)
-        color = hslToRgb(h, s, l)
-    }
-    return color
-}
 
 /** Badge text: nothing for 0 or less, the count up to 99, then "99+". */
 fun badgeText(count: Int): String? = when {

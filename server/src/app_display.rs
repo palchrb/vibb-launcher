@@ -15,17 +15,25 @@ use crate::app_icons::{COLORS, ICONS};
 pub const MAX_LABEL_CHARS: usize = 20;
 /// At most this many per-phone rows.
 pub const MAX_ROWS_PER_DEVICE: i64 = 200;
-/// The colour key meaning "the app's own colour".
+/// The colour key meaning "the app's own tone" (design 34 P1: the launcher picks one of its six
+/// tones from the app's icon).
 pub const AUTO: &str = "auto";
-/// What the preview shows for [AUTO]: the launcher's neutral grey (QA #3 - the real colour comes
-/// from the app's icon on the phone).
-pub const AUTO_PREVIEW: &str = "#868E96";
-/// The preview tile without a glyph ("its own icon"): dark enough for its white text at 4.5:1
-/// (qa-14-code #4; white on [AUTO_PREVIEW] is only 3.3:1). Also in `static/app-display.js`.
+/// The icon key meaning "the app's own logo" (design 34 P1): the phone draws the app's real icon
+/// in its original colours - never the monochrome glyph, no tone. Not a key of [ICONS] (the glyph
+/// and licence tests stand): `validate` and `sanitized` accept it beside them, and its colour is
+/// always [AUTO].
+pub const OWN: &str = "own";
+/// What the preview shows for [AUTO]: the slate tone (QA #3 - the real tone comes from the app's
+/// icon on the phone). Also in `static/app-display.js`.
+pub const AUTO_PREVIEW: &str = "#606B80";
+/// The preview tile without a glyph ("Vibb style", "Its own logo"): dark enough for its white
+/// text at 4.5:1 (qa-14-code #4). Also in `static/app-display.js`.
 pub const OWN_PREVIEW: &str = "#5C6370";
 
-/// One entry of `launcher_ui.app_display` - every key always present. `label`/`icon` `null` = the
-/// app's own; `color` is [AUTO] or a key of [COLORS].
+/// One entry of `launcher_ui.app_display` - every key always present. `label` `null` = the app's
+/// own name; `icon` `null` = Vibb style (the white glyph on the app's tone), [OWN] = the app's own
+/// logo, else a key of [ICONS]; `color` is [AUTO] or a key of [COLORS] (always [AUTO] for `null`
+/// and [OWN]).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct PolicyAppDisplay {
     pub package_name: String,
@@ -43,7 +51,8 @@ pub struct DisplayValues {
 }
 
 impl DisplayValues {
-    pub fn own() -> Self {
+    /// Nothing chosen: the app's own name in Vibb style.
+    pub fn empty() -> Self {
         DisplayValues {
             label: None,
             icon: None,
@@ -51,25 +60,34 @@ impl DisplayValues {
         }
     }
 
-    pub fn is_own(&self) -> bool {
+    /// Nothing to send: no label and no icon (Vibb style under the app's own name). An [OWN] icon
+    /// is something to send.
+    pub fn is_empty(&self) -> bool {
         self.label.is_none() && self.icon.is_none()
     }
 
-    /// "Chat, with the chat icon on peach" - for the pages.
+    /// The parent chose the app's own logo.
+    pub fn is_own(&self) -> bool {
+        self.icon.as_deref() == Some(OWN)
+    }
+
+    /// "Chat, with the chat icon on rose" - for the pages.
     pub fn describe(&self) -> String {
-        let icon = self.icon.as_ref().map(|icon| {
-            let on = if self.color == AUTO {
-                "the app's own colour".to_string()
-            } else {
-                self.color.clone()
-            };
-            format!("the {} icon on {on}", icon.replace('_', " "))
-        });
-        match (&self.label, icon) {
-            (Some(label), Some(icon)) => format!("{label}, with {icon}"),
-            (Some(label), None) => format!("{label}, with the app's own icon"),
-            (None, Some(icon)) => format!("its own name, with {icon}"),
-            (None, None) => "the app's own name and icon".to_string(),
+        let icon = match self.icon.as_deref() {
+            None => "the Vibb-style icon".to_string(),
+            Some(OWN) => "the app's own logo".to_string(),
+            Some(icon) => {
+                let on = if self.color == AUTO {
+                    "the app's tone".to_string()
+                } else {
+                    color_label(&self.color).to_lowercase()
+                };
+                format!("the {} icon on {on}", icon.replace('_', " "))
+            }
+        };
+        match &self.label {
+            Some(label) => format!("{label}, with {icon}"),
+            None => format!("its own name, with {icon}"),
         }
     }
 }
@@ -88,6 +106,20 @@ pub fn valid_package_name(name: &str) -> bool {
 
 pub fn icon_known(key: &str) -> bool {
     ICONS.iter().any(|(k, _)| *k == key)
+}
+
+/// What the PWA calls a colour key (design 34 P1, QA M3): design 14's keys stay (stored rows stay
+/// valid), their tiles are the launcher's tones and the names follow the tiles.
+pub fn color_label(key: &str) -> &'static str {
+    match key {
+        "peach" => "Rose",
+        "plum" => "Plum",
+        "sky" => "Blue",
+        "sunset" => "Indigo",
+        "night" => "Teal",
+        "grey" => "Slate",
+        _ => "The app's tone",
+    }
 }
 
 pub fn color_known(key: &str) -> bool {
@@ -111,7 +143,8 @@ pub struct FieldError {
 }
 
 /// The form's values, checked: the label trimmed (empty = none), 1-20 characters, no control
-/// characters; the icon empty or a known key; the colour [AUTO] or a known key.
+/// characters; the icon empty (Vibb style), [OWN] or a known key; the colour [AUTO] or a known key
+/// - [AUTO] whatever was sent with [OWN] (the logo has no tile).
 pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, FieldError> {
     let label = label.trim();
     let label = if label.is_empty() {
@@ -133,15 +166,17 @@ pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, F
     };
     let icon = match icon.trim() {
         "" => None,
+        OWN => Some(OWN.to_string()),
         key if icon_known(key) => Some(key.to_string()),
         _ => {
             return Err(FieldError {
                 field: "icon",
-                message: "Pick one of the icons, or the app's own.".to_string(),
+                message: "Pick one of the icons, Vibb style or the app's own logo.".to_string(),
             });
         }
     };
     let color = match color.trim() {
+        _ if icon.as_deref() == Some(OWN) => AUTO.to_string(),
         "" | AUTO => AUTO.to_string(),
         key if color_known(key) => key.to_string(),
         _ => {
@@ -155,13 +190,14 @@ pub fn validate(label: &str, icon: &str, color: &str) -> Result<DisplayValues, F
 }
 
 /// Stored values as the phones may get them: an unknown icon (a newer table, a hand edit) is
-/// left out, an unknown colour is [AUTO], a label that no longer validates is left out.
+/// left out, [OWN] is kept (with [AUTO]), an unknown colour is [AUTO], a label that no longer
+/// validates is left out.
 fn sanitized(label: Option<String>, icon: Option<String>, color: String) -> DisplayValues {
     let label = label
         .and_then(|l| validate(&l, "", AUTO).ok())
         .and_then(|v| v.label);
-    let icon = icon.filter(|i| icon_known(i));
-    let color = if color_known(&color) {
+    let icon = icon.filter(|i| i == OWN || icon_known(i));
+    let color = if icon.as_deref() != Some(OWN) && color_known(&color) {
         color
     } else {
         AUTO.to_string()
@@ -208,8 +244,8 @@ pub async fn device_rows(
 }
 
 /// `launcher_ui.app_display` for a phone: the catalog defaults, each replaced as a whole by the
-/// phone's own row; only entries with a label or an icon (a phone row with neither = the app's
-/// own), sorted by package. An entry without an icon always says [AUTO].
+/// phone's own row; only entries with a label or an icon (a phone row with neither = Vibb style on
+/// that phone), sorted by package. An entry without an icon or with [OWN] always says [AUTO].
 pub async fn policy_app_display(
     db: &SqlitePool,
     device_id: i64,
@@ -218,18 +254,24 @@ pub async fn policy_app_display(
     resolved.extend(device_rows(db, device_id).await?);
     Ok(resolved
         .into_iter()
-        .filter(|(_, v)| !v.is_own())
-        .map(|(package_name, v)| PolicyAppDisplay {
-            package_name,
-            color: if v.icon.is_some() {
-                v.color
-            } else {
-                AUTO.to_string()
-            },
-            label: v.label,
-            icon: v.icon,
-        })
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(package_name, v)| wire_entry(package_name, v))
         .collect())
+}
+
+/// One wire entry: the colour only with a glyph - [AUTO] without an icon and for [OWN], whatever
+/// the values carry (a guard: `sanitized` already forces [AUTO] for [OWN] on every read).
+fn wire_entry(package_name: String, v: DisplayValues) -> PolicyAppDisplay {
+    PolicyAppDisplay {
+        package_name,
+        color: if v.icon.is_some() && !v.is_own() {
+            v.color
+        } else {
+            AUTO.to_string()
+        },
+        label: v.label,
+        icon: v.icon,
+    }
 }
 
 // ---- the form (device page and catalog page) ------------------------------------------------
@@ -241,10 +283,11 @@ pub struct IconChoice {
     pub checked: bool,
 }
 
-/// One colour radio (`tile` is what the phone draws).
+/// One colour radio (`tile` is what the phone draws, `label` its name - [color_label]).
 pub struct ColorChoice {
     pub key: &'static str,
     pub tile: &'static str,
+    pub label: &'static str,
     pub checked: bool,
 }
 
@@ -259,15 +302,18 @@ pub struct AppDisplayForm {
     /// The app's own name, for the field's placeholder and the preview.
     pub app_label: String,
     pub label: String,
-    /// Empty = the app's own icon.
+    /// Empty = Vibb style, [OWN] = the app's own logo, else a glyph key.
     pub icon: String,
     pub color: String,
     /// What the phone shows now, for the summary line.
     pub summary: String,
     /// Device page: the catalog default, if there is one.
     pub catalog_default: Option<String>,
-    /// Device page: this phone has its own row (then "Follow the catalog" is offered with a default).
+    /// Device page: this phone has its own row (Reset deletes it; the phone then follows the
+    /// catalog default, else Vibb style).
     pub own_row: bool,
+    /// Something is stored for this form's level (the catalog default on the catalog page).
+    pub has_choice: bool,
     /// The refused field ("label", "icon", "color") and why.
     pub error_field: String,
     pub error: Option<String>,
@@ -322,6 +368,7 @@ impl AppDisplayForm {
             .map(|(key, _, tile)| ColorChoice {
                 key,
                 tile,
+                label: color_label(key),
                 checked: color == *key,
             })
             .collect();
@@ -331,7 +378,7 @@ impl AppDisplayForm {
             package_name,
             summary: current.describe(),
             app_label,
-            preview_tile: if icon.trim().is_empty() {
+            preview_tile: if icon.trim().is_empty() || icon.trim() == OWN {
                 OWN_PREVIEW.to_string()
             } else {
                 tile_of(&color).to_string()
@@ -341,6 +388,7 @@ impl AppDisplayForm {
             color,
             catalog_default: None,
             own_row: false,
+            has_choice: !current.is_empty(),
             error_field: entered
                 .map(|e| e.error.field.to_string())
                 .unwrap_or_default(),
@@ -362,6 +410,50 @@ impl AppDisplayForm {
 
     pub fn auto_checked(&self) -> bool {
         self.color == AUTO
+    }
+
+    /// The Icon radio "The app's own logo" is the choice (the colours then don't apply).
+    pub fn own_checked(&self) -> bool {
+        self.icon.trim() == OWN
+    }
+
+    /// The glyph shown in the preview, if one is chosen.
+    pub fn glyph(&self) -> Option<&str> {
+        let icon = self.icon.trim();
+        (!icon.is_empty() && icon != OWN && icon_known(icon)).then_some(icon)
+    }
+
+    /// Reset is offered only when there is something to reset: the phone's own row (device page),
+    /// or a stored default (catalog page) - qa-34-s1-code N1.
+    pub fn can_reset(&self) -> bool {
+        if self.package_name.is_empty() {
+            self.has_choice
+        } else {
+            self.own_row
+        }
+    }
+
+    /// What Reset does here: the catalog form clears its default, the device form deletes the
+    /// phone's row (it then follows the catalog default, else Vibb style). Empty without Reset.
+    pub fn reset_hint(&self) -> &'static str {
+        if !self.can_reset() {
+            ""
+        } else if self.package_name.is_empty() {
+            "Reset: no default - Vibb style unless a phone has its own choice."
+        } else if self.catalog_default.is_some() {
+            "Reset: this phone follows the catalog default."
+        } else {
+            "Reset: back to Vibb style."
+        }
+    }
+
+    /// The preview tile's text without a glyph: "Vibb style" or "Its own logo".
+    pub fn preview_text(&self) -> &'static str {
+        if self.own_checked() {
+            "Its own logo"
+        } else {
+            "Vibb style"
+        }
     }
 }
 
@@ -422,7 +514,8 @@ mod tests {
         assert!(licence.contains("Apache License") && licence.contains("Version 2.0"));
     }
 
-    /// QA #3: white on every tile reaches 3:1, and no tile is green or red (call / hang-up).
+    /// QA #3, design 34 P1: white on every tile reaches 4.5:1 (the tones reach 5.3:1), and no tile
+    /// is green or red (call / hang-up).
     #[test]
     fn tiles_carry_white_and_are_neither_green_nor_red() {
         fn channel(c: u8) -> f64 {
@@ -437,10 +530,28 @@ mod tests {
             let rgb = u32::from_str_radix(tile.trim_start_matches('#'), 16).unwrap();
             let (r, g, b) = ((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8);
             let lum = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
-            assert!((1.05 / (lum + 0.05)) >= 3.0, "{key} {tile}");
+            assert!((1.05 / (lum + 0.05)) >= 4.5, "{key} {tile}");
+            // By hue (design 34: teal, 176°, is a tone; the call green is 75-165°, red 0-20°).
+            let (rf, gf, bf) = (r as f64, g as f64, b as f64);
+            let (max, min) = (rf.max(gf).max(bf), rf.min(gf).min(bf));
+            let hue = if max == min {
+                0.0
+            } else if max == rf {
+                (60.0 * (gf - bf) / (max - min)).rem_euclid(360.0)
+            } else if max == gf {
+                60.0 * (bf - rf) / (max - min) + 120.0
+            } else {
+                60.0 * (rf - gf) / (max - min) + 240.0
+            };
+            let chromatic = max - min > 30.0;
             assert!(
-                !(g > r && g > b && g as i32 - r as i32 > 40),
-                "{key} is green"
+                !(chromatic && (75.0..=165.0).contains(&hue)),
+                "{key} is green ({hue})"
+            );
+            // Red wraps at 0° (qa-34-s1-code N3): within 15° either side; rose (345°) is 15.2° off.
+            assert!(
+                !(chromatic && hue.min(360.0 - hue) < 15.0),
+                "{key} is red ({hue})"
             );
             assert!(!(r > 180 && g < 80 && b < 80), "{key} is red");
         }
@@ -464,7 +575,8 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static/app-display.js"),
         )
         .unwrap();
-        assert!(script.contains(OWN_PREVIEW));
+        assert!(script.contains(OWN_PREVIEW) && script.contains(AUTO_PREVIEW));
+        assert!(script.contains("Its own logo") && script.contains("Vibb style"));
     }
 
     #[test]
@@ -498,7 +610,7 @@ mod tests {
                 color: "peach".into()
             }
         );
-        assert_eq!(validate("", "", "").unwrap(), DisplayValues::own());
+        assert_eq!(validate("", "", "").unwrap(), DisplayValues::empty());
         // 20 letters counted as characters, not bytes.
         assert!(validate(&"ø".repeat(20), "", AUTO).is_ok());
         assert_eq!(
@@ -513,7 +625,8 @@ mod tests {
     #[test]
     fn stored_values_drop_what_the_phones_cant_use() {
         let v = sanitized(Some("x".repeat(30)), Some("rocket".into()), "green".into());
-        assert_eq!(v, DisplayValues::own());
+        assert_eq!(v, DisplayValues::empty());
+        assert!(v.is_empty());
         assert_eq!(
             DisplayValues {
                 label: Some("Chat".into()),
@@ -521,11 +634,147 @@ mod tests {
                 color: "peach".into()
             }
             .describe(),
-            "Chat, with the chat icon on peach"
+            "Chat, with the chat icon on rose"
         );
         assert_eq!(
-            DisplayValues::own().describe(),
-            "the app's own name and icon"
+            DisplayValues {
+                label: None,
+                icon: Some("chat".into()),
+                color: AUTO.into()
+            }
+            .describe(),
+            "its own name, with the chat icon on the app's tone"
         );
+        assert_eq!(
+            DisplayValues::empty().describe(),
+            "its own name, with the Vibb-style icon"
+        );
+        assert_eq!(
+            DisplayValues {
+                label: Some("Chat".into()),
+                icon: None,
+                color: AUTO.into()
+            }
+            .describe(),
+            "Chat, with the Vibb-style icon"
+        );
+    }
+
+    /// Design 34 P1 (QA H1): the third state, "the app's own logo" - accepted by `validate` and
+    /// `sanitized` beside the glyphs (not one of them), always with [AUTO], something to send.
+    #[test]
+    fn the_apps_own_logo_is_a_third_state() {
+        assert!(!icon_known(OWN), "own is not a glyph");
+        assert_eq!(
+            validate("", OWN, "peach").unwrap(),
+            DisplayValues {
+                label: None,
+                icon: Some(OWN.into()),
+                color: AUTO.into()
+            }
+        );
+        let labelled = validate(" Chat ", " own ", "").unwrap();
+        assert_eq!(labelled.label.as_deref(), Some("Chat"));
+        assert!(labelled.is_own() && !labelled.is_empty());
+        // A stored colour next to `own` (a hand edit) is never sent.
+        let stored = sanitized(None, Some(OWN.into()), "sky".into());
+        assert_eq!(stored.icon.as_deref(), Some(OWN));
+        assert_eq!(stored.color, AUTO);
+        assert!(!stored.is_empty());
+        assert_eq!(stored.describe(), "its own name, with the app's own logo");
+        assert_eq!(labelled.describe(), "Chat, with the app's own logo");
+        // Vibb style is the empty choice, not `own`.
+        assert!(DisplayValues::empty().is_empty() && !DisplayValues::empty().is_own());
+    }
+
+    /// qa-34-s1-code N4: the wire's guard - `own` and no icon always go out as `auto`, even from
+    /// values built directly with another colour; a glyph keeps its colour.
+    #[test]
+    fn the_wire_sends_auto_for_the_logo_and_vibb_style() {
+        let built = |icon: Option<&str>| DisplayValues {
+            label: Some("Chat".into()),
+            icon: icon.map(str::to_string),
+            color: "sky".into(),
+        };
+        assert_eq!(wire_entry("a.b".into(), built(Some(OWN))).color, AUTO);
+        assert_eq!(wire_entry("a.b".into(), built(None)).color, AUTO);
+        assert_eq!(wire_entry("a.b".into(), built(Some("chat"))).color, "sky");
+        assert_eq!(
+            wire_entry("a.b".into(), built(Some(OWN))).icon.as_deref(),
+            Some(OWN)
+        );
+    }
+
+    /// qa-34-s1-code N1: Reset only when there is something to reset.
+    #[test]
+    fn reset_is_offered_only_with_something_to_reset() {
+        let form = |package: &str, current: DisplayValues| {
+            AppDisplayForm::new(
+                String::new(),
+                String::new(),
+                package.into(),
+                "Element".into(),
+                &current,
+                None,
+            )
+        };
+        let chat = DisplayValues {
+            label: Some("Chat".into()),
+            icon: None,
+            color: AUTO.into(),
+        };
+        // The catalog page: a stored default.
+        assert!(!form("", DisplayValues::empty()).can_reset());
+        assert!(form("", chat.clone()).can_reset());
+        assert_eq!(form("", DisplayValues::empty()).reset_hint(), "");
+        // The device page: the phone's own row, not the default it shows.
+        let mut device = form("a.b", chat);
+        assert!(!device.can_reset());
+        device.own_row = true;
+        assert!(device.can_reset());
+        assert_eq!(device.reset_hint(), "Reset: back to Vibb style.");
+    }
+
+    /// QA M3: design 14's colour keys stay, their names follow the tones.
+    #[test]
+    fn every_colour_has_a_tone_name() {
+        let names: Vec<&str> = COLORS.iter().map(|(key, _, _)| color_label(key)).collect();
+        assert_eq!(names, ["Rose", "Plum", "Blue", "Indigo", "Teal", "Slate"]);
+        assert_eq!(color_label(AUTO), "The app's tone");
+    }
+
+    /// The form's three states: the preview text, the glyph, the radio.
+    #[test]
+    fn the_form_knows_the_three_states() {
+        let form = |icon: &str| {
+            AppDisplayForm::new(
+                String::new(),
+                String::new(),
+                String::new(),
+                "Element".into(),
+                &DisplayValues {
+                    label: None,
+                    icon: (!icon.is_empty()).then(|| icon.to_string()),
+                    color: AUTO.into(),
+                },
+                None,
+            )
+        };
+        let vibb = form("");
+        assert_eq!(
+            (vibb.preview_text(), vibb.glyph(), vibb.own_checked()),
+            ("Vibb style", None, false)
+        );
+        assert_eq!(vibb.preview_tile, OWN_PREVIEW);
+        let own = form(OWN);
+        assert_eq!(
+            (own.preview_text(), own.glyph(), own.own_checked()),
+            ("Its own logo", None, true)
+        );
+        assert_eq!(own.preview_tile, OWN_PREVIEW);
+        assert!(own.icons.iter().all(|choice| !choice.checked));
+        let chat = form("chat");
+        assert_eq!((chat.glyph(), chat.own_checked()), (Some("chat"), false));
+        assert_eq!(chat.preview_tile, AUTO_PREVIEW);
     }
 }

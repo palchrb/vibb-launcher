@@ -121,21 +121,61 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
     );
     assert_eq!(app_display(&app, &token_b).await, chat);
 
-    // "Use the app's own" on phone a: nothing for it there, even with the catalog default.
+    // "Vibb style" and no name on phone a: nothing for it there, even with the catalog default
+    // (an empty row).
     save(
         &app,
         &cookie,
         a,
-        &[("package_name", ELEMENT), ("action", "own")],
+        &[
+            ("package_name", ELEMENT),
+            ("label", ""),
+            ("icon", ""),
+            ("color", "auto"),
+            ("action", "save"),
+        ],
     )
     .await;
     assert_eq!(app_display(&app, &token_a).await, serde_json::json!([]));
-    // "Follow the catalog": the phone's row goes.
+    // "Reset" (design 34 P1): the phone's row goes, the catalog default is back.
+    let res = save(
+        &app,
+        &cookie,
+        a,
+        &[("package_name", ELEMENT), ("action", "reset")],
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
+    );
+    assert_eq!(app_display(&app, &token_a).await, chat);
+    // An older page's "Use the app's own" keeps its old meaning - nothing on this phone, even with
+    // the catalog default (an empty row, qa-34-s1-code L1); its "Follow the catalog" resets.
+    for (old, after) in [("own", serde_json::json!([])), ("catalog", chat.clone())] {
+        save(
+            &app,
+            &cookie,
+            a,
+            &[("package_name", ELEMENT), ("label", "Old")],
+        )
+        .await;
+        assert_ne!(app_display(&app, &token_a).await, chat);
+        save(
+            &app,
+            &cookie,
+            a,
+            &[("package_name", ELEMENT), ("action", old)],
+        )
+        .await;
+        assert_eq!(app_display(&app, &token_a).await, after, "{old}");
+    }
+    // Reset deletes the empty row the old "own" left: the default is back.
     save(
         &app,
         &cookie,
         a,
-        &[("package_name", ELEMENT), ("action", "catalog")],
+        &[("package_name", ELEMENT), ("action", "reset")],
     )
     .await;
     assert_eq!(app_display(&app, &token_a).await, chat);
@@ -173,21 +213,115 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
     .await;
     assert_eq!(app_display(&app, &token_a).await, chat);
 
-    // The catalog page shows the default; "Use the app's own" there clears it.
+    // The catalog page shows the default (peach's tile is the rose tone); "Reset" there clears it.
     let page = app
         .get_page(&format!("/apps/tracked/{element}"), &cookie)
         .await
         .text();
-    assert!(page.contains("Chat, with the chat icon on peach"), "{page}");
+    assert!(page.contains("Chat, with the chat icon on rose"), "{page}");
     assert!(page.contains(r#"value="chat" checked"#));
+    assert!(page.contains(r#"<button type="submit" name="action" value="reset""#));
+    assert!(!page.contains("Use the app's own") && !page.contains("Follow the catalog"));
     app.request_form(
         Method::POST,
         &format!("/apps/tracked/{element}/display"),
         Some(&cookie),
-        &[("action", "own"), ("label", "ignored")],
+        &[("action", "reset"), ("label", "ignored")],
     )
     .await;
     assert_eq!(app_display(&app, &token_b).await, serde_json::json!([]));
+}
+
+/// Design 34 P1 (QA H1): "The app's own logo" is the third state - kept without a catalog default
+/// and with a name, sent as `own` with `auto`, a catalog default may be it, and the forms show it.
+#[tokio::test]
+async fn the_apps_own_logo_is_stored_sent_and_shown() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (a, token_a) = app.enrolled_device("a").await;
+    let (_, token_b) = app.enrolled_device("b").await;
+    report_installed(&app, &token_a, &[ELEMENT, "com.spotify.music"]).await;
+
+    // No catalog default: the phone's row is kept, the colour sent never matters.
+    save(
+        &app,
+        &cookie,
+        a,
+        &[
+            ("package_name", "com.spotify.music"),
+            ("icon", "own"),
+            ("color", "sky"),
+            ("action", "save"),
+        ],
+    )
+    .await;
+    // With a name too.
+    save(
+        &app,
+        &cookie,
+        a,
+        &[
+            ("package_name", ELEMENT),
+            ("label", "Chat"),
+            ("icon", "own"),
+            ("action", "save"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        app_display(&app, &token_a).await,
+        serde_json::json!([
+            {"package_name": "com.spotify.music", "label": null, "icon": "own", "color": "auto"},
+            {"package_name": ELEMENT, "label": "Chat", "icon": "own", "color": "auto"},
+        ])
+    );
+    let stored: String = sqlx::query_scalar(
+        "SELECT color_key FROM device_app_display WHERE package_name = 'com.spotify.music'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored, "auto");
+
+    // The phone's Apps page: the summary, the radio checked, the preview's words, Reset.
+    let page = app
+        .get_page(&device_page(a, Section::Apps), &cookie)
+        .await
+        .text();
+    let form = &page[page.find(r#"id="display-com.spotify.music""#).unwrap()..];
+    let form = &form[..form.find("</details>").unwrap()];
+    assert!(
+        form.contains("its own name, with the app&#39;s own logo"),
+        "{form}"
+    );
+    assert!(form.contains(r#"value="own" checked"#), "{form}");
+    assert!(form.contains("Its own logo"));
+    assert!(form.contains(r#"<button type="submit" name="action" value="reset""#));
+    assert!(form.contains("data-colors"));
+    // Element ("Chat") has the logo too.
+    let element = &page[page.find(&format!(r#"id="display-{ELEMENT}""#)).unwrap()..];
+    assert!(element[..element.find("</details>").unwrap()].contains(r#"value="own" checked"#));
+
+    // A catalog default may be the logo: every phone with the app gets it.
+    let row = catalog_app(&app, "Element X", ELEMENT).await;
+    app.request_form(
+        Method::POST,
+        &format!("/apps/tracked/{row}/display"),
+        Some(&cookie),
+        &[("icon", "own"), ("color", "peach"), ("action", "save")],
+    )
+    .await;
+    assert_eq!(
+        app_display(&app, &token_b).await,
+        serde_json::json!([
+            {"package_name": ELEMENT, "label": null, "icon": "own", "color": "auto"},
+        ])
+    );
+    let page = app
+        .get_page(&format!("/apps/tracked/{row}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains(r#"value="own" checked"#), "{page}");
 }
 
 /// Play apps and preinstalled apps the catalog doesn't know can be named per phone; Play core
@@ -240,7 +374,7 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
         .await
         .text();
     assert!(
-        page.contains("Musikk, with the music note icon on sky"),
+        page.contains("Musikk, with the music note icon on blue"),
         "{page}"
     );
     // The row's tile shows the icon the phone shows.

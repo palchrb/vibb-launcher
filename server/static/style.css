@@ -1189,7 +1189,7 @@ th {
     width: 56px;
     height: 56px;
     border-radius: 50%;
-    background: #868E96;
+    background: #606B80;
     color: #fff;
 }
 
@@ -1217,6 +1217,11 @@ th {
     border: none;
     padding: 0;
     margin: 0 0 16px;
+}
+
+/* "The app's own logo" has no tile: app-display.js turns the colours off (design 34 P1). */
+.color-grid:disabled {
+    opacity: 0.45;
 }
 
 /* Spaced with margins, not flex gap (Safari 14.0). */

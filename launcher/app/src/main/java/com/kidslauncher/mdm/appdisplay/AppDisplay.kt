@@ -19,12 +19,25 @@ import kotlinx.serialization.json.JsonPrimitive
 /** A label is at most this many characters (the server's `MAX_LABEL_CHARS`). */
 const val MAX_DISPLAY_LABEL_CHARS = 20
 
-/** The colour key meaning "the app's own colour". */
+/** The colour key meaning "the app's own tone" (design 34 P1: one of the six, from its icon). */
 const val AUTO_COLOR = "auto"
 
-/** The parent's choice for one package: [label]/[icon] `null` = the app's own; [color] [AUTO_COLOR]
- * or a key of [AppGlyphs.COLORS] (only used with an icon). */
-data class AppDisplayEntry(val label: String?, val icon: String?, val color: String = AUTO_COLOR)
+/** The icon key meaning "the app's own logo" (design 34 P1, the server's `app_display::OWN`): the
+ * real icon in its original colours, never the monochrome glyph, no tone. Not a glyph of
+ * [AppGlyphs.ICONS]; its colour is always [AUTO_COLOR]. */
+const val OWN_ICON = "own"
+
+/** Every icon key this launcher can draw: the glyphs and [OWN_ICON]. An older launcher's set
+ * (the glyphs alone) drops `own` like any unknown icon (design 14 QA #1). */
+val KNOWN_ICONS: Set<String> = AppGlyphs.ICONS.keys + OWN_ICON
+
+/** The parent's choice for one package: [label] `null` = the app's own name; [icon] `null` = Vibb
+ * style (the white glyph on the app's tone), [OWN_ICON] = the app's own logo, else a glyph key;
+ * [color] [AUTO_COLOR] or a key of [AppGlyphs.COLORS] (only used with a glyph). */
+data class AppDisplayEntry(val label: String?, val icon: String?, val color: String = AUTO_COLOR) {
+    /** The parent chose the app's own logo. */
+    val ownLogo: Boolean get() = icon == OWN_ICON
+}
 
 /** Android's package name grammar (the server's `valid_package_name`). */
 fun isValidPackageName(name: String): Boolean =
@@ -52,11 +65,12 @@ private fun JsonObject.string(key: String): String? =
  * server's unknown icon, a bad label, `null`s, wrong types, not even a list - never fails the
  * policy and only drops what can't be used: an unknown icon keeps the label, a bad label keeps the
  * icon, an unknown or missing colour is [AUTO_COLOR]; an entry without a valid package or with
- * neither a label nor an icon is left out; the first entry of a package wins.
+ * neither a label nor an icon is left out; the first entry of a package wins. [OWN_ICON] is kept
+ * (design 34 P1), always with [AUTO_COLOR]; [icons] without it is an older launcher's shape.
  */
 fun appDisplayMap(
     element: JsonElement?,
-    icons: Set<String> = AppGlyphs.ICONS.keys,
+    icons: Set<String> = KNOWN_ICONS,
     colors: Set<String> = AppGlyphs.COLORS.keys,
 ): Map<String, AppDisplayEntry> {
     val list = element as? JsonArray ?: return emptyMap()
@@ -69,7 +83,7 @@ fun appDisplayMap(
         val icon = obj.string("icon")?.takeIf { it in icons }
         if (label == null && icon == null) continue
         val color = obj.string("color")?.takeIf { it in colors } ?: AUTO_COLOR
-        map[pkg] = AppDisplayEntry(label, icon, if (icon == null) AUTO_COLOR else color)
+        map[pkg] = AppDisplayEntry(label, icon, if (icon == null || icon == OWN_ICON) AUTO_COLOR else color)
     }
     return map
 }
@@ -85,7 +99,7 @@ fun kidMayRename(entry: AppDisplayEntry?): Boolean = entry?.label == null
 /**
  * The rendered-icon cache key (QA #2: one key for the lookup and the render): app, size and
  * density, plus the glyph and colour when the parent picked an icon - a changed choice is a new
- * key. `auto` keeps the app in the key (its own colour).
+ * key (`|g=own|c=auto` for the app's own logo). `auto` keeps the app in the key (its own tone).
  */
 fun appIconKey(key: String, sizePx: Int, densityDpi: Int, entry: AppDisplayEntry?): String {
     val base = "$key|$sizePx|$densityDpi"

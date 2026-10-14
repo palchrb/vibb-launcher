@@ -46,7 +46,7 @@
         {% include "partials/app_display_form.html" %}
     </div>
     <p class="group-footer">{% if app.package_name.is_empty() %}Applies once a release says which app it is.{% else %}Phones use this unless one has its own.{% endif %}</p>
-    <script src="/static/app-display.js?v=2" defer></script>
+    <script src="/static/app-display.js?v=3" defer></script>
 
     <h2 class="group-header">On phones</h2>
     {% if phones.is_empty() %}
