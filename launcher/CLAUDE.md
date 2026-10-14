@@ -282,14 +282,22 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `#E6AFB4`, all with `AVATAR_INK` `#1B1B28` (>= 8.9:1), picked by contact id (`floorMod`; append, never reorder - a
   contact keeps its colour). Photos are unchanged. Every surface that binds a contact (`KidAvatars.bindContact`: Home,
   the phone book, the sheet, the glance rows, the call screen and Home's call card) gets them. The 112 avatar
-  (`EMERGENCY_AVATAR`) is the tonal emergency red of the lock's pill: `#FF8A8A` on `#3A1E24` (6.6:1), whatever the id;
-  the sheet's ring (`avatarRingColour`) is the contact's colour, but the red ink for an emergency number.
+  (`EMERGENCY_AVATAR` = `kid_emergency_tonal` + `kid_emergency_text`, kept equal by `KidPaletteTest`, the pair P7's pill
+  uses) is `#FF8A8A` on `#3A1E24` (6.6:1), whatever the id, with a 3 dp `#FF8A8A` ring drawn by `bindContact`
+  (`EMERGENCY_RING_DP`) - the disc alone is ~1.1-1.3:1 on the night; every other branch restores `bg_kid_circle` (the
+  phone book recycles views). It shows only on Home's contacts row, in the phone book (its no-rules tile included) and
+  on the sheet: the call screens and Home's call card show the silhouette for emergency calls (`callAvatar`), and the
+  glance rows never pass `isEmergency`. The sheet's ring (`avatarRingColour`) is the contact's colour, but the red ink
+  for an emergency number (in the disc's colour it would cover the disc's red ring).
 - **The sheet at night** (`sheet_contact.xml`, `bg_kid_sheet.xml` 26 dp top radius): `kid_sheet` is `kid_ground_lift`
   (also the missed badge's ring, `bg_kid_badge_sheet`), the name `kid_core`, the hint and Close `kid_sheet_muted` =
   `kid_core_dim`, missed calls `kid_missed_text` `#FF8A8A` (7.5:1), the handle white 22 %, Message the tonal
-  `kid_sheet_button` (white 8 %) with `kid_core` text and a peach glyph; Call stays `kid_call_button`. `kid_sheet_ink`
-  is only Home's window banner now, `kid_message_button` only the time-rule screen's app buttons. `KidPaletteTest`
-  checks every sheet text on the sheet (alpha composited). Buttons, order, behaviour and `ContactSheet` unchanged.
+  `kid_sheet_button` (white 8 %) with `kid_core` text and a peach glyph; Call stays `kid_call_button` - the one call
+  green `#29833B` (white 4.77:1), also the answer button (`bg_call_green`) and Home's call card (`bg_home_call_card`).
+  `kid_sheet_ink` is only Home's window banner now, `kid_message_button` only the time-rule screen's app buttons.
+  `KidPaletteTest` parses `sheet_contact.xml` and checks every text colour and glyph tint against its composited
+  ground (`contrast` composites a translucent ink and refuses a translucent ground). Buttons, order, behaviour and
+  `ContactSheet` unchanged.
 
 ## VoIP calls over the PIN lock (design 17, `docs/design/17-voip-calls-over-lock.md`, at the monorepo root)
 

@@ -216,14 +216,19 @@ val AVATAR_PALETTE = listOf(
 
 /**
  * Emergency numbers, whatever their id: the tonal emergency red (design 34 P1/QA M3) - a dark red
- * disc with the number in `kid_emergency_text` #FF8A8A (6.6:1), like the lock's emergency pill.
- * The text identifies it; the disc is quiet.
+ * disc (`kid_emergency_tonal` #3A1E24) with the number in `kid_emergency_text` #FF8A8A (6.6:1),
+ * ringed in that red ink on every surface ([EMERGENCY_RING_DP], `KidAvatars.bindContact`): the
+ * disc alone is ~1.1-1.3:1 on the night. One pair with P7's emergency pill - `KidPaletteTest`
+ * keeps these equal to the two resources.
  */
 val EMERGENCY_AVATAR = AvatarColors(0xFF3A1E24, 0xFFFF8A8A)
 
+/** The red ring of the 112 avatar, in dp (qa-34-s3-code L2). */
+const val EMERGENCY_RING_DP = 3f
+
 /**
  * The contact sheet's ring around the avatar: the contact's colour, but the emergency red's ink
- * for an emergency number - its dark disc alone would vanish on the night sheet.
+ * for an emergency number - in the disc's colour it would cover the disc's own red ring.
  */
 fun avatarRingColour(colors: AvatarColors, isEmergency: Boolean): Long =
     if (isEmergency) colors.ink else colors.background

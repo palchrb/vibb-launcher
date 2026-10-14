@@ -29,7 +29,8 @@
     <color name="kid_sheet_handle">#38FFFFFF</color>
     <color name="kid_sheet_button">#14FFFFFF</color>
     <color name="kid_missed_text">#FF8A8A</color>
-    <color name="kid_call_button">#2B8A3E</color>
+    <!-- The call green: Ring, the answer button, Home's call card (white 4.77:1, design 34 QA L1). -->
+    <color name="kid_call_button">#29833B</color>
     <!-- The time-rule screen's app buttons (item_lock_app.xml); the sheet's Message no longer. -->
     <color name="kid_message_button">#1864AB</color>
     <color name="kid_emergency">#E03131</color>
@@ -46,4 +47,7 @@
     <color name="kid_music_control">#2A2A3A</color>
     <color name="kid_core_dim">#C7FBE4DC</color>
     <color name="kid_emergency_text">#FF8A8A</color>
+    <!-- The tonal emergency red's ground (design 34): the 112 avatar (EMERGENCY_AVATAR, which
+         KidPaletteTest keeps equal to this pair) and P7's emergency pill. -->
+    <color name="kid_emergency_tonal">#3A1E24</color>
 </resources>

@@ -45,6 +45,7 @@ object KidAvatars {
         val style = avatarStyle(contact, isEmergency)
         val bitmap = if (isEmergency) null else ContactPhotos.cached(context, contact.photo)
         if (bitmap != null) {
+            photo.setBackgroundResource(R.drawable.bg_kid_circle)
             photo.backgroundTintList = null
             photo.setImageDrawable(
                 RoundedBitmapDrawableFactory.create(context.resources, bitmap).apply { isCircular = true }
@@ -52,7 +53,20 @@ object KidAvatars {
             initial.visibility = View.GONE
         } else {
             photo.setImageDrawable(null)
-            photo.backgroundTintList = ColorStateList.valueOf(style.colors.background.toInt())
+            if (isEmergency) {
+                // The tonal red disc with a red ring, on every surface (qa-34-s3-code L2): the
+                // dark disc alone is ~1.1-1.3:1 on the night, so the ring gives it its edge.
+                photo.backgroundTintList = null
+                photo.background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(style.colors.background.toInt())
+                    setStroke(dp(context, EMERGENCY_RING_DP), style.colors.ink.toInt())
+                }
+            } else {
+                // A recycled view (the phone book's grid) may still hold the emergency disc.
+                photo.setBackgroundResource(R.drawable.bg_kid_circle)
+                photo.backgroundTintList = ColorStateList.valueOf(style.colors.background.toInt())
+            }
             initial.visibility = View.VISIBLE
             initial.text = style.text
             initial.setTextColor(style.colors.ink.toInt())

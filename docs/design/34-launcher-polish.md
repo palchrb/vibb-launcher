@@ -368,7 +368,7 @@ P3 built (launcher only, no server or contract change), on branch `design-34-s3`
   glance rows, the call screen and Home's call card.
 - **The 112 avatar** (QA M3): `EMERGENCY_AVATAR` is the tonal pair `#FF8A8A` on `#3A1E24` (6.65:1), built here
   because it is an avatar; step 1 needs only the Phone book and Settings tiles. Decision: the sheet's ring
-  (`avatarRingColour`) is the red ink for an emergency number - the dark disc alone is ~1.3:1 on the lift, so the ring
+  (`avatarRingColour`) is the red ink for an emergency number - the dark disc alone is 1.13:1 on the lift (1.29:1 on the ground), so the ring
   keeps 112 recognisable on the sheet; other contacts keep the ring in their colour.
 - **The sheet** (QA M4, the table in P3): `kid_sheet` = `@color/kid_ground_lift` (sheet and the missed badge's ring),
   the name `kid_core` (14:1), hint and Close `kid_sheet_muted` = `@color/kid_core_dim` (9.0:1 composited), missed calls
@@ -383,7 +383,19 @@ P3 built (launcher only, no server or contract change), on branch `design-34-s3`
   per contact id that name/number don't move, the 112 pair >= 6.6:1 for any id, the ring colour), `KidPaletteTest`
   (the sheet is the lift, the banner keeps its ink, every sheet text >= 4.5:1 with alpha composited, Message's text and
   glyph >= 4.5:1 on the tonal button).
-- **Noted, not changed**: white on `kid_call_button` `#2B8A3E` (Ring) is 4.37:1 - 17 sp extra-bold, close to but
-  under AA's large-text size; P3 keeps Ring call green. The unread badge's colour is step 2's.
+- **Noted** (changed in the fix round, L1): white on `kid_call_button` `#2B8A3E` (Ring) was 4.37:1 - 17 sp
+  extra-bold, close to but under AA's large-text size. The unread badge's colour is step 2's.
 - **Check on the emulator** (not done here - shared emulator, screenshots later): Home, the phone book (incl. the 112
   tile with no rules), the sheet with and without missed calls, with a photo, with Message, the call screens.
+
+### Step 3 code QA fix round (`qa-34-s3-code.md`, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| L1 Ring's white 4.37:1 | `kid_call_button` `#29833B` (white 4.77:1). `bg_call_green.xml` (answer) and `bg_home_call_card.xml` (Home's call card) use the resource instead of the `#2B8A3E` literal, so there is one green. The card hint's `alpha="0.9"` is gone (white 4.77:1). New `KidPaletteTest` `the call green carries white` |
+| L2 the 112 disc has no edge | Coordinator's decision: `KidAvatars.bindContact` draws an emergency number's disc as an oval `#3A1E24` with a 3 dp `#FF8A8A` ring (`EMERGENCY_RING_DP`) on every surface that shows it (Home's row, the phone book's grid and no-rules tile, the sheet). Every other branch restores `bg_kid_circle`, since the phone book recycles views. The sheet's `ring()` keeps `avatarRingColour`: it is not redundant, because a 4 dp ring in the disc's colour would cover the disc's red ring, so for 112 it draws the same red |
+| L3 the layout's colours are unpinned | `KidPaletteTest` parses `sheet_contact.xml` (plus `styles.xml` for `KidSheetButton`'s text, and the vectors for an untinted glyph's colour). Every text colour and glyph tint must reach 4.5:1 over its composited ground (`backgroundTint`, or the background's solid, over `kid_sheet`). That is 8 checks: name, missed, Call text and glyph, Message text and glyph, hint, Close. The badge pill is step 2's. Mutation 7 (`sheet_name` on `kid_sheet_ink`) now fails at 1.01:1 |
+| N1 "~1.3:1 on the lift" | Corrected to 1.13:1 on the lift, 1.29:1 on the ground |
+| N2 `contrast()` dropped alpha | `contrast(top, under)` composites `top` over `under` and asserts that `under` is opaque |
+| N3 two homes for the 112 colours | New `kid_emergency_tonal` `#3A1E24` next to `kid_emergency_text`. `KidPaletteTest` keeps `EMERGENCY_AVATAR` equal to that pair, so P7's pill can take the resources |
+| N4 where the 112 avatar shows | `launcher/CLAUDE.md` now says: only on Home's contacts row, in the phone book and on the sheet. The call screens show the silhouette for emergency calls, and the glance rows never pass `isEmergency` |
