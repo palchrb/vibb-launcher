@@ -65,8 +65,9 @@ class HomeGridAdapter(
         val label: TextView = view.findViewById(R.id.tile_label)
 
         init {
-            // Design 34 P2: depth on the icon, the press and an oval ripple (applyMetrics); the
-            // listener never consumes, so the click, long-press and Home's swipes are unchanged.
+            // Design 34 P2: depth on the icon, the press, an oval ripple and a focus ring
+            // (applyMetrics, built once per size); the listener never consumes, so the click,
+            // long-press and Home's swipes are unchanged.
             PressFeedback.depth(icon)
             PressFeedback.attach(view, icon, scrolling = true)
             view.setOnClickListener { v ->
@@ -103,7 +104,7 @@ class HomeGridAdapter(
                 height = iconPx
             }
             label.setTextSize(TypedValue.COMPLEX_UNIT_SP, m.labelSp)
-            PressFeedback.ovalRipple(itemView, iconPx, KidAvatars.dp(context, PressFeedback.TILE_ICON_TOP_DP))
+            PressFeedback.cellBackground(itemView, iconPx, KidAvatars.dp(context, PressFeedback.TILE_ICON_TOP_DP))
         }
     }
 
@@ -112,6 +113,11 @@ class HomeGridAdapter(
             .also { it.applyMetrics(metrics) }
 
     override fun getItemCount() = tiles.size
+
+    /** A recycled tile starts at rest, whatever its last gesture left (qa-34-s2-code L2). */
+    override fun onViewRecycled(holder: ViewHolder) {
+        PressFeedback.reset(holder.itemView)
+    }
 
     private fun glyphTile(holder: ViewHolder, color: Int, glyph: Int, label: Int) {
         val context = holder.itemView.context

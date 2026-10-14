@@ -74,6 +74,11 @@ class PhoneBookAdapter(
 
     override fun getItemCount() = tiles.size
 
+    /** A recycled contact starts at rest, whatever its last gesture left (qa-34-s2-code L2). */
+    override fun onViewRecycled(holder: ViewHolder) {
+        PressFeedback.reset(holder.itemView)
+    }
+
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val context = holder.itemView.context
         KidInk.label(holder.name, ink)
