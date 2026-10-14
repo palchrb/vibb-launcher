@@ -2167,6 +2167,35 @@ input.row-num { width: 6.5em; text-align: right; }
 .editor-bar { position: -webkit-sticky; position: sticky; top: 0; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 .editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
 
+/* ---- Design 31 step 10: the phone's summary ---- */
+
+/* The header (the DeviceSummary mockup): the large avatar with its dot, the name, the state line,
+   the lock badge and today's bar, centred. */
+.summary-head { display: flex; flex-direction: column; align-items: center; margin: 4px 0 20px; text-align: center; }
+.avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
+.avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
+.summary-name { margin: 10px 0 0; font-size: 1.75rem; font-weight: 700; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
+.summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
+.summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
+.summary-lock { margin-top: 10px; }
+.summary-meter { width: 220px; max-width: 100%; height: 6px; margin-top: 14px; border-radius: 3px; }
+.summary-meter > i { border-radius: 3px; }
+.summary-screen { margin-top: 6px; color: var(--label-2); font-size: 0.8125rem; }
+/* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
+a.act, a.act:hover { text-decoration: none; }
+.act-strong, .act-strong:hover { background: var(--strong); color: #FFFFFF; }
+/* Pause a rule… and Unlock for 2 h…: a tile that opens its sheet under it, across the grid. */
+.act-sheet { margin: 0; }
+.act-sheet[open] { grid-column: 1 / -1; }
+.act-sheet > summary.act { list-style: none; }
+.act-sheet > summary.act::-webkit-details-marker { display: none; }
+.act-sheet-body { margin: 8px 0 0; border-radius: 12px; background: var(--surface); }
+.act-sheet > .confirm-body { padding-top: 16px; }
+/* The foreign-app warning's steps, inside its Attention block. */
+.attention-steps { margin: 8px 0 0; padding-left: 20px; font-size: 0.875rem; font-weight: 400; }
+.attention-steps li + li { margin-top: 4px; }
+.attention-steps a { color: inherit; text-decoration: underline; }
+
 /* ---- Design 31 step 15: Add Phone, sign-in, the tab pages without the brand bar ---- */
 
 /* A tab's landing page opens on its large title under a 44px bar (the mockups): Devices, Apps and

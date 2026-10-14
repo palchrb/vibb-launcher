@@ -203,7 +203,7 @@ async fn twenty_typed_failures_pause_typed_codes_but_never_qr_codes() {
         .get_page(&format!("/devices/{typed_device}"), &cookie)
         .await
         .text();
-    assert!(page.contains("Typed codes are paused until"), "{page}");
+    assert!(page.contains("Typed codes paused until"), "{page}");
     assert!(page.contains("/provision"));
 
     // A flood of QR-shaped junk first, then a real QR code still enrolls.
@@ -287,7 +287,11 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
     assert_eq!(kind, None, "no code until one is asked for");
     let page = app.get_page(&connect, &cookie).await.text();
     assert!(page.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
+    // The phone's summary offers both too, in its Connect This Phone group (step 10).
     let location = format!("/devices/{id}");
+    let page = app.get_page(&location, &cookie).await.text();
+    assert!(page.contains("Connect This Phone"));
+    assert!(page.contains("regenerate-code"));
 
     let first = app
         .request_form(
@@ -310,15 +314,25 @@ async fn new_code_is_shown_once_and_replaces_the_last() {
     assert_eq!(first_code.len(), 9, "ABCD-EFGH");
     // The device page says a code is live (in local time, never UTC), but never shows it.
     let page = app.get_page(&location, &cookie).await.text();
-    assert!(page.contains("Setup code works until"), "{page}");
+    assert!(
+        page.contains("<span class=\"row-label\">Setup code</span>"),
+        "{page}"
+    );
+    assert!(page.contains("Works until "), "{page}");
+    assert!(!page.contains("UTC"), "{page}");
     assert!(!page.contains(&first_code));
-    // Back (and Done) from the code page return to the phone's page, where it waits to connect.
+    // Back from the code page returns to the summary's Connect This Phone group (`#access`, step
+    // 10); Done to the summary's top, where it waits to connect.
     assert!(
         first
             .text()
-            .contains(&format!("class=\"nav-back\" href=\"/devices/{id}\""))
+            .contains(&format!("class=\"nav-back\" href=\"/devices/{id}#access\""))
     );
-    assert!(!first.text().contains("#access"));
+    assert!(
+        first
+            .text()
+            .contains(&format!("href=\"/devices/{id}\" data-row=\"done\""))
+    );
 
     let second = app
         .request_form(
@@ -419,7 +433,17 @@ async fn revoking_access_retires_the_token_and_closes_the_stream() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(summary.contains(&format!("href=\"/devices/{id}/advanced#connection\"")));
+    assert!(summary.contains(&format!(
+        "href=\"/devices/{id}/advanced#connection\" data-attention"
+    )));
+    // And the header says so, with "Connect again" there (L2).
+    assert!(
+        summary.contains("Disconnected</span> · access removed"),
+        "{summary}"
+    );
+    assert!(summary.contains(&format!(
+        "href=\"/devices/{id}/advanced#connection\" data-connect-again"
+    )));
     let events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'access_revoked'",
     )

@@ -1282,7 +1282,6 @@ async fn render_device_time(
     query: &HashMap<String, String>,
     entered: Option<RefusedBudget<'_>>,
 ) -> Response {
-    use crate::time_state::{BadgeContext, TimeReport, lock_badge, screen_time};
     let device = match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
@@ -1347,38 +1346,35 @@ async fn render_device_time(
         };
 
     // What the phone last said (design 31 §3.10's badge; the end only when provably right).
-    let report = latest.as_ref().map(|s| {
-        s.time_state_json
-            .as_deref()
-            .and_then(TimeReport::parse)
-            .unwrap_or_else(|| TimeReport::from_lock_reason(&s.lock_reason))
+    let report = latest.as_ref().and_then(|s| {
+        crate::handlers::devices::time_report(
+            &s.reported_at,
+            &s.lock_reason,
+            s.time_state_json.as_deref(),
+        )
     });
-    let reported_at = latest
+    let reported = report
         .as_ref()
-        .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at));
-    let reported = reported_at.map(|t| (zone.relative(t, now), zone.exact(t)));
+        .map(|(t, _)| (zone.relative(*t, now), zone.exact(*t)));
     let connection = crate::handlers::devices::connection_of(state, &device, now);
     let calls_enforced = crate::attention::calls_enforced(&policy, &call_problems);
-    let rule_days = crate::time_state::rule_days(&effective);
-    let (lock, locking, screen) = match (&report, reported_at) {
-        (Some(report), Some(reported_at)) => {
-            let badge = lock_badge(
+    let (lock, locking, screen) = match &report {
+        Some((reported_at, report)) => {
+            let (badge, screen) = crate::handlers::devices::badge_and_screen(
                 report,
-                &BadgeContext {
-                    rules: &rule_days,
-                    reported_at,
-                    connection: &connection,
-                    calls_enforced,
-                },
+                *reported_at,
+                &effective,
+                &connection,
+                calls_enforced,
                 &zone,
                 now,
             );
             let lock = match &badge {
                 // The footer says when the report came, so the badge needn't repeat it.
-                Some(badge) => badge.text_beside(&zone.relative(reported_at, now)),
+                Some(badge) => badge.text_beside(&zone.relative(*reported_at, now)),
                 None => "None".to_string(),
             };
-            let screen = screen_time(report, &zone, now).map(|st| {
+            let screen = screen.map(|st| {
                 (
                     st.text(),
                     report.extra_minutes.map(|m| {
@@ -1405,7 +1401,7 @@ async fn render_device_time(
             fix: None,
         });
     }
-    if report.as_ref().is_some_and(|r| r.ledger_unreadable) {
+    if report.as_ref().is_some_and(|(_, r)| r.ledger_unreadable) {
         warnings.push(Note {
             warning: true,
             title: "Screen-time record unreadable".to_string(),

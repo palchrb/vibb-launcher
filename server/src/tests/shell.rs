@@ -82,39 +82,25 @@ const LANDING_PAGES: [&str; 5] = [
 ];
 
 /// Every template with the tab bar sets its tab right before including it, to one of the five
-/// (the template decides, not the path - §3.1). Every page includes the bar alone, without the
-/// brand bar (§3.0, step 15): a landing page opens on its large title, an inner page on its back
-/// link and large title. Only the device page keeps the brand bar until step 10 rebuilds it.
+/// (the template decides, not the path - §3.1). There is no brand bar any more (§3.0, steps 10 and
+/// 15): a landing page opens on its large title, every other page on its back link and large title.
 #[test]
 fn every_template_with_the_bar_sets_its_tab() {
     let mut with_bar = 0;
-    let mut bar_alone = 0;
+    assert!(!std::path::Path::new("templates/partials/app_header.html").exists());
     for path in super::device_api::template_files() {
         let text = std::fs::read_to_string(&path).unwrap();
-        let header = text.find("{% include \"partials/app_header.html\" %}");
-        let alone = text.find("{% include \"partials/tab_bar.html\" %}");
-        assert!(
-            header.is_none() || alone.is_none(),
-            "{}: the bar twice",
-            path.display()
-        );
-        let Some(at) = header.or(alone) else {
+        let file = path.file_name().unwrap().to_str().unwrap();
+        assert!(!text.contains("app_header"), "{file}: the brand bar");
+        let Some(at) = text.find("{% include \"partials/tab_bar.html\" %}") else {
             continue;
         };
-        let file = path.file_name().unwrap().to_str().unwrap();
-        assert!(
-            header.is_none() || file == "device_detail.html",
-            "{file}: the brand bar"
+        let landing = LANDING_PAGES.contains(&file);
+        assert_eq!(
+            text.contains("class=\"nav-back\""),
+            !landing,
+            "{file}: a sub-page has its back link, a landing page none"
         );
-        if alone.is_some() {
-            bar_alone += 1;
-            let landing = LANDING_PAGES.contains(&file);
-            assert_eq!(
-                text.contains("class=\"nav-back\""),
-                !landing,
-                "{file}: a sub-page has its back link, a landing page none"
-            );
-        }
         with_bar += 1;
         let before = text[..at].trim_end();
         let line = before.lines().last().unwrap_or("").trim();
@@ -129,10 +115,6 @@ fn every_template_with_the_bar_sets_its_tab() {
         );
     }
     assert!(with_bar >= 36, "{with_bar} templates with the bar");
-    assert!(
-        bar_alone >= 35,
-        "{bar_alone}: every page but the device page"
-    );
     let updates = std::fs::read_to_string("templates/updates.html").unwrap();
     assert!(updates.contains("{% let tab = \"settings\" %}"));
 }

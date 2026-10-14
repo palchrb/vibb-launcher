@@ -1,6 +1,6 @@
 //! The Attention list (design 31 §3.2 item 2, §3.8): what about a phone needs the parent, as one
-//! line each with a link to the fix. The device page shows the rows, the Devices list their count
-//! as the red badge - both from [items] over the same [Facts], so the two always agree.
+//! line each with a link to the fix. The phone's summary shows the rows, the Devices list their
+//! count as the red badge - both from [items] over the same [Facts], so the two always agree.
 //!
 //! Every title comes from a typed value, never from the first sentence of a card's text (M5):
 //! those run past 8 words and carry package names. Alarms (red) come first, then what needs
@@ -13,8 +13,8 @@
 //!   are current and unmarked. Both kinds count, on the list and on the page alike.
 //!
 //! [facts] reads about 10 small things per phone (the policy, the last report, the relock card,
-//! the call report, the rules); fine at 1-5 phones - don't make it one query. The device page,
-//! which builds those cards anyway, passes them to [facts_of] instead of reading them twice.
+//! the call report, the rules); fine at 1-5 phones - don't make it one query. The summary, which
+//! builds those parts anyway, passes them to [facts_of] instead of reading them twice.
 
 use crate::AppState;
 use crate::handlers::calls::CallProblem;
@@ -312,15 +312,14 @@ fn title(kind: Kind) -> String {
     .to_string()
 }
 
-/// The page that fixes it. Until each card has its sub-page (design 31 §8 steps 4-10) some are
-/// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
-/// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
-/// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs; step 5
-/// notification access to Home Screen; step 9 the screen-time record and Vibb too old for time
-/// rules to Device › Time.
+/// The page that fixes it: a sub-page's group, or (design 31 step 10) a group of the summary
+/// itself - the quick actions with Lock again, the foreign-app warning with its steps, the blocked
+/// apps with "Allow these apps…".
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
-        Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
+        Kind::RestrictionsPaused => ("", "quick"),
+        Kind::ForeignAccess => ("", "foreign-access"),
+        Kind::BlockedApps(_) => ("", "blocked-apps"),
         Kind::DoNotDisturb => ("/about", "sound"),
         Kind::PolicyProblem => ("/about", "software"),
         Kind::UnseenRestarts => ("/about", "diagnostics"),
@@ -362,7 +361,7 @@ pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
             .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
 }
 
-/// What [facts_of] reads; the device page passes the cards it has built.
+/// What [facts_of] reads; the summary passes the parts it has built.
 pub struct Sources<'a> {
     pub device: &'a Device,
     pub policy: &'a DevicePolicy,
@@ -370,7 +369,7 @@ pub struct Sources<'a> {
     pub relock: &'a RelockCard,
     /// The call report's problems.
     pub call_problems: &'a [CallProblem],
-    /// Calls aren't managed while a no-calls rule is in force (the Time rules card's warning).
+    /// Calls aren't managed while a no-calls rule is in force (Device › Time's warning).
     pub incoming_calls_not_blocked: bool,
     pub connection: ConnectionState,
     /// The music entries switched on for the phone (`music::ticked_entries`).
@@ -416,9 +415,22 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
         .as_deref()
         .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
         .map(|list| list.into_iter().collect());
-    let relock =
-        crate::handlers::window_relock::card(&state.db, id, latest, None, now_ms, allowed.as_ref())
-            .await;
+    // Only the counts are read here, so the zone doesn't matter.
+    let relock = crate::handlers::window_relock::card(
+        &state.db,
+        id,
+        latest,
+        None,
+        &crate::display_time::Zone::utc_fallback(),
+        chrono::Utc::now(),
+        allowed.as_ref(),
+    )
+    .await
+    // The badge only counts; the summary itself fails on this (qa-31-s10-code L4).
+    .unwrap_or_else(|err| {
+        tracing::error!(device_id = id, %err, "attention: can't read the relock parts");
+        crate::handlers::window_relock::RelockCard::default()
+    });
     let call_problems = match crate::handlers::calls::call_report(state, &policy).await {
         Ok(report) => report.problems(),
         Err(err) => {
@@ -467,12 +479,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .and_then(|st| st.capabilities_json.as_deref())
             .is_some_and(|caps| caps.contains(&format!("\"{name}\"")))
     };
-    let blocked_apps = if s.relock.blocks.items.is_empty() && s.relock.notes.allow_button {
-        // An older launcher: its last relock's "Blocked:" apps that "Allow these apps" lets out.
-        s.relock.notes.allow.len().max(1)
-    } else {
-        s.relock.blocks.items.len()
-    };
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let play =
@@ -517,7 +523,7 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
             latest.is_some(),
         ),
-        blocked_apps,
+        blocked_apps: s.relock.blocks.waiting,
         restart_once: !crate::models::admin_policy_effects(
             latest.and_then(|st| st.admin_policies_pending_json.as_deref()),
         )
@@ -727,7 +733,10 @@ mod tests {
                 .map(|r| r.target.as_str())
                 .unwrap()
         };
-        assert_eq!(target("restrictions-paused"), "/devices/7#status");
+        // Step 10: the summary's own groups.
+        assert_eq!(target("restrictions-paused"), "/devices/7#quick");
+        assert_eq!(target("foreign-access"), "/devices/7#foreign-access");
+        assert_eq!(target("blocked-apps"), "/devices/7#blocked-apps");
         // Step 4: Lock Screen & PINs.
         assert_eq!(target("easy-parent-pin"), "/devices/7/lock#parent-pin");
         assert_eq!(target("no-parent-pin"), "/devices/7/lock#parent-pin");

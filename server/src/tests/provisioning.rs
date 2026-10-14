@@ -319,8 +319,8 @@ async fn every_form_in_the_add_flow_lands_where_it_should() {
         html.contains("<h1 class=\"page-title\">Connect Anna</h1>"),
         "{html}"
     );
-    // Not set up yet: back to the phone's page, no "connected now" warning.
-    assert!(html.contains(&format!("class=\"nav-back\" href=\"/devices/{id}\"")));
+    // Not set up yet: back to the summary's Connect This Phone group, no "connected now" warning.
+    assert!(html.contains(&format!("class=\"nav-back\" href=\"/devices/{id}#access\"")));
     assert!(!html.contains("data-warning=\"replaces\""));
     let qr_action = format!("/devices/{id}/provision#qr");
     let code_action = format!("/devices/{id}/regenerate-code");

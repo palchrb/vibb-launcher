@@ -349,9 +349,10 @@ async fn lifts_are_recorded_delivered_and_end() {
             &[("target", "rule"), ("rule", &rule), ("minutes", "30")],
         )
         .await;
+    // Without a `back`: the summary's quick actions, with the flash (design 31 step 10).
     assert_eq!(
         res.location(),
-        Some(format!("/devices/{id}").as_str()),
+        Some(format!("/devices/{id}?done=pause#quick").as_str()),
         "{}",
         res.text()
     );
@@ -412,7 +413,7 @@ async fn lifts_are_recorded_delivered_and_end() {
             &[],
         )
         .await;
-    assert_redirect(&res, &format!("/devices/{id}"), None);
+    assert_redirect(&res, &format!("/devices/{id}?done=over"), Some("today"));
     let ended: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'time_lift_ended'",
     )
@@ -533,20 +534,37 @@ async fn invalid_lifts_are_rejected() {
     assert!(pause.contains("data-flash=\"pause\""), "{pause}");
     assert!(pause.contains("No rules apply to this phone right now."));
     assert!(pause.contains("flash-error"));
-    // An older tab (no `back`) gets the reason too, on Device › Time (qa-31-s9-code N4).
-    let res = app
-        .request_form(
-            Method::POST,
-            &format!("/devices/{id}/lifts"),
-            Some(&cookie),
-            &[("target", "rule"), ("rule", &foreign), ("minutes", "30")],
-        )
-        .await;
-    assert_redirect(
-        &res,
-        &format!("/devices/{id}/time?done=gone"),
-        Some("pause"),
+    // From the summary (or an older tab without `back`) the reason lands in its quick actions
+    // (design 31 step 10; qa-31-s9-code N4 sent it to Device › Time while the summary had no word
+    // for it).
+    for back in [&[("back", "summary")][..], &[][..]] {
+        let fields: Vec<(&str, &str)> = [("target", "rule"), ("rule", &foreign), ("minutes", "30")]
+            .into_iter()
+            .chain(back.iter().copied())
+            .collect();
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lifts"),
+                Some(&cookie),
+                &fields,
+            )
+            .await;
+        assert_redirect(&res, &format!("/devices/{id}?done=gone"), Some("quick"));
+    }
+    let html = app
+        .get_page(&format!("/devices/{id}?done=gone"), &cookie)
+        .await
+        .text();
+    let quick = &html[html
+        .find("<section id=\"quick\"")
+        .expect("the quick actions")..];
+    let quick = &quick[..quick.find("</section>").unwrap()];
+    assert!(
+        quick.contains("That rule no longer applies to this phone. Nothing was paused."),
+        "{quick}"
     );
+    assert!(quick.contains("flash-error"), "{quick}");
     // Without a refusal and without rules, there is no Pause group.
     let html = app
         .get_page(&device_page(id, Section::Time), &cookie)

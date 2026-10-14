@@ -312,7 +312,7 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
     );
 }
 
-/// The device page's design 24b answers: a pause never fetched within the hour expired, a
+/// The summary's design 24b answers (Today): a pause never fetched within the hour expired, a
 /// cancelled one says so.
 #[tokio::test]
 async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
@@ -329,13 +329,33 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
+    // Today shows today's answers only (qa-31-s10-code N2): a Phone Setup zone where two hours
+    // ago is still today, whenever the test runs.
+    let now = chrono::Utc::now();
+    let zone = ["Europe/Oslo", "Asia/Tokyo", "America/New_York"]
+        .into_iter()
+        .find(|zone| {
+            crate::display_time::Zone::from_setting(zone)
+                .is_today(now - chrono::Duration::hours(2), now)
+        })
+        .unwrap();
+    sqlx::query("UPDATE provisioning_settings SET time_zone = ?")
+        .bind(zone)
+        .execute(&app.db)
+        .await
+        .unwrap();
     insert(&app, device, "start_pause", "datetime('now', '-2 hours')").await;
     let page = app
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
+    // Today's row: "Unlock for 2 h · Expired", why behind its ⓘ.
     assert!(
-        page.contains("expired - the phone didn&#39;t check in within an hour"),
+        page.contains("<span class=\"row-value\">Expired</span>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("The phone didn&#39;t check in within an hour, so it was never sent."),
         "{page}"
     );
     let pause = insert(&app, device, "start_pause", "datetime('now')").await;
@@ -344,7 +364,10 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
-    assert!(page.contains("cancelled before it reached the phone"));
+    assert!(
+        page.contains("<span class=\"row-value\">Cancelled</span>"),
+        "{page}"
+    );
 }
 
 async fn press(app: &TestApp, cookie: &str, device: i64, path: &str) {

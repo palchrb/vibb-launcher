@@ -8,8 +8,8 @@
 {% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
     {#- Back where New Setup Code was: Advanced › Connection for a connected phone (step 3), the
-        phone's page (its "Connect this phone" group) for one not set up yet. -#}
-    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}Advanced{% else %}{{ device.name }}{% endif %}</a>
+        summary's Connect This Phone group (#access, step 10) for one not set up yet. -#}
+    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}Advanced{% else %}{{ device.name }}{% endif %}</a>
     <h1 class="page-title">Setup Code</h1>
 
     {% if let Some(until) = paused_until %}

@@ -9,7 +9,7 @@
 <main class="container container-narrow">
     {#- Step 2 and 3 of Add Phone (design 31 §3.7): the two ways to connect, then the QR code here
         or the code on its own page. Also "Set Up with QR Code" on Advanced › Connection. -#}
-    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}Advanced{% else %}{{ device.name }}{% endif %}</a>
+    <a class="nav-back" href="/devices/{{ device.id }}{% if enrolled %}/advanced#connection{% else %}#access{% endif %}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{% if enrolled %}Advanced{% else %}{{ device.name }}{% endif %}</a>
     <h1 class="page-title">Connect {{ device.name }}</h1>
 
     {% if enrolled %}
