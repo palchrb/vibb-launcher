@@ -79,21 +79,7 @@
     <script src="/static/app-display.js?v=2" defer></script>
 
     {% if installing %}
-    <script>
-        // No push reaches this page: while an app installs, it reloads every 3 s for the
-        // percentage - not while a Name and icon form is open, which would lose what was typed.
-        // Once nothing installs this block isn't rendered, so the reloading stops by itself.
-        (function () {
-            function tick() {
-                if (document.querySelector("details.app-display[open]")) {
-                    setTimeout(tick, 3000);
-                } else {
-                    location.reload();
-                }
-            }
-            setTimeout(tick, 3000);
-        })();
-    </script>
+    <script src="/static/installing-reload.js?v=1" defer></script>
     {% endif %}
 </main>
 </body>

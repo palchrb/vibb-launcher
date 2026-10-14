@@ -1154,7 +1154,8 @@ pub struct AppView {
     pub letter: String,
     /// Name and icon: every allowed app with a package name but Vibb (design 14).
     pub display: Option<crate::app_display::AppDisplayForm>,
-    /// A refused switch, under the row (`toggle_app`'s `?notice=from_play&app=<row>`).
+    /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
+    /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
 }
 
@@ -1170,7 +1171,8 @@ struct AppsTemplate {
     not_allowed: Vec<AppView>,
     /// The phone has reported its apps at least once.
     reported: bool,
-    /// Something installs now: the page reloads every 3 s for the percentage.
+    /// Something installs now: the page reloads every 3 s for the percentage
+    /// (`static/installing-reload.js`) - never on a refused save's page, the answer to a POST.
     installing: bool,
     wifi_only: bool,
     /// The phone's network at its last report, with its time (`app_downloads::network`).
@@ -1189,18 +1191,21 @@ pub async fn view_apps(
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let from_play = query
-        .get("app")
-        .filter(|_| query.get("notice").map(String::as_str) == Some("from_play"));
-    render_apps(&state, id, from_play.map(String::as_str), None).await
+    let refused = query.get("app").and_then(|row| {
+        query
+            .get("notice")
+            .and_then(|code| crate::handlers::devices::toggle_refusal(code))
+            .map(|text| (row.as_str(), text))
+    });
+    render_apps(&state, id, refused, None).await
 }
 
-/// Device › Apps; `from_play` = the row whose switch was refused (a Play copy), `entered` = a
-/// refused Name and icon save (that app's form open with the entered values and the error).
+/// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
+/// and icon save (that app's form open with the entered values and the error).
 pub(crate) async fn render_apps(
     state: &AppState,
     id: i64,
-    from_play: Option<&str>,
+    refused: Option<(&str, &'static str)>,
     entered: Option<(String, crate::app_display::Entered)>,
 ) -> Response {
     use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
@@ -1251,7 +1256,8 @@ pub(crate) async fn render_apps(
             .title(at.map(|t| zone.exact(t)))
             .detail(Some("At the phone's last report."))
         });
-    let installing = rows.apps.iter().any(|a| a.is_installing);
+    // A refused save is the answer to a POST: a reload would ask to send it again (L1).
+    let installing = entered.is_none() && rows.apps.iter().any(|a| a.is_installing);
     let (mut allowed, mut not_allowed) = (Vec::new(), Vec::new());
     for row in rows.apps {
         let package = row.package_name.clone();
@@ -1288,10 +1294,9 @@ pub(crate) async fn render_apps(
             });
         let view = AppView {
             letter: crate::handlers::devices::initial(&row.label),
-            refused: (from_play == Some(anchor.as_str())).then_some(
-                "Installed from the Play Store, so it can't also come from the catalog. \
-                 Uninstall that copy first.",
-            ),
+            refused: refused
+                .filter(|(row, _)| *row == anchor)
+                .map(|(_, text)| text),
             icon,
             display,
             anchor,

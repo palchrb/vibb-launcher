@@ -1731,7 +1731,7 @@ async fn apps_holds_the_moved_forms() {
         "/apps/toggle",
         "/app-updates",
         "/apps/display",
-        "location.reload",
+        "installing-reload.js",
     ] {
         assert!(!summary.contains(gone), "{gone}");
     }
@@ -1811,7 +1811,7 @@ async fn apps_holds_the_moved_forms() {
         input_checked(&html, "app_updates_wifi_only", "on"),
         Some(true)
     );
-    assert!(!html.contains("location.reload"));
+    assert!(!html.contains("installing-reload.js"));
     every_auto_save_has_a_save_without_js(&html);
     for name in ["selected", "app_updates_wifi_only"] {
         assert!(autosaves(&html, name), "{name}");
@@ -2005,6 +2005,11 @@ async fn the_apps_switch_refuses_bad_input_and_the_page_fails_loudly() {
             vec![("package_name", "com.android.vending".to_string())],
             StatusCode::BAD_REQUEST,
         ),
+        // Vibb by its package alone (qa-31-s6-code L3).
+        (
+            vec![("package_name", "me.vibb.launcher".to_string())],
+            StatusCode::BAD_REQUEST,
+        ),
         (
             vec![
                 ("package_name", "me.vibb.launcher".to_string()),
@@ -2030,7 +2035,8 @@ async fn the_apps_switch_refuses_bad_input_and_the_page_fails_loudly() {
         ],
     )
     .await;
-    assert_redirect(&res, &device_page(id, Section::Apps), None);
+    // ... to the group the tap came from (it was a turn-on: Not allowed), never the top (N1).
+    assert_redirect(&res, &device_page(id, Section::Apps), Some("not-allowed"));
     assert_eq!(before().await, start);
 
     // A failed write is a 500, and nothing else is written.
@@ -2097,4 +2103,146 @@ async fn a_phone_not_set_up_has_its_apps_page() {
     assert!(html.contains("data-row=\"not-reported\""));
     assert!(!html.contains("Nothing else on this phone."));
     assert!(html.contains(&format!("action=\"/devices/{id}/app-updates\"")));
+}
+
+/// A refused Name and icon save is the answer to a POST: it never carries the installing reload,
+/// which would ask to send the form again once it is closed; the page itself does while something
+/// installs (qa-31-s6-code L1; the pause and the stop on a save are `jstest/installing-reload`).
+#[tokio::test]
+async fn a_refused_name_save_never_reloads() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, element, _) = apps_phone(&app).await;
+    sqlx::query(
+        "INSERT INTO device_install_progress (device_id, tracked_app_id, percent) VALUES (?, ?, 40)",
+    )
+    .bind(id)
+    .bind(element)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(page.contains("Installing 40%"));
+    assert!(page.contains("<script src=\"/static/installing-reload.js?v=1\" defer></script>"));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/display"),
+            Some(&cookie),
+            &[
+                ("package_name", "com.android.deskclock"),
+                ("label", "Twenty-one characters"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    assert!(html.contains("id=\"display-com.android.deskclock\" open"));
+    assert!(!html.contains("installing-reload.js"), "{html}");
+}
+
+/// A catalog app whose package is an older catalog's free text stays switchable, on and off, at
+/// its row; a free-text package that isn't the catalog row's lands on the row with a short reason,
+/// and one with no catalog row is a 400 (qa-31-s6-code L4).
+#[tokio::test]
+async fn a_legacy_catalog_package_stays_switchable() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, _, _) = apps_phone(&app).await;
+    let legacy: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) \
+         VALUES ('Chat', 'Element X', 'owner/repo') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let page = device_page(id, Section::Apps);
+    let html = app.get_page(&page, &cookie).await.text();
+    let row = format!("catalog-{legacy}");
+    assert!(html.contains(&format!("id=\"{row}\"")));
+    let chosen = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM device_tracked_apps WHERE device_id = ? AND tracked_app_id = ?",
+        )
+        .bind(id)
+        .bind(legacy)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let toggle = |package: &'static str, on: bool| {
+        let (app, cookie) = (&app, &cookie);
+        async move {
+            let tid = legacy.to_string();
+            let mut fields = vec![
+                ("package_name", package),
+                ("tracked_app_id", tid.as_str()),
+                ("back", "apps"),
+            ];
+            if on {
+                fields.push(("selected", "on"));
+            }
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{id}/apps/toggle"),
+                Some(cookie),
+                &fields,
+            )
+            .await
+        }
+    };
+    assert_redirect(&toggle("Element X", true).await, &page, Some(&row));
+    assert_eq!(chosen().await, 1);
+    assert_redirect(&toggle("Element X", false).await, &page, Some(&row));
+    assert_eq!(chosen().await, 0);
+    // Another free text with that row: back to the row, the reason under it, nothing written.
+    let res = toggle("Other X", true).await;
+    assert_redirect(
+        &res,
+        &format!("{page}?notice=not_an_app&app={row}"),
+        Some(&row),
+    );
+    assert_eq!(chosen().await, 0);
+    let html = app
+        .get_page(&format!("{page}?notice=not_an_app&app={row}"), &cookie)
+        .await
+        .text();
+    let at = &html[html.find(&format!("id=\"{row}\"")).unwrap()..];
+    assert!(
+        at[..at.find("</div>\n").unwrap()].contains("This app changed in the catalog"),
+        "{at}"
+    );
+    // Without a catalog row the free text is no app at all.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[("package_name", "Element X"), ("selected", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+}
+
+/// The device page's Apps row tells a corrupt list from a failed read (qa-31-s6-code N2).
+#[tokio::test]
+async fn the_apps_row_says_when_the_list_couldnt_be_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, _, _) = apps_phone(&app).await;
+    sqlx::query("ALTER TABLE device_tracked_apps RENAME TO device_tracked_apps_gone")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let summary = app
+        .get_page(&device_page(id, Section::Summary), &cookie)
+        .await
+        .text();
+    let row = &summary[summary.find("data-row=\"apps\"").unwrap()..];
+    let row = &row[..row.find("</a>").unwrap()];
+    assert!(row.contains("Couldn"), "{row}");
+    assert!(!row.contains("List unreadable"), "{row}");
 }

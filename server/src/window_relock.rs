@@ -211,7 +211,7 @@ pub fn parse_foreign_access(json: Option<&str>) -> Option<ForeignAccess> {
 }
 
 /// One entry of `StatusReportRequest.relock_blocks` (fix of 2026-10-12), as stored
-/// (`device_status.relock_blocks_json`): an app the phone keeps hidden whatever its tick under Apps
+/// (`device_status.relock_blocks_json`): an app the phone keeps hidden even when allowed under Apps
 /// until "Allow these apps" - set by a relock, or by the install check outside windows.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RelockBlock {
@@ -426,11 +426,12 @@ pub fn blocks_note(
         })
         .collect();
     let allow_button = !allow.is_empty();
-    let mut text = "Blocked on the phone - hidden whatever its tick under Apps:".to_string();
+    let mut text = "Blocked on the phone - hidden even when allowed under Apps:".to_string();
     if allow_button {
         text =
-            "Blocked on the phone - hidden whatever its tick under Apps. If one is yours and its \
-                key is the one you expect, press \"Allow these apps\" (a ticked app shows again):"
+            "Blocked on the phone - hidden even when allowed under Apps. If one is yours and its \
+                key is the one you expect, press \"Allow these apps\" (an app allowed under Apps \
+                shows again):"
                 .to_string();
     }
     BlocksNote {
@@ -680,7 +681,7 @@ pub fn relock_notes(
             .collect();
         let mut line = format!(
             "Blocked: {} - installed or replaced from outside Play while it was open, or signed \
-             with another key, so ticking it under Apps doesn't show it.",
+             with another key, so allowing it under Apps doesn't show it.",
             apps.join(", ")
         );
         for p in r.blocked.iter().filter(|p| not_catalogs(p)) {
@@ -692,7 +693,7 @@ pub fn relock_notes(
         }
         if allow_button {
             line.push_str(
-                " If one is yours and its key is the one you expect, tick it under Apps and press \
+                " If one is yours and its key is the one you expect, turn it on under Apps and press \
                  \"Allow these apps\".",
             );
         }
@@ -860,7 +861,7 @@ pub fn flash_text(code: &str) -> Option<&'static str> {
         }
         "allow_blocked_sent" => Some(
             "Sent: the phone shows the blocked apps again as soon as it gets this - the ones \
-             ticked under Apps.",
+             allowed under Apps.",
         ),
         "start_pause_sent" => Some(
             "Sent: the phone pauses its restrictions for 2 hours as soon as it gets this (usually \
@@ -948,7 +949,7 @@ mod tests {
             notes.lines,
             vec![
                 "When the phone locked again at 2025-10-10 12:40 UTC (3 h ago), because its time was up, it removed 2 Wi-Fi proxies, 1 certificate and an Android screen lock the child had set.",
-                "Blocked: com.example.app (signing key 3f2a0000…0000c0de), com.example.game - installed or replaced from outside Play while it was open, or signed with another key, so ticking it under Apps doesn't show it. If one is yours and its key is the one you expect, tick it under Apps and press \"Allow these apps\".",
+                "Blocked: com.example.app (signing key 3f2a0000…0000c0de), com.example.game - installed or replaced from outside Play while it was open, or signed with another key, so allowing it under Apps doesn't show it. If one is yours and its key is the one you expect, turn it on under Apps and press \"Allow these apps\".",
                 "Still on: accessibility service com.evil.ally; notification access com.evil.reader; device admin com.evil.admin; a proxy on a network (mobile data or Wi-Fi).",
                 "Turned off and can't be turned back on remotely: com.android.inputmethod.latin - turn them on in the phone's Settings during a pause.",
                 "The launcher's notifications are off.",

@@ -433,12 +433,12 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     for (allowlist, says) in [
         (
             "[]",
-            "Not ticked under Apps: after \"Allow these apps\" it stays hidden until \
-             you <a href=\"/devices/{id}/apps#app-me.vibb.music.debug\">tick it</a> too.",
+            "Not allowed under Apps: after \"Allow these apps\" it stays hidden until \
+             you <a href=\"/devices/{id}/apps#app-me.vibb.music.debug\">turn it on</a> there too.",
         ),
         (
             "[\"me.vibb.music.debug\"]",
-            "Ticked under Apps: it shows again after \"Allow these apps\".",
+            "Allowed under Apps: it shows again after \"Allow these apps\".",
         ),
     ] {
         sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")

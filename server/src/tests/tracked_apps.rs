@@ -951,6 +951,24 @@ async fn app_downloads_are_stored_and_shown() {
         Some(progress),
     )
     .await;
+    // The report is from yesterday 10:00 UTC, read in Phone Setup's zone (qa-31-s6-code L2).
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '-1 day', 'start of day', \
+         '+10 hours') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let reported_at = (chrono::Utc::now() - chrono::Duration::days(1))
+        .date_naive()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+        .and_utc();
     let page = app
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
@@ -966,15 +984,27 @@ async fn app_downloads_are_stored_and_shown() {
         ),
         "{page}"
     );
-    // The phone's network at its last report, with when (just now, local).
+    // The phone's network at its last report, with when: Oslo's clock (never the UTC 10:00), the
+    // exact local time in `title`.
     let network = &page[page.find(r#"data-row="network""#).expect("the network row")..];
-    assert!(network.contains("Mobile data · "), "{network}");
+    let network = &network[..network.find("</details>").unwrap()];
+    let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
+    let when = oslo.when(reported_at, chrono::Utc::now());
+    assert!(!when.contains("10:00"), "{when}");
+    assert!(
+        network.contains(&format!("Mobile data · {when}</span>")),
+        "{network}"
+    );
+    assert!(
+        network.contains(&format!("title=\"{}\"", oslo.exact(reported_at))),
+        "{network}"
+    );
     assert!(
         network.contains("At the phone&#39;s last report."),
         "{network}"
     );
     // Notes installs: the page reloads itself for the percentage.
-    assert!(page.contains("location.reload()"));
+    assert!(page.contains("/static/installing-reload.js"));
 }
 
 /// Security review M10 (the phone side): a release the launcher refused to install - another

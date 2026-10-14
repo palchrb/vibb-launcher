@@ -1459,7 +1459,9 @@ async fn render_device(
                 .filter(|a| a.checked && !a.is_launcher)
                 .count()
         ),
-        _ => "List unreadable".to_string(),
+        // The stored list is corrupt; a failed read says so (qa-31-s6-code N2).
+        Some(_) => "List unreadable".to_string(),
+        None => "Couldn't read".to_string(),
     };
     let restrictions_paused = latest_status
         .as_ref()
@@ -1608,13 +1610,29 @@ async fn render_device(
 }
 
 /// Where an app's row is on Device › Apps (design 31 step 6): `app-<package>` - the anchor the
-/// blocked apps, the Apps tab and the saves link to -, or `catalog-<id>` for a catalog app that
-/// has no package yet. The page's ids and [toggle_app]'s redirect both come from here.
+/// blocked apps, the Apps tab and the saves link to -, or `catalog-<id>` for a catalog app without
+/// a package (or with an older catalog's free-text one). The page's ids and [toggle_app]'s
+/// redirect both come from here.
 pub(crate) fn app_anchor(package: &str, tracked_app_id: Option<i64>) -> String {
     match tracked_app_id {
         _ if crate::handlers::device_api::is_package_name(package) => format!("app-{package}"),
         Some(id) => format!("catalog-{id}"),
-        None => "allowed".to_string(),
+        // No row has this: the status intake drops unnamed apps and `toggle_app` refuses such a
+        // post. Not a group's id either, so it can never duplicate one (qa-31-s6-code N3).
+        None => "apps".to_string(),
+    }
+}
+
+/// The reason under a refused switch's row (`?notice=<code>&app=<row>`, design 31 step 6);
+/// `None` for a code this page doesn't know.
+pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
+    match code {
+        "from_play" => Some(
+            "Installed from the Play Store, so it can't also come from the catalog. Uninstall \
+             that copy first.",
+        ),
+        "not_an_app" => Some("This app changed in the catalog since the page loaded. Try again."),
+        _ => None,
     }
 }
 
@@ -1636,11 +1654,15 @@ pub(crate) fn app_anchor(package: &str, tracked_app_id: Option<i64>) -> String {
 /// the app's row on Device › Apps (`#app-<package>`): the row moves between Allowed and Not
 /// allowed, and the fragment finds it again, with or without JS.
 ///
-/// Refused, nothing written: a package that isn't a package name (it would go into the allowlist)
-/// or nothing at all, Play's core and Vibb itself (400), an unknown phone (404), turning on a
-/// catalog app whose package the phone has from the Play Store (one source per package: back to
-/// its row with `?notice=from_play&app=<row>`, the reason under it). A catalog app deleted since
-/// the page loaded changes nothing and returns to the page. A DB error is a 500.
+/// The package must be a package name (the status intake's rule; it goes into the allowlist), or
+/// exactly what the catalog row the post names stores - an older catalog's free text stays
+/// switchable (qa-31-s6-code L4). Refused, nothing written: such a package that no longer matches
+/// its catalog row (back to the row with `?notice=not_an_app`), turning on a catalog app whose
+/// package the phone has from the Play Store (one source per package: `?notice=from_play`); a
+/// post naming nothing or another package, Play's core or Vibb itself - by its catalog id or its
+/// package (L3) - is a 400 (no page sends one), an unknown phone a 404. A catalog app deleted since
+/// the page loaded changes nothing and returns to the group the tap came from (N1). A DB error is
+/// a 500.
 pub async fn toggle_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1664,9 +1686,7 @@ pub async fn toggle_app(
         )
             .into_response();
     }
-    if (!package_name.is_empty() && !crate::handlers::device_api::is_package_name(&package_name))
-        || (package_name.is_empty() && tracked_app_id.is_none())
-    {
+    if package_name.is_empty() && tracked_app_id.is_none() {
         return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
     }
     let failed = |err: sqlx::Error| {
@@ -1686,34 +1706,60 @@ pub async fn toggle_app(
         Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => return failed(err),
     }
+    // Vibb is on every phone and never switched: its row has no switch, and a post naming it by
+    // its catalog id or its package is refused (qa-31-s6-code L3).
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM tracked_apps WHERE is_launcher = 1 \
+         AND (id = ? OR (package_name != '' AND package_name = ?))",
+    )
+    .bind(tracked_app_id)
+    .bind(&package_name)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(0) => {}
+        Ok(_) => return (StatusCode::BAD_REQUEST, "Vibb is always on.").into_response(),
+        Err(err) => return failed(err),
+    }
     let page = format!("/devices/{id}/apps");
-    // The catalog app: its own package (an uninstall queued for it is cancelled too) and whether
-    // it is Vibb, which is on every phone and never toggled.
+    // The catalog app's own package: an uninstall queued for it is cancelled too, and an older
+    // catalog's free-text package is accepted only as exactly this.
     let catalog_package = match tracked_app_id {
         Some(tid) => {
-            match sqlx::query_as::<_, (String, bool)>(
-                "SELECT package_name, is_launcher FROM tracked_apps WHERE id = ?",
+            match sqlx::query_scalar::<_, String>(
+                "SELECT package_name FROM tracked_apps WHERE id = ?",
             )
             .bind(tid)
             .fetch_optional(&state.db)
             .await
             {
-                Ok(Some((_, true))) => {
-                    return (StatusCode::BAD_REQUEST, "Vibb is always on.").into_response();
+                Ok(Some(package)) => Some(package).filter(|p| !p.is_empty()),
+                // Removed from the catalog since the page loaded (a second tab, a double tap):
+                // back to the group the tap came from, never the top of the page.
+                Ok(None) => {
+                    let group = if checked { "not-allowed" } else { "allowed" };
+                    return Redirect::to(&format!("{page}#{group}")).into_response();
                 }
-                Ok(Some((package, false))) => Some(package).filter(|p| !p.is_empty()),
-                // Removed from the catalog since the page loaded (a second tab, a double tap).
-                Ok(None) => return Redirect::to(&page).into_response(),
                 Err(err) => return failed(err),
             }
         }
         None => None,
     };
+    let anchor = app_anchor(&package_name, tracked_app_id);
+    if !package_name.is_empty()
+        && !crate::handlers::device_api::is_package_name(&package_name)
+        && catalog_package.as_deref() != Some(package_name.as_str())
+    {
+        if tracked_app_id.is_none() {
+            return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+        }
+        return Redirect::to(&format!("{page}?notice=not_an_app&app={anchor}#{anchor}"))
+            .into_response();
+    }
     let installed = match latest_installed(&state, id).await {
         Ok(installed) => installed,
         Err(err) => return failed(err),
     };
-    let anchor = app_anchor(&package_name, tracked_app_id);
 
     if checked {
         // One source per package: Vibb can't update a Play-installed copy from the catalog

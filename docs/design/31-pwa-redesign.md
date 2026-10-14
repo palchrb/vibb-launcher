@@ -2735,3 +2735,19 @@ Deferred, with the reason:
 - **The browser pass** (390 px, light and dark, JS off) is owed: this VM has no browser. The page uses step 1-5 and 11
   components plus the small section above.
 - **Step 7** builds Device › Music: `back=music` returns to the device page's `#music` until then.
+
+**Fix round after the code QA** (`qa-31-s6-code.md`: 0 High, 1 Medium, 4 Low, 5 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| M1 | The installing reload is `static/installing-reload.js` (loaded only while an app installs). It stops for good once a save has started - a capturing `submit`, a `change` on a `data-autosave` control (autosave.js's `form.submit()` fires no `submit`), `pagehide` - so it never cancels a POST on its way; it still waits while a Name and icon form is open. `jstest/installing-reload.test.js` pins the reload, the stop on a switch, a submit and `pagehide`, and that a change on a control that doesn't save keeps reloading. |
+| L1 | The same test pins the pause (open form: no reload; closed: one). A refused Name and icon save renders without the reload (`installing && entered.is_none()`): `device_pages::a_refused_name_save_never_reloads` checks the GET page has the script while an app installs and the 400 page doesn't. Mutation 9 now fails the jstest. |
+| L2 | `tracked_apps::app_downloads_are_stored_and_shown` sets Phone Setup to Europe/Oslo and the report to yesterday 10:00 UTC, and asserts the Network row's Oslo clock (never "10:00") and the exact local time in its `title`. Mutation 13 now fails it. |
+| L3 | `toggle_app` refuses Vibb by its catalog id or its package (one query, `is_launcher = 1 AND (id = ? OR package_name = ?)`); the package-only post is in the refusal table. |
+| L4 | A package is a package name or exactly what the posted catalog row stores, so an older catalog's free text (`"Element X"`) stays switchable on and off at `#catalog-<id>`; another free text with that row lands on the row with "This app changed in the catalog since the page loaded. Try again." (`?notice=not_an_app`, `devices::toggle_refusal`, which now words both refusals); free text without a catalog row stays a 400 (no page sends one). Test: `a_legacy_catalog_package_stays_switchable`. |
+| N1 | A catalog app deleted since the page loaded returns to the group the tap came from (`#not-allowed` for a turn-on, `#allowed` for a turn-off). |
+| N2 | The device page's Apps row says "Couldn't read" on a failed read, "List unreadable" only for the corrupt list (`the_apps_row_says_when_the_list_couldnt_be_read`). |
+| N3 | `app_anchor`'s unreachable fallback is `apps`, no group's id. |
+| N4 | The reload script drops `?notice=…` from the address once the page shows it (`history.replaceState`, the row's fragment kept), so a reload doesn't show the refusal again; jstest-pinned. |
+| N5 | The Status card's blocked apps say "Allowed under Apps" / "Not allowed under Apps … until you turn it on there too", and `window_relock`'s lines "hidden even when allowed under Apps", "turn it on under Apps", "the ones allowed under Apps". |
+| Checks | `cargo test` 791 passed; `node --test jstest/*.test.js` 23 passed; fmt clean; clippy: the same 13 warnings. |

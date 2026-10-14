@@ -70,7 +70,7 @@
             <p style="margin:0 0 8px;">{{ text }}</p>
             <ul style="margin:0; padding-left:20px;">
                 {% for item in relock.blocks.items %}
-                <li>{{ item.text }}{% if let Some(ticked) = item.ticked %}{% if ticked %} Ticked under Apps: it shows again after "Allow these apps".{% else %} Not ticked under Apps: after "Allow these apps" it stays hidden until you <a href="/devices/{{ device.id }}/apps#app-{{ item.package_name }}">tick it</a> too.{% endif %}{% endif %}</li>
+                <li>{{ item.text }}{% if let Some(ticked) = item.ticked %}{% if ticked %} Allowed under Apps: it shows again after "Allow these apps".{% else %} Not allowed under Apps: after "Allow these apps" it stays hidden until you <a href="/devices/{{ device.id }}/apps#app-{{ item.package_name }}">turn it on</a> there too.{% endif %}{% endif %}</li>
                 {% endfor %}
             </ul>
             {% if let Some(more) = relock.blocks.more %}
