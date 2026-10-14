@@ -145,7 +145,7 @@ class HomeGridAdapter(
                     holder.icon.backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
                     holder.icon.setImageDrawable(KidAvatars.circular(context, bitmap))
                 } else {
-                    holder.icon.backgroundTintList = ColorStateList.valueOf(TILE_GREY)
+                    holder.icon.backgroundTintList = ColorStateList.valueOf(TONE_SLATE)
                     holder.icon.setImageDrawable(null)
                 }
                 holder.label.text = tile.app.label

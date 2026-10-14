@@ -1219,6 +1219,11 @@ th {
     margin: 0 0 16px;
 }
 
+/* "The app's own logo" has no tile: app-display.js turns the colours off (design 34 P1). */
+.color-grid:disabled {
+    opacity: 0.45;
+}
+
 /* Spaced with margins, not flex gap (Safari 14.0). */
 .glyph-grid > *,
 .color-grid > * {

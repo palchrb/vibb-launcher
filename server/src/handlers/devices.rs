@@ -880,9 +880,10 @@ pub(crate) async fn lock_screen_card(
 }
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
-/// `action` "own" = the app's own (on this phone, even with a catalog default), "catalog" =
-/// follow the catalog default (the phone's row goes), else save the fields. A choice equal to the
-/// catalog default, or "the app's own" without a default, keeps no row. Refused input: 400,
+/// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
+/// design 34 P1 - an older page's "own" and "catalog" do the same), else save the fields (Vibb
+/// style with no name on a phone with a catalog default keeps an empty row: Vibb style there). A
+/// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
 /// field focused (the form posts to `…#app-<package>`, so the answer lands on the app's row, not
 /// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`); nudges.
@@ -939,13 +940,14 @@ pub async fn save_app_display(
             response
         }
     };
-    let action = field("action");
-    let values = match action {
-        "own" => DisplayValues::own(),
-        _ => match crate::app_display::validate(field("label"), field("icon"), field("color")) {
+    let reset = matches!(field("action"), "reset" | "own" | "catalog");
+    let values = if reset {
+        DisplayValues::empty()
+    } else {
+        match crate::app_display::validate(field("label"), field("icon"), field("color")) {
             Ok(values) => values,
             Err(error) => return refuse(error).await,
-        },
+        }
     };
     let default = match crate::app_display::catalog_defaults(&state.db).await {
         Ok(defaults) => defaults.get(&package).cloned(),
@@ -958,10 +960,10 @@ pub async fn save_app_display(
                 .into_response();
         }
     };
-    let keep_row = action != "catalog"
+    let keep_row = !reset
         && match &default {
             Some(default) => *default != values,
-            None => !values.is_own(),
+            None => !values.is_empty(),
         };
     let result = if keep_row {
         let rows: i64 = match sqlx::query_scalar(

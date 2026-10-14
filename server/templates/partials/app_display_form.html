@@ -1,4 +1,4 @@
-{# "Name and icon" for one app (design 14): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview; the form works without it. #}
+{# "Name and icon" for one app (design 14; the three icon states of design 34 P1): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview and turns the colours off for "The app's own logo"; the form works without it. #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
     <summary class="row"><span class="row-label">Name and icon<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
     <form method="post" action="{{ form.action }}" class="app-display-form">
@@ -7,8 +7,13 @@
         {% endif %}
         <div class="app-preview">
             <span class="app-tile" data-preview-tile style="background: {{ form.preview_tile }}">
-                <img data-preview-glyph alt=""{% if form.icon.is_empty() %} hidden{% else %} src="/static/app-icons/{{ form.icon }}.svg"{% endif %}>
-                <span class="app-tile-own" data-preview-own{% if !form.icon.is_empty() %} hidden{% endif %}>its own icon</span>
+                {% if let Some(glyph) = form.glyph() %}
+                <img data-preview-glyph alt="" src="/static/app-icons/{{ glyph }}.svg">
+                <span class="app-tile-own" data-preview-own hidden>{{ form.preview_text() }}</span>
+                {% else %}
+                <img data-preview-glyph alt="" hidden>
+                <span class="app-tile-own" data-preview-own>{{ form.preview_text() }}</span>
+                {% endif %}
             </span>
             <span data-preview-label>{{ form.preview_label() }}</span>
         </div>
@@ -22,23 +27,21 @@
         <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
         <fieldset class="glyph-grid">
             <legend>Icon</legend>
-            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">Its own</span></label>
+            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">Vibb style</span></label>
+            <label class="glyph-choice"><input type="radio" name="icon" value="own"{% if form.own_checked() %} checked{% endif %}><span class="choice-text">The app's own logo</span></label>
             {% for choice in form.icons %}
             <label class="glyph-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.checked %} checked{% endif %}><span class="app-tile app-tile-small"><img src="/static/app-icons/{{ choice.key }}.svg" alt="{{ choice.label }}"></span></label>
             {% endfor %}
         </fieldset>
-        <fieldset class="color-grid">
+        <fieldset class="color-grid" data-colors>
             <legend>Colour behind the icon</legend>
-            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="#868E96"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">The app's own</span></label>
+            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="{{ crate::app_display::AUTO_PREVIEW }}"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">The app's tone</span></label>
             {% for choice in form.colors %}
-            <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.key }}</label>
+            <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.label }}</label>
             {% endfor %}
         </fieldset>
-        <p class="hint">Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
+        <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon. The app's own logo: its real icon in its own colours. The colour applies to a chosen icon. {{ form.reset_hint() }} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
         <button type="submit" name="action" value="save">Save</button>
-        <button type="submit" name="action" value="own" class="button-secondary">Use the app's own</button>
-        {% if form.own_row && form.catalog_default.is_some() %}
-        <button type="submit" name="action" value="catalog" class="button-secondary">Follow the catalog</button>
-        {% endif %}
+        <button type="submit" name="action" value="reset" class="button-secondary">Reset</button>
     </form>
 </details>

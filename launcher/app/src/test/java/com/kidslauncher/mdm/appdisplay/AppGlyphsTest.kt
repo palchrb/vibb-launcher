@@ -2,7 +2,7 @@ package com.kidslauncher.mdm.appdisplay
 
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.ui.LegalInfoActivity
-import com.kidslauncher.mdm.ui.home.tileColor
+import com.kidslauncher.mdm.ui.home.ICON_TONES
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -13,7 +13,7 @@ import java.io.File
 /**
  * Design 14 QA #3-#5: the icon and colour table is the shared `app_icons.json` (identical to the
  * server's copy), every icon has its converted glyph saying where it comes from, every tile is
- * `tileColor(seed)`, and the Apache-2.0 licence ships with them.
+ * one of the six tones (design 34 P1), and the Apache-2.0 licence ships with them.
  */
 class AppGlyphsTest {
     private val text = javaClass.classLoader!!.getResource("app_icons.json")!!.readText()
@@ -43,8 +43,8 @@ class AppGlyphsTest {
             fun argb(field: String) = (0xFF000000 or value.jsonObject[field]!!.jsonPrimitive.content.removePrefix("#").toLong(16)).toInt()
             assertEquals(key, argb("seed"), color.seed)
             assertEquals(key, argb("tile"), color.tile)
-            // QA #3: the tile is what the launcher draws for the seed.
-            assertEquals(key, color.tile, tileColor(color.seed))
+            // Design 34 P1 (QA M3): the tile is one of the six tones.
+            assertTrue(key, color.tile in ICON_TONES)
         }
         assertTrue(AUTO_COLOR !in AppGlyphs.COLORS)
     }

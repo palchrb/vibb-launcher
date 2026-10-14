@@ -1339,7 +1339,7 @@ pub(crate) async fn render_apps(
                     format!("display-{package}"),
                     package.clone(),
                     row.label.clone(),
-                    &current.cloned().unwrap_or_else(DisplayValues::own),
+                    &current.cloned().unwrap_or_else(DisplayValues::empty),
                     entered
                         .as_ref()
                         .filter(|(entered, _)| *entered == package)

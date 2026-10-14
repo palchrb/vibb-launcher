@@ -3,7 +3,7 @@ package com.kidslauncher.mdm.appdisplay
 
 import com.kidslauncher.mdm.R
 
-/** A tile colour: the seed the parent picked and [tile] = `tileColor(seed)` (ARGB). */
+/** A tile colour: design 14's seed and [tile], one of the six tones (design 34 P1, `IconTones`; ARGB). */
 data class AppColor(val seed: Int, val tile: Int)
 
 /**
@@ -54,11 +54,11 @@ object AppGlyphs {
 
     /** Colour key -> seed and tile. */
     val COLORS: Map<String, AppColor> = linkedMapOf(
-        "peach" to AppColor(0xFFF0A884.toInt(), 0xFFE4763F.toInt()),
-        "plum" to AppColor(0xFF4A2545.toInt(), 0xFF4A2545.toInt()),
-        "sky" to AppColor(0xFF1C7ED6.toInt(), 0xFF1E7ED4.toInt()),
-        "sunset" to AppColor(0xFFF76707.toInt(), 0xFFDE6C20.toInt()),
-        "night" to AppColor(0xFF1C1A2A.toInt(), 0xFF1C1A2A.toInt()),
-        "grey" to AppColor(0xFF868E96.toInt(), 0xFF868E96.toInt()),
+        "peach" to AppColor(0xFFF0A884.toInt(), 0xFFA45166.toInt()),
+        "plum" to AppColor(0xFF4A2545.toInt(), 0xFF805B9A.toInt()),
+        "sky" to AppColor(0xFF1C7ED6.toInt(), 0xFF496C9C.toInt()),
+        "sunset" to AppColor(0xFFF76707.toInt(), 0xFF6065A9.toInt()),
+        "night" to AppColor(0xFF1C1A2A.toInt(), 0xFF347470.toInt()),
+        "grey" to AppColor(0xFF868E96.toInt(), 0xFF606B80.toInt()),
     )
 }

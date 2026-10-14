@@ -16,7 +16,9 @@
     <color name="kid_ink_dim">#BFFFFFFF</color>
     <color name="kid_badge">#B4532C</color>
     <color name="kid_call_badge">#2F9E44</color>
-    <color name="kid_phone_book">#37B24D</color>
+    <!-- The Phone book tile (and the time-rule screen's phone book button): a muted call green,
+         white 5.5:1, ground 3.6:1 (design 34 P1, QA M3; it was #37B24D, white 2.75:1). -->
+    <color name="kid_phone_book">#3A7552</color>
     <color name="kid_back_button">#1FFFFFFF</color>
     <!-- The contact sheet at night (design 34 P3, QA M4): the lifted night, no white surface. Its
          name is kid_core, its hint and Close kid_sheet_muted (= kid_core_dim), Message a tonal
@@ -34,8 +36,10 @@
     <!-- The time-rule screen's app buttons (item_lock_app.xml); the sheet's Message no longer. -->
     <color name="kid_message_button">#1864AB</color>
     <color name="kid_emergency">#E03131</color>
+    <!-- The light neutral disc under a legacy (non-adaptive) icon drawn as itself (design 34 P1). -->
     <color name="kid_icon_fallback">#F1F3F5</color>
-    <color name="kid_settings_tile">#868E96</color>
+    <!-- Home's Settings tile: the slate tone (design 34 P1, IconTones TONE_SLATE; white 5.4:1). -->
+    <color name="kid_settings_tile">#606B80</color>
     <color name="kid_switch_on">@color/kid_accent</color>
     <color name="kid_slider">@color/kid_accent</color>
     <color name="kid_divider">#1AFFFFFF</color>

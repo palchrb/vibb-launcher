@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.ui
 
 import com.kidslauncher.mdm.ui.home.EMERGENCY_AVATAR
+import com.kidslauncher.mdm.ui.home.TONE_SLATE
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -159,6 +160,19 @@ class KidPaletteTest {
         for (drawable in listOf("bg_call_green", "bg_home_call_card")) {
             assertTrue(drawable, resFile("drawable/$drawable.xml").readText().contains("@color/kid_call_button"))
         }
+    }
+
+    @Test
+    fun `the phone book and settings tiles carry white and stand off the ground`() {
+        // Design 34 P1 (QA M3): the Phone book tile is a muted call green, Settings the slate tone.
+        assertTrue(resolve("kid_phone_book").equals("#3A7552", ignoreCase = true))
+        assertTrue(resolve("kid_settings_tile").equals("#%06X".format(TONE_SLATE and 0xFFFFFF), ignoreCase = true))
+        for (tile in listOf("kid_phone_book", "kid_settings_tile")) {
+            assertTrue(tile, contrast("kid_ink", tile) >= 4.5)
+            assertTrue(tile, contrast(tile, "kid_ground") >= 3.5)
+        }
+        // The legacy icon's light disc: a dark night glyph would show on it, the night stands off it.
+        assertTrue(contrast("kid_icon_fallback", "kid_ground") >= 3.0)
     }
 
     @Test

@@ -22,12 +22,12 @@ pub const ICONS: &[(&str, &str)] = &[
     ("star", "star"),
 ];
 
-/// Colour key -> (seed, tile): the tile is the launcher's `tileColor(seed)`.
+/// Colour key -> (seed, tile): the tile is one of the launcher's six tones (design 34 P1).
 pub const COLORS: &[(&str, &str, &str)] = &[
-    ("peach", "#F0A884", "#E4763F"),
-    ("plum", "#4A2545", "#4A2545"),
-    ("sky", "#1C7ED6", "#1E7ED4"),
-    ("sunset", "#F76707", "#DE6C20"),
-    ("night", "#1C1A2A", "#1C1A2A"),
-    ("grey", "#868E96", "#868E96"),
+    ("peach", "#F0A884", "#A45166"),
+    ("plum", "#4A2545", "#805B9A"),
+    ("sky", "#1C7ED6", "#496C9C"),
+    ("sunset", "#F76707", "#6065A9"),
+    ("night", "#1C1A2A", "#347470"),
+    ("grey", "#868E96", "#606B80"),
 ];

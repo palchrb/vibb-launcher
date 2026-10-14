@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
@@ -24,6 +25,7 @@ import com.kidslauncher.mdm.apps.AbstractAppInfo
 import com.kidslauncher.mdm.appdisplay.AppDisplay
 import com.kidslauncher.mdm.appdisplay.AppDisplayEntry
 import com.kidslauncher.mdm.appdisplay.AppGlyphs
+import com.kidslauncher.mdm.appdisplay.OWN_ICON
 import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.appdisplay.appIconKey
 import com.kidslauncher.mdm.calls.ContactPhotos
@@ -158,70 +160,91 @@ object KidAvatars {
     }
 
     /**
-     * An app icon as a coloured circle (design 08 §1) - **off the main thread only** (loading,
-     * drawing and the palette pass are too slow for `onBind`; [HomeActivity] calls this from its
-     * `refreshApps` pass):
-     * 1. an adaptive icon with a monochrome layer: that glyph in white on [tileColor] of the
-     *    icon's own colour;
-     * 2. an adaptive icon without one: its layers edge to edge in the circle;
-     * 3. a legacy bitmap icon: inset 1/8 on [tileColor] of its colour.
-     * The result is cached by app, size and density.
+     * An app icon as a circle (design 08 §1; the three states of design 34 P1) - **off the main
+     * thread only** (loading, drawing and the palette pass are too slow for `onBind`;
+     * [HomeActivity] calls this from its `refreshApps` pass):
+     * 1. the app's own logo (the parent chose [OWN_ICON], checked first): [drawOwnLogo];
+     * 2. a parent glyph: [renderSymbolIcon] on the colour's tile, or the app's tone for `auto`;
+     * 3. Vibb style (the default): an adaptive icon with a monochrome layer - that glyph in white on
+     *    [iconTone] of the icon's colours; any other icon - [drawOwnLogo] (nothing to tone).
+     * The result is cached by app, size and density, plus the parent's choice ([appIconKey]).
      */
     fun renderAppIcon(context: Context, key: String, icon: () -> Drawable, sizePx: Int): Bitmap {
-        // The parent's glyph and colour (design 14) replace the app's own icon - read once, so a
-        // sync in between can't store one choice's bitmap under the other's key (qa-14-code #1).
+        // The parent's choice (design 14, 34) - read once, so a sync in between can't store one
+        // choice's bitmap under the other's key (qa-14-code #1).
         val display = displayOf(key)
         val cacheKey = iconKey(context, key, sizePx, display)
         iconCache.get(cacheKey)?.let { return it }
+        val packageName = packageOf(key)
+        // Our own copy: the drawer draws the same cached icon object on the main thread, so the
+        // background pass must not change its bounds or tint (qa-08-code.md #5).
+        if (display?.ownLogo == true) {
+            return drawOwnLogo(context, privateCopy(context, icon()), sizePx).also { iconCache.put(cacheKey, it) }
+        }
         val glyph = display?.icon?.let { AppGlyphs.ICONS[it] }
         if (display != null && glyph != null) {
             val tile = AppGlyphs.COLORS[display.color]?.tile
-                ?: tileColor(seedColour(privateCopy(context, icon())))
+                ?: toneOf(privateCopy(context, icon()), packageName)
             return renderSymbolIcon(context, glyph, tile, sizePx).also { iconCache.put(cacheKey, it) }
         }
-        // Our own copy: the drawer draws the same cached icon object on the main thread, so the
-        // background pass must not change its bounds or tint (qa-08-code.md #5).
         val drawable = privateCopy(context, icon())
+        val monochrome = (drawable as? AdaptiveIconDrawable)?.monochrome
+        if (drawable !is AdaptiveIconDrawable || monochrome == null) {
+            return drawOwnLogo(context, drawable, sizePx).also { iconCache.put(cacheKey, it) }
+        }
         val bmp = createBitmap(sizePx, sizePx)
         val canvas = Canvas(bmp)
-        val circle = Paint(Paint.ANTI_ALIAS_FLAG)
-        val monochrome = (drawable as? AdaptiveIconDrawable)?.monochrome
-        when {
-            drawable is AdaptiveIconDrawable && monochrome != null -> {
-                circle.color = tileColor(seedColour(drawable))
-                canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
-                // A layer of our private copy; mutate() anyway so its constant state isn't shared.
-                val glyph = monochrome.mutate()
-                glyph.setTintMode(PorterDuff.Mode.SRC_IN)
-                glyph.setTint(Color.WHITE)
-                val extra = sizePx / 4
-                glyph.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
-                glyph.draw(canvas)
-            }
-            drawable is AdaptiveIconDrawable -> {
-                // Layers are 108 dp with a 72 dp safe zone: draw them 1.5× and centred.
-                val extra = sizePx / 4
-                listOfNotNull(drawable.background, drawable.foreground).forEach {
-                    it.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
-                    it.draw(canvas)
-                }
-            }
-            else -> {
-                circle.color = tileColor(seedColour(drawable))
-                canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
-                val inset = sizePx / 8
-                drawable.setBounds(inset, inset, sizePx - inset, sizePx - inset)
-                drawable.draw(canvas)
-            }
-        }
+        val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = toneOf(drawable, packageName) }
+        canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, circle)
+        // A layer of our private copy; mutate() anyway so its constant state isn't shared.
+        val mono = monochrome.mutate()
+        mono.setTintMode(PorterDuff.Mode.SRC_IN)
+        mono.setTint(Color.WHITE)
+        val extra = sizePx / 4
+        mono.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
+        mono.draw(canvas)
         iconCache.put(cacheKey, bmp)
         return bmp
     }
 
     /**
-     * The parent's icon (design 14): a [tile] circle (an [AppGlyphs.COLORS] tile, or `tileColor` of
-     * the app's own colour - white on it reaches 3:1) with the white glyph at about 55 %. Off the
-     * main thread, like [renderAppIcon].
+     * The app's own logo (design 34 P1), never the monochrome layer, never tinted: an adaptive
+     * icon's background and foreground layers in their original colours, 1.5x (108 dp layers with a
+     * 72 dp safe zone) and centred; a legacy icon inset 1/8 on the light neutral disc
+     * (`kid_icon_fallback`). Clipped to the circle.
+     */
+    private fun drawOwnLogo(context: Context, drawable: Drawable, sizePx: Int): Bitmap {
+        val bmp = createBitmap(sizePx, sizePx)
+        val canvas = Canvas(bmp)
+        val clip = Path().apply { addCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, Path.Direction.CW) }
+        canvas.clipPath(clip)
+        if (drawable is AdaptiveIconDrawable) {
+            val extra = sizePx / 4
+            listOfNotNull(drawable.background, drawable.foreground).forEach {
+                it.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
+                it.draw(canvas)
+            }
+        } else {
+            val disc = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ContextCompat.getColor(context, R.color.kid_icon_fallback) }
+            canvas.drawCircle(sizePx / 2f, sizePx / 2f, sizePx / 2f, disc)
+            val inset = sizePx / 8
+            drawable.setBounds(inset, inset, sizePx - inset, sizePx - inset)
+            drawable.draw(canvas)
+        }
+        return bmp
+    }
+
+    /** The package of a serialized [AppInfo] key, or null. */
+    private fun packageOf(key: String): String? = try {
+        (AbstractAppInfo.deserialize(key) as? AppInfo)?.packageName
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * The parent's icon (design 14): a [tile] circle (an [AppGlyphs.COLORS] tile - one of the
+     * tones - or the app's tone; white on every tone reaches 5.3:1) with the white glyph at about
+     * 55 %. Off the main thread, like [renderAppIcon].
      */
     fun renderSymbolIcon(context: Context, glyphRes: Int, tile: Int, sizePx: Int): Bitmap {
         val bmp = createBitmap(sizePx, sizePx)
@@ -246,8 +269,12 @@ object KidAvatars {
     private fun privateCopy(context: Context, drawable: Drawable): Drawable =
         drawable.constantState?.newDrawable(context.resources)?.mutate() ?: drawable
 
-    /** The icon's own colour: vibrant swatch, else dominant, else grey (a 48 px render). */
-    private fun seedColour(drawable: Drawable): Int = try {
+    /**
+     * The tone behind the app's white glyph (design 34 P1): [iconTone] of the icon's palette
+     * swatches (a 48 px render of its full-colour layers) and the package; the package's hash tone
+     * when the palette fails.
+     */
+    private fun toneOf(drawable: Drawable, packageName: String?): Int = try {
         val small = createBitmap(SEED_PX, SEED_PX)
         val canvas = Canvas(small)
         val bounds = drawable.copyBounds()
@@ -266,12 +293,13 @@ object KidAvatars {
         }
         val palette = Palette.from(small).generate()
         small.recycle()
-        palette.vibrantSwatch?.rgb ?: palette.dominantSwatch?.rgb ?: TILE_GREY
+        iconTone(palette.swatches.map { ToneSwatch(it.rgb, it.population) }, packageName)
     } catch (e: Exception) {
-        TILE_GREY
+        hashedTone(packageName)
     }
 
     private const val SEED_PX = 48
+
 
     /** The rendered icon as a circle for an ImageView. */
     fun circular(context: Context, bitmap: Bitmap): Drawable =

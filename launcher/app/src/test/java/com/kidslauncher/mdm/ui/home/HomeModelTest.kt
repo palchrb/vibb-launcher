@@ -130,23 +130,6 @@ class HomeModelTest {
     }
 
     @Test
-    fun `tile colours keep the hue and reach 3 to 1 against white`() {
-        val white = 1.0
-        for (seed in listOf(0xFFFFD43B, 0xFF0DBD8B, 0xFF7950F2, 0xFFF76707, 0xFFFFFFFF, 0xFF000000, 0xFF4285F4, 0xFF34A853)) {
-            val c = tileColor(seed.toInt())
-            assertTrue("%08X".format(seed), contrastRatio(white, relativeLuminance(c)) >= 3.0)
-            assertEquals(0xFF, (c ushr 24))
-        }
-        // Grey #868E96 already reaches 3.3:1 and stays.
-        assertEquals(TILE_GREY, tileColor(TILE_GREY))
-        assertEquals(3.3, contrastRatio(white, relativeLuminance(TILE_GREY)), 0.05)
-        val yellow = tileColor(0xFFFFD43B.toInt())
-        // Still yellow-ish: red > blue, green > blue.
-        assertTrue(((yellow shr 16) and 0xFF) > (yellow and 0xFF))
-        assertTrue(((yellow shr 8) and 0xFF) > (yellow and 0xFF))
-    }
-
-    @Test
     fun `badge text`() {
         assertNull(badgeText(0))
         assertNull(badgeText(-1))

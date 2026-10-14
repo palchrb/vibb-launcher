@@ -31,6 +31,43 @@ class AppDisplayTest {
         )
     }
 
+    /** Design 34 P1 (QA H1): "the app's own logo" is kept with and without a label, always auto. */
+    @Test
+    fun `the app's own logo is kept with and without a label`() {
+        assertEquals(
+            mapOf(
+                element to AppDisplayEntry("Chat", OWN_ICON, AUTO_COLOR),
+                "com.spotify.music" to AppDisplayEntry(null, OWN_ICON, AUTO_COLOR),
+            ),
+            map(
+                """[
+                  {"package_name":"$element","label":"Chat","icon":"own","color":"auto"},
+                  {"package_name":"com.spotify.music","label":null,"icon":"own","color":"sky"}
+                ]""",
+            ),
+        )
+        assertTrue(map("""[{"package_name":"$element","icon":"own"}]""")[element]!!.ownLogo)
+        assertFalse(AppDisplayEntry(null, "chat").ownLogo)
+        assertFalse(AppDisplayEntry("Chat", null).ownLogo)
+        assertTrue(OWN_ICON !in AppGlyphs.ICONS)
+    }
+
+    /** An older launcher (its icons = the glyphs alone) drops `own` as unknown: with no label the
+     * entry is gone and it draws today's look; with one the label stays (design 14 QA #1). */
+    @Test
+    fun `an older launcher drops the own logo`() {
+        val json = ServerJson.parseToJsonElement(
+            """[
+              {"package_name":"$element","label":null,"icon":"own","color":"auto"},
+              {"package_name":"com.spotify.music","label":"Musikk","icon":"own","color":"auto"}
+            ]""",
+        )
+        assertEquals(
+            mapOf("com.spotify.music" to AppDisplayEntry("Musikk", null, AUTO_COLOR)),
+            appDisplayMap(json, icons = AppGlyphs.ICONS.keys),
+        )
+    }
+
     /** Each bad field alone: only that field is dropped (QA #1). */
     @Test
     fun `a bad field drops only itself`() {
@@ -103,6 +140,12 @@ class AppDisplayTest {
         assertEquals("app|144|420|g=chat|c=peach", appIconKey("app", 144, 420, AppDisplayEntry(null, "chat", "peach")))
         assertEquals("app|144|420|g=chat|c=auto", appIconKey("app", 144, 420, AppDisplayEntry(null, "chat")))
         assertTrue(appIconKey("app", 144, 420, AppDisplayEntry(null, "chat", "sky")) != appIconKey("app", 144, 420, AppDisplayEntry(null, "chat", "peach")))
+        // Design 34 P1: the app's own logo is its own key, apart from Vibb style and every glyph.
+        val own = appIconKey("app", 144, 420, AppDisplayEntry(null, OWN_ICON))
+        assertEquals("app|144|420|g=own|c=auto", own)
+        assertTrue(own.contains("g=own"))
+        assertTrue(own != appIconKey("app", 144, 420, null))
+        assertEquals(own, appIconKey("app", 144, 420, AppDisplayEntry("Chat", OWN_ICON)))
     }
 
     @Test
