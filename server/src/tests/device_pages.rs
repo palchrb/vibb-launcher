@@ -123,7 +123,7 @@ async fn about_this_phone_shows_the_last_reports_facts() {
         .await
         .text();
     assert!(summary.contains(&format!("href=\"/devices/{id}/about\"")));
-    assert!(summary.contains("<span class=\"row-value\">Vibb 0.23.6</span>"));
+    assert!(summary.contains("<span class=\"row-value\">Vibb One 0.23.6</span>"));
     for gone in [
         "App version:",
         "Sound at the last sync",
@@ -1711,7 +1711,13 @@ async fn apps_phone(app: &TestApp) -> (i64, i64, i64, i64) {
         .await
         .unwrap()
     };
-    let vibb = catalog("Vibb", "me.vibb.launcher", Some("launcher-v1.0.0"), true).await;
+    let vibb = catalog(
+        "Vibb One",
+        "me.vibb.launcher",
+        Some("launcher-v1.0.0"),
+        true,
+    )
+    .await;
     let element = catalog("Element X", "io.element.android.x", Some("v26.10.1"), false).await;
     let notes = catalog("Notes", "", None, false).await;
     sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")

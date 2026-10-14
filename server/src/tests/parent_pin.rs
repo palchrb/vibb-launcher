@@ -593,7 +593,7 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     post_status_caps(&app, &token, &["pin_lock_v1"], true).await;
     let html = page(lock.clone()).await;
     assert!(
-        events_group(&html).contains("Vibb on this phone doesn't report this yet."),
+        events_group(&html).contains("Vibb One on this phone doesn't report this yet."),
         "{html}"
     );
     assert!(html.contains("data-warning=\"override-used\""), "{html}");
@@ -621,7 +621,7 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     // Newest first, local times with the exact one in `title`, never UTC.
     let opened = group.find("Lock screen opened").expect("the use");
     let settings = group
-        .find("Vibb&#39;s Settings opened")
+        .find("Vibb One&#39;s Settings opened")
         .expect("the other use");
     let wrong = group.find("Wrong Parent PIN").expect("the wrong try");
     assert!(opened < settings && settings < wrong, "{group}");

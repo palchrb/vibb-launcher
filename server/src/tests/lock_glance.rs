@@ -544,7 +544,7 @@ async fn without_an_allowlist_every_reported_app_is_listed() {
             ("com.example.game", "Game"),
             ("org.thoughtcrime.securesms", "Signal"),
             ("com.google.android.gms", "Play services"),
-            ("me.vibb.launcher", "Vibb"),
+            ("me.vibb.launcher", "Vibb One"),
         ],
         json!({}),
     )
@@ -618,7 +618,7 @@ async fn the_page_shows_each_note() {
     // No report yet, no Child PIN: only the PIN warning.
     let html = page().await;
     assert!(html.contains("No lock without a Child PIN"), "{html}");
-    assert!(!html.contains("Vibb can&#39;t show these yet"));
+    assert!(!html.contains("Vibb One can&#39;t show these yet"));
     assert!(!html.contains("Missed calls only"));
 
     // A launcher without the capability and without notification access; a Child PIN.
@@ -639,7 +639,7 @@ async fn the_page_shows_each_note() {
     .await;
     let html = page().await;
     assert!(!html.contains("without a Child PIN"));
-    assert!(html.contains("Vibb can&#39;t show these yet"), "{html}");
+    assert!(html.contains("Vibb One can&#39;t show these yet"), "{html}");
     assert!(html.contains("Missed calls only"), "{html}");
 
     // An up-to-date launcher with access: no warnings.

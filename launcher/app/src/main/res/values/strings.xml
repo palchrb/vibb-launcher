@@ -276,7 +276,7 @@
     <string name="notification_ring_text">A parent triggered this from Find My Device.</string>
     <string name="notification_ring_stop_action">Stop Ringing</string>
     <string name="notification_channel_listener">Find My Device background connection</string>
-    <string name="notification_listener_title">Kids Device MDM</string>
+    <string name="notification_listener_title">Vibb One</string>
     <string name="notification_listener_text">Ready for parent commands (ring, lock, locate).</string>
     <string name="notification_channel_vpn_filter">Content filter</string>
     <string name="notification_vpn_filter_title">Content filter active</string>

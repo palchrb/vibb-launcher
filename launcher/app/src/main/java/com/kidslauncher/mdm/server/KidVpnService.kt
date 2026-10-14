@@ -40,6 +40,9 @@ private const val VPN_INTERFACE_ADDRESS = "192.0.2.1"
 private const val FAKE_DNS_SERVER = "192.0.2.2"
 private const val MTU = 32767
 
+/** The VPN's name in Android's VPN settings and its key dialog (design 34 P11, the launcher's name). */
+internal const val VPN_SESSION = "Vibb One filter"
+
 /**
  * The launcher's on-device ad/content DNS filter - replaces the retired DoT-to-Pi Private DNS
  * approach (see CLAUDE.md) and the standalone Tailscale app's role in device-wide traffic (see
@@ -84,7 +87,7 @@ class KidVpnService : VpnService() {
     private fun startVpn() {
         try {
             val builder = Builder()
-                .setSession("Kid Phone Filter")
+                .setSession(VPN_SESSION)
                 .addAddress(VPN_INTERFACE_ADDRESS, 32)
                 .addDnsServer(FAKE_DNS_SERVER)
                 .addRoute(FAKE_DNS_SERVER, 32)

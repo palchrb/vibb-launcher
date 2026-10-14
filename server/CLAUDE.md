@@ -137,7 +137,7 @@ No prior programming experience - build features directly rather than explaining
 - **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, clock_format: "system"|"24"|"12", wallpapers: [...]}` (wallpapers since step 8, clock_format since design 34 P12) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
 - **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
-- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_76_in_order` (the migration order).
+- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_77_in_order` (the migration order).
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -373,8 +373,9 @@ branch before that merge holds its old 73 (another checksum) and stops at `Versi
 **A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
 the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
-`0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075
-(`migrations_73_to_76_in_order`); the next free number is 0077 (design 34's catalog row name).
+`0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
+`0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
+(`migrations_73_to_77_in_order`); the next free number is 0078.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -599,7 +600,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `#music-settings` form - since design 30 two switches, "Stream on mobile data" / "Download on mobile data" (a hidden
   `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
   sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
-  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb and the music app" while the
+  a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb One and the music app" while the
   switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
   played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
@@ -1078,7 +1079,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Do Not Disturb** at the last sync is an Attention alarm linking to About This Phone › Sound, where it is a red value (`sound_mode::state`, typed).
 - **Current blocks** (fix of 2026-10-12): status `relock_blocks` `[{package_name, signer, reason, found, at_ms}]` - every app the phone keeps hidden whatever its tick, from a relock or the install check outside windows (`sanitize_relock_blocks`: valid names, a valid key or none, known reason `outside_play|other_key|catalog_key|unknown` and place `relock|install`, at most 16; `[]` = none, NULL = an older launcher) -> `device_status.relock_blocks_json` (0067), with `relock_blocks_total` (how many in all, stored only with the list - 0068; the group's footer says "And N more the phone doesn't list ...", `Blocks::more`, QA of cmd-expiry Low 2). The summary's Blocked Apps group (`#blocked-apps`, the Attention row "N blocked apps wait" lands there) lists each by the phone's name for it (else its package), why and when, its package and key behind the row's ⓘ (`window_relock::blocks`, typed `BlockItem`/`BlockWhy`) and whether it is allowed under Apps ("Allowed" / "Not allowed", the ⓘ linking to its row on the phone's Apps page, `/devices/{id}/apps#app-<package>`; nothing for an imposter or unmanaged apps - QA of cmd-expiry Low 3), with "Allow these apps…" while one can be let out; one with another key than the catalog's pin stays ("Not the catalog's app: uninstall it"). The button posts the listed apps with the keys shown (hidden `blocks` = `package:key,...`, `allow_form_value`/`parse_allow_form`; nothing valid -> 400) into `device_commands.payload` (0068), and the pop sends them as `pending_command.allow` `[{package_name, signer}]` (left out for other commands): the phone lets out only those, each while its key is still the one shown - never a block that came after the parent looked (QA of cmd-expiry, Low 1); a row from before 0068 has none and lets out every block, as before. `device_command_queued` names the apps. When the phone reports them, the last relock's `blocked` gives way to this list. `phone_app_blocked` in the security log for each newly reported block.
 - **Foreign access** (the fix round, QA High 1 (b)): status `foreign_access` `{admins, accessibility}` (apps outside the allowlist with a device admin or an accessibility service on; valid package names, at most 8 each, `sanitize_foreign_access`) -> `device_status.foreign_access_json` (in 0063). While the latest report has one, the phone refuses the parent PIN and the summary shows a red warning (`#foreign-access`, the Attention row lands there) with the steps (`window_relock::foreign_view`, typed: the apps by the phone's name, the packages behind its ⓘ; Unlock for 2 h, turn them off and uninstall them on the phone, Lock again, change the Parent PIN); `phone_foreign_access` in the security log when it appears, changes or goes.
-- **Unseen boots** (H4, `boot_witness`): status `unseen_boots` `{count, last_at_ms}` (read leniently) -> `device_status.unseen_boots_count`/`_last_at_ms`; `boot_unseen` in the security log when the count rose; for 30 days an Attention alarm and About This Phone's "Starts without Vibb" row (`boot_witness::unseen`, typed: count, last time, `BootAdvice`) say so ("safe mode, or a start cut short"), advising "Block safe mode" or, with it on since before the boot was noticed (`device_policy.disallow_safe_boot_set_at_ms`, in 0064: set when the hardening card or the first kid PIN turns it on, cleared when off), "probably a start cut short" - otherwise both explanations. `disallow_safe_boot` by default (design 24b S4) waits for device check 6 on the Jelly Star.
+- **Unseen boots** (H4, `boot_witness`): status `unseen_boots` `{count, last_at_ms}` (read leniently) -> `device_status.unseen_boots_count`/`_last_at_ms`; `boot_unseen` in the security log when the count rose; for 30 days an Attention alarm and About This Phone's "Starts without Vibb One" row (`boot_witness::unseen`, typed: count, last time, `BootAdvice`) say so ("safe mode, or a start cut short"), advising "Block safe mode" or, with it on since before the boot was noticed (`device_policy.disallow_safe_boot_set_at_ms`, in 0064: set when the hardening card or the first kid PIN turns it on, cleared when off), "probably a start cut short" - otherwise both explanations. `disallow_safe_boot` by default (design 24b S4) waits for device check 6 on the Jelly Star.
 - Tests: `window_relock::tests` (the typed views in Oslo time), `boot_witness::tests`, `src/tests/window_relock.rs` (the summary's groups), `src/tests/hardening.rs` (`unseen_boots_*`).
 
 ## The lock's glance page (design 25, `docs/design/25-lock-glance.md`, migration `0066_lock_glance.sql`)
@@ -1293,14 +1294,14 @@ needed to manage the phone, delete on a schedule, never store notification or me
 ## About This Phone and Advanced (design 31 step 3, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **Two sub-pages** (`src/handlers/device_pages.rs`, `device_about.html`, `device_advanced.html`), reached from two
-  rows at the bottom of the device page ("About This Phone · Vibb 0.23.6", "Advanced"). A rebuilt sub-page has the
+  rows at the bottom of the device page ("About This Phone · Vibb One 0.23.6", "Advanced"). A rebuilt sub-page has the
   §3.0 header - a back link to the phone (`.nav-back`) and the large title - and includes `partials/tab_bar.html`
   alone, without the brand bar (gone since step 15).
 - **About This Phone** (`GET /devices/{id}/about`, read-only): Connection (Status "Online since 08:12" from
   `connection_state`, Last contact, Last full report, Network from `limits::LastAccess`), Sound (`sound_mode::state`),
   Software (Vibb version, the music app's version from its versionCode, "Settings from server" = Applied or a
   `PolicyProblem` title, Battery optimisation), Diagnostics (crash reports, each a row whose ⓘ has the trace;
-  "Starts without Vibb" from `boot_witness::unseen`; the time lock). Times are local (`display_time`), the exact one
+  "Starts without Vibb One" from `boot_witness::unseen`; the time lock). Times are local (`display_time`), the exact one
   in `title`. Rows are `device_pages::Row` (`partials/info_row.html`: a row with a sentence opens it as an ⓘ panel).
 - **Advanced** (`GET /devices/{id}/advanced`): Restrictions (the 10 hardening switches as one form, split into
   groups for their footers, plus the Backup to Google row), App screens (`kiosk-block` + `PlayNote`s), Updates &
@@ -1317,7 +1318,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `/about#diagnostics`, Backup to Google → `/advanced#restrictions`, access removed → `/advanced#connection`, restart
   once → `/advanced#app-screens`. Four orange rows added in the fix round (qa-31-s3-code M4/L4, decided yes on the
   user's behalf, the user can overrule): Play install mode and Play openable (not pausable, "Block other apps'
-  screens" off) → `#app-screens`; "Vibb isn't the Home app" and "Boot cover wasn't shown" → `#updates`. Their facts
+  screens" off) → `#app-screens`; "Vibb One isn't the Home app" and "Boot cover wasn't shown" → `#updates`. Their facts
   come from Advanced's own builders (`device_pages::play_notes`, `device_pages::escapes_card`).
 - **Times:** past ones with `Zone::when`, end times with `Zone::until` ("14:05", "00:05 tomorrow", "Mon 14:30",
   "20 Oct 14:30"; qa-31-s3-code M2): the live code, the typed-code pause, install mode. About's Last contact comes
@@ -1438,7 +1439,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
   `device_music.html`, its parts from `handlers::music::device_card`; the device page's row "Music · 6 in library",
   "None" with nothing on, "Needs attention" (orange) while the page shows a warning, "Couldn't read" on a failed
-  read): warnings at the top (Vibb can't deliver music yet, the music app not reachable), **Music app** (the catalog
+  read): warnings at the top (Vibb One can't deliver music yet, the music app not reachable), **Music app** (the catalog
   switch, "Not in the catalog ›" to `/music/settings#app` without a catalog row), **Library** (one switch per entry,
   `#music-entry-<id>`, the phone's error for the entry under its name while it is on), the **settings form**
   `#music-settings` (one form, `v=2`, design 30: Mobile data, Storage limit and Volume cap pickers, Storytel - groups
@@ -1448,9 +1449,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   group, local). A phone not set up has the page. Every read is a 500 on a DB error ("Couldn't read this phone"),
   never an empty library or default settings.
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
-  warnings and six orange rows - "Vibb can't deliver music yet" and "Music app not reachable" (→ the page),
+  warnings and six orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
-  "Update Vibb and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  "Update Vibb One and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
@@ -1770,6 +1771,23 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - Tests: `tests::provisioning` (the add flow's table from the rendered forms, a connected phone, the name and Wi-Fi
   refusals, "Server setup needed", 404s), `admin_auth::the_sign_in_pages_use_the_new_components`,
   `shell::the_tab_pages_open_on_their_large_title`, repointed `enrollment.rs`, `devices_list.rs`.
+
+## The launcher is "Vibb One" (design 34 step 12, P11, `docs/design/34-launcher-polish.md`)
+
+- **Every PWA text that names the launcher says "Vibb One"** (About This Phone's "Vibb One" row and the device page's
+  "About This Phone · Vibb One 0.23.6", "Vibb One's Settings", Attention titles such as "Vibb One isn't the Home app",
+  `provision_qr.html`'s setup text, "Vibb One didn't install that app", the clock warning's Settings path "›
+  Vibb One ›", ...). **Not renamed**: "Vibb Phone" (the PWA), "Vibb style" (the icon state), "Vibb music"/"Vibb
+  Musikk" (the music app and its catalog row), "Import from Vibb", "(from Vibb)", the Vibb box/Pi (the vibb music
+  project), "Vibb night" (a wallpaper), the Vibb logo/mark, the manifest's "Vibb phones", the 2FA issuer "Kids
+  Device MDM" (it only labels new authenticator entries; a change would make a second entry look like another
+  account), and every package, the admin component and the `kids-launcher-mdm.apk` asset (the QR and the catalog
+  match by package/`is_launcher`, never by name).
+- **Migration `0077_vibb_one.sql`**: `UPDATE tracked_apps SET name = 'Vibb One' WHERE is_launcher = 1 AND name IN
+  ('Vibb', 'Kids Launcher')` - the two default names (the mockups' and the old runbook's; there is no seed). Any other
+  name is the parent's and stays; nothing reads the name. Test:
+  `tracked_apps::the_launcher_row_becomes_vibb_one_only_from_a_default_name` (an old database both ways: both
+  defaults renamed, a parent's name, "vibb" in another case and non-launcher rows kept).
 
 ## Current status (2026-08-08, `v0.13.0`)
 

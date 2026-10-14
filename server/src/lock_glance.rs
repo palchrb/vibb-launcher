@@ -83,12 +83,12 @@ impl Note {
                 "The phone opens straight to its home screen and shows none of this.",
             ),
             Note::NeedsUpdate => (
-                "Vibb can't show these yet",
-                "Update Vibb on the phone to show notifications on its lock screen.",
+                "Vibb One can't show these yet",
+                "Update Vibb One on the phone to show notifications on its lock screen.",
             ),
             Note::NoNotificationAccess => (
                 "Missed calls only",
-                "Vibb has no notification access, so messages don't show. The fix is under \
+                "Vibb One has no notification access, so messages don't show. The fix is under \
                  Launcher on the phone's page.",
             ),
         };

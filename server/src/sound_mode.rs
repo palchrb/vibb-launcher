@@ -86,14 +86,14 @@ impl Dnd {
         Some(match self {
             Dnd::Off => return None,
             Dnd::PriorityOnly => {
-                "Only the calls it lets through ring. Your child can't change the sound from Vibb \
+                "Only the calls it lets through ring. Your child can't change the sound from Vibb One \
                  while it is on."
             }
             Dnd::AlarmsOnly => {
-                "Calls don't ring. Your child can't change the sound from Vibb while it is on."
+                "Calls don't ring. Your child can't change the sound from Vibb One while it is on."
             }
             Dnd::TotalSilence => {
-                "Calls and alarms don't ring. Your child can't change the sound from Vibb while it \
+                "Calls and alarms don't ring. Your child can't change the sound from Vibb One while it \
                  is on."
             }
         })

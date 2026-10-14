@@ -223,13 +223,13 @@ impl LockNote {
         match self {
             LockNote::SafeModeAllowed => warning(
                 "Safe mode is allowed",
-                "Safe mode starts the phone without Vibb, so it skips the lock. Turn on Block \
+                "Safe mode starts the phone without Vibb One, so it skips the lock. Turn on Block \
                  safe mode in Advanced › Restrictions."
                     .to_string(),
                 None,
             ),
             LockNote::NeedsUpdate => warning(
-                "Vibb needs an update",
+                "Vibb One needs an update",
                 "This version has no lock. Until it updates, the phone keeps its own screen lock, if any."
                     .to_string(),
                 None,
@@ -241,21 +241,21 @@ impl LockNote {
             ),
             LockNote::Off(Inactive::AndroidCredential) => warning(
                 "Android's screen lock is still on",
-                "Remove it so Vibb's lock can take over: enter the Parent PIN on the phone, then \
+                "Remove it so Vibb One's lock can take over: enter the Parent PIN on the phone, then \
                  Settings › Security › Screen lock › None."
                     .to_string(),
                 Some("With USB debugging allowed: adb shell locksettings clear --old <PIN>".to_string()),
             ),
             LockNote::Off(Inactive::KeyguardNotDisabled) => warning(
                 "Android's lock can't be turned off",
-                "Android refused, so Vibb's lock stays off. Vibb may no longer manage this phone."
+                "Android refused, so Vibb One's lock stays off. Vibb One may no longer manage this phone."
                     .to_string(),
-                Some("Check that Vibb is still the device owner: adb shell dpm list-owners".to_string()),
+                Some("Check that Vibb One is still the device owner: adb shell dpm list-owners".to_string()),
             ),
             LockNote::Off(Inactive::CrashGuard) => warning(
                 "Lock turned off after crashes",
                 "It crashed several times in a row. The phone tries it again within 10 minutes of \
-                 its next check-in; update Vibb if this repeats."
+                 its next check-in; update Vibb One if this repeats."
                     .to_string(),
                 None,
             ),
@@ -268,7 +268,7 @@ impl LockNote {
             ),
             LockNote::Off(Inactive::Other(code)) => warning(
                 "Lock is off on the phone",
-                "Vibb reported a reason this server doesn't know.".to_string(),
+                "Vibb One reported a reason this server doesn't know.".to_string(),
                 Some(format!("The phone reported \"{code}\".")),
             ),
             LockNote::CallsCantRing(package) => warning(

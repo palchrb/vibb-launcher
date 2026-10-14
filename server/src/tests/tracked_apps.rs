@@ -414,7 +414,7 @@ async fn only_the_parent_confirms_a_package_a_phone_reports() {
     let release = &refused[refused.find(r#"id="release""#).unwrap()..];
     assert!(
         release.contains(r#"data-flash="package""#)
-            && release.contains("Vibb didn't install that app"),
+            && release.contains("Vibb One didn't install that app"),
         "{release}"
     );
     assert_eq!(catalog_package().await, "");
@@ -1189,7 +1189,7 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
     let (emil, _) = app.create_device("Emil").await;
     let launcher = catalog_row(
         &app,
-        "Kids Launcher",
+        "Vibb One",
         "me.vibb.launcher",
         Some("launcher-v0.32.0"),
         Some("launcher-v"),
@@ -1800,7 +1800,7 @@ async fn the_launcher_is_on_all_phones_only_once_there_are_some() {
     let cookie = app.admin_cookie().await;
     let launcher = catalog_row(
         &app,
-        "Vibb",
+        "Vibb One",
         "me.vibb.launcher",
         Some("launcher-v1.0.0"),
         None,
@@ -1818,4 +1818,36 @@ async fn the_launcher_is_on_all_phones_only_once_there_are_some() {
     let _ = app.enrolled_device("Anna").await;
     let html = app.get_page("/apps", &cookie).await.text();
     assert!(row_text(&html).contains("Launcher · all phones"), "{html}");
+}
+
+/// Design 34 P11 (migrations/0077): the launcher's catalog row is "Vibb One" when it still had a
+/// default name ("Vibb", "Kids Launcher"); a name the parent chose, and a row that isn't the
+/// launcher's, stay as they were.
+#[tokio::test]
+async fn the_launcher_row_becomes_vibb_one_only_from_a_default_name() {
+    for (name, is_launcher, want) in [
+        ("Vibb", 1, "Vibb One"),
+        ("Kids Launcher", 1, "Vibb One"),
+        ("Ellas telefon", 1, "Ellas telefon"),
+        ("vibb", 1, "vibb"),
+        ("Vibb", 0, "Vibb"),
+        ("Kids Launcher", 0, "Kids Launcher"),
+    ] {
+        let (db, _dir) = super::cleanup::migrated_before(77).await;
+        sqlx::query(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, is_launcher) \
+             VALUES (?, 'me.vibb.launcher', 'palchrb/vibb-launcher', ?)",
+        )
+        .bind(name)
+        .bind(is_launcher)
+        .execute(&db)
+        .await
+        .unwrap();
+        super::cleanup::finish(&db).await;
+        let got: String = sqlx::query_scalar("SELECT name FROM tracked_apps")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(got, want, "{name:?}, is_launcher {is_launcher}");
+    }
 }

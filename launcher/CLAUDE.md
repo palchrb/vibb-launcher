@@ -1,4 +1,4 @@
-# Kids Launcher — Project Context for Claude Code
+# Vibb One (the launcher) — Project Context for Claude Code
 
 ## What this is
 
@@ -613,6 +613,19 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   bare, card and card + track, per channel at 8 bits.
 - Not emulator-checked yet: Kid Settings at 320/360/411 dp and font scale 1.0/1.3/2.0 in nb and en, TalkBack on the
   halves (read-only under DND too), the press.
+
+## The name "Vibb One" (design 34 step 12, P11, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **What users see**: `app_name` "Vibb One" (`res/values/donottranslate.xml`; debug "Vibb One (debug)" in
+  `src/debug`) - Settings › Apps, permission dialogs, the Home-app picker, notification headers, Recents;
+  `notification_listener_title` "Vibb One" (en and nb, the anchor's ongoing notification); the VPN session
+  `VPN_SESSION` = "Vibb One filter" (`KidVpnService`, Android's VPN settings and its key dialog).
+- **What stays**: the packages `me.vibb.launcher`(`.debug`), the Kotlin namespace `com.kidslauncher.mdm`, the admin
+  component, the `kids-launcher-mdm.apk` asset (the QR's URL and checksum), CI names - nothing in provisioning,
+  updates or the music app reads the label (the music app names the launcher by package). The PWA and the catalog row
+  (server migration 0077) follow on the server's side.
+- Test: `ui/VibbOneNameTest` (the label, the debug label, the notification title in en and nb, the VPN session, and
+  no "Kids Launcher", "Kids Device MDM" or "Kid Phone Filter" left in `src/main`/`src/debug`).
 
 ## Building without tsnet.aar
 

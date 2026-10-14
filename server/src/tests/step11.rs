@@ -92,7 +92,10 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     )
     .await;
     let page = advanced().await;
-    assert!(page.contains("Update Vibb for the boot cover"), "{page}");
+    assert!(
+        page.contains("Update Vibb One for the boot cover"),
+        "{page}"
+    );
     post_status(
         &app,
         &token,
@@ -212,7 +215,10 @@ async fn device_page_explains_the_fence_and_the_filter() {
     post_status(&app, &token, json!({ "capabilities": ["pin_lock_v1"] })).await;
     let html = advanced().await;
     assert!(html.contains("Updates &amp; notifications"), "{html}");
-    assert!(html.contains("Update Vibb for these switches"), "{html}");
+    assert!(
+        html.contains("Update Vibb One for these switches"),
+        "{html}"
+    );
     assert!(
         html.contains("neither the update fence nor the notification filter"),
         "{html}"

@@ -168,7 +168,7 @@ fn reword(raw: &str) -> Option<String> {
         "nothing was open" => "Nothing was unlocked",
         "location is off for this device" => "Location is off on the phone",
         "no location fix" => "The phone couldn't find its location",
-        "unknown command - update the launcher" => "Vibb on the phone is too old for this",
+        "unknown command - update the launcher" => "Vibb One on the phone is too old for this",
         _ => "",
     };
     if !known.is_empty() {
@@ -318,7 +318,7 @@ fn status_words(
                 "Sent",
                 "grey",
                 Some(
-                    "This Vibb can't confirm an erase. An erased phone stops reporting."
+                    "This phone's Vibb One can't confirm an erase. An erased phone stops reporting."
                         .to_string(),
                 ),
             ),
@@ -1114,7 +1114,7 @@ mod tests {
             ),
             (
                 "unknown command - update the launcher",
-                "Vibb on the phone is too old for this",
+                "Vibb One on the phone is too old for this",
             ),
         ] {
             assert_eq!(

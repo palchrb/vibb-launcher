@@ -281,7 +281,9 @@ async fn lock_again_follows_the_status_and_the_capability() {
     let quick = group(&html, "quick");
     assert!(quick.contains(paused), "{quick}");
     assert!(
-        quick.contains("It ends by itself; this version of Vibb can't be locked again from here."),
+        quick.contains(
+            "It ends by itself; this version of Vibb One can't be locked again from here."
+        ),
         "{quick}"
     );
     assert!(

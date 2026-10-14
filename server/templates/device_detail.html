@@ -60,7 +60,7 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
         </div>
-        <p class="group-footer">Type the code in Vibb's Settings on the phone, or scan the QR code at setup. A new code replaces the last one.</p>
+        <p class="group-footer">Type the code in Vibb One's Settings on the phone, or scan the QR code at setup. A new code replaces the last one.</p>
     </section>
     {% else %}
 
@@ -107,7 +107,7 @@
             launcher too (qa-31-s10-code M1). -#}
         {% if paused %}
         <div class="attention attention-alarm" data-warning="restrictions-paused">
-            <span class="attention-text">Unlocked on the phone<span class="attention-sub">Restrictions are paused (from here, or with the Parent PIN in Vibb's Settings): apps, Settings and the Play Store are open. {% if relock.lock_again %}It ends by itself, or tap Lock again to end it now.{% else %}It ends by itself; this version of Vibb can't be locked again from here.{% endif %}</span></span>
+            <span class="attention-text">Unlocked on the phone<span class="attention-sub">Restrictions are paused (from here, or with the Parent PIN in Vibb One's Settings): apps, Settings and the Play Store are open. {% if relock.lock_again %}It ends by itself, or tap Lock again to end it now.{% else %}It ends by itself; this version of Vibb One can't be locked again from here.{% endif %}</span></span>
         </div>
         {% endif %}
         <div class="act-grid">
@@ -266,7 +266,7 @@
             <div class="row" data-row="relock-turned-off"><span class="row-label text-alarm">Turned off<span class="row-sub">{{ f.turned_off|join(", ") }}. Turn them on in the phone's Settings during a pause.</span></span></div>
             {% endif %}
             {% if f.own_notifications_off %}
-            <div class="row" data-row="relock-notifications"><span class="row-label">Vibb's notifications</span><span class="row-value row-value-alarm">Off</span></div>
+            <div class="row" data-row="relock-notifications"><span class="row-label">Vibb One's notifications</span><span class="row-value row-value-alarm">Off</span></div>
             {% endif %}
             {% if !f.failures.is_empty() %}
             <div class="row" data-row="relock-failed"><span class="row-label text-alarm">Steps that failed<span class="row-sub">{{ f.failures|join(", ") }}</span></span></div>
