@@ -90,7 +90,7 @@ class SpotifyTrackerTest {
                 "pause_sent" in step -> emptyList<Event>().also { tracker.pauseSent() }
                 "resume_sent" in step -> emptyList<Event>().also { tracker.resumeSent() }
                 "not_ready" in step -> tracker.onNotReady()
-                "error" in step -> tracker.onPlaybackError()
+                "error" in step -> tracker.onPlaybackError(at)
                 "state" in step -> {
                     val posted = step["state"]!!.let { if (it is JsonNull) "null" else it.toString() }
                     val snapshot = SdkState.parse(posted)
@@ -126,6 +126,7 @@ class SpotifyTrackerTest {
             "relinked", "relinked_not_by_name", "relinked_other_artist", "unplayable", "unplayable_reset", "autoplay",
             "autoplay_window", "transfer_in", "queue_leftover", "step_back_stale", "restart_stale", "trackless", "shuffled",
             "start_old_advance", "context_artist", "context_playlist", "context_foreign", "context_autoplay", "context_leftover_add",
+            "end_paused_at_duration", "unplayable_at_boundary",
         )
         assertTrue("the sequences §9.2 and the QA fix round name: ${wanted - sequences.toSet()}", sequences.containsAll(wanted))
         for (name in sequences) replay(name)
@@ -157,16 +158,16 @@ class SpotifyTrackerTest {
         val q = (1..5).map { track(it) }
         val r = SpotifyTracker().apply { load(q, 0) }
         r.played(0, 4)
-        assertEquals(listOf("Unplayable 0"), r.onPlaybackError().map(::word))
+        assertEquals(listOf("Unplayable 0"), r.onPlaybackError(0).map(::word))
         r.played(1, 4, fresh = false)
-        assertEquals(listOf("Unplayable 1"), r.onPlaybackError().map(::word))
+        assertEquals(listOf("Unplayable 1"), r.onPlaybackError(0).map(::word))
         r.played(2, 4, fresh = true)
-        assertEquals("a tap of the kid's: the count starts again", listOf("Unplayable 2"), r.onPlaybackError().map(::word))
+        assertEquals("a tap of the kid's: the count starts again", listOf("Unplayable 2"), r.onPlaybackError(0).map(::word))
         r.played(3, 4, fresh = false)
-        assertEquals(listOf("Unplayable 3"), r.onPlaybackError().map(::word))
+        assertEquals(listOf("Unplayable 3"), r.onPlaybackError(0).map(::word))
         r.played(4, 4, fresh = false)
-        assertEquals(listOf("Unplayable 4 stop"), r.onPlaybackError().map(::word))
-        assertEquals("one error per item, not two", emptyList<String>(), r.onPlaybackError().map(::word))
+        assertEquals(listOf("Unplayable 4 stop"), r.onPlaybackError(0).map(::word))
+        assertEquals("one error per item, not two", emptyList<String>(), r.onPlaybackError(0).map(::word))
     }
 
     @Test
@@ -253,6 +254,120 @@ class SpotifyTrackerTest {
 
     private fun foreign() =
         SdkState(false, 0, 180_000, "spotify:track:FAKEautoplay0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), null)
+
+    // --- the emulator round of 2026-10-14 (N1, N2) ------------------------------------------------------------
+
+    @Test
+    fun `N1 - a pause at a track's end is the end, a pause before it or of ours is a pause`() {
+        // Spotify's pause at the full position after it ran out: no Paused, the next track is the advance, still playing
+        val t = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        t.played(0, 2)
+        assertEquals(listOf("Started 0"), t.onState(state(1, 0), 0).map(::word))
+        t.onState(state(1, 15_000), 15_000)
+        assertEquals("the end, held for the next state: the page asked again", listOf("Look"), t.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+        assertEquals(Mode.OURS, t.mode)
+        assertEquals("measured stays the last playing state", 15_000L, t.measured!!.positionMs)
+        assertEquals(listOf("ItemChanged 1 auto"), t.onState(state(2, 0, prev = listOf(1)), 20_100).map(::word))
+        // the kid's pause right at the end stays the kid's
+        val k = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        k.played(0, 2)
+        k.onState(state(1, 0), 0)
+        k.onState(state(1, 15_000), 15_000)
+        k.pauseSent()
+        assertEquals(listOf("Paused ours"), k.onState(state(1, 19_900, paused = true), 19_950).map(::word))
+        // a pause Spotify posts 2 s before the end (a focus loss) is a pause, not the end
+        val f = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        f.played(0, 2)
+        f.onState(state(1, 0), 0)
+        f.onState(state(1, 13_000), 13_000)
+        assertEquals(listOf("Paused spotify"), f.onState(state(1, 18_000, paused = true), 18_000).map(::word))
+        // a pause at the duration of a track that hadn't run out (a seek to its very end): a pause
+        val g = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        g.played(0, 2)
+        g.onState(state(1, 0), 0)
+        assertEquals(listOf("Paused spotify"), g.onState(state(1, 20_000, paused = true), 1_000).map(::word))
+    }
+
+    @Test
+    fun `N1 - Spotify's advance after a pause that wasn't ours plays again, after our pause it stays quiet`() {
+        val t = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        t.played(0, 2)
+        t.onState(state(1, 0), 0)
+        t.onState(state(1, 13_000), 13_000)
+        assertEquals(listOf("Paused spotify"), t.onState(state(1, 17_000, paused = true), 17_000).map(::word))
+        assertEquals("playing again with the next track", listOf("ItemChanged 1 auto", "Resumed"), t.onState(state(2, 0, prev = listOf(1)), 21_000).map(::word))
+        // our own pause pending: no resume of ours to show
+        val u = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        u.played(0, 2)
+        u.onState(state(1, 0), 0)
+        u.onState(state(1, 18_000), 18_000)
+        u.pauseSent()
+        assertEquals(listOf("ItemChanged 1 auto"), u.onState(state(2, 0, prev = listOf(1)), 20_000).map(::word))
+    }
+
+    @Test
+    fun `N1 - the last item's pause at its end is the end, a window's end without its add the next window`() {
+        val t = SpotifyTracker().apply { load((1..2).map { track(it) }, 1) }
+        t.played(1, 1)
+        t.onState(state(2, 0), 0)
+        t.onState(state(2, 15_000), 15_000)
+        assertEquals(listOf("Ended"), t.onState(state(2, 20_000, paused = true), 20_000).map(::word))
+        // a window of one whose add never landed: the gap's new window, as the reset to 0 gives it
+        val w = SpotifyTracker().apply { load((1..5).map { track(it) }, 0) }
+        w.played(0, 0)
+        assertEquals(listOf("Started 0", "QueueAdd 1"), w.onState(state(1, 0), 0).map(::word))
+        w.onState(state(1, 15_000), 15_000)
+        assertEquals(listOf("NewWindow 1"), w.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+    }
+
+    @Test
+    fun `L2 - a pause at the end Spotify never follows is the end after a second look, never a stall`() {
+        val t = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        t.played(0, 2)
+        t.onState(state(1, 0), 0)
+        t.onState(state(1, 15_000), 15_000)
+        assertEquals(listOf("Look"), t.onState(state(1, 20_000, paused = true), 20_000).map(::word))
+        assertEquals("a repeat before the look is nothing new", emptyList<String>(), t.onState(state(1, 20_000, paused = true), 21_000).map(::word))
+        assertEquals("the page's answer: still there, the end - the next window", listOf("NewWindow 1"), t.onState(state(1, 20_000, paused = true), 22_100).map(::word))
+        // a context whose last track paused at its end: the context's end
+        val c = SpotifyTracker().apply { loadContext("spotify:playlist:FAKEplaylist0000000001", null) }
+        c.playedContext(null)
+        fun cs(pos: Long, paused: Boolean = false) = SdkState(paused, pos, 20_000, uri(1), null, emptyList(), emptyList(), "track", "Fake track 1", listOf("Fake Artist"), "spotify:playlist:FAKEplaylist0000000001")
+        c.onState(cs(0), 0)
+        c.onState(cs(15_000), 15_000)
+        assertEquals(listOf("Look"), c.onState(cs(20_000, paused = true), 20_000).map(::word))
+        assertEquals(listOf("Ended"), c.onState(cs(20_000, paused = true), 22_000).map(::word))
+        // a playing state in between starts the wait again
+        val p = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        p.played(0, 2)
+        p.onState(state(1, 0), 0)
+        p.onState(state(1, 15_000), 15_000)
+        p.onState(state(1, 20_000, paused = true), 20_000)
+        assertEquals(listOf("ItemChanged 1 auto"), p.onState(state(2, 0, prev = listOf(1)), 20_500).map(::word))
+    }
+
+    @Test
+    fun `N2 - an error at a boundary names the next item, mid-track or at the queue's end the current one`() {
+        assertEquals(3, replay("unplayable_at_boundary").index)
+        // mid-track: the current one, as ever
+        val m = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        m.played(0, 2)
+        m.onState(state(1, 0), 0)
+        m.onState(state(1, 5_000), 5_000)
+        assertEquals(listOf("Unplayable 0"), m.onPlaybackError(6_000).map(::word))
+        // the queue's last item has no next: the current one
+        val l = SpotifyTracker().apply { load((1..2).map { track(it) }, 1) }
+        l.played(1, 1)
+        l.onState(state(2, 0), 0)
+        l.onState(state(2, 15_000), 15_000)
+        assertEquals(listOf("Unplayable 1"), l.onPlaybackError(20_000).map(::word))
+        // beyond what Spotify knows (no add yet) neither: the current one
+        val k = SpotifyTracker().apply { load((1..3).map { track(it) }, 0) }
+        k.played(0, 0)
+        k.onState(state(1, 0), 0)
+        k.onState(state(1, 15_000), 15_000)
+        assertEquals(listOf("Unplayable 0"), k.onPlaybackError(20_000).map(::word))
+    }
 
     // --- qa-26c-step4-code's five counter-examples (H1 twice, M1, L1, L2), red on a10e7fe -----------------
 
@@ -366,7 +481,7 @@ class SpotifyTrackerTest {
         assertEquals(0, t.index)
         assertEquals("Spotify picks: any track of the context", listOf("TrackChanged ${uri(9)}"), t.onState(inContext(9, 0), 5_000).map(::word))
         assertNull("a state with no name: no title (the renderer keeps the entry's)", (t.onState(inContext(10, 0, name = null), 6_000).single() as Event.TrackChanged).title)
-        assertEquals("no unplayable item in a context: Spotify skips it", emptyList<String>(), t.onPlaybackError().map(::word))
+        assertEquals("no unplayable item in a context: Spotify skips it", emptyList<String>(), t.onPlaybackError(0).map(::word))
         assertEquals(SpotifyTracker.Measured(0, 0, 6_000, true), t.measured)
     }
 

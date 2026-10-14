@@ -148,14 +148,17 @@ data class CallHold(val inCall: Boolean = false, val holdSent: Boolean = false)
 enum class CallMusicAction { NONE, HOLD, RELEASE }
 
 /**
- * One look at the call ([inCall]) and the music session ([playing]). A call starting while it plays
- * -> HOLD ([MUSIC_CALL_HOLD]); the call over -> RELEASE, only after a HOLD. The music app decides the
- * rest itself (qa-26a-step3b-code H1): its pause is its own, so the kid's sleep timer runs on; it
- * plays again only what it paused, not after the kid's own play and pause during the call, nor after
- * the timer ended meanwhile, nor while it may not play. A pause the kid made before the call: no HOLD.
+ * One look at the call ([inCall]) and whether the music app has a session ([session]). A call starting
+ * while there is one -> HOLD ([MUSIC_CALL_HOLD]: "a call began", playing or not - emulator round
+ * 2026-10-14 N3, qa-26c-emu-music-code M2: the music app's web player is often paused by Chromium's own
+ * focus loss before this look, and a play tapped during a call must start nothing); the call over ->
+ * RELEASE, only after a HOLD. The music app decides the rest itself (qa-26a-step3b-code H1): a call that
+ * begins while nothing plays is no pause of its; its pause is its own, so the kid's sleep timer runs on;
+ * it plays again only what it paused, not after the kid's own play and pause during the call, nor after
+ * the timer ended meanwhile, nor while it may not play.
  */
-fun callHoldStep(state: CallHold, inCall: Boolean, playing: Boolean): Pair<CallHold, CallMusicAction> = when {
-    !state.inCall && inCall -> if (playing) CallHold(inCall = true, holdSent = true) to CallMusicAction.HOLD else CallHold(inCall = true) to CallMusicAction.NONE
+fun callHoldStep(state: CallHold, inCall: Boolean, session: Boolean): Pair<CallHold, CallMusicAction> = when {
+    !state.inCall && inCall -> if (session) CallHold(inCall = true, holdSent = true) to CallMusicAction.HOLD else CallHold(inCall = true) to CallMusicAction.NONE
     state.inCall && !inCall -> CallHold() to (if (state.holdSent) CallMusicAction.RELEASE else CallMusicAction.NONE)
     else -> state to CallMusicAction.NONE
 }

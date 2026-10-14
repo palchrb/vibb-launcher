@@ -221,6 +221,26 @@ fun spotifyPauseCause(ours: Boolean): PauseCause = if (ours) PauseCause.USER els
 fun spotifySelfResumeShown(pausedStep: Boolean, detached: Boolean, mayPlay: Boolean, askedPaused: Boolean): Boolean =
     !pausedStep && !detached && mayPlay && !askedPaused
 
+/**
+ * How long a play the WebView holds paused ([heldForMs] since its pause, the renderer's `heldByPage`) still counts as
+ * playing for the call rule (`callStep`; emulator round 2026-10-14 N3, qa-26c-emu-music-code M1): a ring's focus loss
+ * pauses the page 60-220 ms before the call's `CALL_HOLD` or audio mode arrives, so such a hold is the call's to pause and
+ * play again. An older hold - another app took the audio for good (a video, a game) - is never played again by a later
+ * call's end. The session itself never says playing while nothing plays (`showsPlaying`).
+ */
+const val SPOTIFY_HELD_RECENT_MS = 5_000L
+
+/** Whether a hold that began [heldForMs] ago ([held]) is the call rule's to count as playing ([SPOTIFY_HELD_RECENT_MS]). */
+fun spotifyHeldRecently(held: Boolean, heldForMs: Long): Boolean = held && heldForMs in 0 until SPOTIFY_HELD_RECENT_MS
+
+/**
+ * Whether the web player hears a call (N3): the launcher's (`CALL_HOLD` .. `CALL_RELEASE`, sent at every call's begin while
+ * the music app has a session - "a call began") or the audio mode's (a ringing or active system call, `callMode`: the
+ * backstop for a launcher without notification-listener access or an older one): a play tapped during a call starts
+ * nothing then (qa-26c-6l-fixes L2), and nothing plays after it that the call didn't pause.
+ */
+fun spotifyInCall(launcherInCall: Boolean, modeInCall: Boolean): Boolean = launcherInCall || modeInCall
+
 /** The deadline of a start that begins at [nowMs] (the elapsed clock). */
 fun spotifyStartDeadline(nowMs: Long): Long = nowMs + SPOTIFY_START_BUDGET_MS
 

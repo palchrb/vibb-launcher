@@ -61,6 +61,7 @@ import me.vibb.music.logic.sleepVolume
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.spotifyPauseCause
 import me.vibb.music.logic.spotifySelfResumeShown
+import me.vibb.music.logic.spotifyHeldRecently
 import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
@@ -280,10 +281,23 @@ internal class SpotifyRenderer(
      * to an alarm, a ring or another app (§5.6; qa-26c-6l-fixes-code M1). The intent is kept: the page isn't closed
      * after 5 idle minutes, and the service's call rule counts it as playing, so `CALL_RELEASE` (or Chromium's own
      * resume) brings the music back after a long call. Cleared by any play or pause of ours, a resume, a load, a
-     * detach, a suspension.
+     * detach, a suspension. The call rule counts it as playing only while fresh ([heldRecently]).
      */
     var heldByPage = false
-        private set
+        private set(value) {
+            if (value && !field) heldAt = ports.now()
+            field = value
+        }
+
+    /** When the WebView last began holding our track paused ([heldByPage]). */
+    private var heldAt = 0L
+
+    /**
+     * A hold the call rule counts as playing (`callStep`; qa-26c-emu-music-code M1): the WebView paused our track less than
+     * `SPOTIFY_HELD_RECENT_MS` ago - a ring's focus loss, which comes just before the call's own word. Another app that
+     * took the audio for good minutes ago is no play of ours a call's end would start again.
+     */
+    fun heldRecently(): Boolean = spotifyHeldRecently(heldByPage, ports.now() - heldAt)
 
     /**
      * A pause asked while the WebView held our track paused (the kid's pause, the sleep timer's end, the call rule;
@@ -1192,7 +1206,7 @@ internal class SpotifyRenderer(
         // the SDK's own text only in a debug build (§7.1; qa-26c-step5a-code L8): it is foreign text
         ports.log("spotify: the web player said $kind" + if (BuildConfig.DEBUG) ": $message" else "")
         if (kind == "playback") {
-            apply(tracker.onPlaybackError())
+            apply(tracker.onPlaybackError(ports.now()))
             changed()
             return
         }

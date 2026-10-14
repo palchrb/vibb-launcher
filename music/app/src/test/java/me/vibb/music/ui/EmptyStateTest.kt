@@ -83,4 +83,17 @@ class EmptyStateTest {
             assertFalse("nothing moves or taps: $moving", empty.contains(moving))
         }
     }
+
+    @Test
+    fun `N11 - Nytt offers Fjern alle only when there is something to clear`() {
+        assertFalse(showsClearAll(0))
+        assertTrue(showsClearAll(1))
+        assertTrue(showsClearAll(12))
+        val news = flat("src/main/java/me/vibb/music/ui/ListScreens.kt").substringAfter("fun NewsScreen(").substringBefore("fun SearchScreen(")
+        // the one clear button sits in the branch that has rows; the empty one's header has no trailing action
+        assertEquals(1, Regex("R\\.string\\.clear_all").findAll(news).count())
+        val withRows = news.substringAfter("if (showsClearAll(rows.size)) {").substringBefore("} else {")
+        assertTrue(withRows.contains("R.string.clear_all") && withRows.contains("button(null, onClear)"))
+        assertTrue(news.contains("} else { // nothing to clear: the header's default trailing slot keeps the title centred Header(stringResource(R.string.back_library), onBack, stringResource(R.string.news_title)) }"))
+    }
 }

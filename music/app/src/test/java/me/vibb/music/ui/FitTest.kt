@@ -2,6 +2,7 @@ package me.vibb.music.ui
 
 import me.vibb.music.Fixtures.moduleFile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -233,7 +234,7 @@ class FitTest {
     }
 
     // The library's fit (design 34 P10 b, QA L1; qa-34-s11-code L1, N2): the cover from the measured slot in whole
-    // pixels, floor 120, then scroll.
+    // pixels, floor LIBRARY_COVER_MIN_DP (64 since N6), then scroll.
 
     /** Compose's `Dp.roundToPx`, written out here so the model below doesn't lean on the code under test. */
     private fun px(dp: Int, d: Float) = Math.round(dp * d)
@@ -298,17 +299,101 @@ class FitTest {
 
     @Test
     fun `the library on the Jelly Star at font scale 1_0, 1_3 and 2_0`() {
-        // v12's cover at 1.0, a little less at 1.3, the floor and a short scroll at 2.0 with three buttons only
+        // v12's cover at 1.0, a little less at 1.3; at 2.0 with a 24 dp status bar the cover gives way (N6: no scroll)
         assertEquals(270, fitOnJelly(1.0f, true, 48).coverPx)
         val at13 = fitOnJelly(1.3f, true, 48)
         assertTrue("1.3: ${at13.coverPx} px", at13.coverPx in 250 until 270 && !at13.scrolls)
         assertTrue("2.0 with gestures: no scroll", !fitOnJelly(2.0f, true, 24).scrolls)
         val at20 = fitOnJelly(2.0f, true, 48)
-        assertTrue(at20.scrolls)
-        assertEquals(180, at20.coverPx)
-        val lines20 = linePx(21, 2f, 1.5f) + linePx(13, 2f, 1.5f)
-        val over = librarySlotContentPx(at20.coverPx, lines20, 1.5f) - slotPx(2.0f, true, 48, 1.5f)
-        assertTrue("a short scroll ($over px)", over in 1..30)
+        assertTrue("2.0 with three buttons: ${at20.coverPx} px, no scroll", !at20.scrolls && at20.coverPx in px(LIBRARY_COVER_MIN_DP, 1.5f) until px(120, 1.5f))
+    }
+
+    // --- N6 (emulator round 2026-10-14): the library at font scale 2.0 with the bar, as the emulator drew it ---
+
+    /** Android 14+'s nonlinear font scaling at 2.0 (`FontScaleConverterTable`): an sp in dp, linear between the table's points. */
+    private fun nonlinear20(sp: Int): Float {
+        val from = floatArrayOf(8f, 10f, 12f, 14f, 18f, 20f, 24f, 30f, 100f)
+        val to = floatArrayOf(16f, 20f, 24f, 26f, 30f, 34f, 36f, 38f, 100f)
+        val i = from.indexOfLast { it <= sp }
+        if (from[i] == sp.toFloat()) return to[i]
+        return to[i] + (to[i + 1] - to[i]) * (sp - from[i]) / (from[i + 1] - from[i])
+    }
+
+    /** A one-line Nunito [Line] of [sp] at font scale 2.0 as Android 16 draws it (the nonlinear curve), in pixels. */
+    private fun linePx20(sp: Int, d: Float) = kotlin.math.ceil(1.364 * nonlinear20(sp) * d).toInt()
+
+    /**
+     * The emulator's screen (`wm density 240`, 320 x 569 dp, Android 16) at font scale 2.0 with the bar, as
+     * `d34-music-full-bar-2.0.png` shows it: the status bar grows with the font scale to 136 px (91 dp, not the model's
+     * 24 dp), the category tiles are 118 px and the bar 116 px; [nav] the navigation bar (gestures 24 dp, three buttons 48).
+     */
+    private fun emulatorSlot20(nav: Int, d: Float = 1.5f): Int {
+        val tiles = maxOf(px(64, d), px(44, d) + px(4, d) + linePx20(11, d))
+        val nowBar = 2 * px(6, d) + maxOf(px(44, d), linePx20(13, d) + linePx20(11, d))
+        return Math.round(569 * d) - 136 - px(nav, d) - px(10, d) - px(12, d) - px(52, d) - 3 * px(8, d) - tiles - nowBar
+    }
+
+    @Test
+    fun `N6 - at font scale 2_0 with the bar the hint and the dots fit - the cover gives way before the words`() {
+        val d = 1.5f
+        val slot = emulatorSlot20(nav = 24)
+        assertEquals("the emulator's slot: the header's bottom to the tiles' top (241..545 px, less a rounding)", 301, slot)
+        val lines = linePx20(21, d) + linePx20(13, d)
+        // step 11's floor of 120 dp needed 65 px more than the slot: the hint cut in half, the dots gone (the report)
+        val old = librarySlotContentPx(px(120, d), lines, d) - slot
+        assertTrue("the old floor overflowed by $old px", old in 50..80)
+        val fit = libraryFit(slot, lines, 0, d)
+        assertFalse("no scroll needed: every line shows", fit.scrolls)
+        assertTrue("the cover gives way: ${fit.coverPx} px", fit.coverPx in px(LIBRARY_COVER_MIN_DP, d) until px(120, d))
+        assertTrue("drawn as Compose rounds it, not a pixel cut", drawnContentAt20(fit.coverPx, d) <= slot)
+        // the linear model (an upper bound of the text) still fits, at the floor
+        val linear = libraryFit(slot - 2, linePx(21, 2f, d) + linePx(13, 2f, d), 0, d)
+        assertFalse(linear.scrolls)
+        // three-button navigation leaves less: the floor, and the slot scrolls (never a clip without a scroll)
+        val three = libraryFit(emulatorSlot20(nav = 48), lines, 0, d)
+        assertTrue(three.scrolls)
+        assertEquals(px(LIBRARY_COVER_MIN_DP, d), three.coverPx)
+        // without the bar the cover is the same (N2), the bar's room kept free
+        val reserve = nowBarRoomPx(linePx20(13, d) + linePx20(11, d), d)
+        val without = libraryFit(slot + reserve, lines, reserve, d)
+        assertEquals(fit.coverPx, without.coverPx)
+    }
+
+    /** [drawnContent] with the nonlinear 2.0 lines. */
+    private fun drawnContentAt20(coverPx: Int, d: Float): Int =
+        (coverPx + px(4, d)) + px(8, d) +
+            (linePx20(21, d) + px(3, d) + linePx20(13, d) + px(3, d) + px(3, d) + px(4, d)) +
+            px(8, d) + px(8, d)
+
+    @Test
+    fun `N6 - a category tile is as wide as its label, never cut to Mu…`() {
+        val room = 288f
+        // labels at 11 sp ExtraBold, 0.6 em a character (an upper bound of Nunito's), at font scale 1.0 and 2.0 (22 dp)
+        fun label(text: String, dpPerSp: Float) = text.length * 0.6f * 11 * dpPerSp
+        for (scale in listOf(1f, nonlinear20(11) / 11)) {
+            for (text in listOf("Alle", "Musikk", "Podkaster", "Lydbøker")) {
+                val w = categoryTileWidthFor(room, label(text, scale))
+                assertTrue("$scale $text: the label fits", w >= label(text, scale))
+                assertTrue("$scale $text: never narrower than a fifth", w >= categoryTileWidth(room) - 0.001f)
+            }
+        }
+        assertEquals("a short label keeps the fifth", categoryTileWidth(room), categoryTileWidthFor(room, 20f), 0.001f)
+        assertEquals("never wider than the row", room, categoryTileWidthFor(room, 1_000f), 0.001f)
+        // the screen measures each label at the font scale and gives its tile that width
+        val tiles = library.substringAfter("private fun CategoryTiles(").substringBefore("private fun CategoryTile(")
+        assertTrue(tiles.contains("categoryTileWidthFor(room, labelDp[name] ?: 0f)"))
+        assertTrue("measured once per names and font scale (N2)", tiles.contains("remember(measurer, density.density, density.fontScale, names)"))
+        assertTrue(tiles.contains("measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1)"))
+        assertTrue(library.contains("Line(label, CATEGORY_LABEL_SP, 800,"))
+    }
+
+    @Test
+    fun `N6 - a cover below 120 dp drops its kind chip, the hint line says the kind`() {
+        assertTrue(coverShowsKind(120f) && coverShowsKind(180f))
+        assertFalse(coverShowsKind(119f))
+        assertFalse(coverShowsKind(LIBRARY_COVER_MIN_DP.toFloat()))
+        assertTrue(library.contains("CoverBadges(e, coverShowsKind(cover))"))
+        assertTrue(body(library, "private fun CoverBadges(").contains("if (kind) {"))
     }
 
     @Test
@@ -330,7 +415,7 @@ class FitTest {
     fun `the carousel at the floor - the neighbours still peek, the pull and glyph follow the cover`() {
         for (screen in widths) {
             val room = available(screen)
-            for (cover in listOf(120f, 150f, 180f)) {
+            for (cover in listOf(LIBRARY_COVER_MIN_DP.toFloat(), 120f, 150f, 180f)) {
                 assertTrue("$screen/$cover: the cover fits", carouselSide(room, cover) >= 0f && cover + 2 * carouselSide(room, cover) <= room + 0.001f)
                 assertTrue("$screen/$cover: the neighbours peek", carouselPeek(room, cover) >= 46f - 0.001f)
             }

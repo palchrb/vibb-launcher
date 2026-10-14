@@ -20,9 +20,10 @@ private const val LOG_TAG = "MusicCalls"
  * afterwards only if we paused it - Element X voice and video calls included). The launcher sees
  * every call: a VoIP ring or call from the notification listener ([VoipCalls]), its own dialer's
  * ([OngoingCalls]) and a system call (Telecom, the audio mode). At the call's edges ([callHoldStep])
- * it tells the music app's player through its session's custom actions - [MUSIC_CALL_HOLD] when the
- * music plays as a call begins, [MUSIC_CALL_RELEASE] when that call is over - and the player pauses
- * as its own pause and decides whether to play again (qa-26a-step3b-code H1: a plain session pause
+ * it tells the music app's player through its session's custom actions - [MUSIC_CALL_HOLD] when a
+ * call begins while the music app has a session (playing or not: emulator round 2026-10-14 N3),
+ * [MUSIC_CALL_RELEASE] when that call is over - and the player pauses what it plays as its own pause,
+ * starts nothing during the call and decides whether to play again (qa-26a-step3b-code H1: a plain session pause
  * is the kid's and would end the sleep timer). The same for local and Sonos playback. Without
  * notification-listener access there is no session to see: the music app's own audio-mode backstop
  * covers a system call on a Sonos room then. Main thread.
@@ -49,10 +50,11 @@ object MusicCalls {
         val inCall = musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))
         if (inCall == state.inCall) return
         val session = musicSession(ctx)
+        // the log only: the hold goes whether or not the music plays (N3) - the music app decides
         val playing = session?.let { sessionPlay(it.playbackState?.state) } == SessionPlay.PLAYING
-        val (next, action) = callHoldStep(state, inCall, playing)
+        val (next, action) = callHoldStep(state, inCall, session != null)
         state = next
-        Log.i(LOG_TAG, "call ${if (inCall) "began" else "ended"}: music ${if (playing) "playing" else "not playing"} -> $action")
+        Log.i(LOG_TAG, "call ${if (inCall) "began" else "ended"}: music ${if (session == null) "no session" else if (playing) "playing" else "not playing"} -> $action")
         val command = when (action) {
             CallMusicAction.HOLD -> MUSIC_CALL_HOLD
             CallMusicAction.RELEASE -> MUSIC_CALL_RELEASE

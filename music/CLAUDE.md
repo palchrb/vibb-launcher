@@ -261,10 +261,14 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   loss, ducks, and plays again after a transient loss - the renderer requests none (a request of its own was taken by
   its own WebView at every play) and reads those pauses (`spotifyPauseCause`: not ours is `FAULT`) and resumes
   (`spotifySelfResumeShown`) from the page's states. A pause the WebView made while the kid wanted it playing is kept
-  as `heldByPage` (no 5-minute idle close; the call rule's `callStep` counts it as playing, so `CALL_RELEASE` plays
-  again whichever of `CALL_HOLD` and the ring's pause came first), and a pause asked during it (`askedPaused`: the kid,
-  the sleep timer, the call rule) pauses Chromium's own resume at once; during the launcher's call (`inCall`) no start
-  goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). **The session's `SpotifyPlayer` calls the renderer only qualified**
+  as `heldByPage` (no 5-minute idle close; the call rule's `callStep` counts it as playing only within
+  `SPOTIFY_HELD_RECENT_MS` (5 s) of its start - `heldRecently`, so `CALL_RELEASE` plays again whichever of `CALL_HOLD` and
+  the ring's pause came first, but another app that took the audio for good is never started again by a later call's
+  end: qa-26c-emu-music-code M1), and a pause asked during it (`askedPaused`: the kid,
+  the sleep timer, the call rule) pauses Chromium's own resume at once; during a call (`inCall`: the launcher's, or a
+  system call by the audio mode - `spotifyInCall`, and `callOn` lets the mode drive the call rule on the web player as on
+  a room) no start goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). The session never says playing
+  while nothing plays (`pwr && !ended`); the launcher sends `CALL_HOLD` at every call's begin instead (below). **The session's `SpotifyPlayer` calls the renderer only qualified**
   (`this@SpotifyRenderer.play()`): unqualified, `play()` is the SimpleBasePlayer's own and recursed (F1;
   `SpotifyRendererTest` drives it through Media3's `Player` API with the test-only `android.os.Looper`,
   `android.util.Pair` and `SparseBooleanArray` in `src/test/java/android/`). Those stand-ins shadow the mockable
@@ -408,10 +412,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   but a cap lowered at a restrictions broadcast pulls our own louder set (`volOpt`) down once (`capChanged`). No
   audio focus while a room renders (`LocalRenderer.standDown()`).
 - **Calls** (26a §6.7): the launcher sends `CALL_HOLD` / `CALL_RELEASE` (session custom actions, granted only to a
-  launcher signed like this app, names in `bridge_contract.json`); `logic/CallPause.kt` decides: our own pause (the
+  launcher signed like this app, names in `bridge_contract.json`) - since the emulator round of 2026-10-14 `CALL_HOLD`
+  means "a call began" (every call's begin while the music app has a session, playing or not; 26c N3); `logic/CallPause.kt`
+  decides: a call that begins while nothing plays holds nothing, our own pause (the
   sleep timer runs on), played again only what we paused, never after the kid's own play, a timer that ended or
   while `playAllowed` says no. The audio-mode backstop (MODE_IN_CALL / MODE_RINGTONE, never IN_COMMUNICATION) covers
-  a system call on a room without the launcher's listener access.
+  a system call on a room and on the web player (`callOn`) without the launcher's listener access or with an older one.
 - **Room scope** (26a §5.5): the library's `sonos_rooms` (absent or null = every room; anything else not a list =
   none) limits the sheet, the pick (`ROOM_NOT_ALLOWED`), the controller's belt and a running session (bookmarked,
   stopped, home paused). **A group needs every member allowed** (`groupAllowed`; a `Room`'s members are the whole
@@ -464,8 +470,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   own height; the carousel fills the weighted slot between them (`BoxWithConstraints`). Its cover is
   `libraryFit(slotPx, linesPx, reservePx, density)`, in whole pixels with every fixed part rounded as Compose rounds a
   Dp (`libraryFixedPx`; at density 1.5 a float-dp model overflowed by 2 px) - min(180, the slot less the title and
-  hint lines measured with a `TextMeasurer` at the font scale, less the fixed rest), floor `LIBRARY_COVER_MIN_DP` 120;
-  below the floor the slot scrolls (the `verticalScroll` is applied only then: it clips, and would cut the cover's
+  hint lines measured with a `TextMeasurer` at the font scale, less the fixed rest), floor `LIBRARY_COVER_MIN_DP` 64
+  (120 until the emulator round's N6: Android 16's status bar grows with the font scale; below 120 dp the cover drops
+  its kind chip, `coverShowsKind`); below the floor the slot scrolls (the `verticalScroll` is applied only then: it clips, and would cut the cover's
   shadow), so the tiles never slide under the bar. Without the bar its room (`nowBarRoomPx`) is still kept out of the
   cover, so the cover never changes size when the bar comes or goes. The progress line's room is always kept (the cover never
   resizes on a turn). The pager, its side padding, the pull and the cover glyph all take that cover (`carouselSide`,

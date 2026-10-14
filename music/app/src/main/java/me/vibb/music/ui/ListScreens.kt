@@ -119,17 +119,28 @@ private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
     }
 }
 
+/** Nytt offers "Fjern alle" only with [rows] new items to clear (N11). */
+fun showsClearAll(rows: Int): Boolean = rows > 0
+
 /** One row of Nytt. */
 data class NewsRowUi(val entry: Entry, val category: Category?, val item: PlayItem, val kind: Kind)
 
-/** "Nytt" (`onNews`): the new items (a mini cover and three lines, as the mockup), "Fjern alle", a tap plays and removes. */
+/**
+ * "Nytt" (`onNews`): the new items (a mini cover and three lines, as the mockup), "Fjern alle" - only while there is
+ * something to clear ([showsClearAll]; emulator round 2026-10-14 N11) -, a tap plays and removes.
+ */
 @Composable
 fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, onPick: (NewsRowUi) -> Unit) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header(stringResource(R.string.back_library), onBack, stringResource(R.string.news_title)) {
-            Box(Modifier.height(44.dp).clip(RoundedCornerShape(22.dp)).button(null, onClear).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
-                Line(stringResource(R.string.clear_all), 14, 800, Palette.peach)
+        if (showsClearAll(rows.size)) {
+            Header(stringResource(R.string.back_library), onBack, stringResource(R.string.news_title)) {
+                Box(Modifier.height(44.dp).clip(RoundedCornerShape(22.dp)).button(null, onClear).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+                    Line(stringResource(R.string.clear_all), 14, 800, Palette.peach)
+                }
             }
+        } else {
+            // nothing to clear: the header's default trailing slot keeps the title centred
+            Header(stringResource(R.string.back_library), onBack, stringResource(R.string.news_title))
         }
         if (rows.isEmpty()) {
             // design 34 P10 a: the disc with the bell and today's words, in the room under the header

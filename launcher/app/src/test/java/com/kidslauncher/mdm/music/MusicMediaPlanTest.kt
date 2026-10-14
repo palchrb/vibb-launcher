@@ -161,16 +161,27 @@ class MusicMediaPlanTest {
         assertFalse(com.kidslauncher.mdm.lock.managedCallActive(null, android.media.AudioManager.MODE_IN_COMMUNICATION))
     }
 
+    // the pairs are (inCall, the music app has a session)
+
     @Test
-    fun `music playing when a call starts gets a HOLD, and the RELEASE when it ends`() {
+    fun `a call beginning while the music app has a session gets a HOLD, and the RELEASE when it ends`() {
         assertEquals(listOf(CallMusicAction.HOLD, CallMusicAction.NONE, CallMusicAction.RELEASE), calls(listOf(true to true, true to false, false to false)))
         assertEquals("whatever the kid did during the call: the music app decides", CallMusicAction.RELEASE, calls(listOf(true to true, true to true, false to true)).last())
     }
 
     @Test
-    fun `a pause made before the call gets nothing, and no call no look`() {
+    fun `N3 - a paused session gets the HOLD too - the music app ignores it and starts nothing during the call`() {
+        // the session exists whether it plays or not: the hold says "a call began" (emulator round 2026-10-14 N3)
+        assertEquals(listOf(CallMusicAction.HOLD, CallMusicAction.RELEASE), calls(listOf(true to true, false to true)))
+        val plan = listOf("src/main/java/com/kidslauncher/mdm/music/MusicCalls.kt", "app/src/main/java/com/kidslauncher/mdm/music/MusicCalls.kt")
+            .map { java.io.File(it) }.first { it.isFile }.readText()
+        assertTrue("the hold follows the session, not its playing state", plan.contains("callHoldStep(state, inCall, session != null)"))
+    }
+
+    @Test
+    fun `RELEASE only after a HOLD - no session at the call's begin gets nothing, and no call no look`() {
         assertEquals(listOf(CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to false, false to false)))
-        assertEquals("playing only after the call began", listOf(CallMusicAction.NONE, CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to false, true to true, false to true)))
+        assertEquals("a session only after the call began", listOf(CallMusicAction.NONE, CallMusicAction.NONE, CallMusicAction.NONE), calls(listOf(true to false, true to true, false to true)))
         assertEquals(listOf(CallMusicAction.NONE), calls(listOf(false to true)))
     }
 

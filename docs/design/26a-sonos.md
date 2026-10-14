@@ -569,6 +569,12 @@ Step 3c, after 3b; the one change that touches the server, launcher and music ap
    made before the call is untouched; not after the sleep timer ended during the hold). The music app holds no audio focus while Sonos renders and keeps `AudioManager`'s
    `OnModeChangedListener` (`MODE_IN_CALL` / `MODE_RINGTONE` only) as a backstop for a system call when the launcher's
    listener access is missing (design 21 QA #8's listener-free fallbacks). Launcher part: step 3b, `MusicMediaPlanTest`.
+   **Since the emulator round of 2026-10-14 (design 26c N3, qa-26c-emu-music-code M2) `CALL_HOLD` means "a call
+   began"**: the launcher sends it at every call's begin while the music app has a session, playing or not, and
+   `CALL_RELEASE` at that call's end after a HOLD - the session's playing state is read only for its log line (Spotify's
+   web player is often paused by Chromium's own focus loss before the launcher looks). The player's rule is unchanged: a
+   call that begins while nothing plays is no pause of its (`callPauseStep` holds nothing), a play tapped during the call
+   starts nothing on the web player, and only what the call paused plays again. The names and the AIDL are unchanged.
 
 ## 7. Tests (JVM; vibb's tests ported, one line each)
 

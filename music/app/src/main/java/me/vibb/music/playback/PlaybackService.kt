@@ -95,6 +95,7 @@ import me.vibb.music.logic.storedPlan
 import me.vibb.music.logic.storedRowAwaitsBook
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.smallArtMissing
+import me.vibb.music.logic.spotifyInCall
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
@@ -254,6 +255,7 @@ class PlaybackService : MediaSessionService() {
         LiveBridge.acquire(this)
         PlayerHub.suspendStop = { scope.launch { suspendStop() } }
         PlayerHub.capChanged = { (renderer as? SonosRenderer)?.controller?.capChanged() }
+        modeInCall = callMode(audio.mode)
         audio.addOnModeChangedListener(mainExecutor, modeListener)
         // Design 26a §4.7: the phone settles at once; a room only after one classify of it (adopt).
         val choice = home.choice()
@@ -306,6 +308,11 @@ class PlaybackService : MediaSessionService() {
                     spotifyRenderer().forget()
                 }
             }
+        }
+        // qa-26c-emu-music-code N1: the Spotify entries as listed now, for the session's play of a flipped entry
+        scope.launch {
+            store.libraries().map { lib -> lib?.entries?.filter { isSpotify(it) }?.associateBy { it.id }.orEmpty() }.distinctUntilChanged()
+                .flowOn(Dispatchers.IO).collect { spotifyEntriesNow = it }
         }
         // Design 26c §5.9 (qa-26c-step6-code L4): a parsed library drops the live-track rows of entries no longer in
         // context mode (gone, or listed again) - a flip back to context months later starts from Spotify's top
@@ -448,11 +455,30 @@ class PlaybackService : MediaSessionService() {
         override fun seekToPrevious() = skipPrevious()
         override fun seekToPreviousMediaItem() = skipPrevious()
         override fun play() {
-            if (playAllowed(suspendedNow())) super.play()
+            if (playAllowed(suspendedNow()) && !restartIfStale()) super.play()
         }
         override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (playWhenReady && playAllowed(suspendedNow()) && restartIfStale()) return
             if (!playWhenReady || playAllowed(suspendedNow())) super.setPlayWhenReady(playWhenReady)
         }
+    }
+
+    /** The library's Spotify entries now, by id (main thread; N5's rule for the plays that don't pass `playEntry`). */
+    private var spotifyEntriesNow: Map<Long, Entry> = emptyMap()
+
+    /**
+     * A play from the bar, the notification, a headset or the lock (the session's play, qa-26c-emu-music-code N1) of a loaded
+     * Spotify entry the library now lists another way (`loadedPlayStale`: list <-> context): its new queue starts, as a
+     * cover tap's does - `playEntry` under the switch lock - and the old queue isn't resumed. True when it went that way.
+     */
+    private fun restartIfStale(): Boolean {
+        val a = active ?: return false
+        if (renderer.itemCount() == 0 || !loadedPlayStale(a.entry, spotifyEntriesNow[a.entry.id])) return false
+        scope.launch {
+            rendererReady.await()
+            switching.withLock { playEntry(a.entry.id) }
+        }
+        return true
     }
 
     private val callback = object : MediaSession.Callback {
@@ -652,8 +678,14 @@ class PlaybackService : MediaSessionService() {
     private suspend fun playEntry(entryId: Long) {
         val current = active
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
-            renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
-            return
+            // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
+            val now = if (isSpotify(current.entry)) withContext(Dispatchers.IO) { store.library()?.entries?.firstOrNull { it.id == entryId } } else null
+            if (!loadedPlayStale(current.entry, now)) {
+                renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
+                return
+            }
+            spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
+            renderer.saveNow(force = true)
         }
         val (snap, rows) = loadForRenderer()
         if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return
@@ -676,7 +708,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     private suspend fun resumeLast() {
-        if (active != null && renderer.itemCount() > 0) {
+        val current = active
+        if (current != null && renderer.itemCount() > 0) {
+            // RESUME (Home's card) of a Spotify entry the library now lists another way: its new queue (N1 of the QA)
+            if (isSpotify(current.entry)) return playEntry(current.entry.id)
             renderer.play()
             return
         }
@@ -810,7 +845,7 @@ class PlaybackService : MediaSessionService() {
             scope.launch(writer) { if (store.recordSpotifyOutcome(word, System.currentTimeMillis())) reportSpotifyWord() }
         },
         log = ::spotifyLog,
-    ).apply { inCall = launcherInCall }.also { spotify = it }
+    ).apply { inCall = spotifyInCall(launcherInCall, modeInCall) }.also { spotify = it }
 
     /** The report with the web player's new word, to the launcher (§6l A F7; a failure waits for the next sync's). */
     private suspend fun reportSpotifyWord() {
@@ -1282,13 +1317,15 @@ class PlaybackService : MediaSessionService() {
 
     private val modeListener = AudioManager.OnModeChangedListener { mode ->
         modeInCall = callMode(mode)
+        // the web player hears a system call by the mode too (emulator round 2026-10-14 N3)
+        spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)
         callStep()
     }
 
     private fun launcherCall(inCall: Boolean) {
         launcherInCall = inCall
         // the web player starts nothing during a call (qa-26c-6l-fixes-code L2), as the phone's own player's refused focus
-        spotify?.inCall = inCall
+        spotify?.inCall = spotifyInCall(launcherInCall, modeInCall)
         callStep()
     }
 
@@ -1301,15 +1338,16 @@ class PlaybackService : MediaSessionService() {
      */
     private fun callStep() {
         val r = renderer
-        val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)
+        val inCall = callOn(launcherInCall, modeInCall, r.kind)
         if (callRenderer != null && callRenderer !== r) {
             // the renderer changed under the call: nothing of ours to play again
             callPause = CallPause(inCall = callPause.inCall)
             callRenderer = null
         }
         // a web player the WebView paused (the ring's focus loss can beat CALL_HOLD) still wants to play: the call rule's
-        // to pause and play again (qa-26c-6l-fixes-code M1)
-        val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldByPage == true
+        // to pause and play again (qa-26c-6l-fixes-code M1) - only a fresh hold: an old one is another app that took the audio
+        // for good, never started again by a call's end (qa-26c-emu-music-code M1)
+        val playing = r.showsPlaying || (r as? SpotifyRenderer)?.heldRecently() == true
         // a Spotify line is a paused web player; a room's four mean the speaker isn't ours to count (design 26c §5.8)
         val paused = pausedForCall(playing, r.itemCount(), r.rendererState)
         val (next, action) = callPauseStep(callPause, inCall, playing, paused, playAllowed(suspendedNow()))
