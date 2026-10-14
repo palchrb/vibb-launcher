@@ -7,6 +7,7 @@ import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -292,6 +293,9 @@ class PinLockActivity : AppCompatActivity() {
             trackDialog(EmergencyCall.confirm(this) { PinLockRuntime.emergencyFlowStarted() })
         }
         voipRing.voipRingParentCode.setOnClickListener { showParentCodeDialog() }
+        // Both Nødsamtale pills announce as a button (qa-34-s8-code L3).
+        binding.pinEmergency.accessibilityDelegate = ButtonRole
+        voipRing.voipRingEmergency.accessibilityDelegate = ButtonRole
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -558,8 +562,9 @@ class PinLockActivity : AppCompatActivity() {
                         gravity = Gravity.CENTER
                         includeFontPadding = false
                         setTextColor(getColor(R.color.kid_ink))
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-                        setBackgroundResource(R.drawable.bg_pin_key)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.DIGIT_SP)
+                        // Design 34 P7: the translucent key with its 1 px top highlight on top.
+                        background = LayerDrawable(arrayOf(getDrawable(R.drawable.bg_pin_key), PinKeyHighlight(resources.displayMetrics.density)))
                         contentDescription = label
                         setOnClickListener { onDigit(label[0]) }
                     }
@@ -582,15 +587,21 @@ class PinLockActivity : AppCompatActivity() {
     private fun sizeKeys(keypadHeight: Int) {
         if (keypadHeight <= 0) return
         val density = resources.displayMetrics.density
-        val size = PinKeypadLayout.finalKeySizePx(PinKeypadLayout.keySizePx(keypadHeight, binding.pinKeypad.width, density), density)
-        val changed = keys.filter { it.layoutParams.width != size }
-        if (changed.isEmpty()) return
+        // A digit never outgrows its key (design 34 P7: at font scale 2.0 the keys give way). The size
+        // and the digit are checked apart, so keys that stay at their first 48 dp get the cap too (L1).
+        val style = PinKeypadLayout.keyStyle(keypadHeight, binding.pinKeypad.width, density,
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, PinKeypadLayout.DIGIT_SP, resources.displayMetrics))
+        val stale = keys.filter { PinKeypadLayout.keyStale(it.layoutParams.width, (it as? TextView)?.textSize, style) }
+        if (stale.isEmpty()) return
         binding.pinKeypad.post {
-            for (key in changed) {
-                key.layoutParams = key.layoutParams.apply {
-                    width = size
-                    height = size
+            for (key in stale) {
+                if (key.layoutParams.width != style.sizePx) {
+                    key.layoutParams = key.layoutParams.apply {
+                        width = style.sizePx
+                        height = style.sizePx
+                    }
                 }
+                if (key is TextView) key.setTextSize(TypedValue.COMPLEX_UNIT_PX, style.digitPx)
             }
         }
     }
