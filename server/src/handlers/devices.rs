@@ -881,7 +881,8 @@ pub(crate) async fn lock_screen_card(
 
 /// `POST /devices/{id}/apps/display` (design 14): this phone's name, icon and colour for one app.
 /// `action` "reset" = the phone's row goes (it follows the catalog default, else Vibb style;
-/// design 34 P1 - an older page's "own" and "catalog" do the same), else save the fields (Vibb
+/// design 34 P1 - an older page's "catalog" does the same, its "own" keeps its old meaning: an
+/// empty row, Vibb style on this phone even with a catalog default), else save the fields (Vibb
 /// style with no name on a phone with a catalog default keeps an empty row: Vibb style there). A
 /// choice equal to the catalog default, or nothing without a default, keeps no row. Refused input: 400,
 /// Device › Apps with that app's form open, the entered values and the error by the field, the
@@ -940,8 +941,12 @@ pub async fn save_app_display(
             response
         }
     };
-    let reset = matches!(field("action"), "reset" | "own" | "catalog");
-    let values = if reset {
+    // "reset" (and an older page's "Follow the catalog") deletes the row; an older page's "Use the
+    // app's own" keeps its old meaning - nothing chosen on this phone, an empty row over a catalog
+    // default (Vibb style there; qa-34-s1-code L1).
+    let action = field("action");
+    let reset = matches!(action, "reset" | "catalog");
+    let values = if reset || action == "own" {
         DisplayValues::empty()
     } else {
         match crate::app_display::validate(field("label"), field("icon"), field("color")) {

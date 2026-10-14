@@ -500,3 +500,18 @@ and `PolicyResponseCompatTest` untouched, `app_display` is still a list of `{pac
 
 **Not checked on the emulator yet**: Home and the glance page with an app in each state (Vibb style with and without
 a monochrome layer, the app's own logo, a chosen glyph on a colour and on `auto`); the Phone book and Settings tiles.
+
+### Step 1 code QA fix round (`qa-34-s1-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| L1 an older page's "Use the app's own" now reset | The device form's legacy `action=own` keeps its old meaning: `DisplayValues::empty()` through the normal `keep_row` - an empty row over a catalog default (Vibb style on that phone), no row without one. Only `reset` and the old `catalog` delete. The catalog form's old `own` stays "clear the default". `a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it` asserts `[]` for `own` with the default present, the default for `catalog`, and the default again after Reset |
+| L2 Palette's filter drops orange and brown | `KidAvatars.toneOf` no longer uses androidx Palette: the pure `swatchesOf(pixels)` counts the opaque pixels (alpha >= 128) of the 48 px render per 4-bit colour, and `iconTone`'s own lightness and chroma rules judge black, white and grey. Tests: `#E8772E` and a brown map to rose, an orange disc on transparency is one swatch, half-transparent edges don't count, neighbouring shades share a bucket. The palette dependency stays in the build (no other user; removing it is a build change for another day) |
+| L3 the hint promised a white symbol | "Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo)" |
+| L4 the state order untested | The pure `iconRender(entry, hasMonochrome)` in `IconTones.kt` returns `IconRender.OwnLogo` / `Glyph(res, tile or null)` / `VibbMono`; `renderAppIcon` only switches on it. `IconTonesTest` covers nothing and a name only (with and without a monochrome layer), `own` with a monochrome layer and with a name, a glyph on a colour and on `auto`, an unknown glyph both ways |
+| N1 `own_row` dead | Used: `AppDisplayForm::can_reset()` (the phone's own row on the device page, a stored default - the new `has_choice` - on the catalog page) shows Reset and its hint line only when there is something to reset. `reset_is_offered_only_with_something_to_reset` |
+| N2 `.app-tile`'s grey | `.app-tile`'s default background is the slate `#606B80` (`AUTO_PREVIEW`); `style.css?v=28` |
+| N3 red checks don't wrap | Server: red is within 15° of 0° either side (`hue.min(360 - hue) < 15`; rose at 344.8° is 15.2° off); launcher: `hueDistance(h, 0f) < 15f` |
+| N4 the wire's `!is_own()` unreachable | Kept as a guard in a pure `wire_entry`, with `the_wire_sends_auto_for_the_logo_and_vibb_style` building `DisplayValues` directly (`own` and no icon with `sky` go out `auto`, a glyph keeps `sky`) |
+| N5 filters partly pinned | `a near-black colour and a non-positive count are no colour`: a dark violet (lightness 0.10, 80 %) beside a small blue is blue; a near-white wash beside a red is rose; a red with a zero or negative count beside a blue is blue (the negative case is the one the `population > 0` check decides) |
+| N6 emulator.md's WRITE_SETTINGS line | It says the grant is for P12 (step 6, not built yet; harmless now) and why: `TIME_12_24` isn't on `setSystemSetting`'s list. Kid Settings' brightness does **not** use the app-op - it goes through `setSystemSetting` (`QuickControls.setBrightness`), so the report's "the user today is brightness" isn't so; the line says that instead |

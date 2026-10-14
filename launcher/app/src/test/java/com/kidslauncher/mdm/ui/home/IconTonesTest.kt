@@ -1,6 +1,9 @@
 package com.kidslauncher.mdm.ui.home
 
+import com.kidslauncher.mdm.appdisplay.AUTO_COLOR
+import com.kidslauncher.mdm.appdisplay.AppDisplayEntry
 import com.kidslauncher.mdm.appdisplay.AppGlyphs
+import com.kidslauncher.mdm.appdisplay.OWN_ICON
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -28,7 +31,7 @@ class IconTonesTest {
             if (s > 0.2f) {
                 assertFalse("$label amber", h in 20f..70f)
                 assertFalse("$label green", h in 75f..165f)
-                assertFalse("$label red", h < 15f)
+                assertFalse("$label red", hueDistance(h, 0f) < 15f)
             }
         }
     }
@@ -124,6 +127,58 @@ class IconTonesTest {
         assertEquals(TONE_BLUE, iconTone(four, "com.google.android.calendar"))
         assertEquals(TONE_INDIGO, iconTone(listOf(swatch(0xFF34A853)), "com.google.android.apps.maps"))
         assertTrue(FIXED_TONES.values.all { it in ICON_TONES })
+    }
+
+    /** qa-34-s1-code L2: orange and brown map to rose - Palette's filter never sees them now. */
+    @Test
+    fun `orange and brown map to rose, from the pixels themselves`() {
+        assertEquals(TONE_ROSE, iconTone(listOf(swatch(0xFFE8772E)), "org.example.a"))
+        assertEquals(TONE_ROSE, iconTone(listOf(swatch(0xFF8B5A2B)), "org.example.a"))
+        // A 48x48 orange disc on transparency: the transparent pixels are no colour at all.
+        val orange = 0xFFE8772E.toInt()
+        val pixels = IntArray(48 * 48) { if (it % 3 == 0) orange else 0x00000000 }
+        val swatches = swatchesOf(pixels)
+        assertEquals(1, swatches.size)
+        assertEquals(768, swatches.single().population)
+        assertEquals(TONE_ROSE, iconTone(swatches, "org.example.a"))
+        // Half-transparent edges don't count; white and black stay for iconTone to judge.
+        assertEquals(emptyList<ToneSwatch>(), swatchesOf(intArrayOf(0x40E8772E, 0x7FE8772E)))
+        val mixed = swatchesOf(intArrayOf(orange, -1, 0xFF000000.toInt(), orange))
+        assertEquals(4, mixed.sumOf { it.population })
+        assertEquals(TONE_ROSE, iconTone(mixed, "org.example.a"))
+        // Neighbouring shades share a bucket.
+        assertEquals(1, swatchesOf(intArrayOf(0xFFE8772E.toInt(), 0xFFE07028.toInt())).size)
+    }
+
+    /** qa-34-s1-code N5: the lightness window and the population check are pinned. */
+    @Test
+    fun `a near-black colour and a non-positive count are no colour`() {
+        // A dark violet (lightness 0.10) over a small blue: the dark part is a shade, the blue decides.
+        assertEquals(TONE_BLUE, iconTone(listOf(swatch(0xFF1A0A2A, 80), swatch(0xFF1C7ED6, 20)), "org.example.a"))
+        // A nearly white blue-ish wash is no colour either.
+        assertEquals(TONE_ROSE, iconTone(listOf(swatch(0xFFF0F4FF, 80), swatch(0xFFE03131, 20)), "org.example.a"))
+        // A red with no (or a negative) count beside a blue: only the blue counts.
+        assertEquals(TONE_BLUE, iconTone(listOf(swatch(0xFFE03131, 0), swatch(0xFF1C7ED6, 10)), "org.example.a"))
+        assertEquals(TONE_BLUE, iconTone(listOf(swatch(0xFFE03131, -100), swatch(0xFF1C7ED6, 10)), "org.example.a"))
+    }
+
+    /** qa-34-s1-code L4: the three states' order, before any drawing. */
+    @Test
+    fun `the icon render follows the three states in order`() {
+        val chat = AppGlyphs.ICONS.getValue("chat")
+        // Vibb style (nothing, or a name only): the monochrome glyph, else the app's own icon.
+        assertEquals(IconRender.VibbMono, iconRender(null, hasMonochrome = true))
+        assertEquals(IconRender.OwnLogo, iconRender(null, hasMonochrome = false))
+        assertEquals(IconRender.VibbMono, iconRender(AppDisplayEntry("Chat", null), hasMonochrome = true))
+        // The app's own logo wins over the monochrome layer.
+        assertEquals(IconRender.OwnLogo, iconRender(AppDisplayEntry(null, OWN_ICON), hasMonochrome = true))
+        assertEquals(IconRender.OwnLogo, iconRender(AppDisplayEntry("Chat", OWN_ICON), hasMonochrome = false))
+        // A glyph on its colour's tile, or on the app's tone for auto.
+        assertEquals(IconRender.Glyph(chat, TONE_ROSE), iconRender(AppDisplayEntry(null, "chat", "peach"), hasMonochrome = true))
+        assertEquals(IconRender.Glyph(chat, null), iconRender(AppDisplayEntry(null, "chat", AUTO_COLOR), hasMonochrome = false))
+        // An unknown glyph is Vibb style.
+        assertEquals(IconRender.VibbMono, iconRender(AppDisplayEntry(null, "rocket"), hasMonochrome = true))
+        assertEquals(IconRender.OwnLogo, iconRender(AppDisplayEntry(null, "rocket"), hasMonochrome = false))
     }
 
     @Test

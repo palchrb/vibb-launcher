@@ -150,8 +150,9 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
         Some(format!("/devices/{a}/apps#app-{ELEMENT}").as_str())
     );
     assert_eq!(app_display(&app, &token_a).await, chat);
-    // An older page's "Use the app's own" and "Follow the catalog" reset the same way.
-    for old in ["own", "catalog"] {
+    // An older page's "Use the app's own" keeps its old meaning - nothing on this phone, even with
+    // the catalog default (an empty row, qa-34-s1-code L1); its "Follow the catalog" resets.
+    for (old, after) in [("own", serde_json::json!([])), ("catalog", chat.clone())] {
         save(
             &app,
             &cookie,
@@ -167,8 +168,17 @@ async fn a_catalog_default_reaches_every_phone_and_a_phones_choice_replaces_it()
             &[("package_name", ELEMENT), ("action", old)],
         )
         .await;
-        assert_eq!(app_display(&app, &token_a).await, chat, "{old}");
+        assert_eq!(app_display(&app, &token_a).await, after, "{old}");
     }
+    // Reset deletes the empty row the old "own" left: the default is back.
+    save(
+        &app,
+        &cookie,
+        a,
+        &[("package_name", ELEMENT), ("action", "reset")],
+    )
+    .await;
+    assert_eq!(app_display(&app, &token_a).await, chat);
     // Saving exactly the default keeps no row (the phone follows later catalog changes).
     save(
         &app,

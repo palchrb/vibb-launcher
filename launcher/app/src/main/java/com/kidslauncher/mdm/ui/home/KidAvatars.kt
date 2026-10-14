@@ -18,7 +18,6 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory
-import androidx.palette.graphics.Palette
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo
@@ -178,20 +177,21 @@ object KidAvatars {
         val packageName = packageOf(key)
         // Our own copy: the drawer draws the same cached icon object on the main thread, so the
         // background pass must not change its bounds or tint (qa-08-code.md #5).
-        if (display?.ownLogo == true) {
-            return drawOwnLogo(context, privateCopy(context, icon()), sizePx).also { iconCache.put(cacheKey, it) }
-        }
-        val glyph = display?.icon?.let { AppGlyphs.ICONS[it] }
-        if (display != null && glyph != null) {
-            val tile = AppGlyphs.COLORS[display.color]?.tile
-                ?: toneOf(privateCopy(context, icon()), packageName)
-            return renderSymbolIcon(context, glyph, tile, sizePx).also { iconCache.put(cacheKey, it) }
-        }
         val drawable = privateCopy(context, icon())
         val monochrome = (drawable as? AdaptiveIconDrawable)?.monochrome
-        if (drawable !is AdaptiveIconDrawable || monochrome == null) {
-            return drawOwnLogo(context, drawable, sizePx).also { iconCache.put(cacheKey, it) }
+        // The state order is the pure, tested iconRender (qa-34-s1-code L4).
+        val bmp = when (val render = iconRender(display, monochrome != null)) {
+            IconRender.OwnLogo -> drawOwnLogo(context, drawable, sizePx)
+            is IconRender.Glyph ->
+                renderSymbolIcon(context, render.glyphRes, render.tile ?: toneOf(drawable, packageName), sizePx)
+            IconRender.VibbMono -> drawVibbMono(drawable, monochrome!!, packageName, sizePx)
         }
+        iconCache.put(cacheKey, bmp)
+        return bmp
+    }
+
+    /** Vibb style: the monochrome layer in white on the app's tone. */
+    private fun drawVibbMono(drawable: Drawable, monochrome: Drawable, packageName: String?, sizePx: Int): Bitmap {
         val bmp = createBitmap(sizePx, sizePx)
         val canvas = Canvas(bmp)
         val circle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = toneOf(drawable, packageName) }
@@ -203,7 +203,6 @@ object KidAvatars {
         val extra = sizePx / 4
         mono.setBounds(-extra, -extra, sizePx + extra, sizePx + extra)
         mono.draw(canvas)
-        iconCache.put(cacheKey, bmp)
         return bmp
     }
 
@@ -270,9 +269,10 @@ object KidAvatars {
         drawable.constantState?.newDrawable(context.resources)?.mutate() ?: drawable
 
     /**
-     * The tone behind the app's white glyph (design 34 P1): [iconTone] of the icon's palette
-     * swatches (a 48 px render of its full-colour layers) and the package; the package's hash tone
-     * when the palette fails.
+     * The tone behind the app's white glyph (design 34 P1): [iconTone] of the icon's colours -
+     * [swatchesOf] the opaque pixels of a 48 px render of its full-colour layers, counted directly
+     * (androidx Palette's default filter would drop orange and brown, qa-34-s1-code L2) - and the
+     * package; the package's hash tone when the render fails.
      */
     private fun toneOf(drawable: Drawable, packageName: String?): Int = try {
         val small = createBitmap(SEED_PX, SEED_PX)
@@ -291,9 +291,11 @@ object KidAvatars {
             drawable.draw(canvas)
             drawable.bounds = bounds
         }
-        val palette = Palette.from(small).generate()
+        // Not androidx Palette: its default filter drops orange and brown (qa-34-s1-code L2).
+        val pixels = IntArray(SEED_PX * SEED_PX)
+        small.getPixels(pixels, 0, SEED_PX, 0, 0, SEED_PX, SEED_PX)
         small.recycle()
-        iconTone(palette.swatches.map { ToneSwatch(it.rgb, it.population) }, packageName)
+        iconTone(swatchesOf(pixels), packageName)
     } catch (e: Exception) {
         hashedTone(packageName)
     }

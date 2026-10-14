@@ -93,6 +93,56 @@ fun iconTone(swatches: List<ToneSwatch>, packageName: String?): Int {
     return nearestTone(dominant)
 }
 
+/** A pixel this opaque or more counts; the transparent area around an icon doesn't. */
+private const val OPAQUE_ALPHA = 128
+
+/**
+ * The icon's colours as swatches, from its pixels (ARGB) directly (qa-34-s1-code L2): androidx
+ * Palette's default filter drops orange and brown (hue 10-37° below saturation 0.82) before
+ * [iconTone] would see them, so the tone is never Palette's. Pixels under [OPAQUE_ALPHA] are left
+ * out; the rest are counted per colour at 4 bits a channel (each bucket's centre as its colour).
+ * Black, white and grey stay in: [iconTone]'s own lightness and chroma rules decide on them.
+ */
+fun swatchesOf(pixels: IntArray): List<ToneSwatch> {
+    val counts = HashMap<Int, Int>()
+    for (p in pixels) {
+        if ((p ushr 24) < OPAQUE_ALPHA) continue
+        val bucket = (((p shr 16) and 0xF0) shl 16) or (((p shr 8) and 0xF0) shl 8) or (p and 0xF0)
+        counts[bucket] = (counts[bucket] ?: 0) + 1
+    }
+    return counts.map { (rgb, n) -> ToneSwatch((0xFF shl 24) or rgb or 0x080808, n) }
+}
+
+/** How an app icon is drawn (design 34 P1's three states; [iconRender]). */
+sealed interface IconRender {
+    /** The app's own icon in its own colours, clipped to the circle. */
+    data object OwnLogo : IconRender
+
+    /** The parent's glyph [glyphRes] in white on [tile], or on the app's tone when `null`. */
+    data class Glyph(val glyphRes: Int, val tile: Int?) : IconRender
+
+    /** Vibb style: the icon's monochrome layer in white on the app's tone. */
+    data object VibbMono : IconRender
+}
+
+/**
+ * The order of design 34 P1 (QA H1, qa-34-s1-code L4) - the parent's own logo first, before the
+ * glyph lookup and the monochrome layer (else `own` falls through to the monochrome glyph, the old
+ * bug); then a known glyph (an unknown one is Vibb style); then Vibb style: the monochrome glyph on
+ * the tone, or, with no monochrome layer, the app's own icon (nothing to tone).
+ */
+fun iconRender(
+    entry: com.kidslauncher.mdm.appdisplay.AppDisplayEntry?,
+    hasMonochrome: Boolean,
+    glyphs: Map<String, Int> = com.kidslauncher.mdm.appdisplay.AppGlyphs.ICONS,
+    tiles: Map<String, Int> = com.kidslauncher.mdm.appdisplay.AppGlyphs.COLORS.mapValues { it.value.tile },
+): IconRender {
+    if (entry?.ownLogo == true) return IconRender.OwnLogo
+    val glyph = entry?.icon?.let { glyphs[it] }
+    if (entry != null && glyph != null) return IconRender.Glyph(glyph, tiles[entry.color])
+    return if (hasMonochrome) IconRender.VibbMono else IconRender.OwnLogo
+}
+
 /** The chromatic tone whose hue is nearest [hue] (degrees, on the circle). */
 fun nearestTone(hue: Float): Int = HUE_TONES.minByOrNull { hueDistance(it.first, hue) }!!.second
 

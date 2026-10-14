@@ -255,17 +255,23 @@ pub async fn policy_app_display(
     Ok(resolved
         .into_iter()
         .filter(|(_, v)| !v.is_empty())
-        .map(|(package_name, v)| PolicyAppDisplay {
-            package_name,
-            color: if v.icon.is_some() && !v.is_own() {
-                v.color
-            } else {
-                AUTO.to_string()
-            },
-            label: v.label,
-            icon: v.icon,
-        })
+        .map(|(package_name, v)| wire_entry(package_name, v))
         .collect())
+}
+
+/// One wire entry: the colour only with a glyph - [AUTO] without an icon and for [OWN], whatever
+/// the values carry (a guard: `sanitized` already forces [AUTO] for [OWN] on every read).
+fn wire_entry(package_name: String, v: DisplayValues) -> PolicyAppDisplay {
+    PolicyAppDisplay {
+        package_name,
+        color: if v.icon.is_some() && !v.is_own() {
+            v.color
+        } else {
+            AUTO.to_string()
+        },
+        label: v.label,
+        icon: v.icon,
+    }
 }
 
 // ---- the form (device page and catalog page) ------------------------------------------------
@@ -306,6 +312,8 @@ pub struct AppDisplayForm {
     /// Device page: this phone has its own row (Reset deletes it; the phone then follows the
     /// catalog default, else Vibb style).
     pub own_row: bool,
+    /// Something is stored for this form's level (the catalog default on the catalog page).
+    pub has_choice: bool,
     /// The refused field ("label", "icon", "color") and why.
     pub error_field: String,
     pub error: Option<String>,
@@ -380,6 +388,7 @@ impl AppDisplayForm {
             color,
             catalog_default: None,
             own_row: false,
+            has_choice: !current.is_empty(),
             error_field: entered
                 .map(|e| e.error.field.to_string())
                 .unwrap_or_default(),
@@ -414,10 +423,22 @@ impl AppDisplayForm {
         (!icon.is_empty() && icon != OWN && icon_known(icon)).then_some(icon)
     }
 
-    /// What Reset does here: the catalog form clears its default, the device form deletes the
-    /// phone's row (it then follows the catalog default, else Vibb style).
-    pub fn reset_hint(&self) -> &'static str {
+    /// Reset is offered only when there is something to reset: the phone's own row (device page),
+    /// or a stored default (catalog page) - qa-34-s1-code N1.
+    pub fn can_reset(&self) -> bool {
         if self.package_name.is_empty() {
+            self.has_choice
+        } else {
+            self.own_row
+        }
+    }
+
+    /// What Reset does here: the catalog form clears its default, the device form deletes the
+    /// phone's row (it then follows the catalog default, else Vibb style). Empty without Reset.
+    pub fn reset_hint(&self) -> &'static str {
+        if !self.can_reset() {
+            ""
+        } else if self.package_name.is_empty() {
             "Reset: no default - Vibb style unless a phone has its own choice."
         } else if self.catalog_default.is_some() {
             "Reset: this phone follows the catalog default."
@@ -527,7 +548,11 @@ mod tests {
                 !(chromatic && (75.0..=165.0).contains(&hue)),
                 "{key} is green ({hue})"
             );
-            assert!(!(chromatic && hue < 20.0), "{key} is red ({hue})");
+            // Red wraps at 0° (qa-34-s1-code N3): within 15° either side; rose (345°) is 15.2° off.
+            assert!(
+                !(chromatic && hue.min(360.0 - hue) < 15.0),
+                "{key} is red ({hue})"
+            );
             assert!(!(r > 180 && g < 80 && b < 80), "{key} is red");
         }
     }
@@ -660,6 +685,54 @@ mod tests {
         assert_eq!(labelled.describe(), "Chat, with the app's own logo");
         // Vibb style is the empty choice, not `own`.
         assert!(DisplayValues::empty().is_empty() && !DisplayValues::empty().is_own());
+    }
+
+    /// qa-34-s1-code N4: the wire's guard - `own` and no icon always go out as `auto`, even from
+    /// values built directly with another colour; a glyph keeps its colour.
+    #[test]
+    fn the_wire_sends_auto_for_the_logo_and_vibb_style() {
+        let built = |icon: Option<&str>| DisplayValues {
+            label: Some("Chat".into()),
+            icon: icon.map(str::to_string),
+            color: "sky".into(),
+        };
+        assert_eq!(wire_entry("a.b".into(), built(Some(OWN))).color, AUTO);
+        assert_eq!(wire_entry("a.b".into(), built(None)).color, AUTO);
+        assert_eq!(wire_entry("a.b".into(), built(Some("chat"))).color, "sky");
+        assert_eq!(
+            wire_entry("a.b".into(), built(Some(OWN))).icon.as_deref(),
+            Some(OWN)
+        );
+    }
+
+    /// qa-34-s1-code N1: Reset only when there is something to reset.
+    #[test]
+    fn reset_is_offered_only_with_something_to_reset() {
+        let form = |package: &str, current: DisplayValues| {
+            AppDisplayForm::new(
+                String::new(),
+                String::new(),
+                package.into(),
+                "Element".into(),
+                &current,
+                None,
+            )
+        };
+        let chat = DisplayValues {
+            label: Some("Chat".into()),
+            icon: None,
+            color: AUTO.into(),
+        };
+        // The catalog page: a stored default.
+        assert!(!form("", DisplayValues::empty()).can_reset());
+        assert!(form("", chat.clone()).can_reset());
+        assert_eq!(form("", DisplayValues::empty()).reset_hint(), "");
+        // The device page: the phone's own row, not the default it shows.
+        let mut device = form("a.b", chat);
+        assert!(!device.can_reset());
+        device.own_row = true;
+        assert!(device.can_reset());
+        assert_eq!(device.reset_hint(), "Reset: back to Vibb style.");
     }
 
     /// QA M3: design 14's colour keys stay, their names follow the tones.

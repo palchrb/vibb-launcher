@@ -556,7 +556,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   fieldset; the preview's tile says "Vibb style" / "Its own logo" on `OWN_PREVIEW`) and the 16 glyphs; the colour keys
   keep their names in the database and read as their tones in the PWA (`color_label`: peach Rose, plum Plum, sky
   Blue, sunset Indigo, night Teal, grey Slate; `auto` "The app's tone", previewed slate `AUTO_PREVIEW`). The one
-  secondary button is **Reset** (`action=reset`; an older page's `own`/`catalog` do the same): it deletes the phone's
+  secondary button is **Reset** (`action=reset`, shown only with something to reset - `can_reset`: the phone's own row, or a stored catalog default; an older page's `catalog` does the same, its `own` keeps its old meaning, an empty row - qa-34-s1-code L1, N1): it deletes the phone's
   row (the phone then follows the catalog default, else Vibb style) or clears the catalog default. Vibb style with no
   name on a phone with a catalog default keeps an empty row (Vibb style there). An older launcher drops `own` as an
   unknown icon (with no label the entry is gone - today's look).

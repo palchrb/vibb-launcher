@@ -40,8 +40,10 @@
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.label }}</label>
             {% endfor %}
         </fieldset>
-        <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon. The app's own logo: its real icon in its own colours. The colour applies to a chosen icon. {{ form.reset_hint() }} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
+        <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo). The app's own logo: its real icon in its own colours. The colour applies to a chosen icon.{% if form.can_reset() %} {{ form.reset_hint() }}{% endif %} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
         <button type="submit" name="action" value="save">Save</button>
+        {% if form.can_reset() %}
         <button type="submit" name="action" value="reset" class="button-secondary">Reset</button>
+        {% endif %}
     </form>
 </details>

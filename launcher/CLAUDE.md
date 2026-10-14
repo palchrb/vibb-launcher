@@ -284,12 +284,12 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   Calendar, Maps, ... - mockup 01), else one dominant hue -> the nearest chromatic tone (`nearestTone`; slate is never
   a hue's tone), else (a second hue with >= 25 % of the coloured part, or < 15 % in colour, or nothing) a tone by
   `String.hashCode` of the package (`hashedTone`, stable; slate without a package). Always one of the six.
-  `KidAvatars.toneOf` feeds it the palette's swatches (rgb + population) of a 48 px render of the icon's colour layers.
+  `KidAvatars.toneOf` feeds it `swatchesOf` - the opaque pixels (alpha >= 128) of a 48 px render of the icon's colour layers, counted per 4-bit colour; never androidx Palette, whose default filter drops orange and brown (qa-34-s1-code L2).
 - **Three states** (QA H1; `appdisplay/AppDisplay.kt`): `AppDisplayEntry.icon` `null` = **Vibb style** (default),
   `OWN_ICON` = `"own"` = **the app's own logo** (`ownLogo`), else a glyph. `appDisplayMap` accepts `KNOWN_ICONS` (the
   glyphs + `own`; `own` always with `auto`) - an older launcher's set (the glyphs alone) drops `own` (with no label the
   entry is gone, today's look). `appIconKey` gives `|g=own|c=auto`.
-- **`renderAppIcon`** checks `own` first: `drawOwnLogo` - an adaptive icon's background + foreground in their original
+- **`renderAppIcon`** follows the pure `iconRender(entry, hasMonochrome)` (`IconRender` OwnLogo / Glyph / VibbMono, `IconTonesTest`, qa-34-s1-code L4), which checks `own` first: `drawOwnLogo` - an adaptive icon's background + foreground in their original
   colours at 1.5x, never the monochrome layer, no tint; a legacy icon inset 1/8 on `kid_icon_fallback` `#F1F3F5`; both
   clipped to the circle. Then a parent glyph (`renderSymbolIcon` on the colour's tile, or the app's tone for `auto`).
   Then Vibb style: a monochrome layer white on the app's tone, any other icon `drawOwnLogo` (nothing to tone - a legacy
