@@ -1262,13 +1262,23 @@ needed to manage the phone, delete on a schedule, never store notification or me
   reconnects: seconds after a clean stop, up to 5 min after a crash or power cut (no special case).
 - **Lock badge and screen time** (`src/time_state.rs`, from the last `time_state`): **the end ("until 14:30",
   "until 07:00 tomorrow") only when provably right** (the parent's rule): the phone reports its own zone
-  (`time_state.zone`) and it is Phone Setup's - no launcher sends one yet, so today no end shows -, the report is
-  fresh, from today and inside one window of the active rule, and at that window's end no effective rule locks
+  (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none and
+  gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
+  `TimeReport::parse` keeps only a non-empty string of at most 64 bytes, nothing else reads it), the report is
+  fresh, from today and inside one window of the active rule, the end is exactly one instant in the zone
+  (`Zone::single_instant`: not in a spring-forward gap, where the phone unlocks at the jump, nor in a fall-back
+  hour, which comes twice - qa-34-s13-code L2), and at that window's end no effective rule locks
   (the same rule's next day, an all-day rule, a legacy pair, an adjacent rule) and the screen time isn't used up.
   A report from another day than the server's local today (in the fallback zone: more than a day from the UTC date)
   shows no end and no bar ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last
   report", never with an end. "· calls off" only with calls managed and screened (`attention::Facts::calls_enforced`).
-  In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct").
+  In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct"). End to end with the launcher's
+  own body (`devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts `testdata/time_status_report.json`,
+  the contract the launcher's `TimeStateZoneTest` encodes exactly; the launcher keeps a byte-identical copy, compared
+  on both sides): Phone Setup's zone shows "until 07:00" on the Devices list, the summary and Device › Time; another
+  zone, none, `null`, a non-string or garbage show the rule's name alone (the 64-byte cap is pinned by
+  `time_state::tests::the_zone_is_kept_only_as_a_short_non_empty_string`). The emulator's zone (the launcher forces automatic time zone, so the
+  network's wins): `adb shell getprop persist.sys.timezone` into Phone Setup (`docs/testing/emulator.md`).
 - **Attention** (`src/attention.rs`): `facts(state, device, connection)` (or `facts_of` from cards already built,
   as the device page does) -> `items` = rows with a level (alarm/action), a typed title (<= 8 words;
   `calls::CallProblem` types the call report's warnings), a target (the sub-page that fixes it, or since step 10 a group of the summary: Restrictions
@@ -1514,7 +1524,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "Time · Everyone's rules / Own rules", "Needs attention" (orange) while the page shows the record or Vibb-too-old
   warning, "Couldn't read" on a failed read): warnings (Vibb too old for time rules, the screen-time record unreadable,
   incoming calls not blocked), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows
-  only when provably right, which needs the phone's `time_state.zone`: no launcher sends it yet -, today's screen time
+  only when provably right, which needs the phone's `time_state.zone` - sent since design 34 P13 -, today's screen time
   with the extra minutes, the report's age with the exact local time in `title`), **Extra Time Today** (+15 min / +30
   min / +1 h tiles), **Pause a Rule** (rule and length pickers, only with rules to pause), **Recent** (the 10 newest
   lifts, `lifts::recent`, statuses local - `lifts::LiftState` -, End now), **Rules** (the own-rules switch, its own
@@ -1552,7 +1562,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   min ago" with the exact time in `title`, "· changes may be delayed" while Away, "· changes wait until it's back"
   while Offline, "Disconnected · access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet",
   "Not set up"; the lock badge only while a rule locks - `devices::badge_and_screen`, the Devices list's rules, so no
-  end until the phone reports its zone -; today's bar); **Attention** (`attention::items`, the list's count); the
+  end unless the phone reports Phone Setup's zone -; today's bar); **Attention** (`attention::items`, the list's count); the
   **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: a red "Unlocked on the phone" first while the last report has the restrictions
   paused - what ends it, also for an older launcher -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode

@@ -838,7 +838,7 @@ async fn device_time_shows_the_phones_state_in_local_time() {
     };
     let time = device_page(id, Section::Time);
 
-    // Today's launchers send no zone: the rule's name, no end.
+    // A launcher from before design 34 P13 sends no zone: the rule's name, no end.
     report(&app, &token, state(None, &today)).await;
     let html = app.get_page(&time, &cookie).await.text();
     let now_group = section(&html, "now");

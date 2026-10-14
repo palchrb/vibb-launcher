@@ -108,6 +108,12 @@ impl Zone {
         t.with_timezone(&self.tz)
     }
 
+    /// The local wall time `t` is exactly one instant in this zone: not in a spring-forward gap
+    /// (it never shows) nor in a fall-back hour (it shows twice).
+    pub fn single_instant(&self, t: NaiveDateTime) -> bool {
+        self.tz.from_local_datetime(&t).single().is_some()
+    }
+
     /// " UTC" after a clock time in the fallback zone, else nothing.
     fn suffix(&self) -> &'static str {
         if self.fallback { " UTC" } else { "" }
