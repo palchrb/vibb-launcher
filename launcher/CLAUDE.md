@@ -486,6 +486,19 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **The glance clock** is Nunito 700 (`@font/nunito_bold`; it was 800); size and fit unchanged (`LockGlanceLayoutTest`).
 - Not emulator-checked yet: the keypad at font scale 1.0/1.3/2.0 via the emulator console screenshot (`docs/testing/emulator.md` §6c), nb and en; the glance clock.
 
+## Softer built-in wallpapers (design 34 step 9, P8, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- The server's migration 0076 softens three built-ins in place (same ids and `builtin_key`s, so a kid's pick stays):
+  `green` is now the gradient `#2A4A4F -> #101820`, `sky` `#34406A -> #14141F`, `sunset` `#5A3A4A -> #1A1420`. The
+  launcher keeps no built-in colours of its own (it draws what `launcher_ui.wallpapers` sends; only navy is its
+  fallback), so an older launcher shows them too. Only the names are ours: `wallpaper_green`/`_sky`/`_sunset` = nb
+  "Fjord", "Kveldshimmel", "Skumring", en "Fjord", "Evening sky", "Dusk" (`KidSettingsActivity.wallpaperLabel`, by
+  `builtin_key`).
+- `WallpaperInkTest` lists today's seven built-ins: each reaches 4.5:1 with no label shadow, the three softened ones take
+  white ink with no scrim (>= 9.5:1 on the lightest stop), and the lock's inks reach 4.5:1 on every built-in's stops
+  (the red emergency link needs a light scrim on Dusk's lighter stop, which `lockScrimForColours` gives). The old
+  bright sky/sunset stay in the test as generic bright grounds.
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.

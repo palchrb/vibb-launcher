@@ -36,20 +36,39 @@ class WallpaperInkTest {
         assertTrue(contrastRatio(relativeLuminance(INK_DARK), relativeLuminance(0xFFF4F1EA.toInt())) >= 4.5)
     }
 
+    /** The server's built-ins (vibb_night, navy, forest, plum, and since design 34 P8 / migration
+     * 0076 the softened green "Fjord", sky "Evening sky" and sunset "Dusk" - all gradients now). */
+    private val builtins = listOf(
+        listOf(0xFF0C0C14), listOf(0xFF14213D), listOf(0xFF1E4D3A), listOf(0xFF4A2545),
+        listOf(0xFF2A4A4F, 0xFF101820), listOf(0xFF34406A, 0xFF14141F), listOf(0xFF5A3A4A, 0xFF1A1420),
+    ).map { stops -> stops.map { it.toInt() } }
+
     @Test
     fun `every built-in reaches 4_5 to 1`() {
-        val builtins = listOf(
-            listOf(0xFF14213D), listOf(0xFF1E4D3A), listOf(0xFF4A2545), listOf(0xFF2B8A3E),
-            listOf(0xFF1C7ED6, 0xFF14213D), listOf(0xFFF76707, 0xFF862E9C),
-        ).map { stops -> stops.map { it.toInt() } }
         for (stops in builtins) {
             val ink = inkForColours(stops)
             val lums = stops.map(::relativeLuminance)
             assertTrue("$stops", worstContrast(ink, lums.min(), lums.max()) >= 4.5)
             assertFalse(ink.labelShadow)
         }
-        // The sunset gradient: white ink judged on its lightest stop, so a scrim is needed.
+        // A bright gradient (the old sunset, #F76707 -> #862E9C): white ink judged on its
+        // lightest stop, so a scrim is needed.
         assertTrue(inkForColours(listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())).scrimAlpha > 0.0)
+    }
+
+    /** Design 34 P8 (qa-34-design M1): the three softened built-ins take white ink with no scrim
+     * and no shadow, about 9.5-10.1:1 on their lightest stop. */
+    @Test
+    fun `the softened built-ins take white ink with no scrim`() {
+        for (stops in builtins.takeLast(3)) {
+            val ink = inkForColours(stops)
+            assertEquals("$stops", INK_LIGHT, ink.ink)
+            assertFalse(ink.darkInk)
+            assertEquals(0.0, ink.scrimAlpha, 0.0)
+            assertFalse(ink.labelShadow)
+            val lightest = stops.maxOf(::relativeLuminance)
+            assertTrue("$stops", contrastRatio(1.0, lightest) >= 9.5)
+        }
     }
 
     @Test
@@ -114,7 +133,8 @@ class WallpaperInkTest {
     fun `the lock's scrim gives every lock ink 4_5 to 1 on any background`() {
         fun ground(lum: Double, alpha: Double) = underScrim(lum, ((alpha * 255).toInt()) / 255.0, towardsWhite = false)
         val backgrounds = listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFF1C7ED6.toInt(), 0xFFF76707.toInt(),
-            0xFF862E9C.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt())
+            0xFF862E9C.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt()) +
+            builtins.flatten()
         for (argb in backgrounds) {
             val alpha = lockScrimForColours(listOf(argb))
             assertTrue(alpha <= LOCK_MAX_SCRIM)
@@ -123,8 +143,9 @@ class WallpaperInkTest {
                 assertTrue("%08x on %08x at %.2f: %.2f".format(ink, argb, alpha, c), c >= LABEL_CONTRAST)
             }
         }
-        // QA's table: Sky and Sunset gave the emergency link about 2:1 - not any more.
-        for (stops in listOf(listOf(0xFF1C7ED6.toInt(), 0xFF14213D.toInt()), listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt()))) {
+        // QA's table: the old Sky and Sunset (bright gradients, softened by design 34 P8) gave the
+        // emergency link about 2:1 - not any more. Every built-in of today too.
+        for (stops in listOf(listOf(0xFF1C7ED6.toInt(), 0xFF14213D.toInt()), listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())) + builtins) {
             val alpha = lockScrimForColours(stops)
             val lightest = stops.maxOf(::relativeLuminance)
             assertTrue(inkContrastOn(0xFFFF8A8A.toInt(), ground(lightest, alpha)) >= LABEL_CONTRAST)
