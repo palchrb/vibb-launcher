@@ -507,6 +507,29 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     super::app_display::report_installed(&app, &token, &["org.example.one", "org.example.two"])
         .await;
     let entry = super::music::add_own(&app, &cookie, "Bilturen").await;
+    // Spotify (design 26c): an app, a child's login bound to Anna's phone (Device › Music's
+    // Spotify group, Web Filter's notes and the override mark on a blocked Spotify host), a
+    // Spotify entry, and the Spotify page itself.
+    let account = super::music_spotify::listing::ready(&app).await;
+    sqlx::query("UPDATE device_policy SET music_spotify_account = ? WHERE device_id = ?")
+        .bind(account)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO dns_custom_domains (domain, list_type, device_id) VALUES ('spotify.com', 'block', ?)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let spotify_entry = super::music_spotify::listing::entry(
+        &app,
+        "playlist",
+        super::music_spotify::listing::PLAYLIST,
+    )
+    .await;
     for (path, fields) in [
         (
             format!("/devices/{id}/contacts"),
@@ -541,6 +564,8 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         "/music".to_string(),
         "/music?edit=1".to_string(),
         format!("/music/entries/{entry}"),
+        format!("/music/entries/{spotify_entry}"),
+        "/music/spotify".to_string(),
         "/music/settings".to_string(),
         "/music/categories".to_string(),
         "/music/import".to_string(),
@@ -574,6 +599,24 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
             pages.push(device_page(phone, section));
         }
         pages.push(format!("/devices/{phone}/provision"));
+    }
+    // The Spotify parts are on the pages the loop checks.
+    for (page, part) in [
+        (
+            device_page(id, Section::Music),
+            format!("action=\"/devices/{id}/music/spotify#music-spotify\""),
+        ),
+        (
+            device_page(id, Section::Filter),
+            "data-spotify-override".to_string(),
+        ),
+        (
+            "/music/spotify".to_string(),
+            "action=\"/music/spotify/add#add\"".to_string(),
+        ),
+    ] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(html.contains(&part), "{page} has no {part}");
     }
     let mut forms = 0;
     for page in pages {

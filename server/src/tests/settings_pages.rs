@@ -79,6 +79,8 @@ fn leaves_the_page(action: &str) -> bool {
             | ["devices" | "apps", "new"]
             | ["apps", "tracked", "new"]
             | ["devices", _, "regenerate-code"]
+            // Spotify's login answers with a 303 to Spotify's authorize page (design 26c §2.3).
+            | ["music", "spotify", "login"]
     ) || matches!(
         path.as_slice(),
         ["devices", n, "delete"]
