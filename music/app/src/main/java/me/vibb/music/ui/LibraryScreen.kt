@@ -2,6 +2,7 @@ package me.vibb.music.ui
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -24,11 +25,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
@@ -51,9 +56,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import me.vibb.music.R
 import me.vibb.music.logic.Hint
@@ -142,15 +150,20 @@ fun LibraryScreen(
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
+        // The weighted slot takes what the header, the tiles and the bar leave; they always keep their own height
+        // (design 34 P10 b, QA L1), so the tiles never slide under the bar.
         if (entries.isEmpty()) {
-            Line(stringResource(R.string.no_library), 15, 700, Palette.dim, Modifier.fillMaxWidth(), maxLines = 2, center = true)
+            EmptyState(
+                Icons.headphones,
+                stringResource(R.string.no_library),
+                stringResource(R.string.no_library_body),
+                Modifier.weight(1f).fillMaxWidth(),
+            )
         } else {
             key(selected, entries.size, jumps) {
-                Carousel(entries, startIndex.coerceIn(entries.indices), onIndex, onPlay)
+                Carousel(entries, startIndex.coerceIn(entries.indices), now != null, onIndex, onPlay, Modifier.weight(1f).fillMaxWidth())
             }
         }
-        Spacer(Modifier.weight(1f))
         if (tiles.isNotEmpty()) CategoryTiles(tiles, selected, onCategory)
         if (now != null) NowPlayingBar(now, onOpenPlayer, onTogglePlay)
     }
@@ -161,9 +174,23 @@ fun LibraryScreen(
  * and snaps to the nearest cover with a short spring; the neighbours peek 46 dp, their scale and
  * alpha follow the page offset; a tap on a neighbour turns to it; a tap on the cover plays the
  * entry it lands on; with animations off everything jumps.
+ *
+ * It fills the library's weighted slot (design 34 P10 b, QA L1): the cover is [libraryFit] of the slot's
+ * measured height less the title and hint lines measured at the font scale, in whole pixels - at most 180 dp, at
+ * least 120; below that the slot scrolls. Without the now-playing bar ([hasBar] false) the bar's room is kept out
+ * of the cover's, so the cover doesn't jump when the bar comes or goes (qa-34-s11-code N2); the spare room centres.
+ * The covers' shadow is soft: the centred one keeps v12's 12 dp, a neighbour has P2's 2 dp, in between it follows
+ * the page offset (P10 c).
  */
 @Composable
-private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> Unit, onPlay: (EntryUi) -> Unit) {
+private fun Carousel(
+    entries: List<EntryUi>,
+    startIndex: Int,
+    hasBar: Boolean,
+    onIndex: (Int) -> Unit,
+    onPlay: (EntryUi) -> Unit,
+    modifier: Modifier,
+) {
     val n = entries.size
     val pager = rememberPagerState(initialPage = carouselStartPage(n, startIndex)) { carouselPageCount(n) }
     val scope = rememberCoroutineScope()
@@ -172,13 +199,63 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
     LaunchedEffect(pager, n) {
         snapshotFlow { pager.targetPage }.collect { currentOnIndex(carouselIndex(it, n)) }
     }
-    val pull = with(LocalDensity.current) { 24.dp.toPx() }
-    BoxWithConstraints(Modifier.fillMaxWidth().height(184.dp)) {
-        val side = carouselSide(maxWidth.value).dp
+    val density = LocalDensity.current
+    val lines = measuredLinesPx(21 to 800, 13 to 700)
+    val barReserve = if (hasBar) 0 else nowBarRoomPx(measuredLinesPx(13 to 800, 11 to 700), density.density)
+    val scroll = rememberScrollState()
+    BoxWithConstraints(modifier) {
+        // the slot is always bounded (a weight); the guard keeps an unbounded caller from throwing
+        val slot = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
+        val fit = libraryFit(slot, lines, barReserve, density.density)
+        // verticalScroll clips, so only below the floor: above it the centred cover's 12 dp shadow is never cut (N1)
+        val scrolling = if (fit.scrolls) Modifier.verticalScroll(scroll) else Modifier
+        val fill = if (constraints.hasBoundedHeight) Modifier.heightIn(min = maxHeight) else Modifier
+        Column(
+            Modifier.fillMaxWidth().then(scrolling).then(fill),
+            verticalArrangement = Arrangement.spacedBy(CAROUSEL_GAP_DP.dp, Alignment.CenterVertically),
+        ) {
+            CarouselPager(entries, pager, fit.coverPx, scope, snap, onPlay)
+            CarouselTitle(entries, pager.targetPage)
+        }
+    }
+}
+
+/**
+ * Two one-line [Line]s' height together (px) at this font scale, measured as they are drawn: (sp, weight) each.
+ * Keyed on the font scale too, though a font-scale change recreates the activity (no `configChanges`): harmless.
+ */
+@Composable
+private fun measuredLinesPx(first: Pair<Int, Int>, second: Pair<Int, Int>): Int {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(measurer, density.density, density.fontScale, first, second) {
+        listOf(first, second).sumOf { (size, weight) ->
+            measurer.measure("Ag", text(size.sp, weight, Palette.white), maxLines = 1).size.height
+        }
+    }
+}
+
+@Composable
+private fun CarouselPager(
+    entries: List<EntryUi>,
+    pager: PagerState,
+    coverPx: Int,
+    scope: CoroutineScope,
+    snap: AnimationSpec<Float>,
+    onPlay: (EntryUi) -> Unit,
+) {
+    val n = entries.size
+    val density = LocalDensity.current
+    val cover = coverPx / density.density
+    val pull = with(density) { carouselPull(cover).dp.toPx() }
+    val shape = RoundedCornerShape(24.dp)
+    val box = with(density) { (coverPx + dpToPx(CAROUSEL_BOX_EXTRA_DP, density.density)).toDp() }
+    BoxWithConstraints(Modifier.fillMaxWidth().height(box)) {
+        val side = carouselSide(maxWidth.value, cover).dp
         HorizontalPager(
             state = pager,
             modifier = Modifier.fillMaxSize(),
-            pageSize = PageSize.Fixed(CAROUSEL_COVER_DP.dp),
+            pageSize = PageSize.Fixed(cover.dp),
             contentPadding = PaddingValues(horizontal = side),
             pageSpacing = CAROUSEL_SPACING_DP.dp,
             beyondViewportPageCount = 1,
@@ -194,8 +271,8 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
                 stringResource(if (page < pager.targetPage) R.string.previous_entry else R.string.next_entry, e.entry.name)
             }
             Cover(
-                e.entry.cover, e.category, 24.dp, 84.dp,
-                Modifier.size(180.dp)
+                e.entry.cover, e.category, 24.dp, carouselGlyph(cover).dp,
+                Modifier.size(cover.dp)
                     .graphicsLayer {
                         val offset = (pager.currentPage - page) + pager.currentPageOffsetFraction
                         val f = abs(offset).coerceIn(0f, 1f)
@@ -203,10 +280,13 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
                         scaleX = scale
                         scaleY = scale
                         alpha = lerp(1f, 0.45f, f)
-                        // Pull the neighbour in so 46 dp of it shows beside the 180 dp cover.
+                        // Pull the neighbour in so 46 dp of it shows beside the 180 dp cover (more beside a smaller one).
                         translationX = sign(offset) * pull * f
+                        // The soft shadow (P10 c): 12 dp under the centred cover, P2's 2 dp under a neighbour.
+                        shadowElevation = lerp(COVER_ELEVATION_DP, NEIGHBOUR_ELEVATION_DP, f).dp.toPx()
+                        this.shape = shape
+                        clip = false
                     }
-                    .shadow(if (page == pager.currentPage) 12.dp else 0.dp, RoundedCornerShape(24.dp))
                     .button(label) {
                         when (val tap = carouselTap(page, pager.targetPage, pager.currentPage, n, pager.pageCount)) {
                             is CarouselTap.Play -> onPlay(entries[tap.index])
@@ -220,28 +300,42 @@ private fun Carousel(entries: List<EntryUi>, startIndex: Int, onIndex: (Int) -> 
             }
         }
     }
-    val index = carouselIndex(pager.targetPage, n)
+}
+
+/** The title, the hint (+ progress) and the dots under the pager; the progress line's room is always kept. */
+@Composable
+private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
+    val n = entries.size
+    val index = carouselIndex(targetPage, n)
     val current = entries[index]
+    val density = LocalDensity.current
     // Keyed on the entry, so a position save (the progress line) doesn't fade the title (L13).
     Crossfade(current.entry.id, animationSpec = tween(if (animationsOn()) 200 else 0), label = "title") { id ->
         val e = entries.firstOrNull { it.entry.id == id } ?: current
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp)) {
             Line(e.entry.name, 21, 800, Palette.white)
             // a Spotify tile's line replaces the hint (design 26c §5.8): the loaded one's state, the stored outcome
             Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)
+            // without a progress line its 3 + 3 + 4 dp stay reserved, so the cover never resizes on a turn
             if (e.progress != null) {
-                Box(Modifier.padding(top = 3.dp).width(140.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
+                Box(Modifier.padding(top = CAROUSEL_PROGRESS_PAD_DP.dp).width(140.dp).height(CAROUSEL_PROGRESS_DP.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
                     Box(Modifier.width(140.dp * e.progress).height(4.dp).background(Palette.peach))
                 }
+            } else {
+                Spacer(Modifier.height(with(density) { progressRoomPx(density.density).toDp() }))
             }
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
         for (i in dotWindow(n, index)) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(if (i == index) Palette.peach else Palette.dot))
+            Box(Modifier.size(CAROUSEL_DOTS_DP.dp).clip(CircleShape).background(if (i == index) Palette.peach else Palette.dot))
         }
     }
 }
+
+/** The centred cover's shadow (v12) and a neighbour's (design 34 P2's quiet depth), dp. */
+private const val COVER_ELEVATION_DP = 12f
+private const val NEIGHBOUR_ELEVATION_DP = 2f
 
 @Composable
 private fun CoverBadges(e: EntryUi) {
@@ -311,8 +405,10 @@ private fun CategoryTile(category: Category?, on: Boolean, width: Dp, onClick: (
 /** The now-playing bar: what plays (or played, paused after a restart) and play/pause. */
 @Composable
 fun NowPlayingBar(now: NowView, onOpen: () -> Unit, onTogglePlay: () -> Unit) {
+    // P2's quiet depth (design 34 P10 c): 2 dp of soft shadow lifts the bar off the night ground.
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.card).padding(horizontal = 8.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().shadow(BAR_ELEVATION_DP.dp, RoundedCornerShape(16.dp)).background(Palette.card)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -334,3 +430,6 @@ fun NowPlayingBar(now: NowView, onOpen: () -> Unit, onTogglePlay: () -> Unit) {
         )
     }
 }
+
+/** The now-playing bar's shadow (dp): P2's. */
+const val BAR_ELEVATION_DP = 2

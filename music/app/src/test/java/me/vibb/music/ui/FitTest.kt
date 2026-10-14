@@ -231,4 +231,142 @@ class FitTest {
         assertEquals("a 2.625 phone: the whole file", 512, coverDecodePx(512, 2.625f))
         assertEquals(300, coverDecodePx(300, 3f))
     }
+
+    // The library's fit (design 34 P10 b, QA L1; qa-34-s11-code L1, N2): the cover from the measured slot in whole
+    // pixels, floor 120, then scroll.
+
+    /** Compose's `Dp.roundToPx`, written out here so the model below doesn't lean on the code under test. */
+    private fun px(dp: Int, d: Float) = Math.round(dp * d)
+
+    /** A one-line Nunito [Line] of [sp] in pixels (hhea 1011 + 353 per 1000; the layout's height is rounded up). */
+    private fun linePx(sp: Int, scale: Float, d: Float) = kotlin.math.ceil(1.364 * sp * scale * d).toInt()
+
+    /** The slot's content as Compose draws it: every fixed part rounded on its own (the pager box, the gaps, the
+     * title block's 3 dp gaps, the progress room as padding + line, the dots). */
+    private fun drawnContent(coverPx: Int, scale: Float, d: Float): Int =
+        (coverPx + px(4, d)) + px(8, d) +
+            (linePx(21, scale, d) + px(3, d) + linePx(13, scale, d) + px(3, d) + px(3, d) + px(4, d)) +
+            px(8, d) + px(8, d)
+
+    private val densities = listOf(1.5f, 2f, 2.625f, 3f)
+
+    @Test
+    fun `L1 - in whole pixels the content never overflows the slot, at every density`() {
+        for (d in densities) {
+            for (scale in listOf(1.0f, 1.3f, 2.0f)) {
+                val lines = linePx(21, scale, d) + linePx(13, scale, d)
+                for (slot in px(150, d)..px(420, d)) {
+                    val fit = libraryFit(slot, lines, 0, d)
+                    val content = drawnContent(fit.coverPx, scale, d)
+                    val what = "density $d, scale $scale, slot $slot px: cover ${fit.coverPx}, content $content"
+                    if (fit.scrolls) {
+                        assertEquals("$what: scrolls only at the floor", px(LIBRARY_COVER_MIN_DP, d), fit.coverPx)
+                        assertTrue(what, content > slot)
+                    } else {
+                        assertTrue("$what: not a pixel cut", content <= slot)
+                        assertTrue("$what: and the cover takes the room", fit.coverPx == px(CAROUSEL_COVER_DP, d) || content == slot)
+                    }
+                }
+            }
+        }
+        // the review's case: at 1.5 the fixed rest is 63 px (41 dp would be 61.5)
+        assertEquals(63, libraryFixedPx(1.5f))
+        assertEquals(82, libraryFixedPx(2f))
+        assertEquals(123, libraryFixedPx(3f))
+    }
+
+    /**
+     * The library at 320 x 569 dp (the Jelly Star), as LibraryScreen lays it out, in pixels: the status bar (24 dp) and
+     * the navigation bar (gesture 24 dp, three buttons 48 dp) off, the 10 + 12 dp padding, the 52 dp header, 8 dp between
+     * the children; the category tiles (the 44 dp circle, 4 dp, the 11 sp label; at least 64) and the bar (6 + 6 dp
+     * around the larger of the 44 dp button and its 13 + 11 sp lines) keep their own height, the weighted slot gets the
+     * rest. Text grows linearly with the font scale here (Android 14's curve grows large text less): an upper bound.
+     */
+    private fun slotPx(scale: Float, bar: Boolean, nav: Int, d: Float): Int {
+        val tiles = maxOf(px(64, d), px(44, d) + px(4, d) + linePx(11, scale, d))
+        val nowBar = 2 * px(6, d) + maxOf(px(44, d), linePx(13, scale, d) + linePx(11, scale, d))
+        val children = if (bar) 4 else 3
+        return Math.round(569 * d) - px(24, d) - px(nav, d) - px(10, d) - px(12, d) - px(52, d) - (children - 1) * px(8, d) -
+            tiles - (if (bar) nowBar else 0)
+    }
+
+    private fun fitOnJelly(scale: Float, bar: Boolean, nav: Int, d: Float = 1.5f): LibraryFit {
+        val lines = linePx(21, scale, d) + linePx(13, scale, d)
+        val reserve = if (bar) 0 else nowBarRoomPx(linePx(13, scale, d) + linePx(11, scale, d), d)
+        return libraryFit(slotPx(scale, bar, nav, d), lines, reserve, d)
+    }
+
+    @Test
+    fun `the library on the Jelly Star at font scale 1_0, 1_3 and 2_0`() {
+        // v12's cover at 1.0, a little less at 1.3, the floor and a short scroll at 2.0 with three buttons only
+        assertEquals(270, fitOnJelly(1.0f, true, 48).coverPx)
+        val at13 = fitOnJelly(1.3f, true, 48)
+        assertTrue("1.3: ${at13.coverPx} px", at13.coverPx in 250 until 270 && !at13.scrolls)
+        assertTrue("2.0 with gestures: no scroll", !fitOnJelly(2.0f, true, 24).scrolls)
+        val at20 = fitOnJelly(2.0f, true, 48)
+        assertTrue(at20.scrolls)
+        assertEquals(180, at20.coverPx)
+        val lines20 = linePx(21, 2f, 1.5f) + linePx(13, 2f, 1.5f)
+        val over = librarySlotContentPx(at20.coverPx, lines20, 1.5f) - slotPx(2.0f, true, 48, 1.5f)
+        assertTrue("a short scroll ($over px)", over in 1..30)
+    }
+
+    @Test
+    fun `N2 - the cover is the same with and without the bar`() {
+        for (d in densities) {
+            for (nav in listOf(24, 48)) {
+                for (scale in listOf(1.0f, 1.3f, 2.0f)) {
+                    val with = fitOnJelly(scale, true, nav, d)
+                    val without = fitOnJelly(scale, false, nav, d)
+                    assertEquals("density $d, nav $nav, scale $scale", with.coverPx, without.coverPx)
+                    assertTrue("without the bar the slot never needs more scroll", !without.scrolls || with.scrolls)
+                }
+            }
+        }
+        assertEquals("the bar's room at 1.5: 9 + 66 + 9 px and the 12 px gap", 96, nowBarRoomPx(40, 1.5f))
+    }
+
+    @Test
+    fun `the carousel at the floor - the neighbours still peek, the pull and glyph follow the cover`() {
+        for (screen in widths) {
+            val room = available(screen)
+            for (cover in listOf(120f, 150f, 180f)) {
+                assertTrue("$screen/$cover: the cover fits", carouselSide(room, cover) >= 0f && cover + 2 * carouselSide(room, cover) <= room + 0.001f)
+                assertTrue("$screen/$cover: the neighbours peek", carouselPeek(room, cover) >= 46f - 0.001f)
+            }
+        }
+        assertEquals("v12's 24 dp pull", 24f, carouselPull(180f), 0.05f)
+        assertEquals(84f, carouselGlyph(180f), 0.001f)
+        assertEquals(56f, carouselGlyph(120f), 0.001f)
+        assertEquals("the default is v12's 180", carouselSide(288f, 180f), carouselSide(288f), 0.001f)
+    }
+
+    /** A source file with every run of whitespace as one space (qa-34-s11-code L2: checks pin meaning, not layout). */
+    private fun flat(path: String) = moduleFile(path).readText().replace(Regex("\\s+"), " ")
+
+    private val library get() = flat("src/main/java/me/vibb/music/ui/LibraryScreen.kt")
+
+    private fun body(text: String, start: String) = text.substringAfter(start).substringBefore(" } /**")
+
+    @Test
+    fun `LibraryScreen - one weighted slot, the cover from libraryFit, scroll only below the floor`() {
+        val screen = library.substringAfter("fun LibraryScreen(").substringBefore("private fun Carousel(")
+        assertEquals("only the header's weighted spacer", 1, Regex("Spacer\\(Modifier\\.weight").findAll(screen).count())
+        assertTrue("the carousel is the slot", Regex("Carousel\\([^;]*Modifier\\.weight\\(1f\\)").containsMatchIn(screen.substringBefore("if (tiles")))
+        assertTrue("the tiles and the bar are unweighted", !screen.substringAfter("if (tiles.isNotEmpty())").substringBefore("/**").contains("weight("))
+        val carousel = body(library, "private fun Carousel(")
+        assertTrue(carousel.contains("libraryFit("))
+        assertTrue("the scroll exists only below the floor", carousel.contains("if (fit.scrolls) Modifier.verticalScroll("))
+        assertEquals("one verticalScroll", 1, Regex("verticalScroll\\(").findAll(carousel).count())
+        assertTrue("the progress room is always kept", body(library, "private fun CarouselTitle(").contains("progressRoomPx("))
+        assertTrue("no fixed cover sizes left", !library.contains("180.dp") && !library.contains("184.dp"))
+    }
+
+    @Test
+    fun `soft shadows - 12 dp under the centred cover, P2's 2 dp under a neighbour and the bar (P10 c)`() {
+        assertTrue("centred 12, neighbour 2", library.contains("lerp(COVER_ELEVATION_DP, NEIGHBOUR_ELEVATION_DP, f)"))
+        assertTrue(library.contains("COVER_ELEVATION_DP = 12f") && library.contains("NEIGHBOUR_ELEVATION_DP = 2f"))
+        assertEquals(2, BAR_ELEVATION_DP)
+        assertTrue(body(library, "fun NowPlayingBar(").contains("shadow(BAR_ELEVATION_DP.dp"))
+    }
 }

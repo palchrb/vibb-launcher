@@ -132,7 +132,8 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
             }
         }
         if (rows.isEmpty()) {
-            Line(stringResource(R.string.nothing_new), 15, 700, Palette.dim, Modifier.fillMaxWidth().padding(top = 40.dp), maxLines = 2, center = true)
+            // design 34 P10 a: the disc with the bell and today's words, in the room under the header
+            EmptyState(Icons.bell, stringResource(R.string.nothing_new), null, Modifier.weight(1f).fillMaxWidth())
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(rows, key = { "${it.entry.id}/${it.item.key}" }) { row ->
@@ -196,7 +197,8 @@ fun SearchScreen(
             }
         }
         if (query.isNotBlank() && hits.isEmpty()) {
-            Line(stringResource(R.string.nothing_found), 15, 700, Palette.dim, Modifier.fillMaxWidth().padding(top = 30.dp), center = true)
+            // design 34 P10 a: the disc with the search glyph and today's words, from the top (above the keyboard)
+            EmptyState(Icons.search, stringResource(R.string.nothing_found), null, Modifier.weight(1f).fillMaxWidth(), centred = false)
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(hits, key = { h -> if (h is SearchHit.ItemHit) "${h.entry.id}/${h.item.key}" else "${h.entry.id}" }) { hit ->

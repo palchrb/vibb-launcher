@@ -439,3 +439,74 @@ P3 built (launcher only, no server or contract change), on branch `design-34-s3`
 | N2 `contrast()` dropped alpha | `contrast(top, under)` composites `top` over `under` and asserts that `under` is opaque |
 | N3 two homes for the 112 colours | New `kid_emergency_tonal` `#3A1E24` next to `kid_emergency_text`. `KidPaletteTest` keeps `EMERGENCY_AVATAR` equal to that pair, so P7's pill can take the resources |
 | N4 where the 112 avatar shows | `launcher/CLAUDE.md` now says: only on Home's contacts row, in the phone book and on the sheet. The call screens show the silhouette for emergency calls, and the glance rows never pass `isEmergency` |
+
+## Step 11 implementation status (2026-10-14)
+
+P10 is built (music app only; no launcher, server or contract change), on branch `design-34-s11`. Visual only: no
+behaviour, gesture or text outside the empty states changes.
+
+**What was built**
+- **(a) Empty states** (`ui/Widgets.kt` `EmptyState`): a 104 dp night disc (`Palette.card`, P2's 2 dp soft shadow) with
+  the glyph in peach (40 dp), the headline (19 sp ExtraBold, `fg`) and an optional body (15 sp Bold, `dim`), centred,
+  wrapping, never cut. The library shows the headphones, "Her kommer musikken din" / "Your music will appear here" and
+  "Mamma eller pappa legger til musikk, podkaster og bøker. De dukker opp her av seg selv." / "Mum or dad adds music,
+  podcasts and books. They show up here by themselves." (new `no_library_body`; `no_library` reworded). Nytt shows the
+  bell with today's "Ingenting nytt akkurat nå", search the search glyph with "Fant ingenting". TalkBack (QA L7): the
+  disc has no description (the glyph is `Glyph`, `contentDescription = null`), the two texts are one merged node.
+  Nothing animates, nothing is tappable.
+- **(b) Fit** (QA L1): the weighted spacers around the carousel are gone; the carousel (or the empty state) is the
+  `weight(1f)` slot between the header and the category tiles + bar, which keep their own height - so the tiles can't
+  slide under the bar at any font scale. In the slot a `BoxWithConstraints` reads the height; the title (21 sp) and hint
+  (13 sp) lines are measured with a `TextMeasurer` at the current font scale; `libraryCover(slot, lines)` =
+  min(180, slot - lines - 41), floor 120 (`Fit.kt`; the 41 dp is the pager box's 4 dp shadow margin, two 8 dp gaps,
+  the 8 dp dots and the title block's 3 + 10 dp). Below the floor the slot scrolls vertically (`libraryScrolls`; the
+  scroll is disabled otherwise). The cover feeds the pager's page size, `carouselSide`, `carouselPeek`, the new
+  `carouselPull` (24 dp at 180) and `carouselGlyph` (84 dp at 180). The modelled Jelly Star (320×569 dp, status 24 dp,
+  nav 24/48 dp): 180 dp at font scale 1.0, ~174 dp at 1.3, the 120 dp floor at 2.0 with three-button navigation and the
+  bar (a scroll of under 20 dp), no scroll at 2.0 with gesture navigation.
+- **(c) Soft shadows**: the centred cover keeps v12's 12 dp, a neighbour has P2's 2 dp, the elevation follows the page
+  offset in the cover's `graphicsLayer` (was 12 dp or nothing, switched at the page change); the now-playing bar and the
+  empty-state disc get 2 dp. Shadows are black (Compose's default spot/ambient).
+
+**Decisions**
+- **The title block keeps the progress line's room** (3 + 3 + 4 dp, a `Spacer` when there is no progress): otherwise
+  the cover would resize by 10 dp whenever the carousel turns between an entry with and one without progress.
+- **The lines are measured on "Ag"**, not the shown title: they are one line each (`maxLines = 1`), so the height is the
+  style's, and the cover doesn't change with the entry.
+- **`coverDecodePx` is unchanged**: it already decodes at the largest size a cover is shown (the player's 224 dp), and
+  the library and the player share one decoded bitmap per hash; decoding the library's smaller cover separately would
+  double the memory. The design's "pass it to `coverDecodePx`" is therefore not needed.
+- **The empty library keeps search and Nytt in the header** (mockup 07 shows only Back): hiding them is a behaviour
+  change. Mockup 08's other differences (the "Alle" glyph, a cover without art without the ♪) are not in P10 and were not built.
+- **Search's empty state starts from the top** (24 dp under the field), not centred: the search screen opens with the
+  keyboard up (`adjustResize`), so a centred disc would jump when the keyboard goes. Nytt's is centred in its room.
+- **The English body** says "Mum or dad", matching the Norwegian "Mamma eller pappa".
+- **Tests are plain JUnit** (the music app has no Compose UI test harness): the pure `libraryCover`/`libraryScrolls`/
+  `librarySlotContent`, a model of the library column at 320×569 dp for font scales 1.0/1.3/2.0 with and without the bar
+  and for both navigation modes (Nunito's line = 1.364 × sp × scale from its hhea metrics, linear: an upper bound for
+  Android 14's curve), the carousel at the floor (the neighbours still peek >= 46 dp), and source checks of the wiring
+  (`FitTest` +5); `EmptyStateTest` (3: the words in nb and en, no source named, each screen's glyph, the decorative
+  disc, the merged texts, nothing moving). The existing `SourceScanTest` keeps "Spotify" out of every string.
+
+**Deferred / not checked**
+- The emulator pass (`wm density 240`, nb and en): the library empty and full, with and without the bar, at font scale
+  1.0, 1.3 and 2.0 (the tiles fully above the bar, the scroll at 2.0); Nytt and search empty; TalkBack on the empty
+  states; the shadows' look on the night ground.
+
+**Layout vs mockup 08 (qa-34-s11-code N3).** The carousel is centred in its slot, and the tiles sit 8 dp above the bar
+(v12's layout). Mockup 08 puts the tiles just under the dots and leaves the spare room above the bar. Both are calm;
+v12 stays the reference. Without the bar, the room it would take stays free (N2), so the carousel centres in the
+taller slot.
+
+### Step 11 code QA fix round (`qa-34-s11-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| L1 2 px overflow at density 1.5 | The cover is computed in whole pixels: `libraryFit(slotPx, linesPx, reservePx, density)` takes the slot from `constraints.maxHeight`, the two lines as measured px, and `libraryFixedPx(density)` rounds each fixed part as `Dp.roundToPx` does (63 px at 1.5, not 61.5). The pager box is `coverPx + roundToPx(4 dp)`, and the reserved progress spacer is `progressRoomPx` (the line's 3 + 4 dp, each rounded). The slot scrolls only when the content in pixels is taller than the slot. `FitTest` sweeps every slot from 150 to 420 dp in pixels, at densities 1.5, 2, 2.625 and 3 and font scales 1.0, 1.3 and 2.0. It sums the drawn parts independently: without a scroll the content is never a pixel taller than the slot, and a scroll happens only at the floor. |
+| L2 source checks pinned to formatting | Both tests now read the sources with whitespace collapsed. The checks that remain carry meaning: one weighted slot (only the header's weighted spacer), the tiles and bar unweighted, `libraryFit`, one `verticalScroll` and only under `fit.scrolls`, the progress room kept, no `180.dp`/`184.dp`, the shadow's direction, the bar's shadow, the merge, no description, nothing moving. The exact `measure(...)` literals, modifier chains and the like are gone. |
+| N1 the cover's shadow cut at the slot's top | `verticalScroll` is applied only when `fit.scrolls`, so above the floor nothing clips the slot. |
+| N2 180↔174 jump when the bar comes or goes | Chose the smaller, stable size: without the bar, its room (`nowBarRoomPx`: 6 + max(44 dp, its two measured lines) + 6, and the 8 dp gap) is kept out of the cover's room. The cover is the same with and without the bar at every density, scale and nav mode (`FitTest`), and the spare room centres. |
+| N3 the centring vs mockup 08 | Recorded above. |
+| N4 `heightIn(min = maxHeight)` with an unbounded height | In both `EmptyState` and the carousel, `heightIn` (and `EmptyState`'s `verticalScroll`, which would throw too) is applied only when `constraints.hasBoundedHeight`. An unbounded carousel slot counts as `Int.MAX_VALUE`, so the cover is 180 and there is no scroll. |
+| N5 tautological asserts | Gone. The Jelly Star test asserts the numbers: 270 px (180 dp) at 1.0, 250-269 px with no scroll at 1.3, no scroll at 2.0 with gestures, and at 2.0 with three buttons and the bar the 180 px floor with a scroll of 1-30 px (19). |
+| N6 m9 survived; m8 | `EmptyStateTest` parses each `EmptyState(...)` call: the library and Nytt are centred (the default), search is `centred = false`, and `centred` maps to `Arrangement.Center`/`Top`. The font-scale key of `measuredLinesPx` stays. It is harmless, because the activity has no `configChanges` and is recreated on a font-scale change; its KDoc says so. |
