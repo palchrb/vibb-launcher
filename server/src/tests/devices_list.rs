@@ -330,8 +330,8 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     assert!(anna_page.contains(&format!(
         "<a class=\"attention attention-action\" href=\"/devices/{anna}/time\" data-attention=\"launcher-without-rules\">"
     )));
-    // The targets exist on their pages.
-    assert!(anna_page.contains("id=\"status\""));
+    // The targets exist on their pages (the summary's own: the quick actions).
+    assert!(anna_page.contains("<section id=\"quick\""));
     // Device › Time's warnings sit at its top: the page answers.
     let time = app
         .get_page(&format!("/devices/{anna}/time"), &cookie)

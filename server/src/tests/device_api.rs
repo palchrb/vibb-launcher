@@ -615,7 +615,10 @@ async fn status_report_stores_policy_state_and_pause() {
         page.contains("Phone can&#39;t apply its settings"),
         "{page}"
     );
-    assert!(page.contains("All restrictions are paused"));
+    assert!(
+        page.contains("data-attention=\"restrictions-paused\""),
+        "{page}"
+    );
     let about = about_page(&app, id).await;
     assert!(about.contains("Saved settings unreadable"), "{about}");
     assert!(about.contains("read its saved settings"), "{about}");

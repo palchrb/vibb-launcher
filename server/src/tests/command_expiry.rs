@@ -312,7 +312,7 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
     );
 }
 
-/// The device page's design 24b answers: a pause never fetched within the hour expired, a
+/// The summary's design 24b answers (Today): a pause never fetched within the hour expired, a
 /// cancelled one says so.
 #[tokio::test]
 async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
@@ -334,8 +334,13 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
+    // Today's row: "Unlock for 2 h · Expired", why behind its ⓘ.
     assert!(
-        page.contains("expired - the phone didn&#39;t check in within an hour"),
+        page.contains("<span class=\"row-value\">Expired</span>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("The phone didn&#39;t check in within an hour, so it was never sent."),
         "{page}"
     );
     let pause = insert(&app, device, "start_pause", "datetime('now')").await;
@@ -344,7 +349,10 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
-    assert!(page.contains("cancelled before it reached the phone"));
+    assert!(
+        page.contains("<span class=\"row-value\">Cancelled</span>"),
+        "{page}"
+    );
 }
 
 async fn press(app: &TestApp, cookie: &str, device: i64, path: &str) {

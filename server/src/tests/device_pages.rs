@@ -199,12 +199,12 @@ async fn a_phone_not_set_up_has_little_to_say_and_can_still_be_removed() {
     ] {
         assert!(!advanced.contains(missing), "{missing}");
     }
-    // The device page keeps its "Not enrolled yet" card with the code.
+    // The summary's Connect This Phone group (design 31 step 10) has the code.
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)
         .await
         .text();
-    assert!(summary.contains("Not enrolled yet"));
+    assert!(summary.contains("<section id=\"access\""), "{summary}");
     assert!(summary.contains(&format!("action=\"/devices/{id}/regenerate-code\"")));
 }
 
@@ -212,7 +212,12 @@ async fn a_phone_not_set_up_has_little_to_say_and_can_still_be_removed() {
 async fn unknown_phones_are_404() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    for section in [Section::About, Section::Advanced, Section::Lock] {
+    for section in [
+        Section::Summary,
+        Section::About,
+        Section::Advanced,
+        Section::Lock,
+    ] {
         let res = app.get_page(&device_page(9999, section), &cookie).await;
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{section:?}");
     }

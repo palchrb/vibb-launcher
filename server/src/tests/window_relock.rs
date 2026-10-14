@@ -1,5 +1,5 @@
-//! Design 24b: the phone's `relock` report, the Status card's warnings and buttons, and the two
-//! commands with their own insert.
+//! Design 24b: the phone's `relock` report, the summary's warnings, blocked apps and quick
+//! actions (design 31 step 10), and the commands with their own insert.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -53,70 +53,19 @@ async fn commands(app: &TestApp, id: i64) -> Vec<String> {
     .unwrap()
 }
 
-/// The Status card's HTML: from its heading to the next card.
-fn status_card(html: &str) -> &str {
-    let start = html.find("<h2>Status</h2>").expect("status card");
+/// One group of the summary (design 31 step 10): `<section id="…">` to its end.
+fn group<'a>(html: &'a str, id: &str) -> &'a str {
+    let start = html
+        .find(&format!("<section id=\"{id}\""))
+        .unwrap_or_else(|| panic!("no #{id} in {html}"));
     let end = html[start..]
-        .find("id=\"access\"")
+        .find("</section>")
         .map_or(html.len(), |e| start + e);
     &html[start..end]
 }
 
 #[tokio::test]
-async fn the_literal_is_stored_and_logged_once_per_relock() {
-    let app = TestApp::new().await;
-    let (id, token) = app.enrolled_device("phone").await;
-    let at = now_ms() - 60_000;
-    post_status(&app, &token, json!({ "relock": literal(at) })).await;
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT relock_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    let stored: Value = serde_json::from_str(&stored.unwrap()).unwrap();
-    assert_eq!(stored, literal(at));
-    let logged = events(&app, "phone_relock_findings").await;
-    assert_eq!(logged.len(), 1);
-    assert!(
-        logged[0].starts_with(&format!("device {id}, ")),
-        "{}",
-        logged[0]
-    );
-    assert!(
-        logged[0].ends_with(
-            "locked again (timer) - Wi-Fi proxies removed: 1; blocked: com.example.app."
-        ),
-        "{}",
-        logged[0]
-    );
-
-    // The same relock in every later report: no new row; a newer one logs again.
-    post_status(&app, &token, json!({ "relock": literal(at) })).await;
-    assert_eq!(events(&app, "phone_relock_findings").await.len(), 1);
-    post_status(&app, &token, json!({ "relock": literal(at + 1) })).await;
-    assert_eq!(events(&app, "phone_relock_findings").await.len(), 2);
-    // A relock that found nothing logs nothing.
-    let mut quiet = literal(at + 2);
-    quiet["proxies_cleared"] = json!(0);
-    quiet["blocked"] = json!([]);
-    post_status(&app, &token, json!({ "relock": quiet })).await;
-    assert_eq!(events(&app, "phone_relock_findings").await.len(), 2);
-    // Junk is dropped, the rest of the report kept.
-    post_status(&app, &token, json!({ "relock": "<script>" })).await;
-    let latest: (Option<String>, String) = sqlx::query_as(
-        "SELECT relock_json, lock_reason FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(latest, (None, "NONE".to_string()));
-}
-
-#[tokio::test]
-async fn the_warnings_appear_on_the_status_card_and_expire_after_a_week() {
+async fn the_last_relock_shows_on_the_summary_for_a_week() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -131,35 +80,47 @@ async fn the_warnings_appear_on_the_status_card_and_expire_after_a_week() {
     relock["accessibility_enabled"] = json!(["com.evil.ally"]);
     relock["apps_disabled"] = json!(["com.android.inputmethod.latin"]);
     relock["own_notifications_off"] = json!(true);
-    post_status(&app, &token, json!({ "relock": relock })).await;
+    relock["failures"] = json!(["ca_certs"]);
+    post_status(
+        &app,
+        &token,
+        json!({ "relock": relock,
+                "installed_apps": [{ "package_name": "com.evil.ally", "label": "Ally <b>" }] }),
+    )
+    .await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
-    assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
+    let found = group(&html, "relock");
+    assert!(found.contains("Its time was up"), "{found}");
+    assert!(found.contains("1 h ago"), "{found}");
+    assert!(found.contains("1 Wi-Fi proxy"), "{found}");
+    // By the phone's name, escaped; the package where it reported none.
+    assert!(found.contains("Accessibility: Ally &#60;b&#62;"), "{found}");
+    assert!(!found.contains("Ally <b>"), "{found}");
+    assert!(found.contains("com.android.inputmethod.latin"), "{found}");
     assert!(
-        card.contains("Blocked: com.example.app (signing key 3f2a0000…0000c0de) - installed or replaced from outside Play"),
-        "{card}"
+        found.contains("data-row=\"relock-notifications\""),
+        "{found}"
     );
+    // Words, never the step's code.
+    assert!(found.contains("Certificates"), "{found}");
+    assert!(!found.contains("ca_certs"), "{found}");
+    // An older launcher's relock blocks: listed with Allow These Apps….
+    let blocked = group(&html, "blocked-apps");
     assert!(
-        card.contains("Still on: accessibility service com.evil.ally."),
-        "{card}"
+        blocked.contains("data-block=\"com.example.app\""),
+        "{blocked}"
     );
+    assert!(blocked.contains("3f2a0000…0000c0de"), "{blocked}");
     assert!(
-        card.contains(
-            "Turned off and can&#39;t be turned back on remotely: com.android.inputmethod.latin"
-        ),
-        "{card}"
+        blocked.contains(&format!(
+            "action=\"/devices/{id}/allow-blocked#blocked-apps\""
+        )),
+        "{blocked}"
     );
-    assert!(
-        card.contains("The launcher&#39;s notifications are off."),
-        "{card}"
-    );
-    assert!(
-        card.contains(&format!("action=\"/devices/{id}/allow-blocked\"")),
-        "{card}"
-    );
+    assert!(html.contains("data-attention=\"blocked-apps\""), "{html}");
 
     // Older than a week: nothing.
     post_status(
@@ -174,6 +135,40 @@ async fn the_warnings_appear_on_the_status_card_and_expire_after_a_week() {
         .text();
     assert!(!html.contains("Wi-Fi proxy"), "{html}");
     assert!(!html.contains("allow-blocked"), "{html}");
+    assert!(!html.contains("id=\"relock\""), "{html}");
+}
+
+/// The relock's time is the phone's, shown in the Phone Setup zone - never the UTC clock.
+#[tokio::test]
+async fn relock_times_are_local() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // A whole minute an hour ago, so the clock time is known in both zones.
+    let at = chrono::Utc::now() - chrono::Duration::hours(1);
+    let at = at - chrono::Duration::seconds(i64::from(chrono::Timelike::second(&at)));
+    post_status(
+        &app,
+        &token,
+        json!({ "relock": literal(at.timestamp_millis()) }),
+    )
+    .await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let oslo = at.with_timezone(&chrono_tz::Europe::Oslo);
+    let found = group(&html, "relock");
+    assert!(found.contains(&oslo.format("%H:%M").to_string()), "{found}");
+    assert!(
+        found.contains(&format!("title=\"{}", oslo.format("%Y-%m-%d %H:%M"))),
+        "{found}"
+    );
+    assert!(!found.contains("UTC"), "{found}");
 }
 
 /// Fix round QA Medium 2: a blocked app signed with another key than the catalog pinned stays
@@ -201,12 +196,15 @@ async fn a_blocked_app_with_another_key_than_the_catalogs_is_called_out() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
+    let blocked = group(&html, "blocked-apps");
     assert!(
-        card.contains("com.example.app is signed with another key than the catalog&#39;s (99999999…99999999), so it stays blocked: uninstall it."),
-        "{card}"
+        blocked.contains("Not the catalog&#39;s app: uninstall it"),
+        "{blocked}"
     );
-    assert!(!card.contains("allow-blocked"), "{card}");
+    assert!(blocked.contains("99999999…99999999"), "{blocked}");
+    assert!(!blocked.contains("allow-blocked"), "{blocked}");
+    // An older launcher's imposter waits for nothing: no Attention row for it.
+    assert!(!html.contains("data-attention=\"blocked-apps\""), "{html}");
 }
 
 #[tokio::test]
@@ -217,17 +215,19 @@ async fn lock_again_follows_the_status_and_the_capability() {
     async fn page(app: &TestApp, id: i64, cookie: &str) -> String {
         app.get_page(&format!("/devices/{id}"), cookie).await.text()
     }
-    let button = format!("action=\"/devices/{id}/end-windows\"");
+    let button = format!("action=\"/devices/{id}/end-windows#quick\"");
 
     // Nothing open: no button.
     post_status(&app, &token, json!({})).await;
     assert!(!page(&app, id, &cookie).await.contains(&button));
-    // A pause: the button, and the pause line names it.
+    // A pause: the button among the quick actions, and the Attention row lands there.
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
     let html = page(&app, id, &cookie).await;
-    assert!(status_card(&html).contains(&button), "{html}");
+    assert!(group(&html, "quick").contains(&button), "{html}");
     assert!(
-        html.contains("The pause ends by itself, or press \"Lock the phone again now\"."),
+        html.contains(&format!(
+            "href=\"/devices/{id}#quick\" data-attention=\"restrictions-paused\""
+        )),
         "{html}"
     );
     // Play install mode running.
@@ -246,7 +246,7 @@ async fn lock_again_follows_the_status_and_the_capability() {
     )
     .await;
     assert!(!page(&app, id, &cookie).await.contains(&button));
-    // An older launcher: no button, the old pause line.
+    // An older launcher: no button, but the pause is still an alarm.
     let res = app
         .request(
             Method::POST,
@@ -261,7 +261,11 @@ async fn lock_again_follows_the_status_and_the_capability() {
     assert_eq!(res.status, StatusCode::NO_CONTENT);
     let html = page(&app, id, &cookie).await;
     assert!(!html.contains(&button));
-    assert!(html.contains("The pause ends by itself.</div>"), "{html}");
+    assert!(!html.contains("start-pause"), "{html}");
+    assert!(
+        html.contains("data-attention=\"restrictions-paused\""),
+        "{html}"
+    );
 }
 
 #[tokio::test]
@@ -272,13 +276,14 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
     let mut nudges = app.state.command_notify.subscribe();
 
     let allow = [("blocks", "org.example.app:")];
-    for (path, command, notice, fields, logged_as) in [
+    for (path, command, notice, fields, logged_as, group_id) in [
         (
             "end-windows",
             "end_windows",
             "end_windows_sent",
             &[][..],
             "end_windows",
+            "quick",
         ),
         (
             "allow-blocked",
@@ -286,6 +291,7 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
             "allow_blocked_sent",
             &allow[..],
             "allow_blocked: org.example.app",
+            "blocked-apps",
         ),
         (
             "start-pause",
@@ -293,6 +299,7 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
             "start_pause_sent",
             &[][..],
             "start_pause",
+            "quick",
         ),
     ] {
         let res = app
@@ -304,17 +311,21 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
             )
             .await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        // No #fragment: scroll-restore.js keeps the place.
-        assert_eq!(
-            res.location(),
-            Some(format!("/devices/{id}?notice={notice}").as_str())
-        );
+        // To the summary group the form is in, where the flash shows (design 31 step 10).
+        let location = format!("/devices/{id}?notice={notice}#{group_id}");
+        assert_eq!(res.location(), Some(location.as_str()));
         assert_eq!(nudges.try_recv().ok(), Some(id));
         let logged = events(&app, "device_command_queued").await;
         assert_eq!(
             logged.last().map(String::as_str),
             Some(logged_as),
             "{command}"
+        );
+        // The flash is in that group - also the blocked apps' when the list is already gone.
+        let html = app.get_page(&location, &cookie).await.text();
+        assert!(
+            group(&html, group_id).contains("data-flash=\""),
+            "{command}: {html}"
         );
     }
     // None deleted another.
@@ -365,15 +376,20 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         ]
     );
 
-    // The notice renders inside the Status card.
+    // The notice renders in the quick actions; an unknown one renders nothing.
     let html = app
         .get_page(&format!("/devices/{id}?notice=end_windows_sent"), &cookie)
         .await
         .text();
     assert!(
-        status_card(&html).contains("Sent: the phone locks again as soon as it gets this"),
+        group(&html, "quick").contains("Sent. The phone locks again within seconds"),
         "{html}"
     );
+    let html = app
+        .get_page(&format!("/devices/{id}?notice=%3Cb%3Ex"), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("data-flash"), "{html}");
     // Unknown device: 404, nothing queued.
     let res = app
         .request_form(
@@ -398,22 +414,33 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     let music = json!({ "package_name": "me.vibb.music.debug", "signer": key,
                         "reason": "outside_play", "found": "install", "at_ms": now_ms() - 60_000 });
     post_status(&app, &token, json!({ "relock_blocks": [music.clone()] })).await;
-    let button = format!("action=\"/devices/{id}/allow-blocked\"");
+    let button = format!("action=\"/devices/{id}/allow-blocked#blocked-apps\"");
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
+    let blocked = group(&html, "blocked-apps");
+    assert!(blocked.contains("From outside Play"), "{blocked}");
+    assert!(blocked.contains("d3b00000…00006a6e"), "{blocked}");
     assert!(
-        card.contains(
-            "me.vibb.music.debug (signing key d3b00000…00006a6e): installed from outside Play \
-             (a download or adb) - noticed at its install"
-        ),
-        "{card}"
+        blocked.contains("Noticed when it was installed."),
+        "{blocked}"
     );
-    assert!(card.contains(&button), "{card}");
-    assert!(!card.contains("more - the phone lists at most"), "{card}");
-    // More than the phone lists (QA of cmd-expiry, Low 2): said under the list.
+    assert!(blocked.contains(&button), "{blocked}");
+    // The confirm names it (M6), by its package while the phone reported no name.
+    assert!(
+        blocked.contains("Show me.vibb.music.debug again on phone's phone?"),
+        "{blocked}"
+    );
+    assert!(!blocked.contains("more the phone doesn"), "{blocked}");
+    assert!(
+        html.contains(&format!(
+            "href=\"/devices/{id}#blocked-apps\" data-attention=\"blocked-apps\""
+        )),
+        "{html}"
+    );
+    // More than the phone lists (QA of cmd-expiry, Low 2): said under the list; the phone's name
+    // for the app now.
     post_status(
         &app,
         &token,
@@ -425,20 +452,23 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
+    let blocked = group(&html, "blocked-apps");
     assert!(
-        status_card(&html).contains("And 17 more - the phone lists at most 16."),
-        "{html}"
+        blocked.contains("And 17 more the phone doesn't list"),
+        "{blocked}"
     );
+    assert!(blocked.contains("Show Music again"), "{blocked}");
     // Ticked under Apps or not, per app (QA of cmd-expiry, Low 3).
-    for (allowlist, says) in [
+    for (allowlist, value, says) in [
         (
             "[]",
-            "Not allowed under Apps: after \"Allow these apps\" it stays hidden until \
-             you <a href=\"/devices/{id}/apps#app-me.vibb.music.debug\">turn it on</a> there too.",
+            "Not allowed",
+            "Not allowed under Apps: it stays hidden until you <a href=\"/devices/{id}/apps#app-me.vibb.music.debug\">turn it on there</a> too.",
         ),
         (
             "[\"me.vibb.music.debug\"]",
-            "Allowed under Apps: it shows again after \"Allow these apps\".",
+            "Allowed",
+            "Allowed under Apps: it shows again after Allow These Apps.",
         ),
     ] {
         sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
@@ -452,9 +482,14 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
             .await
             .text();
         let says = says.replace("{id}", &id.to_string());
-        assert!(status_card(&html).contains(&says), "{html}");
+        let blocked = group(&html, "blocked-apps");
+        assert!(blocked.contains(&says), "{html}");
+        assert!(
+            blocked.contains(&format!("<span class=\"row-value\">{value}</span>")),
+            "{blocked}"
+        );
     }
-    // "tick it" lands on the app's switch on Device › Apps (design 31 step 6), under Not allowed.
+    // "turn it on" lands on the app's switch on Device › Apps (design 31 step 6), under Not allowed.
     sqlx::query("UPDATE device_policy SET allowlist_json = '[]' WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
@@ -477,11 +512,15 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         "{logged:?}"
     );
 
-    // The button sends what the card listed, with the key it showed (QA of cmd-expiry, Low 1).
+    // The button sends what the page listed, with the key it showed (QA of cmd-expiry, Low 1).
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
     let listed = format!("me.vibb.music.debug:{key}");
     assert!(
-        card.contains(&format!("name=\"blocks\" value=\"{listed}\"")),
-        "{card}"
+        group(&html, "blocked-apps").contains(&format!("name=\"blocks\" value=\"{listed}\"")),
+        "{html}"
     );
     // Nothing listed (a stale or hand-made form): nothing is queued.
     for blocks in ["", "not a package:", "org.example.app:XYZ"] {
@@ -527,12 +566,16 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
-    assert!(!card.contains("me.vibb.music.debug"), "{card}");
-    assert!(!card.contains(&button), "{card}");
+    assert!(!html.contains("id=\"blocked-apps\""), "{html}");
+    assert!(!html.contains(&button), "{html}");
+    let today = group(&html, "today");
     assert!(
-        card.contains("the phone answered &#34;allowed: 1 apps&#34;."),
-        "{card}"
+        today.contains("data-answer=\"Allow these apps\""),
+        "{today}"
+    );
+    assert!(
+        today.contains("The phone said: &#34;allowed: 1 apps&#34;."),
+        "{today}"
     );
 
     // An imposter of a catalog app: listed, why it stays, and no button for it alone.
@@ -546,7 +589,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
     .unwrap();
     let imposter = json!({ "package_name": "org.example.chat", "signer": key,
                            "reason": "outside_play", "found": "install", "at_ms": now_ms() });
-    // With a relock report from the same time: its "Blocked:" line gives way to the list.
+    // With a relock report from the same time: its blocked app gives way to the phone's list.
     post_status(
         &app,
         &token,
@@ -557,14 +600,16 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
+    let blocked = group(&html, "blocked-apps");
     assert!(
-        card.contains("so it isn&#39;t the catalog&#39;s app and stays blocked: uninstall it"),
-        "{card}"
+        blocked.contains("Not the catalog&#39;s app: uninstall it"),
+        "{blocked}"
     );
-    assert!(!card.contains(&button), "{card}");
-    assert!(!card.contains("Blocked: com.example.app"), "{card}");
-    assert!(card.contains("it removed 1 Wi-Fi proxy."), "{card}");
+    assert!(!blocked.contains(&button), "{blocked}");
+    assert!(!blocked.contains("com.example.app"), "{blocked}");
+    // It waits all the same (the Attention row counts it), and the relock's findings stay.
+    assert!(html.contains("1 blocked app waits"), "{html}");
+    assert!(group(&html, "relock").contains("1 Wi-Fi proxy"), "{html}");
     // A total without the list is dropped.
     post_status(&app, &token, json!({ "relock_blocks_total": 18 })).await;
     let stored: Option<i64> = sqlx::query_scalar(
@@ -577,7 +622,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
 }
 
 /// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
-/// each command's answer - or that there is none - shows on the Status card.
+/// each command's answer - or that there is none - shows in Today.
 #[tokio::test]
 async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
     let app = TestApp::new().await;
@@ -596,7 +641,7 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         json!({ "relock": literal(now_ms() - 3_600_000) }),
     )
     .await;
-    let button = format!("action=\"/devices/{id}/allow-blocked\"");
+    let button = format!("action=\"/devices/{id}/allow-blocked#blocked-apps\"");
     app.request_form(
         Method::POST,
         &format!("/devices/{id}/allow-blocked"),
@@ -604,16 +649,14 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         &[("blocks", "com.example.app:")],
     )
     .await;
-    // Sent, not answered: the button stays, and the card says so.
+    // Sent, not answered: the button stays, and Today says so.
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(status_card(&html).contains(&button));
-    assert!(
-        status_card(&html).contains("no answer from the phone yet."),
-        "{html}"
-    );
+    assert!(group(&html, "blocked-apps").contains(&button));
+    assert!(group(&html, "today").contains("No answer yet"), "{html}");
+    assert!(html.contains("1 blocked app waits"), "{html}");
     // The phone takes it and answers.
     let res = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
@@ -634,14 +677,17 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
-    assert!(!card.contains(&button), "{card}");
+    assert!(!html.contains(&button), "{html}");
     assert!(
-        card.contains("the phone answered &#34;allowed: 1 apps&#34;."),
-        "{card}"
+        group(&html, "today").contains("The phone said: &#34;allowed: 1 apps&#34;."),
+        "{html}"
     );
-    // The warning itself stays with the report it came from.
-    assert!(card.contains("Blocked: com.example.app"), "{card}");
+    // The list itself stays with the report it came from; nothing waits any more.
+    assert!(
+        group(&html, "blocked-apps").contains("data-block=\"com.example.app\""),
+        "{html}"
+    );
+    assert!(!html.contains("blocked app waits"), "{html}");
 }
 
 #[tokio::test]
@@ -649,13 +695,22 @@ async fn the_pause_button_shows_while_no_pause_is_on() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let button = format!("action=\"/devices/{id}/start-pause\"");
+    let button = format!("action=\"/devices/{id}/start-pause#quick\"");
     post_status(&app, &token, json!({})).await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(status_card(&html).contains(&button), "{html}");
+    // Behind a confirm (M6) that says what opens.
+    let quick = group(&html, "quick");
+    let confirm = quick
+        .find("<details class=\"act-sheet confirm\" id=\"unlock\">")
+        .expect("the confirm");
+    assert!(quick[confirm..].contains(&button), "{quick}");
+    assert!(
+        quick.contains("Unlock phone's phone for 2 hours? Apps, Settings and the Play Store open."),
+        "{quick}"
+    );
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
@@ -673,7 +728,8 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         &app,
         &token,
         json!({ "foreign_access": { "admins": ["com.evil.admin", "not a package"],
-                                    "accessibility": ["com.evil.admin"] } }),
+                                    "accessibility": ["com.evil.admin"] },
+                "installed_apps": [{ "package_name": "com.evil.admin", "label": "Spy <i>Kit" }] }),
     )
     .await;
     let stored: Option<String> = sqlx::query_scalar(
@@ -691,20 +747,40 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let card = status_card(&html);
+    let warning = group(&html, "foreign-access");
     assert!(
-        card.contains(
-            "The phone refuses the parent PIN because of device admin com.evil.admin and \
-             accessibility service com.evil.admin, from an app you haven&#39;t allowed."
-        ),
-        "{card}"
+        warning.contains("Don't type the Parent PIN on the phone"),
+        "{warning}"
     );
-    assert!(card.contains("Pause restrictions for 2 hours"), "{card}");
+    // By the phone's name, escaped; the package behind the ⓘ.
+    assert!(
+        warning.contains("Spy &#60;i&#62;Kit can control the phone or read its screen"),
+        "{warning}"
+    );
+    assert!(!warning.contains("<i>Kit"), "{warning}");
+    assert!(
+        warning.contains("Device admin: com.evil.admin. Accessibility: com.evil.admin."),
+        "{warning}"
+    );
+    assert!(warning.contains("Unlock for 2 h"), "{warning}");
+    assert!(
+        warning.contains("Security › Device admin apps"),
+        "{warning}"
+    );
+    assert!(warning.contains("Settings › Accessibility"), "{warning}");
+    assert!(warning.contains("Lock again"), "{warning}");
     // The link goes to the Parent PIN on Lock Screen & PINs (design 31 step 4).
-    assert!(card.contains(&format!(
-        "<a href=\"{}#parent-pin\">Change the Parent PIN</a>",
+    assert!(warning.contains(&format!(
+        "<a href=\"{}#parent-pin\">change the Parent PIN</a>",
         super::device_page(id, super::Section::Lock)
     )));
+    // The Attention row lands on it.
+    assert!(
+        html.contains(&format!(
+            "href=\"/devices/{id}#foreign-access\" data-attention=\"foreign-access\""
+        )),
+        "{html}"
+    );
     // Logged once when it appears, not again while it stays.
     post_status(
         &app,
@@ -725,7 +801,8 @@ async fn an_app_that_could_read_the_parent_pin_is_a_red_warning_with_the_steps()
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    assert!(!html.contains("refuses the parent PIN"));
+    assert!(!html.contains("id=\"foreign-access\""));
+    assert!(!html.contains("data-attention=\"foreign-access\""));
     let logged = events(&app, "phone_foreign_access").await;
     assert_eq!(logged.len(), 2);
     assert!(logged[1].contains("takes the parent PIN again"));

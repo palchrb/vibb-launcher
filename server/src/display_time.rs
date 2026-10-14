@@ -14,9 +14,8 @@
 //! - **The exact time** ("2026-10-13 10:59:13 CEST") is for a `title=` and the ⓘ panels, never
 //!   the visible value.
 //!
-//! `parent_pin::when_text` ("2026-10-09 14:02 UTC (3 h ago)") is the older form; its last
-//! callers, the relock notes, move here in design 31 §8 step 10 (step 3 moved the boot notes,
-//! step 4 the Parent PIN's notices and events).
+//! Every page time goes through here since design 31 step 10 (the relock findings were the last;
+//! `parent_pin::when_text` is gone). The security log keeps its UTC lines.
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use chrono_tz::Tz;
