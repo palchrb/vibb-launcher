@@ -96,6 +96,26 @@ class ClockFormatTest {
         assertEquals("9:30", ClockFormat.format("{x", 21, 30, false, us, amPm = false))
     }
 
+    /** Emulator round N9: Vibb in nb on an en_US system. The status bar shows "11:30" (12 h, no
+     * marker), so the hour cycle and the pattern stay the system's; the marker is Vibb's language. */
+    @Test
+    fun `the AM PM marker is Vibb's language, the pattern the system's`() {
+        val us = Locale.US
+        val nb = Locale.forLanguageTag("nb-NO")
+        assertEquals(nb, ClockFormat.chooseTextLocale(nb, us))
+        assertEquals(us, ClockFormat.chooseTextLocale(null, us))
+        // en_US's 12 h pattern with nb's marker: "Til 11:30 p.m.", not "Til 11:30 PM".
+        assertEquals("11:30 p.m.", ClockFormat.format("h:mm a", 23, 30, false, nb, amPm = true))
+        assertEquals("9:30 a.m.", ClockFormat.format("h:mm a", 9, 30, false, nb, amPm = true))
+        // Only text fields come from the text locale: the face and a 24 h system stay as the status bar.
+        assertEquals("11:30", ClockFormat.format(ClockFormat.facePattern("h:mm a"), 23, 30, false, nb, amPm = false))
+        assertEquals("21.30", ClockFormat.format("H.mm", 21, 30, true, nb, amPm = true))
+        // The wiring: render formats with textLocale(context, locale), read from applicationLocales.
+        val code = src("ui/ClockFormat.kt")
+        assertTrue("getSystemService(LocaleManager::class.java)?.applicationLocales" in code)
+        assertTrue("format(pattern, t.hour, t.minute, is24, textLocale(context, locale), amPm)" in code)
+    }
+
     /** Only `ui/ClockFormat.kt` may ask for a time format or spell a time pattern (qa-34-design M7). */
     @Test
     fun `no clock format outside ClockFormat`() {

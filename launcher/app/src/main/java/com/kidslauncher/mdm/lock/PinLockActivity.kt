@@ -6,6 +6,7 @@ import android.app.Dialog
 import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.LayerDrawable
 import android.os.Bundle
@@ -72,6 +73,11 @@ class PinLockActivity : AppCompatActivity() {
     private var startedLockTask = false
     private var resumed = false
     private val keys = mutableListOf<View>()
+
+    /** The lock's content root and the metrics its texts were sized at (N8, [FontScaleRefresh]). */
+    private var content: FrameLayout? = null
+    private var textMetrics: android.util.DisplayMetrics? = null
+    private var textFontScale = 0f
 
     /** The glance page over the keypad (design 25); `null` only if it couldn't be built - the plain
      * keypad then, as before step 4. */
@@ -283,6 +289,9 @@ class PinLockActivity : AppCompatActivity() {
         binding.pinBack.setOnClickListener { glance?.back() }
         voipRing = ViewVoipRingBinding.inflate(layoutInflater, frame, true)
         setContentView(frame)
+        content = frame
+        textMetrics = FontScaleRefresh.snapshot(resources.displayMetrics)
+        textFontScale = resources.configuration.fontScale
         // Status bar inset once, plus the layout's own <= 8 dp (fix round 2026-10-06).
         com.kidslauncher.mdm.ui.KidInsets.apply(binding.root)
         com.kidslauncher.mdm.ui.KidInsets.apply(voipRing.root)
@@ -423,6 +432,28 @@ class PinLockActivity : AppCompatActivity() {
         glance?.start()
         WallpaperStore.addListener(wallpaperListener)
         applyLockGround()
+    }
+
+    /**
+     * The lock handles every configuration change itself (manifest `configChanges`): a font-scale
+     * change re-sizes its texts in place, then the keys and the glance fit follow (emulator round
+     * 2026-10-14 N8). Never a recreation; a fault keeps the old sizes, never a crash.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val old = textMetrics ?: return
+        val root = content ?: return
+        if (!FontScaleRefresh.changed(textFontScale, newConfig.fontScale)) return
+        try {
+            FontScaleRefresh.rescale(root, old, keys)
+            textMetrics = FontScaleRefresh.snapshot(resources.displayMetrics)
+            textFontScale = newConfig.fontScale
+            sizeKeys(binding.pinKeypad.height)
+            binding.pinKeypad.requestLayout()
+            glance?.refit()
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "The font scale couldn't be followed: ${e.javaClass.simpleName}")
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

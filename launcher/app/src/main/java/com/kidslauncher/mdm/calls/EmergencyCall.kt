@@ -23,9 +23,11 @@ object EmergencyCall {
     /** An emergency number on every GSM phone, also the ones without a SIM. */
     const val NUMBER = "112"
 
-    /** Returns the shown dialog (the PIN lock sends no VoIP ring screen over it, qa-17b-code #3). */
+    /** Returns the shown dialog (the PIN lock sends no VoIP ring screen over it, qa-17b-code #3).
+     * Vibb night in both system modes, like the phone book's confirm (design 34 step 5's
+     * `KidAlertDialog`; emulator round 2026-10-14 N10: it was a white panel on the lock). */
     fun confirm(activity: Activity, onCalling: () -> Unit = {}): AlertDialog =
-        AlertDialog.Builder(activity, R.style.AlertDialogCustom)
+        AlertDialog.Builder(activity, R.style.KidAlertDialog)
             .setTitle(activity.getString(R.string.calls_confirm_title, NUMBER))
             .setPositiveButton(R.string.calls_call) { _, _ ->
                 onCalling()

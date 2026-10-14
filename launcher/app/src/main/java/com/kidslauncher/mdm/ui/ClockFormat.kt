@@ -32,6 +32,11 @@ import java.util.Locale
  *   "h" - so fi's `H.mm` matches its status bar; N6): clock faces drop the AM/PM marker, as the
  *   status bar does ([formatTime], [bind]); an end time ("until 9:30 PM") keeps it in 12 h
  *   ([formatUntil], L1) - a future time without it is ambiguous.
+ * - **The marker's word** is Vibb's language, not the system's (emulator round 2026-10-14 N9): the
+ *   status bar on an en_US system shows "11:30" with no marker, so it has no word to match, and the
+ *   marker is text in a sentence that is Vibb's ("Til 11:30 p.m.", CLDR's bokmål marker, not
+ *   "Til 11:30 PM"). The hour cycle, the separator and the order stay the system's pattern
+ *   ([textLocale]; java.time's `ofPattern(pattern, locale)` takes only text fields from the locale).
  *
  * A parent's "24 h"/"12 h" on the PWA's Home Screen page writes `TIME_12_24`
  * ([com.kidslauncher.mdm.server.ClockFormatSetting]), so the status bar and Vibb change together.
@@ -69,6 +74,10 @@ object ClockFormat {
      */
     fun chooseSystemLocale(fromLocaleManager: Locale?, fromSystemResources: Locale?, default: Locale): Locale =
         fromLocaleManager ?: fromSystemResources ?: default
+
+    /** The language of the marker's word (N9): Vibb's own (`LocaleManager.applicationLocales`),
+     * else - Vibb following the phone - the system locale. */
+    fun chooseTextLocale(fromApplicationLocales: Locale?, system: Locale): Locale = fromApplicationLocales ?: system
 
     /** The skeleton that asks the locale for its own time pattern with the hour field forced. */
     fun skeleton(is24: Boolean): String = if (is24) "Hm" else "hm"
@@ -111,6 +120,16 @@ object ClockFormat {
             null
         }
         return chooseSystemLocale(fromManager, fromResources, Locale.getDefault())
+    }
+
+    /** Vibb's language for the marker's word (N9) - the per-app locale, else [system]. */
+    private fun textLocale(context: Context, system: Locale): Locale {
+        val fromApp = try {
+            context.getSystemService(LocaleManager::class.java)?.applicationLocales?.takeIf { !it.isEmpty }?.get(0)
+        } catch (e: Exception) {
+            null
+        }
+        return chooseTextLocale(fromApp, system)
     }
 
     /** The phone's format now: `TIME_12_24`, else the system locale's default. */
@@ -160,7 +179,7 @@ object ClockFormat {
         val locale = systemLocale(context)
         val is24 = systemIs24(context, locale)
         val pattern = localePattern(locale, is24).let { if (amPm) it else facePattern(it) }
-        return format(pattern, t.hour, t.minute, is24, locale, amPm)
+        return format(pattern, t.hour, t.minute, is24, textLocale(context, locale), amPm)
     }
 
     /**
