@@ -118,12 +118,14 @@ class TimeLockModelTest {
             LockApp("me.vibb.music", "Musikk"),
             LockApp("com.example.chat", "meldinger"),
             LockApp("com.example.books", "Bøker"),
-            LockApp("me.vibb.music", "Musikk"),
         )
         val rows = timeLockRows(callsManaged = true, callsAllowed = true, phoneBookLabel = "Telefonbok", apps = apps)
         assertEquals(listOf("Telefonbok", "Bøker", "meldinger", "Musikk"), rows.map { it.label })
         assertEquals(LockRow.PhoneBook("Telefonbok"), rows.first())
         assertEquals(LockRow.App("me.vibb.music", "Musikk"), rows.last())
+        // Two apps the parent named alike are two rows (qa-34-s7-code N2), ordered by package.
+        val alike = timeLockRows(false, true, "Telefonbok", listOf(LockApp("com.b.chat", "Chat"), LockApp("com.a.chat", "Chat")))
+        assertEquals(listOf<LockRow>(LockRow.App("com.a.chat", "Chat"), LockRow.App("com.b.chat", "Chat")), alike)
         // A no-calls rule (school) or unmanaged calls: no phone book, the apps stay.
         assertEquals(3, timeLockRows(true, false, "Telefonbok", apps).size)
         assertTrue(timeLockRows(false, true, "Telefonbok", apps).none { it is LockRow.PhoneBook })
@@ -139,7 +141,17 @@ class TimeLockModelTest {
             assertTrue(key, "Converted from Material Symbols \"$symbol\"" in text)
             assertTrue(key, "Apache License 2.0" in text && "scripts/material-symbols.sh" in text)
         }
-        assertTrue("lock_glyph_dot.xml" in (file("res/drawable/lock_glyph_dot.xml").name))
+        // The dot is drawn by hand (qa-34-s7-code N5): no converted symbol, one filled white circle path.
+        val dot = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(file("res/drawable/lock_glyph_dot.xml"))
+        assertFalse("Converted from" in file("res/drawable/lock_glyph_dot.xml").readText())
+        assertEquals("vector", dot.documentElement.tagName)
+        val paths = dot.getElementsByTagName("path")
+        assertEquals(1, paths.length)
+        val path = paths.item(0) as Element
+        assertEquals("#FFFFFFFF", path.getAttributeNS(ns, "fillColor"))
+        assertTrue(Regex("""^M12,7a5,5 0,1 1,0 10a5,5 0,1 1,0 -10z$""").matches(path.getAttributeNS(ns, "pathData")))
+        assertEquals("24", dot.documentElement.getAttributeNS(ns, "viewportWidth"))
         val script = listOf(File("../scripts/material-symbols.sh"), File("../../scripts/material-symbols.sh")).first { it.exists() }.readText()
         assertTrue("hourglass_bottom 4de2c88bf639a1f5f114be2cdd2b2e36611500e8d3adb6d57402beae91b3aa17" in script)
         assertTrue("""LOCK_GLYPHS = {"hourglass": "hourglass_bottom", "bedtime": "bedtime", "school": "menu_book"}""" in script)
@@ -209,9 +221,13 @@ class TimeLockModelTest {
         assertEquals("@color/kid_core", views.byId("lock_row_label").attr("textColor"))
         val activity = file("java/com/kidslauncher/mdm/ui/LockActivity.kt").readText()
         assertTrue("view.root.contentDescription = row.label" in activity)
-        assertTrue("asButton(view.root)" in activity)
-        assertTrue("info.className = Button::class.java.name" in activity)
-        assertTrue("asButton(binding.lockEmergencyButton)" in activity)
+        // The role is step 8's shared ButtonRole, on the rows and both text buttons (qa-34-s7-code N1).
+        assertTrue("view.root.accessibilityDelegate = ButtonRole" in activity)
+        assertTrue("binding.lockEmergencyButton.accessibilityDelegate = ButtonRole" in activity)
+        assertTrue("binding.lockUnlockCodeButton.accessibilityDelegate = ButtonRole" in activity)
+        assertTrue("info.className = Button::class.java.name" in file("java/com/kidslauncher/mdm/lock/ButtonRole.kt").readText())
+        // The card clips the rows' ripple to its rounded corners (N3).
+        assertEquals("true", layout("activity_lock").byId("lock_rows").attr("clipToOutline"))
     }
 
     @Test
@@ -228,5 +244,83 @@ class TimeLockModelTest {
         assertTrue("CameraLock.suspendedForLists(pkg, pm.isPackageSuspended(pkg))" in activity)
         // Back stays off.
         assertTrue("override fun handleOnBackPressed() {}" in activity)
+    }
+
+    private fun code(path: String): String =
+        file(path).readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").replace(Regex("""(?m)//.*$"""), "")
+
+    /** A function's body: from its signature to the first line that closes it at its indent. */
+    private fun body(code: String, signature: String): String {
+        val start = code.indexOf(signature)
+        assertTrue(signature, start >= 0)
+        val indent = code.lastIndexOf('\n', start).let { code.substring(it + 1, start) }
+        return code.substring(start, code.indexOf("\n$indent}", start))
+    }
+
+    /** qa-34-s7-code L1: Emergency call can't be hidden at runtime - every use of the view is one of
+     * three known lines, and the one that touches its visibility makes it visible, on every render. */
+    @Test
+    fun `emergency call is visible in every state - nothing in the code hides it`() {
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        val uses = Regex("""lockEmergencyButton[^\n]*""").findAll(activity).map { it.value.trim() }.toList()
+        assertEquals(
+            listOf(
+                "lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }",
+                "lockEmergencyButton.accessibilityDelegate = ButtonRole",
+                "lockEmergencyButton.visibility = View.VISIBLE",
+            ),
+            uses,
+        )
+        // Set in render() itself, before anything that could return early after it.
+        val render = body(activity, "private fun render()")
+        assertTrue("binding.lockEmergencyButton.visibility = View.VISIBLE" in render)
+        assertTrue(render.indexOf("lockEmergencyButton.visibility") < render.indexOf("renderRows("))
+        // No hiding of the whole screen's column, nor of the binding root, anywhere.
+        assertFalse(Regex("""binding\.root\.(visibility|isVisible|isGone|alpha)""").containsMatchIn(activity))
+    }
+
+    /** qa-34-s7-code L2: drawn icons change in place; the rows (TalkBack's focus, a press) stay. */
+    @Test
+    fun `icons arrive in place - the rows are not rebuilt`() {
+        val activity = code("java/com/kidslauncher/mdm/ui/LockActivity.kt")
+        assertTrue("icons.load(::iconsDrawn)" in body(activity, "private fun renderRows("))
+        val drawn = body(activity, "private fun iconsDrawn(")
+        assertTrue("rowIcons[pkg]" in drawn && "showAppIcon(icon, icons.cached(pkg))" in drawn)
+        for (rebuild in listOf("render(", "renderRows(", "removeAllViews", "inflate", "addView", "snapshot")) {
+            assertFalse(rebuild, rebuild in drawn)
+        }
+        // The map is refilled with the rows it points into, so a stale ImageView is never updated.
+        val rows = body(activity, "private fun renderRows(")
+        assertTrue(rows.indexOf("rowIcons.clear()") in 0 until rows.indexOf("for (row in rows)"))
+        assertTrue("rowIcons[row.packageName] = view.lockRowIcon" in rows)
+        // Exactly one place calls render() besides the events: none from icons.
+        assertFalse(Regex("""icons\.load\s*\{[^}]*render\(\)""").containsMatchIn(activity))
+    }
+
+    /** qa-34-s7-code N4: one loader for the glance page and this screen; the failed set is touched
+     * only on the main thread (the background pass returns its failures). */
+    @Test
+    fun `one shared icon loader, its failures merged on the main thread`() {
+        val loader = code("java/com/kidslauncher/mdm/ui/home/AppIconLoader.kt")
+        val load = body(loader, "fun load(")
+        val background = load.substring(load.indexOf("withContext(Dispatchers.Default)"), load.indexOf("failed += pass.failed"))
+        assertFalse("no shared set written off the main thread", Regex("""\b(failed|missing)\s*(\+=|\.add|\.remove|\.clear)""").containsMatchIn(background))
+        assertTrue("catch (e: Throwable)" in load)
+        for (screen in listOf("java/com/kidslauncher/mdm/ui/LockActivity.kt", "java/com/kidslauncher/mdm/lock/GlancePanel.kt")) {
+            val text = code(screen)
+            assertTrue(screen, "AppIconLoader(" in text)
+            assertFalse(screen, "renderAppIcon(" in text || "failedIcons" in text || "withContext(" in text)
+        }
+        // The pure pass: drawn and failed apart, a throw is a failure, nothing shared.
+        val pass = com.kidslauncher.mdm.ui.home.iconPass(listOf("a", "b", "c")) { pkg ->
+            when (pkg) {
+                "a" -> true
+                "b" -> false
+                else -> throw IllegalStateException("broken icon")
+            }
+        }
+        assertEquals(setOf("a"), pass.drawn)
+        assertEquals(setOf("b", "c"), pass.failed)
+        assertEquals(com.kidslauncher.mdm.ui.home.IconPass(emptySet(), emptySet()), com.kidslauncher.mdm.ui.home.iconPass(emptyList()) { true })
     }
 }

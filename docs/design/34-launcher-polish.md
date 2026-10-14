@@ -737,7 +737,7 @@ flow are unchanged.
   one background job as on the glance page, a slate disc until drawn). A row: 34 dp icon, the name (16 sp, two lines at
   most), a chevron (`ic_kid_chevron`, the light at 50 %), `minHeight` 52 dp.
 - **TalkBack** (QA L4, L7): each row is one node whose content description is the name and whose role is a button
-  (`LockActivity.asButton` sets the node's class to `Button`), so TalkBack reads "Telefonbok, knapp" / "Phone book,
+  (`LockActivity.asButton` sets the node's class to `Button`; since the fix round step 8's `ButtonRole`), so TalkBack reads "Telefonbok, knapp" / "Phone book,
   button" in the phone's own words; icon, label and chevron are `importantForAccessibility="no"`. The two text buttons get
   the same role ("Nødsamtale, knapp"); the kind's icon is decorative, the title is a heading.
 - **Glyphs** (QA L4): `lock_glyph_hourglass` (`hourglass_bottom`, SHA-256 pinned in the script) and `lock_glyph_bedtime`
@@ -780,6 +780,24 @@ launcher `assembleDebug testDebugUnitTest --rerun -PwarningsAsErrors=true` - 122
 - Each rule kind (school, bedtime, custom) and the budget lock in nb and en at `wm density 240`, font scale 1.0, 1.3 and
   2.0 (the two buttons at the bottom, the scroll with many rows); the icons' look; TalkBack on the rows and buttons.
 - 112 with Telecom refusing (`docs/testing/emulator.md` §6 item 9) - the flow's code is unchanged.
+
+### Step 7 code QA fix round (`qa-34-s7-code.md`, 2026-10-14)
+
+Main (design 34 step 8) was merged into `design-34-s7` first; the doc, `launcher/CLAUDE.md` and `KidPaletteTest`
+conflicts kept both sides.
+
+| Finding | Fix |
+|---|---|
+| L1 "always shown" pinned only in the XML | `render()` sets `lockEmergencyButton.visibility = View.VISIBLE` on every render (before the rows). `TimeLockModelTest` `emergency call is visible in every state` allows exactly three uses of the view in the comment-stripped source - its click (`EmergencyCall.confirm`), its role, that line - so any hide, `isGone`, alpha or hand-off to a helper fails; nothing hides the binding root. Mutation 6 (hide it while calls are managed) re-run: now caught. |
+| L2 the first icon pass rebuilt every row | `renderRows` keeps `rowIcons` (package -> the row's `ImageView`, cleared with the rows); the loader's callback `iconsDrawn` sets each drawn bitmap in place (`showAppIcon`) and nothing else - no `render()`, no `snapshot`, no inflate. `render()` runs again only on the preference, clock and locale events, as before P6. Tested on the source (`icons arrive in place`). |
+| N1 the code button's role unpinned | Both text buttons and the rows take step 8's shared `lock/ButtonRole` (`LockActivity.asButton` is gone); the test pins all three assignments. Mutation 7 (the code button's role removed) re-run: now caught. |
+| N2 dead `distinctBy` | Removed (the input comes from the lock's package set). The test now has two packages named alike and expects both rows, ordered by package. |
+| N3 square ripple in the round card | `lock_rows` `clipToOutline="true"` (pinned). |
+| N4 a copied icon loader, a `failedIcons` race | `ui/home/AppIconLoader` (cache lookup that notes the missing, one background `load`, `cancel`), used by the glance page and this screen (~40 lines less). The background pass is the pure `iconPass`, which returns drawn and failed; the failed set is merged on the main thread in the continuation, so every set is main-thread only. Tested: the pass (a throw is a failure), no shared set written inside `withContext`, neither screen keeps its own `renderAppIcon`/`failedIcons`/`withContext`. The glance page's `renderIcons` keeps its `catch (Throwable)` (`LockGlanceGuardTest`). |
+| N5 a tautological dot test | The dot is checked as drawn by hand: no "Converted from" line, a 24-unit vector with one white filled circle path. |
+
+Tests: `TimeLockModelTest` 14 (was 11). Full run: launcher `assembleDebug testDebugUnitTest --rerun
+-PwarningsAsErrors=true` - 1237 tests in 129 classes passed.
 
 ## Step 8 implementation status (2026-10-14)
 

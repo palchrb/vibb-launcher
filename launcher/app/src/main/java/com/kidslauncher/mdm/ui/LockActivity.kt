@@ -5,21 +5,18 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
-import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
-import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import com.kidslauncher.mdm.R
 import androidx.lifecycle.lifecycleScope
-import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.EmergencyCall
+import com.kidslauncher.mdm.lock.ButtonRole
 import com.kidslauncher.mdm.lock.PinLockRuntime
 import com.kidslauncher.mdm.calls.PhoneBookActivity
 import com.kidslauncher.mdm.calls.managed
@@ -36,12 +33,9 @@ import com.kidslauncher.mdm.timerules.KIND_BEDTIME
 import com.kidslauncher.mdm.timerules.KIND_SCHOOL
 import com.kidslauncher.mdm.timerules.TimeRule
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.ui.home.AppIconLoader
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.TONE_SLATE
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Full-screen block shown while [LockReason] isn't [LockReason.NONE]: a time rule (school,
@@ -81,8 +75,9 @@ class LockActivity : UIObjectActivity() {
         // secure lock screen has no keyguard Emergency button - so this one is always shown,
         // whatever the call state (QA step 4 #1).
         binding.lockEmergencyButton.setOnClickListener { EmergencyCall.confirm(this) }
-        asButton(binding.lockEmergencyButton)
-        asButton(binding.lockUnlockCodeButton)
+        // TalkBack reads both as buttons ("Nødsamtale, knapp"), as the keypad's pill (design 34 P7).
+        binding.lockEmergencyButton.accessibilityDelegate = ButtonRole
+        binding.lockUnlockCodeButton.accessibilityDelegate = ButtonRole
     }
 
     /** The parent PIN (design 24): checked with the escalating lockout by [ParentPin], which also
@@ -129,8 +124,7 @@ class LockActivity : UIObjectActivity() {
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
         ClockFormat.unwatch(this, clockWatch)
         clockWatch = null
-        iconJob?.cancel()
-        iconJob = null
+        icons.cancel()
         super.onStop()
     }
 
@@ -160,6 +154,9 @@ class LockActivity : UIObjectActivity() {
             else -> getString(R.string.lock_title_screen_time)
         }
         binding.lockKindIcon.setImageResource(glyphRes(lockGlyph(rule?.kind)))
+        // Emergency call is shown in every state (QA step 4 #1, qa-34-s7-code L1): set on every render,
+        // and the only line that touches its visibility (TimeLockModelTest).
+        binding.lockEmergencyButton.visibility = View.VISIBLE
         val callsManaged = CallPolicyStore.state.managed
         // What still works, as one paragraph; the rule's end on its own line above it.
         val sentences = mutableListOf<String>()
@@ -205,12 +202,12 @@ class LockActivity : UIObjectActivity() {
         val container = binding.lockRows
         container.removeAllViews()
         container.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
-        val iconPx = KidAvatars.dp(this, ROW_ICON_DP)
+        rowIcons.clear()
         for (row in rows) {
             val view = ItemLockRowBinding.inflate(LayoutInflater.from(this), container, false)
             view.lockRowLabel.text = row.label
             view.root.contentDescription = row.label
-            asButton(view.root)
+            view.root.accessibilityDelegate = ButtonRole
             when (row) {
                 is LockRow.PhoneBook -> {
                     glyphIcon(view.lockRowIcon, R.color.kid_phone_book, R.drawable.ic_kid_phone_book)
@@ -220,7 +217,8 @@ class LockActivity : UIObjectActivity() {
                     view.root.setOnClickListener { startActivity(PhoneBookActivity.intent(this)) }
                 }
                 is LockRow.App -> {
-                    appIcon(view.lockRowIcon, row.packageName, iconPx)
+                    rowIcons[row.packageName] = view.lockRowIcon
+                    showAppIcon(view.lockRowIcon, icons.cached(row.packageName))
                     view.root.setOnClickListener {
                         val launch = packageManager.getLaunchIntentForPackage(row.packageName) ?: return@setOnClickListener
                         try {
@@ -233,7 +231,7 @@ class LockActivity : UIObjectActivity() {
             }
             container.addView(view.root)
         }
-        renderMissingIcons(iconPx)
+        icons.load(::iconsDrawn)
     }
 
     private fun glyphIcon(icon: ImageView, colour: Int, glyph: Int) {
@@ -243,60 +241,31 @@ class LockActivity : UIObjectActivity() {
         icon.setPadding(pad, pad, pad, pad)
     }
 
-    // ---- app icons: Home's tone icons, drawn off the main thread (as the glance page's) ----------
+    // ---- app icons: Home's tone icons, drawn off the main thread (the glance page's loader) --------
 
-    private var iconJob: Job? = null
-    private val missingIcons = mutableSetOf<String>()
-    private val failedIcons = mutableSetOf<String>()
+    private val icons by lazy { AppIconLoader(this, KidAvatars.dp(this, ROW_ICON_DP), "LockActivity") }
 
-    private fun iconKey(packageName: String): Pair<String, () -> Drawable> {
-        val app = application as? com.kidslauncher.mdm.Application
-        val info = app?.apps?.value?.firstOrNull { (it.getRawInfo() as? AppInfo)?.packageName == packageName }
-        return if (info != null) {
-            info.getRawInfo().serialize() to { info.getIcon(this) }
-        } else {
-            AppInfo(packageName, null).serialize() to { packageManager.getApplicationIcon(packageName) }
-        }
-    }
+    /** The rows' app icons by package, from the last [renderRows]. */
+    private val rowIcons = HashMap<String, ImageView>()
 
-    /** The cached tone icon, or a slate disc until the background job has drawn it. */
-    private fun appIcon(icon: ImageView, packageName: String, sizePx: Int) {
+    /** The cached tone icon, or a slate disc until the loader has drawn it. */
+    private fun showAppIcon(icon: ImageView, bitmap: Bitmap?) {
         icon.setPadding(0, 0, 0, 0)
-        val cached: Bitmap? = KidAvatars.cachedAppIcon(this, iconKey(packageName).first, sizePx)
-        if (cached != null) {
+        if (bitmap != null) {
             icon.backgroundTintList = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-            icon.setImageDrawable(KidAvatars.circular(this, cached))
+            icon.setImageDrawable(KidAvatars.circular(this, bitmap))
         } else {
             icon.backgroundTintList = ColorStateList.valueOf(TONE_SLATE)
             icon.setImageDrawable(null)
-            if (packageName !in failedIcons) missingIcons += packageName
         }
     }
 
-    /** One background job draws the missing icons (Home's renderAppIcon), then the screen renders again. */
-    private fun renderMissingIcons(sizePx: Int) {
-        if (iconJob?.isActive == true || missingIcons.isEmpty()) return
-        val keys = missingIcons.associateWith { iconKey(it) }
-        missingIcons.clear()
-        iconJob = lifecycleScope.launch {
-            try {
-                val drawn = withContext(Dispatchers.Default) {
-                    keys.filter { (pkg, key) ->
-                        try {
-                            KidAvatars.renderAppIcon(this@LockActivity, key.first, key.second, sizePx)
-                            true
-                        } catch (e: Throwable) {
-                            Log.w("LockActivity", "Couldn't draw the icon of $pkg: ${e.javaClass.simpleName}")
-                            failedIcons += pkg
-                            false
-                        }
-                    }
-                }
-                if (drawn.isNotEmpty()) render()
-            } catch (e: Throwable) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.w("LockActivity", "Icons failed: ${e.javaClass.simpleName}")
-            }
+    /** The loader drew [drawn]: only those icons change, in place - the rows stay, so TalkBack's
+     * focus and a press in progress survive (qa-34-s7-code L2). */
+    private fun iconsDrawn(drawn: Set<String>) {
+        for (pkg in drawn) {
+            val icon = rowIcons[pkg] ?: continue
+            showAppIcon(icon, icons.cached(pkg))
         }
     }
 
@@ -310,17 +279,6 @@ class LockActivity : UIObjectActivity() {
             LockGlyph.MOON -> R.drawable.lock_glyph_bedtime
             LockGlyph.BOOK -> R.drawable.lock_glyph_school
             LockGlyph.DOT -> R.drawable.lock_glyph_dot
-        }
-
-        /** TalkBack reads [view] as a button ("Telefonbok, knapp", "Nødsamtale, knapp"): its
-         * content description or text, then the role in the phone's language. */
-        fun asButton(view: View) {
-            view.accessibilityDelegate = object : View.AccessibilityDelegate() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = Button::class.java.name
-                }
-            }
         }
 
         /** Starts the time-rule screen. It is never held back by handy's PIN lock (QA 10 #4): while

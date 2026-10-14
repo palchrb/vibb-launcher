@@ -2,7 +2,6 @@ package com.kidslauncher.mdm.lock
 
 import android.app.PendingIntent
 import android.content.res.ColorStateList
-import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
 import android.os.PowerManager
 import android.text.format.DateFormat
@@ -18,7 +17,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
-import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.badges.GlanceLevel
 import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
@@ -38,11 +36,9 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidInsets
+import com.kidslauncher.mdm.ui.home.AppIconLoader
 import com.kidslauncher.mdm.ui.home.KidAvatars
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -103,10 +99,8 @@ class GlancePanel(
     private var fit: GlanceFit? = null
 
     private val labels = HashMap<String, String>()
-    private val missingIcons = LinkedHashSet<String>()
-    private val failedIcons = HashSet<String>()
-    private var iconJob: Job? = null
-    private val iconSizePx = KidAvatars.dp(activity, 36f)
+    /** Home's icons for the rows, shared with the time-rule screen (qa-34-s7-code N4). */
+    private val icons = AppIconLoader(activity, KidAvatars.dp(activity, 36f), LOG_TAG)
     private val changed: () -> Unit = { render() }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
@@ -174,8 +168,7 @@ class GlancePanel(
 
     /** onStop (and onDestroy): nothing watched, ticking or drawn while the lock isn't shown. */
     fun stop() = guarded("stop") {
-        iconJob?.cancel()
-        iconJob = null
+        icons.cancel()
         music.stop()
         if (!started) return@guarded
         started = false
@@ -281,7 +274,7 @@ class GlancePanel(
                 view.root.setOnClickListener { tap(row) }
             }
         }
-        if (missingIcons.isNotEmpty()) renderIcons()
+        if (icons.hasMissing) renderIcons()
     }
 
     private fun newRow(index: Int): ViewLockGlanceRowBinding {
@@ -324,7 +317,7 @@ class GlancePanel(
         view.glanceRowInitial.visibility = View.GONE
         // The red phone badge on the app's icon for a missed call, as on a phone call's row.
         view.glanceRowBadge.visibility = if (missedShown) View.VISIBLE else View.GONE
-        val icon = appIcon(row.packageName)
+        val icon = icons.cached(row.packageName)
         plainIcon(view)
         if (icon != null) {
             view.glanceRowIcon.setImageBitmap(icon)
@@ -430,48 +423,14 @@ class GlancePanel(
 
     // ---- icons: Home's, drawn off the main thread (QA Low 6) ----------------------------------------
 
-    private fun iconKey(packageName: String): Pair<String, () -> Drawable> {
-        val app = activity.application as? com.kidslauncher.mdm.Application
-        val info = app?.apps?.value?.firstOrNull { (it.getRawInfo() as? AppInfo)?.packageName == packageName }
-        return if (info != null) {
-            info.getRawInfo().serialize() to { info.getIcon(activity) }
-        } else {
-            AppInfo(packageName, null).serialize() to { activity.packageManager.getApplicationIcon(packageName) }
-        }
-    }
-
-    /** An already drawn icon, or null (then it is drawn in the background). Main thread, no work. */
-    private fun appIcon(packageName: String): Bitmap? {
-        val cached = KidAvatars.cachedAppIcon(activity, iconKey(packageName).first, iconSizePx)
-        if (cached == null && packageName !in failedIcons) missingIcons += packageName
-        return cached
-    }
-
-    /** One background job draws the missing icons (Home's renderAppIcon), then the rows bind again. */
+    /** One background job (the shared loader, which catches everything) draws the missing icons,
+     * then the rows bind again. */
     private fun renderIcons() {
-        if (iconJob?.isActive == true || !started) return
-        val wanted = missingIcons.toList()
-        missingIcons.clear()
-        val keys = wanted.associateWith { iconKey(it) }
-        iconJob = activity.lifecycleScope.launch {
-            try {
-                val drawn = withContext(Dispatchers.Default) {
-                    keys.filter { (pkg, key) ->
-                        try {
-                            KidAvatars.renderAppIcon(activity, key.first, key.second, iconSizePx)
-                            true
-                        } catch (e: Throwable) {
-                            Log.w(LOG_TAG, "Couldn't draw the icon of $pkg: ${e.javaClass.simpleName}")
-                            failedIcons += pkg
-                            false
-                        }
-                    }
-                }
-                if (started && drawn.isNotEmpty()) render()
-            } catch (e: Throwable) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.w(LOG_TAG, "Glance icons failed: ${e.javaClass.simpleName}")
-            }
+        if (!started) return
+        try {
+            icons.load { if (started) render() }
+        } catch (e: Throwable) {
+            Log.w(LOG_TAG, "Glance icons failed: ${e.javaClass.simpleName}")
         }
     }
 

@@ -82,13 +82,13 @@ sealed interface LockRow {
 /**
  * The card's rows: the phone book first while calls are managed and the lock allows them (as
  * before P6, when it was its own button), then every usable [apps] entry sorted by its name (QA #6
- * of design 14) - the music app among them under a budget lock. Duplicates by package are dropped.
+ * of design 14) - the music app among them under a budget lock. Every app is a row: [apps] comes
+ * from the lock's set of packages, and two apps the parent named alike both stay.
  */
 fun timeLockRows(callsManaged: Boolean, callsAllowed: Boolean, phoneBookLabel: String, apps: List<LockApp>): List<LockRow> {
     val rows = mutableListOf<LockRow>()
     if (callsManaged && callsAllowed) rows += LockRow.PhoneBook(phoneBookLabel)
-    apps.distinctBy { it.packageName }
-        .sortedWith(compareBy({ it.label.lowercase() }, { it.packageName }))
+    apps.sortedWith(compareBy({ it.label.lowercase() }, { it.packageName }))
         .mapTo(rows) { LockRow.App(it.packageName, it.label) }
     return rows
 }
