@@ -1004,7 +1004,7 @@ async fn app_downloads_are_stored_and_shown() {
         "{network}"
     );
     // Notes installs: the page reloads itself for the percentage.
-    assert!(page.contains("/static/installing-reload.js"));
+    assert!(page.contains("/static/auto-reload.js"));
 }
 
 /// Security review M10 (the phone side): a release the launcher refused to install - another

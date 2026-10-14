@@ -9,7 +9,7 @@ use image::ImageFormat;
 use super::{TestApp, assert_redirect, tags};
 
 /// Each form's action and hidden fields, in page order.
-fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
+pub(crate) fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
     tags(html, "form")
         .iter()
         .map(|form| {
@@ -33,7 +33,7 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
 
 /// Whether the element with `id` holds the position `at` (from its start tag to its matching end
 /// tag, nested tags of the same name counted).
-fn encloses(html: &str, id: &str, at: usize) -> bool {
+pub(crate) fn encloses(html: &str, id: &str, at: usize) -> bool {
     let Some(attr) = html.find(&format!("id=\"{id}\"")) else {
         return false;
     };
@@ -118,7 +118,7 @@ fn behind_a_confirm(html: &str, action: &str) {
 }
 
 /// The part of `html` from `marker` to the end of the element `close` that follows it.
-fn part<'a>(html: &'a str, marker: &str, close: &str) -> &'a str {
+pub(crate) fn part<'a>(html: &'a str, marker: &str, close: &str) -> &'a str {
     let rest = &html[html.find(marker).unwrap_or_else(|| panic!("no {marker}"))..];
     &rest[..rest.find(close).map_or(rest.len(), |e| e + close.len())]
 }
@@ -274,15 +274,23 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
 
     check(
         "/settings/provisioning",
-        vec![(
-            "/settings/provisioning#setup".to_string(),
-            vec![
-                ("server_url", "https://pi.example"),
-                ("locale", "en_GB"),
-                ("time_zone", "Europe/London"),
-            ],
-            to("/settings/provisioning?saved=1", "saved"),
-        )],
+        vec![
+            (
+                "/settings/provisioning#setup".to_string(),
+                vec![
+                    ("server_url", "https://pi.example"),
+                    ("locale", "en_GB"),
+                    ("time_zone", "Europe/London"),
+                ],
+                to("/settings/provisioning?saved=1", "saved"),
+            ),
+            // Design 31 step 8: the country code is Phone Setup's second form.
+            (
+                "/settings/calls#country-code".to_string(),
+                vec![("default_country_code", "46")],
+                to("/settings/provisioning?saved=country-code", "country-code"),
+            ),
+        ],
     )
     .await;
 
@@ -341,6 +349,11 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
         (url.as_str(), locale.as_str()),
         ("https://pi.example", "en_GB")
     );
+    let code: String = sqlx::query_scalar("SELECT default_country_code FROM call_settings")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(code, "46");
 }
 
 /// Web Filter's refusals land in their group with a short message (the phone's page does the

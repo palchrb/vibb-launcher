@@ -2090,3 +2090,48 @@ input.row-input {
 
 /* The Music row on the phone page (the DeviceSummary mockup tile). */
 .tile-pink { background: #FF375F; }
+
+/* ---- Calls & Contacts (design 31 step 8) ---- */
+
+/* A contact's photo in its row, cropped like the initial's circle. */
+.avatar-photo {
+    object-fit: cover;
+}
+
+/* A contact's form, open under its row: its rows indented to the name (the row's 16px, the 36px
+   avatar and 12px), a hairline above each. */
+.contact-body {
+    padding-left: 48px;
+}
+
+.contact-body .row::before,
+.contact-body .contact-field::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+.contact-field {
+    position: relative;
+    padding: 11px 16px 0;
+}
+
+.contact-body input[type="file"] {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 55%;
+    font: inherit;
+    font-size: 0.875rem;
+}
+
+.contact-body .contact-photo-error {
+    margin: 0 16px 12px;
+}
+
+.contact-body .confirm-body {
+    padding-left: 16px;
+}

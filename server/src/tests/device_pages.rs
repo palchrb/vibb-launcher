@@ -1731,7 +1731,7 @@ async fn apps_holds_the_moved_forms() {
         "/apps/toggle",
         "/app-updates",
         "/apps/display",
-        "installing-reload.js",
+        "auto-reload.js",
     ] {
         assert!(!summary.contains(gone), "{gone}");
     }
@@ -1811,7 +1811,7 @@ async fn apps_holds_the_moved_forms() {
         input_checked(&html, "app_updates_wifi_only", "on"),
         Some(true)
     );
-    assert!(!html.contains("installing-reload.js"));
+    assert!(!html.contains("auto-reload.js"));
     every_auto_save_has_a_save_without_js(&html);
     for name in ["selected", "app_updates_wifi_only"] {
         assert!(autosaves(&html, name), "{name}");
@@ -2107,7 +2107,7 @@ async fn a_phone_not_set_up_has_its_apps_page() {
 
 /// A refused Name and icon save is the answer to a POST: it never carries the installing reload,
 /// which would ask to send the form again once it is closed; the page itself does while something
-/// installs (qa-31-s6-code L1; the pause and the stop on a save are `jstest/installing-reload`).
+/// installs (qa-31-s6-code L1; the pause and the stop on a save are `jstest/auto-reload`).
 #[tokio::test]
 async fn a_refused_name_save_never_reloads() {
     let app = TestApp::new().await;
@@ -2126,7 +2126,7 @@ async fn a_refused_name_save_never_reloads() {
         .await
         .text();
     assert!(page.contains("Installing 40%"));
-    assert!(page.contains("<script src=\"/static/installing-reload.js?v=1\" defer></script>"));
+    assert!(page.contains("<script src=\"/static/auto-reload.js?v=2\" defer></script>"));
     let res = app
         .request_form(
             Method::POST,
@@ -2141,7 +2141,7 @@ async fn a_refused_name_save_never_reloads() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
     assert!(html.contains("id=\"display-com.android.deskclock\" open"));
-    assert!(!html.contains("installing-reload.js"), "{html}");
+    assert!(!html.contains("auto-reload.js"), "{html}");
 }
 
 /// A catalog app whose package is an older catalog's free text stays switchable, on and off, at

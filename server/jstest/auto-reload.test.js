@@ -1,9 +1,9 @@
-// Behaviour of static/installing-reload.js (design 31 step 6, qa-31-s6-code M1/L1/N4).
-// Run: node --test jstest/installing-reload.test.js
+// Behaviour of static/auto-reload.js (design 31 steps 6 and 8, qa-31-s6-code M1/L1/N4).
+// Run: node --test jstest/auto-reload.test.js
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, DELAY } = require("../static/installing-reload.js");
+const { install, DELAY } = require("../static/auto-reload.js");
 
 // A fake window: timers run by hand, listeners fired by hand, reloads and address changes counted.
 function fakeWindow({ search = "", openForm = false } = {}) {
@@ -18,7 +18,7 @@ function fakeWindow({ search = "", openForm = false } = {}) {
                 (listeners["doc:" + type] = listeners["doc:" + type] || []).push(fn);
             },
             querySelector: (selector) =>
-                selector === "details.app-display[open]" && win.openForm ? {} : null,
+                selector === "details[open]" && win.openForm ? {} : null,
         },
         addEventListener: (type, fn) => {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
@@ -35,8 +35,17 @@ function fakeWindow({ search = "", openForm = false } = {}) {
             },
         },
         history: {
+            // scroll-restore.js leaves "manual" after the save that led to this page.
+            scrollRestoration: "manual",
             replaceState: (_state, _title, url) => {
                 win.replaced.push(url);
+            },
+        },
+        scrollY: 0,
+        stored: {},
+        sessionStorage: {
+            setItem: (key, value) => {
+                win.stored[key] = value;
             },
         },
     };
@@ -98,7 +107,7 @@ test("a change on a control that doesn't save keeps reloading", () => {
     assert.strictEqual(win.reloads, 1);
 });
 
-test("an open Name and icon form pauses the reload until it is closed", () => {
+test("an open disclosure (a Name and icon or a contact's form) pauses the reload until closed", () => {
     const win = fakeWindow({ openForm: true });
     install(win);
     win.advance();
@@ -116,4 +125,33 @@ test("a refusal's notice leaves the address once shown, the row's fragment stays
     const quiet = fakeWindow();
     install(quiet);
     assert.deepStrictEqual(quiet.replaced, []);
+});
+
+// qa-31-s8-code M1: a reload keeps the place. After a scroll-restored save the entry's
+// scrollRestoration is "manual", so the browser alone would show the top on reload; the script
+// hands it back ("auto") and leaves scroll-restore's own record, which the reloaded page restores.
+test("a reload keeps the scroll position", () => {
+    const scrollRestore = require("../static/scroll-restore.js");
+    const win = fakeWindow();
+    win.location.hash = "";
+    win.scrollY = 800;
+    install(win);
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(win.history.scrollRestoration, "auto");
+    const saved = JSON.parse(win.stored[scrollRestore.KEY]);
+    assert.strictEqual(saved.path, "/devices/1/apps");
+    assert.strictEqual(saved.y, 800);
+    // The reloaded page (same path, no fragment, just now) restores exactly that.
+    assert.strictEqual(scrollRestore.restoreTarget(saved, "/devices/1/apps", "", saved.t + 50), 800);
+});
+
+test("no record or reload once a save has started", () => {
+    const win = fakeWindow();
+    win.scrollY = 800;
+    install(win);
+    win.fire("doc", "submit", {});
+    win.advance();
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.stored, {});
 });

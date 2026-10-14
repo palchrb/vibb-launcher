@@ -640,8 +640,11 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
     // A launcher that stopped enforcing calls still reads as a downgrade, not "not yet".
     let cookie = app.admin_cookie().await;
     let page = app
-        .get_page(&format!("/devices/{id}"), &cookie)
+        .get_page(&super::device_page(id, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(page.contains("stopped reporting that it enforces calls"));
+    assert!(
+        page.contains("stopped reporting that it screens calls"),
+        "{page}"
+    );
 }

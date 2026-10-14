@@ -637,12 +637,8 @@ struct DeviceDetailTemplate {
     latest_status: Option<DeviceStatus>,
     /// The About This Phone row's value: "Vibb 0.23.6" (design 31 step 3).
     about_value: Option<String>,
-    /// One line for the "Calls & SMS" card, e.g. "Managed - 4 contacts".
-    calls_summary: String,
-    /// `calls::call_report` - emergency calls, a launcher that can't enforce calls, roles.
-    call_warnings: Vec<String>,
-    /// `calls::call_report`'s hints: good to know, nothing wrong (plain lines).
-    call_hints: Vec<String>,
+    /// The Calls & Contacts row's value (design 31 step 8): "8 contacts", "Not managed".
+    calls_value: String,
     /// The Apps row's value (design 31 step 6): "14 allowed", or "List unreadable".
     apps_value: String,
     /// The Restrictions switches (migrations/0023_hardening.sql), for the no-PIN warning.
@@ -1469,46 +1465,34 @@ async fn render_device(
         .as_ref()
         .is_some_and(|s| s.restrictions_paused);
 
-    let contact_count: i64 =
+    // The Calls & Contacts row: "8 contacts" while calls are managed (design 31 §3.2); a failed
+    // read says so, never "0 contacts".
+    let contact_count: Option<i64> = if policy.calls_managed {
         sqlx::query_scalar("SELECT COUNT(*) FROM device_contacts WHERE device_id = ?")
             .bind(id)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0);
-    let calls_summary = if !policy.calls_managed {
-        "Not managed - calls and SMS work as on any phone.".to_string()
+            .map_err(|err| tracing::error!(device_id = id, %err, "can't count the contacts"))
+            .ok()
     } else {
-        let contacts = match contact_count {
-            1 => "1 contact".to_string(),
-            n => format!("{n} contacts"),
-        };
-        let calls = if policy.calls_enabled {
-            "calls on"
-        } else {
-            "calls off"
-        };
-        let sms = if policy.sms_enabled {
-            "SMS on"
-        } else {
-            "SMS off"
-        };
-        format!("Managed - {contacts}, {calls}, {sms}.")
+        None
     };
-
-    let (call_warnings, call_hints, call_problems) =
-        match crate::handlers::calls::call_report(&state, &policy).await {
-            Ok(report) => (report.warnings, report.hints, report.problems),
-            Err(err) => {
-                tracing::error!(device_id = id, %err, "failed to read call warnings");
-                (
-                    vec![
-                        "Couldn't read this phone's call state - check the server log.".to_string(),
-                    ],
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-        };
+    // Its findings feed Attention; the page itself words them (design 31 step 8). A report that
+    // can't be read says so on the row, so an empty Attention never reads as "all good"
+    // (qa-31-s8-code N4).
+    let call_problems = crate::handlers::calls::call_report(&state, &policy)
+        .await
+        .map(|report| report.problems())
+        .map_err(|err| tracing::error!(device_id = id, %err, "failed to read the call report"))
+        .ok();
+    let calls_value = match (policy.calls_managed, contact_count) {
+        _ if call_problems.is_none() => "Couldn't read".to_string(),
+        (false, _) => "Not managed".to_string(),
+        (true, None) => "Couldn't read".to_string(),
+        (true, Some(1)) => "1 contact".to_string(),
+        (true, Some(n)) => format!("{n} contacts"),
+    };
+    let call_problems = call_problems.unwrap_or_default();
 
     let time = time_card(&state, &policy, latest_status.as_ref()).await;
     // Each card shows its own codes (design 24, QA #8); nothing at the top of the page.
@@ -1593,9 +1577,7 @@ async fn render_device(
             parent_pin,
             relock,
             title: device.name.clone(),
-            calls_summary,
-            call_warnings,
-            call_hints,
+            calls_value,
             managed_without_pin: managed_without_pin(&policy),
             hardening: policy.hardening.clone(),
             home_value: format!("{} per row", policy.home_columns),

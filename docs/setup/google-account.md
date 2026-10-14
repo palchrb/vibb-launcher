@@ -115,7 +115,7 @@ from a launcher that doesn't report it yet). By hand, with adb allowed:
    Play Store opens for 15 minutes (notification with "End now"; not during a time rule's lock).
 2. Install the app. It stays hidden on the phone until it is allowed.
 3. PWA, device page, "Apps": tick the new app.
-4. For **Element X**: on the "Calls & SMS" page, set the contacts' message button to "Element X"
+4. For **Element X**: on the phone's Calls & Contacts page, set the contacts' message button to "Element X"
    (per contact, or as the phone's default) and enter each contact's Matrix ID
    (`@name:matrix.org`).
 

@@ -1183,7 +1183,7 @@ struct AppsTemplate {
     /// The phone has reported its apps at least once.
     reported: bool,
     /// Something installs now: the page reloads every 3 s for the percentage
-    /// (`static/installing-reload.js`) - never on a refused save's page, the answer to a POST.
+    /// (`static/auto-reload.js`) - never on a refused save's page, the answer to a POST.
     installing: bool,
     wifi_only: bool,
     /// The phone's network at its last report, with its time (`app_downloads::network`).

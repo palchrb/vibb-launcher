@@ -531,13 +531,14 @@ async fn a_new_phone_keeps_its_phone_and_sms_apps() {
             Some(&format!("app-{package}")),
         );
     }
+    // Calls & Contacts says what it costs; the packages only behind the warnings' ⓘ (design 31
+    // step 8).
     let page = app
-        .get_page(&format!("/devices/{first}"), &cookie)
+        .get_page(&super::device_page(first, super::Section::Calls), &cookie)
         .await
         .text();
-    assert!(
-        page.contains("Only emergency calls work on this phone: its phone app (com.maker.dialer)"),
-        "{page}"
-    );
-    assert!(page.contains("The phone hides its Messages app (com.maker.sms)"));
+    assert!(page.contains("Only emergency calls work"), "{page}");
+    assert!(page.contains("Its package name is com.maker.dialer."));
+    assert!(page.contains("Messages app is hidden"));
+    assert!(page.contains("Its package name is com.maker.sms."));
 }
