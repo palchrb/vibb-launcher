@@ -68,6 +68,7 @@ import com.kidslauncher.mdm.ui.home.GridGapDecoration
 import com.kidslauncher.mdm.ui.home.GridMetrics
 import com.kidslauncher.mdm.ui.home.MOCKUP_CONTENT_DP
 import com.kidslauncher.mdm.ui.home.contactItemPx
+import com.kidslauncher.mdm.ui.home.contactsContentPx
 import com.kidslauncher.mdm.ui.home.contactRow
 import com.kidslauncher.mdm.ui.home.gridMetrics
 import com.kidslauncher.mdm.ui.home.HomeGridAdapter
@@ -821,7 +822,14 @@ class HomeActivity : UIObjectActivity() {
         val layout = contactRow(contacts.size, contentWidthDp())
         // Centred while everything fits, from the left (with the peek at the edge) when it scrolls.
         row.gravity = if (layout.scrolls) Gravity.START else Gravity.CENTER_HORIZONTAL
-        val itemPx = contactItemPx(layout, contacts.size, contentWidthDp(), resources.displayMetrics.density)
+        val density = resources.displayMetrics.density
+        // The row's real width once Home is laid out (qa-34-s4-code L2), else the estimate.
+        val contentPx = contactsContentPx(
+            binding.root.width - binding.root.paddingLeft - binding.root.paddingRight,
+            resources.configuration.screenWidthDp,
+            density,
+        )
+        val itemPx = contactItemPx(layout, contacts.size, contentPx, density)
         val inflater = LayoutInflater.from(this)
         for (contact in contacts) {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)

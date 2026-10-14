@@ -617,15 +617,21 @@ no date line, nothing new above the contacts.
 **Decisions**
 - **No "4 dp end padding"**: once the row fits, the badge sits inside its item with 6 dp to spare. Padding would only
   have moved the overflow. `clipChildren=false` was already on the item and its frame (step 2).
-- **A gesture side effect, intended**: with three contacts the row could scroll by 24 dp, so a left swipe that started
-  on it was first a scroll (the rule "a left swipe in a contacts row that can still scroll stays a scroll"). The row no
-  longer scrolls, so that swipe now opens kid Settings like everywhere else on Home - the rule's intent. With more
-  contacts than fit, nothing changed.
+- **The swipe rule's input changes; its outcome is for the emulator pass** (corrected in the fix round, qa-34-s4-code
+  M1). `onFling`'s guard - "a left swipe that starts in a contacts row that can still scroll stays a scroll" - reads
+  `canScrollHorizontally(1)`, which is now false for three contacts on the Jelly Star (the row no longer overflows). But
+  the guard doesn't run on the swipe's own start: a DOWN on a contact goes to the clickable item, so the gesture
+  detector never sees it and `onFling` decides with the last DOWN it was fed - usually an earlier grid touch, or none
+  on Home's first gesture - and compares coordinates of two different views. That is a design 08 bug, older than this
+  step and not changed by it. So whether a left swipe from a contact opens kid Settings depends on that stale DOWN,
+  with three contacts as with five; a swipe that starts in the row's empty space (one or two contacts) gives the
+  detector its DOWN and works as the rule says. The fix (one observe-only feed in `dispatchTouchEvent`, in screen
+  coordinates) changes which swipes open Settings, so it waits for the user's answer.
 - **The contacts row fades 16 dp, not 32**: its peek is half a 64 dp avatar (32 dp), and a 32 dp fade would make
   the peek invisible.
-- **Tests are plain JUnit** (`HomeEdgesTest`, 9). They cover the fade strengths and lengths in px at densities 1.5-3,
-  and the layout's fading attributes. A source check confirms the view scales each edge, fades over its padding and
-  touches no touch event. The label rule is checked in the XML and by a scan for line-count code in the adapter. A row
+- **Tests are plain JUnit** (`HomeEdgesTest`, 9; 10 after the fix round). They cover the fade strengths and lengths in
+  px at densities 1.5-3, and the layout's fading attributes. A source check confirms the view scales each edge, fades
+  over its padding and touches no touch event. The label rule is checked in the XML and by a scan for line-count code in the adapter. A row
   height model (`tileHeightDp`) runs at font scale 1.0/1.3/2.0 in 3 and 4 columns at 240/288/360 dp: rows grow with
   the scale, two lines at most, and the bottom fade is shorter than a tile. On the Jelly Star (both navigation modes,
   three contacts with two-line names), a whole row plus the bottom fade fits even at 2.0 (row ~140 dp in ~297 dp).
@@ -634,7 +640,33 @@ no date line, nothing new above the contacts.
   room. The badge overhang and the focus ring are tied to the layout and to P2's constant. Another source check covers
   HomeActivity's wiring.
 
-**Not checked on the emulator yet** (shared emulator; the pass comes later): Home at `wm density 240` and font scale
-1.0, 1.3 and 2.0, with 3 and 4 columns; the top fade while scrolled and the bottom fade over a photo wallpaper; three
-contacts (no scroll, badge whole) and five (the scroll and its 16 dp fade); tap, long-press, the swipe-up at the grid's
-end, the swipe-left (also from the contacts row) and the press and focus ring on the new grid class.
+**Not checked on the emulator yet** (shared emulator; the pass comes later):
+- Home at `wm density 240` and font scale 1.0, 1.3 and 2.0, with 3 and 4 columns; "Innstillinger" at 1.3 and 2.0
+  (hyphenated, not cut between letters), in nb and en.
+- The top fade growing in over the first 12 dp of a scroll, the bottom fade melting away over the last 32 dp (no snap
+  as a fling settles), over a photo wallpaper.
+- Three contacts (no scroll, badge whole, no fade) and five (the scroll and its 16 dp fade).
+- Tap, long-press, the swipe-up at the grid's end, the press and the focus ring on the new grid class.
+- **The contacts-row swipes (M1)**, with three and with five contacts: a left swipe starting on a contact's avatar and
+  one starting between two contacts (below a one-line name, or in the gap), each (a) as Home's first gesture after
+  the unlock and (b) right after tapping a grid tile's label area and coming back. Record for each whether kid
+  Settings opens or the row scrolls. This is the input for the user's decision on the swipe fix.
+- **Frame time (N4)**: `adb shell dumpsys gfxinfo $P reset`, fling the grid up and down for 10 s, then `dumpsys
+  gfxinfo $P` - janky frames and the 90th/99th percentiles, with the fades on, next to step 2's unmeasured elevated
+  tiles (one measurement covers both).
+
+### Step 4 code QA fix round (`qa-34-s4-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| M1 a swipe from a contact is decided with an old DOWN | Docs only, as asked: the step's claim ("now opens kid Settings") is replaced by the true current behaviour (above, "The swipe rule's input changes") in this doc and `launcher/CLAUDE.md`, and the contacts-row swipes (3 and 5 contacts, on a contact and between contacts, as the first gesture and after a grid tap) are in the emulator checklist. The swipe handling is unchanged until the user answers. |
+| L1 the fade snaps at the first and last pixel | `fadeStrength(remainingPx, edgePx, lengthPx)` = `min(1, remaining / edge) × min(1, edge / length)`, 0 with nothing left. `FadingRecyclerView` feeds it `computeVerticalScrollOffset()` at the top and range − extent − offset at the bottom, through `remainingScrollPx(canScroll, estimate)` (at least 1 px while `canScrollVertically` says there is more, so the layout manager's estimate can never hide a real edge; 0 when it says there isn't). The edges are `FADE_TOP_DP`/`FADE_BOTTOM_DP` × density over the view's real `verticalFadingEdgeLength`. Tested: full from the edge's length on, half at half, at most a pixel one pixel in, 0 at the end, monotonic, at four densities. Mutation m11 (no ramp) is caught. |
+| L2 the row's width from `screenWidthDp` | `contactItemPx(layout, count, contentPx, density)` takes pixels; `HomeActivity.renderContacts` passes `contactsContentPx(measured, screenWidthDp, density)`: Home's column measured (`root.width` − its padding, which includes the side insets) once laid out, else (screenWidthDp − 32) dp in px less a pixel. The sweep now tries each width at −1/0/+1 px around the dp estimate. The layout choice (`contactRow`) stays on dp. |
+| L3 two source checks pinned strings | `FadingRecyclerView`'s class body (comments stripped) must declare exactly the seven overrides - each once, each `override` - and nothing else: no `init`, no property, no listener, `setOn`/`addOn`, `Touch` or `object`. The wiring check matches whole lines anchored at the end (`maxWidth = itemPx`, `item.layoutParams = LinearLayout.LayoutParams(itemPx, ...WRAP_CONTENT)`), each assignment once in `renderContacts`, plus the measured width. Re-run: m6 (`init { setOnTouchListener { _, _ -> true } }`) and m7 (`maxWidth = itemPx + 40`) are now caught. |
+| N1 no room check on the 76 dp row | `contactRow`'s 76 dp case also needs `count × contactRoomDp(76)`; the KDoc says both checks only bite below about 84 dp per contact. The sweep starts at 1 dp; one contact in 80 dp is 64 dp centred, in 70 dp it scrolls, in 84 dp it is 76 dp. Re-run: m5 (the 64 dp check dropped) and m5b (the 76 dp check dropped) are caught. |
+| N2 "Innstillinger" breaks mid-word | `tile_label` has `android:hyphenationFrequency="normal"`: a single word too wide for the cell is hyphenated with the app language's patterns (nb and en ship with Android) instead of cut between letters. Chosen over `breakStrategy` (already `high_quality` by default for a TextView; it doesn't add hyphens). Pinned in the XML test; the look is on the emulator list. |
+| N3 `contactRoomDp`'s `max` | KDoc: the badge overhangs on the end side only and the ring on both, so the larger on each side covers both and over-reserves at the start - harmless. |
+| N4 the frame time is unmeasured | A `dumpsys gfxinfo` line in the emulator checklist above, measuring the fades and step 2's elevated tiles together. |
+| N5 the music card isn't in the row model | The Jelly Star test also models the music card (12 dp margin, max(72 dp, 2 × 10 dp padding + two 12 sp lines + a 15 sp title at 1.6 em)): a whole row still shows at every scale, columns and navigation mode; the row plus the bottom fade fits up to 1.3. At 2.0 with the card, the fade may reach into the one whole row's labels while more rows are below (stated in the test). |
+
+Tests: `HomeEdgesTest` 10. Mutations re-run against `HomeEdgesTest`/`HomeModelTest`: m5, m5b, m6, m7 and m11 caught.

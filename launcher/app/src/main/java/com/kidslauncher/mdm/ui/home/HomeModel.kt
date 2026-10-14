@@ -97,14 +97,17 @@ private fun rowFits(count: Int, avatar: Int, gap: Int, width: Float) =
 
 /**
  * 1-3 contacts: 76 dp avatars 28 dp apart, centred (mockup); when that doesn't fit (or more
- * contacts): 64 dp, 16 dp apart, centred, if that fits and every contact has room for its call
- * badge and focus ring ([contactRoomDp], design 34 P4); otherwise 64 dp in a horizontal scroll, spaced so
- * the next avatar is cut in half at the edge - the peek says "there is more". A row that fits is
- * laid out by [contactItemDp], never wider than the content.
+ * contacts): 64 dp, 16 dp apart, centred, if that fits; otherwise 64 dp in a horizontal scroll, spaced so
+ * the next avatar is cut in half at the edge - the peek says "there is more". A centred row also needs
+ * room for each contact's call badge and focus ring ([contactRoomDp], design 34 P4; this only bites
+ * below about 84 dp of content per contact, never at a real width). A row that fits is laid out by
+ * [contactItemDp], never wider than the content.
  */
 fun contactRow(count: Int, contentWidthDp: Float): ContactRowLayout {
     if (count <= 0) return ContactRowLayout(76, 28, false)
-    if (count <= 3 && rowFits(count, 76, 28, contentWidthDp)) return ContactRowLayout(76, 28, false)
+    if (count <= 3 && rowFits(count, 76, 28, contentWidthDp) && count * contactRoomDp(76) <= contentWidthDp) {
+        return ContactRowLayout(76, 28, false)
+    }
     if (rowFits(count, 64, 16, contentWidthDp) && count * contactRoomDp(64) <= contentWidthDp) {
         return ContactRowLayout(64, 16, false)
     }

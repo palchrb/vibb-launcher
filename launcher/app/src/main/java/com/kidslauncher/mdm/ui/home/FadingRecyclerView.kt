@@ -7,9 +7,12 @@ import androidx.recyclerview.widget.RecyclerView
 /**
  * Home's grid with fading edges of two lengths (design 34 P4, QA L6). Android has one
  * `fadingEdgeLength` for both edges, so the layout sets [FADE_LENGTH_DP] and each edge scales it
- * by [fadeStrength]: [FADE_TOP_DP] at the top, [FADE_BOTTOM_DP] at the bottom, and nothing at an
- * edge the grid can't scroll past. The fade is an alpha fade (View.draw's own), so it works over
- * the system wallpaper too. Touch, scrolling and the item touch listener are RecyclerView's own.
+ * by [fadeStrength]: up to [FADE_TOP_DP] at the top and [FADE_BOTTOM_DP] at the bottom, ramping
+ * with the distance left to scroll (qa-34-s4-code L1), nothing at an edge the grid can't scroll
+ * past. The fade is an alpha fade (View.draw's own), so it works over the system wallpaper too.
+ *
+ * Drawing only: it declares nothing but these seven overrides (`HomeEdgesTest` pins the set), so
+ * touch, scrolling and the item touch listener are RecyclerView's own.
  *
  * With `clipToPadding=false` the grid draws into its bottom padding, so the fade covers the
  * padding as well (as AbsListView does) - otherwise a faded row would reappear below the fade.
@@ -20,11 +23,20 @@ class FadingRecyclerView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : RecyclerView(context, attrs, defStyleAttr) {
 
-    override fun getTopFadingEdgeStrength(): Float =
-        fadeStrength(canScrollVertically(-1), FADE_TOP_DP)
+    override fun getTopFadingEdgeStrength(): Float = fadeStrength(
+        remainingScrollPx(canScrollVertically(-1), computeVerticalScrollOffset()),
+        FADE_TOP_DP * resources.displayMetrics.density,
+        verticalFadingEdgeLength.toFloat(),
+    )
 
-    override fun getBottomFadingEdgeStrength(): Float =
-        fadeStrength(canScrollVertically(1), FADE_BOTTOM_DP)
+    override fun getBottomFadingEdgeStrength(): Float = fadeStrength(
+        remainingScrollPx(
+            canScrollVertically(1),
+            computeVerticalScrollRange() - computeVerticalScrollExtent() - computeVerticalScrollOffset(),
+        ),
+        FADE_BOTTOM_DP * resources.displayMetrics.density,
+        verticalFadingEdgeLength.toFloat(),
+    )
 
     override fun isPaddingOffsetRequired(): Boolean = !clipToPadding
 

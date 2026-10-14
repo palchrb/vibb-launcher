@@ -30,11 +30,23 @@ const val FADE_LENGTH_DP = 32f
 const val CONTACTS_FADE_DP = 16f
 
 /**
- * The strength View.draw multiplies the fading-edge length by: nothing when the list can't scroll
- * past that edge, else the edge's length over the one [lengthDp] the view has (at most 1).
+ * The strength View.draw multiplies the fading-edge length by (qa-34-s4-code L1): it ramps with
+ * the distance still to scroll past that edge, as ScrollView's does, so the fade grows in over the
+ * first [edgePx] of a scroll and melts away over the last instead of snapping in one frame. Full,
+ * it is the edge's length over the one [lengthPx] the view has (at most 1); nothing when there is
+ * nothing left to scroll. All in pixels.
  */
-fun fadeStrength(canScroll: Boolean, edgeDp: Float, lengthDp: Float = FADE_LENGTH_DP): Float =
-    if (!canScroll || lengthDp <= 0f) 0f else (edgeDp / lengthDp).coerceIn(0f, 1f)
+fun fadeStrength(remainingPx: Int, edgePx: Float, lengthPx: Float): Float {
+    if (remainingPx <= 0 || edgePx <= 0f || lengthPx <= 0f) return 0f
+    return min(1f, remainingPx / edgePx) * min(1f, edgePx / lengthPx)
+}
+
+/**
+ * The distance left to scroll past an edge: what the layout manager reports (an estimate in
+ * pixels), but at least 1 px while [canScroll] says there is more - so an estimate of 0 never
+ * hides a real edge - and nothing when it says there isn't.
+ */
+fun remainingScrollPx(canScroll: Boolean, estimatePx: Int): Int = if (canScroll) max(1, estimatePx) else 0
 
 /** Grid labels wrap to at most two lines at every font scale (QA L6: no row height to compute). */
 const val GRID_LABEL_MAX_LINES = 2
@@ -62,7 +74,11 @@ const val CALL_BADGE_OVERHANG_DP = 4f
 /** How far P2's focus ring reaches past the avatar (its 2 dp stroke lies inside the 4 dp gap). */
 const val FOCUS_RING_OUT_DP = PressFeedback.FOCUS_RING_GAP_DP
 
-/** The room one Home contact needs: the avatar with its call badge and focus ring on both sides. */
+/**
+ * The room one Home contact needs, the avatar centred in it. The two don't add: the badge
+ * overhangs on the end side only and the ring on both sides, so the larger of the two on each side
+ * covers both (it over-reserves at the start when the badge is the larger - harmless).
+ */
 fun contactRoomDp(avatarDp: Int): Float = avatarDp + 2 * max(CALL_BADGE_OVERHANG_DP, FOCUS_RING_OUT_DP)
 
 /**
@@ -78,10 +94,21 @@ fun contactItemDp(layout: ContactRowLayout, count: Int, contentWidthDp: Float): 
         min(layout.itemDp.toFloat(), max(0f, contentWidthDp) / count)
     }
 
-/** [contactItemDp] in whole pixels, rounded down so [count] items never exceed the content width. */
-fun contactItemPx(layout: ContactRowLayout, count: Int, contentWidthDp: Float, density: Float): Int =
+/**
+ * [contactItemDp] in whole pixels, rounded down so [count] items never exceed [contentPx], the
+ * row's real width in pixels ([contactsContentPx]; qa-34-s4-code L2).
+ */
+fun contactItemPx(layout: ContactRowLayout, count: Int, contentPx: Int, density: Float): Int =
     if (layout.scrolls || count <= 0) {
         (layout.itemDp * density).toInt()
     } else {
-        min((layout.itemDp * density).toInt(), floor(max(0f, contentWidthDp) * density / count).toInt())
+        min((layout.itemDp * density).toInt(), max(0, contentPx) / count)
     }
+
+/**
+ * The contacts row's width in pixels: the measured content width of Home's column once it is laid
+ * out ([measuredPx] > 0), else the configuration's estimate ([screenWidthDp] minus the 2 x 16 dp
+ * sides, which the window manager may round up) less a pixel of slack (qa-34-s4-code L2).
+ */
+fun contactsContentPx(measuredPx: Int, screenWidthDp: Int, density: Float): Int =
+    if (measuredPx > 0) measuredPx else max(0, floor((screenWidthDp - 32) * density).toInt() - 1)

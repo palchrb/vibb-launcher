@@ -5,7 +5,9 @@
      background is an oval-masked ripple and the icon has elevation (design 34 P2,
      HomeGridAdapter / PressFeedback); the frame doesn't clip the icon's shadow. The label wraps
      to two lines at every font scale (P4, GRID_LABEL_MAX_LINES): a row is as tall as its tallest
-     tile, so nothing is computed. -->
+     tile, so nothing is computed. A single word too wide for the cell ("Innstillinger" at font scale
+     1.3/2.0) is hyphenated by the app language's patterns rather than cut between letters
+     (hyphenationFrequency, qa-34-s4-code N2). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -43,6 +45,7 @@
         android:ellipsize="end"
         android:fontFamily="@font/nunito_bold"
         android:gravity="center"
+        android:hyphenationFrequency="normal"
         android:includeFontPadding="false"
         android:maxLines="2"
         android:paddingStart="2dp"
