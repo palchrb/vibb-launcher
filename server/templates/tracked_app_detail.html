@@ -32,7 +32,7 @@
         </details>
         {% endif %}
         {% if app.source_type == "github" %}
-        <form method="post" action="/apps/tracked/{{ app.id }}/check" class="cell">
+        <form method="post" action="/apps/tracked/{{ app.id }}/check#check" class="cell">
             <button type="submit" class="row row-button">Check Now</button>
         </form>
         {% endif %}
@@ -109,7 +109,7 @@
             {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
             <details class="confirm cell" id="forget">
                 <summary class="row">Forget Package and Key…</summary>
-                <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name" class="confirm-body">
+                <form method="post" action="/apps/tracked/{{ app.id }}/forget-package-name#release" class="confirm-body">
                     <p>Forget them? The next release is then trusted as it comes, whatever app or key it has.</p>
                     <button type="submit" class="button-destructive">Forget Package and Key</button>
                 </form>
@@ -121,7 +121,7 @@
         {% endif %}
 
         <h2 class="group-header">Details</h2>
-        <form method="post" action="/apps/tracked/{{ app.id }}" class="group form-group" id="details">
+        <form method="post" action="/apps/tracked/{{ app.id }}#details" class="group form-group" id="details">
             <div class="field">
                 <label class="field-label" for="name">Name</label>
                 <input type="text" id="name" name="name" value="{{ details.name }}" required>
@@ -148,9 +148,9 @@
         </form>
 
         <h2 class="group-header">Updates</h2>
-        <div class="group">
+        <div class="group" id="updates">
             {% if app.source_type == "github" %}
-            <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases" class="cell">
+            <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases#updates" class="cell">
                 <label class="row">
                     <span class="row-label">Include pre-releases</span>
                     <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if app.include_prereleases %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -162,14 +162,14 @@
                 <div class="info-panel"><p>Needed for a repo that only publishes pre-releases (a rolling build): without it, such a repo never has a release.</p></div>
             </details>
             {% endif %}
-            <form method="post" action="/apps/tracked/{{ app.id }}/enabled" class="cell">
+            <form method="post" action="/apps/tracked/{{ app.id }}/enabled#updates" class="cell">
                 <label class="row">
                     <span class="row-label">Enabled</span>
                     <input type="checkbox" role="switch" class="sw" name="enabled" value="on"{% if app.enabled %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
             </form>
-            <form method="post" action="/apps/tracked/{{ app.id }}/is-launcher" class="cell">
+            <form method="post" action="/apps/tracked/{{ app.id }}/is-launcher#updates" class="cell">
                 <label class="row">
                     <span class="row-label">This is the launcher app</span>
                     <input type="checkbox" role="switch" class="sw" name="is_launcher" value="on"{% if app.is_launcher %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

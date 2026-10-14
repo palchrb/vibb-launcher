@@ -256,8 +256,12 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
     // Ticked on this phone (with navy): in its policy, fetchable, upright, no metadata.
     let mut nudges = app.state.command_notify.subscribe();
     let res = tick(&app, &cookie, id, &[1, portrait]).await;
-    // Back to Home Screen (design 31 step 5) with no fragment: scroll-restore keeps the place.
-    super::assert_redirect(&res, &super::device_page(id, super::Section::Home), None);
+    // Back to its group on Home Screen (§5.1.4): scroll-restore keeps the place.
+    super::assert_redirect(
+        &res,
+        &super::device_page(id, super::Section::Home),
+        Some("wallpapers"),
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     let list = wallpapers(&app, &token).await;
     assert_eq!(list.len(), 2);
@@ -353,7 +357,7 @@ async fn uploads_are_upright_cut_to_the_phone_and_on_no_phone_at_first() {
         .text();
     assert_eq!(
         super::form_action_of(&page, "wallpaper"),
-        Some(format!("/devices/{id}/wallpapers").as_str())
+        Some(format!("/devices/{id}/wallpapers#wallpapers").as_str())
     );
     assert!(page.contains(&format!("src=\"/wallpaper-images/{hash}\"")));
     assert_eq!(
@@ -661,8 +665,12 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
     let mut nudges = app.state.command_notify.subscribe();
     let res = lock_choice(&app, &cookie, id, "1").await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-    // Back to Lock Screen & PINs, no fragment: scroll-restore.js keeps the place.
-    super::assert_redirect(&res, &super::device_page(id, super::Section::Lock), None);
+    // Back to its row on Lock Screen & PINs (§5.1.4): scroll-restore.js keeps the place.
+    super::assert_redirect(
+        &res,
+        &super::device_page(id, super::Section::Lock),
+        Some("lock-wallpaper"),
+    );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(lock_wallpaper(&app, &token).await, json!(1));
     let logged: Vec<String> = sqlx::query_scalar(
@@ -681,7 +689,7 @@ async fn the_lock_wallpaper_is_homes_unless_a_ticked_one_is_chosen() {
         .text();
     assert_eq!(
         super::form_action_of(&page, "wallpaper"),
-        Some(format!("/devices/{id}/lock-wallpaper").as_str())
+        Some(format!("/devices/{id}/lock-wallpaper#lock-wallpaper").as_str())
     );
     assert!(super::autosaves(&page, "wallpaper"));
     assert!(

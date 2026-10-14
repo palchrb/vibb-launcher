@@ -98,12 +98,14 @@ fn domain_group(list_type: &str) -> &'static str {
     }
 }
 
-/// Where a Web Filter form returns (design 31 §5.1): `back=filter` with a phone goes to that
-/// phone's Web Filter page (no fragment: scroll-restore keeps the place), anything else to the
-/// form's group on `/dns`. The phone comes from the path or the stored row, never from `back`.
+/// Where a Web Filter form returns (design 31 §5.1): `back=filter` with a phone goes to the
+/// form's group on that phone's Web Filter page, anything else to the form's group on `/dns` - the
+/// same group name on both, but a phone's list setting (`/dns`'s Phones group, the phone page's
+/// Blocklists). The phone comes from the path or the stored row, never from `back`.
 fn back_to(form: &HashMap<String, String>, device: Option<i64>, group: &str) -> String {
     match (form.get("back").map(String::as_str), device) {
-        (Some("filter"), Some(id)) => format!("/devices/{id}/filter"),
+        (Some("filter"), Some(id)) if group == "phones" => format!("/devices/{id}/filter#lists"),
+        (Some("filter"), Some(id)) => format!("/devices/{id}/filter#{group}"),
         _ => format!("/dns#{group}"),
     }
 }
@@ -568,7 +570,7 @@ pub async fn show_dns_log(
 /// (design 31 step 5): off by default; while on, the phone reports blocked domains and they are
 /// kept `retention::DNS_LOG_RETENTION_DAYS`. Switching it off deletes the phone's log at once.
 /// One auto-saving checkbox (missing = off); 404 for an unknown device; nudges the phone. Back to
-/// `/devices/{id}/filter` without a fragment (scroll-restore keeps the place).
+/// its group, `/devices/{id}/filter#log` (§5.1.4).
 pub async fn set_dns_log(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -612,7 +614,7 @@ pub async fn set_dns_log(
             )
             .await;
             let _ = state.command_notify.send(device_id);
-            Redirect::to(&format!("/devices/{device_id}/filter")).into_response()
+            Redirect::to(&format!("/devices/{device_id}/filter#log")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id, %err, "couldn't save the blocked-domain log switch");

@@ -56,7 +56,7 @@
     <section id="downloads" aria-labelledby="downloads-title">
         <h2 class="group-header" id="downloads-title">Downloads</h2>
         <div class="group">
-            <form method="post" action="/devices/{{ device.id }}/app-updates" class="cell">
+            <form method="post" action="/devices/{{ device.id }}/app-updates#downloads" class="cell">
                 <label class="row">
                     <span class="row-label">Download apps on Wi-Fi only</span>
                     <input type="checkbox" role="switch" class="sw" name="app_updates_wifi_only" value="on"{% if wifi_only %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>

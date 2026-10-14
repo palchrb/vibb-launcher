@@ -11,7 +11,7 @@
     <h1 class="page-title">Settings</h1>
 
     <h2 class="group-header">New episodes</h2>
-    <form method="post" action="/music/sweep" class="group" id="sweep">
+    <form method="post" action="/music/sweep#sweep" class="group" id="sweep">
         <label class="row" for="sweep_hours">
             <span class="row-label">Check for new episodes</span>
             <select id="sweep_hours" name="hours" class="pick" data-autosave>
@@ -73,7 +73,7 @@
         {% if storytel.saved_on.is_some() %}
         <details class="confirm cell" id="storytel-remove">
             <summary class="row">Remove Login…</summary>
-            <form method="post" action="/music/storytel/clear" class="confirm-body">
+            <form method="post" action="/music/storytel/clear#storytel" class="confirm-body">
                 <p>Remove the Storytel login from this server and every phone? Their Storytel books go too.</p>
                 <button type="submit" class="button-destructive">Remove Login</button>
             </form>
@@ -94,7 +94,7 @@
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% else %}
-        <form method="post" action="/music/catalog-row" class="cell">
+        <form method="post" action="/music/catalog-row#app" class="cell">
             <button type="submit" class="row row-button">Add to the App Catalog</button>
         </form>
         {% endif %}
@@ -110,7 +110,7 @@
         </div>
         <details class="confirm cell" id="orphans-delete">
             <summary class="row">Delete Files…</summary>
-            <form method="post" action="/music/orphans/delete" class="confirm-body">
+            <form method="post" action="/music/orphans/delete#orphans" class="confirm-body">
                 <p>Delete these files from the server for good? Keep them while you might put a newer database back.</p>
                 <button type="submit" class="button-destructive">Delete Files</button>
             </form>

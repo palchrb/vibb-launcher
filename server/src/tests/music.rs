@@ -2952,7 +2952,7 @@ async fn entries_and_categories_move_and_categories_in_use_stay() {
             &[],
         )
         .await;
-    assert_eq!(res.location(), Some("/music/categories"));
+    assert_eq!(res.location(), Some("/music/categories#categories"));
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM music_categories")
         .fetch_one(&app.db)
         .await
@@ -3008,13 +3008,13 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
         .unwrap();
     assert_eq!(rows, 1, "only once");
 
-    // The app switch is the catalog toggle (installs and allowlists), back to this page with
-    // `back=music` and no fragment - it is the first group (design 31 §5.1; a page from before
-    // step 6 sent `anchor=music`, which still works).
+    // The app switch is the catalog toggle (installs and allowlists), back to its group on this
+    // page with `back=music` (design 31 §5.1.4; a page from before step 6 sent `anchor=music`,
+    // which still works).
     let page = music_page(&app, &cookie, device).await;
     assert_eq!(
         form_action_of(&page, "back"),
-        Some(format!("/devices/{device}/apps/toggle").as_str())
+        Some(format!("/devices/{device}/apps/toggle#music-app").as_str())
     );
     assert!(page.contains(r#"<input type="hidden" name="back" value="music">"#));
     assert_eq!(input_checked(&page, "selected", ""), Some(false));
@@ -3032,7 +3032,7 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
                 ],
             )
             .await;
-        assert_redirect(&res, &music, None);
+        assert_redirect(&res, &music, Some("music-app"));
     }
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
@@ -3057,7 +3057,7 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
     let ticked = tick_form_of(&page, entry);
     assert!(ticked.contains("Abels tårn"));
     assert!(ticked.contains(&format!(
-        "action=\"/devices/{device}/music/entries/{entry}\""
+        "action=\"/devices/{device}/music/entries/{entry}#music-entry-{entry}\""
     )));
     assert_eq!(input_checked(&ticked, "selected", ""), Some(true), "on");
     assert!(autosaves(&ticked, "selected"), "auto-saving");
@@ -3072,7 +3072,7 @@ async fn the_music_page_ticks_entries_and_switches_the_app() {
         "listed, off on the other phone"
     );
     assert!(other_page.contains(&format!(
-        "action=\"/devices/{other}/music/entries/{entry}\""
+        "action=\"/devices/{other}/music/entries/{entry}#music-entry-{entry}\""
     )));
 
     // Off again.
@@ -4012,7 +4012,10 @@ async fn the_release_tag_prefix_is_edited_on_the_app_page() {
             ],
         )
         .await;
-    assert_eq!(res.location(), Some(format!("/apps/tracked/{id}").as_str()));
+    assert_eq!(
+        res.location(),
+        Some(format!("/apps/tracked/{id}?open=source#details").as_str())
+    );
     let prefix: Option<String> =
         sqlx::query_scalar("SELECT release_tag_prefix FROM tracked_apps WHERE id = ?")
             .bind(id)
@@ -5036,12 +5039,12 @@ async fn files_no_entry_names_are_shown_and_deleted_on_request() {
     // Behind a confirm (design 31 §5.6): the delete form sits inside its <details>.
     let confirm = &page[page.find("id=\"orphans-delete\"").unwrap()..];
     let confirm = &confirm[..confirm.find("</details>").unwrap()];
-    assert!(confirm.contains("action=\"/music/orphans/delete\""));
+    assert!(confirm.contains("action=\"/music/orphans/delete#orphans\""));
 
     let res = app
         .request_form(Method::POST, "/music/orphans/delete", Some(&cookie), &[])
         .await;
-    assert_eq!(res.location(), Some("/music/settings"));
+    assert_eq!(res.location(), Some("/music/settings#orphans"));
     assert!(!dir.join(entry.to_string()).join("stray.mp3").exists());
     assert!(!dir.join("999").exists(), "the gone entry's directory too");
     assert!(dir.join(entry.to_string()).join("young.mp3").exists());
@@ -5106,31 +5109,11 @@ fn post_forms(html: &str) -> Vec<(String, Fields)> {
         .collect()
 }
 
-/// What every form on a music page must have, with or without JS (design 31 §5.1, §5.2): an
-/// action's fragment names an element of the page, so a refusal rendered in the POST's answer
-/// lands on its form; and a form that saves itself (`data-autosave`) has a `<noscript>` submit.
+/// What every form on a music page must have, with or without JS (design 31 §5.1, §5.2): the
+/// shared check (`settings_pages::check_forms`).
+#[track_caller]
 fn check_forms(page: &str, html: &str) {
-    for form in super::tags(html, "form") {
-        let body = &html[form.start..];
-        let body = &body[..body.find("</form>").unwrap_or(body.len())];
-        let action = form.attr("action").unwrap_or("");
-        if let Some((_, fragment)) = action.split_once('#') {
-            assert!(
-                html.contains(&format!("id=\"{fragment}\"")),
-                "{page}: {action} lands on no element"
-            );
-        }
-        if body.contains("data-autosave") {
-            let noscript = body
-                .split_once("<noscript>")
-                .and_then(|(_, rest)| rest.split_once("</noscript>"))
-                .map(|(inside, _)| inside);
-            assert!(
-                noscript.is_some_and(|inside| inside.contains("type=\"submit\"")),
-                "{page}: {action} saves itself but has no <noscript> Save"
-            );
-        }
-    }
+    super::settings_pages::check_forms(page, html);
 }
 
 /// A stray own file no entry names, old enough to be listed (`music::orphan_files`).
@@ -5147,9 +5130,9 @@ fn stray_file(app: &TestApp) {
 }
 
 /// §5.1's redirect table for the Music tab: every form the tab and its pages render is posted
-/// with valid values, and each lands back on the page it is on - at its row or group where the
-/// list is long or the result shows there, else without a fragment (scroll-restore keeps the
-/// place). A form the table has no row for fails the test.
+/// with valid values, and each lands back on the page it is on, at its row or group (§5.1.4:
+/// without JS on the form, with JS scroll-restore keeps the place over it). A form the table has
+/// no row for fails the test.
 #[tokio::test]
 async fn every_form_on_the_music_pages_returns_to_its_page() {
     let app = TestApp::new().await;
@@ -5295,7 +5278,7 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "entry/delete" => ("/music".into(), Some("entries".into())),
             "/music/sweep" => {
                 add(&[("hours", "6")]);
-                ("/music/settings".into(), None)
+                ("/music/settings".into(), Some("sweep".into()))
             }
             "/music/storytel" => {
                 add(&login);
@@ -5303,7 +5286,7 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             }
             "/music/storytel/clear" => ("/music/settings".into(), Some("storytel".into())),
             "/music/catalog-row" => ("/music/settings".into(), Some("app".into())),
-            "/music/orphans/delete" => ("/music/settings".into(), None),
+            "/music/orphans/delete" => ("/music/settings".into(), Some("orphans".into())),
             "/music/categories" => {
                 add(&[("name", "Sport"), ("icon", "star"), ("color", "teal")]);
                 ("/music/categories?open=*".into(), Some("category-*".into()))
@@ -5319,7 +5302,7 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
                 format!("/music/categories?open={}", category.as_ref().unwrap().0),
                 category_anchor,
             ),
-            "category/delete" => ("/music/categories".into(), None),
+            "category/delete" => ("/music/categories".into(), Some("categories".into())),
             "/music/import" => ("(the page)".into(), None),
             "/music/import/confirm" => ("/music/import".into(), Some("import".into())),
             other => panic!("a form without a row in the redirect table: {other} on {page}"),
@@ -5428,7 +5411,7 @@ async fn the_music_deletes_are_behind_a_confirm() {
             "{page} still asks with confirm()"
         );
         for (action, _) in post_forms(&html) {
-            if !(action.contains("delete") || action.ends_with("/clear")) {
+            if !(action.contains("delete") || action.contains("/clear#")) {
                 continue;
             }
             deletes += 1;
@@ -5500,11 +5483,11 @@ async fn the_library_rows_and_edit_mode() {
     );
     assert!(page.contains("Emil &#60;b&#62;"));
     assert!(!page.contains("<i>nyheter") && !page.contains("Emil <b>"));
-    assert!(page.contains(&format!("action=\"/music/entries/{a}/check\"")));
+    assert!(page.contains(&format!("action=\"/music/entries/{a}/check#entry-{a}\"")));
     assert!(autosaves(&page, "cache"));
     assert_eq!(
         form_action_of(&page, "cache"),
-        Some(format!("/music/entries/{a}/offline").as_str())
+        Some(format!("/music/entries/{a}/offline#entry-{a}").as_str())
     );
     assert!(!page.contains("/move\""), "no ↑ ↓ outside Edit");
     assert!(page.contains("href=\"/music?edit=1#entries\""));
@@ -5540,14 +5523,14 @@ async fn the_library_rows_and_edit_mode() {
     assert!(!edit.contains("/check\""), "Edit shows only ↑ ↓");
     let moves: Vec<String> = post_forms(&edit)
         .into_iter()
-        .filter(|(action, _)| action.ends_with("/move"))
+        .filter(|(action, _)| action.contains("/move#"))
         .map(|(action, hidden)| format!("{action} {}", hidden[0].1))
         .collect();
     assert_eq!(
         moves,
         vec![
-            format!("/music/entries/{a}/move down"),
-            format!("/music/entries/{b}/move up"),
+            format!("/music/entries/{a}/move#entry-{a} down"),
+            format!("/music/entries/{b}/move#entry-{b} up"),
         ]
     );
 }

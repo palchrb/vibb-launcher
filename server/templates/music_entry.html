@@ -38,7 +38,7 @@
             </form>
         </details>
         {% if entry.cover_hash.is_some() %}
-        <form method="post" action="/music/entries/{{ entry.id }}/cover/remove" class="cell">
+        <form method="post" action="/music/entries/{{ entry.id }}/cover/remove#cover" class="cell">
             <button type="submit" class="row row-button">Use the Source's Picture</button>
         </form>
         {% endif %}
@@ -64,7 +64,7 @@
         {% if let Some(after) = sweep.check_after %}
         <p class="row row-note" data-row="check-after">Check again after {{ after }}</p>
         {% else %}
-        <form method="post" action="/music/entries/{{ entry.id }}/check" class="cell">
+        <form method="post" action="/music/entries/{{ entry.id }}/check#status" class="cell">
             <input type="hidden" name="back" value="entry">
             <button type="submit" class="row row-button">Check Now</button>
         </form>
@@ -143,7 +143,7 @@
                 <span class="row-label">{{ file.title }}<span class="row-sub">{{ file.detail }}{% if file.missing %} · <span class="music-missing">missing on this server</span>{% endif %}</span></span>
                 <span class="row-value file-delete">Delete…</span>
             </summary>
-            <form method="post" action="/music/entries/{{ entry.id }}/files/{{ file.id }}/delete" class="confirm-body">
+            <form method="post" action="/music/entries/{{ entry.id }}/files/{{ file.id }}/delete#files" class="confirm-body">
                 <p>{% if file.missing %}Phones keep their copy; upload it again to restore it. {% endif %}Delete this file from the server and the phones?</p>
                 <button type="submit" class="button-destructive">Delete File</button>
             </form>

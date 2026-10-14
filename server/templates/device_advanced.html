@@ -21,7 +21,7 @@
         </div>
         {% when _ %}
         {% endmatch %}
-        <form method="post" action="/devices/{{ device.id }}/hardening">
+        <form method="post" action="/devices/{{ device.id }}/hardening#restrictions">
             <div class="group">
                 <label class="row">
                     <span class="row-label">Block factory reset</span>
@@ -120,7 +120,7 @@
         {% include "partials/note_warning.html" %}
         {% endfor %}
         <div class="group">
-            <form method="post" action="/devices/{{ device.id }}/kiosk-block" class="cell">
+            <form method="post" action="/devices/{{ device.id }}/kiosk-block#app-screens" class="cell">
                 <label class="row">
                     <span class="row-label">Block other apps' screens</span>
                     <input type="checkbox" role="switch" class="sw" name="block_activity_start" value="on" {% if block_activity_start %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -147,7 +147,7 @@
         {% for note in escape_warnings %}
         {% include "partials/note_warning.html" %}
         {% endfor %}
-        <form method="post" action="/devices/{{ device.id }}/kiosk-escapes" class="group">
+        <form method="post" action="/devices/{{ device.id }}/kiosk-escapes#updates" class="group">
             <label class="row">
                 <span class="row-label">Update fence<span class="row-sub">Hides Android's home screen while Vibb updates.</span></span>
                 <input type="checkbox" role="switch" class="sw" name="update_fence" value="on" {% if escapes.update_fence %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -220,7 +220,7 @@
             {% if access.has_token %}
             <details class="confirm cell">
                 <summary class="row">Disconnect Phone&hellip;</summary>
-                <form method="post" action="/devices/{{ device.id }}/revoke" class="confirm-body">
+                <form method="post" action="/devices/{{ device.id }}/revoke#connection" class="confirm-body">
                     <p>Disconnect {{ device.name }}? It can't reach this server until it connects again with a new setup code. It keeps its last settings.</p>
                     <label class="checkbox-row">
                         <input type="checkbox" name="confirm" value="yes" required>

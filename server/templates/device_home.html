@@ -10,14 +10,15 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">Home Screen</h1>
 
-    {#- Every form saves on change (autosave.js) and returns here without a fragment, so
-        scroll-restore.js keeps the place; <noscript> Save without JS. -#}
+    {#- Every form saves on change (autosave.js) and returns to its group (#layout, #wallpapers,
+        #quick-controls): without JS the answer lands on the form, with JS scroll-restore.js keeps
+        the place (§5.1.4); <noscript> Save without JS. -#}
     <section id="layout" aria-label="Language and apps per row">
         {% if let Some(note) = notification_warning %}
         {% include "partials/note_warning.html" %}
         {% endif %}
         {#- One form (design 31 §5.6): the handler writes both values. -#}
-        <form method="post" action="/devices/{{ device.id }}/launcher" class="group">
+        <form method="post" action="/devices/{{ device.id }}/launcher#layout" class="group">
             <label class="row">
                 <span class="row-label">Language</span>
                 <select class="pick" name="language" data-autosave>
@@ -40,7 +41,7 @@
 
     <section id="wallpapers" aria-labelledby="wallpapers-title">
         <h2 class="group-header" id="wallpapers-title">Wallpapers</h2>
-        <form method="post" action="/devices/{{ device.id }}/wallpapers" class="group">
+        <form method="post" action="/devices/{{ device.id }}/wallpapers#wallpapers" class="group">
             <div class="wallpaper-grid">
                 {% for w in wallpapers %}
                 <label class="wallpaper-choice">
@@ -49,7 +50,7 @@
                     {% else %}
                     <span class="wallpaper-thumb" style="background: {{ w.background }}"></span>
                     {% endif %}
-                    <input type="checkbox" name="wallpaper" value="{{ w.id }}"{% if w.checked %} checked{% endif %} data-autosave>
+                    <span class="wallpaper-switch"><input type="checkbox" role="switch" class="sw" name="wallpaper" value="{{ w.id }}"{% if w.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span></span>
                     <span>{{ w.label }}</span>
                 </label>
                 {% endfor %}
@@ -69,7 +70,7 @@
     <section id="quick-controls" aria-labelledby="quick-controls-title">
         <h2 class="group-header" id="quick-controls-title">Quick controls</h2>
         {#- One form for the four: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
-        <form method="post" action="/devices/{{ device.id }}/policy" class="group">
+        <form method="post" action="/devices/{{ device.id }}/policy#quick-controls" class="group">
             <input type="hidden" name="section" value="quick">
             <label class="row">
                 <span class="row-label">Wi-Fi</span>

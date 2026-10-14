@@ -1711,29 +1711,42 @@ struct DetailsForm {
     error_field: &'static str,
 }
 
+/// `?open=display|source`: a save returns with its `<details>` open ("Show on phones as", Source
+/// & Signing), so the form it came from is where the parent left it.
 pub async fn view_tracked_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_detail(&state, id, note_of(query.get("notice").map(String::as_str))).await
+    let note = note_of(query.get("notice").map(String::as_str));
+    render_detail_full(
+        &state,
+        id,
+        note,
+        None,
+        None,
+        query.get("open").map(String::as_str),
+    )
+    .await
 }
 
 async fn render_detail(state: &AppState, id: i64, refused: Option<Note>) -> Response {
-    render_detail_full(state, id, refused, None, None).await
+    render_detail_full(state, id, refused, None, None, None).await
 }
 
 async fn render_detail_page(state: &AppState, id: i64, details: Option<DetailsForm>) -> Response {
-    render_detail_full(state, id, None, details, None).await
+    render_detail_full(state, id, None, details, None, None).await
 }
 
-/// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14).
+/// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14),
+/// `open` = the `<details>` a save returns to ("display", "source").
 async fn render_detail_full(
     state: &AppState,
     id: i64,
     refused: Option<Note>,
     details: Option<DetailsForm>,
     display: Option<crate::app_display::Entered>,
+    open: Option<&str>,
 ) -> Response {
     let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
@@ -1767,14 +1780,15 @@ async fn render_detail_full(
         icon: app.display_icon.clone(),
         color: app.display_color.clone(),
     };
-    let form = crate::app_display::AppDisplayForm::new(
-        format!("/apps/tracked/{id}/display"),
+    let mut form = crate::app_display::AppDisplayForm::new(
+        format!("/apps/tracked/{id}/display#display"),
         "display".to_string(),
         String::new(),
         app.name.clone(),
         &current,
         display.as_ref(),
     );
+    form.open |= open == Some("display");
     // The phones with the app ticked; the launcher is on every phone that is set up.
     let devices: Vec<crate::models::Device> = if app.is_launcher {
         sqlx::query_as("SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name")
@@ -1808,7 +1822,10 @@ async fn render_detail_full(
         Some(Note::Package(flash)) => (None, Some(flash)),
         None => (None, None),
     };
-    let source_open = upload_note.is_some() || package_note.is_some() || details.error.is_some();
+    let source_open = upload_note.is_some()
+        || package_note.is_some()
+        || details.error.is_some()
+        || open == Some("source");
     Html(
         TrackedAppDetailTemplate {
             title: app.name.clone(),
@@ -1878,7 +1895,7 @@ pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Re
         }
     });
     let _ = tokio::time::timeout(CHECK_NOW_WAIT, sync).await;
-    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
+    Redirect::to(&format!("/apps/tracked/{id}#check")).into_response()
 }
 
 /// Manual-source apps' only path to a new release: the admin types a label
@@ -2012,7 +2029,8 @@ pub async fn upload_tracked_app_release(
 /// `POST /apps/tracked/{id}/display` (design 14): the catalog default for how the app shows on the
 /// kid's phones (by the row's package name; a phone's own choice replaces it). `action` "own"
 /// clears it. Refused input: 400, the page with the entered values, the error by the field and
-/// that field focused. Saved: back to the card (`#display`); nudges every phone (cosmetic, cheap).
+/// that field focused. Saved: back to the card, open (`?open=display#display`: it doesn't fold up
+/// under the parent, the browser pass of 2026-10-14, 6f); nudges every phone (cosmetic, cheap).
 pub async fn save_display(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2031,7 +2049,8 @@ pub async fn save_display(
                     color: field("color").to_string(),
                     error,
                 };
-                let mut page = render_detail_full(&state, id, None, None, Some(entered)).await;
+                let mut page =
+                    render_detail_full(&state, id, None, None, Some(entered), None).await;
                 if page.status() == StatusCode::OK {
                     *page.status_mut() = StatusCode::BAD_REQUEST;
                 }
@@ -2060,7 +2079,7 @@ pub async fn save_display(
             for device in devices {
                 let _ = state.command_notify.send(device);
             }
-            Redirect::to(&format!("/apps/tracked/{id}#display")).into_response()
+            Redirect::to(&format!("/apps/tracked/{id}?open=display#display")).into_response()
         }
         Err(err) => {
             tracing::error!(app_id = id, %err, "couldn't save the app's name and icon");
@@ -2157,7 +2176,7 @@ pub async fn update_tracked_app(
     .await
     .ok();
 
-    Redirect::to(&format!("/apps/tracked/{id}")).into_response()
+    Redirect::to(&format!("/apps/tracked/{id}?open=source#details")).into_response()
 }
 
 /// Explicit admin-facing way to mark/unmark the one row that is the launcher itself - see
@@ -2182,7 +2201,7 @@ pub async fn set_is_launcher(
         .await
         .ok();
 
-    Redirect::to(&format!("/apps/tracked/{id}"))
+    Redirect::to(&format!("/apps/tracked/{id}?open=source#updates"))
 }
 
 pub async fn set_enabled(
@@ -2198,7 +2217,7 @@ pub async fn set_enabled(
         .await
         .ok();
 
-    Redirect::to(&format!("/apps/tracked/{id}"))
+    Redirect::to(&format!("/apps/tracked/{id}?open=source#updates"))
 }
 
 /// Packages the launcher installed on a phone that has this app checked and that no catalog app is
@@ -2335,7 +2354,7 @@ pub async fn forget_package_name(
     // A release refused for the old pins is downloaded again at the next sync.
     state.app_syncs.set_refused(id, None);
 
-    Redirect::to(&format!("/apps/tracked/{id}"))
+    Redirect::to(&format!("/apps/tracked/{id}?open=source#release"))
 }
 
 pub async fn set_include_prereleases(
@@ -2351,7 +2370,7 @@ pub async fn set_include_prereleases(
         .await
         .ok();
 
-    Redirect::to(&format!("/apps/tracked/{id}"))
+    Redirect::to(&format!("/apps/tracked/{id}?open=source#updates"))
 }
 
 pub async fn delete_tracked_app(
@@ -2373,7 +2392,7 @@ pub async fn delete_tracked_app(
         return Redirect::to("/apps");
     };
     if app.is_launcher {
-        return Redirect::to(&format!("/apps/tracked/{id}"));
+        return Redirect::to(&format!("/apps/tracked/{id}#check"));
     }
 
     let deleted = sqlx::query("DELETE FROM tracked_apps WHERE id = ?")
@@ -2382,7 +2401,7 @@ pub async fn delete_tracked_app(
         .await
         .is_ok();
     if !deleted {
-        return Redirect::to(&format!("/apps/tracked/{id}"));
+        return Redirect::to(&format!("/apps/tracked/{id}#remove"));
     }
 
     // The whole app directory (qa-catalog #4): a download still running for it can then no

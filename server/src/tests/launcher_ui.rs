@@ -171,8 +171,8 @@ async fn launcher_ui_defaults_and_form() {
             &[("language", "nb"), ("home_columns", "4")],
         )
         .await;
-    // Back to Home Screen (design 31 step 5), no fragment: scroll-restore keeps the place.
-    assert_redirect(&res, &device_page(id, Section::Home), None);
+    // Back to its group on Home Screen (design 31 §5.1.4).
+    assert_redirect(&res, &device_page(id, Section::Home), Some("layout"));
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         launcher_settings(&app, &token).await,
@@ -211,7 +211,7 @@ async fn launcher_ui_defaults_and_form() {
         .get_page(&device_page(id, Section::Home), &cookie)
         .await
         .text();
-    let action = format!("/devices/{id}/launcher");
+    let action = format!("/devices/{id}/launcher#layout");
     assert_eq!(form_action_of(&page, "language"), Some(action.as_str()));
     assert_eq!(form_action_of(&page, "home_columns"), Some(action.as_str()));
     assert!(page.contains("<option value=\"nb\" selected>"));

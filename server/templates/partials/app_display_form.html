@@ -1,6 +1,6 @@
 {# "Name and icon" for one app (design 14): under its row on Device › Apps (design 31 step 6) and on the catalog app's page. Reads `form` (app_display::AppDisplayForm). static/app-display.js updates the preview; the form works without it. #}
 <details class="app-display" id="{{ form.anchor }}"{% if form.open %} open{% endif %}>
-    <summary>Name and icon: <span class="subtitle">{{ form.summary }}</span></summary>
+    <summary class="row"><span class="row-label">Name and icon<span class="row-sub">{{ form.summary }}</span></span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
     <form method="post" action="{{ form.action }}" class="app-display-form">
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
@@ -22,14 +22,14 @@
         <input type="text" id="{{ form.anchor }}-label" name="label" value="{{ form.label }}" placeholder="{{ form.app_label }}" data-app-label="{{ form.app_label }}"{% if form.error_field == "label" %} autofocus{% endif %}>
         <fieldset class="glyph-grid">
             <legend>Icon</legend>
-            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}> Its own</label>
+            <label class="glyph-choice"><input type="radio" name="icon" value=""{% if form.icon.is_empty() %} checked{% endif %}{% if form.error_field == "icon" %} autofocus{% endif %}><span class="choice-text">Its own</span></label>
             {% for choice in form.icons %}
             <label class="glyph-choice" title="{{ choice.label }}"><input type="radio" name="icon" value="{{ choice.key }}"{% if choice.checked %} checked{% endif %}><span class="app-tile app-tile-small"><img src="/static/app-icons/{{ choice.key }}.svg" alt="{{ choice.label }}"></span></label>
             {% endfor %}
         </fieldset>
         <fieldset class="color-grid">
             <legend>Colour behind the icon</legend>
-            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="#868E96"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}> The app's own</label>
+            <label class="color-choice"><input type="radio" name="color" value="auto" data-tile="#868E96"{% if form.auto_checked() %} checked{% endif %}{% if form.error_field == "color" %} autofocus{% endif %}><span class="choice-text">The app's own</span></label>
             {% for choice in form.colors %}
             <label class="color-choice"><input type="radio" name="color" value="{{ choice.key }}" data-tile="{{ choice.tile }}"{% if choice.checked %} checked{% endif %}><span class="swatch" style="background: {{ choice.tile }}"></span> {{ choice.key }}</label>
             {% endfor %}

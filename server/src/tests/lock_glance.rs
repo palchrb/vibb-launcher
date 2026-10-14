@@ -272,8 +272,12 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
     for _ in 0..2 {
         let res = tick(&app, Some(&cookie), id, "org.thoughtcrime.securesms", true).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        // Exactly the page, no fragment: scroll-restore.js keeps the parent's place.
-        super::assert_redirect(&res, &lock_page(id), None);
+        // Its row (§5.1.4): without JS on the switch in a long list, with JS the exact place.
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some("lock-screen-app-org.thoughtcrime.securesms"),
+        );
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(
@@ -287,7 +291,11 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
 
     for _ in 0..2 {
         let res = tick(&app, Some(&cookie), id, ELEMENT_X, false).await;
-        super::assert_redirect(&res, &lock_page(id), None);
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some(&format!("lock-screen-app-{ELEMENT_X}")),
+        );
         assert_eq!(nudges.try_recv().ok(), Some(id));
     }
     assert_eq!(ticks(&app, id).await, ["org.thoughtcrime.securesms"]);
@@ -316,7 +324,7 @@ async fn the_text_switch_saves_logs_and_nudges() {
     for on in [true, true, false, false] {
         let res = switch(&app, Some(&cookie), id, on).await;
         assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.text());
-        super::assert_redirect(&res, &lock_page(id), None);
+        super::assert_redirect(&res, &lock_page(id), Some("lock-screen-text"));
         assert_eq!(nudges.try_recv().ok(), Some(id));
         assert_eq!(text_switch(&app, id).await, on);
         assert_eq!(
@@ -486,7 +494,7 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     assert!(section.contains("Missed calls always show."));
     assert_eq!(
         super::form_action_of(section, "show_text"),
-        Some(format!("/devices/{id}/lock-screen").as_str())
+        Some(format!("/devices/{id}/lock-screen#lock-screen-text").as_str())
     );
     assert!(super::autosaves(section, "show_text"));
     assert_eq!(
@@ -499,7 +507,9 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
         switch_on(&element) && element.contains("Element X"),
         "{element}"
     );
-    assert!(element.contains(&format!(r#"action="/devices/{id}/lock-screen/apps""#)));
+    assert!(element.contains(&format!(
+        r#"action="/devices/{id}/lock-screen/apps#lock-screen-app-{ELEMENT_X}""#
+    )));
     assert!(element.contains(r#"role="switch""#));
     assert!(super::autosaves(&element, "on"));
     let signal = form_of(section, "org.thoughtcrime.securesms").expect("Signal listed");

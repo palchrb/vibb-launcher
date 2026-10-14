@@ -796,9 +796,9 @@ pub async fn update_kiosk_block(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            // Its own page, no fragment: scroll-restore.js keeps the exact position, so a save
-            // never jumps (design 31 §5.1.4, qa-31-s3-code M3).
-            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
+            // Its group (design 31 §5.1.4): without JS the answer lands on the switch, with JS
+            // scroll-restore.js keeps the exact position.
+            Redirect::to(&format!("/devices/{id}/advanced#app-screens")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk app block");
@@ -1066,7 +1066,7 @@ pub async fn update_app_updates(
 /// card until design 31 step 3): the update fence (other Home apps paused while the launcher
 /// installs its own update), the notification auto-cancel rule and the boot cover (design 16b).
 /// One auto-saving form, so a missing checkbox is off; 404 for an unknown device; nudges; back to
-/// Advanced without a fragment (a save never jumps).
+/// its group, Advanced's `#updates` (a save never jumps, §5.1.4).
 pub async fn update_kiosk_escapes(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -1088,9 +1088,9 @@ pub async fn update_kiosk_escapes(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            // No fragment: scroll-restore.js keeps the exact position (design 31 §5.1.4,
-            // qa-31-s3-code M3).
-            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
+            // Its group (design 31 §5.1.4; the browser pass of 2026-10-14: without one a save
+            // without JS landed at the top, the switches out of view).
+            Redirect::to(&format!("/devices/{id}/advanced#updates")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the kiosk escape switches");
@@ -1639,7 +1639,7 @@ pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
 /// preinstalled (a preinstalled app can only be hidden).
 ///
 /// Where it returns (§5.1): `back=music` (or `anchor=music`, a page from before design 31 step 6)
-/// to Device › Music (`/devices/{id}/music`, no fragment: the switch is its first group; a refusal
+/// to Device › Music (`/devices/{id}/music#music-app`, its group; a refusal
 /// to `?music_notice=<code>#music-app`, the reason in that group), anything else to the app's row
 /// on Device › Apps (`#app-<package>`): the row moves between Allowed and Not allowed, and the
 /// fragment finds it again, with or without JS.
@@ -1850,8 +1850,7 @@ pub async fn toggle_app(
 
     let _ = state.command_notify.send(id);
     if music {
-        // The switch is the page's first group: no fragment, scroll-restore keeps the place.
-        return Redirect::to(&format!("/devices/{id}/music")).into_response();
+        return Redirect::to(&format!("/devices/{id}/music#music-app")).into_response();
     }
     Redirect::to(&format!("{page}#{anchor}")).into_response()
 }
@@ -1991,8 +1990,8 @@ pub(crate) async fn remove_from_allowlist(
 
 /// The quick controls (Home Screen) and the web filter switch (Web Filter). Since design 31 step 5
 /// the two live on two pages, so the form says which part it carries (§5.6, H1): `section=quick`
-/// writes only the quick controls and returns to `/devices/{id}/home`, `section=filter` only the
-/// filter and returns to `/devices/{id}/filter` (no fragment: scroll-restore keeps the place). A
+/// writes only the quick controls and returns to their group, `/devices/{id}/home#quick-controls`,
+/// `section=filter` only the filter and returns to `/devices/{id}/filter#filter` (§5.1.4). A
 /// form without `section` (an older tab) writes both, as before, and returns to the device page;
 /// an unknown section is a 400. Unticked = off, as every checkbox. 404 for an unknown phone, 500
 /// on a DB error (nothing written either way); nudges the phone. `Form<HashMap<...>>` is safe:
@@ -2004,8 +2003,8 @@ pub async fn update_policy(
 ) -> axum::response::Response {
     let (quick, filter, back) = match fields.get("section").map(String::as_str) {
         None => (true, true, format!("/devices/{id}")),
-        Some("quick") => (true, false, format!("/devices/{id}/home")),
-        Some("filter") => (false, true, format!("/devices/{id}/filter")),
+        Some("quick") => (true, false, format!("/devices/{id}/home#quick-controls")),
+        Some("filter") => (false, true, format!("/devices/{id}/filter#filter")),
         Some(_) => {
             return (axum::http::StatusCode::BAD_REQUEST, "Unknown section").into_response();
         }
@@ -2251,9 +2250,8 @@ pub async fn update_hardening(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            // Its own page; no fragment: Restrictions is the first group, and scroll-restore.js
-            // keeps the exact position (design 31 §5.1).
-            Redirect::to(&format!("/devices/{id}/advanced")).into_response()
+            // Its group (design 31 §5.1.4); scroll-restore.js keeps the exact position.
+            Redirect::to(&format!("/devices/{id}/advanced#restrictions")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save hardening switches");
@@ -2267,8 +2265,8 @@ pub async fn update_hardening(
 }
 
 /// Home Screen's language ("system", "nb", "en") and apps per row (3 or 4): one auto-saving form
-/// (design 31 §5.6); an unknown value is a 400 and nothing is written. Back to
-/// `/devices/{id}/home` without a fragment (scroll-restore keeps the place).
+/// (design 31 §5.6); an unknown value is a 400 and nothing is written. Back to its group,
+/// `/devices/{id}/home#layout` (§5.1.4).
 pub async fn update_launcher_ui(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2301,7 +2299,7 @@ pub async fn update_launcher_ui(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}/home")).into_response()
+            Redirect::to(&format!("/devices/{id}/home#layout")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save launcher settings");
@@ -2316,7 +2314,7 @@ pub async fn update_launcher_ui(
 
 /// Lock Screen & PINs' "Turn off after" (migrations/0032; design 31 step 4): one auto-saving
 /// select. Only a value from `SCREEN_TIMEOUTS` is accepted; anything else is a 400 and nothing is
-/// written. Back to `/devices/{id}/lock` without a fragment (scroll-restore keeps the place).
+/// written. Back to its group, `/devices/{id}/lock#screen` (§5.1.4).
 pub async fn update_screen_timeout(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2347,7 +2345,7 @@ pub async fn update_screen_timeout(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}/lock")).into_response()
+            Redirect::to(&format!("/devices/{id}/lock#screen")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the screen timeout");

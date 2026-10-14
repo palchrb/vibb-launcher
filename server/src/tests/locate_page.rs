@@ -66,30 +66,11 @@ fn forms(html: &str) -> Vec<(String, Vec<(String, String)>)> {
         .collect()
 }
 
-/// qa-31-s12-code L4: every action's fragment names an element of the page, and every form that
-/// saves itself has a `<noscript>` Save.
+/// qa-31-s12-code L4 and the shared rule (`settings_pages::check_forms`): every action lands on
+/// its own group, and every form that saves itself has a `<noscript>` Save.
+#[track_caller]
 fn check_forms(html: &str) {
-    for form in tags(html, "form") {
-        let body = &html[form.start..];
-        let body = &body[..body.find("</form>").unwrap_or(body.len())];
-        let action = form.attr("action").unwrap_or("");
-        if let Some((_, fragment)) = action.split_once('#') {
-            assert!(
-                html.contains(&format!("id=\"{fragment}\"")),
-                "{action} lands on no element"
-            );
-        }
-        if body.contains("data-autosave") {
-            let noscript = body
-                .split_once("<noscript>")
-                .and_then(|(_, rest)| rest.split_once("</noscript>"))
-                .map(|(inside, _)| inside);
-            assert!(
-                noscript.is_some_and(|inside| inside.contains("type=\"submit\"")),
-                "{action} saves itself but has no <noscript> Save"
-            );
-        }
-    }
+    super::settings_pages::check_forms("/devices/locate", html);
 }
 
 /// §5.1's redirect table for the Locate tab, built from the rendered forms: each lands back on
@@ -117,22 +98,22 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
     let table: [Row; 8] = [
         (
-            format!("/devices/{id}/command/locate"),
+            format!("/devices/{id}/command/locate#location"),
             &[],
             (format!("{page}&requested=1"), Some("location")),
         ),
         (
-            format!("/devices/{id}/command/ring"),
+            format!("/devices/{id}/command/ring#actions"),
             &[],
             (page.clone(), Some("actions")),
         ),
         (
-            format!("/devices/{id}/command/stop-ring"),
+            format!("/devices/{id}/command/stop-ring#actions"),
             &[],
             (page.clone(), Some("actions")),
         ),
         (
-            format!("/devices/{id}/command/lock"),
+            format!("/devices/{id}/command/lock#actions"),
             &[],
             (page.clone(), Some("actions")),
         ),
@@ -142,7 +123,7 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
             (page.clone(), Some("actions")),
         ),
         (
-            format!("/devices/{id}/commands/{lock}/cancel"),
+            format!("/devices/{id}/commands/{lock}/cancel#recent"),
             &[],
             (format!("{page}&cancel=done"), Some("recent")),
         ),

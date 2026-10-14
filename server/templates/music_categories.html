@@ -43,17 +43,17 @@
                 </form>
                 <div class="admin-actions">
                     {% if !category.first %}
-                    <form method="post" action="/music/categories/{{ category.id }}/move"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary">&uarr; Earlier</button></form>
+                    <form method="post" action="/music/categories/{{ category.id }}/move#category-{{ category.id }}"><input type="hidden" name="direction" value="up"><button type="submit" class="button-small button-secondary">&uarr; Earlier</button></form>
                     {% endif %}
                     {% if !category.last %}
-                    <form method="post" action="/music/categories/{{ category.id }}/move"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary">&darr; Later</button></form>
+                    <form method="post" action="/music/categories/{{ category.id }}/move#category-{{ category.id }}"><input type="hidden" name="direction" value="down"><button type="submit" class="button-small button-secondary">&darr; Later</button></form>
                     {% endif %}
                 </div>
                 {% if category.error_field == "delete" %}{% if let Some(error) = category.error %}<p class="field-error" style="margin: 12px 0 0;">{{ error }}</p>{% endif %}{% endif %}
                 {% if category.entries == 0 %}
                 <details class="confirm" id="category-{{ category.id }}-delete">
                     <summary class="row">Delete Category…</summary>
-                    <form method="post" action="/music/categories/{{ category.id }}/delete" class="confirm-body">
+                    <form method="post" action="/music/categories/{{ category.id }}/delete#categories" class="confirm-body">
                         <p>Delete {{ category.name }}? Its button goes from the phones.</p>
                         <button type="submit" class="button-destructive">Delete Category</button>
                     </form>

@@ -10,11 +10,12 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">Web Filter</h1>
 
-    {#- Every form returns here without a fragment, so scroll-restore.js keeps the place; the
-        switches and pickers save on change (autosave.js), with a <noscript> Save. -#}
+    {#- Every form returns to its group (#filter, #lists, #blocked, #allowed, #log): without JS the
+        answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4); the switches
+        and pickers save on change (autosave.js), with a <noscript> Save. -#}
     <section id="filter" aria-label="Web filter">
         {#- `section=filter` writes only the filter switch (§5.6, H1), not the quick controls. -#}
-        <form method="post" action="/devices/{{ device.id }}/policy" class="group">
+        <form method="post" action="/devices/{{ device.id }}/policy#filter" class="group">
             <input type="hidden" name="section" value="filter">
             <label class="row">
                 <span class="row-label">Web filter</span>
@@ -37,7 +38,7 @@
         <h2 class="group-header" id="lists-title">Blocklists</h2>
         <div class="group">
             {% for list in lists %}
-            <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ list.id }}/override" class="cell" data-list="{{ list.id }}">
+            <form method="post" action="/dns/devices/{{ device.id }}/blocklists/{{ list.id }}/override#lists" class="cell" data-list="{{ list.id }}">
                 <input type="hidden" name="back" value="filter">
                 <label class="row">
                     <span class="row-label">{{ list.name }}{% if let Some(problem) = list.problem %}<span class="row-sub text-alarm">{{ problem }}</span>{% endif %}</span>
@@ -63,14 +64,15 @@
             {% for d in blocked %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
-                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
+                <form method="post" action="/dns/domains/{{ d.id }}/delete#blocked" class="row-end">
+                    <input type="hidden" name="list_type" value="block">
                     <input type="hidden" name="back" value="filter">
                     <input type="hidden" name="device_id" value="{{ device.id }}">
                     <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
                 </form>
             </div>
             {% endfor %}
-            <form method="post" action="/dns/domains/new" class="cell">
+            <form method="post" action="/dns/domains/new#blocked" class="cell">
                 <input type="hidden" name="list_type" value="block">
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
@@ -89,14 +91,15 @@
             {% for d in allowed %}
             <div class="row" data-domain="{{ d.id }}">
                 <span class="row-label">{{ d.domain }}</span>
-                <form method="post" action="/dns/domains/{{ d.id }}/delete" class="row-end">
+                <form method="post" action="/dns/domains/{{ d.id }}/delete#allowed" class="row-end">
+                    <input type="hidden" name="list_type" value="allow">
                     <input type="hidden" name="back" value="filter">
                     <input type="hidden" name="device_id" value="{{ device.id }}">
                     <button type="submit" class="row-action row-danger" aria-label="Remove {{ d.domain }}">Remove</button>
                 </form>
             </div>
             {% endfor %}
-            <form method="post" action="/dns/domains/new" class="cell">
+            <form method="post" action="/dns/domains/new#allowed" class="cell">
                 <input type="hidden" name="list_type" value="allow">
                 <input type="hidden" name="device_id" value="{{ device.id }}">
                 <input type="hidden" name="back" value="filter">
@@ -112,7 +115,7 @@
 
     <section id="log" aria-labelledby="log-title">
         <h2 class="group-header" id="log-title">Blocked Activity</h2>
-        <form method="post" action="/dns/log/{{ device.id }}" class="group">
+        <form method="post" action="/dns/log/{{ device.id }}#log" class="group">
             <label class="row">
                 <span class="row-label">Keep a log</span>
                 <input type="checkbox" role="switch" class="sw" name="dns_log_enabled" value="on"{% if log_on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
