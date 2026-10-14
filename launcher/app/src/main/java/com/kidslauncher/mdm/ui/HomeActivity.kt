@@ -654,7 +654,7 @@ class HomeActivity : UIObjectActivity() {
         }
         binding.homeWindowBanner.visibility = if (until == null) View.GONE else View.VISIBLE
         if (until != null) {
-            binding.homeWindowText.text = getString(R.string.home_window_open, ClockFormat.formatTime(this, until))
+            binding.homeWindowText.text = getString(R.string.home_window_open, ClockFormat.formatUntil(this, until))
         }
     }
 

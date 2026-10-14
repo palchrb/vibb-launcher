@@ -575,6 +575,37 @@ async fn clock_format_form_keeps_a_missing_field() {
     );
 }
 
+/// qa-34-s6-code N1: migration 0075's CHECK holds even past the handler - a stored value outside
+/// "system"/"24"/"12" is refused by the database itself, and a new row gets "system".
+#[tokio::test]
+async fn the_clock_format_column_takes_only_its_three_values() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    let stored: String =
+        sqlx::query_scalar("SELECT clock_format FROM device_policy WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, "system");
+    for bad in ["25", "", "follow", "SYSTEM"] {
+        let res = sqlx::query("UPDATE device_policy SET clock_format = ? WHERE device_id = ?")
+            .bind(bad)
+            .bind(id)
+            .execute(&app.db)
+            .await;
+        assert!(res.is_err(), "{bad:?} was stored");
+    }
+    for good in ["24", "12", "system"] {
+        sqlx::query("UPDATE device_policy SET clock_format = ? WHERE device_id = ?")
+            .bind(good)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+}
+
 /// Design 34 P12: the phone reports `clock_format_applied`; false while the policy asks for 24 h
 /// or 12 h is a warning on Home Screen (the sentence visible, the adb grant only behind its ⓘ).
 /// True, null, an older launcher (no field) and "Follow the phone" show nothing.

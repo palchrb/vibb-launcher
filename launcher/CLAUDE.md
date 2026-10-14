@@ -433,24 +433,34 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 
 - **Vibb never has a format of its own** (`ui/ClockFormat.kt`, `ClockFormatTest`): every clock time follows the phone's
   system format, as the status bar does - `Settings.System.TIME_12_24` when it is "24"/"12", else the default of the
-  **system** locale (`Resources.getSystem()`, its "jm" pattern; not Vibb's per-app language). `formatTime` gives
-  "06:15"/"18:40" in 24 h and "6:15"/"12:05" in 12 h (no AM/PM, like the status bar). Through it: the glance clock and
-  row times (`GlancePanel`), the time-rule clock and its "until" (`LockActivity`; `TimeRules`' `clockText` is gone), the
-  missed-call text, Home's window banner, the relock notification (`WindowRelock`), install mode's notification
-  (`PlayRuntime`) and its Settings summary (`SettingsFragmentLauncher`). The two time TextClocks (`lock_clock`,
-  `lock_glance_clock`; the XML keeps `h:mm`/`HH:mm`) get both formats set to the system's pattern by `ClockFormat.bind`
-  on every start/resume - a TextClock otherwise picks by its context's (per-app) locale - and the two lock screens
-  `watch` `TIME_12_24` while started (bind + re-render). Durations (the call screen, Home's call card, the music
+  **system** locale, read from `LocaleManager.systemLocales` (qa-34-s6-code M1: on Android 13+ `Resources.getSystem()`
+  and `Locale.getDefault()` carry Vibb's per-app language in our process; they are only the fallbacks,
+  `chooseSystemLocale`). The pattern is the system locale's own (`getBestDateTimePattern` with the hour field forced,
+  skeleton "Hm"/"hm"), so fi's `H.mm` matches its status bar (N6). **Clock faces** (`formatTime`, `bind`) drop the
+  AM/PM marker like the status bar ("6:15"); **end times** (`formatUntil`: "until 9:30 PM") keep it in 12 h (L1) - the
+  lock's "until", Home's window banner, the relock notification (`WindowRelock`), install mode's notification
+  (`PlayRuntime`) and its Settings summary (`SettingsFragmentLauncher`). Faces: the glance clock and row times
+  (`GlancePanel`), the missed-call text. The two time TextClocks (`lock_clock`, `lock_glance_clock`; the XML keeps
+  `h:mm`/`HH:mm` for the first frame) get both formats set to the system's face pattern by `ClockFormat.bind` on the
+  start/resume path (`LockActivity.onStart`, `GlancePanel.resumeNow` - pinned by the test, not only in the watch
+  lambda), and the two lock screens `watch` `TIME_12_24` and `ACTION_LOCALE_CHANGED` while started (bind + re-render;
+  the PIN lock handles `locale` itself, so it isn't recreated). Durations (the call screen, Home's call card, the music
   position, the PIN back-off) are not clocks. **Only `ui/ClockFormat.kt` may call `is24HourFormat`/`getTimeFormat`/
-  `getTimeInstance`/`ofLocalizedTime`/`FORMAT_SHOW_TIME`, ask `getBestDateTimePattern` for an hour field or spell a time
-  pattern** (`ClockFormatTest`'s source scan, comments stripped); every TextClock with a time format must be bound.
-- **The PWA sets the phone's format** (`server/ClockFormatSetting.kt`, pure `clockFormatChoice`/`clockFormatWrite`/
-  `clockFormatApplied`, `ClockFormatSettingTest`): `launcher_ui.clock_format` (`LauncherUi.clockFormat: String?`;
-  missing, `null` or unknown = "system", `PolicyResponseCompatTest`). Every `AppEnforcer.apply()` writes `TIME_12_24` =
-  "24"/"12" when it differs; "system" writes nothing, except clearing the value we wrote (CE prefs
-  `clock_format_state` `clock_written`) once, only while the setting still holds it. A policy without `launcher_ui`
-  (none, an older server, the last-enforced fallback) leaves it alone. Not a restriction: the override and the pause
-  change nothing. **Android's limit**: a device owner can't write it (`setSystemSetting` takes only brightness and the
+  `getTimeInstance`/`ofLocalizedTime`/`FORMAT_SHOW_TIME`, ask `getBestDateTimePattern` for an hour field, spell a time
+  pattern or build one from `${...hour}`** (`ClockFormatTest`'s source scan, comments stripped); every TextClock with a
+  time format must be bound, and each surface's string takes its time straight from `formatTime`/`formatUntil`
+  (structural regexes, N5).
+- **The PWA sets the phone's format** (`server/ClockFormatSetting.kt`, pure `clockFormatChoiceOf`/`clockFormatWrite`/
+  `clockBeforeAfterPut`/`clockFormatApplied`, `ClockFormatSettingTest`): `launcher_ui.clock_format`
+  (`LauncherUi.clockFormat: String?`; missing, `null` or unknown = "system", `PolicyResponseCompatTest`). Every
+  `AppEnforcer.apply()` writes `TIME_12_24` = "24"/"12" when it differs; "system" writes nothing, except putting back
+  what the phone had before our first write (CE prefs `clock_format_state`: `clock_written` our value, `clock_before`
+  the phone's own - unset or a hand-set value; N4) once, only while the setting still holds our value; a hand change
+  since is left alone. **No `launcher_ui`** (no policy, an older server, the last-enforced fallback) is no choice
+  (`clockFormatChoiceOf(null)` = null) and never writes (L2: else a fallback would put back the parent's 24 h). Not a
+  restriction: the override and the pause change nothing, and the write never lifts `DISALLOW_CONFIG_DATE_TIME`
+  (pinned: `applyDateTimeLock` is called once, before the write, and nothing after it in `apply()` touches the
+  restriction). **Android's limit**: a device owner can't write it (`setSystemSetting` takes only brightness and the
   screen-off timeout); the manifest declares `WRITE_SETTINGS` and the "Modify system settings" app-op is granted once
   with adb (`adb shell appops set me.vibb.launcher WRITE_SETTINGS allow`, `docs/testing/emulator.md` §4) or by the
   parent during a pause. Without it (`Settings.System.canWrite` false) nothing is written.

@@ -8,42 +8,59 @@ import com.kidslauncher.mdm.server.dto.PolicyResponse
 
 private const val LOG_TAG = "ClockFormat"
 
-/** "Follow the phone": the launcher writes nothing (and clears only its own earlier value). */
+/** "Follow the phone": the launcher writes nothing (and only puts back what its own write replaced). */
 const val CLOCK_FORMAT_SYSTEM = "system"
 
 /** The policy's `launcher_ui.clock_format`, read leniently: "24" or "12", anything else "system". */
 fun clockFormatChoice(raw: String?): String = if (raw == "24" || raw == "12") raw else CLOCK_FORMAT_SYSTEM
+
+/**
+ * The choice in force, or `null` when there is no `launcher_ui` to read (no policy yet, an older
+ * server without it, the last-enforced fallback): then the setting is left alone (qa-34-s6-code L2).
+ */
+fun clockFormatChoiceOf(ui: LauncherUi?): String? = ui?.let { clockFormatChoice(it.clockFormat) }
 
 /** What [ClockFormatSetting.apply] does with `Settings.System.TIME_12_24` - see [clockFormatWrite]. */
 sealed interface ClockFormatWrite {
     data object Keep : ClockFormatWrite
     /** Write [value] ("24"/"12"). */
     data class Put(val value: String) : ClockFormatWrite
-    /** Put the setting back to unset (the locale's default): it still holds the value we wrote. */
-    data object Clear : ClockFormatWrite
+    /** Put back what the phone had before our first write ([value]; `null` = unset, the locale's
+     * default): the setting still holds the value we wrote. */
+    data class Restore(val value: String?) : ClockFormatWrite
     /** Forget our earlier write without touching the setting: someone else changed it since. */
     data object Forget : ClockFormatWrite
 }
 
 /**
  * Design 34 P12: "24"/"12" writes `TIME_12_24` when it differs. "Follow the phone" writes nothing,
- * except clearing the value this launcher wrote earlier ([written], CE prefs) once - only while the
- * setting still holds it; a value someone set by hand since stays.
+ * except putting back what the phone had before our first write ([before]; qa-34-s6-code N4) - once,
+ * and only while the setting still holds the value we wrote ([written], CE prefs); a value someone
+ * set by hand since stays. No choice (`null`, no `launcher_ui`) never writes.
  */
-fun clockFormatWrite(choice: String, current: String?, written: String?): ClockFormatWrite = when {
+fun clockFormatWrite(choice: String?, current: String?, written: String?, before: String?): ClockFormatWrite = when {
+    choice == null -> ClockFormatWrite.Keep
     choice != CLOCK_FORMAT_SYSTEM -> if (current == choice) ClockFormatWrite.Keep else ClockFormatWrite.Put(choice)
     written == null -> ClockFormatWrite.Keep
-    current == written -> ClockFormatWrite.Clear
+    current == written -> ClockFormatWrite.Restore(before)
     else -> ClockFormatWrite.Forget
 }
 
 /**
- * The status report's `clock_format_applied`: `null` for "Follow the phone" (nothing to apply),
- * else whether the phone's `TIME_12_24` is the choice - `false` covers a missing "Modify system
- * settings" access and a write the system refused (read back, not trusted from the write).
+ * What to remember as "the phone's own value" after a [ClockFormatWrite.Put]: the value in place
+ * before our first write, or - when someone changed the setting by hand since our last write - that
+ * hand-set value; otherwise the one remembered already.
  */
-fun clockFormatApplied(choice: String, current: String?): Boolean? =
-    if (choice == CLOCK_FORMAT_SYSTEM) null else current == choice
+fun clockBeforeAfterPut(current: String?, written: String?, before: String?): String? =
+    if (written == null || current != written) current else before
+
+/**
+ * The status report's `clock_format_applied`: `null` for "Follow the phone" or no choice (nothing
+ * to apply), else whether the phone's `TIME_12_24` is the choice - `false` covers a missing "Modify
+ * system settings" access and a write the system refused (read back, not trusted from the write).
+ */
+fun clockFormatApplied(choice: String?, current: String?): Boolean? =
+    if (choice == null || choice == CLOCK_FORMAT_SYSTEM) null else current == choice
 
 /**
  * Writes the parent's clock format into `Settings.System.TIME_12_24` (design 34 P12), so the status
@@ -62,20 +79,28 @@ object ClockFormatSetting {
     private const val PREFS = "clock_format_state"
     /** The value this launcher last wrote ("24"/"12"); absent = nothing of ours is in place. */
     private const val KEY_WRITTEN = "clock_written"
+    /** The phone's own value before our write (absent = unset), put back by "Follow the phone". */
+    private const val KEY_BEFORE = "clock_before"
 
     fun apply(context: Context, ui: LauncherUi?) {
-        ui ?: return
         try {
-            val choice = clockFormatChoice(ui.clockFormat)
+            val choice = clockFormatChoiceOf(ui)
             val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val written = prefs.getString(KEY_WRITTEN, null)
-            when (val write = clockFormatWrite(choice, current(context), written)) {
+            val before = prefs.getString(KEY_BEFORE, null)
+            val current = current(context)
+            when (val write = clockFormatWrite(choice, current, written, before)) {
                 ClockFormatWrite.Keep -> Unit
-                ClockFormatWrite.Forget -> prefs.edit().remove(KEY_WRITTEN).commit()
+                ClockFormatWrite.Forget -> prefs.edit().remove(KEY_WRITTEN).remove(KEY_BEFORE).commit()
                 is ClockFormatWrite.Put -> if (put(context, write.value)) {
-                    prefs.edit().putString(KEY_WRITTEN, write.value).commit()
+                    val keep = clockBeforeAfterPut(current, written, before)
+                    val edit = prefs.edit().putString(KEY_WRITTEN, write.value)
+                    if (keep == null) edit.remove(KEY_BEFORE) else edit.putString(KEY_BEFORE, keep)
+                    edit.commit()
                 }
-                ClockFormatWrite.Clear -> if (put(context, null)) prefs.edit().remove(KEY_WRITTEN).commit()
+                is ClockFormatWrite.Restore -> if (put(context, write.value)) {
+                    prefs.edit().remove(KEY_WRITTEN).remove(KEY_BEFORE).commit()
+                }
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't apply the clock format", e)
@@ -84,8 +109,8 @@ object ClockFormatSetting {
 
     /** `clock_format_applied` for the status report, from the policy in force. */
     fun report(context: Context, policy: PolicyResponse?): Boolean? = try {
-        val ui = policy?.launcherUi
-        if (ui == null) null else clockFormatApplied(clockFormatChoice(ui.clockFormat), current(context))
+        val choice = clockFormatChoiceOf(policy?.launcherUi)
+        if (choice == null) null else clockFormatApplied(choice, current(context))
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Couldn't read the clock format", e)
         null

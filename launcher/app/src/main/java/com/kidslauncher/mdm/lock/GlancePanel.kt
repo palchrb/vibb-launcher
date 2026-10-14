@@ -110,7 +110,7 @@ class GlancePanel(
     private val changed: () -> Unit = { render() }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
-    private var clockWatch: android.database.ContentObserver? = null
+    private var clockWatch: ClockFormat.Watch? = null
 
     init {
         KidInsets.apply(glance.root)

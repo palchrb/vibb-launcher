@@ -88,7 +88,7 @@ class LockActivity : UIObjectActivity() {
     }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rule's end again. */
-    private var clockWatch: android.database.ContentObserver? = null
+    private var clockWatch: ClockFormat.Watch? = null
 
     override fun onStart() {
         super.onStart()
@@ -148,7 +148,7 @@ class LockActivity : UIObjectActivity() {
         }
         val callsManaged = CallPolicyStore.state.managed
         val lines = mutableListOf<String>()
-        lock?.until?.let { lines += getString(R.string.lock_until, ClockFormat.formatTime(this, it)) }
+        lock?.until?.let { lines += getString(R.string.lock_until, ClockFormat.formatUntil(this, it)) }
         val budget = snap?.budget
         if (rule == null && budget?.effectiveMinutes != null) {
             lines += getString(R.string.lock_budget_used, (budget.usedMs / 60_000L).toInt(), budget.effectiveMinutes!!)

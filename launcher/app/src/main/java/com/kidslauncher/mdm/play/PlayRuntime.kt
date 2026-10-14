@@ -240,7 +240,7 @@ object PlayRuntime {
                 Intent(context, InstallModeReceiver::class.java).setAction(ACTION_END_INSTALL_MODE),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(context, untilMs)
+            val time = com.kidslauncher.mdm.ui.ClockFormat.formatUntil(context, untilMs)
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_INSTALL_MODE)
                 .setSmallIcon(R.drawable.baseline_settings_24)
                 .setContentTitle(context.getString(R.string.notification_install_mode_title, time))

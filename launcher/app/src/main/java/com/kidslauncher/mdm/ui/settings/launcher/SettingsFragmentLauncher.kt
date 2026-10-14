@@ -282,7 +282,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         preference.summary = if (until != null) {
             getString(
                 R.string.settings_play_install_mode_active,
-                com.kidslauncher.mdm.ui.ClockFormat.formatTime(requireContext(), until),
+                com.kidslauncher.mdm.ui.ClockFormat.formatUntil(requireContext(), until),
             )
         } else {
             getString(R.string.settings_play_install_mode_summary)

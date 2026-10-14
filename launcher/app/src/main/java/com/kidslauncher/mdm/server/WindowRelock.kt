@@ -454,7 +454,7 @@ object WindowRelock {
                 Intent(app, WindowRelockReceiver::class.java).setAction(ACTION_LOCK_AGAIN),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(app, untilMs)
+            val time = com.kidslauncher.mdm.ui.ClockFormat.formatUntil(app, untilMs)
             val title = when (kind) {
                 WindowKind.OVERRIDE -> R.string.window_override_open
                 WindowKind.PAUSE -> R.string.window_pause_open
