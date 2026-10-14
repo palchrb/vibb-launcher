@@ -263,8 +263,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   (`spotifySelfResumeShown`) from the page's states. A pause the WebView made while the kid wanted it playing is kept
   as `heldByPage` (no 5-minute idle close; the call rule's `callStep` counts it as playing, so `CALL_RELEASE` plays
   again whichever of `CALL_HOLD` and the ring's pause came first), and a pause asked during it (`askedPaused`: the kid,
-  the sleep timer, the call rule) pauses Chromium's own resume at once; during the launcher's call (`inCall`) no start
-  goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). **The session's `SpotifyPlayer` calls the renderer only qualified**
+  the sleep timer, the call rule) pauses Chromium's own resume at once; during a call (`inCall`: the launcher's, or a
+  system call by the audio mode - `spotifyInCall`, and `callOn` lets the mode drive the call rule on the web player as on
+  a room) no start goes out and the player shows paused (qa-26c-6l-fixes-code H1, M1, L2). For its first
+  `SPOTIFY_HELD_SHOWN_MS` (5 s) a held play still says playing to the session (`spotifySessionPlays`; the player's own
+  screen and `setNowPlaying` follow `showsPlaying`), so the launcher's look at a ring sends `CALL_HOLD` (26c "Fixes after
+  the emulator round", N3). **The session's `SpotifyPlayer` calls the renderer only qualified**
   (`this@SpotifyRenderer.play()`): unqualified, `play()` is the SimpleBasePlayer's own and recursed (F1;
   `SpotifyRendererTest` drives it through Media3's `Player` API with the test-only `android.os.Looper`,
   `android.util.Pair` and `SparseBooleanArray` in `src/test/java/android/`). Those stand-ins shadow the mockable
@@ -464,8 +468,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   own height; the carousel fills the weighted slot between them (`BoxWithConstraints`). Its cover is
   `libraryFit(slotPx, linesPx, reservePx, density)`, in whole pixels with every fixed part rounded as Compose rounds a
   Dp (`libraryFixedPx`; at density 1.5 a float-dp model overflowed by 2 px) - min(180, the slot less the title and
-  hint lines measured with a `TextMeasurer` at the font scale, less the fixed rest), floor `LIBRARY_COVER_MIN_DP` 120;
-  below the floor the slot scrolls (the `verticalScroll` is applied only then: it clips, and would cut the cover's
+  hint lines measured with a `TextMeasurer` at the font scale, less the fixed rest), floor `LIBRARY_COVER_MIN_DP` 64
+  (120 until the emulator round's N6: Android 16's status bar grows with the font scale; below 120 dp the cover drops
+  its kind chip, `coverShowsKind`); below the floor the slot scrolls (the `verticalScroll` is applied only then: it clips, and would cut the cover's
   shadow), so the tiles never slide under the bar. Without the bar its room (`nowBarRoomPx`) is still kept out of the
   cover, so the cover never changes size when the bar comes or goes. The progress line's room is always kept (the cover never
   resizes on a turn). The pager, its side padding, the pull and the cover glyph all take that cover (`carouselSide`,

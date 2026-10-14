@@ -4616,3 +4616,55 @@ Re-run after these (builds paused; the report's list): A1 #9 (the tone keeps sou
 the cooldown) and #24 ("Sync now" ~20 s after the refusal); A1 #3 in the browser (it lands on the callback now); A2 on
 an unmanaged AVD: #1, #2 (the second tap, and the play/pause button during the wait), #3, #4, #5, #7, #8, #9, #14 (with
 its Wi-Fi/mobile-data half), #15, #16-#20.
+
+## Fixes after the emulator round (2026-10-14)
+
+The report is `docs/testing/2026-10-14-emulator-round.md` (on `main` 05fd8e3: 59 pass, 7 fail, 8 blocked); branch
+`emu-round-music-fixes`. The music app's findings, one line each (N6 and N11 are design 34's, step 11's status says it):
+
+- **N1 (High), a pause at a track's end:** `SpotifyTracker.ourState` reads a paused state of our current track at
+  its duration (within `END_RESET_MS`) after it ran out as the track's end, never a pause: while Spotify knows our
+  next item (the window, or our add one ahead) - or in a context - nothing is emitted (still playing, the locks kept,
+  nothing measured) and the next state is Spotify's advance; with nothing of ours left on Spotify's side it is the end
+  (`Ended`, or a gap's `NewWindow`), as the reset to 0 is. `advance()` now emits `Resumed` when the next track plays
+  after a paused state that wasn't our pause (as context mode's advance did), so a pause posted a little before the end
+  is undone with the locks. Spotify's SDK documents no state between tracks (§5.4: the played-out end of the list is
+  paused at 0); the fake's stub no longer posts the element's `pause` before `ended` (`fake-spotify.py`, `--selftest`
+  checks it), and the phone reads both shapes. Part B's recorder answers what the real SDK posts.
+  `sdk_states/end_paused_at_duration`, three tracker tests, a renderer test (showsPlaying and the locks through the
+  boundary; the `Resumed` after a pause before it).
+- **N2, an unplayable track at a boundary:** `onPlaybackError(nowMs)` - an error after our current track played out
+  (`ranOut`) with our next item on Spotify's queue is the next item's: the tracker moves to it and reports it there,
+  so the service records it (`item_errors`) and the run counts it, and the skip the following state proves is the same
+  item (counted once); mid-track, at the queue's last item or beyond what Spotify knows it is still the current one's.
+  The renderer's move-on then plays from the item after it (one play call, as for any unplayable item).
+  `sdk_states/unplayable_at_boundary`, a tracker test, a renderer test (the error recorded for item 1, the list going on).
+- **N3, the call rule and Chromium's pause:** music-side only - no launcher or bridge change. (a) The web player hears
+  a system call by the audio mode too: `spotifyInCall(launcherInCall, modeInCall)` sets the renderer's `inCall` wherever
+  either changes and when it is made, and `callOn` lets `callStep` take the mode on the web player as on a room (the
+  phone's own player has its focus). So a play tapped during a call that began while paused starts nothing and nothing
+  plays after it (A1 #19c), and the call rule pauses and plays again a web player whatever paused it first. (b) For its
+  first `SPOTIFY_HELD_SHOWN_MS` (5 s) a play the WebView holds paused (`heldByPage`) still says playing to the session
+  (`spotifySessionPlays`: the player's play-when-ready, not `showsPlaying` - the player's own screen, the locks and
+  `setNowPlaying` show paused), so the launcher's `MusicCalls`, which reads the session 60-220 ms after the ring's pause,
+  sends `CALL_HOLD` for every call kind (VoIP too, where the mode isn't a call). Bounded so a pause Chromium never undoes
+  (another app's playback) doesn't keep the session playing. Residual: a VoIP call that began while paused, with a play
+  tapped during it, is still Chromium's to resume (the launcher sends nothing then; a launcher that sends the call's
+  edges regardless would close it - the bridge contract is unchanged here). Tests: both orders of the ring's pause and
+  the call, the session's window, a tap during the mode's call; `RendererRulesTest`, `GuardsTest`.
+- **N4, the debug proxy (debug path only):** `DebugProxy` (pure, OkHttp) does the interceptor's fetch: `Content-Length`
+  passed back with `Content-Range`, `Accept-Ranges` and the CORS header (OkHttp drops it itself after an unzip), and no
+  call timeout - a streamed body has none, only the 45 s read timeout (`callTimeout(45 s)` bounded the whole tone).
+  `DebugProxyTest`: a seek's ranged 206 read whole, a body streamed past a 300 ms base call timeout, no redirect followed.
+- **N5, an entry flipped to a context while its list plays:** `playEntry` goes on with the loaded queue only while the
+  library lists that entry the same way (`loadedPlayStale`: key, target, mode); else the cover tap saves the place and
+  starts the entry's new queue - the context play, its synthetic item (the bar and the player), and the old list's
+  queue adds stop with its tracker. A library change alone doesn't end a live play (the kid's tap does). Tests: the pure
+  rule, the renderer's switch (one context play, no queue add after it), `GuardsTest`.
+
+No string names Spotify (the new log line says "web player"; `SourceScanTest` green). To re-check on the emulator: A2 #0
+with the fake as it is now and with an old stub that posts the `ended` pause (both: plays on across tracks, locks held);
+A2 #4 (C named alone, D plays); A1 #19, #19b and #19c (the order logged; `CALL_HOLD` now sent on a ring that paused the
+page first; a play tapped during an answered call starts nothing, and nothing after it); A1 #10, #13, #16 through the
+debug proxy (the tone jumps on a seek past the buffer; 30 min of Doze with track changes); A2 #18 (the flip: the tap
+opens the bar with the context playing, no `queue:` lines after it, the leftover add skipped).

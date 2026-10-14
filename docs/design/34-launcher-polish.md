@@ -587,6 +587,17 @@ taller slot.
 | N5 tautological asserts | Gone. The Jelly Star test asserts the numbers: 270 px (180 dp) at 1.0, 250-269 px with no scroll at 1.3, no scroll at 2.0 with gestures, and at 2.0 with three buttons and the bar the 180 px floor with a scroll of 1-30 px (19). |
 | N6 m9 survived; m8 | `EmptyStateTest` parses each `EmptyState(...)` call: the library and Nytt are centred (the default), search is `centred = false`, and `centred` maps to `Arrangement.Center`/`Top`. The font-scale key of `measuredLinesPx` stays. It is harmless, because the activity has no `configChanges` and is recreated on a font-scale change; its KDoc says so. |
 
+**After the emulator round (2026-10-14, N6 and N11; branch `emu-round-music-fixes`).** At font scale 2.0 with the bar
+the emulator's Android 16 drew the status bar at ~91 dp, not the model's 24, so the slot held the 120 dp floor only by
+scrolling: the hint line was cut at the slot's edge and the dots hidden. The floor is now 64 dp (`LIBRARY_COVER_MIN_DP`;
+the cover gives way before the words, scroll only below it), a cover under 120 dp drops its kind chip (`coverShowsKind`;
+the hint says the kind), and each category tile is as wide as its label measured at the font scale, at least a fifth of
+the row (`categoryTileWidthFor`; the row scrolls), so "Musikk" is never "Mu…". `FitTest` models the emulator's screen
+from the screenshot (the 136 px status bar, Android's nonlinear 2.0 curve): no scroll with gestures, the floor and a
+scroll with three buttons; the old floor overflowed by 65 px. Nytt shows "Fjern alle" only with something to clear
+(N11, `showsClearAll`). Re-check on the emulator: the library full with the bar at 2.0 in both navigation modes (every
+line and the dots shown; with three buttons a vertical swipe on the title scrolls), the tiles' labels whole, Nytt empty.
+
 ## Step 4 implementation status (2026-10-14)
 
 P4 is built (launcher only; no server, policy or contract change), on branch `design-34-s4`. The top stays empty:
