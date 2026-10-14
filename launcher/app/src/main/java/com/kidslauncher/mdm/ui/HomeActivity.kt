@@ -67,6 +67,8 @@ import com.kidslauncher.mdm.ui.home.GridApp
 import com.kidslauncher.mdm.ui.home.GridGapDecoration
 import com.kidslauncher.mdm.ui.home.GridMetrics
 import com.kidslauncher.mdm.ui.home.MOCKUP_CONTENT_DP
+import com.kidslauncher.mdm.ui.home.contactItemPx
+import com.kidslauncher.mdm.ui.home.contactsContentPx
 import com.kidslauncher.mdm.ui.home.contactRow
 import com.kidslauncher.mdm.ui.home.gridMetrics
 import com.kidslauncher.mdm.ui.home.HomeGridAdapter
@@ -820,6 +822,14 @@ class HomeActivity : UIObjectActivity() {
         val layout = contactRow(contacts.size, contentWidthDp())
         // Centred while everything fits, from the left (with the peek at the edge) when it scrolls.
         row.gravity = if (layout.scrolls) Gravity.START else Gravity.CENTER_HORIZONTAL
+        val density = resources.displayMetrics.density
+        // The row's real width once Home is laid out (qa-34-s4-code L2), else the estimate.
+        val contentPx = contactsContentPx(
+            binding.root.width - binding.root.paddingLeft - binding.root.paddingRight,
+            resources.configuration.screenWidthDp,
+            density,
+        )
+        val itemPx = contactItemPx(layout, contacts.size, contentPx, density)
         val inflater = LayoutInflater.from(this)
         for (contact in contacts) {
             val item = inflater.inflate(R.layout.item_kid_contact, row, false)
@@ -837,7 +847,7 @@ class HomeActivity : UIObjectActivity() {
             item.findViewById<TextView>(R.id.contact_name).apply {
                 text = contact.name
                 KidInk.label(this, shownInk)
-                maxWidth = KidAvatars.dp(this@HomeActivity, layout.itemDp.toFloat())
+                maxWidth = itemPx
             }
             item.contentDescription = if (missedCount > 0) {
                 resources.getQuantityString(R.plurals.contact_missed, missedCount, contact.name, missedCount)
@@ -852,10 +862,10 @@ class HomeActivity : UIObjectActivity() {
                 showContactSheet(contact)
                 true
             }
-            // Each item is one avatar plus one gap wide, so avatars are a gap apart.
-            item.layoutParams = LinearLayout.LayoutParams(
-                KidAvatars.dp(this, layout.itemDp.toFloat()), LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
+            // Each item is one avatar plus one gap wide, so avatars are a gap apart - but a row that
+            // fits is never wider than the screen (design 34 P4: three 104 dp items in 288 dp
+            // scrolled by 24 dp and cut the third contact's call badge).
+            item.layoutParams = LinearLayout.LayoutParams(itemPx, LinearLayout.LayoutParams.WRAP_CONTENT)
             row.addView(item)
         }
     }

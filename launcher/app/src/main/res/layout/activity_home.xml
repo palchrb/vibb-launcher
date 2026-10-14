@@ -132,12 +132,16 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Design 34 P4: a row that scrolls (more contacts than fit, contactRow) fades 16 dp at the
+         edge it can scroll past; a row that fits never scrolls (contactItemPx), so it never fades. -->
     <HorizontalScrollView
         android:id="@+id/home_contacts_scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
+        android:fadingEdgeLength="16dp"
         android:fillViewport="true"
+        android:requiresFadingEdge="horizontal"
         android:scrollbars="none"
         android:visibility="gone">
 
@@ -158,14 +162,18 @@
         android:layout_marginTop="12dp"
         android:visibility="gone" />
 
-    <androidx.recyclerview.widget.RecyclerView
+    <!-- Design 34 P4: the grid fades where it can scroll - 12 dp at the top, 32 dp at the bottom
+         (FadingRecyclerView scales the one fadingEdgeLength per edge; HomeEdges.kt). -->
+    <com.kidslauncher.mdm.ui.home.FadingRecyclerView
         android:id="@+id/home_grid"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="18dp"
         android:layout_weight="1"
         android:clipToPadding="false"
+        android:fadingEdgeLength="32dp"
         android:paddingBottom="16dp"
+        android:requiresFadingEdge="vertical"
         tools:listitem="@layout/item_kid_tile" />
 
 </LinearLayout>
