@@ -3678,6 +3678,7 @@ mod entries {
         let page = page_text(&app.get_page(&path, &cookie).await);
         assert!(!page.contains("name=\"order\""), "{page}");
         assert!(page.contains("Spotify picks the order"));
+        assert!(page.contains("no logged-in account may list this one's tracks"));
         let res = app
             .request_form(
                 Method::POST,
@@ -3694,6 +3695,42 @@ mod entries {
                 .await
                 .unwrap();
         assert_eq!(row, ("newest_first".to_string(), 0, false));
+    }
+
+    /// An artist's entry page (emulator check §6l A, F5): context mode with the artist's own hint, never the
+    /// playlist's "no logged-in account may list"; a playlist in context mode keeps that one.
+    #[tokio::test]
+    async fn an_artist_entry_page_has_the_artist_hint_not_the_playlist_one() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        ready(&app).await;
+        let id = entry(&app, "artist", super::listing::ARTIST).await;
+        app.fetch.answer(
+            &url(&app, Read::Artist(super::listing::ARTIST)),
+            200,
+            fixture("artist.json"),
+        );
+        app.fetch.answer(
+            "https://i.scdn.co/image/fake-artist-320",
+            200,
+            crate::tests::music_art::png(0b0100_0010, 320, 320),
+        );
+        assert_eq!(check(&app, id, t0()).await.error, None);
+        assert_eq!(
+            listing(&app, id).await.spotify_mode.as_deref(),
+            Some("context")
+        );
+        let page = page_text(&app.get_page(&format!("/music/entries/{id}"), &cookie).await);
+        assert!(!page.contains("name=\"order\""), "{page}");
+        assert!(
+            page.contains("Spotify picks the order: an artist plays as Spotify does."),
+            "{page}"
+        );
+        assert!(!page.contains("no logged-in account may list"), "{page}");
+        assert!(
+            page.contains("An artist plays as Spotify picks"),
+            "the TRACKS note stays"
+        );
     }
 
     /// The add route's other limits (§3.2, qa-26c-step2b-code L5): a picked phone whose library

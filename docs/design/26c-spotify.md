@@ -1034,7 +1034,8 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
   (paused, played again on the gain, vibb's resume overlap as `LocalRenderer` does), a "duck" is `vibb.volume(0.3)` and
   back. **[device check]** whether the WebView requests focus itself for its media: if it does (our own request would
   then be taken away by our own WebView), the renderer drops its request and maps the WebView's pauses instead - step 5a
-  logs the focus changes on the Jelly Star and picks the branch; the open point says so.
+  logs the focus changes on the Jelly Star and picks the branch; the open point says so. **Answered by the emulator
+  check §6l A (2026-10-14, F2): it does - the renderer requests none; see "Fixes after the emulator check §6l A".**
 - **Becoming noisy** (a headset unplugged, Bluetooth gone): a receiver for `ACTION_AUDIO_BECOMING_NOISY` while playing
   -> `Paused(FAULT)` (ExoPlayer's `setHandleAudioBecomingNoisy` on the local side).
 - **Our own ExoPlayer stands down** (QA L1): attaching the Spotify renderer from the phone calls `local.standDown()`
@@ -1809,7 +1810,8 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 7. The DNS exemption per phone (the stricter choice; FCM is global because every phone needs it), with the binding in
    `dns_filter_version` (M7).
 8. The WebView's own audio focus (§5.6) and episodes in a `uris` list (§3.1): device checks with a default each
-   (step 5a's focus branch; `SHOWS_PLAYABLE`).
+   (step 5a's focus branch; `SHOWS_PLAYABLE`). The focus is answered (§6l A, 2026-10-14: the WebView takes it, the
+   renderer requests none); part B confirms it with the real SDK.
 9. The SDK on a phone: Spotify now lists mobile browsers as supported (Android and iOS); a WebView isn't named - the
    spike is the evidence; if Spotify breaks it, the tiles say "Virker ikke på telefonen" and the rest of
    Vibb is untouched.
@@ -2023,7 +2025,8 @@ read literally):
   the Wi-Fi lock is inactive with the screen off on API 34+), item 15 (the DNS filter on with the family's
   categories), item 17 (Autoplay after a list and after a context), item 18 (the artist option's dev-mode check),
   items 19-21 (a refused play, the leftover queue add, shuffle and repeat).
-- **Device checks with a default in code**: the WebView's own audio focus (§5.6; the renderer keeps its request),
+- **Device checks with a default in code**: the WebView's own audio focus (§5.6; answered by §6l A on 2026-10-14 - the
+  WebView takes it, the renderer requests none; part B confirms it with the real SDK),
   episodes in a `uris` list (§3.1; **no switch is built** - if the SDK refuses them, the server's parser must refuse
   `show`/`episode`, a small code change), the protected-media origin, `getCurrentWebViewPackage` on the
   Jelly Star (§6.3), whether the player's account can open a playlist it doesn't own as a context (§5.9), what the
@@ -4531,3 +4534,85 @@ this Release's branch paragraph.
 Validation (from `server/`, on `cffd63c`): `cargo fmt --check` clean; `cargo clippy --all-targets --locked` 13 warnings,
 `main`'s 13; `cargo test` **939 passed**, 0 failed (937 + the class test + the migration pin); `node --test
 jstest/*.test.js` 30 passed. Migrations end `0073_music_data_and_storage.sql`, `0074_music_spotify.sql`.
+
+## Fixes after the emulator check §6l A (2026-10-14)
+
+The report is `docs/testing/2026-10-14-spotify-6l-a.md` (on `main` 36cabb4: 24 pass, 5 fail, 16 blocked; merged into
+this branch, `spotify-6l-fixes`). One line per finding:
+
+- **F1 (Critical, the StackOverflowError):** `SpotifyPlayer`'s handlers call the renderer qualified
+  (`this@SpotifyRenderer.play()/pause()/seekTo(..)`, and `getState` reads it through `r = this@SpotifyRenderer`):
+  unqualified, they were the SimpleBasePlayer's own `play()`/`pause()`/`seekTo()`, which call the handler again. The
+  player takes Media3's `Clock` (default `Clock.DEFAULT`), so `SpotifyRendererTest` drives it through the `Player`
+  API - play, the seek bar, pause, resume, a pick, stop, and a headset's play on a queue restored paused - on the
+  test's thread, with test-only stand-ins of `android.os.Looper`, `android.util.Pair` and `SparseBooleanArray`
+  (`music/app/src/test/java/android/`; the mockable android.jar answers null and false there). With the old handler
+  the test fails with the device's `StackOverflowError`; a source scan forbids an unqualified call in the class.
+  `SonosRenderer`'s player calls its controller and never had it.
+- **F2 (High, the focus loss) - §5.6 answered:** the WebView's Chromium media session (`AudioFocusDelegate`) requests
+  AUDIOFOCUS_GAIN when the page's audio starts, and from then on every focus change goes to it, not to us. Decided:
+  **the renderer requests no audio focus** (§5.6's other branch; `requestFocus`/`abandonFocus`, `FocusChange`, the
+  duck and `suppressed` are gone): Chromium pauses the page's audio on a loss (another app's playback, a call's
+  ringtone), ducks it for a notification and plays it again after a transient loss; the renderer reads those from the
+  page's states - a pause it didn't send is `Paused(FAULT)` (`spotifyPauseCause`; vibb's resume overlap, as the phone's
+  own player's focus loss), a resume by itself is shown playing unless a step while paused, a detach or the time rule
+  says no (`spotifySelfResumeShown`, else `vibb.pause()` at once). Calls still pause through the launcher's
+  `CALL_HOLD`/`CALL_RELEASE`. Rejected: keeping our request and ignoring a loss "from our own WebView" (Android has no
+  public way to name the new holder, and after it every later change reaches only Chromium anyway: our listener is
+  blind); holding focus so the WebView's request fails (a request of the same app is always granted, outside a call).
+  `RendererEvent.Interrupted` no longer comes from the web player (a transient loss is a pause and a resume). Part B
+  confirms it on the real SDK (QA checklist item 10). Tests: the page's pause, Chromium's pause and resume, a resume
+  under the time rule, the two pure rules, the fade as the only volume.
+- **F3 (Medium, offline next moved):** the service never moved (its gate refused before `seekTo`); the screens' instant
+  switch held the next track for its 3 s (`SWITCH_HOLD_MS`) - the report's screenshot was 2 s after the tap. The service
+  now tells the screens `PlayerHub.Message.STAYED` on a refused Spotify step (`goTo`, `stepOnWebPlayer`), which ends the
+  hold with no toast (the player's line says why), and `SpotifyRenderer.seekTo(index, ms)` checks the network gate
+  before it moves (the renderer's belt). Tests: `F3 - offline, a step says the line and stays`, `GuardsTest`.
+- **F4 (the fake):** `scripts/fake-spotify.py`'s `/authorize` answers a consent page (as Spotify's, `show_dialog`) whose
+  form posts to `/authorize/accept` and submits itself; that answers the 302 to the callback (and `--deny`'s
+  error). The PWA's `form-action` CSP no longer meets the loopback hop. `--selftest` covers the page and the
+  accept used once.
+- **F5 (PWA copy):** an artist's entry page says "Spotify picks the order: an artist plays as Spotify does."; the
+  "no logged-in account may list" hint is a playlist's only (`EntryTemplate.spotify_artist`). Test
+  `an_artist_entry_page_has_the_artist_hint_not_the_playlist_one`.
+- **F6 (procedure):** §6l's 403 step waits out the check's 15-minute cooldown before "Check Now" (no code change: a
+  login resetting entries' cooldowns would be a new rule).
+- **F7 (the word reaches the server late):** a changed account word makes the service ask for a music sync
+  (`Store.recordSpotifyOutcome` returns whether it changed, then `Sync.nudge`), which writes the report and hands it to
+  the launcher, so the launcher's next sync - "Sync now" too - carries `reauthorize`. §4.4 says only that the sync
+  writes the report; nothing intended the wait. `GuardsTest` pins the site.
+- **F8 (procedure):** §6l's server-log grep is `code_verifier` (`verifier` matched `rustls_platform_verifier`).
+- **F9, the locale (Info):** ours and by design - a managed music app applies Vibb's language from the launcher's
+  managed config at every start (`Bridge.applyLanguage`), so a `cmd locale set-app-locales` lasts until the next
+  force-stop or suspension. §6l now says to set the phone's language to Norsk in the PWA (the phone's page, Launcher).
+- **F9, "Spilles nå" while paused (Info):** no change - every source's current row says "Spilles nå · <length>" playing
+  or paused (`listRows`' `playing` is the current item; 21 §"Liste", mockup v12); Spotify matches the others.
+- **F9, the entry's name as a context's first title (Info):** as designed (§5.9: the title before a track is known);
+  F2 kept the first state away.
+- **F10, the console ERROR (Info):** the fake's, not ours - the stub's `audio.play()` promise rejected (AbortError)
+  when our `vibb.pause()` came while it loaded (a foreign transfer, a context step while paused). The stub now handles
+  it (`played(audio)`); `player.js` has no unhandled promise.
+
+### Fix round after QA's code review (qa-26c-6l-fixes-code, 2026-10-14)
+
+QA `cb799f9b`: 1 High, 1 Medium, 2 Low, 3 Nits; all fixed, none disputed. `main` (e17949e3+, design 34 steps 9 and 10)
+was merged first with no conflict.
+
+| Finding | What changed | Check |
+|---|---|---|
+| H1 | A pause asked while the WebView holds our track paused (the kid's, the sleep timer's end, the call rule's) no longer calls `tracker.pauseSent()` - no paused state would follow, and it swallowed Chromium's resume - but sets `askedPaused`; `spotifySelfResumeShown(…, askedPaused)` then answers Chromium's resume at the gain with `vibb.pause()` at once, never shown. Cleared by our own play, a load, a detach. | `H1 - the kid's pause while an alarm holds the page paused sticks`, `H1 - the sleep timer ending during the ring`, the pure rule. |
+| M1 | `heldByPage` (QA's `heldByWebView`: `SourceScanTest` keeps the word WebView in the host only; a pause not ours while the kid wanted it playing) holds off the 5-minute idle close, and `callStep` counts it as playing, so a ring whose focus loss beats `CALL_HOLD` is still the call rule's: `CALL_RELEASE` plays again (a `vibb.resume()`, or a fresh play at the place when the page went after 5 paused minutes). Cleared by a resume, any pause or play of ours, a load, a detach, a suspension, a stop. The service's foreground state still drops while paused (as for every source's pause). | `M1 - held by the WebView the page outlives the idle close…`, both call orders short and long, `GuardsTest` pins `callStep`. |
+| L1 | F7 writes the report with `Sync.writeReport` (`reportSpotifyWord`, which hands it to the launcher), not a whole sync; the nudge's debounce is no longer F7's. | `GuardsTest`: `reportSpotifyWord` calls `writeReport`, not `Sync.nudge`. |
+| L2 | During the launcher's call (`launcherCall` sets `SpotifyRenderer.inCall`) a play starts nothing - no page, no Web API call - and shows paused with no line, as the phone's own player whose focus request a call refuses; the call rule plays again only what it paused. | `L2 - a play tapped during a call…`; §6l's new call lines. |
+| N1 | `SpotifyPlayer`'s KDoc names the real tests (SpotifyRendererTest's F1 tests). | - |
+| N2 | The renderer's own refusal of a step emits `PlayerHub.Message.STAYED` too. | `N2 - the renderer's own refusal of a step tells the screens it stayed`. |
+| N3 | `music/CLAUDE.md` says what the test-only stand-ins under `src/test/java/android/` are and that a new one needs its reason. | - |
+
+§6l's re-run gains (emulator.md): pause during an alarm, the sleep timer ending during the ring, a call over 5 minutes
+with the order of `CALL_HOLD` and the page's pause logged, and play tapped during a call.
+
+Re-run after these (builds paused; the report's list): A1 #9 (the tone keeps sounding; the focus stack), #10, #11,
+#13, #15 (the headset's play), #16, #17, #18, #19 (a call) and the new "Another app's audio", #20, #21, #22, #23 (with
+the cooldown) and #24 ("Sync now" ~20 s after the refusal); A1 #3 in the browser (it lands on the callback now); A2 on
+an unmanaged AVD: #1, #2 (the second tap, and the play/pause button during the wait), #3, #4, #5, #7, #8, #9, #14 (with
+its Wi-Fi/mobile-data half), #15, #16-#20.

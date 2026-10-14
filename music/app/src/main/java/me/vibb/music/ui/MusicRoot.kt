@@ -55,6 +55,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     LaunchedEffect(Unit) {
         PlayerHub.messages.collect {
             vm.switching = null // the player refused or skipped: show what it has
+            if (it == PlayerHub.Message.STAYED) return@collect // the player's own line says why (§6l A, F3)
             message = it
             delay(3_000)
             message = null
@@ -178,8 +179,9 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     PlayerHub.Message.NOT_DOWNLOADED -> R.string.not_downloaded
                     PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
                     PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed
+                    PlayerHub.Message.STAYED -> null // never set (above)
                 }
-                Line(stringResource(text), 14, 800, Palette.fg, maxLines = 2, center = true)
+                text?.let { Line(stringResource(it), 14, 800, Palette.fg, maxLines = 2, center = true) }
             }
         }
     }

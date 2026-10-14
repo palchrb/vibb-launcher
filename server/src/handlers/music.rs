@@ -1901,6 +1901,9 @@ struct EntryTemplate {
     /// Spotify; in context mode no play order either (Spotify picks it).
     spotify: bool,
     spotify_context: bool,
+    /// A Spotify artist: its context-mode hint is the artist's, never the playlist's "no logged-in account may list"
+    /// (emulator check §6l A, F5).
+    spotify_artist: bool,
     spotify_link: Option<String>,
     /// The status group's header ([list_title]): "Books", "Tracks" or "Episodes".
     list_title: &'static str,
@@ -2027,12 +2030,15 @@ async fn render_entry(
                 .listings
                 .get(&entry.id)
                 .is_some_and(|l| l.spotify_mode.as_deref() == Some("context"));
-        let spotify_link = entry
+        let spotify_ref = entry
             .target
             .as_deref()
             .filter(|_| spotify)
-            .and_then(crate::spotify::parse_target)
-            .map(|r| r.open_url());
+            .and_then(crate::spotify::parse_target);
+        let spotify_artist = spotify_ref
+            .as_ref()
+            .is_some_and(|r| r.kind == crate::spotify::LinkKind::Artist);
+        let spotify_link = spotify_ref.map(|r| r.open_url());
         let form = entered.form.unwrap_or_else(|| EntryForm {
             name: entry.name.clone(),
             category: entry.category_id,
@@ -2078,6 +2084,7 @@ async fn render_entry(
             storytel,
             spotify,
             spotify_context,
+            spotify_artist,
             spotify_link,
             list_title: list_title(&entry),
             form,

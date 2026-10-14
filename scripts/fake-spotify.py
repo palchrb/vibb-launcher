@@ -25,8 +25,12 @@ FAKE-REFRESH-<n>, FAKE-CODE-<n>, users fakeparent/fakekid, tracks FAKEtrack<13 d
 may look like a real account or token.
 
 The accounts service (the server's SPOTIFY_ACCOUNTS_BASE=http://127.0.0.1:8731):
-    GET  /authorize?...&code_challenge=..&state=..    302 to redirect_uri?code=FAKE-CODE-<n>&state=<state>
-                                                     (auto-consent as --as; --deny: error=access_denied);
+    GET  /authorize?...&code_challenge=..&state=..    200, a consent page (as Spotify's own, show_dialog): its
+                                                     form posts to the fake itself, auto-submitted - a browser
+                                                     never follows a redirect chain out of the PWA's form-action
+                                                     CSP (emulator check §6l A, F4)
+    POST /authorize/accept  consent=FAKE-CONSENT-<n>  302 to redirect_uri?code=FAKE-CODE-<n>&state=<state>
+                                                     (consent as --as; --deny: error=access_denied);
                                                      GET /fake/as?user=kid|parent switches it while running
     POST /api/token                                  authorization_code: the code once, the verifier's S256
                                                      against the challenge; refresh_token: FAKE-ACCESS-<n>
@@ -74,6 +78,7 @@ account's settings until the phone turns them off: PUT /v1/me/player/shuffle?sta
 import argparse
 import base64
 import hashlib
+import html
 import http.client
 import json
 import math
@@ -188,8 +193,9 @@ class Spotify:
         self.args = args
         self.consent = args.as_user
         self.lock = threading.Lock()
-        self.serial = {"code": 0, "access": 0, "refresh": 0, "device": 0}
+        self.serial = {"code": 0, "access": 0, "refresh": 0, "device": 0, "consent": 0}
         self.codes = {}             # code -> (challenge, redirect_uri, client_id, user)
+        self.consents = {}          # FAKE-CONSENT-<n> -> the authorize query it shows (used once)
         self.refresh = {}           # refresh token -> user
         self.access = {}            # access token -> (user, monotonic expiry)
         self.devices = {}
@@ -328,6 +334,16 @@ def play_body_ok(body, shapes):
     return False
 
 
+CONSENT_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Fake Spotify - allow access</title></head>
+<body><p>Fake Spotify: allow the app to play as <b>{user}</b>?</p>
+<form method="post" action="/authorize/accept"><input type="hidden" name="consent" value="{consent}">
+<button type="submit">Agree</button></form>
+<script>document.forms[0].submit();</script></body></html>
+"""
+
+
 def handler_for(sp):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -397,6 +413,8 @@ def handler_for(sp):
             path, q = self.parts()
             if path == "/api/token":
                 return self.token()
+            if path == "/authorize/accept":
+                return self.accept()
             if path.startswith("/v1/"):
                 return self.web_api("POST", path, q)
             self.send(404)
@@ -408,6 +426,25 @@ def handler_for(sp):
             if any(k not in q for k in need) or q["response_type"] != "code" or q["code_challenge_method"] != "S256" \
                     or not CLIENT_ID.match(q["client_id"]):
                 log("authorize: 400 (not the server's authorize query)")
+                return self.send(400, {"error": "invalid_request"})
+            # A consent page, as Spotify's own (show_dialog=true), never a redirect straight on: the PWA's login form
+            # posts under its CSP's form-action ('self' and the accounts base), and Chromium applies that to the whole
+            # redirect chain, so an immediate 302 to the loopback callback was refused (emulator check §6l A, F4). The
+            # page's form posts to the fake itself and is submitted at once; its 302 to the callback starts from the
+            # fake's document, as Spotify's starts from Spotify's.
+            consent = sp.next_value("consent", "FAKE-CONSENT")
+            with sp.lock:
+                sp.consents[consent] = dict(q)
+            log(f"authorize: the consent page ({consent}, as {sp.consent})")
+            page = CONSENT_PAGE.replace("{user}", html.escape(sp.consent)).replace("{consent}", html.escape(consent))
+            self.send(200, page.encode(), headers=[("Cache-Control", "no-store")], content_type="text/html; charset=utf-8")
+
+        def accept(self):
+            form = {k: v[0] for k, v in urllib.parse.parse_qs(self.body().decode("utf-8", "replace")).items()}
+            with sp.lock:
+                q = sp.consents.pop(form.get("consent", ""), None)
+            if q is None:
+                log("authorize: accept 400 (no such consent page, or used)")
                 return self.send(400, {"error": "invalid_request"})
             if sp.args.deny:
                 target = q["redirect_uri"] + "?" + urllib.parse.urlencode({"error": "access_denied", "state": q["state"]})
@@ -732,6 +769,13 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     });
   }
 
+  // An element's play() is a promise: a pause while it loads (ours, at once, after a foreign transfer or a step while
+  // paused) rejects it with an AbortError - handled here, else the page's console showed an uncaught ERROR (§6l A, F10).
+  function played(audio) {
+    var p = audio.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+
   function trackObject(t) {
     if (!t) return null;
     var id = t.uri.split(':').pop();
@@ -880,7 +924,7 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
     var at = positionMs / 1000;
     var seek = function () { audio.currentTime = at; audio.removeEventListener('loadedmetadata', seek); };
     if (at > 0) audio.addEventListener('loadedmetadata', seek);
-    audio.play();
+    played(audio);
     this._changed();
   };
 
@@ -941,7 +985,7 @@ STUB_SDK = r"""// The fake Spotify's stub Web Playback SDK (scripts/fake-spotify
   Player.prototype.getCurrentState = function () { return Promise.resolve(this._state()); };
   Player.prototype.pause = function () { this._audio.pause(); return Promise.resolve(); };
   Player.prototype.resume = function () {
-    if (this._active && this._current) this._audio.play();
+    if (this._active && this._current) played(this._audio);
     return Promise.resolve();
   };
   Player.prototype.togglePlay = function () { return this._audio.paused ? this.resume() : this.pause(); };
@@ -1070,8 +1114,13 @@ def selftest():
         query = urllib.parse.urlencode({"response_type": "code", "client_id": client, "scope": "streaming",
                                         "redirect_uri": redirect, "code_challenge_method": "S256",
                                         "code_challenge": s256(verifier), "state": state, "show_dialog": "true"})
-        status, headers, _ = call(sp, "GET", "/authorize?" + query)
+        status, headers, page = call(sp, "GET", "/authorize?" + query)
+        assert status == 200 and headers["Content-Type"].startswith("text/html"), status
+        consent = re.search(rb'name="consent" value="(FAKE-CONSENT-\d+)"', page).group(1).decode()
+        assert b'action="/authorize/accept"' in page and b"document.forms[0].submit()" in page
+        status, headers, _ = call(sp, "POST", "/authorize/accept", "consent=" + consent, form)
         assert status == 302, status
+        assert call(sp, "POST", "/authorize/accept", "consent=" + consent, form)[0] == 400, "a consent page is used once"
         back = urllib.parse.urlsplit(headers["Location"])
         q = urllib.parse.parse_qs(back.query)
         assert f"{back.scheme}://{back.netloc}{back.path}" == redirect and q["state"] == [state], headers
@@ -1103,7 +1152,7 @@ def selftest():
         status, _, kid = exchange(sp, login(sp)[0])
         assert status == 200
         kid_access = kid["access_token"]
-        print("2. PKCE: RFC 7636's S256 vector, the authorize 302 with code and state, the exchange once, "
+        print("2. PKCE: RFC 7636's S256 vector, the consent page and its 302 with code and state, the exchange once, "
               "a wrong verifier refused, /fake/as OK")
 
         # 3. refresh without rotation; the Web API's routes against their fixtures
