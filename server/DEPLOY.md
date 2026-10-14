@@ -208,8 +208,8 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   the address that sent them, for an hour after 15); wrong 2FA codes do: 5 lock it for 15 minutes, every further lock
   doubles, up to 24 hours. After a sign-in that followed wrong codes, the Devices page says how many and from where:
   whoever typed them knew the password - change it.
-- Changing the password or resetting 2FA signs out every other session; Account > "Sign out everywhere" signs out
-  this one too.
+- Changing the password or resetting 2FA signs out every other session; Settings › Account & Password › "Sign Out
+  Everywhere…" signs out this one too.
 - **Lost the authenticator and signed out?** On the Pi:
   `cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server reset-2fa admin` (in Docker:
   `docker compose exec handy /app/kid_phone_server reset-2fa admin`). It removes the 2FA setup, the lock and its
@@ -280,7 +280,7 @@ initial-admin-password`. Sign in as `admin` and change it - the server deletes i
   its next start (Docker's restart policy brings it back), and keeps the previous database in
   `data/backups/prerestore-<time>/` (the newest 3 are kept); if the backup won't open, the previous database goes
   back. A backup whose database is over 1 GiB is refused.
-- The Updates page has no OS, Tailscale or reboot controls in the container, and the Backups page no external drive:
+- Settings › Software Updates has no OS, Tailscale or restart controls in the container, and Backups no external drive:
   copy `data/backups` off the host yourself.
 - **Recovery**: `docker compose exec handy /app/kid_phone_server reset-2fa admin` (it also replaces the password,
   see "Signing in and recovery").
@@ -326,7 +326,8 @@ To install from a different fork, prefix `bash` with `KPS_REPO=owner/repo` (for 
 (`SERVER_RELEASE_REPO=palchrb/kid-phone-server` and the old `LAUNCHER_APK_URL` in `.env` are read as the new defaults,
 and a launcher row in the Apps catalog that watches `palchrb/kids-launcher-mdm` is repointed by a migration), but the
 root-side updater still fetches `update.sh` from the old repo. Re-run the installer once from the new URL above; it keeps
-`.env` and the database. Until then the server refuses "Update now" and scheduled auto-updates and shows the command.
+`.env` and the database. Until then the server refuses "Update Now…" and scheduled auto-updates and shows the command (Settings › Software
+Updates, "Run the installer again").
 (The old repo's `deploy/update.sh` is replaced by a stub that forwards here - `docs/legacy/kid-phone-server-update.sh`.)
 
 Updates only ever go forward: the Updates page, the scheduler and `update.sh` refuse a release that isn't newer than the
@@ -616,7 +617,7 @@ the PWA's address, e.g. its tailnet host name, never a path), so the parent's br
 
 ## Backups
 
-Built in - see the **Backups** page under Settings in the admin UI. Create a backup on demand, set a schedule for automatic ones, and optionally mirror them live to an external drive plugged into the Pi. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
+Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one on demand, the Schedule group sets automatic ones, and on the Pi they can be copied (and the database mirrored live) to an external drive plugged into it. Each backup in the list has Download, Restore… (type its file name) and Delete…; Upload a Backup… adds one from elsewhere. The database itself lives at `/opt/kid-phone-server/data/kidphone.db` if you ever need it directly.
 
 - **Keep backups as safe as the admin password.** A backup (and a copy of the data volume or the live mirror) holds
   everything: every location, the PIN hashes, the password hash - and the 2FA secret, which is kept unsealed on

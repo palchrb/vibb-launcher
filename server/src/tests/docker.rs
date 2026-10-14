@@ -437,7 +437,6 @@ async fn the_healthcheck_dials_the_admin_listener() {
 }
 
 fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppUpdateData {
-    let schedule = system_update::AppUpdateScheduleConfig::defaults();
     system_update::AppUpdateData {
         current_version: "v0.23.0".to_string(),
         latest_version: latest.map(str::to_string),
@@ -446,8 +445,7 @@ fn app_data(latest: Option<&str>, update_available: bool) -> system_update::AppU
         watcher_version: None,
         watcher_needs_update: true,
         reinstall_hint: "curl ... | sudo bash".to_string(),
-        schedule_summary: String::new(),
-        schedule,
+        schedule: system_update::AppUpdateScheduleConfig::defaults(),
     }
 }
 
@@ -461,8 +459,13 @@ fn the_updates_page_says_how_to_update_the_image() {
     )
     .0;
     assert!(page.contains("Version 0.24.0 is out"), "{page}");
-    assert!(page.contains("HANDY_VERSION=0.24.0"));
-    assert!(page.contains("docker compose pull &amp;&amp; docker compose up -d"));
+    // The commands are behind the row's ⓘ, never in its visible text (design 31 §4.2).
+    let row = &page[page.find("data-row=\"latest\"").unwrap()..];
+    let row = &row[..row.find("</details>").unwrap()];
+    let (summary, panel) = row.split_once("</summary>").unwrap();
+    assert!(!summary.contains("HANDY_VERSION"), "{summary}");
+    assert!(panel.contains("HANDY_VERSION=0.24.0"));
+    assert!(panel.contains("docker compose pull &amp;&amp; docker compose up -d"));
     for gone in [
         "/update/trigger",
         "/update/restart",
@@ -470,8 +473,8 @@ fn the_updates_page_says_how_to_update_the_image() {
         "/system/",
         "Raspberry Pi OS",
         "Tailscale</h2>",
-        "System helper scripts",
-        "re-run the installer",
+        "installer",
+        "Restart Server",
     ] {
         assert!(!page.contains(gone), "{gone} on the Docker page");
     }
@@ -482,10 +485,10 @@ fn the_updates_page_says_how_to_update_the_image() {
         None,
     )
     .0;
-    assert!(current.contains("up to date"));
+    assert!(current.contains("Up to date"));
     assert!(!current.contains("HANDY_VERSION"));
 
-    // systemd keeps its page.
+    // systemd keeps its page: the confirms, the installer warning with its command behind ⓘ.
     let pi = updates::page(
         false,
         app_data(Some("v0.24.0"), true),
@@ -493,11 +496,67 @@ fn the_updates_page_says_how_to_update_the_image() {
         None,
     )
     .0;
-    assert!(pi.contains("/update/trigger"));
     assert!(!pi.contains("HANDY_VERSION"));
+    for confirm in [
+        "/update/trigger#app",
+        "/update/restart#app",
+        "/system/os/upgrade#os",
+    ] {
+        let at = pi.find(&format!("action=\"{confirm}\"")).expect(confirm);
+        let before = &pi[..at];
+        assert!(
+            before.rfind("<details class=\"confirm").unwrap() > before.rfind("</details>").unwrap(),
+            "{confirm} is behind a <details> confirm"
+        );
+    }
+    let warning = &pi[pi.find("data-warning=\"installer\"").unwrap()..];
+    let warning = &warning[..warning.find("</details>").unwrap()];
+    let (visible, panel) = warning.split_once("</summary>").unwrap();
+    assert!(!visible.contains("sudo bash"), "{visible}");
+    assert!(panel.contains("curl ... | sudo bash"));
+    super::settings_pages::check_forms("/updates", &pi);
+}
+
+/// A result shows in the group whose form posted it, never at the page's top (design 31 §3.0).
+#[test]
+fn an_updates_result_shows_in_its_own_group() {
+    use crate::handlers::settings::Flash;
+    for (at, before, after) in [
+        ("app", "id=\"app\"", "id=\"os\""),
+        ("os", "id=\"os\"", "id=\"tailscale\""),
+        ("tailscale", "id=\"tailscale\"", "id=\"app-schedule\""),
+        ("app-schedule", "id=\"app-schedule\"", "id=\"os-schedule\""),
+        ("os-schedule", "id=\"os-schedule\"", "</main>"),
+    ] {
+        let page = updates::page(
+            false,
+            app_data(Some("v0.23.0"), false),
+            system_maintenance::not_managed(),
+            Some(Flash::done(at, "Probe result.")),
+        )
+        .0;
+        let flash = page.find("Probe result.").expect(at);
+        assert!(page.find(before).unwrap() < flash, "{at}");
+        assert!(flash < page.find(after).unwrap(), "{at}");
+        assert_eq!(page.matches("Probe result.").count(), 1, "{at}");
+    }
+    // A refusal with a reason: the title visible, the reason behind ⓘ.
+    let page = updates::page(
+        false,
+        app_data(Some("v0.23.0"), false),
+        system_maintenance::not_managed(),
+        Some(Flash::refused("app", "Nothing was started").because("Probe reason.")),
+    )
+    .0;
+    let flash = &page[page.find("data-flash=\"app\"").unwrap()..];
+    let (title, panel) = flash.split_once("</summary>").unwrap();
+    assert!(title.contains("Nothing was started"));
+    assert!(!title.contains("Probe reason."));
+    assert!(panel[..panel.find("</details>").unwrap()].contains("Probe reason."));
 }
 
 #[tokio::test]
+
 async fn in_docker_the_host_helper_routes_and_drive_features_are_gone() {
     let app = TestApp::with_env(&[("DEPLOY_KIND", "docker")]).await;
     let cookie = app.admin_cookie().await;
@@ -518,12 +577,14 @@ async fn in_docker_the_host_helper_routes_and_drive_features_are_gone() {
         assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
     }
     let page = app.get_page("/backups", &cookie).await.text();
-    assert!(!page.contains("External drive"), "{page}");
+    assert!(!page.contains("id=\"drive\""), "{page}");
+    assert!(!page.contains("external drive"), "{page}");
     assert!(!page.contains("continuous_mirror_enabled"));
     assert!(page.contains("copy them off the host"));
     // On the Pi they are there.
     let pi = TestApp::new().await;
     let cookie = pi.admin_cookie().await;
     let page = pi.get_page("/backups", &cookie).await.text();
-    assert!(page.contains("External drive"));
+    assert!(page.contains("id=\"drive\""));
+    assert!(page.contains("continuous_mirror_enabled"));
 }

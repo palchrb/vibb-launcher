@@ -1328,7 +1328,7 @@ async fn old_per_phone_filter_urls_redirect_to_the_filter_page() {
         );
     }
     let log = app.get_page("/dns/log", &cookie).await.text();
-    assert!(log.contains("<span class=\"row-value\">Log off</span>"));
+    assert!(log.contains("<span class=\"row-value\">Off</span>"));
     // The global page's domain fields check the shape before posting too (qa-31-s5-code L1).
     let global = app.get_page("/dns", &cookie).await.text();
     let fields: Vec<_> = tags(&global, "input")
@@ -1366,17 +1366,17 @@ async fn the_filter_routes_refuse_bad_input() {
     };
     let phone = id.to_string();
     for (fields, status) in [
-        // Not a domain.
+        // Not a domain: back to its group with the refusal (step 14), nothing added.
         (
             vec![
                 ("domain", "not a domain".to_string()),
                 ("device_id", phone.clone()),
             ],
-            StatusCode::BAD_REQUEST,
+            StatusCode::SEE_OTHER,
         ),
         (
             vec![("domain", "https://x.example/".to_string())],
-            StatusCode::BAD_REQUEST,
+            StatusCode::SEE_OTHER,
         ),
         // A phone id that isn't a number never becomes "every phone".
         (
@@ -1440,13 +1440,13 @@ async fn the_filter_routes_refuse_bad_input() {
         ("device_id", phone.clone()),
     ])
     .await;
-    assert_redirect(&res, "/dns", None);
+    assert_redirect(&res, "/dns", Some("blocked"));
     let res = add(vec![
         ("domain", "y.example".to_string()),
         ("back", "filter".to_string()),
     ])
     .await;
-    assert_redirect(&res, "/dns", None);
+    assert_redirect(&res, "/dns", Some("blocked"));
     let everyone: Option<i64> =
         sqlx::query_scalar("SELECT device_id FROM dns_custom_domains WHERE domain = 'y.example'")
             .fetch_one(&app.db)

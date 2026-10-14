@@ -82,7 +82,7 @@ async fn the_security_log_pages_back_past_a_flood() {
     let older = first
         .split("/security?before=")
         .nth(1)
-        .and_then(|rest| rest.split('"').next())
+        .and_then(|rest| rest.split(['"', '#']).next())
         .expect("a link to older events")
         .to_string();
     let second = app

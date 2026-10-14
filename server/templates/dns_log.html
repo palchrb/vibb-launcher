@@ -5,25 +5,28 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container">
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
     <h1 class="page-title">Blocked Activity</h1>
 
-    {#- Design 31 step 5: each phone's log (its switch and the list) is on its Web Filter page;
-        this page is the entrance. Step 14 restyles it. -#}
+    {#- Each phone's log (its switch and the list) is on its Web Filter page (design 31 step 5);
+        this page is the entrance. -#}
     {% if phones.is_empty() %}
-    <p class="empty-state">No phones yet.</p>
+    <div class="group">
+        <p class="row row-note">No phones yet.</p>
+    </div>
     {% else %}
     <div class="group">
         {% for p in phones %}
         <a class="row" href="/devices/{{ p.id }}/filter#log" data-phone="{{ p.id }}">
             <span class="row-label">{{ p.name }}</span>
-            <span class="row-value">{% if p.log_enabled %}Log on{% else %}Log off{% endif %}</span>
+            <span class="row-value">{{ p.value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         {% endfor %}
     </div>
-    <p class="group-footer">The log is off until you turn it on for a phone. Entries are kept {{ retention_days }} days.</p>
+    <p class="group-footer">The log is off until you turn it on for a phone. Kept {{ retention_days }} days.</p>
     {% endif %}
 </main>
 </body>

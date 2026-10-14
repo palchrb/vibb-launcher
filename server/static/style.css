@@ -2055,6 +2055,35 @@ input.row-input {
 
 .group-apps > .cell > .flash {
     padding-left: 64px;
+
+/* ---- Design 31 step 14: the rest of Settings ---- */
+
+/* A form's result at the top of its form group (the schedules): flush with the group's edges. */
+.form-group > .flash:first-child,
+.form-group > details.info:first-child {
+    margin: -16px -16px 16px;
+}
+
+/* Wallpapers: a thumbnail in the row, and hairlines between a photo's own rows. */
+.row > .wallpaper-thumb {
+    flex: none;
+    margin-bottom: 0;
+}
+
+.wallpaper-item > .cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 73px;
+    right: 0;
+    border-top: 1px solid var(--sep-light);
+    pointer-events: none;
+}
+
+/* Backups: Download above the backup's two confirms. */
+.edit-body > .button-small {
+    display: inline-block;
+    margin-bottom: 8px;
 }
 
 /* ---- Device › Music (design 31 step 7) ---- */

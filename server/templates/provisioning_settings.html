@@ -5,41 +5,51 @@
 </head>
 <body>
 {% let tab = "settings" %}
-{% include "partials/app_header.html" %}
+{% include "partials/tab_bar.html" %}
 <main class="container container-narrow">
-    <div class="page-header">
-        <h1>Phone Setup</h1>
-    </div>
-    <p class="subtitle">Embedded verbatim into every device's setup QR code (both Android's native zero-touch provisioning on stock/GMS devices, and the launcher's own in-app QR scanner for devices like GrapheneOS that need adb-based setup instead). One server covers every device. The Tailscale key is one-time: put a new one here before each phone's setup.</p>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
+    <h1 class="page-title">Phone Setup</h1>
 
-    <div class="card">
-        <form method="post" action="/settings/provisioning">
-            <label for="server_url">Server URL</label>
-            <input type="text" id="server_url" name="server_url" value="{{ settings.server_url }}" placeholder="https://kidphone.your-tailnet.ts.net" autocomplete="off">
-            <p class="subtitle">The tailnet HTTPS URL devices use to reach this server - same value you'd otherwise type into the app's Settings &gt; Server URL by hand.</p>
-
-            <label for="tailscale_auth_key">Tailscale auth key</label>
-            <p>{% if let Some(hint) = tailscale_key_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-            <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Type a new key to replace it{% else %}tskey-auth-...{% endif %}" autocomplete="off">
-            {% if tailscale_key_hint.is_some() %}
-            <label class="checkbox-row">
-                <input type="checkbox" name="clear_tailscale_auth_key" value="on">
-                <span>Remove the stored key</span>
-            </label>
-            {% endif %}
-            <p class="subtitle">A <em>one-time</em>, tagged (<code>tag:kid</code>), pre-approved auth key from your Tailscale admin console, used by the phone's embedded tsnet client. One key sets up one phone: make a new one before each setup (DEPLOY.md, "Tailscale keys for the phones"). A used key is worth nothing, so a photo of the setup QR is too. It is never shown again here; leave the field empty to keep it. Leave it unset to enter it by hand per device instead.</p>
-
-            <label for="locale">Phone language</label>
-            <input type="text" id="locale" name="locale" value="{{ settings.locale }}" placeholder="nb_NO" autocomplete="off">
-            <p class="subtitle">Set on the phone during QR setup (Android's PROVISIONING_LOCALE, form <code>nb_NO</code>). Leave blank to keep the phone's own. adb setup doesn't set it - choose the language in Android's Settings before enrolling. While the phone is managed its language is locked ("Lock the phone's language" in each phone's Advanced › Restrictions).</p>
-
-            <label for="time_zone">Time zone</label>
-            <input type="text" id="time_zone" name="time_zone" value="{{ settings.time_zone }}" placeholder="Europe/Oslo" autocomplete="off">
-            <p class="subtitle">Set during QR setup (PROVISIONING_TIME_ZONE, an IANA name like <code>Europe/Oslo</code>). Leave blank to keep the phone's own; automatic time zone is on while the phone is managed.</p>
-
-            <button type="submit">Save</button>
-        </form>
-    </div>
+    {#- One form (§5.6: the handler writes every field). A refusal renders in the POST's answer at
+        #setup; a save comes back to the flash under Save (#saved). -#}
+    <form method="post" action="/settings/provisioning#setup" id="setup">
+        <div class="group form-group">
+            <div class="field">
+                <label class="field-label" for="server_url">Server address</label>
+                <details class="info field-info"><summary aria-label="About the server address"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>This server's HTTPS address on your tailnet. The setup QR code gives it to the phone, so nobody types it there.</p></div></details>
+                <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="https://vibb.your-tailnet.ts.net" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url">
+                <p class="field-hint">The address phones use to reach this server.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="tailscale_auth_key">Tailscale key</label>
+                <details class="info field-info"><summary aria-label="About the Tailscale key"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>A one-time, pre-approved auth key tagged tag:kid, from the Tailscale admin console. One key sets up one phone, so a photo of a used setup QR code is worth nothing.</p><p>It is never shown again here; leave the field empty to keep it. Without one, you enter it on each phone by hand. DEPLOY.md, "Tailscale keys for the phones", has the steps.</p></div></details>
+                <p class="field-hint" data-row="key">{% if let Some(hint) = tailscale_key_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
+                <input type="password" id="tailscale_auth_key" name="tailscale_auth_key" value="" placeholder="{% if tailscale_key_hint.is_some() %}Paste a new key to replace it{% else %}Paste the key{% endif %}" autocomplete="off"{% if entered.key_dropped %} aria-invalid="true" aria-describedby="key-error"{% endif %}>
+                {% if entered.key_dropped %}<p class="field-error" id="key-error">The new key wasn't saved. Paste it again.</p>{% else %}<p class="field-hint">Make a new one-time key before each phone setup.</p>{% endif %}
+                {% if tailscale_key_hint.is_some() %}
+                <label class="checkbox-row">
+                    <input type="checkbox" name="clear_tailscale_auth_key" value="on"{% if entered.clear_key %} checked{% endif %}>
+                    <span>Remove the stored key</span>
+                </label>
+                {% endif %}
+            </div>
+            <div class="field">
+                <label class="field-label" for="locale">Phone language</label>
+                <details class="info field-info"><summary aria-label="About the phone language"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Set during QR setup, in the form nb_NO. Leave it blank to keep the phone's own. A phone set up without the QR code keeps the language chosen in Android's settings.</p><p>While the phone is managed, its language stays locked (Advanced › Restrictions on the phone's page).</p></div></details>
+                <input type="text" id="locale" name="locale" value="{{ entered.locale }}" placeholder="nb_NO" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "locale" %} aria-invalid="true" aria-describedby="locale-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "locale" %}<p class="field-error" id="locale-error">{{ why }}</p>{% endif %}{% endif %}
+            </div>
+            <div class="field">
+                <label class="field-label" for="time_zone">Time zone</label>
+                <details class="info field-info"><summary aria-label="About the time zone"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Set during QR setup, a name like Europe/Oslo. Leave it blank to keep the phone's own; the phone then follows the network's time zone.</p><p>This app shows its times in this zone too, or in UTC when it is blank or unknown.</p></div></details>
+                <input type="text" id="time_zone" name="time_zone" value="{{ entered.time_zone }}" placeholder="Europe/Oslo" autocomplete="off" autocapitalize="none" spellcheck="false"{% if let Some((field, _)) = error %}{% if *field == "time_zone" %} aria-invalid="true" aria-describedby="time_zone-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "time_zone" %}<p class="field-error" id="time_zone-error">{{ why }}</p>{% endif %}{% endif %}
+            </div>
+            <button type="submit" class="button-wide">Save</button>
+        </div>
+        <p class="group-footer">The setup QR code carries these to each new phone.</p>
+        {% if saved %}<div class="group" id="saved"><p class="flash" data-flash="setup" role="status">Saved. Phones set up from now on get these.</p></div>{% endif %}
+    </form>
 </main>
 </body>
 </html>

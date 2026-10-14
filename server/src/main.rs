@@ -76,6 +76,10 @@ pub struct AppState {
     /// Fork-specific settings from env vars (release repo, launcher provisioning values) - see
     /// `config::ForkConfig`.
     pub config: std::sync::Arc<config::ForkConfig>,
+    /// `data/` (a temp dir in tests): the backups and their schedule, the update and system
+    /// schedules and the root helper's request file (`handlers::backups`, `system_update`,
+    /// `system_maintenance`), so a test can drive them without touching the working directory.
+    pub data_dir: std::sync::Arc<std::path::PathBuf>,
     /// Where contact photos are stored (`data/contact_photos`; a temp dir in tests) - see
     /// `photos`.
     pub photo_dir: std::sync::Arc<std::path::PathBuf>,
@@ -354,6 +358,7 @@ async fn main() {
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
+        data_dir: std::sync::Arc::new(std::path::PathBuf::from("data")),
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
@@ -389,7 +394,7 @@ async fn main() {
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     // After a restore the database may name photos or wallpapers that aren't on disk: take them
     // from the backups, or drop the reference (design 05, 08).
-    photos::recover_missing(&state, std::path::Path::new(handlers::backups::BACKUP_DIR)).await;
+    photos::recover_missing(&state, &state.data_dir.join(handlers::backups::BACKUP_DIR)).await;
     // Own music files are never backed up: one that isn't on disk is listed as missing (design 21,
     // QA #3), and an upload a crash interrupted leaves no temp file.
     music::remove_partial_uploads(&state.music_files_dir).await;
