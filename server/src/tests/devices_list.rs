@@ -328,12 +328,16 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     )));
     assert!(anna_page.contains(">Do Not Disturb is on</span>"));
     assert!(anna_page.contains(&format!(
-        "<a class=\"attention attention-action\" href=\"/devices/{anna}#time\" data-attention=\"launcher-without-rules\">"
+        "<a class=\"attention attention-action\" href=\"/devices/{anna}/time\" data-attention=\"launcher-without-rules\">"
     )));
     // The targets exist on their pages.
-    for anchor in ["status", "time"] {
-        assert!(anna_page.contains(&format!("id=\"{anchor}\"")), "{anchor}");
-    }
+    assert!(anna_page.contains("id=\"status\""));
+    // Device › Time's warnings sit at its top: the page answers.
+    let time = app
+        .get_page(&format!("/devices/{anna}/time"), &cookie)
+        .await;
+    assert_eq!(time.status, axum::http::StatusCode::OK);
+    assert!(time.text().contains("Vibb too old for time rules"));
     for (page, anchor) in [
         ("about", "sound"),
         ("about", "software"),

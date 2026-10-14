@@ -3,7 +3,7 @@
 use axum::http::{Method, StatusCode};
 use serde_json::json;
 
-use super::TestApp;
+use super::{Section, TestApp, assert_redirect, device_page};
 
 async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
     let res = app
@@ -50,7 +50,16 @@ async fn global_rule_reaches_every_device_and_nudges_them() {
     let res = app
         .request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
         .await;
-    assert_eq!(res.location(), Some("/schedules"), "{}", res.text());
+    let rule_id: i64 = sqlx::query_scalar("SELECT id FROM time_rules")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // A new rule opens its own page (design 31 step 9).
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{rule_id}?saved=added"),
+        None,
+    );
     let mut nudged = vec![nudges.try_recv().unwrap(), nudges.try_recv().unwrap()];
     nudged.sort_unstable();
     assert_eq!(nudged, vec![a.min(b), a.max(b)]);
@@ -106,9 +115,15 @@ async fn device_override_uses_its_own_rules_and_budget() {
             ],
         )
         .await;
-    assert_eq!(
-        res.location(),
-        Some(format!("/schedules?device={id}").as_str())
+    let own_rule: i64 = sqlx::query_scalar("SELECT id FROM time_rules WHERE device_id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_redirect(
+        &res,
+        &format!("/schedules/rules/{own_rule}?saved=added"),
+        None,
     );
 
     // Not in force until the override is on.
@@ -141,9 +156,7 @@ async fn device_override_uses_its_own_rules_and_budget() {
         json!([null, null, 45, null, null, null, null])
     );
 
-    let page = app
-        .get_page(&format!("/schedules?device={id}"), &cookie)
-        .await;
+    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.text().contains("Leggetid"));
 }
@@ -183,7 +196,8 @@ async fn rule_edit_and_delete_are_scoped() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
-    // Unknown rule / unknown device scope.
+    // A rule that is gone (deleted in another tab): back to the list, nothing written; an
+    // unknown device scope is a 404.
     let res = app
         .request_form(
             Method::POST,
@@ -192,7 +206,7 @@ async fn rule_edit_and_delete_are_scoped() {
             SCHOOL_FORM,
         )
         .await;
-    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_redirect(&res, "/schedules?notice=gone_unsaved", Some("rules"));
     let mut ghost = SCHOOL_FORM.to_vec();
     ghost[0] = ("scope", "9999");
     let res = app
@@ -212,7 +226,7 @@ async fn rule_edit_and_delete_are_scoped() {
             &edit,
         )
         .await;
-    assert!(res.status.is_redirection(), "{}", res.text());
+    assert_redirect(&res, &format!("/schedules/rules/{rule_id}?saved=1"), None);
     let rule = policy(&app, &token).await["time_policy"]["rules"][0].clone();
     assert_eq!(rule["name"], "School");
     assert_eq!(rule["calls_allowed"], true);
@@ -225,11 +239,21 @@ async fn rule_edit_and_delete_are_scoped() {
             &[("scope", "")],
         )
         .await;
-    assert!(res.status.is_redirection());
+    assert_redirect(&res, "/schedules?notice=deleted", Some("rules"));
     assert_eq!(
         policy(&app, &token).await["time_policy"]["rules"],
         json!([])
     );
+    // A second tap on Delete lands on the list too, with nothing to delete.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/schedules/rules/{rule_id}/delete"),
+            Some(&cookie),
+            &[("scope", "")],
+        )
+        .await;
+    assert_redirect(&res, "/schedules?notice=gone", Some("rules"));
 }
 
 #[tokio::test]
@@ -361,12 +385,13 @@ async fn lifts_are_recorded_delivered_and_end() {
             .await
             .unwrap();
     assert_eq!(events, 2);
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(page.text().contains("Skole lifted for 30 min"));
+    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
+    assert!(page.text().contains("Skole paused for 30 min"));
     assert!(page.text().contains("End now"));
     assert!(page.text().contains("+15 min screen time"));
 
-    // End the rule lift early: no longer delivered; ending it again is a 404.
+    // End the rule pause early: no longer delivered; ending it again changes nothing and lands
+    // back (a second tap); a pause this phone never had is a 404.
     let lift_id = lifts[0]["id"].as_i64().unwrap();
     let res = app
         .request_form(
@@ -387,7 +412,49 @@ async fn lifts_are_recorded_delivered_and_end() {
             &[],
         )
         .await;
+    assert_redirect(&res, &format!("/devices/{id}"), None);
+    let ended: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE event_type = 'time_lift_ended'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(ended, 1, "the second tap logs nothing");
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts/999/end"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
     assert_eq!(res.status, StatusCode::NOT_FOUND);
+    // Another phone's running pause can't be ended through this phone's URL (qa-31-s9-code L4).
+    let (other, _) = app.enrolled_device("other").await;
+    let theirs: i64 = sqlx::query_scalar(
+        "INSERT INTO time_lifts (device_id, target, minutes, expires_at) \
+         VALUES (?, 'rule', 30, datetime('now', '+30 minutes')) RETURNING id",
+    )
+    .bind(other)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts/{theirs}/end"),
+            Some(&cookie),
+            &[("back", "time")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    let ended: Option<String> =
+        sqlx::query_scalar("SELECT ended_early_at FROM time_lifts WHERE id = ?")
+            .bind(theirs)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(ended, None, "the other phone's pause keeps running");
 
     // An expired lift isn't delivered.
     sqlx::query("UPDATE time_lifts SET expires_at = datetime('now', '-1 minute')")
@@ -398,7 +465,7 @@ async fn lifts_are_recorded_delivered_and_end() {
         policy(&app, &token).await["time_policy"]["lifts"],
         json!([])
     );
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     assert!(page.text().contains("Ended early"));
 }
 
@@ -423,11 +490,7 @@ async fn invalid_lifts_are_rejected() {
         vec![("target", "rule"), ("rule", "all"), ("minutes", "45")],
         vec![("target", "budget"), ("minutes", "120")],
         vec![("target", "everything"), ("minutes", "30")],
-        vec![
-            ("target", "rule"),
-            ("rule", foreign.as_str()),
-            ("minutes", "30"),
-        ],
+        vec![("target", "rule"), ("rule", "seven"), ("minutes", "30")],
     ] {
         let res = app
             .request_form(
@@ -439,6 +502,57 @@ async fn invalid_lifts_are_rejected() {
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
     }
+    // A rule that doesn't apply to this phone (deleted or switched off since the page loaded):
+    // back to the page with nothing written.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts"),
+            Some(&cookie),
+            &[
+                ("target", "rule"),
+                ("rule", &foreign),
+                ("minutes", "30"),
+                ("back", "time"),
+            ],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/time?done=gone"),
+        Some("pause"),
+    );
+    // No rule applies to this phone at all: Pause a Rule still shows, with the reason, so the
+    // fragment lands on it (qa-31-s9-code M1).
+    let html = app
+        .get_page(&format!("/devices/{id}/time?done=gone"), &cookie)
+        .await
+        .text();
+    let pause = &html[html.find("<section id=\"pause\"").expect("the pause group")..];
+    let pause = &pause[..pause.find("</section>").unwrap()];
+    assert!(pause.contains("data-flash=\"pause\""), "{pause}");
+    assert!(pause.contains("No rules apply to this phone right now."));
+    assert!(pause.contains("flash-error"));
+    // An older tab (no `back`) gets the reason too, on Device › Time (qa-31-s9-code N4).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lifts"),
+            Some(&cookie),
+            &[("target", "rule"), ("rule", &foreign), ("minutes", "30")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/time?done=gone"),
+        Some("pause"),
+    );
+    // Without a refusal and without rules, there is no Pause group.
+    let html = app
+        .get_page(&device_page(id, Section::Time), &cookie)
+        .await
+        .text();
+    assert!(!html.contains("<section id=\"pause\""));
     let res = app
         .request_form(
             Method::POST,
@@ -468,8 +582,12 @@ async fn time_state_is_stored_and_shown() {
         Some(json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": ["call_policy_v1"]})),
     )
     .await;
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(page.text().contains("doesn't know time rules yet"));
+    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
+    assert!(page.text().contains("Vibb too old for time rules"));
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Europe::Oslo)
+        .date_naive()
+        .to_string();
 
     let res = app
         .request(
@@ -481,7 +599,7 @@ async fn time_state_is_stored_and_shown() {
                 "kiosk_engaged": true,
                 "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
-                    "day": "2026-10-05", "used_minutes": 42, "budget_minutes": 90,
+                    "day": today, "used_minutes": 42, "budget_minutes": 90,
                     "extra_minutes": 30, "active_rule_id": 1, "active_rule_name": "Skole",
                     "calls_blocked": true, "lock_reason": "SCHOOL", "lifts_active": []
                 }
@@ -497,11 +615,16 @@ async fn time_state_is_stored_and_shown() {
     .await
     .unwrap();
     assert!(stored.unwrap().contains("\"used_minutes\":42"));
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
+    let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     let text = page.text();
-    assert!(text.contains("Skole is active - calls blocked"), "{text}");
-    assert!(text.contains("Screen time 2026-10-05: 42 of 90 min (incl. 30 extra)"));
-    assert!(!text.contains("doesn't know time rules yet"));
+    // Calls aren't managed here, so no "calls off"; no zone from the phone, so no end.
+    assert!(
+        text.contains("<span class=\"badge badge-lock\">Skole</span>"),
+        "{text}"
+    );
+    assert!(text.contains(">42 of 90 min today<"), "{text}");
+    assert!(text.contains("Includes 30 min extra"));
+    assert!(!text.contains("Vibb too old for time rules"));
 
     // Not an object, or too big: not stored.
     for bad in [json!("SCHOOL"), json!({"x": "y".repeat(5000)})] {
@@ -868,30 +991,30 @@ async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
-    const WARNING: &str = "Incoming calls aren't blocked: calls are unmanaged";
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(!page.text().contains(WARNING), "no rule yet");
+    // Device › Time's warning, and the device page's Attention row (it links to Calls & Contacts).
+    const WARNING: &str = "Incoming calls aren&#39;t blocked";
+    const ROW: &str = "data-attention=\"incoming-calls\"";
+    let time = device_page(id, Section::Time);
+    let summary = device_page(id, Section::Summary);
+    assert!(
+        !app.get_page(&time, &cookie).await.text().contains(WARNING),
+        "no rule yet"
+    );
+    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
 
     app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
         .await;
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(page.text().contains(WARNING), "{}", page.text());
-    let page = app
-        .get_page(&format!("/schedules?device={id}"), &cookie)
-        .await;
-    assert!(page.text().contains(WARNING));
+    let page = app.get_page(&time, &cookie).await.text();
+    assert!(page.contains(WARNING), "{page}");
+    assert!(app.get_page(&summary, &cookie).await.text().contains(ROW));
 
     sqlx::query("UPDATE device_policy SET calls_managed = 1 WHERE device_id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(!page.text().contains(WARNING));
-    let page = app
-        .get_page(&format!("/schedules?device={id}"), &cookie)
-        .await;
-    assert!(!page.text().contains(WARNING));
+    assert!(!app.get_page(&time, &cookie).await.text().contains(WARNING));
+    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
 
     // Calls unmanaged but every rule allows calls: no warning.
     sqlx::query("UPDATE device_policy SET calls_managed = 0 WHERE device_id = ?")
@@ -903,8 +1026,8 @@ async fn a_calls_off_rule_on_a_device_with_unmanaged_calls_warns() {
         .execute(&app.db)
         .await
         .unwrap();
-    let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
-    assert!(!page.text().contains(WARNING));
+    assert!(!app.get_page(&time, &cookie).await.text().contains(WARNING));
+    assert!(!app.get_page(&summary, &cookie).await.text().contains(ROW));
 }
 
 async fn report_time_state(app: &TestApp, token: &str, state: serde_json::Value) {
@@ -959,54 +1082,36 @@ async fn lift_status_comes_from_the_phone() {
         ],
     )
     .await;
-    let lift: i64 = sqlx::query_scalar("SELECT id FROM time_lifts")
+    let (lift, expires): (i64, String) = sqlx::query_as("SELECT id, expires_at FROM time_lifts")
         .fetch_one(&app.db)
         .await
         .unwrap();
-    let text = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(
-        text.contains("Waiting for the phone - server expiry"),
-        "{text}"
-    );
+    let time = device_page(id, Section::Time);
+    let status = |text: &str| -> String {
+        let row = &text[text.find(&format!("data-lift=\"{lift}\"")).unwrap()..];
+        let value = &row[row.find("class=\"row-value\">").unwrap() + 18..];
+        value[..value.find('<').unwrap()].to_string()
+    };
+    let text = app.get_page(&time, &cookie).await.text();
+    assert_eq!(status(&text), "Waiting for the phone");
 
+    // The phone runs it: until the server's expiry, in the Phone Setup zone (Oslo by default),
+    // never the UTC clock.
     report_time_state(&app, &token, time_state(json!([lift]))).await;
-    let text = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(
-        text.contains("Active on the phone - server expiry"),
-        "{text}"
+    let text = app.get_page(&time, &cookie).await.text();
+    let end = crate::display_time::parse_db_utc(&expires).unwrap();
+    let oslo = crate::display_time::Zone::from_setting("Europe/Oslo");
+    assert_eq!(
+        status(&text),
+        format!("Until {}", oslo.until(end, chrono::Utc::now()))
     );
+    assert!(!status(&text).contains(&end.format("%H:%M").to_string()));
 
     // A reboot ended it on the phone, though the server's expiry hasn't passed.
     report_time_state(&app, &token, time_state(json!([]))).await;
-    let text = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(
-        text.contains("Ended on the phone - server expiry"),
-        "{text}"
-    );
-}
-
-#[test]
-fn rule_lift_status_cases() {
-    use crate::handlers::devices::rule_lift_status;
-    let state = json!({"lifts_active": [4, 5]});
-    let at = "2026-10-05 10:00:00";
-    let exp = "2026-10-05 10:30:00";
-    assert!(rule_lift_status(4, at, exp, None).starts_with("Waiting"));
-    assert!(
-        rule_lift_status(4, at, exp, Some(("2026-10-05 09:59:59", &state))).starts_with("Waiting")
-    );
-    assert!(rule_lift_status(4, at, exp, Some((at, &state))).starts_with("Active on the phone"));
-    assert!(rule_lift_status(6, at, exp, Some((at, &state))).starts_with("Ended on the phone"));
-    assert!(rule_lift_status(4, at, exp, Some((at, &json!({})))).starts_with("Ended"));
+    let text = app.get_page(&time, &cookie).await.text();
+    assert_eq!(status(&text), "Ended on the phone");
+    assert!(text.contains("End now"), "the server still sends it");
 }
 
 #[tokio::test]
@@ -1016,19 +1121,26 @@ async fn an_unreadable_ledger_is_shown() {
     let (id, token) = app.enrolled_device("phone").await;
     let mut state = time_state(json!([]));
     report_time_state(&app, &token, state.clone()).await;
-    let text = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(!text.contains("screen-time record was unreadable"));
+    let time = device_page(id, Section::Time);
+    let summary = device_page(id, Section::Summary);
+    assert!(
+        !app.get_page(&time, &cookie)
+            .await
+            .text()
+            .contains("Screen-time record unreadable")
+    );
     state["ledger_unreadable"] = json!(true);
     report_time_state(&app, &token, state).await;
-    let text = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
+    let text = app.get_page(&time, &cookie).await.text();
+    assert!(text.contains("Screen-time record unreadable"), "{text}");
+    assert!(text.contains("screen time as used up"));
+    // The summary keeps a signal: the Attention row to Device › Time, and the row's value.
+    let text = app.get_page(&summary, &cookie).await.text();
+    assert!(text.contains(&format!(
+        "href=\"/devices/{id}/time\" data-attention=\"screen-time-record\""
+    )));
     assert!(
-        text.contains("screen-time record was unreadable; today's budget counts as used up"),
+        text.contains("row-value row-value-action\">Needs attention<"),
         "{text}"
     );
 }
@@ -1157,31 +1269,41 @@ async fn the_phones_locate_answer_is_shown() {
 async fn a_rule_name_is_never_script() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let name = "x');alert(1);('";
-    sqlx::query(
-        "INSERT INTO time_rules (id, device_id, name, kind, calls_allowed, days_json) \
-         VALUES (7, NULL, ?, 'school', 0, '[null,null,null,null,null,null,null]')",
-    )
-    .bind(name)
-    .execute(&app.db)
-    .await
-    .unwrap();
-    let page = app.get_page("/schedules", &cookie).await.text();
-    let form = page
-        .split("action=\"/schedules/rules/7/delete\"")
-        .nth(1)
-        .and_then(|rest| rest.split('>').next())
-        .expect("the delete form");
-    assert!(
-        form.contains(r#"onsubmit="return confirm('Delete ' + this.dataset.name + '?');""#),
-        "{form}"
-    );
-    assert!(
-        form.contains("data-name=\"x&#39;);alert(1);(&#39;\""),
-        "{form}"
-    );
-    assert!(
-        !page.contains("alert(1);('"),
-        "the raw name is nowhere in the page"
-    );
+    let (id, _) = app.enrolled_device("phone").await;
+    let name = "<b>x</b>');alert(1);(\"";
+    let escaped = "&#60;b&#62;x&#60;/b&#62;&#39;);alert(1);(&#34;";
+    for (rule, device) in [(7, None), (8, Some(id))] {
+        sqlx::query(
+            "INSERT INTO time_rules (id, device_id, name, kind, calls_allowed, days_json) \
+             VALUES (?, ?, ?, 'school', 0, '[null,null,null,null,null,null,null]')",
+        )
+        .bind(rule)
+        .bind(device)
+        .bind(name)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The list, both editors (title, name field, the delete's sentence) and Device › Time (its own
+    // rules and the Pause picker) show it escaped; no confirm() is built from it any more.
+    for page in [
+        "/schedules".to_string(),
+        "/schedules/rules/7".to_string(),
+        "/schedules/rules/8".to_string(),
+        device_page(id, Section::Time),
+    ] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(html.contains(escaped), "{page}: {html}");
+        assert!(!html.contains("<b>x</b>"), "{page}: the raw name");
+        assert!(!html.contains("alert(1);(\""), "{page}: the raw name");
+        assert!(!html.contains("confirm("), "{page}");
+    }
+    let editor = app.get_page("/schedules/rules/7", &cookie).await.text();
+    assert!(editor.contains(&format!("<title>{escaped} · Vibb Phone</title>")));
+    assert!(editor.contains(&format!("value=\"{escaped}\"")));
 }

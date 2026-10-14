@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <h1 class="page-title">Time</h1>
+
+    {#- Every form returns to its own group (the action carries the same fragment), with its flash
+        there: the lifts with back=time (§5.1), the own-rules switch with section=switch and the
+        limits with section=budget (§5.6, H1: each writes only its own). -#}
+    {% for note in warnings %}
+    {% include "partials/note_warning.html" %}
+    {% endfor %}
+
+    <section id="now" aria-labelledby="now-title">
+        <h2 class="group-header" id="now-title">Now</h2>
+        <div class="group">
+            <div class="row" data-row="time-lock">
+                <span class="row-label">Time lock</span>
+                <span class="row-value">{% if locking %}<span class="badge badge-lock">{{ lock }}</span>{% else %}{{ lock }}{% endif %}</span>
+            </div>
+            {% if let Some((text, extra)) = screen %}
+            <div class="row" data-row="screen-time">
+                <span class="row-label">Screen time{% if let Some(extra) = extra %}<span class="row-sub">{{ extra }}</span>{% endif %}</span>
+                <span class="row-value">{{ text }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% if let Some((age, exact)) = reported %}<p class="group-footer">From the phone's last report, <span title="{{ exact }}" data-reported>{{ age }}</span>.</p>{% endif %}
+    </section>
+
+    <section id="extra" aria-labelledby="extra-title">
+        <h2 class="group-header" id="extra-title">Extra Time Today</h2>
+        <div class="act-grid">
+            {% for minutes in [15, 30, 60] %}
+            <form method="post" action="/devices/{{ device.id }}/lifts#extra">
+                <input type="hidden" name="target" value="budget">
+                <input type="hidden" name="minutes" value="{{ minutes }}">
+                <input type="hidden" name="back" value="time">
+                <button type="submit" class="act">{% if *minutes == 60 %}+1 h{% else %}+{{ minutes }} min{% endif %}</button>
+            </form>
+            {% endfor %}
+        </div>
+        {% if let Some((group, text, refused)) = done %}{% if *group == "extra" %}<div class="group"><p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="extra">{{ text }}</p></div>{% endif %}{% endif %}
+        <p class="group-footer group-footer-after">Adds to today's screen time on the phone.</p>
+    </section>
+
+    {#- Shown for its flash too, so a refused pause of the last rule that applied lands here and
+        says why (qa-31-s9-code M1). -#}
+    {% if pause_rules.is_empty() && pause_done %}
+    <section id="pause" aria-labelledby="pause-title">
+        <h2 class="group-header" id="pause-title">Pause a Rule</h2>
+        <div class="group">
+            <p class="row row-note">No rules apply to this phone right now.</p>
+            {% if let Some((_, text, refused)) = done %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="pause">{{ text }}</p>{% endif %}
+        </div>
+    </section>
+    {% else if !pause_rules.is_empty() %}
+    <section id="pause" aria-labelledby="pause-title">
+        <h2 class="group-header" id="pause-title">Pause a Rule</h2>
+        <form method="post" action="/devices/{{ device.id }}/lifts#pause" class="group">
+            <input type="hidden" name="target" value="rule">
+            <input type="hidden" name="back" value="time">
+            <label class="row">
+                <span class="row-label">Rule</span>
+                <select class="pick" name="rule">
+                    <option value="all">All rules</option>
+                    {% for (id, name) in pause_rules %}
+                    <option value="{{ id }}">{{ name }}</option>
+                    {% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <label class="row">
+                <span class="row-label">For</span>
+                <select class="pick" name="minutes">
+                    <option value="15">15 min</option>
+                    <option value="30" selected>30 min</option>
+                    <option value="60">1 h</option>
+                    <option value="120">2 h</option>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <button type="submit" class="row row-button">Pause</button>
+            {% if let Some((group, text, refused)) = done %}{% if *group == "pause" %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="pause">{{ text }}</p>{% endif %}{% endif %}
+        </form>
+        <p class="group-footer">The rule comes back by itself. Calls stay as the call rules say.</p>
+    </section>
+    {% endif %}
+
+    {% if !lifts.is_empty() %}
+    <section id="lifts" aria-labelledby="lifts-title">
+        <h2 class="group-header" id="lifts-title">Recent</h2>
+        <div class="group">
+            {% for l in lifts %}
+            <div class="row" data-lift="{{ l.id }}">
+                <span class="row-label">{{ l.what }}<span class="row-sub"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{{ l.when }}{% if !l.by.is_empty() %} · {{ l.by }}{% endif %}</span></span>
+                <span class="row-value">{{ l.status }}</span>
+                {% if l.can_end %}
+                <form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end#lifts" class="row-end">
+                    <input type="hidden" name="back" value="time">
+                    <button type="submit" class="row-action">End now</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% if let Some((group, text, refused)) = done %}{% if *group == "lifts" %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="lifts">{{ text }}</p>{% endif %}{% endif %}
+        </div>
+        <p class="group-footer">Extra time counts for the day the phone gets it, and can't be taken back.</p>
+    </section>
+    {% endif %}
+
+    <section id="rules" aria-labelledby="rules-title">
+        <h2 class="group-header" id="rules-title">Rules</h2>
+        <div class="group">
+            {#- `section=switch` writes only the switch, never the limits below (§5.6, H1). -#}
+            <form method="post" action="/schedules/device/{{ device.id }}#rules" class="cell">
+                <input type="hidden" name="section" value="switch">
+                <label class="row">
+                    <span class="row-label">Own rules</span>
+                    <input type="checkbox" role="switch" class="sw" name="custom_schedule_enabled" value="on"{% if custom %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% if !custom %}
+            <a class="row" href="/schedules" data-row="everyone">
+                <span class="row-label">Everyone's Rules</span>
+                <span class="row-value">{{ everyone_rules }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
+        </div>
+        <p class="group-footer">{% if custom %}On: {{ device.name }} follows the rules and daily limit below.{% else %}Off: {{ device.name }} follows everyone's rules and daily limit.{% endif %} Emergency calls always work.</p>
+    </section>
+
+    <section id="own-rules" aria-labelledby="own-rules-title">
+        <h2 class="group-header" id="own-rules-title">Own Rules</h2>
+        <div class="group">
+            {% for r in own_rules %}
+            <a class="row" href="/schedules/rules/{{ r.id }}" data-rule="{{ r.id }}">
+                <span class="row-label">{{ r.name }}<span class="row-sub{% if r.corrupt %} text-alarm{% endif %}">{{ r.summary }}</span></span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endfor %}
+            <a class="row row-button" href="/schedules/rules/new?device={{ device.id }}">Add Rule</a>
+            {% if let Some((text, refused)) = own_notice %}<p class="flash{% if *refused %} flash-error{% endif %}" role="status" data-flash="own-rules">{{ text }}</p>{% endif %}
+        </div>
+        {% if !custom %}<p class="group-footer">Used once Own rules is on.</p>{% endif %}
+    </section>
+
+    <section id="screen-time" aria-labelledby="screen-time-title">
+        <h2 class="group-header" id="screen-time-title">Own Daily Limit</h2>
+        {% if budget_corrupt %}
+        <div class="attention attention-alarm" data-warning="budget-corrupt"><div class="attention-text">Stored limits unreadable<div class="attention-sub">The phone gets an error instead of its rules until you save here again.</div></div></div>
+        {% endif %}
+        {#- `section=budget` writes only the limits, never the switch (§5.6, H1). -#}
+        <form method="post" action="/schedules/device/{{ device.id }}#screen-time" class="group">
+            <input type="hidden" name="section" value="budget">
+            {% include "partials/budget_rows.html" %}
+            <button type="submit" class="row row-button">Save</button>
+            {% if budget_saved %}<p class="flash" role="status" data-flash="screen-time">Saved.</p>{% endif %}
+        </form>
+        <p class="group-footer">Minutes a day. Empty means no limit.{% if !custom %} Used once Own rules is on.{% endif %}</p>
+    </section>
+</main>
+</body>
+</html>

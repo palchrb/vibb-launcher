@@ -316,7 +316,8 @@ fn title(kind: Kind) -> String {
 /// the cards' anchors on the device page; each step moves its targets. Step 3 moved Do Not
 /// Disturb, the policy problem and the restarts to About This Phone, and Google backup, access
 /// and the restart to Advanced; step 4 the Parent PIN and the lock to Lock Screen & PINs; step 5
-/// notification access to Home Screen.
+/// notification access to Home Screen; step 9 the screen-time record and Vibb too old for time
+/// rules to Device › Time.
 fn target(kind: Kind, id: i64) -> String {
     let (page, anchor) = match kind {
         Kind::RestrictionsPaused | Kind::ForeignAccess | Kind::BlockedApps(_) => ("", "status"),
@@ -332,9 +333,12 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
         Kind::ChildLockOff => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
-        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => ("", "time"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
+        }
+        // Device › Time's warnings at the top of the page (step 9): no fragment needed.
+        Kind::LedgerUnreadable | Kind::LauncherWithoutRules => {
+            return format!("/devices/{id}/time");
         }
         // Device › Music's warnings at the top of the page: no fragment needed.
         Kind::MusicCantDeliver | Kind::MusicUnreachable => {
@@ -347,6 +351,15 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::MusicFailing(_) => ("/music", "library"),
     };
     format!("/devices/{id}{page}#{anchor}")
+}
+
+/// A rule's "calls off" is real: calls are managed and the call report doesn't say the launcher
+/// can't screen them. The lock badge's "· calls off" on every page reads it (qa-31-s9-code N1).
+pub fn calls_enforced(policy: &DevicePolicy, problems: &[CallProblem]) -> bool {
+    policy.calls_managed
+        && !problems
+            .iter()
+            .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall))
 }
 
 /// What [facts_of] reads; the device page passes the cards it has built.
@@ -460,9 +473,6 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     } else {
         s.relock.blocks.items.len()
     };
-    let time = latest
-        .and_then(|st| st.time_state_json.as_deref())
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
     let play =
@@ -525,15 +535,13 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
             .is_some(),
         calls: s.call_problems.to_vec(),
-        ledger_unreadable: time
-            .as_ref()
-            .is_some_and(|t| t["ledger_unreadable"].as_bool() == Some(true)),
+        // Device › Time reads the same typed report.
+        ledger_unreadable: latest
+            .and_then(|st| st.time_state_json.as_deref())
+            .and_then(crate::time_state::TimeReport::parse)
+            .is_some_and(|report| report.ledger_unreadable),
         launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
-        calls_enforced: policy.calls_managed
-            && !s
-                .call_problems
-                .iter()
-                .any(|p| matches!(p, CallProblem::NotEnforced | CallProblem::AnyoneCanCall)),
+        calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
         music: crate::handlers::music::music_warnings(policy, latest, s.music_ticked),
     }
@@ -746,7 +754,9 @@ mod tests {
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
         // Step 5: Home Screen.
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
-        assert_eq!(target("screen-time-record"), "/devices/7#time");
+        // Step 9: Device › Time, its warnings at the top.
+        assert_eq!(target("screen-time-record"), "/devices/7/time");
+        assert_eq!(target("launcher-without-rules"), "/devices/7/time");
         assert_eq!(target("calls"), "/devices/7/calls");
         assert_eq!(target("incoming-calls"), "/devices/7/calls");
         // Step 7's fix round: Device › Music - the top warnings without a fragment, the others at

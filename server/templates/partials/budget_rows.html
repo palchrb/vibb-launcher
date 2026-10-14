@@ -1,0 +1,11 @@
+{#- The 7 daily limits as rows (`schedules::BudgetInput`, as `budget`): Settings › Time Rules ›
+    Daily Limit and a phone's own limits on Device › Time. A refused field has its reason under its
+    row and is focused, so the answer lands on it. -#}
+{% for b in budget %}
+<label class="row" for="b{{ b.index }}">
+    <span class="row-label">{{ b.name }}</span>
+    <input type="number" class="row-num" id="b{{ b.index }}" name="b{{ b.index }}" value="{{ b.value }}" min="0" max="1440" inputmode="numeric" placeholder="No limit"{% if b.error.is_some() %} aria-invalid="true" aria-describedby="b{{ b.index }}-error" autofocus{% endif %}>
+    <span class="row-unit" aria-hidden="true">min</span>
+</label>
+{% if let Some(why) = b.error %}<p class="flash flash-error" id="b{{ b.index }}-error" role="status" data-flash="screen-time">{{ why }} Nothing was saved.</p>{% endif %}
+{% endfor %}

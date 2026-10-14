@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "settings" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/schedules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Time Rules</a>
+    <h1 class="page-title">Daily Limit</h1>
+
+    {#- One form (§5.6: the handler writes all 7 days). Save returns to #screen-time with the flash
+        under it; a refusal renders this page again there, as typed. -#}
+    <section id="screen-time" aria-labelledby="screen-time-title">
+        <h2 class="group-header" id="screen-time-title">Everyone · Screen Time</h2>
+        {% if corrupt %}
+        <div class="attention attention-alarm" data-warning="budget-corrupt"><div class="attention-text">Stored limits unreadable<div class="attention-sub">The phones get an error instead of their rules until you save here again.</div></div></div>
+        {% endif %}
+        <form method="post" action="/schedules/global#screen-time" class="group">
+            {% include "partials/budget_rows.html" %}
+            <button type="submit" class="row row-button">Save</button>
+            {% if saved %}<p class="flash" role="status" data-flash="screen-time">Saved. Phones that follow everyone's rules get it within seconds.</p>{% endif %}
+        </form>
+        <div class="group-footer">Minutes a day. Empty means no limit.
+            <details class="info">
+                <summary aria-label="About the daily limit"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>Time with the screen on and an app open counts; calls don't. When it's used up, only calls and the message apps chosen for contacts still work.</p>
+                    <p>A phone with its own rules has its own limits, on its Time page.</p>
+                </div>
+            </details>
+        </div>
+    </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "settings" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    {#- One form (§5.6: the handler writes every field). Save sits in a sticky top bar, as the
+        RuleEditor mockup's navigation bar, so it is in reach after editing any field, and the
+        save's flash or a refusal's reason shows in that bar - in view wherever the page opens, with
+        or without JS (qa-31-s9-code M2, L1). A save returns here without a fragment (scroll-restore
+        keeps the place), a new rule to its own page; a refusal renders this page again (400) as
+        typed, the reason also under its field. -#}
+    <form method="post" action="{% if rule.id == 0 %}/schedules/rules{% else %}/schedules/rules/{{ rule.id }}{% endif %}" id="rule">
+        <input type="hidden" name="scope" value="{{ scope }}">
+        <div class="editor-bar" data-bar="rule">
+            <div class="title-bar title-bar-split">
+                <a class="nav-back" href="{{ back_href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back_label }}</a>
+                <button type="submit" class="title-action" data-save="rule">{% if rule.id == 0 %}Add{% else %}Save{% endif %}</button>
+            </div>
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. {{ why }}</p>{% endif %}
+            {% if let Some(text) = saved %}<p class="flash bar-flash" role="status" data-flash="rule">{{ text }}</p>{% endif %}
+        </div>
+        <h1 class="page-title">{{ title }}</h1>
+
+        {% if let Some(parts) = corrupt %}
+        <div class="attention attention-alarm" data-warning="rule-corrupt"><div class="attention-text">Stored rule unreadable<div class="attention-sub">The phones get an error instead of their rules. {{ parts }}, so they show empty here and are saved as you see them: set them again, then Save - or delete the rule.</div></div></div>
+        {% endif %}
+        <section id="rule-main" aria-label="Rule">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Name</span>
+                    <input type="text" class="row-input row-input-end" name="name" value="{{ rule.name }}" maxlength="60" required placeholder="Skole" autocomplete="off"{% if rule.name_error.is_some() %} aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}>
+                </label>
+                {% if let Some(why) = rule.name_error %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
+                <label class="row">
+                    <span class="row-label">Type</span>
+                    {#- The kind pre-sets the calls switch (school: off); the switch can still be changed. -#}
+                    <select class="pick" name="kind" onchange="var c=this.form.querySelector('[name=calls_allowed]'); if (c) c.checked = this.value != 'school';">
+                        {% for (value, label) in kinds %}
+                        <option value="{{ value }}"{% if rule.kind == *value %} selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <label class="row">
+                    <span class="row-label">Calls with contacts</span>
+                    <input type="checkbox" role="switch" class="sw" name="calls_allowed" value="on"{% if rule.calls_allowed %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <p class="group-footer">The phone is locked while the rule runs. Emergency calls always work.</p>
+        </section>
+
+        <section id="when" aria-labelledby="when-title">
+            <h2 class="group-header" id="when-title">When</h2>
+            <div class="group">
+                {% for d in rule.days %}
+                <div class="row day-row" data-day="{{ d.index }}">
+                    <span class="row-label">{{ d.short }}</span>
+                    <input type="time" class="row-time" name="d{{ d.index }}_start" value="{{ d.start }}" aria-label="{{ d.name }} from"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error" autofocus{% endif %}>
+                    <span class="day-dash" aria-hidden="true">&ndash;</span>
+                    <input type="time" class="row-time" name="d{{ d.index }}_end" value="{{ d.end }}" aria-label="{{ d.name }} until"{% if d.error.is_some() %} aria-invalid="true" aria-describedby="d{{ d.index }}-error"{% endif %}>
+                </div>
+                {% if let Some(why) = d.error %}<p class="flash flash-error" id="d{{ d.index }}-error" data-flash="day-{{ d.index }}">{{ why }}</p>{% endif %}
+                {% endfor %}
+            </div>
+            <div class="group-footer">On the phone's clock. Leave a day empty when the rule is off.
+                <details class="info">
+                    <summary aria-label="About the times"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                    <div class="info-panel">
+                        <p>An end before the start ends the next morning (21:00 to 07:00). The same start and end lasts 24 hours.</p>
+                        <p>The phone follows its own clock and time zone, also across summer time.</p>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <section id="exceptions" aria-labelledby="exceptions-title">
+            <h2 class="group-header" id="exceptions-title">Exceptions</h2>
+            <div class="group">
+                {#- Inside the form (H1): the handler writes the exempt apps with every save. -#}
+                <details class="cell disclosure"{% if rule.apps_error.is_some() %} open{% endif %}>
+                    <summary class="row">
+                        <span class="row-label">Apps that still work</span>
+                        <span class="row-value" data-value="apps">{{ rule.apps_value() }}</span>
+                        <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </summary>
+                    {% if let Some(why) = rule.apps_error %}<p class="flash flash-error" id="apps-error" data-flash="apps">{{ why }}</p>{% endif %}
+                    {% for a in rule.apps %}
+                    <label class="row">
+                        <span class="row-label">{{ a.label }}</span>
+                        <input type="checkbox" role="switch" class="sw" name="exempt_apps" value="{{ a.package }}"{% if a.checked %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                    </label>
+                    {% else %}
+                    <p class="row row-note">No apps reported by the phones yet.</p>
+                    {% endfor %}
+                </details>
+            </div>
+            <p class="group-footer">They must also be allowed under Apps on the phone.</p>
+        </section>
+    </form>
+
+    {% if rule.id != 0 %}
+    <section id="delete" aria-label="Delete rule">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">Delete Rule&hellip;</summary>
+                <form method="post" action="/schedules/rules/{{ rule.id }}/delete" class="confirm-body">
+                    <input type="hidden" name="scope" value="{{ scope }}">
+                    <p>Delete {{ title }}? {% if let Some(name) = device_name %}{{ name }}'s phone is{% else %}The phones that follow everyone's rules are{% endif %} no longer locked by it.</p>
+                    <button type="submit" class="button-destructive">Delete Rule</button>
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

@@ -123,75 +123,9 @@
     </div>
     {% endif %}
 
-    <div class="card" id="time">
-        <h2>Time rules</h2>
-        <p class="subtitle">{% if time.custom %}This phone has its own time rules and screen time.{% else %}This phone follows the global time rules and screen time.{% endif %} Emergency calls always work.</p>
-        {% if time.launcher_without_rules %}
-        <div class="error">This phone's launcher doesn't know time rules yet. Until it updates it keeps the old schedule exactly as it was before time rules were introduced - changes here don't reach it.</div>
-        {% endif %}
-        {% if time.incoming_calls_unblocked %}
-        <div class="error">Incoming calls aren't blocked: calls are unmanaged on this device. A rule without calls (school) only stops outgoing calls here - manage calls on the Calls &amp; SMS page to block incoming ones.</div>
-        {% endif %}
-        {% if time.ledger_unreadable %}
-        <div class="error">The phone's screen-time record was unreadable; today's budget counts as used up.</div>
-        {% endif %}
-        {% if time.rules_error %}
-        <div class="error">Couldn't read the time rules - check the server log.</div>
-        {% endif %}
-        {% if let Some(line) = time.now_line %}<p>Now: <strong>{{ line }}</strong></p>{% endif %}
-        {% if let Some(line) = time.screen_line %}<p>{{ line }}</p>{% endif %}
-        {% if let Some(status) = latest_status %}{% if time.now_line.is_some() %}<p class="subtitle">As of {{ status.reported_at }}</p>{% endif %}{% endif %}
-
-        <form method="post" action="/devices/{{ device.id }}/lifts" style="margin-top:12px;">
-            <input type="hidden" name="target" value="rule">
-            <label for="lift_rule">Lift a rule for a while</label>
-            <select id="lift_rule" name="rule">
-                <option value="all">All rules</option>
-                {% for r in time.rules %}
-                <option value="{{ r.id }}">{{ r.name }}</option>
-                {% endfor %}
-            </select>
-            <select name="minutes" aria-label="For how long">
-                <option value="15">15 min</option>
-                <option value="30" selected>30 min</option>
-                <option value="60">1 hour</option>
-                <option value="120">2 hours</option>
-            </select>
-            <button type="submit" class="button-small">Lift</button>
-        </form>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
-            {% for m in [15, 30, 60] %}
-            <form method="post" action="/devices/{{ device.id }}/lifts">
-                <input type="hidden" name="target" value="budget">
-                <input type="hidden" name="minutes" value="{{ m }}">
-                <button type="submit" class="button-small button-secondary">+{{ m }} min screen time</button>
-            </form>
-            {% endfor %}
-        </div>
-
-        {% if !time.lifts.is_empty() %}
-        <div class="table-wrap" style="margin-top:12px;">
-        <table>
-            <thead><tr><th>Lift</th><th>When</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-            {% for l in time.lifts %}
-            <tr>
-                <td>{{ l.what }}</td>
-                <td>{{ l.created_at }}{% if !l.created_by.is_empty() %} by {{ l.created_by }}{% endif %}</td>
-                <td>{{ l.status }}</td>
-                <td>{% if l.can_end %}<form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end"><button type="submit" class="button-small button-secondary">End now</button></form>{% endif %}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-        </div>
-        {% endif %}
-        <a href="/schedules?device={{ device.id }}" class="button-small" style="margin-top:12px;">Edit time rules and screen time</a>
-    </div>
-
-    {#- Design 31 steps 3-8: the Status/Access/Play/crash facts, the set-once controls, the lock
-        and PINs, the home screen, the web filter, the apps, the music and calls moved to their
-        sub-pages; the rows stay where the summary (step 10) has them, at the bottom. -#}
+    {#- Design 31 steps 3-9: the Status/Access/Play/crash facts, the set-once controls, the lock
+        and PINs, the home screen, the web filter, the apps, the music, calls and time moved to
+        their sub-pages; the rows stay where the summary (step 10) has them, at the bottom. -#}
     <div class="group group-icons" id="more">
         <a class="row" href="/devices/{{ device.id }}/calls" data-row="calls">
             <span class="tile tile-green"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M5 2.5H3.4a1 1 0 0 0-1 1.1c.5 6 5 10.5 11 11a1 1 0 0 0 1.1-1v-1.6a1 1 0 0 0-.8-1l-2.2-.5a1 1 0 0 0-1 .3l-.8.9a8 8 0 0 1-3.8-3.8l.9-.8a1 1 0 0 0 .3-1l-.5-2.2a1 1 0 0 0-1-.8z" fill="currentColor"/></svg></span>
@@ -209,6 +143,12 @@
             <span class="tile tile-pink"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><path d="M6.5 12.5V3.5l7.5-1.7v9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="4.6" cy="12.7" r="2" fill="currentColor"/><circle cx="12.1" cy="11" r="2" fill="currentColor"/></svg></span>
             <span class="row-label">Music</span>
             <span class="row-value{% if music_attention %} row-value-action{% endif %}">{{ music_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="row" href="/devices/{{ device.id }}/time" data-row="time">
+            <span class="tile tile-indigo"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8.5 5v3.7l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+            <span class="row-label">Time</span>
+            <span class="row-value{% if time_attention %} row-value-action{% endif %}">{{ time_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
         <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">
