@@ -448,9 +448,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `RoundButton` is `requiredSize`: give it the room, it never shrinks.
 - **The library's height** (design 34 P10 b, QA L1): the header, the category tiles and the now-playing bar keep their
   own height; the carousel fills the weighted slot between them (`BoxWithConstraints`). Its cover is
-  `libraryCover(slot, lines)` - min(180, the slot less the title and hint lines measured with a `TextMeasurer` at the
-  font scale, less `LIBRARY_SLOT_FIXED_DP`), floor `LIBRARY_COVER_MIN_DP` 120; below the floor the slot scrolls
-  (`libraryScrolls`), so the tiles never slide under the bar. The progress line's room is always kept (the cover never
+  `libraryFit(slotPx, linesPx, reservePx, density)`, in whole pixels with every fixed part rounded as Compose rounds a
+  Dp (`libraryFixedPx`; at density 1.5 a float-dp model overflowed by 2 px) - min(180, the slot less the title and
+  hint lines measured with a `TextMeasurer` at the font scale, less the fixed rest), floor `LIBRARY_COVER_MIN_DP` 120;
+  below the floor the slot scrolls (the `verticalScroll` is applied only then: it clips, and would cut the cover's
+  shadow), so the tiles never slide under the bar. Without the bar its room (`nowBarRoomPx`) is still kept out of the
+  cover, so the cover never changes size when the bar comes or goes. The progress line's room is always kept (the cover never
   resizes on a turn). The pager, its side padding, the pull and the cover glyph all take that cover (`carouselSide`,
   `carouselPeek`, `carouselPull`, `carouselGlyph`); `coverDecodePx` stays at the player's 224 dp (the largest a cover
   is shown, one decoded bitmap per hash for both screens). No fixed `180.dp`/`184.dp` in `LibraryScreen` (`FitTest`).

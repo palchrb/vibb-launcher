@@ -305,8 +305,12 @@ const val EMPTY_GLYPH_DP = 40
 @Composable
 fun EmptyState(icon: ImageVector, headline: String, body: String?, modifier: Modifier = Modifier, centred: Boolean = true) {
     BoxWithConstraints(modifier) {
+        // every caller gives it a weight (a bounded height); the guard keeps an unbounded one from throwing (N4)
+        // (a scroll inside a scrolling parent throws too, so both go only on a bounded height)
+        val scroll = rememberScrollState()
+        val fill = if (constraints.hasBoundedHeight) Modifier.verticalScroll(scroll).heightIn(min = maxHeight) else Modifier
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
+            Modifier.fillMaxWidth().then(fill)
                 .padding(horizontal = 16.dp, vertical = if (centred) 0.dp else 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = if (centred) Arrangement.Center else Arrangement.Top,

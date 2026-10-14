@@ -492,3 +492,21 @@ behaviour, gesture or text outside the empty states changes.
 - The emulator pass (`wm density 240`, nb and en): the library empty and full, with and without the bar, at font scale
   1.0, 1.3 and 2.0 (the tiles fully above the bar, the scroll at 2.0); Nytt and search empty; TalkBack on the empty
   states; the shadows' look on the night ground.
+
+**Layout vs mockup 08 (qa-34-s11-code N3).** The carousel is centred in its slot, and the tiles sit 8 dp above the bar
+(v12's layout). Mockup 08 puts the tiles just under the dots and leaves the spare room above the bar. Both are calm;
+v12 stays the reference. Without the bar, the room it would take stays free (N2), so the carousel centres in the
+taller slot.
+
+### Step 11 code QA fix round (`qa-34-s11-code.md`, 2026-10-14)
+
+| Finding | What was done |
+|---|---|
+| L1 2 px overflow at density 1.5 | The cover is computed in whole pixels: `libraryFit(slotPx, linesPx, reservePx, density)` takes the slot from `constraints.maxHeight`, the two lines as measured px, and `libraryFixedPx(density)` rounds each fixed part as `Dp.roundToPx` does (63 px at 1.5, not 61.5). The pager box is `coverPx + roundToPx(4 dp)`, and the reserved progress spacer is `progressRoomPx` (the line's 3 + 4 dp, each rounded). The slot scrolls only when the content in pixels is taller than the slot. `FitTest` sweeps every slot from 150 to 420 dp in pixels, at densities 1.5, 2, 2.625 and 3 and font scales 1.0, 1.3 and 2.0. It sums the drawn parts independently: without a scroll the content is never a pixel taller than the slot, and a scroll happens only at the floor. |
+| L2 source checks pinned to formatting | Both tests now read the sources with whitespace collapsed. The checks that remain carry meaning: one weighted slot (only the header's weighted spacer), the tiles and bar unweighted, `libraryFit`, one `verticalScroll` and only under `fit.scrolls`, the progress room kept, no `180.dp`/`184.dp`, the shadow's direction, the bar's shadow, the merge, no description, nothing moving. The exact `measure(...)` literals, modifier chains and the like are gone. |
+| N1 the cover's shadow cut at the slot's top | `verticalScroll` is applied only when `fit.scrolls`, so above the floor nothing clips the slot. |
+| N2 180↔174 jump when the bar comes or goes | Chose the smaller, stable size: without the bar, its room (`nowBarRoomPx`: 6 + max(44 dp, its two measured lines) + 6, and the 8 dp gap) is kept out of the cover's room. The cover is the same with and without the bar at every density, scale and nav mode (`FitTest`), and the spare room centres. |
+| N3 the centring vs mockup 08 | Recorded above. |
+| N4 `heightIn(min = maxHeight)` with an unbounded height | In both `EmptyState` and the carousel, `heightIn` (and `EmptyState`'s `verticalScroll`, which would throw too) is applied only when `constraints.hasBoundedHeight`. An unbounded carousel slot counts as `Int.MAX_VALUE`, so the cover is 180 and there is no scroll. |
+| N5 tautological asserts | Gone. The Jelly Star test asserts the numbers: 270 px (180 dp) at 1.0, 250-269 px with no scroll at 1.3, no scroll at 2.0 with gestures, and at 2.0 with three buttons and the bar the 180 px floor with a scroll of 1-30 px (19). |
+| N6 m9 survived; m8 | `EmptyStateTest` parses each `EmptyState(...)` call: the library and Nytt are centred (the default), search is `centred = false`, and `centred` maps to `Arrangement.Center`/`Top`. The font-scale key of `measuredLinesPx` stays. It is harmless, because the activity has no `configChanges` and is recreated on a font-scale change; its KDoc says so. |

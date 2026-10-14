@@ -98,7 +98,8 @@ fun carouselGlyph(coverDp: Float): Float = 84f * coverDp / CAROUSEL_COVER_DP
  * category tiles + now-playing bar, which always keep their own height. The cover is sized from the slot as measured
  * (a BoxWithConstraints), less the title and hint lines as measured at the font scale, less the fixed rest:
  * min(180, what is left), never under 120 - below that the slot scrolls, so nothing ever slides under the tiles or
- * the bar.
+ * the bar. Everything is in whole pixels, each fixed part rounded as Compose rounds a Dp (qa-34-s11-code L1: at
+ * density 1.5 the 3 dp gaps are 4.5 px each, drawn as 5), so the content is never a pixel taller than the slot.
  */
 
 /** The smallest library cover; below it the slot scrolls (QA L1). */
@@ -113,27 +114,52 @@ const val CAROUSEL_GAP_DP = 8
 /** The dots' height. */
 const val CAROUSEL_DOTS_DP = 8
 
+/** The title block's gaps (title, hint, progress line) and the progress line: 3 dp above the 4 dp line. */
+const val CAROUSEL_TITLE_GAP_DP = 3
+const val CAROUSEL_PROGRESS_PAD_DP = 3
+const val CAROUSEL_PROGRESS_DP = 4
+
+/** A dp value in pixels as Compose's `Dp.roundToPx` gives it. */
+fun dpToPx(dp: Int, density: Float): Int = (dp * density).roundToInt()
+
 /**
- * The title block's fixed part (dp): the 3 dp between the title and the hint, and the progress line's 3 + 3 + 4 -
- * always reserved, so the cover keeps its size when the carousel turns to an entry with or without progress.
+ * Everything in the slot but the cover and the two text lines, in pixels as drawn: the pager box's extra, two gaps,
+ * the title block's two 3 dp gaps and the progress line's room (the line, or the spacer of the same height that keeps
+ * its room - always reserved, so the cover keeps its size when the carousel turns), the dots. 41 dp at density 2.
  */
-const val CAROUSEL_TITLE_FIXED_DP = 3 + 3 + 3 + 4
+fun libraryFixedPx(density: Float): Int {
+    fun px(dp: Int) = dpToPx(dp, density)
+    return px(CAROUSEL_BOX_EXTRA_DP) + 2 * px(CAROUSEL_GAP_DP) + 2 * px(CAROUSEL_TITLE_GAP_DP) +
+        progressRoomPx(density) + px(CAROUSEL_DOTS_DP)
+}
 
-/** Everything in the slot but the cover and the two text lines (dp): 41. */
-const val LIBRARY_SLOT_FIXED_DP = CAROUSEL_BOX_EXTRA_DP + CAROUSEL_GAP_DP + CAROUSEL_TITLE_FIXED_DP + CAROUSEL_GAP_DP + CAROUSEL_DOTS_DP
+/** The progress line's room: its 3 dp padding and 4 dp line, each rounded, as the reserved spacer is drawn too. */
+fun progressRoomPx(density: Float): Int = dpToPx(CAROUSEL_PROGRESS_PAD_DP, density) + dpToPx(CAROUSEL_PROGRESS_DP, density)
 
-/** What the slot [slotDp] leaves the cover once the title and hint lines ([linesDp], measured) and the fixed rest are in. */
-private fun libraryRoom(slotDp: Float, linesDp: Float): Float = slotDp - linesDp - LIBRARY_SLOT_FIXED_DP
+/** The library's cover in pixels and whether the slot scrolls. */
+data class LibraryFit(val coverPx: Int, val scrolls: Boolean)
 
-/** The library's cover (dp): min(180, the room the slot leaves), floor 120. */
-fun libraryCover(slotDp: Float, linesDp: Float): Float =
-    libraryRoom(slotDp, linesDp).coerceIn(LIBRARY_COVER_MIN_DP.toFloat(), CAROUSEL_COVER_DP.toFloat())
+/**
+ * The library's cover for a slot of [slotPx] holding the measured title and hint lines ([linesPx]): min(180 dp, what
+ * is left once [reservePx] is also kept free), floor 120 dp. [reservePx] is the now-playing bar's room (and its gap)
+ * while there is no bar, so the cover is the same with and without it (qa-34-s11-code N2: no 180/174 jump when the
+ * bar comes or goes). The slot scrolls only when the content is taller than the slot itself.
+ */
+fun libraryFit(slotPx: Int, linesPx: Int, reservePx: Int, density: Float): LibraryFit {
+    val room = slotPx - reservePx - linesPx - libraryFixedPx(density)
+    val cover = room.coerceIn(dpToPx(LIBRARY_COVER_MIN_DP, density), dpToPx(CAROUSEL_COVER_DP, density))
+    return LibraryFit(cover, librarySlotContentPx(cover, linesPx, density) > slotPx)
+}
 
-/** Below the floor the slot scrolls rather than overlap. */
-fun libraryScrolls(slotDp: Float, linesDp: Float): Boolean = libraryRoom(slotDp, linesDp) < LIBRARY_COVER_MIN_DP
+/** The slot's content in pixels with a cover of [coverPx]. */
+fun librarySlotContentPx(coverPx: Int, linesPx: Int, density: Float): Int = coverPx + linesPx + libraryFixedPx(density)
 
-/** The slot's content (dp) with a cover of [coverDp]: what scrolls when it is taller than the slot. */
-fun librarySlotContent(coverDp: Float, linesDp: Float): Float = coverDp + linesDp + LIBRARY_SLOT_FIXED_DP
+/**
+ * The now-playing bar's room in pixels, its gap above it included: 6 dp above and below the larger of the 44 dp
+ * play button and its two lines ([linesPx], 13 + 11 sp, measured), and the column's 8 dp gap.
+ */
+fun nowBarRoomPx(linesPx: Int, density: Float): Int =
+    2 * dpToPx(6, density) + maxOf(dpToPx(44, density), linesPx) + dpToPx(CAROUSEL_GAP_DP, density)
 
 // The player's art (design 27 §3.3): today's single cover, or the episode carousel in its place.
 
