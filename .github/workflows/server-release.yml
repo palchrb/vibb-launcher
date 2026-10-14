@@ -293,6 +293,9 @@ jobs:
         run: |
           set -euo pipefail
           for platform in linux/amd64 linux/arm64; do
+            # The same digest again for the second platform: newer Docker refuses to pull it over
+            # the first one ("cannot overwrite digest", server-v0.24.0's run), so drop it first.
+            docker image rm -f "$REF" >/dev/null 2>&1 || true
             docker pull --platform "$platform" "$REF"
             deploy/image-smoke.sh "$REF" "$platform"
           done

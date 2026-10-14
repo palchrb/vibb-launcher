@@ -144,13 +144,14 @@ since) is to be checked: wait for the three workflows green on the branch's head
    `kid_phone_server` entry in `server/Cargo.lock`. (0.25.0 is design 30's - 0073 without 0074 - if `main` releases
    it on its own before the merge.)
 5. **Tags, in the Release's order** (each on a `main` commit; versionCode `X*1_000_000 + Y*1_000 + Z`, an RC minus 1):
-   0. `main`'s own step 0: `server-v0.24.0` exists as a tag but its release run failed at `server-release-sign`
-      (minisign: "Error while loading the secret key file"): re-enter `SERVER_MINISIGN_KEY` in the `release`
-      environment as **the whole two-line key file** written by `minisign -G -W` (the pair whose public key is pinned
-      in `server/deploy/*.sh`), then re-run the failed job. No `server-v*` GitHub release exists in the repo yet.
+   0. `server-v0.24.0` is **skipped as a release** (the user, 2026-10-14): with `SERVER_MINISIGN_KEY` re-entered its
+      re-run signed fine, but `server-release-image` failed on a workflow bug (`docker pull` of the same digest for the
+      second platform: "cannot overwrite digest"; fixed on `main` after `9cde918`), and a re-run uses the tag's own
+      workflow. The tag stays without a GitHub release; its image was pushed by digest only (untagged). The first
+      published server release is `server-v0.26.0`, built with the fixed workflow.
    1. `launcher-v0.26.0` (26000; above `launcher-v0.25.0-rc.1` = 24999; becomes "latest", the provisioning QR's APK).
    2. `music-v0.4.0-rc.1` (3999, a prerelease; the catalog offers it with the music row's "include prereleases").
-   3. `server-v0.25.0` - only if `main` releases design 30's 0073 alone; otherwise skip it.
+   3. `server-v0.25.0` - skipped (0.26.0 carries 0073 and 0074).
    4. `server-v0.26.0` with 0074 - after 0073 or carrying both, **never before 0073**.
    The stable `music-v0.4.0` (4000) only after the owed checks of §3.
    The `release` environment's deployment rule must admit `launcher-v*`, `music-v*` and `server-v*` (proven by the
