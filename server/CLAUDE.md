@@ -134,9 +134,10 @@ No prior programming experience - build features directly rather than explaining
 
 - **Contact photos** (`src/photos.rs`, migration `0024`): upload per contact on the calls page (`POST /devices/{id}/contacts/{cid}/photo`, multipart field `photo`, route body limit ~10 MB; remove: `.../photo/remove`), scoped to the device (404 otherwise) but stored on the global `contacts` row (`photo_hash`), so every device with the contact gets it and is nudged. Never stored as sent: decoded with the pure-Rust `image` crate (already in the tree via `totp-rs`'s QR feature; we enable `jpeg`/`webp`; format sniffed from the bytes, limits 8000 px / 256 MiB), EXIF orientation applied, centre-cropped square, shrunk to ≤ 512 px, re-encoded JPEG q85 - which drops all metadata (EXIF/GPS). Decoding is capped at 40 MP / 8000 px a side / 128 MiB, only the ≤ 512 px crop is copied and rotated, and `photos::process_limited` runs one upload at a time on a blocking thread. Store + `photo_hash` commit and `prune`/`recover_missing` share one file lock (`photos::lock_files`), so a prune can't delete a just-stored photo (QA step 5 #2/#3). Files: `AppState.photo_dir` (`data/contact_photos/<sha256>.jpg`, a temp dir in tests). `photos::prune` deletes unreferenced files after replace/remove/contact remove/device delete. Backups include the photos (`contact_photos/<hash>.jpg` in the zip); the root restore script still swaps only the DB, and at startup `photos::recover_missing` extracts missing referenced photos from `data/backups/*.zip` (hash checked) and sets `photo_hash = NULL` for any it can't find. Admin thumbnails: `/contact-photos/{hash}` (session).
 - **Device API**: `call_policy.contacts[].photo` (hash or null); `GET /api/devices/contact-photos/{hash}` (bearer) serves it only when a contact on *this* device has that hash (invalid hash, other device's contact, missing file: 404).
-- **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, wallpapers: [...]}` (wallpapers since step 8) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
+- **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, clock_format: "system"|"24"|"12", wallpapers: [...]}` (wallpapers since step 8, clock_format since design 34 P12) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
 - **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
+- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`.
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -364,6 +365,8 @@ branch before that merge holds its old 73 (another checksum) and stops at `Versi
 **A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
 the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
+`0075_clock_format.sql` (design 34 P12) follows 0074; the next free number is 0076 (design 34's wallpapers, then 0077
+the catalog row's name).
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -1344,10 +1347,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
 ## Home Screen and Web Filter (design 31 step 5, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **Home Screen** (`GET /devices/{id}/home`, `device_pages::view_home`, `device_home.html`; row "Home Screen · 3 per
-  row"): Language and Apps per row (`/launcher`, one form, two inline selects), the Wallpapers grid (`/wallpapers`, one
+  row"): Language, Apps per row and Clock (`/launcher`, one form, three inline selects; design 34 P12 added Clock -
+  a post without it keeps the stored format), the Wallpapers grid (`/wallpapers`, one
   form) and the four Quick controls (`/policy` with `section=quick`). "Notification access off" sits above the first
   group (`device_pages::notification_access_note`, the adb command behind its ⓘ; the Attention row's fact and target
-  `/home#layout`). A failed wallpaper read is a 500, never an empty grid (its Save would untick everything).
+  `/home#layout`). "Clock format not applied" (design 34 P12, `device_pages::clock_format_note`) sits there too, only
+  while 24 h or 12 h is chosen and the last report says `clock_format_applied` false. A failed wallpaper read is a
+  500, never an empty grid (its Save would untick everything).
 - **Web Filter** (`GET /devices/{id}/filter`, `device_pages::view_filter`, `device_filter.html`; row "Web Filter ·
   On/Off"): the Web filter switch (`/policy` with `section=filter`); Blocklists, one inline select each - Default (the
   list as everyone has it) / On / Off (`/dns/devices/{id}/blocklists/{list}/override`, `setting=default|on|off`; an

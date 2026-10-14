@@ -36,6 +36,7 @@ import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
+import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import kotlinx.coroutines.Dispatchers
@@ -108,6 +109,9 @@ class GlancePanel(
     private val iconSizePx = KidAvatars.dp(activity, 36f)
     private val changed: () -> Unit = { render() }
 
+    /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
+    private var clockWatch: android.database.ContentObserver? = null
+
     init {
         KidInsets.apply(glance.root)
         val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
@@ -137,6 +141,12 @@ class GlancePanel(
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
             music.start()
+            clockWatch = ClockFormat.watch(activity) {
+                guarded("clock") {
+                    ClockFormat.bind(glance.lockGlanceClock)
+                    renderNow()
+                }
+            }
         }
         resumeNow()
     }
@@ -148,6 +158,8 @@ class GlancePanel(
 
     private fun resumeNow() {
         if (!started) return
+        // Design 34 P12: the clock follows the phone's format, not Vibb's own language.
+        ClockFormat.bind(glance.lockGlanceClock)
         val interactive = activity.getSystemService(PowerManager::class.java)?.isInteractive == true
         val offs = PinLockRuntime.screenOffs
         if (lockStageDue(interactive, decidedAt, offs)) {
@@ -169,6 +181,8 @@ class GlancePanel(
         started = false
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
+        ClockFormat.unwatch(activity, clockWatch)
+        clockWatch = null
         labels.clear()
     }
 
@@ -402,13 +416,13 @@ class GlancePanel(
     private fun label(packageName: String): String =
         labels.getOrPut(packageName) { AppDisplay.shownLabel(activity, packageName) }
 
-    /** `HH:mm` today, "i går" / "yesterday", else `d. MMM` (§1.2). */
+    /** The time today in the phone's format ([ClockFormat]), "i går" / "yesterday", else `d. MMM` (§1.2). */
     private fun timeText(ms: Long): String {
         val zone = ZoneId.systemDefault()
         val day = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate().toEpochDay()
         val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
         return when (relativeDay(day, LocalDate.now(zone).toEpochDay())) {
-            RelativeDay.TODAY -> DateFormat.format(if (DateFormat.is24HourFormat(activity)) "HH:mm" else "h:mm", ms).toString()
+            RelativeDay.TODAY -> ClockFormat.formatTime(activity, ms, zone)
             RelativeDay.YESTERDAY -> activity.getString(R.string.glance_yesterday)
             RelativeDay.EARLIER -> DateFormat.format(DateFormat.getBestDateTimePattern(locale, "dMMM"), ms).toString()
         }

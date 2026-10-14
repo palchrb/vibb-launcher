@@ -940,6 +940,33 @@ pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<
         })
 }
 
+/// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
+/// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
+/// settings" access, or Android refused the write. Home Screen's warning above the Language
+/// group; the adb grant and the Settings path behind its ⓘ. "Follow the phone" never warns, nor
+/// does an older launcher that doesn't report it.
+pub(crate) fn clock_format_note(
+    policy: &DevicePolicy,
+    latest: Option<&DeviceStatus>,
+) -> Option<Note> {
+    (crate::models::clock_format(&policy.clock_format) != "system"
+        && latest.is_some_and(|s| s.clock_format_applied == Some(false)))
+    .then(|| Note {
+        warning: true,
+        title: "Clock format not applied".to_string(),
+        value: None,
+        detail: Some("The phone can't change its clock format yet.".to_string()),
+        fix: Some(
+            "Vibb needs Android's \"Modify system settings\" access, which a device owner can't \
+             grant. With USB debugging allowed, run: adb shell appops set me.vibb.launcher \
+             WRITE_SETTINGS allow (a debug build: me.vibb.launcher.debug). Or, during a pause, on \
+             the phone: Settings › Apps › Special app access › Modify system settings › Kids \
+             Launcher › Allow."
+                .to_string(),
+        ),
+    })
+}
+
 #[derive(Template)]
 #[template(path = "device_home.html")]
 struct HomeTemplate {
@@ -947,8 +974,12 @@ struct HomeTemplate {
     device: Device,
     /// Above the first group: Vibb can't read notifications.
     notification_warning: Option<Note>,
+    /// Above the first group too: the phone can't apply the chosen clock format (design 34 P12).
+    clock_warning: Option<Note>,
     launcher_language: String,
     home_columns: i64,
+    /// "system", "24" or "12".
+    clock_format: &'static str,
     /// Every wallpaper, ticked when this phone may use it.
     wallpapers: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
     /// The quick controls (`quick_controls_mask`).
@@ -989,8 +1020,10 @@ pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Re
         HomeTemplate {
             title: format!("Home Screen · {}", device.name),
             notification_warning: notification_access_note(latest.as_ref()),
+            clock_warning: clock_format_note(&policy, latest.as_ref()),
             launcher_language: policy.launcher_language.clone(),
             home_columns: policy.home_columns,
+            clock_format: crate::models::clock_format(&policy.clock_format),
             wallpapers,
             quick_wifi: mask & QUICK_CONTROL_WIFI != 0,
             quick_bluetooth: mask & QUICK_CONTROL_BLUETOOTH != 0,

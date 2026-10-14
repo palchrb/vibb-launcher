@@ -86,6 +86,10 @@ data class StatusReportRequest(
     /** How many blocks there are in all: [relockBlocks] stops at `RELOCK_BLOCKS_MAX`, and the PWA
      * says "and N more" (QA of cmd-expiry, Low 2). Sent with [relockBlocks]. */
     val relockBlocksTotal: Int? = null,
+    /** Design 34 P12: the phone's clock format is the policy's `launcher_ui.clock_format` (true), it
+     * should be but isn't - no "Modify system settings" access, or the write was refused - (false);
+     * `null` (left out) for "Follow the phone" or no policy ([com.kidslauncher.mdm.server.ClockFormatSetting.report]). */
+    val clockFormatApplied: Boolean? = null,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

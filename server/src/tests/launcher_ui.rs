@@ -159,7 +159,7 @@ async fn launcher_ui_defaults_and_form() {
     let (id, token) = app.enrolled_device("phone").await;
     assert_eq!(
         launcher_settings(&app, &token).await,
-        json!({ "language": "system", "home_columns": 3 })
+        json!({ "language": "system", "home_columns": 3, "clock_format": "system" })
     );
 
     let mut nudges = app.state.command_notify.subscribe();
@@ -176,7 +176,7 @@ async fn launcher_ui_defaults_and_form() {
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         launcher_settings(&app, &token).await,
-        json!({ "language": "nb", "home_columns": 4 })
+        json!({ "language": "nb", "home_columns": 4, "clock_format": "system" })
     );
 
     for bad in [
@@ -195,7 +195,7 @@ async fn launcher_ui_defaults_and_form() {
     }
     assert_eq!(
         launcher_settings(&app, &token).await,
-        json!({ "language": "nb", "home_columns": 4 })
+        json!({ "language": "nb", "home_columns": 4, "clock_format": "system" })
     );
 
     let res = app
@@ -498,6 +498,160 @@ async fn missing_notification_access_is_a_warning() {
             assert!(at < panel && !page[panel..command].contains("</details>"));
         }
     }
+}
+
+/// Design 34 P12: the Clock select is in the launcher form; every choice reaches the policy, a
+/// present unknown value is a 400 that changes nothing, and a post without `clock_format` (a page
+/// cached before the field existed) keeps the stored format (qa-34-design L10).
+#[tokio::test]
+async fn clock_format_form_keeps_a_missing_field() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let launcher = format!("/devices/{id}/launcher");
+    for format in ["24", "12", "system", "12"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &launcher,
+                Some(&cookie),
+                &[
+                    ("language", "en"),
+                    ("home_columns", "3"),
+                    ("clock_format", format),
+                ],
+            )
+            .await;
+        assert_redirect(&res, &device_page(id, Section::Home), Some("layout"));
+        app.assert_lands(&res, &cookie).await;
+        assert_eq!(
+            launcher_settings(&app, &token).await["clock_format"],
+            json!(format)
+        );
+    }
+    let page = app
+        .get_page(&device_page(id, Section::Home), &cookie)
+        .await
+        .text();
+    let action = format!("{launcher}#layout");
+    assert_eq!(form_action_of(&page, "clock_format"), Some(action.as_str()));
+    assert!(page.contains("<option value=\"12\" selected>12 h</option>"));
+    assert!(page.contains("<option value=\"system\">Follow the phone</option>"));
+
+    // An old cached page: the language and columns change, the clock stays 12 h.
+    let res = app
+        .request_form(
+            Method::POST,
+            &launcher,
+            Some(&cookie),
+            &[("language", "nb"), ("home_columns", "4")],
+        )
+        .await;
+    assert_redirect(&res, &device_page(id, Section::Home), Some("layout"));
+    assert_eq!(
+        launcher_settings(&app, &token).await,
+        json!({ "language": "nb", "home_columns": 4, "clock_format": "12" })
+    );
+
+    // A present unknown value is a 400, and nothing is written.
+    for bad in ["", "24h", "follow", "SYSTEM"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &launcher,
+                Some(&cookie),
+                &[
+                    ("language", "en"),
+                    ("home_columns", "3"),
+                    ("clock_format", bad),
+                ],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
+    }
+    assert_eq!(
+        launcher_settings(&app, &token).await,
+        json!({ "language": "nb", "home_columns": 4, "clock_format": "12" })
+    );
+}
+
+/// Design 34 P12: the phone reports `clock_format_applied`; false while the policy asks for 24 h
+/// or 12 h is a warning on Home Screen (the sentence visible, the adb grant only behind its ⓘ).
+/// True, null, an older launcher (no field) and "Follow the phone" show nothing.
+#[tokio::test]
+async fn clock_format_not_applied_is_a_warning() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let warning = "Clock format not applied";
+    let home = device_page(id, Section::Home);
+    let launcher = format!("/devices/{id}/launcher");
+    let set_format = async |format: &str| {
+        let res = app
+            .request_form(
+                Method::POST,
+                &launcher,
+                Some(&cookie),
+                &[
+                    ("language", "system"),
+                    ("home_columns", "3"),
+                    ("clock_format", format),
+                ],
+            )
+            .await;
+        assert!(res.status.is_redirection());
+    };
+    let page = async || app.get_page(&home, &cookie).await.text();
+    assert!(!page().await.contains(warning), "no report yet");
+
+    set_format("24").await;
+    for (applied, shown) in [
+        (Some(json!(false)), true),
+        (Some(json!(true)), false),
+        (Some(json!(null)), false),
+        (None, false),
+        (Some(json!(false)), true),
+    ] {
+        let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
+        if let Some(applied) = &applied {
+            body["clock_format_applied"] = applied.clone();
+        }
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(&token),
+                Some(body),
+            )
+            .await;
+        assert!(res.status.is_success());
+        let stored: Option<bool> = sqlx::query_scalar(
+            "SELECT clock_format_applied FROM device_status WHERE device_id = ? \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(stored, applied.as_ref().and_then(|a| a.as_bool()));
+        let html = page().await;
+        assert_eq!(html.contains(warning), shown, "{stored:?}");
+        if shown {
+            // In the Language group's section, above its form; the command only in the ⓘ panel.
+            let at = html.find(warning).unwrap();
+            assert!(html[..at].contains("<section id=\"layout\""));
+            assert!(!html[..at].contains("<form"));
+            assert!(html[at..].contains("change its clock format yet."));
+            let command = html.find("WRITE_SETTINGS allow").expect("the fix");
+            let panel = html[..command].rfind("<details class=\"info\">").unwrap();
+            assert!(at < panel && !html[panel..command].contains("</details>"));
+        }
+    }
+    // The last report still says false, but "Follow the phone" asks for nothing.
+    set_format("system").await;
+    assert!(!page().await.contains(warning));
+    set_format("12").await;
+    assert!(page().await.contains(warning));
 }
 
 #[tokio::test]

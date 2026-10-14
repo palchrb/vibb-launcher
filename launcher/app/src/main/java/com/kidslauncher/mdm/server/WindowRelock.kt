@@ -42,7 +42,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.Date
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -455,7 +454,7 @@ object WindowRelock {
                 Intent(app, WindowRelockReceiver::class.java).setAction(ACTION_LOCK_AGAIN),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val time = android.text.format.DateFormat.getTimeFormat(app).format(Date(untilMs))
+            val time = com.kidslauncher.mdm.ui.ClockFormat.formatTime(app, untilMs)
             val title = when (kind) {
                 WindowKind.OVERRIDE -> R.string.window_override_open
                 WindowKind.PAUSE -> R.string.window_pause_open

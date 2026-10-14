@@ -441,6 +441,7 @@ pub(crate) async fn build_policy(
         launcher_ui: LauncherUi {
             language: policy.launcher_language,
             home_columns: policy.home_columns,
+            clock_format: crate::models::clock_format(&policy.clock_format).to_string(),
             // Cosmetic: a failing wallpaper query must not cost the phone its time rules or
             // calls - it gets no list (navy) this time, and the error is logged.
             wallpapers: crate::wallpapers::policy_wallpapers(&state.db, device_id)
@@ -1116,8 +1117,8 @@ pub async fn status(
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
-          relock_blocks_total) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          relock_blocks_total, clock_format_applied) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1167,6 +1168,7 @@ pub async fn status(
             .relock_blocks_total
             .map(|n| n.clamp(0, MAX_RELOCK_BLOCKS_TOTAL))
     }))
+    .bind(report.clock_format_applied)
     .execute(&state.db)
     .await
     .ok();

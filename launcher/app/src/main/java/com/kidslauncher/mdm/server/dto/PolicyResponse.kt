@@ -145,6 +145,10 @@ data class LocationPolicy(
 data class LauncherUi(
     val language: String = "system",
     val homeColumns: Int = 3,
+    /** The phone's clock format (design 34 P12): "system" (follow the phone), "24" or "12" - the
+     * launcher writes `Settings.System.TIME_12_24` ([com.kidslauncher.mdm.server.ClockFormatSetting]).
+     * Missing (an older server), `null` or anything else = "system" ([com.kidslauncher.mdm.server.clockFormatChoice]). */
+    val clockFormat: String? = null,
     /** The wallpapers the parent allows on this phone, in order (design 08-ui-polish.md);
      * missing from an older server = only the built-in navy
      * ([com.kidslauncher.mdm.ui.wallpaper.effectiveWallpaper]). */

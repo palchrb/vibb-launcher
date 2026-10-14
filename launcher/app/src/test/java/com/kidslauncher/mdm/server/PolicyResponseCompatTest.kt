@@ -406,6 +406,39 @@ class PolicyResponseCompatTest {
         assertNull((decodeCached(withDisplay("[]").replace(", \"app_display\": []", "")) as CachedPolicy.Ok).policy.launcherUi!!.appDisplay)
     }
 
+    /** Design 34 P12: `launcher_ui.clock_format` - today's values, missing (an older server), `null`
+     * or an unknown string: the policy always decodes, the cache round trip keeps it, and the
+     * launcher reads every unknown as "system". `clock_format_applied` goes out under the server's
+     * key, and is left out when null ("Follow the phone"). */
+    @Test
+    fun `launcher_ui clock_format is read leniently and clock_format_applied uses the server's key`() {
+        fun withClock(clock: String?) = serverResponse.replaceFirst(
+            "{",
+            """{"launcher_ui": {"language": "nb", "home_columns": 3, "wallpapers": []""" +
+                (clock?.let { """, "clock_format": $it""" } ?: "") + "},",
+        )
+        for ((json, choice) in listOf(
+            "\"24\"" to "24", "\"12\"" to "12", "\"system\"" to CLOCK_FORMAT_SYSTEM,
+            null to CLOCK_FORMAT_SYSTEM, "null" to CLOCK_FORMAT_SYSTEM, "\"follow\"" to CLOCK_FORMAT_SYSTEM,
+        )) {
+            val cached = decodeCached(withClock(json))
+            assertTrue(json.toString(), cached is CachedPolicy.Ok)
+            assertTrue(json.toString(), decodeFresh(withClock(json)) is FreshDecode.Ok)
+            val policy = (cached as CachedPolicy.Ok).policy
+            assertEquals(json.toString(), choice, clockFormatChoice(policy.launcherUi!!.clockFormat))
+            assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        }
+        for (applied in listOf(true, false)) {
+            val report = StatusReportRequest(lockReason = "NONE", kioskEngaged = true, clockFormatApplied = applied)
+            val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
+            assertEquals(applied.toString(), json["clock_format_applied"].toString())
+        }
+        val follow = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true)),
+        ).jsonObject
+        assertTrue("clock_format_applied" !in follow)
+    }
+
     /** Design 21 (step 1): the server's `music` object - today's shape, `null` (the server couldn't
      * read the library), missing (an older server), or anything else: the policy always decodes,
      * the cache round trip keeps it; `spotify` (design 26c §6.2) is read on its own. */

@@ -28,7 +28,6 @@ import com.kidslauncher.mdm.timerules.KIND_BEDTIME
 import com.kidslauncher.mdm.timerules.KIND_SCHOOL
 import com.kidslauncher.mdm.timerules.TimeRule
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
-import com.kidslauncher.mdm.timerules.clockText
 
 /**
  * Full-screen block shown while [LockReason] isn't [LockReason.NONE]: a time rule (school,
@@ -88,10 +87,19 @@ class LockActivity : UIObjectActivity() {
         ) { finish() }
     }
 
+    /** The phone's clock format changed (design 34 P12): the clock and the rule's end again. */
+    private var clockWatch: android.database.ContentObserver? = null
+
     override fun onStart() {
         super.onStart()
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
+        // The clock follows the phone's format (design 34 P12), never Vibb's own language's.
+        ClockFormat.bind(binding.lockClock)
+        clockWatch = ClockFormat.watch(this) {
+            ClockFormat.bind(binding.lockClock)
+            render()
+        }
         // A fresh look at the clock on top of the boundary alarm; the listener re-renders.
         reevaluateLockReasonFromCache(this)
         render()
@@ -108,6 +116,8 @@ class LockActivity : UIObjectActivity() {
     override fun onStop() {
         LauncherPreferences.getSharedPreferences()
             .unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener)
+        ClockFormat.unwatch(this, clockWatch)
+        clockWatch = null
         super.onStop()
     }
 
@@ -138,7 +148,7 @@ class LockActivity : UIObjectActivity() {
         }
         val callsManaged = CallPolicyStore.state.managed
         val lines = mutableListOf<String>()
-        lock?.until?.let { lines += getString(R.string.lock_until, it.clockText()) }
+        lock?.until?.let { lines += getString(R.string.lock_until, ClockFormat.formatTime(this, it)) }
         val budget = snap?.budget
         if (rule == null && budget?.effectiveMinutes != null) {
             lines += getString(R.string.lock_budget_used, (budget.usedMs / 60_000L).toInt(), budget.effectiveMinutes!!)

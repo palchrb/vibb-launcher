@@ -68,6 +68,9 @@ pub struct DevicePolicy {
     pub launcher_language: String,
     /// Columns of the launcher's home-screen app grid, 3 or 4.
     pub home_columns: i64,
+    /// The phone's clock format (design 34 P12, migrations/0075): "system" (follow the phone),
+    /// "24" or "12" - see [CLOCK_FORMATS]. Sent as `launcher_ui.clock_format`.
+    pub clock_format: String,
     /// This device's own daily screen-time budget (migrations/0025_time_rules.sql), used while
     /// `custom_schedule_enabled` is set: 7 entries Monday first, minutes or null (unlimited).
     pub daily_budget_json: String,
@@ -159,11 +162,29 @@ pub fn screen_timeout_label(seconds: i64) -> String {
 /// The launcher languages a parent can choose; "system" follows the phone's language.
 pub const LAUNCHER_LANGUAGES: [&str; 3] = ["system", "nb", "en"];
 
+/// The phone's clock formats a parent can choose (design 34 P12): "system" follows the phone (the
+/// launcher writes nothing), "24"/"12" make the launcher write Android's `TIME_12_24`, so the
+/// status bar and every Vibb clock show the same format.
+pub const CLOCK_FORMATS: [&str; 3] = ["system", "24", "12"];
+
+/// The stored clock format if it is one of [CLOCK_FORMATS], else "system" (a policy that has no
+/// row yet, `DevicePolicy::default()`).
+pub fn clock_format(stored: &str) -> &'static str {
+    CLOCK_FORMATS
+        .iter()
+        .find(|f| **f == stored)
+        .copied()
+        .unwrap_or("system")
+}
+
 /// `PolicyResponse.launcher_ui` - always sent with every field.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct LauncherUi {
     pub language: String,
     pub home_columns: i64,
+    /// "system", "24" or "12" (design 34 P12) - always sent; the launcher reads a missing or
+    /// unknown value as "system".
+    pub clock_format: String,
     /// The wallpapers this phone may use, in the parent's order (design 08-ui-polish.md); the kid
     /// picks one on the phone. Always sent, possibly empty (the launcher then uses navy).
     pub wallpapers: Vec<PolicyWallpaper>,
@@ -354,6 +375,10 @@ pub struct DeviceStatus {
     /// How many blocks there are in all; the list holds at most `window_relock::BLOCKS_MAX` (QA
     /// of cmd-expiry, Low 2, migration 0068). `None` from older launchers.
     pub relock_blocks_total: Option<i64>,
+    /// The phone's clock format is the policy's (design 34 P12, migrations/0075): `false` = it
+    /// should be but can't be (no "Modify system settings" access, or the write was refused).
+    /// `None` = "Follow the phone", or an older launcher.
+    pub clock_format_applied: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -1079,6 +1104,11 @@ pub struct StatusReportRequest {
     /// Absent = an older launcher.
     #[serde(default)]
     pub relock_blocks_total: Option<i64>,
+    /// Design 34 P12: the phone's clock format is the policy's `launcher_ui.clock_format` (true),
+    /// it should be but can't be (false), or nothing to apply - "Follow the phone" - (null).
+    /// Absent from older launchers.
+    #[serde(default)]
+    pub clock_format_applied: Option<bool>,
 }
 
 /// `StatusReportRequest.install_mode`.
