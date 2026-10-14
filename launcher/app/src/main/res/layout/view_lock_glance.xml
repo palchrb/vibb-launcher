@@ -26,7 +26,7 @@
         android:id="@+id/lock_glance_clock"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:fontFamily="@font/nunito_extrabold"
+        android:fontFamily="@font/nunito_bold"
         android:format12Hour="h:mm"
         android:format24Hour="HH:mm"
         android:includeFontPadding="false"
@@ -310,11 +310,13 @@
             android:textSize="17sp" />
     </LinearLayout>
 
+    <!-- Design 34 P7 (qa-34-s8-code N5): a 48 dp target like every emergency control; the margin
+         gave the 4 dp, so the fit's fixed parts (and every expected fit) stay as they were. -->
     <TextView
         android:id="@+id/lock_glance_emergency"
         android:layout_width="wrap_content"
-        android:layout_height="44dp"
-        android:layout_marginTop="6dp"
+        android:layout_height="48dp"
+        android:layout_marginTop="2dp"
         android:background="?android:attr/selectableItemBackground"
         android:clickable="true"
         android:focusable="true"

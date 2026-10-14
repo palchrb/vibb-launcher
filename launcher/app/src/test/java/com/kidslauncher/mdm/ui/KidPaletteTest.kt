@@ -182,4 +182,39 @@ class KidPaletteTest {
         assertEquals(resolve("kid_emergency_text").uppercase(), "#%06X".format(EMERGENCY_AVATAR.ink and 0xFFFFFF))
         assertTrue(contrast("kid_emergency_text", "kid_emergency_tonal") >= 6.6)
     }
+
+    @Test
+    fun `the lock's tonal emergency pills carry their label and glyph`() {
+        // Design 34 P7: what the keypad (activity_pin_lock.xml) and the VoIP ring card
+        // (view_voip_ring.xml, qa-34-s8-code L2) really use, from the shared resources.
+        val android = "http://schemas.android.com/apk/res/android"
+        for ((layout, id) in listOf("activity_pin_lock" to "pin_emergency", "view_voip_ring" to "voip_ring_emergency")) {
+            val all = parse("layout/$layout.xml").getElementsByTagName("*")
+            val views = (0 until all.length).map { all.item(it) as Element }
+                .associateBy { it.getAttributeNS(android, "id").removePrefix("@+id/") }
+            val pill = views.getValue(id).getAttributeNS(android, "background").removePrefix("@drawable/")
+            val solid = parse("drawable/$pill.xml").getElementsByTagName("solid").item(0) as Element
+            val ground = solid.getAttributeNS(android, "color")
+            assertEquals(layout, "@color/kid_emergency_tonal", ground)
+            val label = views.getValue("${id}_label").getAttributeNS(android, "textColor")
+            val glyph = views.getValue("${id}_icon").getAttributeNS(android, "tint")
+            for (ink in listOf(label, glyph)) {
+                val ratio = contrast(ink, ground)
+                assertTrue("$layout: $ink on $ground: $ratio", ratio >= 4.5)
+            }
+            assertEquals(6.6, contrast(label, ground), 0.1)
+        }
+        // The press (N4): a ripple of the label's red at 20 % inside the pill - calm, no new colour.
+        val ripple = parse("drawable/bg_pin_emergency_tonal.xml").documentElement
+        assertEquals("ripple", ripple.tagName)
+        val press = ripple.getAttributeNS(android, "color")
+        assertEquals(resolve("kid_emergency_text").takeLast(6).uppercase(), press.takeLast(6).uppercase())
+        assertEquals(0.2, alphaOf(press), 0.01)
+        // The saturated pill is gone with its last user.
+        assertTrue(listOf("src/main/res/drawable", "app/src/main/res/drawable").none { File(it, "bg_pin_emergency.xml").exists() })
+        // Muted, never garish: the pill is a quiet field on the night (QA N4: about 1.3:1 - its text
+        // and glyph identify it), and its red reads on the bare night too.
+        assertTrue(contrast("kid_emergency_tonal", "kid_ground") < 1.5)
+        assertTrue(contrast("kid_emergency_text", "kid_ground") >= 4.5)
+    }
 }

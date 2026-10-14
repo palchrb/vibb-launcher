@@ -409,6 +409,25 @@ class LockGlanceLayoutTest {
     }
 
     @Test
+    fun `the glance page's Nødsamtale is a 48 dp target and the fit's fixed parts didn't move (qa-34-s8-code N5)`() {
+        val link = root.byId("lock_glance_emergency")
+        assertTrue(link.dim("layout_height") >= 48f)
+        assertEquals("@color/kid_emergency_text", link.getAttributeNS(ns, "textColor"))
+        // The margin gave the 4 dp: Lås opp + Nødsamtale with their margins stay 106 dp.
+        assertEquals(106f, withMargins("lock_glance_unlock") + withMargins("lock_glance_emergency"), 0.01f)
+    }
+
+    @Test
+    fun `the clock is the lighter 700 weight (design 34 P7)`() {
+        // It was Nunito 800 (extra-bold), the heaviest thing on the calm lock; the size and fit stay.
+        val clock = root.byId("lock_glance_clock")
+        assertEquals("@font/nunito_bold", clock.getAttributeNS(ns, "fontFamily"))
+        assertTrue(file("res/font/nunito.xml").readText().contains(Regex("""fontWeight="700"[^/]*@font/nunito_bold""")))
+        // Nothing sets the clock's typeface in code, so the XML is what shows.
+        assertFalse(file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().contains(Regex("""lockGlanceClock\.(typeface|setTypeface)""")))
+    }
+
+    @Test
     fun `the expected fits at 473 and 497 dp (§1_2)`() {
         val bars = available(48f)
         fun fit(tile: Boolean, rows: Int, avail: Float = bars) = glanceFit(avail, heights, tile, rows)

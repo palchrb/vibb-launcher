@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- lock.PinLockActivity's keypad stage, handy's own PIN lock (design 10-lock-and-call-ui.md, mockup
-     Lock.dc.html, 320x568 dp; since design 25 mockup LockGlance.dc.html C): the back arrow to the glance
-     page by the prompt, the dots, the keypad (keys sized to fit, 48-72 dp, at the last resort down to
-     32 dp - lock.PinKeypadLayout), Emergency call, the Parent code link (decision after QA review:
-     always there) and, while a music session is live, the compact now-playing row. No clock or date -
-     the glance page (view_lock_glance.xml, over this stage) has them. Android draws the status line
-     above. Fits 320x569 dp with the status bar and a gesture bar or 3-button navigation, keys >= 52 dp
-     with and without the music row (PinLockLayoutTest checks the budget from this file - keep it in
-     step). -->
+     Lock.dc.html, 320x568 dp; since design 25 mockup LockGlance.dc.html C; since design 34 P7 mockups
+     05/05b): one column with nothing overlaid - the back arrow to the glance page by the prompt, the
+     dots, the keypad, a gap of at least 16 dp, Emergency call (the tonal pill, at least 48 dp, wraps and
+     grows with the font scale), the Parent code link (at least 44 dp; decision after QA review: always
+     there), the inset. Only the keys give way: lock.PinKeypadLayout sizes them from the keypad's
+     measured height, min(72, (h - 3 x gap) / 4) dp, at the last resort down to 32 dp. No clock or
+     date - the glance page (view_lock_glance.xml, over this stage) has them. Android draws the status
+     line above. PinLockLayoutTest checks the budget from this file at font scale 1.0, 1.3 and 2.0 -
+     keep it in step. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pin_root"
     android:layout_width="match_parent"
@@ -71,33 +72,41 @@
         android:gravity="center"
         android:orientation="vertical" />
 
+    <!-- Design 34 P7: the tonal pill (#3A1E24 under #FF8A8A, 6.6:1), 16 dp below the keypad. The label
+         wraps rather than cuts at a large font scale, and the pill grows with it. -->
     <LinearLayout
         android:id="@+id/pin_emergency"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:background="@drawable/bg_pin_emergency"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_pin_emergency_tonal"
         android:clickable="true"
         android:focusable="true"
         android:gravity="center"
-        android:minHeight="44dp"
+        android:minHeight="48dp"
         android:orientation="horizontal"
-        android:paddingStart="18dp"
-        android:paddingEnd="18dp">
+        android:paddingStart="20dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="6dp">
 
         <ImageView
+            android:id="@+id/pin_emergency_icon"
             android:layout_width="18dp"
             android:layout_height="18dp"
             android:importantForAccessibility="no"
-            android:src="@drawable/ic_kid_phone" />
+            android:src="@drawable/ic_kid_phone"
+            android:tint="@color/kid_emergency_text" />
 
         <TextView
+            android:id="@+id/pin_emergency_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
             android:text="@string/pin_lock_emergency"
-            android:textColor="@color/kid_ink"
+            android:textColor="@color/kid_emergency_text"
             android:textSize="15sp" />
     </LinearLayout>
 
@@ -109,7 +118,7 @@
         android:background="?android:attr/selectableItemBackground"
         android:fontFamily="@font/nunito_bold"
         android:gravity="center"
-        android:minHeight="40dp"
+        android:minHeight="44dp"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:text="@string/pin_lock_parent_code"
