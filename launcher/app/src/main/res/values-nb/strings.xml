@@ -101,9 +101,9 @@
     <string name="wallpaper_vibb_night">Natt</string>
     <string name="wallpaper_forest">Skog</string>
     <string name="wallpaper_plum">Plomme</string>
-    <string name="wallpaper_green">Grønn</string>
-    <string name="wallpaper_sky">Himmel</string>
-    <string name="wallpaper_sunset">Solnedgang</string>
+    <string name="wallpaper_green">Fjord</string>
+    <string name="wallpaper_sky">Kveldshimmel</string>
+    <string name="wallpaper_sunset">Skumring</string>
     <string name="wallpaper_photo">Bilde fra mamma og pappa</string>
     <string name="quick_controls_wifi">Wi-Fi</string>
     <string name="quick_controls_bluetooth">Bluetooth</string>

@@ -36,20 +36,39 @@ class WallpaperInkTest {
         assertTrue(contrastRatio(relativeLuminance(INK_DARK), relativeLuminance(0xFFF4F1EA.toInt())) >= 4.5)
     }
 
+    /** The server's built-ins (vibb_night, navy, forest, plum, and since design 34 P8 / migration
+     * 0076 the softened green "Fjord", sky "Evening sky" and sunset "Dusk" - all gradients now). */
+    private val builtins = listOf(
+        listOf(0xFF0C0C14), listOf(0xFF14213D), listOf(0xFF1E4D3A), listOf(0xFF4A2545),
+        listOf(0xFF2A4A4F, 0xFF101820), listOf(0xFF34406A, 0xFF14141F), listOf(0xFF5A3A4A, 0xFF1A1420),
+    ).map { stops -> stops.map { it.toInt() } }
+
     @Test
     fun `every built-in reaches 4_5 to 1`() {
-        val builtins = listOf(
-            listOf(0xFF14213D), listOf(0xFF1E4D3A), listOf(0xFF4A2545), listOf(0xFF2B8A3E),
-            listOf(0xFF1C7ED6, 0xFF14213D), listOf(0xFFF76707, 0xFF862E9C),
-        ).map { stops -> stops.map { it.toInt() } }
         for (stops in builtins) {
             val ink = inkForColours(stops)
             val lums = stops.map(::relativeLuminance)
             assertTrue("$stops", worstContrast(ink, lums.min(), lums.max()) >= 4.5)
             assertFalse(ink.labelShadow)
         }
-        // The sunset gradient: white ink judged on its lightest stop, so a scrim is needed.
+        // A bright gradient (the old sunset, #F76707 -> #862E9C): white ink judged on its
+        // lightest stop, so a scrim is needed.
         assertTrue(inkForColours(listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())).scrimAlpha > 0.0)
+    }
+
+    /** Design 34 P8 (qa-34-design M1): the three softened built-ins take white ink with no scrim
+     * and no shadow, 9.59-10.1:1 on their lightest stop (Fjord the lowest). */
+    @Test
+    fun `the softened built-ins take white ink with no scrim`() {
+        for (stops in builtins.takeLast(3)) {
+            val ink = inkForColours(stops)
+            assertEquals("$stops", INK_LIGHT, ink.ink)
+            assertFalse(ink.darkInk)
+            assertEquals(0.0, ink.scrimAlpha, 0.0)
+            assertFalse(ink.labelShadow)
+            val lightest = stops.maxOf(::relativeLuminance)
+            assertTrue("$stops", contrastRatio(1.0, lightest) >= 9.5)
+        }
     }
 
     @Test
@@ -114,7 +133,8 @@ class WallpaperInkTest {
     fun `the lock's scrim gives every lock ink 4_5 to 1 on any background`() {
         fun ground(lum: Double, alpha: Double) = underScrim(lum, ((alpha * 255).toInt()) / 255.0, towardsWhite = false)
         val backgrounds = listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFF1C7ED6.toInt(), 0xFFF76707.toInt(),
-            0xFF862E9C.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt())
+            0xFF862E9C.toInt(), 0xFF14213D.toInt(), 0xFF0C0C14.toInt(), 0xFF000000.toInt()) +
+            builtins.flatten()
         for (argb in backgrounds) {
             val alpha = lockScrimForColours(listOf(argb))
             assertTrue(alpha <= LOCK_MAX_SCRIM)
@@ -123,8 +143,9 @@ class WallpaperInkTest {
                 assertTrue("%08x on %08x at %.2f: %.2f".format(ink, argb, alpha, c), c >= LABEL_CONTRAST)
             }
         }
-        // QA's table: Sky and Sunset gave the emergency link about 2:1 - not any more.
-        for (stops in listOf(listOf(0xFF1C7ED6.toInt(), 0xFF14213D.toInt()), listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt()))) {
+        // QA's table: the old Sky and Sunset (bright gradients, softened by design 34 P8) gave the
+        // emergency link about 2:1 - not any more. Every built-in of today too.
+        for (stops in listOf(listOf(0xFF1C7ED6.toInt(), 0xFF14213D.toInt()), listOf(0xFFF76707.toInt(), 0xFF862E9C.toInt())) + builtins) {
             val alpha = lockScrimForColours(stops)
             val lightest = stops.maxOf(::relativeLuminance)
             assertTrue(inkContrastOn(0xFFFF8A8A.toInt(), ground(lightest, alpha)) >= LABEL_CONTRAST)
@@ -159,5 +180,100 @@ class WallpaperInkTest {
         val render = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/ui/wallpaper/WallpaperRender.kt") }.first { it.exists() }.readText()
         val image = render.substringAfter("is WallpaperFill.Image ->").substringBefore("canvas.drawBitmap(")
         assertTrue(image.contains("paint.color = 0xFF000000.toInt()"))
+    }
+
+    // qa-34-s10-code M1: white ink is judged on the deepest kid surface - the ground under the
+    // scrim (as drawn, 8-bit) plus Kid Settings' card and the sound choice's track, white 8 % each.
+
+    /** [argb] over [ground] per channel, 8-bit, as Android draws it. */
+    private fun over(argb: Int, ground: Int): Int {
+        val a = ((argb ushr 24) and 0xFF) / 255.0
+        fun ch(shift: Int) = Math.round(a * ((argb shr shift) and 0xFF) + (1 - a) * ((ground shr shift) and 0xFF)).toInt()
+        return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+    }
+
+    private val whiteLayer = 0x14FFFFFF
+
+    /** White ink's contrast on [colour] under [ink]'s scrim, then [layers] white 8 % layers. */
+    private fun whiteOn(colour: Int, ink: InkChoice, layers: Int): Double {
+        var ground = over(ink.scrimArgb, colour)
+        repeat(layers) { ground = over(whiteLayer, ground) }
+        return contrastRatio(1.0, relativeLuminance(ground))
+    }
+
+    @Test
+    fun `the kid surfaces are the card's and the track's white 8 percent`() {
+        assertEquals(0x14 / 255.0, KID_SURFACE_ALPHA, 1e-12)
+        assertEquals(2, KID_SURFACE_LAYERS)
+        for (path in listOf("res/drawable/bg_kid_card.xml", "res/drawable/bg_kid_segment_track.xml")) {
+            val xml = listOf("src/main", "app/src/main").map { java.io.File(it, path) }.first { it.exists() }.readText()
+            assertTrue(path, xml.contains("android:color=\"#14FFFFFF\""))
+        }
+    }
+
+    @Test
+    fun `white ink reaches 4_5 to 1 on the card and the track over mid-tone grounds`() {
+        // A parent's bright colours and the white/dark edge greys (luminance ~0.18-0.20).
+        val grounds = listOf(0xFF1C7ED6, 0xFF7048E8, 0xFFC92A2A, 0xFF777777, 0xFF7A7A7A, 0xFF7C7C7C, 0xFF747474, 0xFF5C5C5C)
+            .map { it.toInt() }
+        for (colour in grounds) {
+            val ink = inkForColours(listOf(colour))
+            assertFalse(ink.darkInk)
+            assertFalse(ink.labelShadow)
+            for (layers in 0..2) {
+                val ratio = whiteOn(colour, ink, layers)
+                assertTrue("${Integer.toHexString(colour)} with $layers layers: $ratio", ratio >= 4.5)
+            }
+        }
+        // #1C7ED6 needed 0.05 for the bare ground; on card + track it takes about 0.24.
+        val blue = inkForColours(listOf(0xFF1C7ED6.toInt()))
+        assertTrue("${blue.scrimAlpha}", blue.scrimAlpha in 0.2..0.3)
+    }
+
+    @Test
+    fun `a photo whose light side is mid-tone reaches 4_5 to 1 on card and track`() {
+        val photo = inkForImage(LuminanceStats(0.12, 0.08))
+        assertFalse(photo.darkInk)
+        assertFalse(photo.labelShadow)
+        assertTrue(photo.scrimAlpha > MIN_IMAGE_SCRIM)
+        assertTrue(contrastRatio(1.0, underKidSurfaces(0.20, photo.scrimAlpha)) >= 4.5)
+        // A grey of that luminance, drawn per channel.
+        val grey = (1..255).last { relativeLuminance((0xFF shl 24) or (it shl 16) or (it shl 8) or it) <= 0.20 }
+        val argb = (0xFF shl 24) or (grey shl 16) or (grey shl 8) or grey
+        for (layers in 0..2) assertTrue(whiteOn(argb, photo, layers) >= 4.5)
+    }
+
+    @Test
+    fun `the built-ins keep no scrim and dark ink is unchanged`() {
+        for (stops in builtins) {
+            val ink = inkForColours(stops)
+            assertEquals("$stops", 0.0, ink.scrimAlpha, 0.0)
+            assertFalse(ink.labelShadow)
+        }
+        // Light grounds: dark ink, no scrim; the white layers only help it.
+        for (colour in listOf(0xFFFFFFFF.toInt(), 0xFFFFF3B0.toInt(), 0xFFF4F1EA.toInt())) {
+            val ink = inkForColours(listOf(colour))
+            assertTrue(ink.darkInk)
+            assertEquals(0.0, ink.scrimAlpha, 0.0)
+        }
+    }
+
+    @Test
+    fun `the scrim is judged at the alpha it is drawn with`() {
+        // No truncation gap: across the whole white-ink range the 8-bit scrim actually drawn
+        // still gives the bare ground and both surfaces 4.5:1.
+        var lum = 0.0
+        while (lum <= 0.41) {
+            val ink = inkFor(lum, lum)
+            if (!ink.darkInk && !ink.labelShadow) {
+                val drawn = drawnScrimAlpha(ink.scrimAlpha)
+                assertEquals(((ink.scrimArgb ushr 24) and 0xFF) / 255.0, drawn, 1e-12)
+                assertTrue("$lum", contrastRatio(1.0, underScrim(lum, drawn, towardsWhite = false)) >= 4.5)
+                assertTrue("$lum", contrastRatio(1.0, underKidSurfaces(lum, ink.scrimAlpha)) >= 4.5)
+            }
+            lum += 0.005
+        }
+        assertEquals(0.0, drawnScrimAlpha(0.0), 0.0)
+        assertEquals(38 / 255.0, drawnScrimAlpha(0.15), 1e-12)
     }
 }
