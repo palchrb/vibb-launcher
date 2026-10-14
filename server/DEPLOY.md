@@ -553,6 +553,58 @@ The sweep also fetches each NRK/RSS episode's own picture and the phones show it
 - Rolling back means restoring the `update.sh` backup: an older server refuses to start on a database with migration
   0070.
 
+## Vibb music: Spotify (server 0.26.0, design 26c, migration 0074)
+
+Spotify is opt-in: nothing changes until a parent sets up a Spotify app on Music › From Spotify. The server ships no
+Spotify client ID - each family registers its own (bring your own app, Spotify's Development mode).
+
+- **The app**: the page walks through it - developer.spotify.com/dashboard with a **Premium** account, a new app (a name
+  not starting with "Spot"), the redirect URI the page shows, APIs **Web API** and **Web Playback SDK**, each child's
+  Spotify account under User Management (one per phone; **at most 5**), then the **Client ID** (never the secret: the
+  server uses PKCE and stores no client secret) into the page. Or in `.env`:
+
+  | `.env` setting | Default | What it does |
+  |---|---|---|
+  | `SPOTIFY_CLIENT_ID` | unset | The app's client ID (32 letters and digits). Wins over the page's, whose field is then read-only. A client ID is public; it is stored in the clear. |
+  | `SPOTIFY_REDIRECT_URI` | unset | `https://<the PWA's host>/music/spotify/callback`, or exactly `http://127.0.0.1:43117/callback` (the paste, below). Wins over the page's. |
+  | `SPOTIFY_ARTIST_ALBUMS` | unset (off) | `1` (or `true`) lists an artist as the tracks of its newest 20 albums and singles - with a track list, resume and the order setting - instead of playing it as a Spotify context in Spotify's order. Opt-in: turn it on once the design's checklist item 18 shows the albums endpoint works for your app; an artist Spotify refuses falls back to a context. |
+
+  A value that doesn't fit is ignored with one warning in the log at start.
+- **A Spotify login needs the PWA on https, or the paste.** Spotify accepts only https redirect URIs (or a loopback
+  address). Behind `tailscale serve` or Caddy with https, the redirect URI is the PWA's own https address, and a login
+  must be started **from that address** (the page refuses another address of the server with a link to the right one).
+  The page suggests the https form only when the proxy says `X-Forwarded-Proto: https`; if it suggests the loopback form
+  behind your https proxy, type the https form in. Without https (e.g. Docker on the LAN over http) use the loopback
+  redirect: after Spotify's consent the browser shows "can't connect" with the code in its address bar - paste that
+  address into the page. The callback answers without a session but stays behind the admin gate, so the browser must
+  reach the PWA as usual (tailnet). Log the children in from a private window - one account per phone, the child's own;
+  your own Spotify account is never logged in (you paste the links, and a playlist lists its tracks only when a child's
+  account owns it or collaborates on it). A login lasts 6 months (Spotify's limit): the page and the phone's card warn
+  14 days before.
+- **Keys and backups**: each account's refresh token is sealed with the music key (`MUSIC_SECRET_KEY` or
+  `data/keys/music-secret.key`), like the Storytel login. Backups hold the sealed tokens, never the key: a restore on
+  another box, or a lost key, means logging the accounts in again.
+- **What it fetches**: `accounts.spotify.com` and `api.spotify.com` (one request at a time through the music gate),
+  Spotify's short links (`spotify.link`, `spotify.app.link`) when one is added, and covers and track pictures from Spotify's image hosts. Playlists
+  and shows are checked at the sweep's interval (a playlist's tracks are read again only when it changed, or after a
+  day), albums, tracks, episodes and artists daily. The quota is per developer account and shared with the phones'
+  play calls: if Spotify says it is used up, the server pauses its Spotify reads for an hour.
+- **The phones**: a phone gets Spotify entries only while its Music page (Devices › the phone › Music) says "Plays as
+  <account>". For such a phone the Web Filter never blocks Spotify's hosts - a parent's own block of `spotify.com` or
+  `scdn.co` is overridden on that phone for every app (the phone's Web Filter page says so, and marks the blocks).
+- **Testing only, never on a real server**: `SPOTIFY_ACCOUNTS_BASE` and `SPOTIFY_API_BASE` point the server at
+  `scripts/fake-spotify.py` and are honoured **only** as `http://127.0.0.1:<port>` or `http://[::1]:<port>` (anything
+  else is ignored with a warning; while one is set Spotify requests may go to a private address, and the start logs a
+  warning naming them). `INSECURE_COOKIES` also drops `Secure` from the login cookie (the emulator loop over http).
+- **Order**: the launcher and the music app that read design 30's two switches first, then the server with design
+  30's migration 0073 (0.25.0), then this one with 0074 - or 0073 and 0074 in one release, **never 0074 before
+  0073** (the pre-migration backup compares the highest version only). A dev database that ran the Spotify branch
+  before its merge of main holds its old 73 and stops at `VersionMismatch(73)`: start it on a fresh `data/`.
+- **Smoke check**: `journalctl -u kid-phone-server -b | grep -i spotify` shows no "ignored" warning (and no override
+  line on a real server); the Music page's "From Spotify ›" row says "No app", then "Signed in" after a login.
+- Rolling back means restoring the `update.sh` backup: an older server refuses to start on a database with
+  migration 0074.
+
 ## Server 0.23.0 (design 22): two listeners, the admin gate, Docker
 
 - **What changes for an existing Pi**: nothing has to be done - the admin keeps answering on `127.0.0.1:3100` behind
