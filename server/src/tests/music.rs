@@ -29,6 +29,8 @@ pub struct Canned {
     pub body: Vec<u8>,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// A 3xx's `Location` (design 26c §3.1: a short link's hop).
+    pub location: Option<String>,
 }
 
 /// One request as the canned fetch saw it (design 26b §2.2: the Storytel bookshelf's shape).
@@ -39,6 +41,8 @@ pub struct Recorded {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// The request's `follow` (design 26c §3.1).
+    pub follow: bool,
 }
 
 impl Recorded {
@@ -68,6 +72,8 @@ pub struct CannedFetch {
     pub conditional: Mutex<Vec<(String, Option<String>)>>,
     /// Which addresses each request was allowed to reach.
     pub reaches: Mutex<Vec<(String, crate::music_net::Reach)>>,
+    /// `Retry-After` sent with every answer for a URL ([CannedFetch::retry_after], design 26c).
+    retry_after: Mutex<HashMap<String, String>>,
     delay_ms: std::sync::atomic::AtomicU64,
     /// While armed ([CannedFetch::hold]), every request waits here until [CannedFetch::release].
     gate: Mutex<Option<std::sync::Arc<tokio::sync::Semaphore>>>,
@@ -82,6 +88,19 @@ impl CannedFetch {
             Canned {
                 status,
                 body: body.into(),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Answers `url` with a redirect to `location` (never followed here: a canned answer is the
+    /// answer, as with `follow: false`).
+    pub fn redirect(&self, url: &str, status: u16, location: &str) {
+        self.canned(
+            url,
+            Canned {
+                status,
+                location: Some(location.to_string()),
                 ..Default::default()
             },
         );
@@ -109,6 +128,14 @@ impl CannedFetch {
     pub fn fail(&self, url: &str, err: crate::music_net::FetchError) {
         self.answers.lock().unwrap().remove(url);
         self.failures.lock().unwrap().insert(url.to_string(), err);
+    }
+
+    /// Every answer for `url` carries `Retry-After: value` (design 26c §2.4).
+    pub fn retry_after(&self, url: &str, value: &str) {
+        self.retry_after
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), value.to_string());
     }
 
     pub fn dns(&self, host: &str, ips: &[&str]) {
@@ -204,6 +231,7 @@ impl crate::music_net::Source for CannedFetch {
                     .map(|(name, value)| (name.to_string(), value.clone()))
                     .collect(),
                 body: request.body.clone(),
+                follow: request.follow,
             });
             self.conditional
                 .lock()
@@ -254,6 +282,8 @@ impl crate::music_net::Source for CannedFetch {
                 body: answer.body[..answer.body.len().min(limit)].to_vec(),
                 etag: answer.etag,
                 last_modified: answer.last_modified,
+                retry_after: self.retry_after.lock().unwrap().get(&request.url).cloned(),
+                location: answer.location,
             })
         })
     }
@@ -923,7 +953,8 @@ async fn the_policy_carries_a_small_music_object() {
             "download_mobile_data": false,
             "volume_cap_pct": null,
             "storage_limit_gb": 2,
-            "storytel_generation": 0
+            "storytel_generation": 0,
+            "spotify": false
         }),
         "nothing ticked, everything off, 2 GB"
     );
@@ -1656,7 +1687,13 @@ async fn a_failing_library_query_sends_music_null_and_never_fails_the_policy() {
     assert!(policy["time_policy"].is_object());
 }
 
-/// Fixed data for the snapshot: a podcast with a cover, an RSS feed and own files (one missing).
+/// The snapshot's two Spotify entries (design 26c §8 item 3): a playlist in list mode and an
+/// artist in context mode.
+pub(super) const SNAPSHOT_PLAYLIST: &str = "spotify:playlist:FAKEplaylist0000000001";
+pub(super) const SNAPSHOT_ARTIST: &str = "spotify:artist:FAKEartist000000000001";
+
+/// Fixed data for the snapshot: a podcast with a cover, an RSS feed, own files (one missing), a
+/// Storytel series and two Spotify entries.
 async fn snapshot_library(app: &TestApp, device: i64) {
     let cover = "a".repeat(64);
     let art = "b".repeat(64);
@@ -1669,10 +1706,16 @@ async fn snapshot_library(app: &TestApp, device: i64) {
           'newest_first', 3, 1, NULL, 20), \
          (3, 'Bilturen', 1, 'own', NULL, 'own-5c0ffee1d0e5', 'auto', -1, 0, NULL, 30), \
          (4, 'Not on this phone', 2, 'own', NULL, 'own-0b5e55ed4a11', 'auto', -1, 0, NULL, 40), \
-         (5, 'Kokosbananas', 3, 'storytel', 'storytel:series:26175', ?, 'auto', -1, 1, NULL, 50)",
+         (5, 'Kokosbananas', 3, 'storytel', 'storytel:series:26175', ?, 'auto', -1, 1, NULL, 50), \
+         (6, 'Kveldsliste', 1, 'spotify', ?, ?, 'auto', 0, 1, NULL, 60), \
+         (7, 'Fake Artist', 1, 'spotify', ?, ?, 'auto', 0, 1, NULL, 70)",
     )
     .bind(&cover)
     .bind(crate::music::state_key("storytel:series:26175"))
+    .bind(SNAPSHOT_PLAYLIST)
+    .bind(crate::music::state_key(SNAPSHOT_PLAYLIST))
+    .bind(SNAPSHOT_ARTIST)
+    .bind(crate::music::state_key(SNAPSHOT_ARTIST))
     .execute(&app.db)
     .await
     .unwrap();
@@ -1693,8 +1736,10 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .unwrap();
     sqlx::query(
         "INSERT INTO device_music_entries (device_id, entry_id) \
-         VALUES (?, 1), (?, 2), (?, 3), (?, 5)",
+         VALUES (?, 1), (?, 2), (?, 3), (?, 5), (?, 6), (?, 7)",
     )
+    .bind(device)
+    .bind(device)
     .bind(device)
     .bind(device)
     .bind(device)
@@ -1716,6 +1761,17 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // The Spotify entries (design 26c §3.6): the playlist listed (list mode: its tracks), the
+    // artist a context (Spotify's order, no items); neither has a cover yet.
+    sqlx::query(
+        "INSERT INTO music_listings (entry_id, version, cover_hash, keep_end, listed_at, \
+         spotify_mode) VALUES \
+         (6, '11ee11ee11ee11ee', NULL, 'first', '2026-10-13 12:00:00', 'list'), \
+         (7, '22dd22dd22dd22dd', NULL, 'first', '2026-10-13 12:00:00', 'context')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     // Storytel entries reach the phone only with its switch on and a login stored (26b §2.7).
     sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")
         .bind(device)
@@ -1729,6 +1785,21 @@ async fn snapshot_library(app: &TestApp, device: i64) {
     .execute(&app.db)
     .await
     .unwrap();
+    // Spotify entries reach the phone only while it plays as an account (design 26c §3.6): a fake
+    // sealed login, never opened here.
+    sqlx::query(
+        "INSERT INTO music_spotify_accounts (id, spotify_user, display_name, ciphertext, nonce, \
+         key_fingerprint, scopes, authorized_at) \
+         VALUES (1, 'fakekid', 'Ella', x'00', x'00', 'fake', 'streaming', '2026-10-13 10:00:00')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE device_policy SET music_spotify_account = 1 WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
     // The parent limited the phone to one Sonos room (design 26a §5.5; NULL = every room).
     sqlx::query(
         "UPDATE device_policy SET music_sonos_rooms_json = '[\"RINCON_000E58A0B1C201400\"]' \
@@ -1887,7 +1958,7 @@ async fn music_library_snapshot() {
     category_keys.sort_unstable();
     assert_eq!(category_keys, ["color", "icon", "id", "name", "sort"]);
     // Only this phone's entries, their categories, files and covers.
-    assert_eq!(served["entries"].as_array().unwrap().len(), 4);
+    assert_eq!(served["entries"].as_array().unwrap().len(), 6);
     assert_eq!(served["categories"].as_array().unwrap().len(), 3);
     assert_eq!(served["files"].as_array().unwrap().len(), 2);
     assert_eq!(served["files"][1]["missing"], json!(true));
@@ -1924,6 +1995,65 @@ async fn music_library_snapshot() {
         ),
         (&json!(-1), &json!(true), &json!(false), &json!("auto"))
     );
+    assert!(
+        storytel.get("spotify").is_none(),
+        "the mode is a Spotify entry's only"
+    );
+    // The Spotify entries (design 26c §3.6, §8 item 3): streamed (cache 0), resume on, never on the
+    // LAN, their listing's version, and the new field `spotify` - the mode - on them alone.
+    let playlist = &served["entries"][4];
+    let artist = &served["entries"][5];
+    assert_eq!(
+        (&playlist["source"], &playlist["target"], &playlist["items"]),
+        (
+            &json!("spotify"),
+            &json!(SNAPSHOT_PLAYLIST),
+            &json!("11ee11ee11ee11ee")
+        )
+    );
+    assert_eq!(
+        (&artist["target"], &artist["items"]),
+        (&json!(SNAPSHOT_ARTIST), &json!("22dd22dd22dd22dd"))
+    );
+    assert_eq!(playlist["spotify"], json!("list"));
+    assert_eq!(artist["spotify"], json!("context"));
+    for spotify in [playlist, artist] {
+        assert_eq!(
+            (
+                &spotify["cache"],
+                &spotify["resume"],
+                &spotify["lan"],
+                &spotify["order"],
+                &spotify["cover"]
+            ),
+            (
+                &json!(0),
+                &json!(true),
+                &json!(false),
+                &json!("auto"),
+                &Value::Null
+            )
+        );
+    }
+    let mut spotify_keys: Vec<&str> = playlist
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    spotify_keys.sort_unstable();
+    assert_eq!(
+        spotify_keys,
+        [
+            "cache", "category", "cover", "id", "items", "key", "lan", "name", "order", "resume",
+            "sort", "source", "spotify", "target"
+        ]
+    );
+    for (i, e) in served["entries"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(e.get("spotify").is_some(), i >= 4, "{e}");
+    }
+    // The policy says the phone plays Spotify (design 26c §6.2).
+    assert_eq!(music_policy(&app, &token).await["spotify"], json!(true));
     // The policy names the same version as the document and its ETag.
     let version = served["version"].as_str().unwrap();
     assert_eq!(
@@ -1952,7 +2082,7 @@ async fn library_lan_only_for_a_lan_rss_feed() {
             .collect()
     };
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
-    assert_eq!(lan_of(&res.json()), [false, false, false, false]);
+    assert_eq!(lan_of(&res.json()), [false; 6]);
     sqlx::query("UPDATE music_listings SET lan = 1")
         .execute(&app.db)
         .await
@@ -1965,8 +2095,8 @@ async fn library_lan_only_for_a_lan_rss_feed() {
     let res = device_get(&app, "/api/devices/music/library", &token, &[]).await;
     assert_eq!(
         lan_of(&res.json()),
-        [false, true, false, false],
-        "never a Storytel entry"
+        [false, true, false, false, false, false],
+        "never a Storytel or a Spotify entry"
     );
 }
 
@@ -4148,7 +4278,11 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
             "NRK series · oldest first · newest 42 kept offline",
             "a Pi value kept",
         ),
-        ("Spotify comes in a later version", "spotify"),
+        (
+            "Spotify playlist · natural order · streamed, on no phone yet · continues where it \
+             stopped",
+            "spotify (design 26c §3.2: imported, on no phone)",
+        ),
         (
             "Storytel series · natural order · every book downloaded · continues where it stopped",
             "storytel (design 26b §2.6: cache 0 is all)",
@@ -4165,7 +4299,7 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     // " podkast " matches the existing Podkast (trimmed, case-insensitive).
     assert!(page.contains("<option value=\"4\" selected>Podkast</option>"));
     assert!(page.contains("<option value=\"new\" selected>New: Eventyr og sånt</option>"));
-    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "0.3", "1.0"]);
+    assert_eq!(preview_rows(&page), vec!["0.0", "0.1", "0.2", "0.3", "1.0"]);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM music_entries")
             .fetch_one(&app.db)
@@ -4293,17 +4427,18 @@ async fn a_vibb_library_is_previewed_then_imported_without_a_fetch() {
     );
     assert_eq!(
         events(&app, "music_library_imported").await,
-        vec!["4 entries, 1 categories, 6 skipped".to_string()]
+        vec!["4 entries, 1 categories, 5 skipped".to_string()]
     );
 
     // The result, once, in the import group.
     let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains("data-flash=\"import\""));
     assert!(
-        page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 6 skipped:"),
+        page.contains("Imported 4 entries and 1 new category, ticked on Anna, Emil. 5 skipped:"),
         "{page}"
     );
-    assert!(page.contains("podkast / Spilleliste: Spotify comes in a later version"));
+    // The Spotify row (design 26c §3.2) was offered and left unticked: not "skipped".
+    assert!(!page.contains("podkast / Spilleliste"));
     assert!(page.contains("Eventyr og sånt / Abels tårn (igjen): it is in the file twice"));
     let again = app.get_page("/music/import", &cookie).await.text();
     assert!(!again.contains("Imported 4 entries"), "shown once");
@@ -4586,10 +4721,10 @@ async fn the_confirm_trusts_nothing_in_the_form() {
     let res = import_confirm(&app, &cookie, &[("row", "0.0")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
-    // A document edited to carry a Spotify row, a folder and 201 entries: only what a fresh upload
-    // would allow gets in.
+    // A document edited to carry a Spotify short link, a folder and 201 entries: only what a fresh
+    // upload would allow gets in.
     let mut entries = vec![
-        json!({"name": "Spill", "target": "spotify:playlist:1"}),
+        json!({"name": "Spill", "target": "https://spotify.link/abc"}),
         json!({"name": "Mappe", "target": "/srv/x"}),
     ];
     entries.extend((0..201).map(
@@ -4615,7 +4750,9 @@ async fn the_confirm_trusts_nothing_in_the_form() {
             .any(|n| n == "Spill" || n == "Mappe" || n == "F200")
     );
     let page = app.get_page("/music/import", &cookie).await.text();
-    assert!(page.contains("Podkast / Spill: Spotify comes in a later version"));
+    assert!(page.contains(
+        "Podkast / Spill: a Spotify short link - resolve it by adding it on the Spotify page"
+    ));
     assert!(page.contains("Podkast / F200: the library holds at most 200 entries"));
     assert!(app.fetch.calls.lock().unwrap().is_empty());
 }
@@ -5164,6 +5301,16 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
     let preview = import_preview(&app, &cookie, vibb_library().to_string().as_bytes())
         .await
         .text();
+    // Spotify (design 26c; qa-26c-merge2-code M3, L6): an app with the loopback redirect (so the
+    // paste shows), a child's login, a listed playlist's entry page, and the album an add takes.
+    use super::music_spotify::listing as spotify;
+    spotify::ready(&app).await;
+    let playlist = spotify::entry(&app, "playlist", spotify::PLAYLIST).await;
+    app.fetch.answer(
+        &spotify::url(&app, crate::spotify::Read::Album(spotify::ALBUM_X)),
+        200,
+        crate::spotify::tests::fixture("album.json"),
+    );
 
     let mut forms: Vec<(String, String, Fields)> = Vec::new();
     for page in [
@@ -5174,6 +5321,8 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         "/music/import".to_string(),
         format!("/music/entries/{first}"),
         format!("/music/entries/{own}"),
+        format!("/music/entries/{playlist}"),
+        "/music/spotify".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
         check_forms(&page, &html);
@@ -5187,7 +5336,15 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         forms.push(("/music/import".to_string(), action, hidden));
     }
     // Deletes last: they take what the other forms need.
-    forms.sort_by_key(|(_, action, _)| action.contains("delete") || action.ends_with("/clear"));
+    forms.sort_by_key(|(_, action, _)| {
+        let target = action.split('#').next().unwrap_or_default();
+        // A clear takes the most (the Spotify app's takes its logins too): after every delete.
+        let clear = target.ends_with("/clear");
+        (
+            clear || target.contains("delete") || target.contains("/accounts/"),
+            clear,
+        )
+    });
     let mut seen = std::collections::HashSet::new();
     let mut added = 0;
     for (page, action, hidden) in forms {
@@ -5203,10 +5360,14 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         };
         let entry = id_and_rest("/music/entries/");
         let category = id_and_rest("/music/categories/");
-        let kind = match (&entry, &category) {
-            (Some((_, rest)), _) if rest.starts_with("/files/") => "entry/file-delete".to_string(),
-            (Some((_, rest)), _) => format!("entry{rest}"),
-            (_, Some((_, rest))) => format!("category{rest}"),
+        let account = id_and_rest("/music/spotify/accounts/");
+        let kind = match (&entry, &category, &account) {
+            (Some((_, rest)), _, _) if rest.starts_with("/files/") => {
+                "entry/file-delete".to_string()
+            }
+            (Some((_, rest)), _, _) => format!("entry{rest}"),
+            (_, Some((_, rest)), _) => format!("category{rest}"),
+            (_, _, Some((_, rest))) => format!("spotify-account{rest}"),
             _ => target.clone(),
         };
         seen.insert(kind.clone());
@@ -5222,6 +5383,11 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "entry" => Some("settings".to_string()),
             "entry/cover" => Some("cover".to_string()),
             "entry/files" => Some("files".to_string()),
+            "/music/spotify/app" => Some("app".to_string()),
+            "/music/spotify/app/clear" => Some("app-clear".to_string()),
+            "/music/spotify/paste" => Some("paste".to_string()),
+            "/music/spotify/add" => Some("add".to_string()),
+            "spotify-account/remove" => account.as_ref().map(|(id, _)| format!("account-{id}")),
             _ => None,
         };
         if refusal_lands_at.is_some() {
@@ -5304,6 +5470,39 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "category/delete" => ("/music/categories".into(), Some("categories".into())),
             "/music/import" => ("(the page)".into(), None),
             "/music/import/confirm" => ("/music/import".into(), Some("import".into())),
+            "/music/spotify/app" => {
+                add(&[
+                    ("client_id", crate::spotify::tests::CLIENT),
+                    ("redirect_uri", crate::spotify::LOOPBACK_REDIRECT),
+                ]);
+                ("/music/spotify?saved=*".into(), Some("app".into()))
+            }
+            "/music/spotify/app/clear" => {
+                add(&[("confirm", "on")]);
+                ("/music/spotify?cleared=1".into(), Some("app".into()))
+            }
+            // The login goes to Spotify (a 303 off this server): no fragment to carry along.
+            "/music/spotify/login" => ("https://accounts.spotify.com/authorize?*".into(), None),
+            "/music/spotify/paste" => {
+                // A cancelled login nobody started: the outcome lands in the accounts group.
+                let url = format!(
+                    "{}?error=access_denied&state=0123456789abcdef0123456789abcdef",
+                    crate::spotify::LOOPBACK_REDIRECT
+                );
+                fields.push(("url".into(), url));
+                ("/music/spotify?login=*".into(), Some("accounts".into()))
+            }
+            "spotify-account/remove" => {
+                add(&[("confirm", "on")]);
+                ("/music/spotify?removed=1".into(), Some("accounts".into()))
+            }
+            "/music/spotify/add" => {
+                add(&[(
+                    "link",
+                    &format!("https://open.spotify.com/album/{}", spotify::ALBUM_X),
+                )]);
+                ("/music/spotify?added=*".into(), Some("added".into()))
+            }
             other => panic!("a form without a row in the redirect table: {other} on {page}"),
         };
         let id = entry.as_ref().map_or(0, |(id, _)| *id);
@@ -5376,6 +5575,12 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         "category/delete",
         "/music/import",
         "/music/import/confirm",
+        "/music/spotify/app",
+        "/music/spotify/app/clear",
+        "/music/spotify/login",
+        "/music/spotify/paste",
+        "spotify-account/remove",
+        "/music/spotify/add",
     ] {
         assert!(seen.contains(kind), "no form posted to {kind}");
     }

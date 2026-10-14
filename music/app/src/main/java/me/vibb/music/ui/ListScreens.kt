@@ -38,6 +38,8 @@ import me.vibb.music.logic.ListRow
 import me.vibb.music.logic.OfflineSummary
 import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.formatDuration
+import me.vibb.music.logic.isSpotifyContext
+import me.vibb.music.logic.kindOf
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -51,20 +53,28 @@ private fun Header(backLabel: String, onBack: () -> Unit, title: String?, traili
     }
 }
 
-/** "Liste" (`onList`): the offline summary and the rows in the order they play. */
+/**
+ * "Liste" (`onList`): the offline summary (none for Spotify, which streams only: [summary] null - no line, or for a
+ * context the hint that the order is picked, design 26c §5.9; no source named, step 8) and the rows in the order they play.
+ */
 @Composable
-fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
+fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Header(stringResource(R.string.back_player), onBack, entry.name)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-            Glyph(Icons.downloadAll, 16.dp, Palette.peach)
-            Line(
-                when (summary) {
-                    OfflineSummary.All -> stringResource(R.string.all_downloaded)
-                    is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
-                },
-                12, 800, Palette.sub,
-            )
+        if (summary != null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                Glyph(Icons.downloadAll, 16.dp, Palette.peach)
+                Line(
+                    when (summary) {
+                        OfflineSummary.All -> stringResource(R.string.all_downloaded)
+                        is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
+                    },
+                    12, 800, Palette.sub,
+                )
+            }
+        } else if (isSpotifyContext(entry)) {
+            // a context (design 26c §5.9): the order is picked for the kid, its one row is the track playing now
+            Line(stringResource(R.string.hint_spotify_picks, kindText(kindOf(entry))), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
         }
         val state = rememberLazyListState(initialFirstVisibleItemIndex = (rows.indexOfFirst { it.playing }).coerceAtLeast(0))
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -76,6 +86,8 @@ fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary, onBac
 @Composable
 private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
     val duration = formatDuration(row.item.durationMs)
+    // a Spotify context's one row has no duration (design 26c §5.9): "Spilles nå" alone, no trailing dot
+    val playing = stringResource(R.string.row_playing, duration).removeSuffix(" · ")
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(16.dp))
             .background(if (row.playing) Palette.selected else Palette.card)
@@ -90,7 +102,7 @@ private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
             Line(row.item.title, 15, 800, Palette.white)
             Line(
                 when {
-                    row.playing -> stringResource(R.string.row_playing, duration)
+                    row.playing -> playing
                     row.heard -> stringResource(R.string.row_heard, duration)
                     else -> duration
                 },
@@ -136,6 +148,7 @@ fun NewsScreen(rows: List<NewsRowUi>, onBack: () -> Unit, onClear: () -> Unit, o
                                 Kind.OWN -> R.string.new_track
                                 Kind.AUDIOBOOK -> R.string.new_book
                                 Kind.PODCAST -> R.string.new_episode
+                                Kind.MUSIC -> R.string.new_track
                             }
                             Line(stringResource(label), 12, 800, Palette.peach)
                             Line(row.item.title, 15, 800, Palette.white)
@@ -187,7 +200,7 @@ fun SearchScreen(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(hits, key = { h -> if (h is SearchHit.ItemHit) "${h.entry.id}/${h.item.key}" else "${h.entry.id}" }) { hit ->
-                val kind = kindText(me.vibb.music.logic.kindOf(hit.entry))
+                val kind = kindText(kindOf(hit.entry))
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 60.dp).clip(RoundedCornerShape(16.dp)).background(Palette.card)
                         .button(null) { onPick(hit) }.padding(horizontal = 10.dp, vertical = 8.dp),

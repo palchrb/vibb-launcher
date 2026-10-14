@@ -39,8 +39,41 @@ data class Output(val key: String, val kind: OutputKind, val name: String?) {
 }
 
 /**
- * Why a Sonos renderer isn't playing what we sent it (design 26a §4.8; vibb `daemon.py:2627-2632`,
- * in this precedence), the player's one line under the title. Null while nothing is wrong, and
- * always on the phone. Not `sonos.RendererChoice` (the persisted renderer.json record).
+ * Why a renderer isn't playing what we sent it, the player's one line under the title. Null while
+ * nothing is wrong, and always for the phone's own player. Not `sonos.RendererChoice` (the persisted
+ * renderer.json record).
+ *
+ * - A Sonos room's four (design 26a §4.8; vibb `daemon.py:2627-2632`, in this precedence): [remote].
+ * - Spotify's web player on the phone (design 26c §5.8, QA M6): why a start didn't happen or playback
+ *   stopped - no Wi-Fi, no internet (and the quota's [SPOTIFY_UNAVAILABLE]), an adult's matter, no
+ *   Widevine, the account playing elsewhere, the page's renderer gone. Not [remote]: the call rule
+ *   (`callStep`) counts a paused Spotify renderer with one of these as paused. The names say whose
+ *   renderer it is; the kid's lines never do (26c step 8: no source on the kid's screens).
  */
-enum class RendererState { GROUPED_AWAY, TAKEN_OVER, LOST_SESSION, UNREACHABLE }
+enum class RendererState(val remote: Boolean) {
+    GROUPED_AWAY(true),
+    TAKEN_OVER(true),
+    LOST_SESSION(true),
+    UNREACHABLE(true),
+
+    /** "Trenger Wi-Fi": a network the gate refuses (mobile data not allowed, or roaming). */
+    SPOTIFY_NEEDS_WIFI(false),
+
+    /** "Trenger internett": offline, the SDK or `ready` not reached, the play call unreachable, no state for 30 s. */
+    SPOTIFY_NEEDS_INTERNET(false),
+
+    /** "Ikke tilgjengelig nå": the play call's 429 `QUOTA_EXCEEDED` (§5.8 gives it NEEDS_INTERNET's place with its own text). */
+    SPOTIFY_UNAVAILABLE(false),
+
+    /** "Spør en voksen": the login ended, the play refused, no Premium. */
+    SPOTIFY_ASK_ADULT(false),
+
+    /** "Virker ikke på telefonen": no EME/Widevine in the web player. */
+    SPOTIFY_NOT_ON_PHONE(false),
+
+    /** "Spilles et annet sted": a confirmed `null` state - the account plays on another device. */
+    SPOTIFY_ELSEWHERE(false),
+
+    /** "Stoppet - trykk spill": the web player's renderer process died. */
+    SPOTIFY_STOPPED(false),
+}

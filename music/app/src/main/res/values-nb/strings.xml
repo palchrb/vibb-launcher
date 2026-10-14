@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Musikk</string>
 
     <!-- Biblioteket -->
@@ -19,11 +19,13 @@
     <string name="kind_podcast">Podkast</string>
     <string name="kind_own">Egne filer</string>
     <string name="kind_audiobook">Lydbok</string>
+    <string name="kind_music">Musikk</string>
     <string name="hint_episode">%1$s · episode %2$d av %3$d</string>
     <string name="hint_track">%1$s · spor %2$d av %3$d</string>
     <string name="hint_part">%1$s · del %2$d av %3$d</string>
     <string name="hint_continues">%1$s · fortsetter der du slapp</string>
     <string name="hint_from_start">%1$s · starter fra begynnelsen</string>
+    <string name="hint_spotify_picks">%1$s · rekkefølgen velges for deg</string>
     <string name="cant_play">Kan ikke spilles nå</string>
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
     <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>
@@ -62,6 +64,14 @@
     <string name="renderer_taken_over">Noen andre bruker høyttaleren</string>
     <string name="renderer_lost_session">Høyttaleren stoppet</string>
     <string name="renderer_unreachable">Får ikke kontakt med høyttaleren</string>
+    <string name="renderer_spotify_needs_wifi">Trenger Wi-Fi</string>
+    <!-- "internett" is bokmål's common noun (lint's Typos check wants it capitalized). -->
+    <string name="renderer_spotify_needs_internet" tools:ignore="Typos">Trenger internett</string>
+    <string name="renderer_spotify_unavailable">Ikke tilgjengelig nå</string>
+    <string name="renderer_spotify_ask_adult">Spør en voksen</string>
+    <string name="renderer_spotify_not_on_phone">Virker ikke på telefonen</string>
+    <string name="renderer_spotify_elsewhere">Spilles et annet sted</string>
+    <string name="renderer_spotify_stopped">Stoppet - trykk spill</string>
 
     <!-- Liste -->
     <string name="back_player">Tilbake til avspilling</string>

@@ -1,0 +1,18 @@
+{
+  "about": "Autoplay after the window (QA H4): Spotify's list ran out at the window's end (the queue add failed) and it plays a track it picked: paused at once, never measured, a new window from the next index.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000004", "title": "Fake track 4 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 1}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 20500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": false, "repeat": 0}, "expect": ["ItemChanged 1 auto", "QueueAdd 2"]},
+    {"at": 35500, "state": {"paused": false, "position": 15000, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 40600, "state": {"paused": false, "position": 0, "duration": 180000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing", "NewWindow 2"]},
+    {"at": 40800, "state": {"paused": false, "position": 200, "duration": 180000, "uri": "spotify:track:FAKEautoplay0000000001", "linked": null, "type": "track", "name": "Something Spotify picked", "artists": ["Someone Else"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 1, "mode": "LOST", "measured": {"index": 1, "position": 15000, "at": 35500, "playing": true}}
+}

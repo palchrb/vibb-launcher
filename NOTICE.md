@@ -101,3 +101,29 @@ License, Copyright (c) 2026 palchrb, and its notice above cover these too. vibb'
 License, Copyright (c) 2025 Andrea Debernardi (debba); its permission notice is in
 [`music/app/src/main/assets/licenses/MIT-storytel-player.txt`](music/app/src/main/assets/licenses/MIT-storytel-player.txt),
 shipped in the app, and covers the server's port too.
+
+Spotify (design 26c) is new ground - the Pi's go-librespot path doesn't carry over - but it keeps
+[palchrb/vibb](https://github.com/palchrb/vibb)'s rules for what a Spotify link is and how a Spotify entry behaves, and
+reimplements them under the GPL-3.0 (or later):
+- `pi/vibb/spotify.py`'s link grammar - `URI_RE`, `LINK_RE` and `to_uri` (the `open.spotify.com` links with their
+  `intl-xx/` prefixes, `spotify:<kind>:<id>` URIs, the `spotify.link` short links resolved once) - in Rust in
+  `server/src/spotify.rs` (`parse_link`, `parse_target`, `resolve_short_link`, and the import in
+  `server/src/music_import.rs`), and the stored target's grammar in Kotlin in
+  `music/app/src/main/java/me/vibb/music/spotify/SpotifyRef.kt`;
+- its per-context bookmark rule - `bookmark_step`, `save_bookmark` and `read_bookmark` (one bookmark per context:
+  the track and where; the entry keyed like `state_key` by the canonical URI's hash) and `pi/daemon.py`'s
+  `play_origin` rule (only a session we started writes a bookmark) - in the music app's resume per entry and track
+  (phase 1's port of `bookmarks.py`), its context mode's live track and `spotify/SpotifyTracker.kt` (a state we didn't
+  command is paused and never saved);
+- the Spotify parts of `pi/vibb/library.py` - the precache gate's politeness (a playlist's items re-read only when
+  its `snapshot_id` changed, the immutable kinds daily) and `context_tracks`' "Title — Artists" rows - in
+  `server/src/music_sweep.rs` (`spotify_check`) and `server/src/spotify.rs`'s listing parsers.
+
+The ported code names vibb where it lands (`server/src/spotify.rs`'s header, `SpotifyRef.kt`, `SpotifyTracker.kt`,
+`spotify_check`). Written here, not ported: the developer-app setup and the PKCE logins, the
+token route, the Web API listing, the headless WebView player (`music/app/src/main/java/me/vibb/music/spotify/`,
+`music/app/src/main/assets/spotify/`), the launcher's token courier and DNS exemption, and `scripts/fake-spotify.py`
+(modelled on vibb's test fakes and their one-source-of-truth rule). vibb's MIT License, Copyright (c) 2026 palchrb,
+and its notice in [`music/app/src/main/assets/licenses/MIT-vibb.txt`](music/app/src/main/assets/licenses/MIT-vibb.txt)
+cover these too. Spotify's Web Playback SDK (`https://sdk.scdn.co/spotify-player.js`) is not in this repository or
+any APK: the music app's page loads it from Spotify at run time, under Spotify's Developer Terms.

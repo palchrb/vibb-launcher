@@ -104,7 +104,11 @@ object PlayerHub {
         val outputs: List<Output> = listOf(Output.PHONE),
         /** The output in use (the chosen one, else where the system routes). */
         val output: Output = Output.PHONE,
-        /** Why the Sonos room isn't playing what we sent it (design 26a §3.3, §4.8); null on the phone. */
+        /**
+         * Why the renderer isn't playing what we sent it (the player's quiet line): a Sonos room's four (design 26a
+         * §3.3, §4.8) or Spotify's web player's (design 26c §5.8, also the loaded entry's tile - [entryId]); null
+         * for the phone's own player.
+         */
         val rendererState: RendererState? = null,
         /** The Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`, design 26a §5.1). */
         val rooms: RoomsView = RoomsView(emptyList(), stale = false, scanning = false),

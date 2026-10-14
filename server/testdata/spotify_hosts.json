@@ -1,0 +1,5 @@
+{
+  "comment": "Spotify's hosts for the Web Playback SDK (design 26c §6.2): the DNS filter never blocks them on a phone with Spotify on, and the music app's WebView loads nothing else. PROVISIONAL (unverified) until the spike's item 10 step 7 capture replaces it (step 6 at the latest).",
+  "suffixes": ["spotify.com", "scdn.co", "spotifycdn.com", "spotifycdn.net", "pscdn.co"],
+  "exact": ["audio-ak-spotify-com.akamaized.net", "audio-akp-quic-spotify-com.akamaized.net"]
+}

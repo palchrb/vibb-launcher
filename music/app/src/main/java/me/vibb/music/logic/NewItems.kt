@@ -22,11 +22,23 @@ import me.vibb.music.model.Source
 /**
  * The keys of a listing that may join the Nytt tray when new: those that can play once fetched
  * ([fetchable]: a url, or a Storytel book, whose url is minted per download - design 26b §3.4, vibb
- * `_mark_new_seen(newest_book_id)`). A withdrawn episode without a url never does. The tray and the
- * notification show only visible items, so a new book appears there once it is on the phone.
+ * `_mark_new_seen(newest_book_id)`), and a listed Spotify item, which streams (design 26c §4.3). A
+ * withdrawn episode without a url never does. The tray and the notification show only visible
+ * items, so a new book appears there once it is on the phone.
  */
-fun newsEligible(entry: Entry, items: List<ListingItem>): Set<String> =
-    items.filter { it.url != null || entry.source == Source.STORYTEL }.map { it.key }.toSet()
+fun newsEligible(entry: Entry, items: List<ListingItem>, spotifyPlayable: Boolean = SPOTIFY_PLAYABLE): Set<String> =
+    items.filter { eligible(entry, it.url, spotifyPlayable) }.map { it.key }.toSet()
+
+/**
+ * Can an item of [entry] with [url] join the tray: a url, a Storytel book, or a listed Spotify item
+ * (design 26c §4.3: a song added to a playlist, a new episode of a show) - once Spotify plays
+ * ([spotifyPlayable]); before that its listings are only acknowledged.
+ */
+private fun eligible(entry: Entry, url: String?, spotifyPlayable: Boolean): Boolean = when (entry.source) {
+    Source.STORYTEL -> true
+    Source.SPOTIFY -> spotifyPlayable
+    else -> url != null
+}
 
 /** The Nytt tray holds at most this many items (newest first). */
 const val NEWS_MAX = 30
@@ -89,8 +101,15 @@ data class Listed(val entry: Entry, val oldestFirst: List<String>, val eligible:
  * eligible as [newsEligible] has it (own files: all), unplayable a Storytel book whose item error
  * ([errors], item key -> code) is permanent and a [missing] own file without a copy ([onPhone]).
  */
-fun listedOf(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, missing: Set<String>, errors: Map<String, String>): Listed {
-    val eligible = if (entry.source == Source.OWN) null else items.filter { it.url != null || entry.source == Source.STORYTEL }.map { it.key }.toSet()
+fun listedOf(
+    entry: Entry,
+    items: List<PlayItem>,
+    onPhone: Set<String>,
+    missing: Set<String>,
+    errors: Map<String, String>,
+    spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
+): Listed {
+    val eligible = if (entry.source == Source.OWN) null else items.filter { eligible(entry, it.url, spotifyPlayable) }.map { it.key }.toSet()
     val noAudio = if (entry.source == Source.STORYTEL) errors.filterValues(::storytelPermanentFailure).keys else emptySet()
     return Listed(entry, items.map { it.key }, eligible, noAudio + (missing - onPhone))
 }

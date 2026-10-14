@@ -12,6 +12,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import me.vibb.music.logic.storytelTarget
+import me.vibb.music.spotify.SPOTIFY_MODES
+import me.vibb.music.spotify.spotifyTarget
 
 /*
  * The phone's library (design 21 §1.3, 21b §4.1): `GET /api/devices/music/library`, pinned by
@@ -23,7 +25,9 @@ import me.vibb.music.logic.storytelTarget
  * `v: 1` with its three arrays is refused (the old library stays). `sonos_rooms` (design 26a §5.5)
  * absent or null is every room; a list is those rooms; anything else is no room (fail closed). A
  * Storytel entry (design 26b §3.1) needs a target of vibb's grammar; an older app drops it with its id
- * kept, so nothing of it is pruned.
+ * kept, so nothing of it is pruned. A Spotify entry (design 26c §4.1) needs a canonical
+ * `spotify:<kind>:<id>` target and the `spotify` field - its mode, `list` or `context` - else it is
+ * hidden with its id kept; it is streamed (cache read as 0 whatever is sent, never `lan`).
  */
 
 val JSON = Json { ignoreUnknownKeys = true; explicitNulls = false }
@@ -33,7 +37,7 @@ private val HASH = Regex("[0-9a-f]{64}")
 private val VERSION = Regex("[0-9a-f]{16}")
 val ORDERS = setOf("auto", "newest_first", "oldest_first")
 
-enum class Source { NRK, RSS, OWN, STORYTEL }
+enum class Source { NRK, RSS, OWN, STORYTEL, SPOTIFY }
 
 data class Category(val id: Long, val name: String, val icon: String, val color: String, val sort: Int)
 
@@ -55,6 +59,11 @@ data class Entry(
     val sort: Int,
     /** An RSS feed on the home LAN or tailnet (21b §2.7/§4.1): its audio may come from private addresses. */
     val lan: Boolean = false,
+    /**
+     * A Spotify entry's mode (design 26c §3.3, §4.1): `list` (the phone plays our listing by track
+     * URI) or `context` (Spotify's own order, no items); null for every other source.
+     */
+    val spotifyMode: String? = null,
 ) {
     /** An NRK serie (`radio.nrk.no/serie/...`): a story read from its start (vibb `_natural_order`). */
     val nrkSerie: Boolean get() = source == Source.NRK && target.orEmpty().contains("radio.nrk.no/serie/", ignoreCase = true)
@@ -126,6 +135,7 @@ private data class EntryDto(
     val items: String? = null,
     val sort: Int = 0,
     val lan: Boolean = false,
+    val spotify: String? = null,
 )
 
 @Serializable
@@ -197,21 +207,30 @@ object LibraryParser {
             "rss" -> Source.RSS
             "own" -> Source.OWN
             "storytel" -> Source.STORYTEL
-            else -> return null // spotify comes with its phase
+            "spotify" -> Source.SPOTIFY
+            else -> return null // a newer server's source: hidden, its id kept
         }
         if (d.id <= 0 || !KEY.matches(d.key) || d.name.isBlank()) return null
         // Download-only: "in the library" means downloaded, so a Storytel cache 0 is all (vibb library.py 87-89).
-        val cache = if (source == Source.STORYTEL && d.cache == 0) -1 else d.cache
+        // Spotify streams only (design 26c §4.1): nothing is ever kept, whatever is sent.
+        val cache = when {
+            source == Source.STORYTEL && d.cache == 0 -> -1
+            source == Source.SPOTIFY -> 0
+            else -> d.cache
+        }
         if (!(cache == -1 || cache in 0..100)) return null // what to keep is unknown: hide it, keep its copies
         if (source != Source.OWN && d.target.isNullOrBlank()) return null
         if (source == Source.STORYTEL && storytelTarget(d.target) == null) return null
+        // A Spotify entry needs its canonical target and its mode; without either it is hidden, its id kept.
+        val spotifyMode = if (source == Source.SPOTIFY) d.spotify?.takeIf { it in SPOTIFY_MODES } ?: return null else null
+        if (source == Source.SPOTIFY && spotifyTarget(d.target) == null) return null
         return Entry(
             d.id, d.key, d.name.trim(), d.category, source, d.target,
             d.order.takeIf { it in ORDERS } ?: "auto",
             cache, d.resume,
             d.cover?.takeIf { HASH.matches(it) },
             if (source == Source.OWN) null else d.items?.takeIf { VERSION.matches(it) },
-            d.sort, source == Source.RSS && d.lan,
+            d.sort, source == Source.RSS && d.lan, spotifyMode,
         )
     }
 

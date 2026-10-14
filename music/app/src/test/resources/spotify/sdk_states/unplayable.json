@@ -1,0 +1,20 @@
+{
+  "about": "Unplayable (§5.4, QA M5): only from the SDK - a playback_error on our current track (Spotify then moving on is no second error), or Spotify skipping past ours (a later uri of ours before the current one played 3 s). The third in a row stops: every later playing state is paused.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000004", "title": "Fake track 4 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000005", "title": "Fake track 5 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000006", "title": "Fake track 6 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 5}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003", "spotify:track:FAKEtrack0000000000004"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 700, "error": "playback", "expect": ["Unplayable 0"]},
+    {"at": 900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000003", "spotify:track:FAKEtrack0000000000004", "spotify:track:FAKEtrack0000000000005"], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": false, "repeat": 0}, "expect": ["ItemChanged 1 auto"]},
+    {"at": 1900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Fake track 4", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000005", "spotify:track:FAKEtrack0000000000006"], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Unplayable 1", "Unplayable 2 stop"]},
+    {"at": 2000, "state": {"paused": false, "position": 100, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Fake track 4", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000005", "spotify:track:FAKEtrack0000000000006"], "prev": ["spotify:track:FAKEtrack0000000000001", "spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 1, "mode": "LOST"}
+}

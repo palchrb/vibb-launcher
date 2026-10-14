@@ -100,6 +100,13 @@ fun stateReport(
     storytel: String? = null,
     /** The rooms the speaker cache knows ([reportedRooms]). */
     sonosRooms: List<ReportedRoom> = emptyList(),
+    /**
+     * The phone's last Spotify outcome (design 26c §4.4): one of `none`, `ok`, `reauthorize`,
+     * `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota` - never a token, an account or a
+     * device id. The sync reads it from `spotify_state.json` (`SpotifyOutcome.reported`: `none` without
+     * the file); a track the account can't play is an `item_errors` row (`unplayable`), never this.
+     */
+    spotify: String = "none",
 ): JsonObject = buildJsonObject {
     put("version_code", versionCode)
     put("library_version", libraryVersion)
@@ -117,6 +124,7 @@ fun stateReport(
         }
     })
     put("storytel", storytel)
+    put("spotify", spotify)
     put("downloads", buildJsonArray {
         for (d in downloads.take(DOWNLOADS_MAX)) {
             add(buildJsonObject {

@@ -1450,6 +1450,16 @@ async fn render_device(
         tracing::error!(device_id = id, %err, "can't read the phone's music");
     }
 
+    // The Spotify account it plays as (qa-26c-merge2-code L3): the badge's rows read it too.
+    let spotify_account =
+        match crate::handlers::music::spotify_account_warnings(state, &policy).await {
+            Ok(warnings) => warnings,
+            Err(err) => {
+                tracing::error!(device_id = id, %err, "can't read the phone's Spotify account");
+                Default::default()
+            }
+        };
+
     // The same rows the Devices list counts, from the parts built above (not read twice).
     let connection = connection_of(state, &device, now);
     let facts = crate::attention::facts_of(
@@ -1462,6 +1472,7 @@ async fn render_device(
             incoming_calls_not_blocked: incoming_calls_unblocked,
             connection,
             music_ticked: music_ticked.as_deref().unwrap_or(&[]),
+            spotify_account,
         },
         now.timestamp_millis(),
     );

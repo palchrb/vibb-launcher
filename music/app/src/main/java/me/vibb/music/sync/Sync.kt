@@ -35,6 +35,7 @@ import me.vibb.music.logic.storageLimitBytes
 import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
 import me.vibb.music.logic.repickWanted
+import me.vibb.music.logic.SpotifyOutcome
 import me.vibb.music.logic.reportWaiting
 import me.vibb.music.logic.reportedRooms
 import me.vibb.music.logic.stateReport
@@ -281,6 +282,8 @@ object Sync {
             storytel,
             // the rooms the speaker cache knows, for the parent's room scope (design 26a §5.5)
             reportedRooms(SpeakerCache(SonosFiles.cache(context)).load().players.mapValues { it.value.name }),
+            // the phone's last Spotify outcome, from the file the renderer's word is kept in (design 26c §4.4, QA L8)
+            spotify = SpotifyOutcome.reported(runCatching { store.spotifyStateFile.readText() }.getOrNull()),
         )
         val text = report.toString()
         reportLock.withLock { Store.writeAtomic(store.reportFile, text.toByteArray()) }
@@ -305,7 +308,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 }
 
-/** `item_errors` in Room: the latest failure of a download or stream of a listed url, per item. */
+/** `item_errors` in Room: the latest failure of a download or stream of a listed url, or a Spotify track the account
+ * can't play (`unplayable`, design 26c §4.4), per item. */
 object ItemErrors {
     suspend fun record(context: Context, entryId: Long, itemKey: String, code: String) {
         val dao = Store.get(context).db

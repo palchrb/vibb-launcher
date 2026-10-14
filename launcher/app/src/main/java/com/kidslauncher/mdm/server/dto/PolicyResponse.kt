@@ -102,11 +102,14 @@ data class PolicyResponse(
      * The offline override and the pause don't lift it - it guards data, not the kid. */
     val appUpdatesWifiOnly: Boolean? = null,
     /** Vibb music (design 21): the server's `{library_version, mobile_data, stream_mobile_data,
-     * download_mobile_data, volume_cap_pct, storage_limit_gb, storytel_generation}` (design 30 adds
-     * the switches and the limit; `mobile_data` = both); `null` from an older server, or when the server couldn't read the
-     * library (then the music app keeps what it has - never an empty library). Step 1 only
-     * carries it, as raw JSON so nothing in it can fail the policy; the music sync (step 3) reads
-     * it field by field. Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
+     * download_mobile_data, volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (design 30
+     * adds the switches and the limit; `mobile_data` = both); `null` from an older server, or when the
+     * server couldn't read the library (then the music app keeps what it has - never an empty library).
+     * Carried as raw JSON so nothing in it can fail the policy, and read field by field:
+     * [com.kidslauncher.mdm.music.musicPolicy] for the music sync, and
+     * [com.kidslauncher.mdm.music.musicSpotify] for `spotify` (design 26c §6.2: this phone plays
+     * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false).
+     * Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
     /** The lock's glance page (design 25): `{apps: [package, ...], show_text: bool}` - the apps whose
      * messages show on the PIN lock's first page, and whether with their text. Raw JSON read field

@@ -1,0 +1,9 @@
+{
+  "about": "The token route's answers (design 26c §2.6) as the phone reads them: the server's POST /api/devices/music/spotify/token, and the fake's GET /fake/token (the debug switch's debugTokens, §9.3) answers in the same shape. Fake values only; account 2:1 is the fake's kid.",
+  "ok": {"http": 200, "body": {"status": "ok", "access_token": "FAKE-ACCESS-1", "expires_in_s": 3300, "account": "2:1"}},
+  "off": {"http": 404, "body": {"status": "off"}},
+  "reauthorize": {"http": 409, "body": {"status": "reauthorize"}},
+  "busy": {"http": 429, "body": {"status": "busy", "retry_after_s": 30}},
+  "unreachable": {"http": 502, "body": {"status": "unreachable"}},
+  "key": {"http": 503, "body": {"status": "key"}}
+}

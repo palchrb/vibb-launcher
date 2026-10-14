@@ -88,6 +88,14 @@
             <span class="row-value">{{ storytel_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
+        {#- Design 26c: Spotify links are added on their own page (the app, the children's logins, the
+            add form); `id="spotify"` is where that page's back link lands. -#}
+        <a class="row" href="/music/spotify" id="spotify" data-row="from-spotify">
+            <span class="tile tile-green" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.8 6.4c2.2-.7 4.6-.5 6.6.6M5.3 8.6c1.8-.5 3.7-.3 5.2.5M5.8 10.7c1.3-.3 2.7-.2 3.8.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></span>
+            <span class="row-label">From Spotify</span>
+            <span class="row-value">{{ spotify_state }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/music/import" data-row="import">
             <span class="tile tile-graphite" aria-hidden="true"><svg viewBox="0 0 16 16" focusable="false"><path d="M8 3v8M5 8l3 3 3-3M3 13h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             <span class="row-label">Import from Vibb</span>

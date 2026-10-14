@@ -2,6 +2,7 @@ package me.vibb.music.logic
 
 import android.content.Intent
 import androidx.media3.common.PlaybackException
+import me.vibb.music.Fixtures
 import me.vibb.music.Fixtures.moduleFile
 import me.vibb.music.media.MediaCache
 import me.vibb.music.media.StreamGateException
@@ -83,6 +84,8 @@ class GuardsTest {
         assertTrue(attach.indexOf("old.pause()") < attach.indexOf("old.onEvent = null"))
         assertTrue(attach.indexOf("next.onEvent = { onRendererEvent(it) }") < attach.indexOf("renderer = next"))
         assertTrue(attach.contains("session?.setPlayer(KidPlayer(next.player))"))
+        // design 26c §5.10, qa-26c-step5b-code M1: a detached web player is told, after its events are cut
+        assertTrue(attach.indexOf("old.onEvent = null") in 0 until attach.indexOf("if (old === spotify) spotify?.detached()"))
         assertEquals("onEvent is set only in attach (and cleared for the destroy tail, qa-26a-step3b-code L1)", 3, Regex("""\.onEvent = """).findAll(service).count())
         assertTrue(service.substringAfter("override fun onDestroy() {").contains("sonos.onEvent = null\n            sonos.saveNow(force = true)"))
         assertEquals(2, Regex("""\.onEvent = """).findAll(attach).count())
@@ -117,7 +120,7 @@ class GuardsTest {
         assertTrue(adopt.indexOf("SonosTail.join()") < adopt.indexOf("sonos.probe("))
         assertTrue(adopt.contains("val verdict = roomVerdict(choice, live, ofEntry)"))
         // qa-26a-step3b-code M1: back to the phone only on a definite answer; ours but not rebuildable: one Stop
-        val notAdopted = adopt.substringAfter("if (queue == null || live == null || renderer !== local) {").substringBefore("\n        val (a, index) = queue")
+        val notAdopted = adopt.substringAfter("if (queue == null || live == null || !renderer.kind.onPhone) {").substringBefore("\n        val (a, index) = queue")
         assertTrue(notAdopted.contains("if (verdict == RoomVerdict.OURS_LIVE) sonos.stopUnadopted()"))
         assertTrue(notAdopted.indexOf("if (verdict == RoomVerdict.NO_ANSWER) {") < notAdopted.indexOf("home.write(RendererChoice.local(home.choice()))"))
         for (start in listOf(".play()", "start(", "resumeLast", "playTile", "playPause")) assertFalse(start, adopt.contains(start))
@@ -133,8 +136,8 @@ class GuardsTest {
         for (verb in listOf(".play(", ".pause(", ".stop(", ".seek(", "setAvTransportUri", "setVolume", "setMute")) assertFalse(verb, adoptLive.contains(verb))
         // resumption on a room starts the speaker (the controller asks mayPlay), never Exo, after the gate
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val restored = restore()")
-        assertTrue(resumption.contains("if (renderer.kind == RendererKind.SONOS) {"))
-        assertTrue(resumption.substringAfter("if (renderer.kind == RendererKind.SONOS) {").substringBefore("return@launch").contains("resumeLast()\n                        future.setException("))
+        assertTrue(resumption.contains("if (!renderer.kind.onPhone) {"))
+        assertTrue(resumption.substringAfter("if (!renderer.kind.onPhone) {").substringBefore("return@launch").contains("resumeLast()\n                        future.setException("))
     }
 
     @Test
@@ -277,8 +280,10 @@ class GuardsTest {
         assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
         assertEquals(5, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
         assertEquals("lost, nothing playable, the suspension, the room scope", 4, Regex("""comeHome\((old|sonos), play = false(, quiet = true)?\)""").findAll(service).count())
-        // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again
-        assertEquals("attach: defined once, four callers", 5, Regex("""\battach\(""").findAll(service).count())
+        // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again, and
+        // the phone's renderer for an entry (design 26c §5.10: the phone's own player or Spotify's web player)
+        assertEquals("attach: defined once, five callers", 6, Regex("""\battach\(""").findAll(service).count())
+        assertTrue(service.substringAfter("private fun usePhoneRenderer(entry: Entry) {").substringBefore("\n    }\n").contains("attach(next)"))
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
         assertTrue(service.contains("attach(sonos)\n        active = a"))
         assertEquals("every room's renderer holds the locks", 1, Regex("""SonosRenderer\(""").findAll(service).count())
@@ -306,7 +311,8 @@ class GuardsTest {
         val main = moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" }
             .map { f -> f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "") }.toList()
         val calls = main.flatMap { (name, text) -> Regex("""persistPlace\(""").findAll(text).map { name }.toList() }
-        assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt"), calls.sorted())
+        // design 26c §5.4: Spotify's bookmark is the tracker's measurement, through the same write
+        assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt", "SpotifyRenderer.kt"), calls.sorted())
         // ... and one write behind every place: persistPlace and the suspension's standalone bookmark (qa-26a-step3b-code L6)
         val writes = main.flatMap { (name, text) -> Regex("""writePlace\(""").findAll(text).map { name }.toList() }
         assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosSuspension.kt"), writes.sorted())
@@ -548,7 +554,7 @@ class GuardsTest {
     fun `every call site reads the snapshot of the renderer section 5_6 names (QA H2)`() {
         // design 26b §5.6: the queue for whoever plays now; a room's look, adopt and switch the room's view;
         // coming home the phone's; the standalone suspension the room's; the screens the shown renderer's
-        assertTrue(service.contains("private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = renderer.kind == RendererKind.SONOS)"))
+        assertTrue(service.contains("private suspend fun loadForRenderer(): Pair<Snapshot, List<DownloadRow>> = load(remote = !renderer.kind.onPhone)"))
         assertTrue(service.contains("store.snapshot().forRenderer(remote) to store.db.downloads()"))
         fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
         for (f in listOf("private suspend fun playEntry(", "private suspend fun playItem(", "private suspend fun restore(")) {
@@ -689,6 +695,242 @@ class GuardsTest {
         )
     }
 
+    // Spotify in the service (design 26c §5.10, step 5b): every site of the table; the rules are RendererRulesTest's
+
+    private fun serviceBody(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
+
+    @Test
+    fun `26c 5_10 - which renderer - a Spotify entry's start attaches the web player, made once, before the queue changes`() {
+        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        assertTrue(start.contains("usePhoneRenderer(a.entry)\n        active = a"))
+        assertTrue("before the queue loads", start.indexOf("usePhoneRenderer(a.entry)") in 0 until start.indexOf("renderer.load("))
+        assertTrue("after the old renderer's own save", start.indexOf("renderer.saveNow()") < start.indexOf("usePhoneRenderer("))
+        val use = serviceBody("private fun usePhoneRenderer(entry: Entry) {")
+        assertTrue("a room keeps its renderer", use.contains("if (!renderer.kind.onPhone) return"))
+        assertTrue(use.contains("val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local"))
+        assertTrue("through attach (saved, paused), the Exo stood down (§5.6, QA L1)", use.contains("attach(next)\n        if (next !== local) local.standDown()"))
+        // made once for the service's life; its queue only while it renders; the outcome to the store; a debug-only log
+        assertEquals(1, Regex("""SpotifyRenderer\.create\(""").findAll(service).count())
+        assertTrue(service.contains("private fun spotifyRenderer(): SpotifyRenderer = spotify ?: SpotifyRenderer.create("))
+        assertTrue(service.contains("queue = { active.takeIf { renderer === spotify } },"))
+        assertTrue(service.contains("outcome = { word -> scope.launch(writer) { store.recordSpotifyOutcome(word, System.currentTimeMillis()) } },"))
+        assertTrue(service.contains("log = ::spotifyLog,"))
+        assertEquals("the service's one log line: the web player's, debug builds only (qa-26c-step5a-code L8)", 1, Regex("""\bLog\.""").findAll(service).count())
+        assertTrue(serviceBody("private fun spotifyLog(message: String) {").contains("if (BuildConfig.DEBUG) Log.d(SPOTIFY_LOG_TAG, message)"))
+        assertEquals("spotify is assigned only where it is made", 1, Regex("""\bspotify = """).findAll(service).count())
+        assertEquals(1, Regex("""\.also \{ spotify = it \}""").findAll(service).count())
+        // the renderer and the Exo: every renderer comparison read by §5.10's rule
+        val kinds = service.lines().filter { it.contains("RendererKind.") }.map { it.trim() }
+        assertEquals(
+            listOf(
+                // design 30 (merged from main 571f86f): the changed-source reload, the played mark and the held set are
+                // the phone's own player's (LOCAL) - never Spotify's web player, never a room; the claim is claimsQueue's
+                "val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local",
+                "val inCall = launcherInCall || (modeInCall && r.kind == RendererKind.SONOS)",
+                "renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL",
+                "if (renderer.kind != RendererKind.LOCAL || item.fileId != null || a.entry.source == Source.STORYTEL) return",
+                "val held = if (a == null || renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0) {",
+                "val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS) ?: return null",
+                "val queue = place?.let { (entry, plan) -> queueFor(snap, rows, entry, plan, shuffled = false, RendererKind.SONOS)?.let { entry to it } }",
+            ),
+            kinds,
+        )
+        val locals = service.lines().filter { Regex("""[!=]== local\b""").containsMatchIn(it) }.map { it.trim() }
+        assertEquals(
+            listOf("if (renderer !== local) local.release()", "if (next !== local) local.standDown()", "if (renderer !== local) return"),
+            locals,
+        )
+        assertTrue("the room's filters by onPhone", service.contains(".filter { kind.onPhone || PlayBodies.speakerPlayable(entry, it) }"))
+        assertTrue(service.contains("val p = if (!kind.onPhone) {"))
+    }
+
+    @Test
+    fun `26c 5_10 - playable, playableFrom, start, goTo and onItemChanged - the network gate, never NOT_DOWNLOADED, never another item`() {
+        // design 30: the streaming switch - a Spotify stream's too - never the downloads one (the old single switch is gone)
+        assertTrue(serviceBody("private fun playable(").contains("streamMobileData: Boolean = store.streamMobileData): Boolean {"))
+        assertTrue(serviceBody("private fun playable(").contains("return itemPlayable(renderer.kind, a.entry, hasCopy(a, item), item.url != null, caps, streamMobileData)"))
+        assertTrue(serviceBody("private fun playableFrom(").contains("return playableIndex(a.entry, a.items.size, index, forward, wrap) { playable(a, it, caps, streamMobileData) }"))
+        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        assertTrue("NOT_DOWNLOADED only for another source", start.contains("if (first == null && !isSpotify(a.entry)) {\n            if (play) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)\n            updateHeld(loaded = true) \n            return"))
+        assertTrue(start.contains("if (first != null && first != index) {"))
+        assertTrue("refused: loaded paused with the line, no play", start.contains("if (play && (first != null || !refuseSpotify())) {\n            renderer.play()"))
+        val refuse = serviceBody("private fun refuseSpotify(): Boolean {")
+        assertTrue(refuse.contains("val line = spotifyNetworkLine(netCaps(this), store.streamMobileData) ?: return false"))
+        assertTrue(
+            "the web player's own gate: the streaming switch too",
+            code("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").contains("override fun networkLine(): SpotifyLine? = spotifyNetworkLine(netCaps(app), store.streamMobileData)"),
+        )
+        for (f in listOf("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt", "src/main/java/me/vibb/music/logic/Spotify.kt", "src/main/java/me/vibb/music/playback/RendererRules.kt")) {
+            assertFalse("$f: never the downloads switch", code(f).contains("downloadMobileData"))
+            assertFalse("$f: never the storage limit", code(f).contains("storageLimit"))
+        }
+        assertTrue(refuse.contains("(renderer as? SpotifyRenderer)?.refused(line)"))
+        for (move in listOf("seekTo(", ".play()", "NOT_DOWNLOADED", "saveBookmark(")) assertFalse(move, refuse.contains(move))
+        val goTo = serviceBody("private fun goTo(a: Active, index: Int, forward: Boolean) {")
+        assertTrue(goTo.contains("if (isSpotify(a.entry)) refuseSpotify() else PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"))
+        val changed = serviceBody("private fun onItemChanged(index: Int, auto: Boolean) {")
+        assertTrue(changed.contains("if (isSpotify(a.entry)) {\n            "))
+        assertTrue("only Spotify's own advance is refused; never moved on", changed.contains("if (auto && !playable(a, index)) refuseSpotify()\n        } else if (!playable(a, index)) {"))
+        assertTrue("the natural-advance seek stays the Exo's (QA M4)", changed.contains("if (resumesOnAdvance(auto, renderer.kind)) {"))
+        // the room's queue drops Spotify items (§4.2): toRoom from a Spotify entry keeps the phone playing (QA L1)
+        val spotify = Fixtures.entry(6, me.vibb.music.model.Source.SPOTIFY, target = "spotify:playlist:FAKEid6", cache = 0).copy(spotifyMode = "list")
+        val track = me.vibb.music.model.PlayItem(6, "t1", "Song — Artist", null, false, 180_000)
+        assertEquals("spotify", me.vibb.music.sonos.PlayBodies.speakerDropReason(spotify, track))
+        assertFalse(me.vibb.music.sonos.PlayBodies.speakerPlayable(spotify, track))
+    }
+
+    @Test
+    fun `26c 5_10 - onError records unplayable and stays synchronous on main, the move-on the web player's own`() {
+        val events = serviceBody("private fun onRendererEvent(event: RendererEvent) {")
+        assertTrue("called directly from the renderer's event", events.contains("is RendererEvent.Error -> onError(event.code, event.gated)"))
+        val onError = serviceBody("private fun onError(code: String, gated: Boolean = false) {")
+        assertTrue(onError.contains("recordsItemError(a.entry, hasUrl = item.url != null) ->\n                scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }"))
+        assertTrue("an own file and a copy first, each by its own rule", onError.indexOf("item.fileId != null || gated -> Unit") < onError.indexOf("copy != null -> if (code == \"bad_media\")") && onError.indexOf("copy != null ->") < onError.indexOf("recordsItemError("))
+        assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null"))
+        // design 30's changed-source reload (playOnUncached) is the phone's own player's only, never Spotify's
+        assertTrue(onError.contains("renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL"))
+        // qa-26c-step5a-code (deviation 6): the seekTo/prepare/play inside the renderer's Error("unplayable") are its move-on
+        val moveOn = onError.substringAfter("renderer.saveNow()")
+        assertTrue(moveOn.contains("renderer.seekTo(nextIndex, startPos(a, nextIndex))\n            renderer.prepare()\n            renderer.play()"))
+        for (async in listOf("launch", "post", "withContext", "async", "handler.", "delay(")) assertFalse(async, moveOn.contains(async))
+        assertEquals("only the record is launched", 2, Regex("""scope\.launch""").findAll(onError).count())
+    }
+
+    @Test
+    fun `26c 5_10 - mediaItem - a Spotify item's uri, no ItemTag, no cache key - and it never reaches ItemMediaSourceFactory`() {
+        val media = service.substringAfter("private fun mediaItem(a: Active, item: PlayItem): MediaItem {").substringBefore("val meta =")
+        val branch = media.substringAfter("} else if (isSpotify(a.entry)) {").substringBefore("} else if (a.entry.source == Source.STORYTEL) {")
+        assertTrue(branch.contains("spotifyItemUri(a.entry, item.key)?.let { b.setUri(it) }"))
+        for (cache in listOf("setTag", "setCustomCacheKey", "ItemTag", "item.url", "download")) assertFalse(cache, branch.contains(cache))
+        assertTrue("before Storytel's and the feeds' branches", media.indexOf("isSpotify(a.entry)") in 0 until media.indexOf("Source.STORYTEL"))
+        // design 30 (the merge of main 571f86f): cache-through, the played mark and the held set are the phone's own
+        // player's - Spotify's web player (RendererKind.SPOTIFY) writes no cache, marks nothing played, holds nothing
+        assertTrue(media.contains("val through = a.entry.source == Source.NRK || a.entry.source == Source.RSS"))
+        assertTrue(serviceBody("private fun markPlayed(a: Active, item: PlayItem) {").contains("if (renderer.kind != RendererKind.LOCAL || item.fileId != null"))
+        assertTrue(serviceBody("private fun updateHeld(loaded: Boolean = false) {").contains("renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0"))
+        assertTrue(serviceBody("private suspend fun activeFor(").contains("if (claimsQueue(kind, entry)) {"))
+        // qa-26c-merge-code M1: a new queue's kind is the renderer that will play it, never the attached one
+        assertTrue(serviceBody("private suspend fun playEntry(entryId: Long) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry))"))
+        assertTrue(serviceBody("private suspend fun playItem(entryId: Long, key: String) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry))"))
+        assertTrue(serviceBody("private suspend fun restore(): Restored {").contains("queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry))"))
+        assertEquals(3, Regex("""queueKind\(renderer\.kind, entry\)""").findAll(service).count())
+        val queueCalls = Regex("""(queueFor|activeFor)\([^\n]*""").findAll(service).map { it.value }.toList()
+        assertTrue(queueCalls.toString(), queueCalls.isNotEmpty() && queueCalls.none { Regex("""[(,] ?renderer\.kind\)""").containsMatchIn(it) })
+        // only the phone's own player has the media source factory ...
+        val factory = mainSources().filter { code(it.path.substringAfter("music/app/")).contains("ItemMediaSourceFactory(") }.map { it.name }.sorted()
+        assertEquals(listOf("ItemMediaSourceFactory.kt", "LocalRenderer.kt"), factory)
+        // ... a queue loads into a renderer only in start, after the renderer for its entry is chosen, and a room's
+        // adopted queue is built for the room (the speaker filter drops Spotify); resumption hands no Spotify item to Media3
+        // (design 30 adds the second: playOnUncached reloads the phone's own queue, onError's LOCAL-only path)
+        assertEquals(2, Regex("""renderer\.load\(""").findAll(service).count())
+        assertTrue(serviceBody("private fun playOnUncached(a: Active, index: Int, item: PlayItem) {").contains("renderer.load("))
+        assertTrue(service.contains("val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS) ?: return null"))
+        val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("return future")
+        val spotify = resumption.substringAfter("} else if (isSpotify(restored.active.entry)) {").substringBefore("} else {")
+        assertTrue(spotify.contains("start(a, QueuePlan(a.items.map { it.key }, index, pos))\n                        future.setException(UnsupportedOperationException(\"playing on Spotify\"))"))
+        assertFalse(spotify.contains("future.set("))
+        val local = resumption.substringAfter("} else if (isSpotify(restored.active.entry)) {").substringAfter("} else {")
+        assertTrue("Media3's items go to the phone's own player", local.indexOf("usePhoneRenderer(a.entry)") in 0 until local.indexOf("future.set("))
+        assertEquals("future.set only there", 1, Regex("""future\.set\(""").findAll(resumption).count())
+        // the wake mode: the web player keeps its own locks
+        assertTrue(code("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt").contains("override fun setWakeMode(wakeMode: Int) = Unit"))
+    }
+
+    @Test
+    fun `26c 5_10 - onDestroy, the suspension, the room looks, comeHome, callStep, and the clearing at a library without Spotify`() {
+        val destroy = service.substringAfter("override fun onDestroy() {").substringBefore("super.onDestroy()")
+        assertTrue(destroy.contains("spotify?.let { if (it !== renderer) it.release() }"))
+        assertTrue("released before the writer closes", destroy.indexOf("spotify?.let { if (it !== renderer) it.release() }") < destroy.indexOf("writer.close()"))
+        assertTrue("the current one through renderer.release()", destroy.contains("renderer.release()\n            home.release()\n            writer.close()"))
+        val stop = serviceBody("private suspend fun suspendStop() {")
+        assertTrue("the page goes whatever the state (§5.7, QA L11)", stop.indexOf("spotify?.suspended()") in 0 until stop.indexOf("val sonos = renderer as? SonosRenderer"))
+        assertTrue(stop.contains("if (renderer !== spotify) renderer.pause()"))
+        assertTrue(serviceBody("private suspend fun lookAtRoom(").contains("if (!renderer.kind.onPhone) return"))
+        assertTrue(serviceBody("private suspend fun lookAgainBeforePlaying() {").contains("if (!renderer.kind.onPhone || SystemClock.elapsedRealtime() - lastRoomLook < ROOM_LOOK_MS) return"))
+        val home = serviceBody("private suspend fun comeHome(")
+        assertTrue(home.contains("activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, phoneRendererFor(a0.entry), plan.startIndex)"))
+        assertTrue("start chooses the phone's renderer", home.trimEnd().endsWith("start(a, plan, play = play)"))
+        val step = serviceBody("private fun callStep() {")
+        assertTrue(step.contains("val paused = pausedForCall(playing, r.itemCount(), r.rendererState)"))
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        assertTrue(onCreate.contains("store.libraries().map { lib -> lib != null && lib.entries.none { isSpotify(it) } }.distinctUntilChanged()"))
+        assertTrue(onCreate.contains("if (none && (spotify != null || withContext(Dispatchers.IO) { SpotifyRenderer.pageAccountFile(this@PlaybackService).exists() })) {\n                    spotifyRenderer().forget()"))
+        // the token's `off` is the renderer's own (SpotifyProblem.OFF: the page cleared, the marker gone, `none`)
+        val renderer = code("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt")
+        assertTrue(renderer.contains("SpotifyProblem.OFF -> forgetAccount()"))
+        // design 28: the listening window reads showsPlaying through setNowPlaying, unchanged for every renderer
+        assertTrue(service.contains("val playing = !forcePaused && renderer.showsPlaying"))
+        // the report's word from the file; the screens' tiles from the store
+        assertTrue(code("src/main/java/me/vibb/music/sync/Sync.kt").contains("spotify = SpotifyOutcome.reported(runCatching { store.spotifyStateFile.readText() }.getOrNull()),"))
+        val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
+        assertTrue(root.contains("entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome) },"))
+        assertTrue("no offline summary for Spotify", root.contains("if (isSpotify(n.entry)) null else offlineSummary("))
+        assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.spotifyOutcomes().map { it?.outcome }"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/LibraryScreen.kt").contains("Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)"))
+        // step 8: no source line under the title - the player looks the same for every source
+        assertFalse(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("kind_spotify"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("Kind.MUSIC -> R.string.track_of"))
+        // the fake's tokens only without a launcher (§9.3): a managed phone asks the bridge
+        assertTrue(renderer.contains("if (fakeTokens != null && withContext(Dispatchers.IO) { !Bridge.config(app).managed }) {"))
+    }
+
+    /**
+     * Design 26c §5.9, step 6: a Spotify context's synthetic item is saved with no duration and never done, its end drops its
+     * place and its live track, next and previous are the web player's, the setNowPlaying title is the live track's, and
+     * spotify_context.json is the store's alone (the snapshot and the renderer read it through the store).
+     */
+    @Test
+    fun `26c step 6 - a context's item has no duration and is never done, its end drops the live track, its steps are the SDK's`() {
+        val ready = service.substringAfter("RendererEvent.Ready -> active?.let { a ->").substringBefore("RendererEvent.Ended ->")
+        assertTrue(ready.contains("if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration"))
+        val ended = serviceBody("private fun queueEnded() {")
+        assertTrue(ended.contains("a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }"))
+        assertTrue("the context's end drops its live track", ended.contains("if (context) store.recordSpotifyContext(entryKey, null)"))
+        assertTrue(ended.contains("store.db.clearPartialPositions(entryKey)"))
+        assertTrue(serviceBody("private fun skipNext() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = true)"))
+        assertTrue(serviceBody("private fun skipPrevious() {").contains("if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = false)"))
+        val step = serviceBody("private fun stepOnWebPlayer(forward: Boolean) {")
+        assertTrue("gated as every step", step.contains("if (refuseSpotify()) return") && step.indexOf("refuseSpotify()") < step.indexOf("web.step(forward)"))
+        val now = serviceBody("private fun reportNowPlaying(")
+        assertTrue(now.contains("putString(NowPlayingKeys.ITEM, title)"))
+        assertTrue("a track change is a new report", now.contains("val key = Triple(a?.entry?.id, item?.key?.let { \"\$it\\n\$title\" }, playing)"))
+        // the renderer: a context's save carries no duration; the move-on after an unplayable plays only with the intent
+        val renderer = code("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt")
+        assertTrue(renderer.contains("val duration = if (contextUri != null) null else stateDuration ?: a.durations[item.key] ?: item.durationMs"))
+        val moveOn = renderer.substringAfter("private fun moveOnTo(").substringBefore("\n    }\n")
+        assertTrue(moveOn.contains("if (pwr && ports.mayPlay()) request("))
+        // the file: written by the store alone; the snapshot gets it in every build of one
+        val files = moduleFile("src/main/java").walk().filter { it.isFile && it.extension == "kt" }
+            .filter { f -> f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "").contains("spotify_context.json") }
+            .map { it.name }.toList()
+        assertEquals(listOf("Store.kt"), files)
+        val store = code("src/main/java/me/vibb/music/data/Store.kt")
+        assertTrue(store.contains("val next = SpotifyContexts.next(spotifyContexts(), entryKey, track) ?: return"))
+        assertTrue("tmp + rename", store.contains("writeAtomic(spotifyContextFile, SpotifyContexts.encode(next).toByteArray())"))
+        assertTrue(store.contains("spotifyContextFlow(),\n    ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }"))
+        assertTrue(store.contains("return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)"))
+        assertTrue(code("src/main/java/me/vibb/music/data/Snapshot.kt").contains("listed[e.id] = listOf(contextItem(e, spotifyContexts[e.key]))"))
+        // the UI: no number and no instant step for a context; the list says the order is picked (no source, step 8)
+        assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)"))
+        val list = code("src/main/java/me/vibb/music/ui/ListScreens.kt")
+        assertTrue(list.contains("} else if (isSpotifyContext(entry)) {\n            \n            Line(stringResource(R.string.hint_spotify_picks, kindText(kindOf(entry))), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)\n        }"))
+        assertFalse("no source line in a list-mode entry's place", list.contains("kind_spotify"))
+        // the fix round (qa-26c-step6-code): L4 - a parsed library prunes the rows of entries not in context mode, and the
+        // renderer's main-thread read never takes the store's lock once loaded; L2 - one rule for an artist's place
+        val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
+        assertTrue(onCreate.contains("store.libraries().map { lib -> lib?.entries?.filter { isSpotifyContext(it) }?.map { it.key }?.toSet() }.distinctUntilChanged()"))
+        assertTrue(onCreate.contains("if (keys != null) withContext(writer) { store.pruneSpotifyContexts(keys) }"))
+        assertTrue(store.contains("if (spotifyContextLoaded) spotifyContextState.value else loadSpotifyContexts()"))
+        assertTrue(renderer.contains("contextOffsets = a != null && contextResumes(a.entry)"))
+        val ui = code("src/main/java/me/vibb/music/ui/UiModel.kt")
+        assertTrue(ui.contains("if (!contextResumes(entry)) pos = 0") && ui.contains("val pos = if (contextResumes(entry)) row.posMs else 0"))
+        // M3: one more play, without the offset, only after the play call itself was refused
+        val prepare = renderer.substringAfter("private suspend fun prepareAndCall(s: Start): StartEnd = coroutineScope {").substringBefore("\n    }\n")
+        assertEquals("the first call and one fallback", 2, Regex("""\bcall\(""").findAll(prepare).count() - 1)
+        assertTrue(prepare.contains("if (ctx != null && refusesContext(result) && playSentAt != Long.MAX_VALUE) {"))
+        assertTrue(prepare.contains("contextKey?.let { ports.storeContextTrack(it, null) }"))
+    }
+
     /** Design 29 step 4's glue (qa-29-code L2): the pure rules in OwnFilesTest, wired here. */
     @Test
     fun `own-file copies - the record written on arrival, judged at every pull, the report from the rule`() {
@@ -757,7 +999,8 @@ class GuardsTest {
         assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated)"))
         val onError = body(service, "private fun onError(code: String, gated: Boolean = false) {")
         assertTrue(onError.contains("item.fileId != null || gated -> Unit"))
-        assertTrue(onError.contains("val offline = gated || copy == null"))
+        // design 26c: a Spotify item's offline isn't the item's (its web player never reports `gated`)
+        assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed("))
         assertTrue(MediaCache.gated(PlaybackException("x", StreamGateException(), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)))
         assertFalse(MediaCache.gated(PlaybackException("x", IOException(), PlaybackException.ERROR_CODE_IO_UNSPECIFIED)))
         // The length guard's 416 on the phone: the row goes, the item plays on uncached where it was, no item error.
@@ -793,7 +1036,7 @@ class GuardsTest {
         // Every other end of a queue's claims (qa-30-s3b-code L6): start() giving up, playback resumption once the
         // session has its items, and an exception between the claim and the queue.
         val start = body(service, "private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
-        assertTrue(start.substringAfter("if (first == null) {").substringBefore("return").contains("updateHeld(loaded = true)"))
+        assertTrue(start.substringAfter("if (first == null && !isSpotify(a.entry)) {").substringBefore("return").contains("updateHeld(loaded = true)"))
         assertTrue(Regex("future\\.set\\(MediaSession\\.MediaItemsWithStartPosition\\(a\\.items\\.map \\{ mediaItem\\(a, it\\) \\}, index, pos\\)\\)\\s*handler\\.post \\{ updateHeld\\(loaded = true\\) \\}").containsMatchIn(service))
         val active = body(service, "private suspend fun activeFor(")
         assertTrue(active.indexOf("PlayerHub.claim(") in 0 until active.indexOf("claimed = true"))
@@ -896,6 +1139,6 @@ class GuardsTest {
             "val fresh = CacheThrough.queueRows(this, entry, if (through) items else emptyList(), before)",
         ).map { active.indexOf(it) }
         assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())
-        assertTrue(active.contains("if (kind == RendererKind.LOCAL && entry.source != Source.OWN) {"))
+        assertTrue(active.contains("if (claimsQueue(kind, entry)) {"))
     }
 }

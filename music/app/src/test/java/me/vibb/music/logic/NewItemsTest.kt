@@ -453,7 +453,10 @@ class NewItemsTest {
         val spotify = """{"id": 9, "key": "sp9", "name": "Spotify", "source": "spotify", "target": "spotify:playlist:x"},"""
         val lib = LibraryParser.parse(Fixtures.resource("music_library.json").replaceFirst("\"entries\": [", "\"entries\": [$spotify"))!!
         assertNull(lib.entry(9))
-        assertEquals(mapOf(9L to "sp9", 1L to "abels_taarn", 2L to "40201d4c16fc", 3L to "own-5c0ffee1d0e5", 5L to "7ac843e9f5d4"), lib.keyById)
+        assertEquals(
+            mapOf(9L to "sp9", 1L to "abels_taarn", 2L to "40201d4c16fc", 3L to "own-5c0ffee1d0e5", 5L to "7ac843e9f5d4", 6L to "400584733efd", 7L to "4f94c81c7059"),
+            lib.keyById,
+        )
         assertEquals(lib.entryIds, lib.keyById.keys)
     }
 

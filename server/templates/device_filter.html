@@ -23,12 +23,18 @@
             </label>
             <noscript><button type="submit" class="row row-button">Save</button></noscript>
         </form>
-        <div class="group-footer">Blocks the lists and domains below on this phone.
+        <div class="group-footer" data-note="filter">{% if spotify_on %}Blocks the lists and domains below, except Spotify's while this phone plays Spotify.{% else %}Blocks the lists and domains below on this phone.{% endif %}
             <details class="info">
                 <summary aria-label="About the web filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>The phone filters by itself, on any network. Your child can't turn it off on the phone. Off, nothing is blocked; everything else works as before.</p>
                     <p>The lists and domains for every phone are in <a href="/dns">Settings › Web Filter</a>.</p>
+                    {% if spotify_on %}
+                    <p data-note="spotify-hosts">Spotify's hosts are allowed on this phone while it plays Spotify (its <a href="/devices/{{ device.id }}/music#music-spotify">Music page</a>): a block of spotify.com or scdn.co in a list or a domain doesn't apply to it then - for every app on the phone, not only the music app.</p>
+                    {% if !spotify_global.is_empty() %}
+                    <p data-note="spotify-global">Not applied on {{ device.name }} for that reason, from Settings › Web Filter: {{ spotify_global.join(", ") }}.</p>
+                    {% endif %}
+                    {% endif %}
                 </div>
             </details>
         </div>
@@ -63,7 +69,7 @@
         <div class="group">
             {% for d in blocked %}
             <div class="row" data-domain="{{ d.id }}">
-                <span class="row-label">{{ d.domain }}</span>
+                <span class="row-label">{{ d.domain }}{% if self.overridden(d.id) %}<span class="row-sub" data-spotify-override>Not applied while this phone plays Spotify</span>{% endif %}</span>
                 <form method="post" action="/dns/domains/{{ d.id }}/delete#blocked" class="row-end">
                     <input type="hidden" name="list_type" value="block">
                     <input type="hidden" name="back" value="filter">

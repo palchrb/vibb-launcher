@@ -29,6 +29,11 @@
         {% else %}
         <form method="post" action="/music/entries/{{ entry.id }}/check#entry-{{ entry.id }}"><button type="submit" class="button-small button-secondary">Check now</button></form>
         {% endif %}
+        {#- A Spotify entry streams (no Offline select) and links back to Spotify (design 26c §3.6). -#}
+        {% if let Some(link) = sweep.spotify_link %}
+        <a class="button-small button-secondary" href="{{ link }}" rel="noopener noreferrer" target="_blank">Open in Spotify</a>
+        {% endif %}
+        {% if sweep.offline %}
         <form method="post" action="/music/entries/{{ entry.id }}/offline#entry-{{ entry.id }}">
             <label for="offline-{{ entry.id }}">Offline</label>
             <select id="offline-{{ entry.id }}" name="cache" class="pick" data-autosave>
@@ -38,6 +43,7 @@
             </select>
             <noscript><button type="submit" class="button-small">Save</button></noscript>
         </form>
+        {% endif %}
     </div>
     {% endif %}
 </div>

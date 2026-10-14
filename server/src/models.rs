@@ -107,6 +107,10 @@ pub struct DevicePolicy {
     pub music_download_mobile_data: bool,
     pub music_volume_cap_pct: Option<i64>,
     pub music_storytel: bool,
+    /// The Spotify account this phone plays as (design 26c §2.5, migrations/0074): `None` = Spotify
+    /// is off on this phone (the default). The phone's library, listings and covers hold Spotify
+    /// entries only while it is set (`music::spotify_gate`); the FK makes the account exist.
+    pub music_spotify_account: Option<i64>,
     /// The parent's music storage limit in GB (design 30 §1.8, migrations/0073): one of
     /// `music::STORAGE_LIMITS`, `None` = no limit; default 2. Anything else is sent as 2
     /// (`music::storage_limit`).

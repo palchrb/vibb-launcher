@@ -61,8 +61,9 @@ import me.vibb.music.sonos.RoomsView
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
  * (it shrinks to fit the Jelly Star), the item's marquee title, "Episode|Spor N av M", the seek
  * line, [shuffle] previous / play-pause / next [slot] (v15's compact sizes on a 320 dp phone, [controlRow]),
- * then Liste / Sov / "Spill av på". On a Sonos room a quiet line under the entry name says why the
- * speaker isn't playing what we sent it ([rendererState], design 26a §5.2); nothing acts on it but the kid.
+ * then Liste / Sov / "Spill av på". On a Sonos room, or with Spotify's web player, a quiet line under the entry name
+ * says why it isn't playing what we sent it ([rendererState], design 26a §5.2, 26c §5.8); nothing acts on it but the
+ * kid. No source is named: a Spotify entry's player looks like any other's (design 26c §4.3, step 8).
  */
 @Composable
 fun PlayerScreen(
@@ -110,8 +111,10 @@ fun PlayerScreen(
                     Kind.OWN -> R.string.track_of
                     Kind.AUDIOBOOK -> R.string.part_of
                     Kind.PODCAST -> R.string.episode_of
+                    Kind.MUSIC -> R.string.track_of
                 }
-                Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
+                if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
             }
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
@@ -200,12 +203,19 @@ fun outputIcon(output: Output): ImageVector = when (output.kind) {
     OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
 }
 
-/** The player's one line for a Sonos room that isn't playing what we sent it (design 26a §5.2). */
+/** The player's one line for a renderer that isn't playing what we sent it (design 26a §5.2; Spotify's, 26c §5.8). */
 fun rendererStateText(state: RendererState): Int = when (state) {
     RendererState.GROUPED_AWAY -> R.string.renderer_grouped_away
     RendererState.TAKEN_OVER -> R.string.renderer_taken_over
     RendererState.LOST_SESSION -> R.string.renderer_lost_session
     RendererState.UNREACHABLE -> R.string.renderer_unreachable
+    RendererState.SPOTIFY_NEEDS_WIFI -> R.string.renderer_spotify_needs_wifi
+    RendererState.SPOTIFY_NEEDS_INTERNET -> R.string.renderer_spotify_needs_internet
+    RendererState.SPOTIFY_UNAVAILABLE -> R.string.renderer_spotify_unavailable
+    RendererState.SPOTIFY_ASK_ADULT -> R.string.renderer_spotify_ask_adult
+    RendererState.SPOTIFY_NOT_ON_PHONE -> R.string.renderer_spotify_not_on_phone
+    RendererState.SPOTIFY_ELSEWHERE -> R.string.renderer_spotify_elsewhere
+    RendererState.SPOTIFY_STOPPED -> R.string.renderer_spotify_stopped
 }
 
 @Composable

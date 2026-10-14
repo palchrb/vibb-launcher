@@ -1039,6 +1039,21 @@ struct FilterTemplate {
     events: Vec<LogRow>,
     /// The group whose add row was refused ("blocked", "allowed"), else "".
     refused: &'static str,
+    /// The phone plays as a Spotify account: Spotify's hosts are never blocked on it (design 26c
+    /// §6.2), whatever the lists and domains say.
+    spotify_on: bool,
+    /// This phone's blocked domains that binding overrides (their ids; qa-26c-step3-code L5: said
+    /// where the parent types the block).
+    spotify_overridden: Vec<i64>,
+    /// The site-wide blocked domains it overrides on this phone.
+    spotify_global: Vec<String>,
+}
+
+impl FilterTemplate {
+    /// This phone's block `id` is one of Spotify's hosts while the phone plays Spotify.
+    fn overridden(&self, id: &i64) -> bool {
+        self.spotify_overridden.contains(id)
+    }
 }
 
 /// GET `/devices/{id}/filter`: Web Filter (design 31 §3.2, step 5). The filter switch (`/policy`
@@ -1103,6 +1118,31 @@ pub async fn view_filter(
     };
     let (blocked, allowed): (Vec<_>, Vec<_>) =
         domains.into_iter().partition(|d| d.list_type == "block");
+    // A phone that plays Spotify never gets Spotify's hosts as blocked (the delivered list and the
+    // launcher's filter, design 26c §6.2): say so by the blocks it overrides.
+    let spotify_on = policy.music_spotify_account.is_some();
+    let spotify_overridden: Vec<i64> = blocked
+        .iter()
+        .filter(|d| spotify_on && crate::spotify::is_spotify_host(&d.domain))
+        .map(|d| d.id)
+        .collect();
+    let spotify_global: Vec<String> = if spotify_on {
+        match sqlx::query_scalar::<_, String>(
+            "SELECT domain FROM dns_custom_domains \
+             WHERE device_id IS NULL AND list_type = 'block' ORDER BY domain",
+        )
+        .fetch_all(&state.db)
+        .await
+        {
+            Ok(domains) => domains
+                .into_iter()
+                .filter(|d| crate::spotify::is_spotify_host(d))
+                .collect(),
+            Err(err) => return read_failed(id, "the site-wide domains", err),
+        }
+    } else {
+        Vec::new()
+    };
     let events = if policy.dns_log_enabled {
         match sqlx::query_as::<_, crate::models::DeviceDnsEvent>(
             "SELECT * FROM device_dns_events WHERE device_id = ? \
@@ -1146,6 +1186,9 @@ pub async fn view_filter(
             title: format!("Web Filter · {}", device.name),
             refused,
             filter_on: policy.vpn_filter_enabled,
+            spotify_on,
+            spotify_overridden,
+            spotify_global,
             lists,
             blocked,
             allowed,

@@ -2440,6 +2440,9 @@ async fn music_forms_return_to_their_groups() {
     let cookie = app.admin_cookie().await;
     let (id, token, [a, b], music_app) = music_phone(&app, &cookie).await;
     let (emil, _) = app.enrolled_device("Emil").await;
+    // A Spotify app and a child's login: the page shows its "Plays as" group (design 26c §2.5).
+    crate::spotify::tests::save_app(&app, crate::spotify::LOOPBACK_REDIRECT).await;
+    let kid = crate::spotify::tests::store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
     let page = device_page(id, Section::Music);
     let html = app.get_page(&page, &cookie).await.text();
     let mut seen = Vec::new();
@@ -2483,6 +2486,9 @@ async fn music_forms_return_to_their_groups() {
                 ("volume_cap".to_string(), "70".to_string()),
             ]);
             Some("music-settings".to_string())
+        } else if target == format!("/devices/{id}/music/spotify") {
+            sent.push(("account".to_string(), kid.to_string()));
+            Some("music-spotify".to_string())
         } else if target == format!("/devices/{id}/music/sonos-rooms") {
             // "All rooms" off: the hidden rooms keep both allowed.
             Some("music-sonos".to_string())
@@ -2525,6 +2531,7 @@ async fn music_forms_return_to_their_groups() {
             format!("/devices/{id}/music/entries/{a}"),
             format!("/devices/{id}/music/entries/{b}"),
             format!("/devices/{id}/music"),
+            format!("/devices/{id}/music/spotify"),
             format!("/devices/{id}/music/sonos-rooms"),
         ],
         "every form on the page is in the table, in page order"
@@ -2544,6 +2551,13 @@ async fn music_forms_return_to_their_groups() {
             .await
             .unwrap();
     assert_eq!(ticks, [(id, b)]);
+    let bound: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT device_id, music_spotify_account FROM device_policy ORDER BY device_id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert!(bound.contains(&(id, Some(kid))) && bound.contains(&(emil, None)));
     type Settings = (bool, bool, Option<i64>, Option<i64>, bool, Option<String>);
     let settings = |device: i64| {
         let db = app.db.clone();

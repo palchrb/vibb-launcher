@@ -490,7 +490,12 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
         "permissions-policy",
         HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
     );
-    set(headers, header::CONTENT_SECURITY_POLICY, ADMIN_CSP);
+    // A page that sets its own policy keeps it: only the Spotify page does (design 26c §2.3),
+    // ADMIN_CSP with its login form's `form-action` widened to Spotify's accounts service - a
+    // browser enforces `form-action` on the 303 the form's answer is.
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        set(headers, header::CONTENT_SECURITY_POLICY, ADMIN_CSP);
+    }
     let is_html = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())

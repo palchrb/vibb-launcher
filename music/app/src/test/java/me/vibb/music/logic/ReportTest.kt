@@ -86,10 +86,12 @@ class ReportTest {
         assertEquals(
             setOf(
                 "version_code", "library_version", "cache_bytes", "audio_bytes", "extra_bytes", "downloads_waiting", "entry_errors", "item_errors",
-                "downloads", "storytel", "sonos_rooms",
+                "downloads", "storytel", "spotify", "sonos_rooms",
             ),
             report.keys,
         )
+        assertEquals("design 26c §4.4: none until the player plays Spotify", "none", report["spotify"]!!.jsonPrimitive.content)
+        assertEquals("ok", stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = "ok")["spotify"]!!.jsonPrimitive.content)
         val room = (report["sonos_rooms"] as JsonArray).single().jsonObject
         assertEquals("uid and name only - never an ip", setOf("uid", "name"), room.keys)
         assertEquals("Stua", room["name"]!!.jsonPrimitive.content)
@@ -103,6 +105,32 @@ class ReportTest {
         assertEquals("wifi", downloads[0].jsonObject["waiting"]!!.jsonPrimitive.content)
         assertEquals(JsonNull, downloads[1].jsonObject["waiting"])
         assertTrue(report.keys.none { it.contains("position") || it.contains("playing") })
+    }
+
+    /** Design 26c §4.4 (step 5b): the `spotify` word from spotify_state.json, an unplayable track as an item error. */
+    @Test
+    fun `the report's spotify is the stored outcome's word, and an unplayable track is an item error`() {
+        val file = SpotifyOutcome("not_premium", 1_760_000_000_000).encode()
+        val report = stateReport(
+            1, "v", 0, 0, 0, emptyList(),
+            listOf(ItemError(6, "11ee11ee11ee11ee", "1FakeTrackA00000000001", "unplayable")),
+            emptyList(),
+            spotify = SpotifyOutcome.reported(file),
+        )
+        assertEquals("not_premium", report["spotify"]!!.jsonPrimitive.content)
+        val error = (report["item_errors"] as JsonArray).single().jsonObject
+        assertEquals("unplayable", error["error"]!!.jsonPrimitive.content)
+        assertEquals("the track's id, never a uri or a token", "1FakeTrackA00000000001", error["item"]!!.jsonPrimitive.content)
+        for (word in SpotifyWords.ALL) {
+            assertEquals(word, stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(SpotifyOutcome(word, 1).encode()))["spotify"]!!.jsonPrimitive.content)
+        }
+        assertEquals("no file: none", "none", stateReport(1, null, 0, 0, 0, emptyList(), emptyList(), emptyList(), spotify = SpotifyOutcome.reported(null))["spotify"]!!.jsonPrimitive.content)
+        // the stored file holds the word and its time, nothing else
+        assertEquals(setOf("outcome", "at"), kotlinx.serialization.json.Json.parseToJsonElement(file).jsonObject.keys)
+        // one row per track, the latest (a track unplayable twice is one row)
+        var log = addItemError(emptyList(), ItemError(6, "v", "t1", "unplayable"))
+        log = addItemError(log, ItemError(6, "v", "t1", "unplayable"))
+        assertEquals(1, log.size)
     }
 
     /** Design 30 §1.10 (M4): both always sent, 0 included - their presence tells the PWA this app reads both switches. */

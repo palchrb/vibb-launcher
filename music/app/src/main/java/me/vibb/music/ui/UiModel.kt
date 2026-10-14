@@ -7,11 +7,14 @@ import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.Kind
 import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.contextResumes
 import me.vibb.music.logic.countedOrder
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapStart
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
+import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.kindOf
 import me.vibb.music.logic.overallProgress
 import me.vibb.music.logic.pickPlan
@@ -19,13 +22,16 @@ import me.vibb.music.logic.resumeFrom
 import me.vibb.music.logic.seekGate
 import me.vibb.music.logic.showsCarousel
 import me.vibb.music.logic.skipTarget
+import me.vibb.music.logic.spotifyTileLine
 import me.vibb.music.logic.started
 import me.vibb.music.logic.swipeVia
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.PlayerHub
+import me.vibb.music.playback.RendererState
 import me.vibb.music.sonos.PlayBodies
+import me.vibb.music.spotify.rendererStateOf
 
 /** A carousel cover. */
 data class EntryUi(
@@ -36,13 +42,20 @@ data class EntryUi(
     /** The thin overall-progress line of a started resume entry; null = not shown. */
     val progress: Float?,
     val isNew: Boolean,
+    /** In place of the hint (design 26c §5.8): a Spotify tile's line - the loaded one's state, else the stored outcome's. */
+    val state: RendererState? = null,
 )
 
-fun entryUi(snap: Snapshot, entry: Entry): EntryUi {
+/**
+ * A cover of [entry]: its kind, hint, progress and NY - and for a Spotify entry the line that replaces the hint
+ * ([spotifyTileState]: [loadedId]'s renderer [loadedState] from `PlayerHub.State`, the stored [spotifyOutcome]).
+ */
+fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: RendererState? = null, spotifyOutcome: String? = null): EntryUi {
     val visible = snap.order(entry).map { it.key }
     val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
     val bookmark = snap.bookmarks[entry.key]
-    val showProgress = entry.resume && started(order, bookmark)
+    // a Spotify context (design 26c §5.9) has no list to show progress through: Spotify picks the tracks
+    val showProgress = entry.resume && started(order, bookmark) && !isSpotifyContext(entry)
     val duration = bookmark?.let { b -> snap.item(entry.id, b.itemKey)?.durationMs }
     return EntryUi(
         entry,
@@ -51,7 +64,21 @@ fun entryUi(snap: Snapshot, entry: Entry): EntryUi {
         hint(entry, order, bookmark),
         if (showProgress) overallProgress(order, bookmark, duration) else null,
         isNew(snap.news.filter { n -> visible.contains(n.key) }, entry.id),
+        spotifyTileState(entry, loadedId, loadedState, spotifyOutcome),
     )
+}
+
+/**
+ * What a Spotify tile says in place of its hint (design 26c §5.8, QA M6): the loaded entry ([loadedId]) shows its
+ * web player's line ([loadedState], `PlayerHub.State.rendererState` - "Trenger Wi-Fi", "Trenger internett",
+ * "Spilles et annet sted" ...); every Spotify tile shows the stored outcome's account line ("Spør en voksen", "Ikke
+ * tilgjengelig nå": `spotifyTileLine`) until a play succeeds; else null (the hint). No line names the source (step 8).
+ * Never for another source, and never a room's line (`remote`).
+ */
+fun spotifyTileState(entry: Entry, loadedId: Long?, loadedState: RendererState?, spotifyOutcome: String?): RendererState? {
+    if (!isSpotify(entry)) return null
+    if (entry.id == loadedId && loadedState != null && !loadedState.remote) return loadedState
+    return spotifyTileLine(spotifyOutcome)?.let { rendererStateOf(it) }
 }
 
 /** What is playing (live from the player) or was playing (the stored queue, shown paused). */
@@ -124,6 +151,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
         key = (1..all.size).map { all[(from + it) % all.size].key }.first { it in keys }
         pos = 0
     }
+    // an artist context starts where Spotify starts it (design 26c §12, qa-26c-step6-code L2): its place shows 0
+    if (!contextResumes(entry)) pos = 0
     // Shuffled, the picked item starts a new queue; else the play order, at the item.
     val queue = if (shuffle && key != null) order.filter { it.key == key } + order.filter { it.key != key } else order
     val index = if (key == null) 0 else queue.indexOfFirst { it.key == key }
@@ -142,6 +171,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
  * phone would.
  */
 fun skipSwitch(snap: Snapshot, now: NowView, forward: Boolean, posMs: Long, atMs: Long, onRoom: Boolean = false): Switch? {
+    // a Spotify context (design 26c §5.9): next and previous are the web player's, and only Spotify knows where they go
+    if (isSpotifyContext(now.entry)) return null
     val target = skipTarget(forward, now.index, now.queue.size, posMs, now.durationMs) ?: return null
     return toIndex(snap, now, target, PlayRequest(now.entry.id, now.queue[target].key, now.ref, atMs), onRoom)
 }
@@ -184,7 +215,9 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
     val queue = stored.mapNotNull { visible[it] }
     val index = queue.indexOfFirst { it.key == stored.getOrNull(row.index) }
     if (index < 0) return null
-    return NowView(entry, category(snap, entry), queue, index, false, false, row.posMs, row.durationMs ?: queue[index].durationMs, row.shuffled)
+    // an artist context's stored place is shown as 0: its play starts where Spotify starts it (L2)
+    val pos = if (contextResumes(entry)) row.posMs else 0
+    return NowView(entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled)
 }
 
 private fun category(snap: Snapshot, entry: Entry) = snap.library?.categories?.firstOrNull { it.id == entry.category }
@@ -218,6 +251,12 @@ private fun countedKeys(snap: Snapshot, now: NowView): List<String> = countedOrd
     listOrder(snap, now).map { it.key },
     snap.listed[now.entry.id].orEmpty().map { it.key },
 )
+
+/**
+ * Whether the player shows "Spor N av M" (design 26c §4.3, §5.9): never for a Spotify context - nothing is listed,
+ * Spotify picks the tracks; its one synthetic item would always read "1 av 1".
+ */
+fun showsNumber(now: NowView): Boolean = !isSpotifyContext(now.entry)
 
 /** Equal dots: at most [max] shown, a window that keeps the current one in view. */
 fun dotWindow(n: Int, current: Int, max: Int = 20): IntRange {

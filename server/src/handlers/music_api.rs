@@ -10,6 +10,8 @@
 //!   ETag, `If-Match` -> 412, 416) plus `X-Content-SHA256`. A file flagged missing is a 404.
 //! - `GET /api/devices/music/storytel`: the family's Storytel login, `no-store`; 404 while this
 //!   phone's switch is off or none is stored, 503 without a usable key.
+//! - `POST /api/devices/music/spotify/token`: an access token of the Spotify account this phone
+//!   plays as (design 26c §2.6), `no-store`, always a JSON `status`; at most 20 a rolling hour.
 
 use std::io::Write;
 
@@ -286,6 +288,110 @@ pub async fn storytel(
         }),
     )
         .into_response()
+}
+
+/// One answer of the token route (design 26c §2.6): always JSON with its `status`, `no-store`.
+fn spotify_answer(status: StatusCode, body: serde_json::Value) -> Response {
+    (
+        status,
+        [(header::CACHE_CONTROL, "no-store")],
+        axum::Json(body),
+    )
+        .into_response()
+}
+
+fn spotify_status(status: StatusCode, word: &str) -> Response {
+    spotify_answer(status, serde_json::json!({ "status": word }))
+}
+
+/// `POST /api/devices/music/spotify/token` (design 26c §2.6): the access token of the account this
+/// phone plays as, with at least [crate::spotify::PHONE_TOKEN_MIN_LEFT] left (refreshed if
+/// needed). 200 `ok` with the token, what is left of it and `"<account>:<generation>"` (a change
+/// tells the phone to clear its web player); 404 `off` (no app, or the phone isn't bound); 409
+/// `reauthorize` (the login ended, or Spotify refused the app); 429 `busy` with `retry_after_s`
+/// (Spotify's 429, or this phone's [crate::spotify::PHONE_TOKENS_PER_WINDOW] asks an hour); 502
+/// `unreachable` (the accounts service failed, or [crate::spotify::PHONE_TOKEN_BUDGET] passed - a
+/// refresh still running then finishes on its own and is kept for the next ask);
+/// 503 `key` (the music key can't open the login). The token is never written anywhere: not the
+/// database, a log, an event or `music_state`.
+pub async fn spotify_token(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+) -> Response {
+    use crate::spotify::SpotifyError;
+    let bound: Option<Option<i64>> = match sqlx::query_scalar(
+        "SELECT music_spotify_account FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device.id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(bound) => bound,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "spotify binding lookup failed");
+            return spotify_status(StatusCode::INTERNAL_SERVER_ERROR, "unreachable");
+        }
+    };
+    let Some(account) = bound.flatten() else {
+        return spotify_status(StatusCode::NOT_FOUND, "off");
+    };
+    match crate::spotify::app(&state).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return spotify_status(StatusCode::NOT_FOUND, "off"),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "spotify app lookup failed");
+            return spotify_status(StatusCode::INTERNAL_SERVER_ERROR, "unreachable");
+        }
+    }
+    if let Err(retry_after) = state.spotify.phone_ask(device.id) {
+        tracing::info!(
+            device_id = device.id,
+            "spotify: a phone's token asks are over its limit"
+        );
+        return spotify_answer(
+            StatusCode::TOO_MANY_REQUESTS,
+            serde_json::json!({ "status": "busy", "retry_after_s": retry_after }),
+        );
+    }
+    let minted = tokio::time::timeout(
+        state.spotify.phone_token_budget(),
+        state
+            .spotify
+            .access_token(&state, account, crate::spotify::PHONE_TOKEN_MIN_LEFT),
+    )
+    .await;
+    let err = match minted {
+        Ok(Ok(minted)) => {
+            tracing::debug!(device_id = device.id, account, "spotify: a phone's token");
+            return spotify_answer(
+                StatusCode::OK,
+                serde_json::json!({
+                    "status": "ok",
+                    "access_token": minted.token.secret(),
+                    "expires_in_s": minted.left.as_secs(),
+                    "account": format!("{}:{}", minted.account, minted.generation),
+                }),
+            );
+        }
+        Ok(Err(err)) => err,
+        Err(_) => SpotifyError::Fetch(crate::music_net::FetchError::Timeout),
+    };
+    tracing::info!(device_id = device.id, account, code = %err.code(), "spotify: no token for a phone");
+    match err {
+        SpotifyError::Off | SpotifyError::NoAccount => spotify_status(StatusCode::NOT_FOUND, "off"),
+        SpotifyError::Reauthorize | SpotifyError::AppRefused => {
+            spotify_status(StatusCode::CONFLICT, "reauthorize")
+        }
+        SpotifyError::RateLimited(retry_after) => spotify_answer(
+            StatusCode::TOO_MANY_REQUESTS,
+            serde_json::json!({ "status": "busy", "retry_after_s": retry_after.unwrap_or(30).max(1) }),
+        ),
+        SpotifyError::Key => spotify_status(StatusCode::SERVICE_UNAVAILABLE, "key"),
+        SpotifyError::Database(_) => {
+            spotify_status(StatusCode::INTERNAL_SERVER_ERROR, "unreachable")
+        }
+        _ => spotify_status(StatusCode::BAD_GATEWAY, "unreachable"),
+    }
 }
 
 #[cfg(test)]

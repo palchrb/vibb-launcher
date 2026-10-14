@@ -28,6 +28,7 @@ mod locations;
 mod lock_glance;
 mod music;
 mod music_art;
+mod music_spotify;
 mod music_storytel;
 mod music_sweep;
 mod parent_pin;
@@ -183,6 +184,7 @@ impl TestApp {
             music_sweep: Default::default(),
             music_libraries: Default::default(),
             storytel: Default::default(),
+            spotify: Default::default(),
             net: std::sync::Arc::new(net),
             audit: Default::default(),
             limits: Default::default(),

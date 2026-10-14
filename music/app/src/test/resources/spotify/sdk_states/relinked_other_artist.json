@@ -1,0 +1,16 @@
+{
+  "about": "Not relinked: the same name and duration by another artist mid-track (a transfer-in) is not ours.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Stille natt — Ola Fjell, Kari Li", "duration_ms": 200000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fjellvise — Ola Fjell", "duration_ms": 180000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Vuggesang — Kari Li", "duration_ms": 150000},
+    {"uri": "spotify:track:FAKEtrack0000000000004", "title": "Siste sang — Kari Li", "duration_ms": 150000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 3}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Stille natt", "artists": ["Ola Fjell", "Kari Li"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 5500, "state": {"paused": false, "position": 5000, "duration": 200000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Stille natt", "artists": ["Ola Fjell", "Kari Li"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 6000, "state": {"paused": false, "position": 0, "duration": 180000, "uri": "spotify:track:FAKEother000000000002", "linked": null, "type": "track", "name": "Fjellvise", "artists": ["Someone Else"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 0, "mode": "LOST", "measured": {"index": 0, "position": 5000, "at": 5500, "playing": true}}
+}

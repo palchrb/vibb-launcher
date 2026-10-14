@@ -28,7 +28,8 @@ pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// What a request is for: its size cap and overall timeout (21b §2.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A psapi catalog root or episode page.
+    /// A psapi catalog root or episode page; a Spotify Web API read and a short link's hop
+    /// (design 26c §3.1, §3.4).
     Page,
     /// A psapi playback manifest or metadata.
     Manifest,
@@ -40,6 +41,9 @@ pub enum Kind {
     Login,
     /// The Storytel bookshelf.
     Shelf,
+    /// Spotify's accounts service: the token exchange and refresh, and `/v1/me` at a login
+    /// (design 26c §2.4; a token answer is a few hundred bytes).
+    Token,
 }
 
 impl Kind {
@@ -51,6 +55,7 @@ impl Kind {
             Kind::Image => 10_000_000,
             Kind::Login => 64_000,
             Kind::Shelf => 8_000_000,
+            Kind::Token => 64_000,
         }
     }
 
@@ -62,6 +67,7 @@ impl Kind {
             Kind::Image => 60,
             Kind::Login => 20,
             Kind::Shelf => 30,
+            Kind::Token => 20,
         })
     }
 }
@@ -76,7 +82,8 @@ pub enum Reach {
 }
 
 /// One request. No `Debug`: a Storytel login's URL carries the e-mail and the encrypted password
-/// (`pwd=`), and its bookshelf request the bearer (design 26b §0).
+/// (`pwd=`), and its bookshelf request the bearer (design 26b §0); a Spotify token request's body
+/// the refresh token or the code and its verifier, a Web API request the bearer (design 26c §7.1).
 pub struct SourceRequest {
     pub url: String,
     pub kind: Kind,
@@ -89,6 +96,10 @@ pub struct SourceRequest {
     /// Extra request headers (Storytel's bearer, `Accept`, the bookshelf's content type).
     pub headers: Vec<(reqwest::header::HeaderName, String)>,
     pub body: Option<Vec<u8>>,
+    /// Follow redirects (at most 5, the [Reach]'s rule) - the default. `false` answers a 3xx as it
+    /// is, its `Location` in [SourceResponse::location] (design 26c §3.1: a Spotify short link is
+    /// resolved one hop at a time, each hop's host checked before it is asked).
+    pub follow: bool,
 }
 
 impl SourceRequest {
@@ -102,6 +113,7 @@ impl SourceRequest {
             method: reqwest::Method::GET,
             headers: Vec::new(),
             body: None,
+            follow: true,
         }
     }
 }
@@ -115,6 +127,11 @@ pub struct SourceResponse {
     pub truncated: bool,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// `Retry-After` as sent (design 26c §2.4: Spotify's 429s), at most 500 characters.
+    pub retry_after: Option<String>,
+    /// `Location` as sent (a 3xx of a request with `follow: false`, design 26c §3.1), cut to one
+    /// character past [MAX_MEDIA_URL_CHARS] - so a longer one is seen to be too long.
+    pub location: Option<String>,
 }
 
 /// Without the body (design 26b QA L4): a Storytel login's body holds the session token.
@@ -126,6 +143,8 @@ impl std::fmt::Debug for SourceResponse {
             .field("truncated", &self.truncated)
             .field("etag", &self.etag)
             .field("last_modified", &self.last_modified)
+            .field("retry_after", &self.retry_after)
+            .field("location", &self.location.is_some())
             .finish()
     }
 }
@@ -325,21 +344,28 @@ fn redirect_policy(reach: Reach) -> reqwest::redirect::Policy {
     })
 }
 
-/// The real client: two reqwest clients, one per [Reach].
+/// The real client: four reqwest clients, one per [Reach] and redirect rule.
 pub struct HttpSource {
     public: reqwest::Client,
     any: reqwest::Client,
+    /// The same without following redirects ([SourceRequest::follow] `false`).
+    public_once: reqwest::Client,
+    any_once: reqwest::Client,
 }
 
 impl HttpSource {
     pub fn new() -> Self {
-        let base = |reach: Reach| {
+        let base = |reach: Reach, follow: bool| {
             let builder = reqwest::Client::builder()
                 .user_agent("kid-phone-server (self-hosted; vibb music library)")
                 .no_proxy()
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))
-                .redirect(redirect_policy(reach))
+                .redirect(if follow {
+                    redirect_policy(reach)
+                } else {
+                    reqwest::redirect::Policy::none()
+                })
                 // No `Referer` on a redirect (design 26b QA M1): reqwest copies the previous URL
                 // with its query, and the Storytel login's carries the e-mail and `pwd=`.
                 .referer(false);
@@ -351,8 +377,10 @@ impl HttpSource {
             .expect("the music source client builds")
         };
         HttpSource {
-            public: base(Reach::Public),
-            any: base(Reach::Any),
+            public: base(Reach::Public, true),
+            any: base(Reach::Any, true),
+            public_once: base(Reach::Public, false),
+            any_once: base(Reach::Any, false),
         }
     }
 }
@@ -364,11 +392,19 @@ impl Default for HttpSource {
 }
 
 fn header(response: &reqwest::Response, name: reqwest::header::HeaderName) -> Option<String> {
+    header_cut(response, name, 500)
+}
+
+fn header_cut(
+    response: &reqwest::Response,
+    name: reqwest::header::HeaderName,
+    max: usize,
+) -> Option<String> {
     response
         .headers()
         .get(name)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.chars().take(500).collect())
+        .map(|v| v.chars().take(max).collect())
 }
 
 /// The error's text without its URL (design 26b §2.1): reqwest's `Display` prints the URL, and a
@@ -405,9 +441,11 @@ impl Source for HttpSource {
                     "a private address where only public ones may go".to_string(),
                 ));
             }
-            let client = match request.reach {
-                Reach::Public => &self.public,
-                Reach::Any => &self.any,
+            let client = match (request.reach, request.follow) {
+                (Reach::Public, true) => &self.public,
+                (Reach::Any, true) => &self.any,
+                (Reach::Public, false) => &self.public_once,
+                (Reach::Any, false) => &self.any_once,
             };
             let mut builder = client
                 .request(request.method.clone(), &request.url)
@@ -428,6 +466,12 @@ impl Source for HttpSource {
             let status = response.status().as_u16();
             let etag = header(&response, reqwest::header::ETAG);
             let last_modified = header(&response, reqwest::header::LAST_MODIFIED);
+            let retry_after = header(&response, reqwest::header::RETRY_AFTER);
+            let location = header_cut(
+                &response,
+                reqwest::header::LOCATION,
+                MAX_MEDIA_URL_CHARS + 1,
+            );
             let limit = request.kind.limit();
             let mut body = Vec::new();
             let mut truncated = false;
@@ -446,6 +490,8 @@ impl Source for HttpSource {
                 truncated,
                 etag,
                 last_modified,
+                retry_after,
+                location,
             })
         })
     }
@@ -716,6 +762,28 @@ mod tests {
                 .await;
             assert!(err.is_err(), "{path}");
         }
+        // `follow: false` (design 26c §3.1): the 3xx itself, its `Location` read; a followed
+        // answer carries none.
+        let mut once = SourceRequest::new(url("/hop/1"), Kind::Page, Reach::Any);
+        once.follow = false;
+        let hop = source.get(once).await.unwrap();
+        assert_eq!(hop.status, 307);
+        assert_eq!(hop.location.as_deref(), Some("/hop/0"));
+        let mut once = SourceRequest::new(url("/ftp"), Kind::Page, Reach::Any);
+        once.follow = false;
+        assert_eq!(
+            source.get(once).await.unwrap().location.as_deref(),
+            Some("ftp://example.org/x"),
+            "not followed, so not refused: the caller judges it"
+        );
+        assert_eq!(five.location, None);
+        // Never past the public rule: a public-only request to a private address isn't sent.
+        let mut once = SourceRequest::new(url("/hop/1"), Kind::Page, Reach::Public);
+        once.follow = false;
+        assert!(matches!(
+            source.get(once).await,
+            Err(FetchError::Refused(_))
+        ));
         assert_eq!(
             source.resolve("192.168.1.1").await.unwrap(),
             vec!["192.168.1.1".parse::<IpAddr>().unwrap()]

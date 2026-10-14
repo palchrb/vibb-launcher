@@ -60,10 +60,16 @@ object DebugStorytel {
     }
 }
 
-/** Assigns the debug switch at process start, before any worker or service runs (a debug-only provider). */
+/**
+ * Assigns the debug switches at process start, before any worker or service runs (a debug-only
+ * provider): Storytel's (design 26b §4.6) and Spotify's (design 26c §9.3, [DebugSpotify]), and Spotify's state
+ * recorder (design 26c §9.4).
+ */
 class DebugStartup : ContentProvider() {
     override fun onCreate(): Boolean {
         context?.let { runCatching { DebugStorytel.applyBase(it) } }
+        context?.let { runCatching { DebugSpotify.applyBase(it) } }
+        context?.let { runCatching { DebugSpotify.applyRecorder(it) } }
         return true
     }
 

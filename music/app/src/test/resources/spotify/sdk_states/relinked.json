@@ -1,0 +1,17 @@
+{
+  "about": "Relinking (§5.4): the expected next item is ours by uri, by the SDK's linked uri, or by title and duration within 2 s (a relinked copy: the server's listing title built from the state). The current track relinked at a start counts too.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Stille natt — Ola Fjell, Kari Li", "duration_ms": 200000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fjellvise — Ola Fjell", "duration_ms": 180000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Vuggesang — Kari Li", "duration_ms": 150000},
+    {"uri": "spotify:track:FAKEtrack0000000000004", "title": "Siste sang — Kari Li", "duration_ms": 150000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 3}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 200000, "uri": "spotify:track:FAKErelink00000000001", "linked": "spotify:track:FAKEtrack0000000000001", "type": "track", "name": "Stille natt", "artists": ["Ola Fjell", "Kari Li"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 200600, "state": {"paused": false, "position": 0, "duration": 181500, "uri": "spotify:track:FAKErelink00000000002", "linked": null, "type": "track", "name": "Fjellvise", "artists": ["Ola Fjell"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["ItemChanged 1 auto"]},
+    {"at": 380700, "state": {"paused": false, "position": 0, "duration": 150000, "uri": "spotify:track:FAKErelink00000000003", "linked": "spotify:track:FAKEtrack0000000000003", "type": "track", "name": "Vuggesang", "artists": ["Kari Li"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["ItemChanged 2 auto"]},
+    {"at": 530800, "state": {"paused": false, "position": 0, "duration": 150000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Siste sang", "artists": ["Kari Li"], "next": [], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["ItemChanged 3 auto"]}
+  ],
+  "end": {"index": 3, "mode": "OURS"}
+}

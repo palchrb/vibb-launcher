@@ -13,7 +13,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
 - `music/` - the Vibb music app (Kotlin, Compose, Media3; applicationId `me.vibb.music`, debug
-  `me.vibb.music.debug`), designs 20/21/21b. Details: `music/CLAUDE.md`.
+  `me.vibb.music.debug`), designs 20/21/21b, Sonos 26a, Storytel 26b, Spotify 26c. Details: `music/CLAUDE.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
   `kid-phone-server` = `server/`, `L` = `kids-launcher-mdm` = `launcher/`, "branch `handy`" = what is
   now `main` here. `docs/testing/emulator.md` - the emulator test loop. `docs/setup/` - setup
@@ -23,8 +23,10 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   calls, remote-capable; `docs/testing/emulator.md` §5b), `fake-sonos.py` (fake Sonos speakers for the
   music app on the emulator, answering from the music app's Sonos test fixtures; §6h), `fake-storytel.py` (a fake
   Storytel - the login, the asset call's 302, a CDN of silent books - answering from the music app's Storytel test
-  fixtures; §6i), `fake-audio.py` (a fake podcast host of silent episodes with Range; `--vary` serves another
-  length per request, design 30's changed-source check; §6f).
+  fixtures; §6i), `fake-spotify.py` (a fake Spotify - the accounts service with PKCE, the Web API the server and the
+  phone use, a stub Web Playback SDK playing a tone - answering from `server/testdata/spotify/` and the music app's
+  Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-audio.py` (a fake podcast host of
+  silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f).
 - `PLAN.md` - the plan and status.
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -64,16 +66,21 @@ music app keeps byte-identical copies in `music/app/src/test/resources/` (with `
 (`*/app/src/main/aidl/me/vibb/bridge/`) and the names both apps spell (`bridge_contract.json` in both apps'
 test resources) are byte-identical in `launcher/` and `music/` (`MusicPlanTest`, `BridgeTest`); new methods are
 appended. `server/testdata/music_state.json` is every `music_state` field: the server keeps them all, the launcher
-keeps the music app's, the music app sends exactly those.
+keeps the music app's, the music app sends exactly those. Spotify's host list `server/testdata/spotify_hosts.json`
+(design 26c §6.2; provisional until the DNS capture) is byte-identical in both apps' test resources
+(`spotify::tests::hosts_match_the_contract`, `ContractFilesTest`, `MusicPlanTest`); a change goes into all three in
+one commit, with each side's constants (`HOST_SUFFIXES`/`EXACT_HOSTS`, `SPOTIFY_HOST_SUFFIXES`/`SPOTIFY_EXACT_HOSTS`).
 
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
-  shared snapshots, `music/gradle/` and `music.yml`; `music.yml` also on the shared `server/testdata/music_*.json`,
-  the launcher's copy of the bridge AIDL and `bridge_contract.json`, `scripts/fake-sonos.py`,
-  `scripts/fake-storytel.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs after the build;
+  shared snapshots, the three `spotify_hosts.json`, `music/gradle/` and `music.yml`; `music.yml` also on the shared
+  `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
+  `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
+  `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
+  after the build; `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` copies;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

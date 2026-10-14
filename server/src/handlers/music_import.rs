@@ -81,6 +81,8 @@ fn order_text(order: &str) -> &'static str {
 
 fn cache_text(source: &str, cache: i64) -> String {
     match cache {
+        // Spotify streams (design 26c §3.2).
+        _ if source == "spotify" => "streamed, on no phone yet".to_string(),
         // Storytel is download-only (design 26b §2.6): the first N books in reading order.
         -1 if source == "storytel" => "every book downloaded".to_string(),
         n if source == "storytel" => format!("the first {n} books downloaded"),
@@ -467,6 +469,7 @@ pub async fn confirm(
                 cover: None,
                 items: None,
                 lan: false,
+                spotify: None,
                 sort,
             };
             added.push((entry, candidate.name.clone()));
@@ -507,6 +510,11 @@ pub async fn confirm(
             };
             let mut ticked: Vec<(i64, String)> = Vec::new();
             for (entry, name) in &added {
+                // A Spotify entry goes to no phone here (design 26c §3.2): the parent ticks it on
+                // each phone that plays as an account.
+                if entry.source == "spotify" {
+                    continue;
+                }
                 let mut share = serde_json::to_vec(entry).map_or(usize::MAX / 4, |j| j.len()) + 1;
                 if !present.contains(&entry.category) {
                     share += lib_categories

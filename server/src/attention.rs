@@ -73,6 +73,15 @@ pub enum Kind {
     MusicOverLimit,
     MusicOlderPhone,
     MusicFailing(usize),
+    /// The phone's Spotify account can't play (design 26c §4.4: the login, the app, Premium or
+    /// the phone's web player) - the music app's tiles say "Spør en voksen".
+    MusicSpotify,
+    /// The account the phone plays as, from the accounts table (qa-26c-merge2-code L3): its login
+    /// to renew, its login ending within 14 days, two phones on it, no Spotify app set up.
+    MusicSpotifyLogin,
+    MusicSpotifyEnding,
+    MusicSpotifyShared,
+    MusicSpotifyNoApp,
 }
 
 impl Kind {
@@ -141,6 +150,11 @@ impl AttentionItem {
             Kind::MusicOverLimit => "music-over-limit",
             Kind::MusicOlderPhone => "music-older-phone",
             Kind::MusicFailing(_) => "music-entries",
+            Kind::MusicSpotify => "music-spotify",
+            Kind::MusicSpotifyLogin => "music-spotify-login",
+            Kind::MusicSpotifyEnding => "music-spotify-ending",
+            Kind::MusicSpotifyShared => "music-spotify-shared",
+            Kind::MusicSpotifyNoApp => "music-spotify-no-app",
         }
     }
 }
@@ -233,6 +247,11 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         music.failing_entries > 0,
         Kind::MusicFailing(music.failing_entries),
     );
+    add(music.spotify_account.no_app, Kind::MusicSpotifyNoApp);
+    add(music.spotify_account.renew, Kind::MusicSpotifyLogin);
+    add(music.spotify_account.ending, Kind::MusicSpotifyEnding);
+    add(music.spotify_account.shared, Kind::MusicSpotifyShared);
+    add(music.spotify_cant_play, Kind::MusicSpotify);
     kinds
         .into_iter()
         .map(|kind| AttentionItem {
@@ -273,7 +292,12 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
         | Kind::MusicOlderPhone
-        | Kind::MusicFailing(_) => Level::Action,
+        | Kind::MusicFailing(_)
+        | Kind::MusicSpotify
+        | Kind::MusicSpotifyLogin
+        | Kind::MusicSpotifyEnding
+        | Kind::MusicSpotifyShared
+        | Kind::MusicSpotifyNoApp => Level::Action,
     }
 }
 
@@ -308,6 +332,11 @@ fn title(kind: Kind) -> String {
         Kind::MusicOlderPhone => "Update Vibb and the music app",
         Kind::MusicFailing(1) => "1 music entry fails on the phone",
         Kind::MusicFailing(n) => return format!("{n} music entries fail on the phone"),
+        Kind::MusicSpotify => "Spotify can't play on this phone",
+        Kind::MusicSpotifyLogin => "Spotify login needs renewing",
+        Kind::MusicSpotifyEnding => "Spotify login ends soon",
+        Kind::MusicSpotifyShared => "Two phones share a Spotify account",
+        Kind::MusicSpotifyNoApp => "No Spotify app set up",
     }
     .to_string()
 }
@@ -348,6 +377,11 @@ fn target(kind: Kind, id: i64) -> String {
         Kind::MusicOverLimit => ("/music", "storage-title"),
         Kind::MusicOlderPhone => ("/music", "music-settings"),
         Kind::MusicFailing(_) => ("/music", "library"),
+        Kind::MusicSpotify
+        | Kind::MusicSpotifyLogin
+        | Kind::MusicSpotifyEnding
+        | Kind::MusicSpotifyShared
+        | Kind::MusicSpotifyNoApp => ("/music", "music-spotify"),
     };
     format!("/devices/{id}{page}#{anchor}")
 }
@@ -374,6 +408,8 @@ pub struct Sources<'a> {
     pub connection: ConnectionState,
     /// The music entries switched on for the phone (`music::ticked_entries`).
     pub music_ticked: &'a [i64],
+    /// The Spotify account it plays as, from the accounts table (`music::spotify_account_warnings`).
+    pub spotify_account: crate::handlers::music::SpotifyAccountWarnings,
 }
 
 /// Reads what [items] needs. A read that fails counts as "nothing to say" for its row (logged by
@@ -450,6 +486,12 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             tracing::error!(device_id = id, %err, "attention: can't read the music ticks");
             Vec::new()
         });
+    let spotify_account = crate::handlers::music::spotify_account_warnings(state, &policy)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(device_id = id, %err, "attention: can't read the Spotify account");
+            Default::default()
+        });
     facts_of(
         &Sources {
             device,
@@ -460,6 +502,7 @@ pub async fn facts(state: &AppState, device: &Device, connection: ConnectionStat
             incoming_calls_not_blocked,
             connection,
             music_ticked: &music_ticked,
+            spotify_account,
         },
         now_ms,
     )
@@ -549,7 +592,19 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         launcher_without_rules: crate::handlers::devices::launcher_without_rules(latest),
         calls_enforced: calls_enforced(policy, s.call_problems),
         // Device › Music's own warnings, so the rows and the page agree.
-        music: crate::handlers::music::music_warnings(policy, latest, s.music_ticked),
+        music: {
+            let mut music = crate::handlers::music::music_warnings(policy, latest, s.music_ticked);
+            music.spotify_account = s.spotify_account;
+            // A login to renew is one row: the phone's `reauthorize` says the same.
+            let reported = crate::music::parse_music_state(
+                latest.and_then(|st| st.music_state_json.as_deref()),
+            )
+            .and_then(|report| report.spotify);
+            if music.spotify_account.renew && reported.as_deref() == Some("reauthorize") {
+                music.spotify_cant_play = false;
+            }
+            music
+        },
     }
 }
 
@@ -587,6 +642,13 @@ mod tests {
                 over_limit: Some(("3.2 GB".to_string(), 2)),
                 older_phone: true,
                 failing_entries: 2,
+                spotify_cant_play: true,
+                spotify_account: crate::handlers::music::SpotifyAccountWarnings {
+                    no_app: true,
+                    renew: true,
+                    ending: true,
+                    shared: true,
+                },
             },
             ..Default::default()
         }
@@ -676,6 +738,11 @@ mod tests {
                 "Music over the storage limit",
                 "Update Vibb and the music app",
                 "2 music entries fail on the phone",
+                "No Spotify app set up",
+                "Spotify login needs renewing",
+                "Spotify login ends soon",
+                "Two phones share a Spotify account",
+                "Spotify can't play on this phone",
             ]
         );
         let first_action = rows.iter().position(|r| r.level == Level::Action).unwrap();

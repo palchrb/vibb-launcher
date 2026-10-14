@@ -66,6 +66,12 @@ fun downloadPlan(snap: Snapshot, rows: List<DownloadRow>, nowMs: Long, held: Set
     removedEntries(byEntry.keys, lib?.entryIds).forEach { id -> prune += byEntry.getValue(id).filterNot(::held) }
     for (entry in lib?.entries.orEmpty()) {
         if (entry.source == Source.OWN) continue
+        // Design 26c §4.2, §4.4: a Spotify entry streams - no keep set, no download, no `downloads` row in
+        // the report. A copy can't exist (nothing is ever fetched for one); if one somehow did, it goes.
+        if (entry.source == Source.SPOTIFY) {
+            prune += byEntry[entry.id].orEmpty()
+            continue
+        }
         val version = snap.listingVersions[entry.id] ?: continue
         val listed = snap.listed[entry.id].orEmpty()
         val listedKeys = listed.map { it.key }

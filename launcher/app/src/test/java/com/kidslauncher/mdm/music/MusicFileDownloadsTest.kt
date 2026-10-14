@@ -42,6 +42,7 @@ class MusicFileDownloadsTest {
         override suspend fun listing(entryId: Long, ifNoneMatch: String?) = throw UnsupportedOperationException()
         override suspend fun cover(hash: String) = throw UnsupportedOperationException()
         override suspend fun storytel() = throw UnsupportedOperationException()
+        override suspend fun spotifyToken() = throw UnsupportedOperationException()
         override fun file(id: Long, range: String?, ifMatch: String?): Call<ResponseBody> {
             asked += range to ifMatch
             val answer = queue.removeFirst()

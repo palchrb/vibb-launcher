@@ -177,7 +177,7 @@ No prior programming experience - build features directly rather than explaining
 
 - **Play** (`src/play.rs`): `PLAY_CORE` (vending, gms, gsf) is the launcher's business - never listed on the phone's Apps page, `toggle_app` answers 400 for it, and the first-heartbeat allowlist bootstrap leaves it out. One source per package: turning on a catalog app whose package the phone reports installed by `com.android.vending` writes nothing and returns to its row with the reason (`/devices/{id}/apps?notice=from_play&app=<row>#<row>`; a 409 before design 31 step 6). Security log: `play_install_mode` (a new `install_mode.until_ms`), `app_installed` (a package new since the previous report, with its installer; not on the first report). The device page's "Play and kiosk" card ("Push and Play" until design 19) shows the "Instant changes" line, install mode, the nightly update window and the kiosk app block switch.
 - **Battery (design 19b phase 1, migration `0055_battery_exemption.sql`)**: status `battery_optimization_exempt` (`Option<bool>`, `#[serde(default)]`) is stored in `device_status.battery_optimization_exempt` (NULL from an older launcher or when unreadable); About This Phone shows a "Battery optimisation" row for true ("Off") and false ("On", the fix behind its ⓘ), nothing for NULL. No policy key, no capability.
-- **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
+- **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Spotify's hosts get the same split **per phone**, only while it is bound to a Spotify account (design 26c, "Vibb music: Spotify on the server"). Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
   (an error, a non-2xx, over `MAX_FEED_BYTES` = 32 MB decompressed, or nothing that `parse_feed` takes for a domain
   - a captive portal's page) keeps its previous domains (`CompiledList.last_error`): in memory, else its last good
@@ -245,7 +245,11 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   every template, subfolders too, and runs `node --test jstest/*.test.js`, the script's behaviour tests, when node is
   installed - CI always runs them); a new form needs its group's fragment in its action and its redirect
   (`tests::shell::every_form_on_every_page_lands_on_its_own_group` checks every page's forms with
-  `settings_pages::check_forms`). External file, so a future CSP needs no inline-script exception.
+  `settings_pages::check_forms`), except the forms that leave the page, which carry none
+  (`settings_pages::leaves_the_page`: sign-in and out, the add flows' first steps, New Setup Code, the deletes back to
+  a list, Spotify's login; matched without the fragment, so one that has a fragment fails). Every class a template
+  uses has a rule in `style.css` (`tests::shell::every_class_a_template_uses_is_in_style_css`, with an allowlist of
+  dynamic prefixes and hooks, each with its reason). External file, so a future CSP needs no inline-script exception.
 - **Screen timeout** (migration `0032`): `device_policy.screen_timeout_seconds` (one of
   `models::SCREEN_TIMEOUTS` = 15/30/60/120/300/600, default 60; anything else is sent as 60),
   Lock Screen & PINs › Screen › "Turn off after" (design 31 step 4; `POST /devices/{id}/screen-timeout`, 400 for
@@ -353,6 +357,10 @@ versions with the compiled ones (a change for the main session, not made yet).
 `music-1b-sonos`) sits above both: 0070 or 0071 reaching a server that has run 0072 is the same hazard. Since the
 Storytel branch merged design 27 (through `music-1b-sonos`, 2026-10-12) every build of it carries 0070-0072 and applies
 them in order; never deploy a build of it from before that merge (0071 and 0072 without 0070).
+`0074_music_spotify.sql` (design 26c, written as 0073 on `music-3-spotify`, renumbered at its merge of main on
+2026-10-13, where design 30 holds `0073_music_data_and_storage.sql`) sits above 0073: the same hazard if 0073 reaches a
+server that has run 0074; design 30's server ships before or with Spotify's. A dev database that ran the Spotify
+branch before that merge holds its old 73 (another checksum) and stops at `VersionMismatch(73)`: a fresh `data/`.
 **A migration file is frozen from its first commit on a pushed branch, comments included**: sqlx stores a checksum of
 the whole file and refuses to start (`VersionMismatch`) when an applied migration's text changed. Later notes go into
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
@@ -373,7 +381,7 @@ this file or the design doc; a dev database that ran an earlier text needs a fre
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
-- `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"
+- `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
 - `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list), see the Find My Device architecture bullet above
 
@@ -543,10 +551,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Data**: `music_categories` (name <= 20, `icon`/`color` keys of `testdata/music_icons.json` - 12 Material Symbols, 8
   colours, white >= 3:1, `src/music_icons.rs` + `static/music-icons/` generated by `scripts/material-symbols.sh`;
   seeded Musikk/Eventyr/Lydbøker/Podkast, `default_kind` picks a new entry's category by source), `music_entries`
-  (nrk/rss/own, storytel since design 26b; `target` unique, NULL for own; `key` = vibb's `state_key`, `own-<id>`;
+  (nrk/rss/own, storytel since design 26b, spotify since 26c; `target` unique, NULL for own; `key` = vibb's `state_key`, `own-<id>`;
   `cache` -1/0/1-100, own = -1; <= 200), `music_files` (own uploads, <= 300 per entry, `missing`),
   `device_music_entries` (ticks),
-  `device_policy.music_volume_cap_pct/music_storytel` (and since design 30, migration `0073`,
+  `device_policy.music_volume_cap_pct/music_storytel` (and `music_spotify_account` since design 26c, migration
+  `0074`, NULL = Spotify off - "Vibb music: Spotify on the server" below; and since design 30, migration `0073`,
   `music_stream_mobile_data`/`music_download_mobile_data`, which replaced `music_mobile_data` and both took its value,
   and `music_storage_limit_gb` - 1/2/5/10, NULL = no limit, default 2 for every phone), `music_storytel` singleton,
   `device_status.music_state_json`, `tracked_apps.release_tag_prefix`; `device_policy.music_sonos_rooms_json`
@@ -576,7 +585,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   by the autofocused field. Changes nudge the phones they reach and log `music_*` / `storytel_login_*` events. PWA
   text is English like the rest.
 - **Wire**: `PolicyResponse.music` = `{library_version, mobile_data, stream_mobile_data, download_mobile_data,
-  volume_cap_pct, storage_limit_gb, storytel_generation}` (always the key; `null` when the library query fails, QA #3;
+  volume_cap_pct, storage_limit_gb, storytel_generation, spotify}` (`spotify`: the phone is bound to a Spotify
+  account, design 26c; always the key; `null` when the library query fails, QA #3;
   `policy_json_keys_snapshot`). Design 30: `mobile_data` stays for an older launcher (it refuses a music object
   without it) and is `stream && download` (`music::mobile_data_wire`: AND never spends data the parent turned off);
   `storage_limit_gb` is the stored choice, `null` = no limit, a stored non-choice is sent as 2
@@ -613,15 +623,18 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (multipart `library`, <= 1 MB, never stored) previews a Pi's `library.json` on the import page
   (`/music/import`, its GET the empty form); `POST /music/import/confirm` re-reads the preview's hidden document with
   the same parser and re-checks in one transaction (new categories, entries in file order after `NEXT_SORT`, ticks via
-  `music::tick_fits`), then a session flash at `/music/import#import` and one `music_library_imported` event. Targets only through `parse_link` (a `storytel:` one through
-  `storytel::parse_target`, a Storytel entry since design 26b, below): no outgoing request. Skips: Spotify, folders,
-  `parse_link` refusals, `spotify_user` sections, no name, already in the library (target or key), repeats, past 200.
+  `music::tick_fits`), then a session flash at `/music/import#import` and one `music_library_imported` event. Targets
+  only through `parse_link` (a `storytel:` one through `storytel::parse_target`, a Storytel entry since design 26b,
+  below; a Spotify URI or `open.spotify.com` link through `spotify::parse_link`, a Spotify entry on no phone since
+  design 26c, below): no outgoing request. Skips: Spotify short links, folders, `parse_link` refusals, `spotify_user`
+  sections, no name, already in the library (target or key), repeats, past 200.
 - Tests: `src/tests/music.rs`, `music::tests`, `music_secret::tests`, `music_import::tests`, `tracked_apps::tests`
   (`launcher_and_music_rows_keep_to_their_own_releases`).
 
 ## Vibb music: the server sweep (design 21b = step 1c, `docs/design/21b-music-server-sweep.md`, migration `0051_music_sweep.sql`, 0.22.0)
 
-- **What**: the server lists every NRK/RSS entry itself (vibb's logic; Storytel too since design 26b, below); phones
+- **What**: the server lists every NRK/RSS entry itself (vibb's logic; Storytel too since design 26b and Spotify since
+  26c, below); phones
   get each list from `GET /api/devices/music/entries/{id}/items` and only download audio from the source.
   `music_sweep::run` is spawned in `main` (never in `build_admin_router`), its first pass 60 s after start, then
   whenever something is due or `wake()` (`AppState.music_sweep`: after an add, the import's commit, a tick, Check now,
@@ -765,6 +778,207 @@ needed to manage the phone, delete on a schedule, never store notification or me
   import); fixtures in `testdata/storytel/`; `music_library.json` holds a Storytel entry (shared with the music app and
   the launcher). `tests::music::CannedFetch` records each request (`requests`) and has `answer_once`.
 
+## Vibb music: Spotify on the server (design 26c steps 1, 2a, 2b, 3 and 8, `docs/design/26c-spotify.md`, migration `0074_music_spotify.sql`)
+
+- **What**: `src/spotify.rs` (vibb `spotify.py`'s link grammar ported; the rest new ground) and
+  `handlers::music_spotify`. **Bring your own developer app**: the server ships no client ID. Until one is set,
+  Spotify is "not configured" - `/music/spotify` shows how to register an app (a Premium owner, the redirect URI shown,
+  Web API + Web Playback SDK, at most 5 users under User Management, a name not starting "Spot", the Developer
+  Policy's line about children), and nothing else changes. The client ID is one `music_spotify_app` row from the PWA
+  or `SPOTIFY_CLIENT_ID` (32 letters and digits; it wins, the field read-only), with `SPOTIFY_REDIRECT_URI` likewise;
+  **stored in the clear on purpose** (a PKCE client ID is public; the page shows its last four). There is no client
+  secret anywhere. Clear (a confirm box) deletes the app, every account and every binding; a new client ID with
+  accounts present removes the accounts too (their tokens are the old app's). Events `spotify_app_saved`,
+  `spotify_app_cleared`.
+- **Accounts** (`music_spotify_accounts`, `spotify::Accounts` = `AppState.spotify`): one row per Spotify user
+  (`spotify_user` unique; a new login of the same account replaces its token, bumps `generation` and keeps the row id
+  and the phones bound to it), the refresh token sealed with the music key under AAD `spotify-v1:<fingerprint>:<spotify
+  user>` (`music_secret::seal_with`/`open_with`; Storytel's `storytel-v1` path is unchanged), `scopes`, `authorized_at`
+  (the 6-month clock Spotify doesn't expose: "log in again before" = `+ 180 days`, a warning from 14 days before on the
+  Spotify page and on each bound phone's Music page, with an Attention row), `refresh_ok_at`, `refresh_error` (a code),
+  `needs_login`. Remove (a confirm box) unbinds its phones first, then deletes the row and forgets its cached token
+  (`spotify_account_removed`).
+- **The account model** (26c step 8, the user's answer of 2026-10-14): **one account per phone, the child's own; the
+  parent's own Spotify account is never logged in** - the parent pastes links. Nothing in the code enforces it (the
+  table holds any accounts, a phone binds one, any account is a reader); the copy says it, and tests pin the copy: the
+  Spotify page's intro ("your children's Spotify accounts: one account per phone, the child's own. Your own Spotify
+  account is never logged in here - you paste the links."), its setup steps (User Management: "each child's Spotify
+  account - one per phone, the child's own, never yours"; a sixth step on playlists: a playlist lists only when a
+  child's account owns it or collaborates on it - made in the child's account, or the parent's with the child invited to
+  collaborate and joined from the child's account (the invite link opened as the child) -, else it plays in Spotify's
+  order without a track list), the login hint ("Log in each child's own account - one per phone, never yours ..."), the
+  context notice ("... For the track list, make the playlist in your child's Spotify account, or invite your child to
+  collaborate on yours and join from your child's account.", the entry page and the add), and Device › Music's binding
+  footer ("One account per phone: the child's own Premium account, never yours."). A Spotify entry without a name from
+  Spotify (a playlist's is optional) is named `LinkKind::plain_name` ("Playlist" ...), never `kind_label`'s "Spotify
+  playlist": the name is the kid's tile and lock screen. The two-phones-one-account warning and the entry page's "read
+  as <name>" (which child's account listed it) stay. The PWA is also where Spotify's attribution lives: the music app
+  shows no Spotify word at all (step 8, 26c §7.3) - keep "Spotify" in the PWA's labels and "Open in Spotify".
+- **The login is PKCE in the parent's browser** (`POST /music/spotify/login`): a 64-character verifier (`OsRng`), its
+  S256 challenge and a 32-hex `state` kept **in memory only** (at most 8, 10 minutes, with the admin who started it; a
+  restart loses an unfinished login), the `spotify_login` cookie (hex SHA-256 of the state; `HttpOnly`, `Secure`
+  unless `INSECURE_COOKIES`, `SameSite=Lax`, `Path=/music/spotify/callback`, 10 minutes), then a 303 to Spotify's
+  authorize URL with `show_dialog=true`. Its form is the one form on `/music/spotify` without a `#fragment` (a
+  fragment would follow the 303 to Spotify; a refusal renders the page with the button `autofocus`ed;
+  `settings_pages::leaves_the_page`). The page carries its own CSP (`ADMIN_CSP` with `form-action 'self' https://accounts.spotify.com`, the
+  loopback fake's origin with the override; `admin_headers` keeps a CSP a handler set - only this page sets one), else
+  the browser would block the form's 303. **With an https redirect URI a login is started only from that address** (the cookie is that
+  host's; `request_host`/`redirect_host`): another address of the server is refused by the button with a link to the
+  right one. The suggested redirect is https only when a trusted proxy said `X-Forwarded-Proto: https`, else the
+  loopback form `http://127.0.0.1:43117/callback` (`LOOPBACK_REDIRECT`): nothing listens there, the parent pastes the
+  address their browser shows into `POST /music/spotify/paste` (a session, CSRF; the same code path; the admin who
+  started it, not the cookie, is checked) - that works from any address and needs no https.
+- **The callback's exemption**: `GET /music/spotify/callback` and `GET /music/spotify/done` are in
+  `build_admin_router`'s `public_routes` beside `/login` (outside `require_full_auth`; still behind the admin gate,
+  tailnet/loopback and `ADMIN_TAILSCALE_USERS`): the admin cookie is `SameSite=Strict`, which a browser withholds on
+  the whole redirect chain Spotify starts. The callback does nothing without a live pending `state` (taken out on first
+  use) and a matching `spotify_login` cookie (cleared); the exchange and `/v1/me` share `LOGIN_BUDGET` (45 s, the
+  gate's wait included); `/me` 403 = the account isn't in the app's User Management (nothing stored). It answers a 303
+  to `/music/spotify/done?login=<outcome>` - a public page with no secret that moves on to
+  `/music/spotify?login=<outcome>#accounts` with a meta refresh (same-site, so the session cookie goes;
+  `music_spotify_done.html`, with the head partial's stylesheet and title like every page), so the
+  spent code never sits on a page's URL or in a `Referer`. Outcomes: `ok`, `cancelled`, `not_registered`, `refused`,
+  `unreachable`, `expired` (also another browser, a changed app), `off`, `error`. Events `spotify_account_added`,
+  `spotify_login_failed` (a code).
+- **Tokens** (`Accounts::access_token(account, min_left)`): per account a tokio `Mutex` around the cached access
+  token (`expires_in` must be 1..86 400 s; kept with a 60 s margin), so one refresh runs at a time. The refresh is a
+  `tokio::spawn`ed `MintJob` holding the account's lock as an `OwnedMutexGuard`: a caller that gives up (a budget, a
+  client gone) cancels nothing, and the result is kept for the next ask. **A rotated refresh token is sealed and
+  written before the access token is used** (three tries; if the database refuses, it stays in memory and every later
+  call writes it first). `invalid_grant` -> `needs_login`, `spotify_login_needed`, never tried again until a new
+  login; `invalid_client` -> `app_refused` (the app card says Spotify no longer accepts the client ID). Reads
+  (`api_get`): the bearer, a 401 refreshes once (only when the rejected token is still the kept one) and retries
+  once, a `Retry-After` of at most 5 s waited once, `QUOTA_EXCEEDED` stops every Web API read for 60 minutes
+  (`quota_until`; the accounts service goes on) so the phones' play calls - the same developer account's bucket -
+  keep room. Every URL is built from the canonical id. **Every request goes through `AppState.music_fetch`**, the one
+  gate, `Reach::Public` - `Reach::Any` **only while a loopback base override is set** (below).
+- **The phone's token** (`POST /api/devices/music/spotify/token`, step 3, `handlers::music_api::spotify_token`, device
+  bearer, always JSON, `no-store`): binding and app first (404 `off`, not counted), then the per-phone limit
+  (`Accounts::phone_ask`: 20 a rolling hour, a refused ask not counted, 429 `busy` with `retry_after_s`), then the
+  bound account's token with at least 10 minutes left (`PHONE_TOKEN_MIN_LEFT`): 200 `{status: ok, access_token,
+  expires_in_s (what is left), account: "<id>:<generation>"}`; 409 `reauthorize` (`needs_login` or `app_refused`);
+  429 `busy` (Spotify's `Retry-After`, else 30 s); 502 `unreachable`; 503 `key` (the music key can't open it); a
+  database error 500 `unreachable`. **The route waits at most `PHONE_TOKEN_BUDGET` = 8 s** for a refresh, which can
+  queue behind a sweep at the gate (a feed fetch holds it up to 120 s): past it 502 `unreachable`, the spawned refresh
+  finishes and is kept, and the music app's one prompt retry about 5 s later finds it. 8 s is under the launcher's and
+  the music app's 10 s, so the server's answer arrives first. The token is never stored or logged.
+- **Links and entries** (`POST /music/spotify/add`, step 2b): `spotify::parse_link` takes `spotify:<kind>:<id>`,
+  `open.spotify.com/[intl-xx/]<kind>/<id>` (query and fragment dropped) and short links (`spotify.link`,
+  `spotify.app.link`), which `resolve_short_link` follows **one hop at a time** (`SourceRequest.follow = false`,
+  `SourceResponse.location`, at most 3 hops, each on those hosts or `open.spotify.com`) at add time only. Playlist,
+  album, track, artist, show, episode; audiobooks, Liked Songs and profiles are refused with a sentence; the generic add
+  form points Spotify links to `/music/spotify` (`SPOTIFY_ON_ITS_PAGE`). The add check (`ADD_BUDGET` 45 s, the short
+  link included) reads the kind's metadata and, for a playlist, its first items page; the entry is source `spotify`, the
+  canonical target, `key` = `state_key(target)`, order `auto`, **cache 0 always** (nothing is ever downloaded: no
+  offline select anywhere, a posted value saved as 0), resume on, the category by `default_kind_for(source, target)` (a
+  show or episode to Podkast). The phones picked on the form are ticked in the insert's own `BEGIN IMMEDIATE` only when
+  they play as an account (`PLAYS_SPOTIFY`, the gate's own `EXISTS`); the others are named. The Music tab has a "From
+  Spotify ›" row (No app / No login / Signed in), its fifth Add row - design 31 step 12's open point, settled at the
+  merge of main `5584772`. The Spotify page (`/music/spotify`) is in design 31's layout since that merge's code QA fix
+  round (groups: Your Spotify App with the Client ID and the exact Redirect URI as rows, How to Set It Up, Remove the
+  App… as a confirm; Children's Accounts, one row per account with Remove … as a confirm, Log in with Spotify, the
+  paste; Add a Spotify link with the phones as checks; the flashes in their groups; `.env` and the key file only behind
+  ⓘs). **`/music/spotify/callback` and `/music/spotify/done` never move** - the callback is the redirect URI every
+  family registered at Spotify (`CALLBACK_PATH`, the only https path `valid_redirect_uri` takes, the login cookie's
+  `Path`), and a new path breaks every family's next login.
+- **Readers and the listing modes** (step 2a, `music_sweep::spotify_check`): the readers are the accounts without
+  `needs_login`, the listing's last reader first (`music_listings.spotify_reader`), then by id. **`ReaderTurns`** is
+  the one rule for the sweep and the add check: a 403/404 or an account that can't be used now passes to the next
+  reader, anything else ends the read as that failure, and the read is "refused" only when **every** reader said
+  403/404. **List mode** (`spotify_mode = 'list'`): one `ok` item per track or episode, key = the Spotify id, title
+  `"<name> — <artist>, <artist>"`, **`url` NULL** (the phone plays by uri), `duration_ms`, `art_url`; a playlist's
+  items with `additional_types=track,episode` (episodes, local files, `is_playable: false` left out and counted in
+  `spotify_skipped`; a repeat listed once), at most 1000 (`capped`); an album in disc/track order; a show's newest 100
+  (`keep_end = 'newest'`); a track or episode one item. **Context mode** (`'context'`): an artist always (top tracks
+  are gone in dev mode), and a playlist whose items every reader refuses - no items, the listing's version moving
+  with the mode, the title and the cover URL; the phone plays the context. A context playlist is read again at every
+  check and flips back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
+  checklist item 18) lists an artist as its newest 20 albums' tracks (pages of 10, at most 500 tracks), with a
+  403/404 falling back to context mode. A playlist's `snapshot_id` gates its items (unchanged and read within 24 h:
+  one request; Check now ignores it); `interval(link, ..)`: an album, track, episode or artist daily, a playlist or
+  show at the setting. Without an app `spotify_off`, without a usable account `no_account`/`reauthorize`, inside the
+  quota pause `quota` - no request; the last good list stays. A new login or app save makes the entries that failed
+  for those reasons due at once. `restamp_versions` takes Spotify; `flag_reports` skips it. Art: a playlist's and a
+  track's pictures are judged `own` (no reference prints, no twin merge), a show's episodes as RSS's, an album lists
+  none; the art pass asks each URL once per pass.
+- **The gate** (step 2b, §3.6): `spotify_gate!()` (exported beside `storytel_gate!()`, `concat!`ed into the SQL, one
+  more bind) in `LIBRARY_ENTRIES` (its `IN` takes `'spotify'`), `device_listing`, `cover_in_library` and
+  `art_in_library`: a phone gets Spotify entries, listings and covers only **while it is bound to an account**
+  (`device_policy.music_spotify_account`; else 404). `needs_login` doesn't close it (the tiles say "Spør en voksen").
+  `LibEntry.spotify` is `"list"`/`"context"` (absent on every other source, and on a Spotify entry not listed yet, whose
+  `items` is then null), `cache` 0, `lan` false. The binding is the **Spotify** group on Device › Music
+  (`/devices/{id}/music#music-spotify`, design 31 step 7's page; `handlers::music::spotify_binding_card`, shown once an
+  app is set up or accounts or a binding remain): "Plays as: Off | <account>" as an inline picker (`POST
+  /devices/{id}/music/spotify`, back to `#music-spotify`; `music_spotify_binding_changed`; an unknown id back at the
+  anchor with `music_notice=spotify_unknown` as the group's flash), its footer "One account per phone: the child's own
+  Premium account, never yours." and a "Spotify Accounts ›" row (the account model above; the phone's hourly token
+  carries every scope of its account). In design 31's shapes (§4.2; the second merge's code QA, M2): what needs the
+  parent as notes above the group - a short title and one sentence (`SpotifyBindingCard.warnings: Vec<Note>`, through
+  `note_warning.html`: "No Spotify app set up", "Spotify login needs renewing" (the account's or the phone's
+  `reauthorize`, one note), "Spotify login can't be opened", "Spotify login ends 14 Apr", "Two phones share one
+  account", "Spotify refused the account", "No Spotify Premium", "This phone can't play Spotify"); the login's "Log in
+  again before ..." and an unbound phone's "Its N Spotify entries aren't sent." as the "Plays as" row's sub-lines; the
+  phone's passing words (`ok` "Plays", `unreachable`, `quota`) as a "Spotify" row in "On the phone"
+  (`spotify_report_row`). Dates in the Phone Setup zone. **Attention rows** (to `#music-spotify`, Action level): the
+  phone's refusal - `reauthorize`, `refused`, `not_premium`, `no_widevine` - "Spotify can't play on this phone"
+  (`MusicWarnings.spotify_cant_play`, `Kind::MusicSpotify`); and the account's side from the accounts table
+  (`music::spotify_account_warnings`, read by `attention::facts` and the summary into `Sources.spotify_account`):
+  "Spotify login needs renewing" (ended, refused, another key; the phone's `reauthorize` then raises no second row),
+  "Spotify login ends soon" (14 days), "Two phones share a Spotify account", "No Spotify app set up". The library row
+  (Music tab): "Spotify playlist · 42 tracks · 1 phone", "Open in Spotify" (`rel="noopener noreferrer"`) in place of the
+  Offline select; the entry page: "42 tracks · read as Ella", context mode's notice, the left-out count, the phones'
+  lines ("Plays as Ella", "Not sent - Spotify is off on this phone"; `gated`/`phone_count` follow the binding as the
+  gate does), `unplayable` from `item_errors`. "From Spotify ›" is the Music tab's fifth Add row. The streaming switch's
+  ⓘ names Spotify (it streams, never saved); the phone's Web Filter page (`/devices/{id}/filter`) says in its one footer
+  that Spotify's hosts aren't blocked while bound (the detail and the site-wide blocks it overrides behind the ⓘ) and
+  marks the phone's own blocks it overrides. The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link
+  imports as a Spotify entry on no phone, a short link is `Skip::SpotifyShortLink`, `spotify_user` sections stay
+  `Skip::SpotifyProfile`.
+- **The DNS binding override** (step 3, §6.2): the policy's `music.spotify` = the phone is bound (`policy_music`;
+  computed per request). For a bound phone `effective_blocklist` leaves out every domain `spotify::is_spotify_host`
+  names - equal to or under a suffix (Spotify's own parents included, so `spotify.com` itself), or exactly an exact
+  CDN host (`akamaized.net` stays delivered; the launcher exempts the exact hosts before its walk) - from the
+  categories **and** the custom blocks, and `compute_dns_filter_version` hashes `\nspotify:true` **while bound**
+  (bind and unbind each move it; an unbound phone keeps the version it had). A parent's own block of `spotify.com` is
+  overridden on that phone for every app: the device card's Web Filter part says so, and **`/dns?device=<id>`
+  marks** each of the phone's custom blocks the rule names "not applied while Spotify is on for this phone" and lists
+  the site-wide ones it overrides (`handlers::dns_filter`). `HOST_SUFFIXES`/`EXACT_HOSTS` are checked against
+  `testdata/spotify_hosts.json`, byte-identical with both apps' copies (`spotify::tests::hosts_match_the_contract`
+  reads all three) - **provisional** until the user's DNS capture lands, before any tag of this release, as one commit
+  of the list, the constants and the comment (the three copies, the six constants on the three sides; 26c
+  "Release").
+- **Migration 0074** (`0074_music_spotify.sql`; written as 0073 on the branch, renumbered at the merge of main
+  `571f86f`, where design 30 holds 0073): the two tables, `device_policy.music_spotify_account` (`REFERENCES` the
+  accounts, NULL = Spotify off; unbind before delete, no `ON DELETE`), `music_listings.spotify_mode`/`_snapshot`/
+  `_items_at`/`_reader`/`_skipped`, and two triggers moving `music_library_revision` (the binding, the mode).
+  `AUTOINCREMENT` so a removed account's id never names another. Frozen; it deploys after 0073 or with it, never
+  before ("Data model": the out-of-order hazard - `pre_migration_backup` compares `MAX(version)` only, so a 0073
+  reaching a server that ran 0074 is applied out of order with no backup - and a dev database that ran the branch
+  before the merge stops at `VersionMismatch(73)`). Backups copy the sealed refresh tokens like Storytel's login,
+  useless without `data/keys/`, which no backup holds; a restore elsewhere means logging the accounts in again.
+- **Environment**: `SPOTIFY_CLIENT_ID`, `SPOTIFY_REDIRECT_URI` (a bad value is ignored with one warning at start), and
+  for the emulator loop only `SPOTIFY_ACCOUNTS_BASE`/`SPOTIFY_API_BASE`, **honoured only as `http://127.0.0.1:<port>`
+  or `http://[::1]:<port>`** (`loopback_base`; anything else ignored with one warning) - only while one is set do the
+  Spotify requests use `Reach::Any` (`music_net` refuses loopback for `Public`), and the start logs a warning naming
+  the bases. `SPOTIFY_ARTIST_ALBUMS` (above). `INSECURE_COOKIES` also drops `Secure` from the login cookie. The fake is
+  `scripts/fake-spotify.py` (root `CLAUDE.md`), answering from `testdata/spotify/` (fakes only: `FAKE-ACCESS-<n>`,
+  `FAKE-REFRESH-<n>`, `FAKE-CODE-<n>`, users `fakeparent`/`fakekid`).
+- **Secrets**: refresh tokens, access tokens, the PKCE verifier and the authorization code never reach a log, an
+  event, a page, an error text or a `Debug` (`AccessToken`, `RefreshToken`, `Verifier`, `Pending`, `Started`,
+  `TokenAnswer`, `Access`, `Slot`, `Minted`, `MintJob`, `Accounts`, `SealedRow` have none:
+  `spotify::tests::secret_types_have_no_debug`); the callback's query never reaches a
+  log (the gate and the audit log paths only; a capturing subscriber at TRACE pins it); Spotify log lines carry
+  account ids, statuses and codes, display names only in events. Storytel's `reqwest` log floor, `without_url` and
+  `.referer(false)` cover these requests too.
+- Tests: `spotify::tests` (the grammar, PKCE with RFC 7636's vector, the authorize URL, token answers, rotation and
+  the unsaved retry, the per-account lock, `api_get`, the parsers over `testdata/spotify/`, readers, short links,
+  the host list, the phone limit, no secret in errors), `src/tests/music_spotify.rs` (the routes - login, callback,
+  paste, Remove/Clear, the 6-month line, no code or token in any log line, event or page -, `listing` - the modes,
+  the snapshot gate, the quota, art -, `entries` - add, ticks, the gate, the cards, the device card, the import -,
+  `phones` - the token route's answers, limit and budget, the policy and the blocklist following the binding, the
+  `/dns` marks), `music::tests` (the link, kinds, words), `music_import::tests`, `music_secret::tests`;
+  `music_library.json` holds a Spotify entry in each mode (shared with both apps).
+
 ## Vibb music: episode art (design 27, `docs/design/27-music-episode-art.md`, migration `0070_music_episode_art.sql`)
 
 - **What**: the sweep fetches each NRK/RSS item's own picture (`art_url`: NRK's smallest variant of at least 512 px
@@ -775,7 +989,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   of that picture, or null (none, the series picture, not fetched yet, failed) - `testdata/music_listing.json`, the
   music app's copy and the launcher's `MusicPlanTest` version pin change together. Served by the cover route:
   `cover_in_library` first, else `music::art_in_library` (a listed, non-pending item of a listed NRK/RSS/Storytel entry
-  the phone has ticked, a Storytel one behind `storytel_gate!()`) from `music_art_dir`.
+  the phone has ticked, a Storytel one behind `storytel_gate!()`, a Spotify one behind `spotify_gate!()`) from
+  `music_art_dir`.
 - **Storytel books** (design 26b step 4a): a book's `art_url` is the shelf's cover; `art_candidate(item, link)` takes
   an `ok` book with no `url` (an NRK/RSS item needs its `url`), `auto` reads a Storytel entry from book 1, and
   `storytel_check` keeps a known book's whole row (every `art_*` field), so a check never drops a hash or a failure's

@@ -56,6 +56,36 @@ class EnforcementPlanTest {
         assertTrue(recents in computeEnforcementPlan(listOf("org.example.game"), true, 0, false, withIcon, OWN, DIALER).hide)
     }
 
+    @Test
+    fun `the WebView provider is never hidden or suspended - allowlist, SMS off, time-rule lock (26c §6_3)`() {
+        val webView = "com.google.android.webview"
+        val withProvider = controllable + webView
+        for (locked in listOf(false, true)) {
+            for (calls in listOf(CallPolicyState.Unmanaged, smsOff, CallPolicyState.UnknownFailClosed)) {
+                val plan = computeEnforcementPlan(
+                    listOf("org.example.game"), true, 0, false, withProvider, OWN, DIALER,
+                    callState = calls, smsPackages = setOf(SMS, webView), scheduleLocked = locked, webViewProvider = webView,
+                )
+                assertTrue(webView in plan.neverRestrict)
+                assertFalse("locked $locked, $calls", webView in plan.suspend)
+                assertFalse("locked $locked, $calls", webView in plan.hide)
+                assertTrue("everything else not allowed still is", "org.example.music" in plan.hide)
+            }
+        }
+        // Unknown (the lookup failed): nothing new is spared.
+        assertEquals(
+            computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER).neverRestrict,
+            computeEnforcementPlan(listOf("org.example.game"), true, 0, false, controllable, OWN, DIALER, webViewProvider = null).neverRestrict,
+        )
+        // Not named: an ordinary controllable package - hidden when not allowed.
+        assertTrue(webView in computeEnforcementPlan(listOf("org.example.game"), true, 0, false, withProvider, OWN, DIALER).hide)
+        // The enforcer passes the provider it reads at each apply.
+        val enforcer = listOf(java.io.File("src/main/java/com/kidslauncher/mdm/server/AppEnforcer.kt"), java.io.File("app/src/main/java/com/kidslauncher/mdm/server/AppEnforcer.kt"))
+            .first { it.exists() }.readText()
+        assertTrue(enforcer.contains("webViewProvider = webViewProviderPackage(),"))
+        assertTrue(enforcer.contains("android.webkit.WebView.getCurrentWebViewPackage()?.packageName"))
+    }
+
     private val callsOn = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = true))
     private val callsOff = CallPolicyState.Managed(CallRules(callsEnabled = false, smsEnabled = true))
     private val smsOff = CallPolicyState.Managed(CallRules(callsEnabled = true, smsEnabled = false))

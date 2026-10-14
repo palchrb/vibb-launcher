@@ -43,8 +43,10 @@ fun seriesTarget(seriesId: String): String = "storytel:series:$seriesId"
 /** `book_target`: also the marker that stands in for a book's signed URL. */
 fun bookTarget(consumableId: String): String = "storytel:book:$consumableId"
 
-/** Can [item] of [entry] be downloaded? With a `url`, or when Storytel mints one (design 26b §3.3). */
-fun fetchable(entry: Entry, item: PlayItem): Boolean = item.url != null || entry.source == Source.STORYTEL
+/** Can [item] of [entry] be downloaded? With a `url`, or when Storytel mints one (design 26b §3.3);
+ * a Spotify item never (design 26c §4.2: the web player streams it, nothing is kept). */
+fun fetchable(entry: Entry, item: PlayItem): Boolean =
+    entry.source != Source.SPOTIFY && (item.url != null || entry.source == Source.STORYTEL)
 
 /**
  * The books a Storytel entry keeps (vibb `sync`: `books[:count]`): the first [Entry.cache] of the

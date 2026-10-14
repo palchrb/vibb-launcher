@@ -1,0 +1,13 @@
+{
+  "followers": {"href": null, "total": 1234},
+  "genres": ["norsk barnemusikk"],
+  "id": "3FakeArtist00000000001",
+  "images": [
+    {"height": 640, "url": "https://i.scdn.co/image/fake-artist-640", "width": 640},
+    {"height": 320, "url": "https://i.scdn.co/image/fake-artist-320", "width": 320},
+    {"height": 160, "url": "https://i.scdn.co/image/fake-artist-160", "width": 160}
+  ],
+  "name": "Ola Fjell",
+  "type": "artist",
+  "uri": "spotify:artist:3FakeArtist00000000001"
+}

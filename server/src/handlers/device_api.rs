@@ -583,11 +583,29 @@ pub(crate) async fn device_contacts(
     .await
 }
 
+/// Whether `device_id` plays Spotify (design 26c §2.5, §6.2): bound to an account. The policy's
+/// `music.spotify` (`music::policy_music`, from the same column), the blocklist's drop of
+/// Spotify's hosts and the version below follow it.
+async fn plays_spotify(state: &AppState, device_id: i64) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT music_spotify_account IS NOT NULL FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?
+    .unwrap_or(false))
+}
+
 /// Opaque per-device token combining the global compiled blocklist's content
 /// hash with a summary of this device's own overrides/custom domains, so the
 /// client can tell "has my effective blocklist changed since I last fetched
 /// it" (see `PolicyResponse.dns_filter_version`'s doc comment) without
 /// needing to compare the full ~100k+ domain list on every poll.
+///
+/// A phone that plays Spotify gets its list without Spotify's hosts (design 26c §6.2), so the
+/// binding is hashed too (QA M7): binding and unbinding each move the version, and the launcher
+/// refetches. Only a bound phone adds to the hash, so every other phone keeps its version (and its
+/// list) across the upgrade that brought this in.
 async fn compute_dns_filter_version(
     state: &AppState,
     device_id: i64,
@@ -620,6 +638,9 @@ async fn compute_dns_filter_version(
     }
     for (domain, list_type) in custom {
         hasher.update(format!("\ncd:{list_type}:{domain}").as_bytes());
+    }
+    if plays_spotify(state, device_id).await? {
+        hasher.update(b"\nspotify:true");
     }
     Ok(hex::encode(hasher.finalize()))
 }
@@ -870,6 +891,14 @@ async fn effective_blocklist(
             .unwrap_or(false)
     };
 
+    // A phone that plays Spotify never gets Spotify's hosts as blocked (design 26c §6.2), whatever
+    // a category or a custom block says: the parent's choice is overridden on that phone, as its
+    // device page says. The launcher exempts them too, before its suffix walk.
+    let spotify = plays_spotify(state, device_id).await.map_err(db_error)?;
+    let exempt = |d: &str| {
+        crate::play::is_fcm_protected(d) || (spotify && crate::spotify::is_spotify_host(d))
+    };
+
     let compiled = state.dns_compiled.read().await;
 
     let mut categories: Vec<DnsBlocklistCategory> = compiled
@@ -881,7 +910,7 @@ async fn effective_blocklist(
             domains: list
                 .domains
                 .iter()
-                .filter(|d| !device_allow.contains(*d) && !crate::play::is_fcm_protected(d))
+                .filter(|d| !device_allow.contains(*d) && !exempt(d))
                 .cloned()
                 .collect(),
         })
@@ -892,9 +921,7 @@ async fn effective_blocklist(
         .iter()
         .chain(device_block.iter())
         .filter(|d| {
-            !device_allow.contains(*d)
-                && !compiled.global_custom_allow.contains(*d)
-                && !crate::play::is_fcm_protected(d)
+            !device_allow.contains(*d) && !compiled.global_custom_allow.contains(*d) && !exempt(d)
         })
         .cloned()
         .collect();

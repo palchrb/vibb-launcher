@@ -8,6 +8,7 @@ import me.vibb.music.data.NewsRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.buildSnapshot
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.Library
@@ -61,8 +62,9 @@ object Fixtures {
         bookmarks: Map<String, Pair<String, Long>> = emptyMap(),
         news: List<NewsRow> = emptyList(),
         shuffle: Set<String> = emptySet(),
+        spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
     ): Snapshot = buildSnapshot(
         lib, items, downloads, listings.map { (id, v) -> ListingRow(id, v) }, ownCopies, positions,
-        bookmarks.map { (k, b) -> BookmarkRow(k, b.first, b.second, 0) }, news, shuffle,
+        bookmarks.map { (k, b) -> BookmarkRow(k, b.first, b.second, 0) }, news, shuffle, spotifyContexts,
     )
 }

@@ -21,11 +21,13 @@
     <string name="kind_podcast">Podcast</string>
     <string name="kind_own">Own files</string>
     <string name="kind_audiobook">Audiobook</string>
+    <string name="kind_music">Music</string>
     <string name="hint_episode">%1$s · episode %2$d of %3$d</string>
     <string name="hint_track">%1$s · track %2$d of %3$d</string>
     <string name="hint_part">%1$s · part %2$d of %3$d</string>
     <string name="hint_continues">%1$s · continues where you left off</string>
     <string name="hint_from_start">%1$s · starts from the beginning</string>
+    <string name="hint_spotify_picks">%1$s · the order is picked for you</string>
     <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
     <string name="cant_play_on_sonos">Can\'t play on Sonos</string>
@@ -64,6 +66,15 @@
     <string name="renderer_taken_over">Someone else is using the speaker</string>
     <string name="renderer_lost_session">The speaker stopped</string>
     <string name="renderer_unreachable">Can\'t reach the speaker</string>
+    <!-- The web player's quiet line (design 26c §5.8). No source is named on the kid's screens (26c step 8:
+         a Spotify entry is a tile like any other), so the line says what is wrong, not whose player it is. -->
+    <string name="renderer_spotify_needs_wifi">Needs Wi-Fi</string>
+    <string name="renderer_spotify_needs_internet">Needs the internet</string>
+    <string name="renderer_spotify_unavailable">Not available right now</string>
+    <string name="renderer_spotify_ask_adult">Ask a grown-up</string>
+    <string name="renderer_spotify_not_on_phone">Doesn\'t work on this phone</string>
+    <string name="renderer_spotify_elsewhere">Playing somewhere else</string>
+    <string name="renderer_spotify_stopped">Stopped - press play</string>
 
     <!-- List -->
     <string name="back_player">Back to the player</string>

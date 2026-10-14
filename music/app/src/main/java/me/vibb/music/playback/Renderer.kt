@@ -5,8 +5,12 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 
-/** Who makes the sound (design 26a §0): the phone's own player, or a Sonos room. */
-enum class RendererKind { LOCAL, SONOS }
+/**
+ * Who makes the sound (design 26a §0, 26c §5.1): the phone's own player, a Sonos room, or Spotify's web
+ * player on the phone. [onPhone]: the sound comes out of the phone (its speaker, a headset, Bluetooth) -
+ * the rule every `LOCAL`/`SONOS` comparison is re-read by in step 5b (§5.10's table).
+ */
+enum class RendererKind(val onPhone: Boolean) { LOCAL(true), SONOS(false), SPOTIFY(true) }
 
 /**
  * What [PlaybackService] talks to (design 26a §3.1), apart from the output axis (where the phone's
@@ -81,7 +85,11 @@ interface Renderer {
      */
     val showsPlaying: Boolean
 
-    /** Why a remote renderer isn't playing what we sent it (the player's one quiet line); null on the phone. */
+    /**
+     * Why the renderer isn't playing what we sent it (the player's one quiet line): a Sonos room's four
+     * ([RendererState.remote]), or Spotify's (design 26c §5.8); null while nothing is wrong, and always
+     * for the phone's own player.
+     */
     val rendererState: RendererState?
 
     /** The Sonos room this renderer plays in, as the player's output (`sonos:<uid>`); null on the phone. */

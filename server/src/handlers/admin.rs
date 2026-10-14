@@ -124,6 +124,13 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "storytel_login_cleared" => "Storytel login removed",
         "storytel_login_refused" => "Storytel refused the login",
         "storytel_login_sent" => "Storytel login sent to phone",
+        "spotify_app_saved" => "Spotify app saved",
+        "spotify_app_cleared" => "Spotify app removed",
+        "spotify_account_added" => "Spotify account logged in",
+        "spotify_account_removed" => "Spotify account removed",
+        "spotify_login_failed" => "Spotify login failed",
+        "spotify_login_needed" => "Spotify login needs renewing",
+        "music_spotify_binding_changed" => "Spotify account for a phone changed",
         "music_entry_added" => "Music added",
         "music_entry_changed" => "Music changed",
         "music_entry_saved" => "Music offline choice changed",
@@ -311,11 +318,15 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 22] = [
+    const NOT_EVENTS: [&str; 25] = [
+        // A failed Spotify login's codes (`spotify_login_failed`'s details, design 26c §2.3).
+        "access_denied",
         "admin_id",
+        "authorize_error",
         "clear_kid_pin",
         "clear_pin",
         "gone_unsaved",
+        "invalid_grant",
         "music_entries",
         "music_note",
         "new_kid_pin",

@@ -92,7 +92,7 @@
             <details class="info">
                 <summary aria-label="About mobile data"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Streaming: what isn't downloaded can play off Wi-Fi too. What plays is saved on the phone as it plays, so it isn't fetched twice (not for an entry that keeps nothing).</p>
+                    <p>Streaming: what isn't downloaded can play off Wi-Fi too. What plays is saved on the phone as it plays, so it isn't fetched twice (not for an entry that keeps nothing). This includes Spotify, which streams (about 60-150 MB an hour) and is never saved on the phone.</p>
                     <p>Downloads: the offline episodes and Storytel books download off Wi-Fi too. A Storytel book is often several hundred MB.</p>
                     <p>What's downloaded plays anywhere.</p>
                 </div>
@@ -146,6 +146,40 @@
         <p class="group-footer">{% if music.storytel_stored %}Gives the music app the family's login. Off removes it from the phone.{% else %}No login saved yet: add it in <a href="/music/settings#storytel">Music › Settings</a>.{% endif %}</p>
         <noscript><div class="group"><button type="submit" class="row row-button">Save</button></div></noscript>
     </form>
+
+    {#- Spotify (design 26c §2.5, §3.6): which account this phone plays as - one per phone, the
+        child's own - as an inline picker in its group, back to #music-spotify (below the library:
+        without JS a save must not land at the top); what needs the parent as notes above it, the
+        login's date and the unsent entries as the row's sub-line, a refused save's reason in the
+        group. Shown once a Spotify app is set up, or while accounts or a binding remain. -#}
+    {% if let Some(spotify) = music.spotify %}
+    <section id="music-spotify" aria-labelledby="music-spotify-title">
+        <h2 class="group-header" id="music-spotify-title">Spotify</h2>
+        {% for note in spotify.warnings %}
+        {% include "partials/note_warning.html" %}
+        {% endfor %}
+        <form method="post" action="/devices/{{ device.id }}/music/spotify#music-spotify" class="group">
+            <label class="row" for="music_spotify_account">
+                <span class="row-label">Plays as{% if let Some(login) = spotify.login %}<span class="row-sub" data-row="spotify-login">{{ login }}</span>{% endif %}{% if let Some(note) = spotify.note %}<span class="row-sub" data-row="spotify-off">{{ note }}</span>{% endif %}</span>
+                <select class="pick" id="music_spotify_account" name="account" data-autosave{% if spotify.notice.is_some() %} autofocus{% endif %}>
+                    <option value="off"{% if spotify.bound.is_none() %} selected{% endif %}>Off</option>
+                    {% for (id, name) in spotify.accounts %}
+                    <option value="{{ id }}"{% if spotify.bound == Some(**id) %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            {% if let Some(text) = spotify.notice %}
+            <p class="flash flash-error" role="status" data-flash="music-spotify">{{ text }}</p>
+            {% endif %}
+            <a class="row" href="/music/spotify#accounts" data-row="spotify-accounts">
+                <span class="row-label">Spotify Accounts</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </form>
+        <p class="group-footer">One account per phone: the child's own Premium account, never yours.</p>
+    </section>
+    {% endif %}
 
     <section id="music-sonos" aria-labelledby="music-sonos-title">
         <h2 class="group-header" id="music-sonos-title">Sonos speakers</h2>

@@ -1,0 +1,21 @@
+{
+  "about": "A null state (§5.4, QA L11): confirmed only by another null 2 s or more after the first (the page's state() look) - one sooner or a state of ours in between doesn't count. Confirmed: Elsewhere, the measured position kept, nothing ours after it.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 2}},
+    {"at": 500, "state": {"paused": false, "position": 30, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 5500, "state": {"paused": false, "position": 5030, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 6000, "state": null, "expect": ["Look"]},
+    {"at": 6500, "state": null, "expect": []},
+    {"at": 7000, "state": {"paused": false, "position": 6530, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": []},
+    {"at": 9000, "state": null, "expect": ["Look"]},
+    {"at": 11000, "state": null, "expect": ["Elsewhere"]},
+    {"at": 12000, "state": null, "expect": []},
+    {"at": 13000, "state": {"paused": false, "position": 6600, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["NotOurs playing"]}
+  ],
+  "end": {"index": 0, "mode": "LOST", "measured": {"index": 0, "position": 6530, "at": 7000, "playing": true}}
+}

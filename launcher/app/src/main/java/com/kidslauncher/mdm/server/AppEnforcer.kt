@@ -360,6 +360,7 @@ object AppEnforcer {
             lockTaskHelpers = if (policy?.blockActivityStart == true) resolveLockTaskHelpers(context) else emptySet(),
             recentsPackage = systemRecentsPackage(context),
             emergencySos = sos,
+            webViewProvider = webViewProviderPackage(),
         )
 
         // Set before the loop below can release the dialer, so its keypad is never usable for
@@ -833,6 +834,18 @@ object AppEnforcer {
                 (recents?.let { ", system ${it.system}, ${if (it.packageName in helpers) "pinned" else "not pinned"}" } ?: ""),
         )
         return helpers
+    }
+
+    /**
+     * Design 26c §6.3: the system WebView's package, read once per apply (off main) and never
+     * hidden or suspended ([computeEnforcementPlan]'s never-restrict set): the music app's Spotify
+     * player is a WebView, and a suspended provider breaks every WebView. `null` if it can't be read.
+     */
+    internal fun webViewProviderPackage(): String? = try {
+        android.webkit.WebView.getCurrentWebViewPackage()?.packageName
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't look up the WebView provider", e)
+        null
     }
 
     /**

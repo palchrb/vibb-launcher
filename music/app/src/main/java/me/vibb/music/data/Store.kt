@@ -16,6 +16,9 @@ import me.vibb.music.bridge.RestrictionKeys
 import me.vibb.music.bridge.mobileSwitch
 import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.SpotifyContextTrack
+import me.vibb.music.logic.SpotifyContexts
+import me.vibb.music.logic.SpotifyOutcome
 import me.vibb.music.logic.coversToDelete
 import me.vibb.music.logic.isArtHash
 import me.vibb.music.logic.recentArt
@@ -26,8 +29,9 @@ import java.io.File
 /**
  * Where the app keeps what it received and what it plays: the library file, received listings
  * (applied into Room by the sync), covers, own files' copies (noBackupFilesDir, never backed up),
- * the report, and the parent's settings from the launcher's restrictions (design 30's two mobile-data
- * switches and the storage limit; unmanaged, the debug feed sets them).
+ * the report, Spotify's last outcome (design 26c §4.4) and its contexts' live tracks (§5.9), and the parent's settings from the launcher's
+ * restrictions (design 30's two mobile-data switches and the storage limit; unmanaged, the debug feed
+ * sets them).
  */
 class Store private constructor(context: Context) {
     private val app = context.applicationContext
@@ -48,6 +52,28 @@ class Store private constructor(context: Context) {
     val entryErrorsFile = File(dir, "entry_errors.json")
     val db: MusicDao = MusicDb.get(app).dao()
     private val prefs = app.getSharedPreferences("music", Context.MODE_PRIVATE)
+
+    /**
+     * The phone's last Spotify outcome (design 26c §4.4, QA L8): `{"outcome": "<word>", "at": <wall ms>}`,
+     * written by the Spotify renderer through the service only when the word changes ([recordSpotifyOutcome],
+     * tmp + rename), read by the report (`Sync.writeReport`, from the file) and every Spotify tile
+     * ([spotifyOutcomes]). Never a token, an account or a device id.
+     */
+    val spotifyStateFile = File(app.noBackupFilesDir, "spotify_state.json")
+    private val spotifyOutcomeState = MutableStateFlow<SpotifyOutcome?>(null)
+
+    @Volatile private var spotifyOutcomeLoaded = false
+
+    /**
+     * A context-mode Spotify entry's live track (design 26c §5.9, step 6): `{"<entry key>": {"uri", "title"}}`, written
+     * by the Spotify renderer through the service at every track change of a context it plays ([recordSpotifyContext],
+     * tmp + rename), its row dropped at the context's end; read by the snapshot (the synthetic item's title) and the
+     * renderer (where a playlist context goes on). Never a token, an account or a device id.
+     */
+    val spotifyContextFile = File(app.noBackupFilesDir, "spotify_context.json")
+    private val spotifyContextState = MutableStateFlow<Map<String, SpotifyContextTrack>>(emptyMap())
+
+    @Volatile private var spotifyContextLoaded = false
 
     /** The parsed library, read from its file on first use (never in the constructor, which may run
      * on the main thread); null = none (the app is unmanaged or never fed: "Ingen bibliotek"). */
@@ -95,6 +121,79 @@ class Store private constructor(context: Context) {
     }
 
     fun coverFile(hash: String): File = File(coversDir, hash)
+
+    /** The stored Spotify outcome as the file holds it now (null: none stored, or junk) - call off the main thread. */
+    fun readSpotifyOutcome(): SpotifyOutcome? = SpotifyOutcome.decode(runCatching { spotifyStateFile.readText() }.getOrNull())
+
+    @Synchronized
+    private fun spotifyOutcome(): SpotifyOutcome? {
+        if (!spotifyOutcomeLoaded) {
+            spotifyOutcomeState.value = readSpotifyOutcome()
+            spotifyOutcomeLoaded = true
+        }
+        return spotifyOutcomeState.value
+    }
+
+    /**
+     * The renderer's outcome [word] at [nowMs] (wall clock): written only when the word changes
+     * (`SpotifyOutcome.next`; an unknown word never), atomically. Off the main thread (the service's writer).
+     */
+    @Synchronized
+    fun recordSpotifyOutcome(word: String, nowMs: Long) {
+        val next = SpotifyOutcome.next(spotifyOutcome(), word, nowMs) ?: return
+        runCatching { writeAtomic(spotifyStateFile, next.encode().toByteArray()) }.onFailure { return }
+        spotifyOutcomeState.value = next
+    }
+
+    /**
+     * Every context's live track as stored: once loaded, a lock-free read of the in-memory copy (the renderer's `load` on
+     * the main thread never waits for the file or the writer - qa-26c-step6-code L4; the service's snapshot, read on IO
+     * before every start and restore, loads it first).
+     */
+    fun spotifyContexts(): Map<String, SpotifyContextTrack> =
+        if (spotifyContextLoaded) spotifyContextState.value else loadSpotifyContexts()
+
+    @Synchronized
+    private fun loadSpotifyContexts(): Map<String, SpotifyContextTrack> {
+        if (!spotifyContextLoaded) {
+            spotifyContextState.value = SpotifyContexts.decode(runCatching { spotifyContextFile.readText() }.getOrNull())
+            spotifyContextLoaded = true
+        }
+        return spotifyContextState.value
+    }
+
+    /** Only the rows of [contextKeys] (the parsed library's context-mode entries) stay (L4); off the main thread. */
+    @Synchronized
+    fun pruneSpotifyContexts(contextKeys: Set<String>) {
+        val rows = spotifyContexts()
+        val kept = rows.filterKeys { it in contextKeys }
+        if (kept.size == rows.size) return
+        runCatching { writeAtomic(spotifyContextFile, SpotifyContexts.encode(kept).toByteArray()) }.onFailure { return }
+        spotifyContextState.value = kept
+    }
+
+    /**
+     * [entryKey]'s live track is [track] now (null: the context played out, `clear_state`): written only when it
+     * changes (`SpotifyContexts.next`), atomically. Off the main thread (the service's writer).
+     */
+    @Synchronized
+    fun recordSpotifyContext(entryKey: String, track: SpotifyContextTrack?) {
+        val next = SpotifyContexts.next(spotifyContexts(), entryKey, track) ?: return
+        runCatching { writeAtomic(spotifyContextFile, SpotifyContexts.encode(next).toByteArray()) }.onFailure { return }
+        spotifyContextState.value = next
+    }
+
+    /** The contexts' live tracks, live (read from the file on first collection - collect off the main thread). */
+    fun spotifyContextFlow(): Flow<Map<String, SpotifyContextTrack>> = flow {
+        spotifyContexts()
+        emitAll(spotifyContextState)
+    }
+
+    /** The stored Spotify outcome, live (read from its file on first collection - collect off the main thread). */
+    fun spotifyOutcomes(): Flow<SpotifyOutcome?> = flow {
+        spotifyOutcome()
+        emitAll(spotifyOutcomeState)
+    }
 
     /** The cover files on the phone (library covers and episode art, design 27 §2.3). */
     fun coverHashes(): Set<String> = coversDir.list().orEmpty().filter(::isArtHash).toSet()
@@ -172,18 +271,28 @@ class Store private constructor(context: Context) {
         libraries(),
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
         combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
-    ) { lib, (items, downloads, listings), rows -> snapshot(lib, items, downloads, listings, rows) }.flowOn(Dispatchers.Default)
+        spotifyContextFlow(),
+    ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }.flowOn(Dispatchers.Default)
 
     /** The same, once. */
-    suspend fun snapshot(): Snapshot =
-        snapshot(library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()))
+    suspend fun snapshot(): Snapshot = snapshot(
+        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()),
+        spotifyContexts(),
+    )
 
     private data class Rows(val positions: List<PositionRow>, val bookmarks: List<BookmarkRow>, val news: List<NewsRow>, val shuffle: List<ShuffleRow>)
 
-    private fun snapshot(lib: Library?, items: List<ItemRow>, downloads: List<DownloadRow>, listings: List<ListingRow>, rows: Rows): Snapshot {
+    private fun snapshot(
+        lib: Library?,
+        items: List<ItemRow>,
+        downloads: List<DownloadRow>,
+        listings: List<ListingRow>,
+        rows: Rows,
+        contexts: Map<String, SpotifyContextTrack>,
+    ): Snapshot {
         val positions = rows.positions.groupBy { it.entryKey }.mapValues { (_, ps) -> ps.associate { it.itemKey to ItemPosition(it.posMs, it.done) } }
         val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
-        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle)
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)
     }
 
     companion object {

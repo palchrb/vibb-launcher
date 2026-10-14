@@ -1,0 +1,22 @@
+{
+  "about": "The account's shuffle or repeat on (qa-26c-step4-code M1): a state that says so is read for nothing - no start, skip or foreign track - and one ShuffleOrRepeat asks for both off and a new play; after it, our order.",
+  "queue": [
+    {"uri": "spotify:track:FAKEtrack0000000000001", "title": "Fake track 1 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000002", "title": "Fake track 2 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000003", "title": "Fake track 3 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000004", "title": "Fake track 4 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000005", "title": "Fake track 5 — Fake Artist", "duration_ms": 20000},
+    {"uri": "spotify:track:FAKEtrack0000000000006", "title": "Fake track 6 — Fake Artist", "duration_ms": 20000}
+  ],
+  "steps": [
+    {"at": 0, "played": {"index": 0, "known": 5}},
+    {"at": 500, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000004", "spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000006"], "prev": [], "context": null, "shuffle": true, "repeat": 0}, "expect": ["ShuffleOrRepeat 0"]},
+    {"at": 900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000004", "linked": null, "type": "track", "name": "Fake track 4", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": true, "repeat": 0}, "expect": []},
+    {"at": 1500, "played": {"index": 0, "known": 5}},
+    {"at": 1900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000001", "linked": null, "type": "track", "name": "Fake track 1", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000002", "spotify:track:FAKEtrack0000000000003", "spotify:track:FAKEtrack0000000000004"], "prev": [], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 0"]},
+    {"at": 21900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": [], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": false, "repeat": 2}, "expect": ["ShuffleOrRepeat 0"]},
+    {"at": 22500, "played": {"index": 1, "known": 5}},
+    {"at": 22900, "state": {"paused": false, "position": 0, "duration": 20000, "uri": "spotify:track:FAKEtrack0000000000002", "linked": null, "type": "track", "name": "Fake track 2", "artists": ["Fake Artist"], "next": ["spotify:track:FAKEtrack0000000000003", "spotify:track:FAKEtrack0000000000004", "spotify:track:FAKEtrack0000000000005"], "prev": ["spotify:track:FAKEtrack0000000000001"], "context": null, "shuffle": false, "repeat": 0}, "expect": ["Started 1"]}
+  ],
+  "end": {"index": 1, "mode": "OURS"}
+}

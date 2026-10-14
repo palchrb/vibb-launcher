@@ -26,11 +26,46 @@ class BridgeTest {
 
     @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl")) {
+        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl")) {
             val ours = moduleFile("src/main/aidl/me/vibb/bridge/$name")
             val theirs = repo("launcher/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from launcher/'s copy", theirs.readText(), ours.readText())
         }
+        // Appended, never reordered (the transaction codes an installed launcher or app uses follow the
+        // order; qa-26c-step3-code L2): the whole sequence, a new method added at the end.
+        val aidl = moduleFile("src/main/aidl/me/vibb/bridge/IMusicBridge.aidl").readText()
+        val methods = Regex("^\\s+(?:oneway )?[\\w\\[\\]]+ (\\w+)\\(", RegexOption.MULTILINE).findAll(aidl).map { it.groupValues[1] }.toList()
+        assertEquals(
+            listOf(
+                "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
+                "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
+            ),
+            methods,
+        )
+    }
+
+    @Test
+    fun `the Spotify token's statuses and wait are the shared contract's, and each maps to a result (26c §5_5)`() {
+        val spotify = contract["spotify_token"] as JsonObject
+        assertEquals((spotify["statuses"] as JsonArray).map { (it as JsonPrimitive).content }, SpotifyBridgeToken.STATUSES)
+        assertEquals((spotify["timeout_ms"] as JsonPrimitive).content.toLong(), SpotifyBridgeToken.TIMEOUT_MS)
+        val now = 1_000_000L
+        assertEquals(TokenResult.Ok("FAKE-ACCESS-1", now + 3_300_000, "3:2"), tokenResult("ok", "FAKE-ACCESS-1", 3_300_000, "3:2", now))
+        assertEquals(TokenResult.Off, tokenResult("off", null, 0, null, now))
+        assertEquals(TokenResult.Reauthorize, tokenResult("reauthorize", null, 0, null, now))
+        assertEquals(TokenResult.Busy(7_000), tokenResult("busy", null, 7_000, null, now))
+        assertEquals(TokenResult.Busy(TOKEN_BUSY_DEFAULT_MS), tokenResult("busy", null, 0, null, now))
+        for (status in listOf("unreachable", "key", "launcher", "paused_by_parent", null)) {
+            assertEquals("$status", TokenResult.Unreachable, tokenResult(status, null, 0, null, now))
+        }
+        // An ok that isn't whole is no token.
+        assertEquals(TokenResult.Unreachable, tokenResult("ok", null, 3_300_000, "3:2", now))
+        assertEquals(TokenResult.Unreachable, tokenResult("ok", "FAKE-ACCESS-1", 0, "3:2", now))
+        assertEquals(TokenResult.Unreachable, tokenResult("ok", "FAKE-ACCESS-1", 3_300_000, "x", now))
+        // Every status the launcher answers is one this app reads.
+        for (status in SpotifyBridgeToken.STATUSES) tokenResult(status, "FAKE-ACCESS-1", 1, "1:1", now)
+        val ok = tokenResult("ok", "FAKE-ACCESS-1", 3_300_000, "3:2", now)
+        assertFalse("never the token", ok.toString().contains("FAKE-ACCESS"))
     }
 
     @Test

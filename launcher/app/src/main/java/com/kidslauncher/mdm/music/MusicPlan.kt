@@ -161,6 +161,15 @@ private fun mobileSwitch(o: JsonObject, key: String, mobileData: Boolean): Boole
     else -> null
 }
 
+/**
+ * The policy's `music.spotify` (design 26c §6.2): this phone plays Spotify (it is bound to an
+ * account), so the DNS filter lets Spotify's hosts through. Read on its own and leniently: absent
+ * (an older server), not a boolean, or no `music` object at all is false - whatever else the object
+ * holds.
+ */
+fun musicSpotify(element: JsonElement?): Boolean =
+    ((element as? JsonObject)?.get("spotify") as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull == true
+
 /** What the launcher reads of the library (21 §3): its version, covers, own files and listings. */
 data class LibraryHead(val version: String, val covers: Set<String>, val files: List<LibraryFile>, val listings: Map<Long, String?>)
 
@@ -300,7 +309,7 @@ fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, la
     packageName ?: return null
     val keys = listOf(
         "library_version", "cache_bytes", "audio_bytes", "extra_bytes", "downloads_waiting", "entry_errors", "item_errors",
-        "downloads", "storytel", "sonos_rooms",
+        "downloads", "storytel", "spotify", "sonos_rooms",
     )
     return buildJsonObject {
         put("package", packageName)

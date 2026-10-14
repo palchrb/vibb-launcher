@@ -18,7 +18,7 @@
             {% else if let Some(cover) = source_cover %}
             <img class="cover-big" src="/music-covers/{{ cover }}" alt="The source's picture">
             {% endif %}
-            <span class="row-label">{{ kind }}{% if let Some(target) = entry.target %}<span class="row-sub" style="overflow-wrap:anywhere;">{% if storytel %}{{ target }}{% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</span>{% endif %}<span class="row-sub">{% if entry.cover_hash.is_some() %}Your photo{% else %}The source's picture{% if own %} (the first file's art){% endif %}{% endif %}</span></span>
+            <span class="row-label">{{ kind }}{% if let Some(target) = entry.target %}<span class="row-sub" style="overflow-wrap:anywhere;">{% if storytel %}{{ target }}{% else if spotify %}{{ target }}{% if let Some(link) = spotify_link %} (<a href="{{ link }}" rel="noopener noreferrer" target="_blank">Open in Spotify</a>){% endif %}{% else %}<a href="{{ target }}" rel="noreferrer noopener" target="_blank">{{ target }}</a>{% endif %}</span>{% endif %}<span class="row-sub">{% if entry.cover_hash.is_some() %}Your photo{% else %}The source's picture{% if own %} (the first file's art){% endif %}{% endif %}</span></span>
         </div>
         {% if storytel %}
         <a class="row" href="/music/storytel" data-row="shelf">
@@ -46,7 +46,7 @@
     <p class="group-footer">JPEG, PNG or WebP up to 10 MB, cut square; nothing hidden in it is kept.</p>
 
     {% if let Some(sweep) = sweep %}
-    <h2 class="group-header">{% if storytel %}Books{% else %}Episodes{% endif %}</h2>
+    <h2 class="group-header">{{ list_title }}</h2>
     <div class="group" id="status">
         {% if let Some(title) = sweep.source_title %}
         <div class="row" data-row="source-title"><span class="row-label">At the source</span><span class="row-value">{{ title }}</span></div>
@@ -89,7 +89,24 @@
             </select>
             {% if form.error_field == "category" %}{% if let Some(error) = form.error %}<p class="field-error" id="entry-error">{{ error }}</p>{% endif %}{% endif %}
         </div>
-        {% if !own %}
+        {% if spotify %}
+        {#- Design 26c §3.2-§3.3: a Spotify entry keeps nothing offline; in context mode Spotify
+            picks the order (no select: the handler keeps the stored one). -#}
+        {% if !spotify_context %}
+        <div class="field">
+            <label class="field-label" for="entry_order">Play order</label>
+            <select id="entry_order" name="order"{% if form.error_field == "order" %} aria-invalid="true" aria-describedby="entry-error" autofocus{% endif %}>
+                {% for (value, label) in orders %}
+                <option value="{{ value }}"{% if form.order == **value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            {% if form.error_field == "order" %}{% if let Some(error) = form.error %}<p class="field-error" id="entry-error">{{ error }}</p>{% endif %}{% endif %}
+        </div>
+        {% else %}
+        <p class="field-hint" data-hint="spotify-order">Spotify picks the order: no logged-in account may list this one's tracks, so the phones play it as Spotify does.</p>
+        {% endif %}
+        <p class="field-hint" data-hint="spotify-streams">Spotify streams: nothing is kept on the phone for offline listening. It plays on Wi-Fi unless the phone may stream on mobile data (the phone's Music page).</p>
+        {% else if !own %}
         <div class="field">
             <label class="field-label" for="entry_order">Play order</label>
             <select id="entry_order" name="order"{% if form.error_field == "order" %} aria-invalid="true" aria-describedby="entry-error" autofocus{% endif %}>
