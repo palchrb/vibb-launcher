@@ -972,3 +972,19 @@ policy change, no migration, no capability.
 - **Check on the emulator** (not done here - no emulator): Phone Setup's zone = the emulator's
   `persist.sys.timezone`, a bedtime rule running now; the phone's summary, the Devices list and Device › Time say
   "Leggetid until …"; Phone Setup set to another zone - the rule's name alone.
+
+### Step 13 code QA fix round (`qa-34-s13-code.md`, 2026-10-14)
+
+| Finding | Fix |
+|---|---|
+| L1 the zone read again for the day and the rule | `TimeRulesRuntime.snapshot(.., zone: ZoneId = zone())` reads the system zone once and passes it to `ledger(.., zone)`, `loadLedger(.., zone)` (the unreadable ledger's day) and the rules' local time; `Snapshot` keeps it, and the pure `timeStateOf(snap, lockReason)` (what `report` calls) sends `snap.zone.id`. `TimeStateZoneTest.the_report_carries_the_zone_the_snapshot_was_counted_in` builds a snapshot in a zone that isn't the machine's and checks the report's zone; a source check pins that `snapshot`/`ledger`/`loadLedger`/`timeStateOf` read no zone of their own. Mutations re-run: `timeStateOf` reading `zone()` (the QA's L1b, moved) - killed (2 tests); `snapshot`'s local time from `zone()` - killed (the source check). |
+| L2 an end in a DST gap | `Zone::single_instant(t)` (`display_time.rs`: `from_local_datetime(..).single()`), and `provable_end` returns `None` unless the end is exactly one instant. `time_state::tests::an_end_that_isnt_one_instant_shows_no_end`: a rule 00:00-02:30 in Oslo shows "until 02:30" on an ordinary night, the name alone on 2026-03-29 (02:30 never shows) and on 2026-10-25 (02:30 comes twice - the fall-back case, now refused too, one night's badge), plus the zone's own answers. |
+| L3 the literal kept equal by hand | The contract file `server/testdata/time_status_report.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher test compares its encoded report with it and the server's copy (`the_contract_is_identical_to_the_servers_copy`), the server test `include_str!`s it and compares the launcher's copy (`devices_list::the_time_report_contract_matches_the_launchers_copy`). Root `CLAUDE.md`'s contract list and the CI path filters (`launcher.yml`: the server's copy; `server-ci.yml`: the launcher's) name it. |
+| N1 `reportedZone` unreachable | Dropped with `MAX_REPORTED_ZONE_LENGTH`; the report sends `zone.id` (the server's `TimeReport::parse` is the guard). |
+| N2 the padded case didn't test the cap | Dropped from the end-to-end test; `time_state::tests::the_zone_is_kept_only_as_a_short_non_empty_string` pins `parse`: 64 bytes kept, 65 dropped, `""`, `null`, a number dropped. |
+| N3 the clippy count | Checked on the base (`e17949e3`) with this sandbox's toolchain (clippy 0.1.99, 2026-09-28): 13 warnings, the same 13 on this branch, none in the touched files. The QA's 15 is its toolchain's. |
+
+Counts: server `cargo test` 954 passed (951 + `an_end_that_isnt_one_instant_shows_no_end`,
+`the_zone_is_kept_only_as_a_short_non_empty_string`, `the_time_report_contract_matches_the_launchers_copy`), `cargo fmt
+--check` clean, clippy 13 (as on the base), node jstests 30/30; launcher 1260 tests, 0 failures (`TimeStateZoneTest` 5,
+was 4).

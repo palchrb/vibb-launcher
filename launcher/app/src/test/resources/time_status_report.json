@@ -1,0 +1,1 @@
+{"lock_reason":"BEDTIME","kiosk_engaged":true,"capabilities":["call_policy_v1","time_rules_v1"],"time_state":{"day":"2026-10-14","used_minutes":42,"budget_minutes":90,"extra_minutes":0,"active_rule_id":7,"active_rule_name":"Leggetid","calls_blocked":false,"lock_reason":"BEDTIME","lifts_active":[],"zone":"Europe/Oslo"}}

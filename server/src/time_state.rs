@@ -15,6 +15,8 @@
 //! - at that window's end no rule of the phone has a window running or starting (the same
 //!   rule's next day, an all-day rule, a legacy morning/evening pair, an adjacent rule), and the
 //!   day's screen time isn't used up: the end is a real unlock;
+//! - the end is exactly one instant in the zone (`Zone::single_instant`): not in a spring-forward
+//!   gap, where the phone unlocks at the jump, nor in a fall-back hour, which comes twice;
 //! - the end is still ahead (else the report is out of date: "at last report").
 //!
 //! **Stale** ("at last report (yesterday 21:40)", never an end): a report from another day than
@@ -318,6 +320,12 @@ fn provable_end(
     if ends.iter().any(|e| *e != end) {
         return None;
     }
+    // The end is one instant on the phone's clock (qa-34-s13-code L2): an end in the
+    // spring-forward gap never shows (the phone unlocks at the jump), and one in the fall-back
+    // hour shows twice - neither is a clock time to promise.
+    if !zone.single_instant(end) {
+        return None;
+    }
     // A real unlock: nothing locks at the end instant (the same rule's next window included).
     if rules
         .iter()
@@ -549,6 +557,65 @@ mod tests {
             ),
             "Skole"
         );
+    }
+
+    #[test]
+    fn an_end_that_isnt_one_instant_shows_no_end() {
+        // qa-34-s13-code L2: a rule 00:00-02:30 every night, Oslo.
+        let rules = [(1, every_day(0, 2 * 60 + 30))];
+        // An ordinary night: 01:30 CEST (23:30 UTC the day before) - the end shows.
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-14"),
+                &rules,
+                "2026-10-13 23:30:00",
+                "2026-10-13 23:30:00"
+            ),
+            "Leggetid until 02:30"
+        );
+        // Spring forward, 2026-03-29: 01:30 CET (00:30 UTC); 02:00-03:00 doesn't exist, so 02:30
+        // never shows - the phone unlocks at the jump. No end.
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-03-29"),
+                &rules,
+                "2026-03-29 00:30:00",
+                "2026-03-29 00:30:00"
+            ),
+            "Leggetid"
+        );
+        // Fall back, 2026-10-25: 01:30 CEST (23:30 UTC the day before); 02:30 comes twice. No end.
+        assert_eq!(
+            badge_at(
+                &report("Leggetid", "BEDTIME", "2026-10-25"),
+                &rules,
+                "2026-10-24 23:30:00",
+                "2026-10-24 23:30:00"
+            ),
+            "Leggetid"
+        );
+        // The zone's own answer.
+        let at = |s: &str| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap();
+        assert!(!oslo().single_instant(at("2026-03-29 02:30")));
+        assert!(!oslo().single_instant(at("2026-10-25 02:30")));
+        assert!(oslo().single_instant(at("2026-10-25 03:30")));
+    }
+
+    #[test]
+    fn the_zone_is_kept_only_as_a_short_non_empty_string() {
+        // qa-34-s13-code N2: the 64-byte cap is `parse`'s own (the badge only compares).
+        let zone = |z: serde_json::Value| {
+            TimeReport::parse(&serde_json::json!({"lock_reason": "NONE", "zone": z}).to_string())
+                .unwrap()
+                .zone
+        };
+        assert_eq!(zone("Europe/Oslo".into()).as_deref(), Some("Europe/Oslo"));
+        let longest = "A".repeat(64);
+        assert_eq!(zone(longest.clone().into()), Some(longest));
+        assert_eq!(zone("A".repeat(65).into()), None);
+        assert_eq!(zone("".into()), None);
+        assert_eq!(zone(serde_json::Value::Null), None);
+        assert_eq!(zone(42.into()), None);
     }
 
     #[test]

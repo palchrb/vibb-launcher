@@ -1265,16 +1265,19 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`time_state.zone`, the launcher's `ZoneId.systemDefault().id` since design 34 P13; an older launcher sends none and
   gets no end) and it is exactly Phone Setup's IANA name (another zone, an offset id, garbage or another case: no end;
   `TimeReport::parse` keeps only a non-empty string of at most 64 bytes, nothing else reads it), the report is
-  fresh, from today and inside one window of the active rule, and at that window's end no effective rule locks
+  fresh, from today and inside one window of the active rule, the end is exactly one instant in the zone
+  (`Zone::single_instant`: not in a spring-forward gap, where the phone unlocks at the jump, nor in a fall-back
+  hour, which comes twice - qa-34-s13-code L2), and at that window's end no effective rule locks
   (the same rule's next day, an all-day rule, a legacy pair, an adjacent rule) and the screen time isn't used up.
   A report from another day than the server's local today (in the fallback zone: more than a day from the UTC date)
   shows no end and no bar ("at last report (yesterday 21:40)"); Offline always and Away after 15 min add "at last
   report", never with an end. "· calls off" only with calls managed and screened (`attention::Facts::calls_enforced`).
   In the fallback zone the bar names the phone's day ("42 of 90 min on 13 Oct"). End to end with the launcher's
-  own body (`devices_list::a_launcher_report_with_its_zone_shows_the_rules_end`: the literal the launcher's
-  `TimeStateZoneTest` encodes - keep the two equal): Phone Setup's zone shows "until 07:00" on the Devices list, the
-  summary and Device › Time; another zone, none, `null`, a non-string or garbage show the rule's name alone.
-  `server/testdata/` pins no status shape. The emulator's zone (the launcher forces automatic time zone, so the
+  own body (`devices_list::a_launcher_report_with_its_zone_shows_the_rules_end` posts `testdata/time_status_report.json`,
+  the contract the launcher's `TimeStateZoneTest` encodes exactly; the launcher keeps a byte-identical copy, compared
+  on both sides): Phone Setup's zone shows "until 07:00" on the Devices list, the summary and Device › Time; another
+  zone, none, `null`, a non-string or garbage show the rule's name alone (the 64-byte cap is pinned by
+  `time_state::tests::the_zone_is_kept_only_as_a_short_non_empty_string`). The emulator's zone (the launcher forces automatic time zone, so the
   network's wins): `adb shell getprop persist.sys.timezone` into Phone Setup (`docs/testing/emulator.md`).
 - **Attention** (`src/attention.rs`): `facts(state, device, connection)` (or `facts_of` from cards already built,
   as the device page does) -> `items` = rows with a level (alarm/action), a typed title (<= 8 words;

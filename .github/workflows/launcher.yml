@@ -4,7 +4,8 @@ name: Launcher
 # - Every push to master/main and every PR that touches launcher/ (or this workflow, the
 #   build-tsnet action, or the music files its tests compare: the bridge's AIDL and the music app's
 #   manifest in music/, the library/listing snapshots, Spotify's host list (server/testdata/ and the
-#   music app's copy, design 26c §8), music's Gradle wrapper and verification
+#   music app's copy, design 26c §8), the time status report (server/testdata/, design 34 P13),
+#   music's Gradle wrapper and verification
 #   metadata and music.yml - BuildChainTest checks them, security review L9): build and test (debug, unsigned release, lint, unit
 #   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag launcher-vX.Y.Z (release) or launcher-vX.Y.Z-rc.N (release candidate) on a commit that
@@ -70,7 +71,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts)\.json$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report)\.json$)'; then
           changed=true
         else
           changed=false

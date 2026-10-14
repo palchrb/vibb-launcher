@@ -421,9 +421,24 @@ async fn no_phones_yet() {
     assert!(add.contains("a QR code or a setup code"), "{add}");
 }
 
-/// The launcher test's body (`TimeStateZoneTest.the_zone_is_in_the_encoded_json`: snake_case,
-/// defaults left out, `zone` last) - keep the two equal.
-const LAUNCHER_TIME_REPORT: &str = r#"{"lock_reason":"BEDTIME","kiosk_engaged":true,"capabilities":["call_policy_v1","time_rules_v1"],"time_state":{"day":"2026-10-14","used_minutes":42,"budget_minutes":90,"extra_minutes":0,"active_rule_id":7,"active_rule_name":"Leggetid","calls_blocked":false,"lock_reason":"BEDTIME","lifts_active":[],"zone":"Europe/Oslo"}}"#;
+/// The launcher's status body (design 34 P13, the shared contract: the launcher's
+/// `TimeStateZoneTest` encodes exactly this - snake_case, defaults left out, `zone` last).
+const LAUNCHER_TIME_REPORT: &str = include_str!("../../testdata/time_status_report.json");
+
+/// The launcher keeps a byte-identical copy of the contract in its test resources.
+#[test]
+fn the_time_report_contract_matches_the_launchers_copy() {
+    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../launcher/app/src/test/resources/time_status_report.json");
+    let copy = std::fs::read_to_string(&copy_path)
+        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
+    assert_eq!(
+        copy,
+        LAUNCHER_TIME_REPORT,
+        "{} differs",
+        copy_path.display()
+    );
+}
 
 /// The lock as the Devices list's row, the summary's header and Device › Time show it.
 async fn locks_shown(app: &TestApp, cookie: &str, id: i64) -> [String; 3] {
@@ -522,7 +537,8 @@ async fn a_launcher_report_with_its_zone_shows_the_rules_end() {
     );
 
     // Another zone - a real one, the same offset spelled otherwise, the name in another case -,
-    // no zone, and zones the server doesn't keep: the rule's name alone, never an end.
+    // no zone, and zones the server doesn't keep: the rule's name alone, never an end. (The
+    // 64-byte cap is `TimeReport::parse`'s, pinned by its unit test.)
     for other in [
         Some(json!("Europe/Oslo")),
         Some(json!(format!("UTC{offset:+}"))),
@@ -532,7 +548,6 @@ async fn a_launcher_report_with_its_zone_shows_the_rules_end() {
         Some(json!("")),
         Some(json!(42)),
         Some(json!("Not/A_Zone")),
-        Some(json!(format!("{setup_zone}{}", " ".repeat(64)))),
     ] {
         send(other.clone()).await;
         assert_eq!(

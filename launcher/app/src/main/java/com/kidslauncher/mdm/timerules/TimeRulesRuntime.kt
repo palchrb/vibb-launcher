@@ -66,13 +66,13 @@ object TimeRulesRuntime {
 
     /** An unreadable record fails closed: today counts as used up and the budget lifts being
      * delivered as applied ([unreadableLedger], QA step 6 #6); reported in `time_state`. */
-    private fun loadLedger(context: Context, lifts: List<Lift>, clocks: Clocks): ScreenTimeLedger {
+    private fun loadLedger(context: Context, lifts: List<Lift>, clocks: Clocks, zone: ZoneId): ScreenTimeLedger {
         val raw = prefs(context).getString(LEDGER_KEY, null) ?: return ScreenTimeLedger()
         return try {
             ServerJson.decodeFromString(ScreenTimeLedger.serializer(), raw)
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Screen-time ledger unreadable: today counts as used up", e)
-            unreadableLedger(clocks, zone(), lifts)
+            unreadableLedger(clocks, zone, lifts)
         }
     }
 
@@ -82,11 +82,11 @@ object TimeRulesRuntime {
         if (!ok) Log.w(LOG_TAG, "Couldn't save the screen-time ledger")
     }
 
-    /** The ledger moved to now, with new budget lifts applied - saved when it changed. */
+    /** The ledger moved to now in [zone], with new budget lifts applied - saved when it changed. */
     @Synchronized
-    fun ledger(context: Context, policy: TimePolicy?, clocks: Clocks = clocks()): ScreenTimeLedger {
-        val before = loadLedger(context, policy?.lifts.orEmpty(), clocks)
-        var after = observe(before, clocks, zone()).ledger
+    fun ledger(context: Context, policy: TimePolicy?, clocks: Clocks = clocks(), zone: ZoneId = zone()): ScreenTimeLedger {
+        val before = loadLedger(context, policy?.lifts.orEmpty(), clocks, zone)
+        var after = observe(before, clocks, zone).ledger
         if (policy != null) after = applyBudgetLifts(after, policy.lifts)
         saveLedger(context, before, after)
         return after
@@ -95,8 +95,9 @@ object TimeRulesRuntime {
     /** Adds a counted stretch that began at elapsed realtime [sinceElapsedMs]. */
     @Synchronized
     fun accrueScreenTime(context: Context, sinceElapsedMs: Long, clocks: Clocks = clocks()): ScreenTimeLedger {
-        val before = loadLedger(context, KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.lifts.orEmpty(), clocks)
-        val after = accrue(before, sinceElapsedMs, clocks, zone())
+        val zone = zone()
+        val before = loadLedger(context, KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)?.lifts.orEmpty(), clocks, zone)
+        val after = accrue(before, sinceElapsedMs, clocks, zone)
         saveLedger(context, before, after)
         return after
     }
@@ -124,7 +125,8 @@ object TimeRulesRuntime {
         return messagingAppPackages(rules, CallSystem.defaultSmsPackage(context))
     }
 
-    /** Everything the lock needs, at one instant. */
+    /** Everything the lock needs, at one instant, in one [zone] (the ledger's day and the rules'
+     * local time are both counted in it; the status report sends it - design 34 P13). */
     data class Snapshot(
         val lock: TimeLock,
         val policy: TimePolicy?,
@@ -132,21 +134,23 @@ object TimeRulesRuntime {
         val budget: BudgetUse?,
         val records: List<LiftRecord>,
         val clocks: Clocks,
+        val zone: ZoneId,
     )
 
-    fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive()): Snapshot {
+    /** [zone] is read once here and passed down; nothing below reads the system zone again. */
+    fun snapshot(context: Context, policy: PolicyResponse?, overrideActive: Boolean = overrideActive(), zone: ZoneId = zone()): Snapshot {
         val clocks = clocks()
         val tp = KidModeEnforcer.timePolicyOf(policy)
-            ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks)
-        val ledger = ledger(context, tp, clocks)
+            ?: return Snapshot(UNLOCKED, null, null, null, emptyList(), clocks, zone)
+        val ledger = ledger(context, tp, clocks, zone)
         val records = liftRecords(context, tp.lifts, clocks)
         val budget = budgetUse(ledger, tp)
-        val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone())
+        val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(clocks.wallMs), zone)
         val lock = decideTimeLock(
             tp, at, overrideActive, activeRuleLifts(records, tp.lifts, clocks), budget, messagingApps(context),
             musicApps = com.kidslauncher.mdm.music.MUSIC_PACKAGES.toSet(),
         )
-        return Snapshot(lock, tp, ledger, budget, records, clocks)
+        return Snapshot(lock, tp, ledger, budget, records, clocks, zone)
     }
 
     /** The lock in force now for [policy] (the one being enforced). */
@@ -165,9 +169,11 @@ object TimeRulesRuntime {
     }
 
     /** The status report's `time_state`. */
-    fun report(context: Context, policy: PolicyResponse?, lockReason: LockReason): TimeState {
-        val zone = zone()
-        val snap = snapshot(context, policy)
+    fun report(context: Context, policy: PolicyResponse?, lockReason: LockReason): TimeState =
+        timeStateOf(snapshot(context, policy), lockReason)
+
+    /** The `time_state` of [snap] - pure: its `zone` is the snapshot's own (design 34 P13). */
+    fun timeStateOf(snap: Snapshot, lockReason: LockReason): TimeState {
         val top = snap.lock.rules.firstOrNull()
         return TimeState(
             day = snap.ledger?.day,
@@ -180,7 +186,7 @@ object TimeRulesRuntime {
             lockReason = lockReason.name,
             liftsActive = snap.ledger?.let { activeLiftIds(snap.records, snap.policy?.lifts.orEmpty(), it, snap.clocks) }.orEmpty(),
             ledgerUnreadable = snap.ledger?.unreadable == true,
-            zone = reportedZone(zone),
+            zone = snap.zone.id,
         )
     }
 

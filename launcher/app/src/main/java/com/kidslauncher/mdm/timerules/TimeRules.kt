@@ -304,12 +304,3 @@ fun decodeBootCallBlocks(json: String?): BootCallBlocks? {
  * means the suspension must be re-applied, even when the reason stays the same. */
 fun TimeLock.key(): String =
     if (!locked) "NONE" else "$reason|${rules.map { it.id }}|${usableApps.sorted()}|$callsAllowed"
-
-/** The longest zone id the server keeps (`time_state::TimeReport::parse`, 64 bytes). */
-const val MAX_REPORTED_ZONE_LENGTH = 64
-
-/** `time_state.zone` (design 34 P13): the phone's zone id - the zone the report's `day` and the
- * rules' windows are counted in -, so the server can show a rule's end ("until 07:00") when it is
- * Phone Setup's. `null` (left out) for an id the server wouldn't keep: blank, too long or not ASCII. */
-fun reportedZone(zone: ZoneId): String? =
-    zone.id.takeIf { id -> id.isNotBlank() && id.length <= MAX_REPORTED_ZONE_LENGTH && id.all { it.code in 0x21..0x7e } }
