@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row of the time-rule screen's card (design 34 P6, LockActivity.renderRows): a tone icon,
+     the name, a chevron. The row is the one button TalkBack reads ("Telefonbok, knapp": its
+     content description is the name, its role a button); icon and chevron are decorative. Two
+     lines at most, so it grows with the font scale instead of cutting the name. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:minHeight="52dp"
+    android:orientation="horizontal"
+    android:paddingStart="14dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="6dp">
+
+    <ImageView
+        android:id="@+id/lock_row_icon"
+        android:layout_width="34dp"
+        android:layout_height="34dp"
+        android:background="@drawable/bg_kid_circle"
+        android:importantForAccessibility="no"
+        android:scaleType="fitCenter" />
+
+    <TextView
+        android:id="@+id/lock_row_label"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:fontFamily="@font/nunito_bold"
+        android:importantForAccessibility="no"
+        android:maxLines="2"
+        android:textColor="@color/kid_core"
+        android:textSize="16sp" />
+
+    <ImageView
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_marginStart="8dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_kid_chevron"
+        android:tint="@color/kid_lock_chevron" />
+</LinearLayout>

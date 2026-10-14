@@ -20,7 +20,7 @@ Kotlin, single Gradle module (`app/`). `minSdk = 34`, `compileSdk`/`targetSdk = 
 - **The parent PIN** (the offline override PIN, "unlock code", "Parent code"; design 24): PBKDF2-HMAC-SHA256 verified fully offline against a hash+salt cached from the last successful sync, **only** through `server/ParentPin.check` - with its escalating lockout and its events - see "Parent PIN hardening (design 24)" below. `OfflineOverride.activate()` (the "lift restrictions for 2 hours" side effect) is called only by that gate.
 - **Settings is PIN-gated** (`ui/settings/SettingsActivity.kt`, pure `SettingsGate.kt`/`SettingsGateTest`): open only before the phone's first policy (setup: server URL, enroll, scan QR); afterwards it needs the parent PIN, and with no PIN on the server (or during a PIN lockout) it doesn't open at all - the gate's dialog then says why, OK disabled, Cancel finishes (handy step 4, QA #12; design 24). Checked on every `onCreate`/`onStart`, so the drawer, the exported `APPLICATION_PREFERENCES` filter, explicit intents, recents and a restore after process death all hit it; a passed gate ends in `onStop` (kept only across a configuration change via `onSaveInstanceState`), and recents screenshots are off. The gate is a non-cancelable modal dialog over the normally-inflated (but `INVISIBLE` until verified) content, not by deferring `binding` initialization, because `UIObjectActivity`'s `onStart()` unconditionally calls `setOnClicks()` which needs `binding` to already exist.
 - **`restrictions_paused`** is a separate, manually-toggled kill-switch in Settings - an emergency escape hatch if a policy or launcher update ever ships something broken. In this fork (`server/RestrictionsPause.kt`, the only reader/writer of `restrictions_paused`/`restrictions_paused_until`): turning it on always asks for the parent PIN, and the gate (`ParentPin`) starts the pause (so it's unavailable while the server has no PIN configured - and since step 4 Settings doesn't even open then on a managed phone), it ends by itself after 2 hours by the wall clock *and* by `SystemClock.elapsedRealtime()`, and on any reboot (`Settings.Global.BOOT_COUNT` changes) - so setting the clock back can't stretch it (`timedWindowActive`, `BootClock`, initialised in `Application.onCreate`; the offline-override PIN window uses the same check). A window saved by an older build counts as expired, it doesn't end on sync, and every status report sends `restrictionsPaused` so the server shows it. Toggling it re-runs `AppEnforcer.apply()` and `reevaluateLockReasonFromCache()` immediately and offline, on a background coroutine (see the ANR note further down).
-- **`LockActivity.kt`** is the full-screen time-rule / screen-time block (time, rule name, what still works - see "Time rules" below), with a visible (not hidden-behind-a-gesture) "Enter unlock code" button - the PIN itself is the security boundary, not the button's obscurity - a "Phone book" button while calls are managed and allowed, and always "Emergency call". Since handy step 4 the lock is also **enforced by suspension**: see "Hardening (handy step 4)" below.
+- **`LockActivity.kt`** is the full-screen time-rule / screen-time block (time, rule name, what still works - see "Time rules" below; since design 34 P6 one calm card, see "The time-rule screen as one calm card"), with a visible (not hidden-behind-a-gesture) "Enter unlock code" button - the PIN itself is the security boundary, not the button's obscurity - a "Phone book" row while calls are managed and allowed, and always "Emergency call". Since handy step 4 the lock is also **enforced by suspension**: see "Hardening (handy step 4)" below.
 - **Silent self-update is unified with third-party app updates** - the launcher is just another row in kid-phone-server's `tracked_apps` table (in this fork: package `me.vibb.launcher` - migration 0037 renamed a row on the old name -, GitHub repo `palchrb/vibb-launcher` (the monorepo; the server's sync skips its `server-v*` releases), asset `kids-launcher-mdm.apk`, `include_prereleases` **off** so release candidates never reach phones - see `../server/DEPLOY.md`; upstream used the debug package from a rolling `pre-release` tag), going through the exact same `AppInstaller`/`AppInstallReceiver`/`checkForTrackedAppUpdates` path as everything else via Device Owner's `PackageInstaller` privilege - no launcher-specific update code exists anymore (the old `LauncherUpdater`/`LauncherUpdateInstallReceiver`/`launcher_releases` system was fully retired). The one place self-update still differs from a third-party install: `AppInstallReceiver` skips deleting its cache file on success when the install is the launcher's own self-update, since installing over yourself can kill/replace the process before that line gets to run. A release that already failed to install is cached per-app in `TrackedAppUpdateState` (`tracked_app_update_state` preference) so it isn't retried every 2 minutes forever - covers the launcher the same as any tracked app now.
 - **`GET /api/devices/apps` is scoped per-device now** (2026-08-08, server-side `device_tracked_apps` join table - see kid-phone-server's CLAUDE.md) - a device only receives updates for apps an admin actually selected for it on that device's own page, plus the launcher's own self-update (always included). No client change was needed for the scoping itself; the server just stopped advertising apps this device wasn't given. What *did* need a client change: `TrackedAppUpdate.packageName` is optional server-side now (an admin can add an app to the catalog without typing its real Android package name), so `MdmSyncWorker`/`AppInstaller`/`AppInstallReceiver`/`TrackedAppUpdateState` no longer key install-state tracking, cache filenames, or the `PackageInstaller.openWrite()` session label off it - they use `TrackedAppUpdate.id` (the server's stable tracked-app id, stringified) instead. Self-update detection (deciding whether `AppInstallReceiver` should skip its cache-cleanup) switched the same way, from a `packageName == context.packageName` string comparison to the server-reported `TrackedAppUpdate.isLauncher` flag - more robust anyway, since it no longer depends on the launcher's own catalog row happening to have its package name typed in correctly. `packageName` is still sent and still shown in the admin UI for reference; it just isn't load-bearing for anything client-side anymore.
 - **Background app installs/updates (including the launcher's own self-update) now show a notification** (`Notifications.kt`'s `notifyAppInstalling`/`notifyAppInstallResult`, channel `launcher:app_install`, LOW importance - visible but silent) - previously this "just happened" with zero on-device indication, reported as worth surfacing. `MdmSyncWorker.checkForTrackedAppUpdates` shows an ongoing "Installing X…" notification for the whole download+install span before it starts; `AppInstallReceiver` cancels it on success (disappearing is enough signal) or swaps it for a dismissible "Couldn't install X" on failure, keyed by `TrackedAppUpdate.id` so concurrent/queued installs in the same sync cycle don't clobber each other's notification. Needed a new `TrackedAppUpdate.name` field from the server (the admin-facing catalog name) since `packageName` can no longer be trusted to be present or meaningful for a notification title - see kid-phone-server's CLAUDE.md.
@@ -260,7 +260,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   and after every accepted sync; a change calls `Application.reloadApps()`, so Home and the drawer re-render and
   re-sort (QA #2).
 - **Names**: `displayLabel(parent, kidRename, appLabel)` feeds `getCustomLabel` (Home, drawer, `AppFilter`'s sort),
-  the time-rule screen's usable-app buttons (sorted by that name now, QA #6), the contact sheet's "Message opens in
+  the time-rule screen's usable-app rows (sorted by that name now, QA #6), the contact sheet's "Message opens in
   Chat" and the install notification (`WantedDownload.name`). Long-press Rename is hidden for an app the parent named
   (`kidMayRename`); the kid's stored rename stays and returns when the parent clears the name.
 - **Icons**: `KidAvatars.renderAppIcon` draws the parent's glyph white at 55 % on the colour's tile (the
@@ -296,7 +296,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   icon is no longer drawn on its colour).
 - **Parent colours** (QA M3): `app_icons.json`'s keys stay, their tiles are tones (peach rose, plum plum, sky blue,
   sunset indigo, night teal, grey slate); the generated `AppGlyphs.COLORS` follows. **Fixed tiles**: the Phone book
-  `kid_phone_book` `#3A7552` (white 5.5:1; also the time-rule screen's phone book button), Settings `kid_settings_tile`
+  `kid_phone_book` `#3A7552` (white 5.5:1; also the time-rule screen's phone book row), Settings `kid_settings_tile`
   = slate, the grid's placeholder slate (`KidPaletteTest`). The 112 avatar's tonal pair is step 3's.
 - Not emulator-checked yet: Home and the glance with an app in each state.
 
@@ -319,7 +319,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `kid_core_dim`, missed calls `kid_missed_text` `#FF8A8A` (7.5:1), the handle white 22 %, Message the tonal
   `kid_sheet_button` (white 8 %) with `kid_core` text and a peach glyph; Call stays `kid_call_button` - the one call
   green `#29833B` (white 4.77:1), also the answer button (`bg_call_green`) and Home's call card (`bg_home_call_card`).
-  `kid_sheet_ink` is only Home's window banner now, `kid_message_button` only the time-rule screen's app buttons.
+  `kid_sheet_ink` is only Home's window banner now; `kid_message_button` went with the time-rule screen's app buttons (P6).
   `KidPaletteTest` parses `sheet_contact.xml` and checks every text colour and glyph tint against its composited
   ground (`contrast` composites a translucent ink and refuses a translucent ground). Buttons, order, behaviour and
   `ContactSheet` unchanged.
@@ -476,6 +476,44 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   app-op and a refused write are both `false`; the PWA warns), left out (`null`) for "Follow the phone" or without
   `launcher_ui`. Device check (design 34 step 6): whether SettingsProvider refuses the write under our
   `DISALLOW_CONFIG_DATE_TIME` - the restriction is never lifted for it.
+
+## The time-rule screen as one calm card (design 34 step 7, P6, `docs/design/34-launcher-polish.md`, at the monorepo root)
+
+- **Visual only**: what the lock allows (usable apps, calls, the phone book, exempt apps), Back off, the gestures and
+  every target are unchanged; `decideTimeLock` decides, the screen only shows it. Mockup `04-time-lock-after`.
+- **Layout** (`activity_lock.xml`): the clock (52 sp, Nunito 700, `kid_core`, through `ClockFormat` as before), the
+  kind's icon in a 52 dp peach disc (`bg_lock_kind_disc` = accent 14 %, glyph `kid_accent`, decorative), the title
+  (22 sp, a heading), the message (15 sp `kid_core_dim`: the rule's "until" on its own line, then one paragraph), **one
+  card** of rows (`lock_rows`, `bg_lock_card` = `kid_ground_lift`, the contact sheet's lift - QA M4; hairlines
+  `kid_divider`), then at the bottom "Emergency call" as a **red text button** (`kid_emergency_text`, the glance page's
+  red, >= 48 dp, always shown, `EmergencyCall.confirm` as before with the `EmergencyDialer` fallback) and "Enter unlock
+  code" in `kid_core_dim` (>= 48 dp). A weighted `Space` keeps the two at the bottom when there is room; otherwise the
+  screen scrolls. No saturated full-width buttons: `KidLockButton`, `item_lock_app.xml` and `kid_message_button` are gone.
+- **Rows** (`item_lock_row.xml`, pure `ui/TimeLockModel.kt` `timeLockRows`, `TimeLockModelTest`): the phone book first
+  while calls are managed and the lock allows them (its tile: `kid_phone_book` with `ic_kid_phone_book`), then each
+  usable app that can be opened (launchable, not suspended - `CameraLock.suspendedForLists` as before) sorted by the
+  parent's name (two apps named alike are two rows), the music app among them under a budget lock. App icons are Home's
+  tone icons through `ui/home/AppIconLoader` - one loader shared with the glance page (`renderAppIcon` on
+  `Dispatchers.Default`, the pure `iconPass` returns its failures so every set is touched on the main thread only, the
+  job catches everything), a slate disc until drawn; drawn icons are set **in place** (`iconsDrawn` over `rowIcons`), the
+  rows are never rebuilt for them, so TalkBack's focus and a press survive (qa-34-s7-code L2). Each row is one TalkBack
+  node: content description = the name, role button (step 8's `lock/ButtonRole`, also on both text buttons), so TalkBack
+  reads "Telefonbok, knapp"; icon, label and chevron are `importantForAccessibility="no"`. Labels wrap to two lines; the
+  card clips the rows' ripple to its corners (`clipToOutline`).
+- **Emergency call is visible in every state**: `render()` sets it `VISIBLE` each time, and `TimeLockModelTest` allows
+  exactly three uses of the view (its click, its role, that line) - never hide or move it (qa-34-s7-code L1).
+- **The kind's icon** (`lockGlyph`): screen time (no rule) the hourglass, bedtime the moon, school the book, any other
+  kind a dot. `lock_glyph_hourglass`/`_bedtime`/`_school` are converted Material Symbols (`hourglass_bottom`,
+  `bedtime`, `menu_book`; Apache-2.0, "Converted from" lines) generated by `scripts/material-symbols.sh` (`LOCK_GLYPHS`,
+  not in `app_icons.json` - not a parent choice); `lock_glyph_dot` is drawn by hand.
+- **The budget sentence** (`budgetLine`, `durationText`): under the budget lock "Du har brukt dagens 1 t 30 min." /
+  "You've used today's 1 h 30 min." with the day's allowance = budget + today's extra minutes
+  (`BudgetUse.effectiveMinutes`), never the minutes used - the same sentence whatever the overrun (the old "6 av 1
+  minutter brukt i dag"); a budget of 0 with no extra minutes says "Ingen skjermtid i dag." / "There's no screen time
+  today."; under a rule "used up too" as before. `durationText` takes the units from `duration_unit_hours`/`_minutes`
+  (nb "t", en "h"; "min").
+- Not emulator-checked yet: each rule kind and the budget in nb and en at `wm density 240` (font scale 1.0/1.3/2.0),
+  TalkBack on the rows and buttons, 112 with Telecom refusing (`docs/testing/emulator.md` §6 item 9).
 
 ## The keypad's tonal emergency button and the spacing rule (design 34 step 8, P7, `docs/design/34-launcher-polish.md`, at the monorepo root)
 

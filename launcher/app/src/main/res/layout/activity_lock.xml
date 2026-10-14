@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The time-rule lock (design 06-time-rules.md): the time and the rule's name, what still works
-     (the rule's exempt apps or, with screen time used up, the messaging apps; the phone book when
-     calls are allowed), and always Emergency call and the unlock code. Same look as Home. -->
+<!-- The time-rule lock (design 06-time-rules.md), as one calm card since design 34 P6 (mockup
+     04-time-lock-after): the clock, the kind's icon in a peach disc, the rule's name and what still
+     works, then one card of rows - the phone book when calls are allowed and the usable apps
+     (LockActivity, item_lock_row.xml) - and at the bottom "Emergency call" as a red text button
+     (like the glance page's) and the unlock code. Nothing saturated and full-width. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -11,34 +13,49 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center"
+        android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingStart="24dp"
+        android:paddingStart="16dp"
         android:paddingTop="8dp"
-        android:paddingEnd="24dp"
-        android:paddingBottom="24dp">
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
 
         <TextClock
             android:id="@+id/lock_clock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="@font/nunito_extrabold"
+            android:fontFamily="@font/nunito_bold"
             android:format12Hour="h:mm"
             android:format24Hour="HH:mm"
             android:gravity="center"
             android:includeFontPadding="false"
-            android:textColor="@color/kid_ink"
-            android:textSize="64sp" />
+            android:letterSpacing="-0.02"
+            android:textColor="@color/kid_core"
+            android:textSize="52sp" />
+
+        <!-- The kind's icon (LockActivity: hourglass, moon, book or dot); decorative - the title says it. -->
+        <ImageView
+            android:id="@+id/lock_kind_icon"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_lock_kind_disc"
+            android:importantForAccessibility="no"
+            android:padding="13dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/lock_glyph_hourglass"
+            android:tint="@color/kid_accent" />
 
         <TextView
             android:id="@+id/lock_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
+            android:accessibilityHeading="true"
             android:fontFamily="@font/nunito_extrabold"
             android:gravity="center"
-            android:textColor="@color/kid_ink"
-            android:textSize="28sp" />
+            android:textColor="@color/kid_core"
+            android:textSize="22sp" />
 
         <TextView
             android:id="@+id/lock_message"
@@ -46,37 +63,64 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:gravity="center"
-            android:lineSpacingExtra="4dp"
-            android:textColor="@color/kid_ink_dim"
-            android:textSize="17sp" />
+            android:lineSpacingMultiplier="1.1"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="15sp" />
 
-        <!-- One button per app the lock leaves usable (filled in by LockActivity). -->
+        <!-- One card: a row per thing that still works (LockActivity fills it; gone when empty). -->
         <LinearLayout
-            android:id="@+id/lock_apps"
+            android:id="@+id/lock_rows"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:orientation="vertical" />
-
-        <!-- Shown while calls are managed and the rule allows calls (LockActivity). -->
-        <TextView
-            android:id="@+id/lock_phone_book_button"
-            style="@style/KidLockButton"
-            android:backgroundTint="@color/kid_phone_book"
-            android:text="@string/calls_phone_book"
+            android:background="@drawable/bg_lock_card"
+            android:clipToOutline="true"
+            android:divider="@drawable/bg_lock_row_divider"
+            android:orientation="vertical"
+            android:showDividers="middle"
             android:visibility="gone" />
 
-        <!-- Always there, whatever the rule, the call state or the lock-screen type (QA step 4 #1). -->
+        <!-- The rest of the screen; the two buttons sit at the bottom when there is room, else scroll. -->
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="16dp" />
+
+        <!-- Always there, whatever the rule, the call state or the lock-screen type (QA step 4 #1):
+             a red text button like the glance page's "Nødsamtale", >= 48 dp. -->
         <TextView
             android:id="@+id/lock_emergency_button"
-            style="@style/KidLockButton"
-            android:backgroundTint="@color/kid_emergency"
-            android:text="@string/calls_emergency" />
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/calls_emergency"
+            android:textColor="@color/kid_emergency_text"
+            android:textSize="15sp" />
 
         <TextView
             android:id="@+id/lock_unlock_code_button"
-            style="@style/KidLockButton"
-            android:backgroundTint="@color/kid_back_button"
-            android:text="@string/lock_enter_unlock_code" />
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/lock_enter_unlock_code"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="15sp" />
     </LinearLayout>
 </ScrollView>
