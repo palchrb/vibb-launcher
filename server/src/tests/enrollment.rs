@@ -454,7 +454,7 @@ async fn the_setup_qr_carries_a_qr_code() {
             Method::POST,
             &format!("/devices/{id}/provision"),
             Some(&cookie),
-            &[("wifi_ssid", "home"), ("wifi_password", "secret")],
+            &[("wifi_ssid", "home"), ("wifi_password", "not-a-real-pass")],
         )
         .await;
     assert_eq!(page.status, StatusCode::OK);

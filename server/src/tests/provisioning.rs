@@ -41,7 +41,10 @@ async fn provision_page_without_checksum_has_no_qr() {
     config.launcher_signature_checksum = None;
     state.config = Arc::new(config);
 
+    let before = code_hash(&app, id).await;
     let page = provision_page(state, id).await;
+    // The POST made no code: the phone's live one still works (qa-31-s15-code L3).
+    assert_eq!(code_hash(&app, id).await, before);
     assert!(page.contains("data-missing=\"checksum\""), "{page}");
     assert!(!page.contains("data-row=\"qr\""), "a QR code was rendered");
     // Upstream's checksum must never come back as a fallback.
@@ -451,6 +454,21 @@ async fn add_phone_refuses_a_bad_name_in_place() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+    // 40 characters is still a name.
+    let forty = "Å".repeat(crate::handlers::devices::MAX_DEVICE_NAME_CHARS);
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/new",
+            Some(&cookie),
+            &[("name", &forty)],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    sqlx::query("DELETE FROM devices")
+        .execute(&app.db)
+        .await
+        .unwrap();
     // A name with spaces around it is trimmed.
     app.request_form(
         Method::POST,
@@ -495,6 +513,12 @@ async fn a_wifi_field_that_cant_be_right_is_refused_before_any_code() {
         assert!(input.contains("aria-invalid=\"true\""), "{input}");
         assert!(text.contains("Nothing was made."));
         assert!(!text.contains(password), "the password came back");
+        // The other field was wrong: the password field says to type it again.
+        assert_eq!(
+            text.contains("Type the password again."),
+            field == "wifi_ssid",
+            "{field}"
+        );
         assert!(!text.contains("data-row=\"qr\""));
         assert_eq!(
             code_hash(&app, id).await,
@@ -582,4 +606,110 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(code_hash(&app, id).await, before, "no code was made");
+}
+
+/// The Wi-Fi limits at their edges (qa-31-s15-code L2, L3): the name is 32 *bytes* (æ, ø, å count as
+/// two), a WPA password 8-63 characters or the raw 64-hex-digit key.
+#[test]
+fn wifi_fields_are_judged_at_their_edges() {
+    let refused =
+        |ssid: &str, password: &str| provisioning::wifi_refusal(ssid, password).map(|r| r.0);
+    assert_eq!(refused(&"N".repeat(32), ""), None);
+    assert_eq!(refused(&"ø".repeat(16), ""), None, "16 × ø = 32 bytes");
+    assert_eq!(
+        refused(&"ø".repeat(17), ""),
+        Some("wifi_ssid"),
+        "17 letters, 34 bytes"
+    );
+    assert_eq!(refused("Hjemme", &"p".repeat(7)), Some("wifi_password"));
+    assert_eq!(refused("Hjemme", &"p".repeat(8)), None);
+    assert_eq!(refused("Hjemme", &"p".repeat(63)), None);
+    assert_eq!(
+        refused("Hjemme", &"0123456789abcdef".repeat(4)),
+        None,
+        "a raw key"
+    );
+    assert_eq!(refused("Hjemme", &"p".repeat(64)), Some("wifi_password"));
+    assert_eq!(
+        refused(
+            "Hjemme",
+            &"0123456789abcdef".repeat(4).replacen('0', "00", 1)
+        ),
+        Some("wifi_password")
+    );
+    assert_eq!(refused("Hjemme", ""), None, "an open network");
+    assert_eq!(refused("", "long enough pass"), Some("wifi_ssid"));
+}
+
+/// A 32-byte name of æ/ø/å and a 63-character password make a QR code; one byte more is refused in
+/// place with the name typed back, so it can be shortened (N2).
+#[tokio::test]
+async fn a_wifi_name_at_the_limit_makes_a_qr_and_one_over_is_typed_back() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    let action = format!("/devices/{id}/provision");
+    let name = "ø".repeat(16);
+    let password = "p".repeat(63);
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[("wifi_ssid", &name), ("wifi_password", &password)],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let text = res.text();
+    assert!(text.contains("data-row=\"qr\""));
+    assert!(text.contains("data-row=\"keep-open\""));
+    let long = format!("{name}ø");
+    let res = app
+        .request_form(
+            Method::POST,
+            &action,
+            Some(&cookie),
+            &[("wifi_ssid", &long), ("wifi_password", &password)],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let text = res.text();
+    assert!(
+        text.contains(&format!("value=\"{long}\"")),
+        "the name typed back"
+    );
+    assert!(text.contains("shorten the name"));
+    assert!(!text.contains(&password));
+}
+
+/// A payload too big for a QR code (a huge server address) is refused before a code is made: the
+/// phone's live code survives (qa-31-s15-code L1).
+#[tokio::test]
+async fn a_payload_too_big_for_a_qr_code_keeps_the_live_code() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+    let huge = format!("https://{}.example.invalid", "a".repeat(3000));
+    sqlx::query("UPDATE provisioning_settings SET server_url = ?")
+        .bind(&huge)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let before = code_hash(&app, id).await;
+    assert!(before.is_some());
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/provision"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(res.text().contains("too long for a QR code"));
+    assert_eq!(
+        code_hash(&app, id).await,
+        before,
+        "the live code was replaced"
+    );
 }

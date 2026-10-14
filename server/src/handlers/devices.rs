@@ -447,9 +447,7 @@ pub async fn regenerate_code(
     let page = EnrollCodeTemplate {
         title: format!("Setup Code for {}", device.name),
         code: crate::enrollment::display(&code),
-        until: crate::display_time::parse_db_utc(&expires_at)
-            .map(|t| zone.until(t, now))
-            .unwrap_or_else(|| format!("{expires_at} UTC")),
+        until: zone.until_db(&expires_at, now),
         enrolled: device.enrolled_at.is_some(),
         paused_until: state
             .enrollment

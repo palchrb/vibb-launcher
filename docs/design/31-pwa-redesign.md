@@ -3225,8 +3225,8 @@ it depends on what step 10 removes, and follows as a small clean-up once both ar
   3. **The QR code** renders in the POST's answer inside `#qr` - the form posts to `/provision#qr`, so the answer lands
      on the QR with or without JS (scroll-restore defers to the fragment) - with "Works until 14:35, once" (local,
      `Zone::until`; was "… UTC") and "Make a New QR Code". **The code** (New Setup Code → `enroll_code.html`, "Setup
-     Code"): the code, "Works until 14:20, once", the footer "Type it in Vibb's settings on Anna." with the button's
-     name ("Enroll with code" - the page said "Enroll now", which the launcher doesn't have) and the Server URL first
+     Code"): the code, "Works until 14:20, once", the footer "On Anna: Vibb's Settings › Enroll with code." (the
+     launcher's own label - the page said "Enroll now", which the launcher doesn't have) with the Server URL first
      behind ⓘ; the typed-code pause local (was "… UTC").
   - **Waiting/done:** for a phone not set up, both end on **Done** → the phone's page (which shows "Not set up" until it
     connects); Back goes there too. For a connected phone (Advanced › Set Up with QR Code / New Setup Code) Back goes
@@ -3282,12 +3282,19 @@ Choices made while building:
    this phone" group and its id; the page is short, and Done goes there too.
 4. **"Server setup needed" covers a missing server address too** (§3.7 names both), though a QR code can still be made
    without one (the phone then asks for it); only the missing checksum takes the QR form away.
-5. **"Enroll with code" and "Scan setup QR"** - the launcher's own labels - are quoted only inside ⓘ panels (§4.2's
-   "enrol(l)"); the footers say "Vibb's settings".
+5. **"Enroll with code" and "Scan setup QR"** - the launcher's own labels: "Scan setup QR" only inside Connect's ⓘ;
+   "Enroll with code" is in the code page's footer, the button the parent has to find on the phone (§4.2 keeps
+   "enrol(l)" out of the PWA's own words; this quotes the phone's). Connect's Code footer says "Vibb's settings".
 6. **A refused sign-in form says why in one line above the form**, not under a field: the handlers return one message
    for the whole form, and splitting it per field would change `handlers::auth`, which this step leaves alone.
 7. **A reload of the QR or the code page makes a new code** (its URL is the POST): as before, by design - the code
-   can't be shown twice, and a new one only replaces the last.
+   can't be shown twice, and a new one only replaces the last. Post/redirect/get would be worse: the GET would need the
+   code - and the Wi-Fi password inside the QR - kept server-side between the POST and the GET (the session store),
+   breaking design 22's "only the hash is stored" and the field's "never stored". The browser asks "Confirm form
+   resubmission?" first (the page is `no-store`, so nothing replays from a cache), the new QR replaces the old one on
+   the same screen, and the case it can hurt - a phone that scanned and is still provisioning loses its code, so it
+   ends set up but not connected - is recovered with New Setup Code. The QR answer says "Keep this page open until the
+   phone has connected. Reloading it makes a new code." (qa-31-s15-code N1).
 8. **The "+" on Devices and Apps** (the mockups' top bar, left out in step 2 while the brand bar was there) is added:
    a link to the same page as the Add row, `aria-label`led.
 
@@ -3298,3 +3305,16 @@ Deferred, with the reason:
   `.app-header` / `.brand` and `partials/app_header.html` go once step 10's page includes `partials/tab_bar.html`
   alone.
 - **The browser pass** (390 px, light and dark, JS off, every `<details>` opened) is owed: no browser on this VM.
+
+**Fix round after the code QA** (`qa-31-s15-code.md`: 0 High, 0 Medium, 3 Low, 4 Nits; all fixed):
+
+| # | Fix |
+|---|---|
+| L1 | `provision_qr` builds the payload with a placeholder code of the real length (`QR_LEN` letters - the encoder's worst case; a real code is never larger) and checks it fits a QR code **before** `new_code`: an overflow is a 500 "… Nothing was changed." and the phone's live code survives. `provisioning::a_payload_too_big_for_a_qr_code_keeps_the_live_code` (a 3 kB server address, the code's hash unchanged). |
+| L2 | A 64-hex-digit raw WPA key is accepted; a password of 1-7 characters is refused ("at least 8 characters"), never echoed. `provisioning::wifi_fields_are_judged_at_their_edges` (7/8/63/64-hex/64-other characters, an open network, a password without a name). |
+| L3 | The boundaries: a 40-character name (of "Å") makes the phone; 16 × "ø" (32 bytes) with a 63-character password makes a QR, 17 is refused (`a_wifi_name_at_the_limit_makes_a_qr_and_one_over_is_typed_back`); no checksum → the POST leaves the live code (`provision_page_without_checksum_has_no_qr`); "Type the password again." shows exactly on the name refusals that carried a password; `/devices/3/regenerate-code` in `admin_auth::tests::no_store_paths`. Mutations 2, 3, 6, 13, 14 and 15 re-run: all six fail a test now. `enrollment::the_setup_qr_carries_a_qr_code` sends an 8+ character password. |
+| N1 | Choice 7 says why post/redirect/get is worse here; the QR answer has the "Keep this page open …" line (`data-row="keep-open"`). |
+| N2 | The name refusal says "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count as two)", and the name is typed back (escaped). |
+| N3 | Connect keeps the zone and time it loaded (`ProvisionQrTemplate.zone`/`now`); `Zone::until_db` formats a stored end for both pages. |
+| N4 | The status describes the code page's footer as it is ("On Anna: Vibb's Settings › Enroll with code."), choice 5 reworded. |
+| Checks | See the merge with step 10 below. |

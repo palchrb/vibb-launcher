@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::config::ForkConfig;
+use crate::display_time::Zone;
 use crate::enrollment::Kind;
 use crate::models::{Device, ProvisioningSettings};
 
@@ -89,9 +90,11 @@ pub(crate) fn valid_time_zone(zone: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c))
 }
 
-/// The longest Wi-Fi network name (32 bytes, IEEE 802.11) and WPA passphrase (63 characters) the
-/// QR code takes: anything longer can't be a real network, and could overflow the QR code.
+/// The longest Wi-Fi network name (32 bytes, IEEE 802.11) and the WPA passphrase's length (8-63
+/// characters; or the raw key as 64 hex digits, which Android's provisioning takes as the PSK): a
+/// field outside them can't be a real network, and could overflow the QR code.
 const MAX_SSID_BYTES: usize = 32;
+const MIN_WIFI_PASSWORD_CHARS: usize = 8;
 const MAX_WIFI_PASSWORD_CHARS: usize = 63;
 
 /// Connect (design 31 §3.7): steps 2 and 3 of Add Phone, and "Set Up with QR Code" on Advanced.
@@ -120,11 +123,14 @@ struct ProvisionQrTemplate {
     password_dropped: bool,
     qr_minutes: i64,
     code_minutes: i64,
+    /// The Phone Setup zone and the time the page was built, for its "until"s.
+    zone: Zone,
+    now: chrono::DateTime<chrono::Utc>,
 }
 
 impl ProvisionQrTemplate {
     async fn new(state: &AppState, device: Device, settings: &ProvisioningSettings) -> Self {
-        let zone = crate::display_time::Zone::load(&state.db).await;
+        let zone = Zone::load(&state.db).await;
         let now = chrono::Utc::now();
         ProvisionQrTemplate {
             title: format!("Connect {}", device.name),
@@ -144,6 +150,8 @@ impl ProvisionQrTemplate {
             password_dropped: false,
             qr_minutes: Kind::Qr.minutes(),
             code_minutes: Kind::Typed.minutes(),
+            zone,
+            now,
         }
     }
 
@@ -203,17 +211,26 @@ pub async fn provision_form(State(state): State<AppState>, Path(id): Path<i64>) 
 }
 
 /// A Wi-Fi field that can't go into the QR code: the field and why.
-fn wifi_refusal(ssid: &str, password: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn wifi_refusal(ssid: &str, password: &str) -> Option<(&'static str, &'static str)> {
     if ssid.len() > MAX_SSID_BYTES {
         return Some((
             "wifi_ssid",
-            "A network name has at most 32 characters. Nothing was made.",
+            "Too long for a Wi-Fi network: shorten the name (at most 32 bytes; æ, ø and å count \
+             as two). Nothing was made.",
         ));
     }
-    if password.chars().count() > MAX_WIFI_PASSWORD_CHARS {
+    let raw_key = password.len() == 64 && password.chars().all(|c| c.is_ascii_hexdigit());
+    let chars = password.chars().count();
+    if !password.is_empty() && !raw_key && chars < MIN_WIFI_PASSWORD_CHARS {
         return Some((
             "wifi_password",
-            "A Wi-Fi password has at most 63 characters. Nothing was made.",
+            "A Wi-Fi password has at least 8 characters. Nothing was made.",
+        ));
+    }
+    if !raw_key && chars > MAX_WIFI_PASSWORD_CHARS {
+        return Some((
+            "wifi_password",
+            "A Wi-Fi password has at most 63 characters (or is a 64-digit key). Nothing was made.",
         ));
     }
     if ssid.is_empty() && !password.is_empty() {
@@ -248,10 +265,8 @@ pub async fn provision_qr(
         page.error_field = field;
         page.error = Some(why);
         page.password_dropped = !password.is_empty();
-        // A name too long to be a network isn't typed back either.
-        if ssid.len() <= MAX_SSID_BYTES {
-            page.wifi_ssid = ssid.to_string();
-        }
+        // The name isn't a secret: typed back (escaped, cut to a sane length) to be shortened.
+        page.wifi_ssid = ssid.chars().take(MAX_SSID_BYTES * 4).collect();
         return page.page(StatusCode::BAD_REQUEST);
     }
     page.wifi_ssid = ssid.to_string();
@@ -260,6 +275,30 @@ pub async fn provision_qr(
         return page.page(StatusCode::OK);
     }
     let wifi = (!ssid.is_empty()).then(|| (ssid.to_string(), password.to_string()));
+    let payload_for = |code: String| {
+        provisioning_payload(
+            &state.config,
+            AdminExtras {
+                server_url: settings.server_url.clone(),
+                tailscale_auth_key: settings.tailscale_auth_key.clone(),
+                enrollment_code: code,
+            },
+            wifi.clone(),
+            &settings.locale,
+            &settings.time_zone,
+        )
+    };
+    // The fit is checked before a code is made (qa-31-s15-code L1): an overflow must never
+    // replace the phone's live code. A placeholder of the real length in the code's worst case
+    // for the QR's encoder (letters, no digits); a real code is never larger.
+    let fits = |payload: &serde_json::Value| QrCode::new(payload.to_string().as_bytes()).is_ok();
+    if !payload_for("A".repeat(crate::enrollment::QR_LEN)).is_some_and(|p| fits(&p)) {
+        tracing::error!(
+            device_id = id,
+            "the provisioning payload doesn't fit a QR code"
+        );
+        return too_long();
+    }
 
     let (code, expires_at) = match crate::enrollment::new_code(&state, id, Kind::Qr).await {
         Ok(made) => made,
@@ -273,31 +312,15 @@ pub async fn provision_qr(
         }
     };
 
-    let Some(payload) = provisioning_payload(
-        &state.config,
-        AdminExtras {
-            server_url: settings.server_url.clone(),
-            tailscale_auth_key: settings.tailscale_auth_key.clone(),
-            enrollment_code: code,
-        },
-        wifi,
-        &settings.locale,
-        &settings.time_zone,
-    ) else {
+    let Some(payload) = payload_for(code) else {
         return page.page(StatusCode::OK);
     };
-    // A QR code holds about 2.9 kB: only a very long server address or key can overflow it.
     let Ok(qr) = QrCode::new(payload.to_string().as_bytes()) else {
         tracing::error!(
             device_id = id,
             "the provisioning payload doesn't fit a QR code"
         );
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "The setup details are too long for a QR code - check the server address and \
-             Tailscale key in Settings › Phone Setup.",
-        )
-            .into_response();
+        return too_long();
     };
     page.qr_svg = qr
         .render()
@@ -305,14 +328,18 @@ pub async fn provision_qr(
         .dark_color(svg::Color("#000000"))
         .light_color(svg::Color("#ffffff"))
         .build();
-    let now = chrono::Utc::now();
-    let zone = crate::display_time::Zone::load(&state.db).await;
-    page.until = Some(
-        crate::display_time::parse_db_utc(&expires_at)
-            .map(|t| zone.until(t, now))
-            .unwrap_or_else(|| format!("{expires_at} UTC")),
-    );
+    page.until = Some(page.zone.until_db(&expires_at, page.now));
     page.page(StatusCode::OK)
+}
+
+/// A QR code holds about 2.9 kB: only a very long server address or Tailscale key overflows it.
+fn too_long() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "The setup details are too long for a QR code - check the server address and Tailscale \
+         key in Settings › Phone Setup. Nothing was changed.",
+    )
+        .into_response()
 }
 
 /// Android's standard zero-touch Device Owner provisioning flow: on a

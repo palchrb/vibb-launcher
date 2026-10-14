@@ -1446,10 +1446,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
   **Done** → the phone's page for a phone not set up; for a connected phone both go back to Advanced › Connection and
   warn that a new code cuts it off. "Server setup needed" (no `LAUNCHER_SIGNATURE_CHECKSUM` - no QR form then -, no
   server address) is one red row with the env var / Phone Setup behind its ⓘ.
-- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password over 63 characters, or a password without a
+- **Refusals before any code**: a Wi-Fi name over 32 bytes, a password under 8 or over 63 characters (a 64-hex-digit raw key passes), or a password without a
   name renders Connect again (400) with the reason under the field, never the password; nothing was made (the QR
   code's capacity can't be overflowed by a form). A payload too long for a QR code (a huge server address or key)
-  is a 500 with a reason, never a panic; Connect's and the code page's DB reads are 500s, not 404s.
+  is a 500 with a reason, checked before the code is made (the live code survives), never a panic; Connect's and the
+  code page's DB reads are 500s, not 404s.
 - **Sign-in pages** (`login.html`, `verify_2fa.html`, `setup_2fa.html`, `change_password.html`): one column
   (`.auth-card`): the name, a large title, a grouped form, a wide button; a refusal is one red line (`role="alert"`)
   above the form; the 2FA key shows once behind "Can't scan it?". Templates and titles only: `handlers::auth`'s

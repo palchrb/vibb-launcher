@@ -45,6 +45,7 @@
                 <span class="row-label">Works until</span>
                 <span class="row-value">{{ until }}, once</span>
             </div>
+            <p class="row row-note" data-row="keep-open">Keep this page open until the phone has connected. Reloading it makes a new code.</p>
             {% endif %}
             {% endif %}
             <form method="post" action="/devices/{{ device.id }}/provision#qr" class="cell form-group">
