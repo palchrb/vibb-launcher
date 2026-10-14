@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>34 Contact sheet after</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.dim { position: absolute; inset: 0; background: rgba(0,0,0,.55); z-index: 1; }
+.under { opacity: .9; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; background: var(--lift); border-radius: 26px 26px 0 0; padding: 10px 16px 18px;
+  box-shadow: 0 -8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; align-items: center; }
+.handle { width: 40px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.22); margin-bottom: 18px; }
+.sheet .avatar { width: 112px; height: 112px; font-size: 46px; }
+.name { font-size: 26px; font-weight: 800; margin: 12px 0 18px; color: var(--core); }
+.sub { font-size: 13px; color: var(--core-dim); margin-bottom: 16px; }
+.btns { display: flex; gap: 10px; width: 100%; }
+.btn { flex: 1; height: 64px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 16px; font-weight: 800; }
+.btn .g { width: 22px; height: 22px; }
+.call { background: var(--call); color: #fff; }
+.msg { background: rgba(255,255,255,.08); color: var(--core); }
+.msg .g { color: var(--accent); }
+.hint { font-size: 12px; color: var(--core-dim); margin-top: 10px; }
+.close { margin-top: 14px; height: 44px; display: flex; align-items: center; font-size: 15px; font-weight: 800; color: var(--core); }
+.contacts { display: flex; gap: 22px; justify-content: center; padding-top: 64px; }
+.c { display: flex; flex-direction: column; align-items: center; gap: 6px; font-weight: 800; font-size: 14px; }
+.c .avatar { width: 64px; height: 64px; font-size: 26px; }
+</style></head>
+<body>
+<div class="phone" data-time="16:42">
+  <div class="under">
+    <div class="header" style="position:absolute;top:28px;left:0"><span class="back"><i data-g="kid_back"></i></span><span class="title">Telefonbok</span></div>
+    <div class="contacts">
+      <div class="c"><div class="avatar" style="background:var(--a-sky)">M</div>Mamma</div>
+      <div class="c"><div class="avatar" style="background:var(--a-sand)">P</div>Pappa</div>
+      <div class="c"><div class="avatar" style="background:var(--a-sage)">M</div>Mormor</div>
+    </div>
+  </div>
+  <div class="dim"></div>
+  <div class="sheet">
+    <div class="handle"></div>
+    <div class="avatar" style="background:var(--a-sky)">M</div>
+    <div class="name">Mamma</div>
+    <div class="btns">
+      <div class="btn call"><i data-g="kid_phone"></i>Ring</div>
+      <div class="btn msg"><i data-g="kid_message"></i>Melding</div>
+    </div>
+    <div class="hint">Melding åpnes i Meldinger</div>
+    <div class="close">Lukk</div>
+  </div>
+</div>
+<script src="glyphs.js"></script><script src="kit.js"></script>
+</body></html>

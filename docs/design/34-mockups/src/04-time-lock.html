@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>34 Time-rule screen after</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.clock { text-align: center; font-size: 52px; font-weight: 700; letter-spacing: -1px; margin-top: 14px; color: var(--core); }
+.moon { width: 52px; height: 52px; margin: 10px auto 8px; border-radius: 50%; background: rgba(240,168,132,.14); display: flex; align-items: center; justify-content: center; color: var(--accent); }
+.moon svg { width: 26px; height: 26px; }
+.h { text-align: center; font-size: 22px; font-weight: 800; color: var(--core); }
+.p { text-align: center; font-size: 15px; color: var(--core-dim); margin: 8px 28px 0; line-height: 1.35; }
+.rows { margin: 16px 16px 0; background: var(--card); border-radius: 18px; overflow: hidden; }
+.row { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-size: 16px; font-weight: 700; border-top: 1px solid var(--hair); color: var(--core); }
+.row:first-child { border-top: 0; }
+.row .dot { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; }
+.row .dot .g { width: 19px; height: 19px; }
+.row .chev { margin-left: auto; color: var(--core-faint); font-size: 18px; }
+.foot { position: absolute; left: 0; right: 0; bottom: 22px; display: flex; flex-direction: column; align-items: center; gap: 0; }
+.link { height: 44px; display: flex; align-items: center; font-size: 15px; font-weight: 800; }
+.em { color: var(--emergency-text); }
+.code { color: var(--core-dim); }
+</style></head>
+<body>
+<div class="phone" data-time="20:15">
+  <div class="clock">20:15</div>
+  <div class="moon"><svg viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M7.5 3c0 5 9 6 9 9s-9 4-9 9M16.5 3c0 5-9 6-9 9s9 4 9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+  <div class="h">Skjermtiden er brukt opp</div>
+  <div class="p">Du har brukt dagens 1 t 30 min. Du kan fortsatt ringe kontaktene dine.</div>
+  <div class="rows">
+    <div class="row"><span class="dot" style="background:var(--call)"><i data-g="kid_phone_book"></i></span>Telefonbok<span class="chev">›</span></div>
+    <div class="row"><span class="dot" style="background:var(--t-blue)"><i data-g="chat"></i></span>Meldinger<span class="chev">›</span></div>
+    <div class="row"><span class="dot" style="background:var(--t-rose)"><i data-g="music_note"></i></span>Musikk<span class="chev">›</span></div>
+  </div>
+  <div class="foot">
+    <div class="link em">Nødsamtale</div>
+    <div class="link code">Skriv inn opplåsingskode</div>
+  </div>
+</div>
+<script src="glyphs.js"></script><script src="kit.js"></script>
+</body></html>

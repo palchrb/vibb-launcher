@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="nb"><head><meta charset="utf-8"><title>34 Kid Settings after</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.sec { font-size: 15px; font-weight: 800; color: var(--core); margin: 6px 16px 8px; }
+.walls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0 16px; }
+.w { aspect-ratio: 9 / 13; border-radius: 12px; border: 1px solid rgba(255,255,255,.18); position: relative; }
+.w.sel { border: 3px solid #fff; }
+.w.sel::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800; color: #fff; }
+.cap { font-size: 12px; color: var(--core-dim); margin: 8px 16px 14px; }
+.card { margin: 0 16px; background: var(--card); border-radius: 18px; overflow: hidden; }
+.row { min-height: 52px; display: flex; align-items: center; padding: 0 14px; font-size: 16px; font-weight: 700; border-top: 1px solid var(--hair); color: var(--core); }
+.row:first-child { border-top: 0; }
+.sw { margin-left: auto; width: 46px; height: 28px; border-radius: 14px; background: var(--accent); position: relative; }
+.sw::after { content: ""; position: absolute; right: 3px; top: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.link { font-size: 14px; color: var(--accent); font-weight: 700; padding: 0 14px 12px; margin-top: -6px; }
+.seg { display: flex; margin: 0 14px 14px; background: rgba(255,255,255,.07); border-radius: 14px; padding: 3px; }
+.seg span { flex: 1; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 800; color: var(--core-dim); }
+.seg span.on { background: var(--accent); color: var(--ground); }
+.sub { font-size: 15px; font-weight: 700; color: var(--core); padding: 12px 14px 8px; border-top: 1px solid var(--hair); }
+</style></head>
+<body>
+<div class="phone" data-time="16:42">
+  <div class="header"><span class="back"><i data-g="kid_back"></i></span><span class="title">Innstillinger</span></div>
+  <div class="sec">Bakgrunn</div>
+  <div class="walls">
+    <div class="w sel" style="background:#0C0C14"></div>
+    <div class="w" style="background:#14213D"></div>
+    <div class="w" style="background:#1E3B33"></div>
+    <div class="w" style="background:#3A2440"></div>
+    <div class="w" style="background:linear-gradient(160deg,#2A4A4F,#101820)"></div>
+    <div class="w" style="background:linear-gradient(160deg,#34406A,#14141F)"></div>
+    <div class="w" style="background:linear-gradient(160deg,#5A3A4A,#1A1420)"></div>
+  </div>
+  <div class="cap">Bildene er valgt ut av mamma og pappa</div>
+  <div class="sec">Tilkobling, skjerm og lyd</div>
+  <div class="card">
+    <div class="row">Wi-Fi<span class="sw"></span></div>
+    <div class="link">Velg nettverk</div>
+    <div class="sub">Lyd på telefonen</div>
+    <div class="seg"><span class="on">Lyd</span><span>Lydløs (vibrerer)</span></div>
+  </div>
+</div>
+<script src="glyphs.js"></script><script src="kit.js"></script>
+</body></html>

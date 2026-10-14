@@ -1,0 +1,63 @@
+/* Design 34 mockups: one 320x569 dp phone (CSS px = dp, font px = sp), rendered at 1.5x = 480x854 px,
+   the Jelly Star. Nunito from the launcher's own res/font (OFL 1.1), nothing fetched. */
+@font-face { font-family: Nunito; font-weight: 600; src: url(../../../../launcher/app/src/main/res/font/nunito_semibold.ttf); }
+@font-face { font-family: Nunito; font-weight: 700; src: url(../../../../launcher/app/src/main/res/font/nunito_bold.ttf); }
+@font-face { font-family: Nunito; font-weight: 800; src: url(../../../../launcher/app/src/main/res/font/nunito_extrabold.ttf); }
+
+:root {
+  /* Vibb night (colors_kid.xml) */
+  --ground: #0C0C14;
+  --lift: #1C1A2A;      /* kid_ground_lift */
+  --card: #1B1B28;      /* music Palette.card */
+  --card-2: #24233A;    /* new: a card on a card, pressed rows */
+  --core: #FBE4DC;
+  --core-dim: rgba(251, 228, 220, .72);
+  --core-faint: rgba(251, 228, 220, .5);
+  --accent: #F0A884;
+  --ink: #FFFFFF;
+  --ink-dim: rgba(255, 255, 255, .75);
+  --hair: rgba(255, 255, 255, .08);
+  --call: #2B8A3E;
+  --emergency: #E03131;
+  --emergency-text: #FF8A8A;
+  --emergency-tonal: #3A1E24;
+  /* Proposal 1: the seven icon tones (white glyph >= 5.3:1, tone vs ground >= 3.5:1) */
+  --t-slate: #606B80; --t-blue: #496C9C; --t-teal: #347470; --t-plum: #805B9A;
+  --t-rose: #A45166; --t-amber: #866237; --t-indigo: #6065A9;
+  /* Proposal 3: contact avatars without a photo - soft, with a dark ink (>= 8.9:1) */
+  --a-peach: #E8B49A; --a-sky: #9FC3E3; --a-sand: #E3CF9A; --a-sage: #A9CDB0; --a-lilac: #C9B3DE; --a-rose: #E6AFB4;
+  --a-ink: #1B1B28;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #555; }
+body { font-family: Nunito, sans-serif; font-weight: 600; color: var(--ink); -webkit-font-smoothing: antialiased; }
+.phone { width: 320px; height: 569px; position: relative; overflow: hidden; background: var(--ground); }
+.status { height: 28px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; color: var(--ink); position: relative; z-index: 5; }
+.status .r { display: flex; gap: 5px; align-items: center; }
+.status .r i { display: block; width: 12px; height: 9px; border-radius: 2px; background: var(--ink); opacity: .9; }
+.status .r i.bat { width: 8px; height: 12px; }
+.navhandle { position: absolute; bottom: 7px; left: 50%; width: 108px; height: 4px; margin-left: -54px; border-radius: 2px; background: rgba(255, 255, 255, .85); z-index: 5; }
+.g { display: inline-block; width: 24px; height: 24px; color: inherit; }
+.g svg { width: 100%; height: 100%; display: block; }
+.note { position: absolute; left: 8px; right: 8px; bottom: 16px; font-size: 9px; color: #ffd27a; text-align: center; z-index: 9; display: none; }
+
+/* Proposal 2: app tile - tone circle, white glyph, gentle depth (a soft drop shadow and a faint top light),
+   baked into the rendered bitmap; pressed = 96 % and a little darker. */
+.tile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.icon { width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; position: relative;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45), 0 1px 1px rgba(0, 0, 0, .3);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, .10)); }
+.icon::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14); }
+.icon .g { width: 32px; height: 32px; }
+.icon.pressed { transform: scale(.94); filter: brightness(.9); }
+.label { font-size: 13px; font-weight: 700; color: var(--ink); max-width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.badge { position: absolute; top: -3px; right: -5px; min-width: 22px; height: 22px; border-radius: 11px; background: #C0582E; color: #fff; font-size: 12px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; padding: 0 6px; border: 2px solid var(--ground); }
+.avatar { border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--a-ink); font-weight: 700; position: relative;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .4); }
+.callbadge { position: absolute; right: -2px; bottom: 2px; width: 26px; height: 26px; border-radius: 50%; background: var(--call); border: 2.5px solid var(--ground); display: flex; align-items: center; justify-content: center; color: #fff; }
+.callbadge .g { width: 14px; height: 14px; }
+.header { height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 14px; }
+.back { width: 44px; height: 44px; border-radius: 50%; background: rgba(255, 255, 255, .08); display: flex; align-items: center; justify-content: center; color: var(--ink); }
+.back .g { width: 22px; height: 22px; }
+.title { font-size: 22px; font-weight: 800; }
