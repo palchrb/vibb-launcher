@@ -548,6 +548,14 @@ findings, merge to `main`, full suite once.
   `L.Icon.Default.imagePath = '/static/leaflet/images/'` instead (file names stay Leaflet's), and
   check the pin, its shadow and the retina icon in the headless browser.
 
+- **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
+  and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as
+  Element X's own unread badge. Idea: the listener's Element X reader (design 15: it already matches a DM's
+  `sender_person` key to a phone-book contact's Matrix ID, reading no text or name) also recognises Element X's
+  missed-call notification and counts it for that contact, cleared when the sheet opens, as a phone call's. Unknown:
+  the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
+  it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
+
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
