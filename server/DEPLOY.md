@@ -422,24 +422,26 @@ An invalid value (wrong length, `+`/`/`/`=` characters) is logged at startup and
 
 The launcher updates itself through the Apps catalog, like any other app. **Nothing to add**: since 2026-10-15 the
 server creates the launcher's row at startup when no app under Apps is marked as the launcher, and logs
-`created the launcher's catalog row (palchrb/vibb-launcher, launcher-v*)`. It is:
+`created the launcher's catalog row (palchrb/vibb-launcher, launcher-v*, me.vibb.launcher)`. It is:
 
 - name: **Vibb One** (the launcher's name on the phone since design 34; migration 0077 renamed a row still called
   "Vibb" or "Kids Launcher" - any other name is yours and stays)
-- source: GitHub releases, the repo of `LAUNCHER_APK_URL` when that is a `https://github.com/<owner>/<repo>/releases/...`
-  URL, else `palchrb/vibb-launcher` (the log says so); the catalog skips the repo's `server-v*` and `music-v*`
-  releases and takes the newest `launcher-v*` release that carries the APK
+- source: GitHub releases, the repo of `LAUNCHER_APK_URL` (`https://github.com/<owner>/<repo>/releases/...`; the
+  default is `palchrb/vibb-launcher`); the catalog skips the repo's `server-v*` and `music-v*` releases and takes the
+  newest `launcher-v*` release that carries the APK. A `LAUNCHER_APK_URL` elsewhere (your own host) creates **no**
+  row and the log says so: add the launcher under Apps yourself and turn on "This is the launcher app"
 - "File name contains": `kids-launcher-mdm.apk`, and "Tag starts with": `launcher-v`
 - "Include pre-releases": **off** (release candidates are published as pre-releases and must never reach the phones)
   - an existing row that watched `palchrb/kids-launcher-mdm` is moved to the monorepo by migration 0031, which also
     turns this off (with it on, every `launcher-vX.Y.Z-rc.N` would roll out to every phone)
 - "This is the launcher app": on (every phone gets it; it can't be removed while on)
-- no package or key: the first release's APK pins `me.vibb.launcher` and its signing key (a row that still says
-  `com.kidslauncher.mdm` or `.debug` is renamed by migration 0037)
+- package: the one in `LAUNCHER_ADMIN_COMPONENT` (`me.vibb.launcher` by default) - a release of any other package is
+  refused and shown on the row, never sent to a phone; the first release's APK pins the signing key (a row that still
+  says `com.kidslauncher.mdm` or `.debug` is renamed by migration 0037)
 
 A launcher row you made yourself is never changed. If you added the launcher by hand **without** turning on "This is
-the launcher app", the server creates no second row and logs a warning naming yours instead: turn the switch on on its
-page (Source & Signing). To stop launcher updates, untick "Enabled" on its page - a launcher row that is deleted comes
+the launcher app" (or uploaded it as a manual app with the launcher's package), the server creates no second row and
+logs a warning naming yours instead: if it is the launcher, turn the switch on on its page (Source & Signing). To stop launcher updates, untick "Enabled" on its page - a launcher row that is deleted comes
 back at the next start. The **music app** is still added by hand (Music › Settings, "Add to the App Catalog").
 
 #### Rollout of the package rename (`com.kidslauncher.mdm` -> `me.vibb.launcher`, 2026-10-06)

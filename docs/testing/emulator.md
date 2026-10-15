@@ -85,6 +85,13 @@ Then Settings › Phone Setup › Time zone = that value.
 
 ## 4. Provision (adb on the VM)
 
+A test server for the debug launcher sets the debug component (add it to §2's `cargo run` line):
+`LAUNCHER_ADMIN_COMPONENT=me.vibb.launcher.debug/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver`. The server
+creates the launcher's catalog row at its first start, pinned to that component's package, so the row refuses the
+release builds (`me.vibb.launcher`) instead of installing the release Vibb One next to the debug one (or untick
+Enabled on that row under Apps). For §6d's manual launcher row, take the flag off the seeded row first (one launcher
+row; while any row is flagged nothing is seeded again).
+
 ```sh
 P=me.vibb.launcher.debug
 adb install -r ~/repos/handy/launcher/app/build/outputs/apk/debug/app-debug.apk
@@ -379,7 +386,8 @@ launcher row (A4) exercises the fence and the window.
 Setup: the phone's Advanced -> "Updates & notifications": tick **Update fence** and
 **Notification filter** (both default off until A3/B5 pass). A test self-update for the debug
 build: `./gradlew assembleDebug -PversionCode=<higher than installed>`, PWA Apps -> add a manual
-app (package `me.vibb.launcher.debug`), mark it as the launcher on its page, upload the APK
+app (package `me.vibb.launcher.debug`), turn off "This is the launcher app" on the seeded Vibb One row
+(§4) and turn it on for the new app on its page, upload the APK
 with a new release label. The phone downloads it at the next sync and keeps it pending
 (logcat `MdmSyncWorker`: "waiting for the update window"); **debug builds count a pending update
 as overdue after 2 minutes**, release builds wait for 02:00-05:00 (or 24 h).
