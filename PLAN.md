@@ -510,6 +510,14 @@ findings, merge to `main`, full suite once.
 - **Nudge phones on a new catalog release**: today a phone sees a new release only at its next
   sync (≤ 30 min backstop, or "Sync now"). Approved with the item above, 2026-10-15.
 
+- **The PWA's tab bar moves when switching tabs** (the user, 2026-10-15, narrow window): the five
+  bottom tabs (Devices, Apps, Locate, Music, Settings) shift a little between pages; they must stand
+  completely still. Likely cause: the fixed `.tab-bar` spans the viewport (`left: 0; right: 0`),
+  and a page tall enough for a classic scrollbar makes the viewport ~15 px narrower than one that
+  isn't, so every equal-width tab moves. Likely fix: `scrollbar-gutter: stable` on `html` (and
+  check that nothing else changes the tabs' widths between pages). Verify with the headless browser
+  at a narrow width on a short and a long page. Approved 2026-10-15.
+
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
