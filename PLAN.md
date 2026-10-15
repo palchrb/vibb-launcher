@@ -539,6 +539,15 @@ findings, merge to `main`, full suite once.
   - a tailnet address isn't reachable from the VPN's own socket (tsnet is inside the launcher). A
   short design note first. Approved 2026-10-15.
 
+- **The Locate map's marker is a broken image** (the user, 2026-10-15: a broken-image icon with
+  the alt text "Mark" instead of the pin). Cause: `device_locate.html` sets
+  `L.Icon.Default.mergeOptions({iconUrl: '/static/leaflet/images/marker-icon.png', ...})`, but
+  Leaflet 1.9.4's `Icon.Default._getIconUrl` prepends its `imagePath` (detected from leaflet.css as
+  `.../static/leaflet/images/`) to that, so the browser asks for
+  `/static/leaflet/images//static/leaflet/images/marker-icon.png`. Fix: set
+  `L.Icon.Default.imagePath = '/static/leaflet/images/'` instead (file names stay Leaflet's), and
+  check the pin, its shadow and the retina icon in the headless browser.
+
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
