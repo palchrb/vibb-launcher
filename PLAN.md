@@ -527,6 +527,18 @@ findings, merge to `main`, full suite once.
   bottom), and give the tabs a little more room above the home indicator. Check in a WebKit
   browser with a simulated inset and on the user's iPhone. Approved 2026-10-15.
 
+- **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
+  Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
+  the launcher's `DnsFilterEngine` knows only those two, `1.1.1.1`/`cloudflare-dns.com` and
+  `9.9.9.9`/`dns.quad9.net`, over DNS-over-TLS). Add "Custom": an IP address and the server's TLS
+  name for DNS-over-TLS (validated on the server; the phone checks the certificate against that
+  name as today). Crosses the API (`dns_upstream_provider` plus the address and name in the policy,
+  `policy_json_keys_snapshot`/`PolicyResponseCompatTest`, both directories in one commit); an older
+  launcher that doesn't know "custom" must fall back to Cloudflare, never break look-ups. Open
+  question for the design: plain DNS to a server on the home network or the tailnet (AdGuard Home)
+  - a tailnet address isn't reachable from the VPN's own socket (tsnet is inside the launcher). A
+  short design note first. Approved 2026-10-15.
+
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
