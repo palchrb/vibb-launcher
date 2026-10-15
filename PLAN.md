@@ -597,6 +597,14 @@ findings, merge to `main`, full suite once.
   knob should show on the left, light and dark; (2) "add an existing family contact" to a phone
   (the server already keeps one address book per number); (3) every `<details>` confirm
   (Remove Contact… and the rest) gets a clear Cancel that closes it.
+- **The child's own photos as wallpaper, from Immich** (the user, 2026-10-15): the child has his own Immich
+  account and the Immich app on the phone (the user's Immich is on a public address, so the app reaches it
+  without the tailnet). Idea: Vibb One is a share target for images ("Bakgrunn (Vibb One)", `ACTION_SEND`
+  `image/*`, maybe `ATTACH_DATA` "Use as"): from Immich (or the camera) Share -> it, cropped to the phone,
+  re-encoded, kept on the phone only and added to the kid's wallpaper picker. Behind a parent switch "Can use
+  own photos as wallpaper" (off = no share target: the activity alias disabled). The share sheet is already a
+  kiosk helper. To check first: what Immich's share sends for a photo that is only on the server (a file
+  after a download, or a link). Launcher mostly, plus the switch on the server. Scope not settled yet.
 - **`PHONE_SERVER_URL` in `.env`**: the phones' server address as an env default; the DB value
   (Phone Setup) wins when set, the page says "from .env", a startup warning when it isn't https.
 - **Wi-Fi in Phone Setup**, one of: (A) remember the Wi-Fi for the setup QR (write-only like the
