@@ -570,13 +570,6 @@ findings, merge to `main`, full suite once.
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
-- **Say why Spotify refused a login** (the user, 2026-10-15: a child's account got "Spotify refused this account
-  for your app" after a good token exchange): `spotify::Accounts` login maps any `/v1/me` 403 to `not_registered`
-  and drops Spotify's answer. Keep Spotify's own `error.message` (cut, control characters out - it holds no
-  secret) and show it under the page's line and in the `spotify_login_failed` event, so the parent sees whether
-  it is User Management, the app owner's Premium, or something else. Check what Spotify sends for each with the
-  fake (`scripts/fake-spotify.py` gets the variants). Approved 2026-10-15.
-
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
