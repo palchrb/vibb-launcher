@@ -530,14 +530,20 @@ findings, merge to `main`, full suite once.
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
   the launcher's `DnsFilterEngine` knows only those two, `1.1.1.1`/`cloudflare-dns.com` and
-  `9.9.9.9`/`dns.quad9.net`, over DNS-over-TLS). Add "Custom": an IP address and the server's TLS
-  name for DNS-over-TLS (validated on the server; the phone checks the certificate against that
-  name as today). Crosses the API (`dns_upstream_provider` plus the address and name in the policy,
-  `policy_json_keys_snapshot`/`PolicyResponseCompatTest`, both directories in one commit); an older
-  launcher that doesn't know "custom" must fall back to Cloudflare, never break look-ups. Open
-  question for the design: plain DNS to a server on the home network or the tailnet (AdGuard Home)
-  - a tailnet address isn't reachable from the VPN's own socket (tsnet is inside the launcher). A
-  short design note first. Approved 2026-10-15.
+  `9.9.9.9`/`dns.quad9.net`, over DNS-over-TLS). Add "Custom", aimed at the user's own AdGuard Home on
+  a public address (asked 2026-10-15) with a per-phone or per-family key: **DNS-over-HTTPS** first
+  (`https://dns.example/dns-query/<client-id>` - AdGuard Home's ClientID, with "Allowed clients" set to
+  the ids; the id travels inside TLS, so it works as a simple secret), DNS-over-TLS second (host name,
+  optionally `<client-id>.dns.example` - the id is in the SNI, readable on the wire). The address with its
+  id is a secret: write-only in the PWA like the Tailscale key, never logged, left out of backups'
+  plain text where possible. The phone resolves the DoH/DoT host itself through the protected socket
+  (bootstrap via the system's resolver or a stored IP), checks the certificate by the system's CAs, and
+  falls back to Cloudflare - never to unfiltered or broken look-ups - when the custom server fails or an
+  older launcher doesn't know "custom". Crosses the API (the policy's upstream fields,
+  `policy_json_keys_snapshot`/`PolicyResponseCompatTest`, both directories in one commit). Open
+  question: plain DNS to a server on the home network or the tailnet (a tailnet address isn't reachable
+  from the VPN's own socket; tsnet is inside the launcher). A short design note first. Approved
+  2026-10-15.
 
 - **The Locate map's marker is a broken image** (the user, 2026-10-15: a broken-image icon with
   the alt text "Mark" instead of the pin). Cause: `device_locate.html` sets
