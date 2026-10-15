@@ -161,7 +161,7 @@ impl ForkConfig {
 
 /// `owner/repo`, the same character set GitHub allows - also what `deploy/install.sh` checks
 /// `KPS_REPO` against before substituting it into a root-run script.
-fn is_valid_repo(value: &str) -> bool {
+pub(crate) fn is_valid_repo(value: &str) -> bool {
     let ok_part = |p: &str| {
         !p.is_empty()
             && p.chars()
