@@ -314,6 +314,21 @@ jobs:
       uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
       with:
         name: release-signed
+    - name: Find this component's previous tag (the release notes compare with it)
+      id: prev
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+        # launcher-v / music-v / server-v: GitHub's default compares with the newest tag of any kind.
+        prefix="${TAG%%-v*}-v"
+        prev=$( { gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate --jq '.[].name' | grep "^${prefix}[0-9]" || true; echo "$TAG"; } \
+          | sort -uV | grep -B1 -x "$TAG" | head -1 )
+        [ "$prev" = "$TAG" ] && prev=""
+        echo "previous tag: ${prev:-none}"
+        echo "tag=$prev" >> "$GITHUB_OUTPUT"
+
     - name: Create GitHub Release
       uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
       with:
@@ -324,6 +339,7 @@ jobs:
         # the provisioning QR both follow that URL.
         makeLatest: ${{ needs.launcher-release-build.outputs.prerelease == 'true' && 'false' || 'true' }}
         generateReleaseNotes: true
+        generateReleaseNotesPreviousTag: ${{ steps.prev.outputs.tag }}
         artifacts: "kids-launcher-mdm.apk,kids-launcher-mdm.apk.sha256"
         artifactErrorsFailBuild: true
         token: ${{ secrets.GITHUB_TOKEN }}

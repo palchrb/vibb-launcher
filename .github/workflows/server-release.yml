@@ -344,6 +344,21 @@ jobs:
         with:
           name: server-release-signed
 
+      - name: Find this component's previous tag (the release notes compare with it)
+        id: prev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # launcher-v / music-v / server-v: GitHub's default compares with the newest tag of any kind.
+          prefix="${TAG%%-v*}-v"
+          prev=$( { gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate --jq '.[].name' | grep "^${prefix}[0-9]" || true; echo "$TAG"; } \
+            | sort -uV | grep -B1 -x "$TAG" | head -1 )
+          [ "$prev" = "$TAG" ] && prev=""
+          echo "previous tag: ${prev:-none}"
+          echo "tag=$prev" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
@@ -353,6 +368,7 @@ jobs:
           # release must never take it over.
           makeLatest: "false"
           generateReleaseNotes: true
+          generateReleaseNotesPreviousTag: ${{ steps.prev.outputs.tag }}
           artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
