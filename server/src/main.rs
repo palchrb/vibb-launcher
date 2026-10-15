@@ -432,6 +432,9 @@ async fn main() {
             state.clone(),
         ));
     }
+    // The launcher's catalog row, so its self-updates need nothing added under Apps - before
+    // the scheduled sync's first pass.
+    handlers::tracked_apps::ensure_launcher_row(&state).await;
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
     // Hashes for cached files from before migration 0043 (design 13): the phones check them.

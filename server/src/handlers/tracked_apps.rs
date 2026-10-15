@@ -21,7 +21,9 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
-use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
+use crate::config::{
+    DEFAULT_SERVER_RELEASE_REPO, MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX,
+};
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -2179,6 +2181,134 @@ pub async fn update_tracked_app(
     Redirect::to(&format!("/apps/tracked/{id}?open=source#details")).into_response()
 }
 
+/// The launcher's catalog row as [seed_launcher_row] creates it: the name, the asset filter
+/// (the APK name the launcher's release CI attaches) and the tag prefix of its releases.
+pub const LAUNCHER_ROW_NAME: &str = "Vibb One";
+pub const LAUNCHER_ROW_ASSET: &str = "kids-launcher-mdm.apk";
+pub const LAUNCHER_ROW_TAG_PREFIX: &str = "launcher-v";
+
+/// `owner/repo` from a `https://github.com/<owner>/<repo>/releases/...` URL
+/// (`LAUNCHER_APK_URL`), `None` for anything else.
+pub fn launcher_repo_from_url(url: &str) -> Option<String> {
+    let rest = url.trim().strip_prefix("https://")?;
+    let rest = rest
+        .strip_prefix("github.com/")
+        .or_else(|| rest.strip_prefix("www.github.com/"))?;
+    let mut parts = rest.split('/');
+    let (owner, repo, releases) = (parts.next()?, parts.next()?, parts.next()?);
+    let repo = format!("{owner}/{repo}");
+    (releases == "releases" && crate::config::is_valid_repo(&repo)).then_some(repo)
+}
+
+/// What [seed_launcher_row] did.
+#[derive(Debug, PartialEq)]
+pub enum LauncherSeed {
+    /// A row with `is_launcher = 1` is there (the parent's, or one made before): nothing done.
+    Exists,
+    /// A row the parent added for the launcher without the flag (id, name): nothing done - no
+    /// second row, and the parent's row is left as it is (see [seed_launcher_row]).
+    HandMade(i64, String),
+    /// The row was created, watching this repo; `derived` says whether the repo came from
+    /// `LAUNCHER_APK_URL` (else the default repo).
+    Created {
+        id: i64,
+        repo: String,
+        derived: bool,
+    },
+}
+
+/// At startup (both deploy kinds): makes sure the launcher has its catalog row, so its
+/// self-updates need nothing added under Apps. Only when no row has `is_launcher = 1`:
+///
+/// - a GitHub row that is clearly the launcher already - it watches the same repo with the
+///   `launcher-v` tag prefix or a filter naming `kids-launcher-mdm`, or it is pinned to the
+///   launcher's package (from `LAUNCHER_ADMIN_COMPONENT`) - is left alone and logged: a second
+///   row would serve the launcher twice, and flagging the parent's row would push it to every
+///   phone with whatever the parent chose (pre-releases on, say) and would undo a parent who
+///   turned the flag off on purpose, at every restart. The parent turns on "This is the launcher
+///   app" on that row.
+/// - else one row is created: "Vibb One", GitHub, the repo of `LAUNCHER_APK_URL` when it is a
+///   `github.com/<owner>/<repo>/releases/...` URL (else [DEFAULT_SERVER_RELEASE_REPO]), filter
+///   `kids-launcher-mdm.apk`, tag prefix `launcher-v`, pre-releases off, enabled, `is_launcher`.
+///   No package or key: the first sync pins them (security review M10, with its checks).
+///
+/// In one transaction, so a second start (or a crash half-way) never makes two rows.
+pub async fn seed_launcher_row(
+    db: &sqlx::SqlitePool,
+    config: &crate::config::ForkConfig,
+) -> Result<LauncherSeed, sqlx::Error> {
+    let (repo, derived) = match launcher_repo_from_url(&config.launcher_apk_url) {
+        Some(repo) => (repo, true),
+        None => (DEFAULT_SERVER_RELEASE_REPO.to_string(), false),
+    };
+    let package = config
+        .launcher_admin_component
+        .split_once('/')
+        .map(|(package, _)| package)
+        .unwrap_or_default();
+    let mut tx = db.begin().await?;
+    let flagged: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tracked_apps WHERE is_launcher = 1")
+            .fetch_one(&mut *tx)
+            .await?;
+    if flagged > 0 {
+        return Ok(LauncherSeed::Exists);
+    }
+    let hand_made: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, name FROM tracked_apps WHERE source_type = 'github' AND ( \
+           (LOWER(github_repo) = LOWER(?) AND (release_tag_prefix = ? \
+              OR INSTR(COALESCE(asset_pattern, ''), 'kids-launcher-mdm') > 0)) \
+           OR (package_name != '' AND package_name = ?)) \
+         ORDER BY id LIMIT 1",
+    )
+    .bind(&repo)
+    .bind(LAUNCHER_ROW_TAG_PREFIX)
+    .bind(package)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((id, name)) = hand_made {
+        return Ok(LauncherSeed::HandMade(id, name));
+    }
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, asset_pattern, \
+         include_prereleases, release_tag_prefix, enabled, is_launcher) \
+         VALUES (?, '', 'github', ?, ?, 0, ?, 1, 1) RETURNING id",
+    )
+    .bind(LAUNCHER_ROW_NAME)
+    .bind(&repo)
+    .bind(LAUNCHER_ROW_ASSET)
+    .bind(LAUNCHER_ROW_TAG_PREFIX)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(LauncherSeed::Created { id, repo, derived })
+}
+
+/// [seed_launcher_row] from `main`, logged; an error is logged and the server starts anyway.
+pub async fn ensure_launcher_row(state: &AppState) {
+    match seed_launcher_row(&state.db, &state.config).await {
+        Ok(LauncherSeed::Exists) => {}
+        Ok(LauncherSeed::HandMade(id, name)) => tracing::warn!(
+            "no catalog row is marked as the launcher, but '{name}' (id {id}) watches the \
+             launcher's releases - turn on \"This is the launcher app\" on its page under Apps \
+             (no second row is created)"
+        ),
+        Ok(LauncherSeed::Created { repo, derived, .. }) => {
+            if !derived {
+                tracing::info!(
+                    "LAUNCHER_APK_URL ({}) is not a github.com/<owner>/<repo>/releases URL - the \
+                     launcher's catalog row watches the default repo",
+                    state.config.launcher_apk_url
+                );
+            }
+            tracing::info!(
+                "created the launcher's catalog row ({repo}, {LAUNCHER_ROW_TAG_PREFIX}*)"
+            );
+        }
+        Err(err) => tracing::error!("couldn't create the launcher's catalog row: {err}"),
+    }
+}
+
 /// Explicit admin-facing way to mark/unmark the one row that is the launcher itself - see
 /// migrations/0013_device_tracked_apps.sql's doc comment for what this flag does. Exists because
 /// the migration's one-time best-effort `UPDATE ... WHERE package_name = 'com.kidslauncher.mdm'`
@@ -3066,5 +3196,235 @@ mod tests {
             .unwrap();
         assert_eq!(downloads.load(Ordering::SeqCst), 3);
         assert_eq!(row().await.latest_release_tag.as_deref(), Some("v2"));
+    }
+
+    fn fork_config(vars: &[(&str, &str)]) -> crate::config::ForkConfig {
+        crate::config::ForkConfig::from_vars(
+            &vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
+    }
+
+    async fn all_rows(db: &sqlx::SqlitePool) -> Vec<TrackedApp> {
+        sqlx::query_as("SELECT * FROM tracked_apps ORDER BY id")
+            .fetch_all(db)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn the_launchers_repo_comes_from_a_github_releases_url() {
+        let repo = |url: &str| launcher_repo_from_url(url);
+        assert_eq!(
+            repo(crate::config::DEFAULT_LAUNCHER_APK_URL).as_deref(),
+            Some("palchrb/vibb-launcher")
+        );
+        assert_eq!(
+            repo("https://github.com/someone/my-fork/releases/download/launcher-v1.0.0/x.apk")
+                .as_deref(),
+            Some("someone/my-fork")
+        );
+        assert_eq!(
+            repo("https://www.github.com/a/b/releases/latest/download/kids-launcher-mdm.apk")
+                .as_deref(),
+            Some("a/b")
+        );
+        for url in [
+            "https://example.org/launcher.apk",
+            "https://github.com/a/b/raw/main/x.apk",
+            "https://github.com/a/releases",
+            "http://github.com/a/b/releases/latest/download/x.apk",
+            "https://github.com.evil.org/a/b/releases/x.apk",
+            "https://github.com/a;rm/b/releases/x.apk",
+        ] {
+            assert_eq!(repo(url), None, "{url}");
+        }
+    }
+
+    /// A fresh database gets exactly one launcher row, with these fields, and later starts
+    /// (idempotent) change nothing.
+    #[tokio::test]
+    async fn a_fresh_database_gets_the_launchers_row_once() {
+        let app = crate::tests::TestApp::new().await;
+        let config = fork_config(&[]);
+        let LauncherSeed::Created { id, repo, derived } =
+            seed_launcher_row(&app.db, &config).await.unwrap()
+        else {
+            panic!("no row created");
+        };
+        assert_eq!((repo.as_str(), derived), ("palchrb/vibb-launcher", true));
+        let rows = all_rows(&app.db).await;
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.id, id);
+        assert_eq!(row.name, "Vibb One");
+        assert_eq!(row.source_type, "github");
+        assert_eq!(row.github_repo, "palchrb/vibb-launcher");
+        assert_eq!(row.asset_pattern.as_deref(), Some("kids-launcher-mdm.apk"));
+        assert_eq!(row.release_tag_prefix.as_deref(), Some("launcher-v"));
+        assert!(!row.include_prereleases);
+        assert!(row.enabled);
+        assert!(row.is_launcher);
+        // Nothing guessed: the first release pins the package and the key (M10).
+        assert_eq!(row.package_name, "");
+        assert_eq!(row.signer_sha256, None);
+        assert_eq!(row.latest_release_tag, None);
+
+        for _ in 0..2 {
+            assert_eq!(
+                seed_launcher_row(&app.db, &config).await.unwrap(),
+                LauncherSeed::Exists
+            );
+        }
+        assert_eq!(all_rows(&app.db).await.len(), 1);
+    }
+
+    /// The parent's own launcher row (any name, repo or settings) is never touched, and no second
+    /// row is made.
+    #[tokio::test]
+    async fn an_existing_launcher_row_is_left_alone() {
+        let app = crate::tests::TestApp::new().await;
+        sqlx::query(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, include_prereleases, \
+             enabled, is_launcher) VALUES ('My launcher', 'me.vibb.launcher', 'me/other', 1, 0, 1)",
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(
+            seed_launcher_row(&app.db, &fork_config(&[])).await.unwrap(),
+            LauncherSeed::Exists
+        );
+        let after = all_rows(&app.db).await;
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            (after[0].name.as_str(), after[0].github_repo.as_str()),
+            ("My launcher", "me/other")
+        );
+        assert!(after[0].include_prereleases && !after[0].enabled && after[0].is_launcher);
+    }
+
+    /// A row the parent added for the launcher without the flag - the same repo (any case) with
+    /// the launcher's tag prefix or file name, or pinned to the launcher's package - stops the
+    /// seed: no second row, and that row isn't flagged or changed. Other apps in the same repo
+    /// (the music app) or elsewhere don't.
+    #[tokio::test]
+    async fn a_hand_made_launcher_row_gets_no_duplicate() {
+        let hand_made = [
+            "INSERT INTO tracked_apps (name, package_name, github_repo, release_tag_prefix, \
+             include_prereleases) VALUES ('Launcher', '', 'Palchrb/Vibb-Launcher', 'launcher-v', 1)",
+            "INSERT INTO tracked_apps (name, package_name, github_repo, asset_pattern) \
+             VALUES ('Launcher', '', 'palchrb/vibb-launcher', 'kids-launcher-mdm.apk')",
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Launcher', 'me.vibb.launcher', 'someone/fork')",
+        ];
+        for insert in hand_made {
+            let app = crate::tests::TestApp::new().await;
+            let id: i64 = sqlx::query_scalar(&format!("{insert} RETURNING id"))
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+            let before = all_rows(&app.db).await;
+            for _ in 0..2 {
+                assert_eq!(
+                    seed_launcher_row(&app.db, &fork_config(&[])).await.unwrap(),
+                    LauncherSeed::HandMade(id, "Launcher".to_string()),
+                    "{insert}"
+                );
+            }
+            ensure_launcher_row(&app.state).await;
+            let after = all_rows(&app.db).await;
+            assert_eq!(after.len(), 1, "{insert}");
+            assert!(!after[0].is_launcher, "{insert}");
+            assert_eq!(
+                after[0].include_prereleases, before[0].include_prereleases,
+                "{insert}"
+            );
+        }
+
+        // The music app in the same repo, an app elsewhere, and a launcher-looking row in another
+        // repo without the launcher's package: the launcher's row is made.
+        let app = crate::tests::TestApp::new().await;
+        sqlx::query(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, asset_pattern, \
+             release_tag_prefix) VALUES ('Vibb music', 'me.vibb.music', 'palchrb/vibb-launcher', \
+             'vibb-music.apk', 'music-v'), ('Element', '', 'element-hq/element-x-android', NULL, \
+             NULL), ('Fork', '', 'someone/fork', 'kids-launcher-mdm.apk', 'launcher-v')",
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+        assert!(matches!(
+            seed_launcher_row(&app.db, &fork_config(&[])).await.unwrap(),
+            LauncherSeed::Created { .. }
+        ));
+        assert_eq!(all_rows(&app.db).await.len(), 4);
+    }
+
+    /// `LAUNCHER_APK_URL` on another GitHub repo: the row watches that repo. Not a GitHub
+    /// releases URL: the default repo (`derived` false, which `ensure_launcher_row` logs).
+    #[tokio::test]
+    async fn the_row_watches_the_repo_of_launcher_apk_url() {
+        let app = crate::tests::TestApp::new().await;
+        let config = fork_config(&[(
+            "LAUNCHER_APK_URL",
+            "https://github.com/someone/my-fork/releases/latest/download/kids-launcher-mdm.apk",
+        )]);
+        assert!(matches!(
+            seed_launcher_row(&app.db, &config).await.unwrap(),
+            LauncherSeed::Created { ref repo, derived: true, .. } if repo == "someone/my-fork"
+        ));
+        assert_eq!(all_rows(&app.db).await[0].github_repo, "someone/my-fork");
+
+        let app = crate::tests::TestApp::new().await;
+        let config = fork_config(&[("LAUNCHER_APK_URL", "https://example.org/launcher.apk")]);
+        assert!(matches!(
+            seed_launcher_row(&app.db, &config).await.unwrap(),
+            LauncherSeed::Created { ref repo, derived: false, .. } if repo == "palchrb/vibb-launcher"
+        ));
+        ensure_launcher_row(&app.state).await;
+        assert_eq!(all_rows(&app.db).await.len(), 1);
+    }
+
+    /// A database error (here: no table) is an `Err` that `ensure_launcher_row` logs - nothing
+    /// panics, the server starts.
+    #[tokio::test]
+    async fn a_database_error_does_not_stop_the_start() {
+        let app = crate::tests::TestApp::new().await;
+        sqlx::query("ALTER TABLE tracked_apps RENAME TO tracked_apps_gone")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        assert!(seed_launcher_row(&app.db, &fork_config(&[])).await.is_err());
+        ensure_launcher_row(&app.state).await;
+    }
+
+    /// The created row, as stored, picks only the newest stable launcher release - never a newer
+    /// `music-v*` or `server-v*` release, even one carrying a `kids-launcher-mdm.apk`, nor a
+    /// launcher RC.
+    #[tokio::test]
+    async fn the_created_row_takes_only_stable_launcher_releases() {
+        let app = crate::tests::TestApp::new().await;
+        seed_launcher_row(&app.db, &fork_config(&[])).await.unwrap();
+        let row = all_rows(&app.db).await.remove(0);
+        let mut releases = vec![
+            release("server-v0.26.0", false, &[(30, "kids-launcher-mdm.apk")]),
+            release("music-v0.2.0", false, &[(31, "kids-launcher-mdm.apk")]),
+            release("music-v0.1.0", false, &[(21, "vibb-music.apk")]),
+        ];
+        releases.extend(monorepo());
+        let (r, a) = newest_matching_release(
+            releases,
+            row.include_prereleases,
+            &AssetFilter::parse(row.asset_pattern.as_deref()).unwrap(),
+            row.release_tag_prefix.as_deref(),
+        )
+        .unwrap();
+        assert_eq!((r.tag_name.as_str(), a.id), ("launcher-v0.30.0", 4));
+        for tag in ["server-v0.26.0", "music-v0.2.0", "music-v0.1.0"] {
+            assert!(!release_allowed(tag, row.release_tag_prefix.as_deref()));
+        }
     }
 }
