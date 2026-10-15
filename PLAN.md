@@ -518,6 +518,15 @@ findings, merge to `main`, full suite once.
   check that nothing else changes the tabs' widths between pages). Verify with the headless browser
   at a narrow width on a short and a long page. Approved 2026-10-15.
 
+- **The PWA's tab bar sits too low on an iPhone** (the user, 2026-10-15, screenshot of the
+  installed PWA): the labels end right at the screen's bottom edge, on top of the home indicator,
+  and are hard to tap. Cause: `partials/head.html`'s viewport meta has no `viewport-fit=cover`, so
+  `env(safe-area-inset-bottom)` is 0 and `.tab-bar`'s bottom padding never grows. Fix: add
+  `viewport-fit=cover`, then make sure every edge that touches the screen takes its inset (the
+  top of the page under the status bar and the notch, the sides in landscape, the tab bar's
+  bottom), and give the tabs a little more room above the home indicator. Check in a WebKit
+  browser with a simulated inset and on the user's iPhone. Approved 2026-10-15.
+
 ### Before stable `music-v0.4.0`
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
