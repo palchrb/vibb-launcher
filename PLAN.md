@@ -485,6 +485,77 @@ before features. PRs in order (S = server, L = launcher, ↑ = upstreamable):
 Environment notes: no KVM here, so no emulator in this sandbox; the server
 builds (`cargo build` OK, 0 tests). Android needs JDK 17, SDK 36, AGP 8.13.
 
+## Fix backlog
+
+The running list of fixes and small follow-ups, kept up to date as items come in and are
+done. Process for each batch: design note where needed, QA, implementation, code QA, fix all
+findings, merge to `main`, full suite once.
+
+### Approved for the next fix batch
+
+- **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
+  sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
+  touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
+  `dispatchTouchEvent`, in screen coordinates). Approved 2026-10-14.
+- **The music app syncs after its own update** (found 2026-10-15 on the emulator): `music/` has
+  no `MY_PACKAGE_REPLACED` receiver, and the launcher nudges (`BRIDGE_CHANGED`) only when the
+  managed config or the library changes. A freshly updated music app sends no report until
+  something else happens, so Device › Music keeps the old app's report ("Library: Update
+  waiting", no "Music downloads", the older-phone warning). Fix: `Sync.nudge` on
+  `MY_PACKAGE_REPLACED` in the music app, and/or the launcher nudges after a music-package
+  install succeeds. Approved 2026-10-15.
+- **"Update Vibb One and the music app" warning** (`music::older_phone`): it fires on the music
+  app's report alone but names the launcher too. Name only what is actually old ("Update the
+  music app" when the launcher is new enough). Approved 2026-10-15.
+- **Nudge phones on a new catalog release**: today a phone sees a new release only at its next
+  sync (≤ 30 min backstop, or "Sync now"). Approved with the item above, 2026-10-15.
+
+### Before stable `music-v0.4.0`
+
+- **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
+  after our resume; the launcher's HOLD/RELEASE are right).
+  `docs/testing/2026-10-14-emulator-recheck.md`.
+
+### Parked
+
+- **Spotify DNS capture** (design 26c §6.2): replace the provisional `spotify_hosts.json` (three
+  byte-identical copies) and the six constants with the real host set, from a real Premium login
+  (an emulator `-tcpdump` capture, or the Jelly Star's DNS log). Until then a missing host shows as
+  a blocked request in the DNS log.
+- **§6l part B and the 26c QA checklist** on the Jelly Star with the real account (the user's).
+- **Emulator re-check leftovers**: R2 the debug proxy stalls after a seek (debug only); R3 no
+  now-playing bar after a list→context flip; R4 the VPN session name and launcher notifications
+  in English before the language arrives from the server. Not yet checked (time-box): Home in en
+  with 4 columns, the phone book, the keypad after a font-scale change, the time-rule
+  "Til … p.m.", the PWA's About row, a VoIP ring while paused.
+- **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
+  verification-metadata entries.
+
+### Asked for, scope not settled yet
+
+- **PWA small things**: (1) a switch in the off state loses its knob and shows as a grey box - the
+  knob should show on the left, light and dark; (2) "add an existing family contact" to a phone
+  (the server already keeps one address book per number); (3) every `<details>` confirm
+  (Remove Contact… and the rest) gets a clear Cancel that closes it.
+- **`PHONE_SERVER_URL` in `.env`**: the phones' server address as an env default; the DB value
+  (Phone Setup) wins when set, the page says "from .env", a startup warning when it isn't https.
+- **Wi-Fi in Phone Setup**, one of: (A) remember the Wi-Fi for the setup QR (write-only like the
+  Tailscale key, left out of backups) - small; or (B) push the family's Wi-Fi networks to every
+  phone through the policy - server, launcher and contract, larger. Waiting for the choice.
+
+### Tooling and docs
+
+- **Emulator AVD "jellystar"**: the "Nexus S" profile (no display cutout) at 480×854 @240 instead
+  of the Pixel 7 profile; make it the default in `docs/testing/emulator.md`. Check the real
+  Jelly Star's `wm density` first (the docs assume 240).
+- **Emulator speed**: a lighter image (Android 16 ATD / google_apis) for most checks, and a
+  `systemd-run --user --scope -p MemoryHigh=4G -p MemoryMax=5G` around the emulator.
+
+### Done (not released yet)
+
+- The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
+  `server-v*`).
+
 ## Open questions
 
 - **Full Tailscale for the kid** (wanted: Immich and other tailnet services
