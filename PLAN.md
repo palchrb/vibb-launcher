@@ -526,6 +526,13 @@ findings, merge to `main`, full suite once.
   top of the page under the status bar and the notch, the sides in landscape, the tab bar's
   bottom), and give the tabs a little more room above the home indicator. Check in a WebKit
   browser with a simulated inset and on the user's iPhone. Approved 2026-10-15.
+  Also (the user, 2026-10-15): after the installed PWA came back from the background, the tab bar was
+  gone altogether until the app was killed and reopened - the known iOS standalone bug where the
+  viewport's height is stale on resume and a `position: fixed; bottom: 0` bar lands below the visible
+  area. Fix with the same change: size the page by the dynamic viewport (`100dvh`, with a `100vh`
+  fallback for iOS 14), and re-read the size on `pageshow`/`visibilitychange`/`resize` if CSS alone
+  isn't enough (a tiny script, no layout jumps, never a scroll to the top). Verify on the user's iPhone:
+  background the app, open the keyboard, rotate, come back.
 
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
