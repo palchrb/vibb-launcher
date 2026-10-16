@@ -661,7 +661,12 @@ findings, merge to `main`, full suite once.
   task snapshot WM shows until the lock's first frame, or from the display's last buffer before the off
   animation. Next: (1) check the Jelly Star with a slow-motion phone camera - an emulator's display may
   behave differently; (2) on the emulator, `dumpsys activity activities` right after a screen-off (which task
-  is top, did Home's dark start land) and `adb shell screenrecord` at the screen-on; (3) design 32 §7's ruled-out
+  is top, did Home's dark start land) and `adb shell screenrecord` at the screen-on; (3) the user's idea - draw the lock while the screen is still on: an app never sees the power key and
+  `ACTION_SCREEN_OFF` came after the off animation in design 32's measurements, but the ~300 ms colour fade is
+  a window in which the display still draws; measure, on the Jelly Star and the emulator, when
+  `PowerManager.isInteractive` turns false (no callback - poll only if cheap), a `DisplayManager.DisplayListener`
+  state change and `ACTION_SCREEN_OFF` arrive relative to the fade's start, and if one comes early enough start
+  the lock then, so it has drawn before the panel goes dark; (4) design 32 §7's ruled-out
   options stay out (no turn-screen-on on the lock, no cover overlay, no accessibility service). Our own call
   screen also gets `finishAndRemoveTask()` and `setRecentsScreenshotEnabled(false)` (a caller's name must
   never show on a lock screen), and the same for our other own-task screens. A design note (design 32b)
