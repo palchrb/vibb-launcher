@@ -618,6 +618,13 @@ findings, merge to `main`, full suite once.
     `clearAppBadge` for the unread count. Also check whether Safari's declarative Web Push (Safari/iOS 18.4)
     fits: Safari shows it without the service worker running, which would make iPhone delivery less fragile;
     the standard push stays for other browsers.
+  - **Delivery health per device** (the user, 2026-10-16: catch pushes that are sent but never shown): each
+    subscription keeps its last push accepted (201), its last receipt and how many accepted pushes have no
+    receipt. Accepted pushes without a receipt for a while (e.g. 3 in a row, or none for a day after one
+    was sent) mark that device "Notifications may not be showing" on the inbox page and as an Attention row,
+    with what to check (added to the Home Screen? notifications allowed for the app? Focus?) and "Send a test"
+    - a visible test push on a tap, never an invisible one. A 410 marks it "Turned off on that device - turn it
+    on again there". The same counts feed phase 2's second channel.
   - **Events** (each switchable on the inbox page): an emergency call made (always on), the parent PIN used
     or locked out, foreign access or a start without Vibb One, offline for X hours; later a new blocked app
     or an extra-time request. Titles only, never message content.
