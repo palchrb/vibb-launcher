@@ -580,6 +580,16 @@ findings, merge to `main`, full suite once.
   needs five checks: give Spotify's CDN pictures a larger per-check share (they are Spotify's own, one GET
   each). Size: ~50 KB a picture. Music app (+ a server constant). Approved 2026-10-16.
 
+- **Touch sounds and vibration on Kid Settings** (the user, 2026-10-16): a row on the child's Settings
+  (swipe left) to turn key/touch sounds on and off, and vibration on touch. Android's switches are
+  `Settings.System.SOUND_EFFECTS_ENABLED` (touch sounds), `HAPTIC_FEEDBACK_ENABLED` (touch vibration) and
+  `DTMF_TONE_WHEN_DIALING` (dial-pad tones) - writable with the WRITE_SETTINGS app-op design 34 P12 already
+  grants (`ClockFormatSetting`; without it the row is read-only and says so). The keyboard's own key sound
+  and vibration are the keyboard app's settings (Gboard's), not Android's - say so, or open nothing. Our own
+  keys (the PIN lock, the phone book) follow the system switches. A Quick controls bit like design 18's
+  sound row (the parent decides whether the row shows); never on the PIN lock. Launcher + the server's
+  switch. Approved 2026-10-16.
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
