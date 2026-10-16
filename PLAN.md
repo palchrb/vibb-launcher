@@ -640,12 +640,23 @@ findings, merge to `main`, full suite once.
   Tailscale key, left out of backups) - small; or (B) push the family's Wi-Fi networks to every
   phone through the policy - server, launcher and contract, larger. Waiting for the choice.
 
-- **Three emergency choices** (the user, 2026-10-16): "Nødsamtale" (the PIN lock's keypad and glance page,
-  the VoIP ring card, the time-rule screen, the phone book's 112 tile) opens a sheet with three large choices
-  instead of "Ringe 112?": Politi 112 (first, largest, red), Ambulanse 113, Brann 110, and Avbryt - one tap
-  calls (the sheet is the confirm). Only for Norway (the SIM's or the network's country +47); elsewhere 112
-  alone. Glyphs for each, Vibb's language, nothing on it opens anything else; `EmergencyCall`'s flow and the
-  `EmergencyDialer` fallback unchanged per number. A mockup first for the order and wording.
+- **A configurable emergency menu** (the user, 2026-10-16): "Nødsamtale" (the PIN lock's keypad and glance
+  page, the VoIP ring card, the time-rule screen, the phone book's 112 tile) calls the phone's emergency
+  number - 112 by default, changeable per phone in the PWA - and, when the parent has added more (each with a
+  name: "Ambulanse 113", "Brann 110", "Legevakt 116 117"), opens a sheet of large choices instead of "Ringe
+  112?", the default first and largest, then Avbryt; one tap calls (the sheet is the confirm). **Only real
+  emergency numbers** (the platform's `isEmergencyNumber` or the launcher's country list) are called past the
+  call rules and the locks; any other number on the menu follows the call rules like a contact (else the menu
+  is a way around the lock) - the PWA says so when one is added. Glyphs, Vibb's language, nothing on the sheet
+  opens anything else; `EmergencyCall`'s flow and the `EmergencyDialer` fallback per number. Crosses the API
+  (the policy's list, both directories in one commit). A mockup first.
+- **Push notifications to the parent** (the user, 2026-10-16): Web Push to the installed PWA (VAPID keys
+  made and kept on the server in `data/keys/`; the payload encrypted end to end, RFC 8291, so Apple's and
+  Google's push services see nothing; iOS 16.4+ for an installed PWA), and optionally a webhook (ntfy, Home
+  Assistant, Matrix). Events, each chosen in the PWA: an emergency call made (always), the parent PIN used or
+  locked out, foreign access or a start without Vibb One, offline for X hours, later a new blocked app or an
+  extra-time request. Titles only, never message content; a tap opens the page that shows it. The service
+  worker gets a push handler only (still no offline caching). A design note first.
 
 ### Tooling and docs
 
