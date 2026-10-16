@@ -512,7 +512,15 @@ findings, merge to `main`, full suite once.
   keeping every other `android` notification untouched. Still to capture: the activity the tap opens
   (`topResumedActivity` while the page shows) - Safety Center lives in the permission controller, which the
   kiosk pins on purpose for permission dialogs; if the tap lands there, the pinned helper exposes Safety
-  Center and its "set a screen lock" path.
+  Center and its "set a screen lock" path. **Confirmed**: the tap opens
+  `com.google.android.permissioncontroller/...safetycenter.ui.SafetyCenterActivity` inside the lock task. Fix
+  plan: (1) cancel `android`'s `safety_center_*` notifications; (2) the pinned permission controller can't be
+  narrowed to its dialogs (lock task pins packages), so Vibb One sends Home to the front when Safety Center (or
+  any permission-controller page that isn't a permission/role request we or an allowed app made) comes up in
+  the kiosk; (3) a safety net: an Android credential set outside a parent window is reported to the parent
+  (Attention, later push) and removed where possible (`resetPasswordWithToken` needs the token, set only in a
+  window - design 24b). Still to test: whether Safety Center's "set a screen lock" reaches Settings' ChooseLock
+  (Settings isn't pinned, so the app block should stop it) or gets through.
 - **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
   sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
   touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
