@@ -601,15 +601,23 @@ findings, merge to `main`, full suite once.
     (the page says how, and whether this device is subscribed); subscribe per browser/device on the inbox
     page; a subscription the push service refuses (404/410) is dropped. The service worker gets a push and a
     click handler (still no offline caching); it posts a receipt when it shows a notification, so the server
-    knows which pushes arrived (shown in the inbox). Apple's guide (the user's link, 2026-10-16:
-    developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers;
-    the page needs JavaScript, so read it in a browser for the design note): permission asked only from a
-    tap, `userVisibleOnly: true`, VAPID (RFC 8292: ES256 JWT, `aud` the push service's origin, `exp` under
-    24 h, `sub` a `mailto:`/`https:` contact), `aes128gcm` (RFC 8291), `Urgency`/`TTL`/`Topic` headers, every
-    push shows a notification (a silent one may cost the permission), the app badge
-    (`navigator.setAppBadge`) for the unread count. Check whether Safari's **declarative Web Push** (Safari
-    18.4/iOS 18.4: a JSON payload Safari shows itself, without the service worker running) fits - it would make
-    delivery on iPhone less fragile; a standard push stays the fallback for other browsers.
+    knows which pushes arrived (shown in the inbox). From Apple's guide (the user pasted it, 2026-10-16:
+    developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers):
+    standard Push/Notifications/Badging APIs and a service worker, iOS 16.4+ Home Screen web apps and macOS
+    Safari 16+, no Apple Developer Program; subscribe from a tap's handler at once; **no invisible push** -
+    show every push at once or Safari revokes the permission; a VAPID key pair; RFC 8030 requests over
+    HTTP/1.1 or 2 with SNI and ALPN to `https://*.push.apple.com` (the server must be allowed to reach it);
+    headers `TTL` (required, positive; stored at most 30 days while the device is away, a limited number),
+    `Authorization` (the VAPID JWT + public key, the key the subscription used; refresh the JWT at most
+    hourly, `exp` at most a day ahead, `sub` a URL or `mailto:`, `aud` the push service's origin),
+    `Content-Encoding` (`aes128gcm`), `Topic` (optional, at most 32 base64url characters, coalesces) and
+    `Urgency` (`high` to deliver at once); payload at most 4 KB; at most 100 unacknowledged requests on an
+    HTTP/1.1 connection. Answers: 201 sent; 410 = the subscription expired (drop it); 400/403/413/429 with a
+    JSON `reason` (BadTtl, BadJwtToken, VapidPkHashMismatch, PayloadTooLarge, TooManyRequests, ...) - log
+    the reason and the `apns-id`; 429/500/503 retry later. The app badge: `navigator.setAppBadge` /
+    `clearAppBadge` for the unread count. Also check whether Safari's declarative Web Push (Safari/iOS 18.4)
+    fits: Safari shows it without the service worker running, which would make iPhone delivery less fragile;
+    the standard push stays for other browsers.
   - **Events** (each switchable on the inbox page): an emergency call made (always on), the parent PIN used
     or locked out, foreign access or a start without Vibb One, offline for X hours; later a new blocked app
     or an extra-time request. Titles only, never message content.
