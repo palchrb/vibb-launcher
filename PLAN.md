@@ -650,6 +650,17 @@ findings, merge to `main`, full suite once.
   with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
   off/on over the PIN lock showed no flash of content (design 32 holds).
 
+- **An old call screen flashes at screen-on** (the user, 2026-10-16, emulator video, found frame by frame):
+  turning the screen on over the PIN lock showed, for one frame (~33 ms), the incoming-call screen "Ringer
+  deg ... Pappa" with Avvis/Svar and the status bar at 08:00 - a stale task snapshot from a call hours earlier
+  (the clock was 13:3x). `InCallActivity` lives in its own task (`taskAffinity` `.call`, `singleTask`,
+  `showWhenLocked`, `turnScreenOn`, `excludeFromRecents`) and ends with `finish()`, which leaves the empty task
+  and its snapshot behind; design 32 says WM shows the task under the lock (its snapshot) until the lock's
+  first frame, and here that was the old call task. Also a privacy leak (a caller's name, on a lock screen).
+  Fix: `finishAndRemoveTask()` when the call screen ends, `setRecentsScreenshotEnabled(false)` on it (no
+  snapshot at all), and the same check for our other own-task screens (`VoipWakeActivity`, the time-rule
+  screen, the boot cover); the smoke test greps the screen-on frames for the call screen. Launcher only.
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
