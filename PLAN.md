@@ -635,6 +635,19 @@ findings, merge to `main`, full suite once.
     is what makes the important ones reliable.
   Approved 2026-10-16 (phase 1).
 
+- **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
+  (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
+  (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
+  transition (Home is already behind the app). Home's window is transparent with `windowShowWallpaper`
+  (`launcherBaseTheme`), so the black is the compositor's: the system wallpaper isn't shown yet during the
+  app-close transition - likely because our Home isn't the recents provider (quickstep/the stock launcher
+  owns the gesture's go-home animation, so Shell runs a generic transition in which the wallpaper becomes
+  visible only once Home is the wallpaper target), or design 32's black stand-ins (Home's black
+  `TaskDescription`, `setRecentsScreenshotEnabled(false)`). Find which on the emulator (both navigation
+  modes, kiosk on and off, a photo and a colour wallpaper) and fix without bringing design 32's lock flash
+  back - e.g. Home draws its own `WallpaperGround` copy under the grid while a transition runs (the store
+  already holds the one decoded photo). Launcher only.
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
