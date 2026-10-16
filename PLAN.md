@@ -646,7 +646,9 @@ findings, merge to `main`, full suite once.
   `TaskDescription`, `setRecentsScreenshotEnabled(false)`). Find which on the emulator (both navigation
   modes, kiosk on and off, a photo and a colour wallpaper) and fix without bringing design 32's lock flash
   back - e.g. Home draws its own `WallpaperGround` copy under the grid while a transition runs (the store
-  already holds the one decoded photo). Launcher only.
+  already holds the one decoded photo). Launcher only. A second video (2026-10-16) shows the same black frame
+  with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
+  off/on over the PIN lock showed no flash of content (design 32 holds).
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
