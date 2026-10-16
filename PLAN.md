@@ -656,7 +656,12 @@ findings, merge to `main`, full suite once.
   Assistant, Matrix). Events, each chosen in the PWA: an emergency call made (always), the parent PIN used or
   locked out, foreign access or a start without Vibb One, offline for X hours, later a new blocked app or an
   extra-time request. Titles only, never message content; a tap opens the page that shows it. The service
-  worker gets a push handler only (still no offline caching). A design note first.
+  worker gets a push handler only (still no offline caching). **Web Push alone isn't trusted for what
+  matters** (the user: no delivery guarantee - iOS drops subscriptions silently, Focus, battery saving): the
+  PWA's service worker posts a receipt when it shows a notification; an important event without a receipt
+  within ~2 minutes goes again through a second channel - ntfy (self-hosted or ntfy.sh, top priority) or
+  Matrix through a webhook - and an emergency call goes to both at once. Every event also stays in the PWA
+  (Attention/Today) whatever the push did. A design note first.
 
 ### Tooling and docs
 
