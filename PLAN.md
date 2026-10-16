@@ -715,6 +715,17 @@ findings, merge to `main`, full suite once.
   code minus 1) with the running build's versionCode; equal or older = installed at once (no download, no
   pending). Launcher only (+ a test).
 
+- **A time rule shows as one calm card on the PIN lock** (the user, 2026-10-16: "det er beste løsning og sikkert
+  enkelt å lage"): while a time rule locks (school first; bedtime, custom and the used-up budget the same way
+  unless the user says otherwise), the lock's glance page shows **only** a simple card - the kind's glyph and
+  name and its end, "Skolemodus til 14:30" (`ClockFormat.formatUntil`, the end only when it is certain, as the
+  time-rule screen's) - instead of the notification rows and the music tile; the clock, the date, "Lås opp" and
+  "Nødsamtale" stay. Unlocking still leads to today's time-rule screen (the one calm card of design 34 P6) with
+  what the rule allows (phone book, exempt apps). The card follows the lock re-checks (`TimeRulesRuntime`,
+  the boundary alarm) and goes when the rule ends or is lifted. Open for the design note: whether a missed call
+  from an allowed contact still shows during a rule that allows calls, and whether music shows under a budget
+  lock (music plays on then). Launcher only; a mockup first, then the usual process.
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
