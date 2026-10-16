@@ -650,19 +650,22 @@ findings, merge to `main`, full suite once.
   with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
   off/on over the PIN lock showed no flash of content (design 32 holds).
 
-- **An old call screen flashes at screen-on** (the user, 2026-10-16, emulator video, found frame by frame):
-  turning the screen on over the PIN lock showed, for one frame (~33 ms), the incoming-call screen "Ringer
-  deg ... Pappa" with Avvis/Svar and the status bar at 08:00 - a stale task snapshot from a call hours earlier
-  (the clock was 13:3x). `InCallActivity` lives in its own task (`taskAffinity` `.call`, `singleTask`,
-  `showWhenLocked`, `turnScreenOn`, `excludeFromRecents`) and ends with `finish()`, which leaves the empty task
-  and its snapshot behind; design 32 says WM shows the task under the lock (its snapshot) until the lock's
-  first frame, and here that was the old call task. Also a privacy leak (a caller's name, on a lock screen).
-  Fix: `finishAndRemoveTask()` when the call screen ends, `setRecentsScreenshotEnabled(false)` on it (no
-  snapshot at all) - design 32's residual: its lock-up puts Home's black ground under the lock, but one of
-  our own show-when-locked tasks above Home still shows; first check whether the call screen was still alive
-  (`dumpsys activity activities | grep -i InCallActivity` with no call - "Ringer deg" hints it hung in the
-  ringing state since 08:00, which `OngoingCalls.reconcile` should have cleared) -, and the same check for our other own-task screens (`VoipWakeActivity`, the time-rule
-  screen, the boot cover); the smoke test greps the screen-on frames for the call screen. Launcher only.
+- **The last app still flashes for one frame at screen-on** (design 32's lock flash isn't gone; the user,
+  2026-10-16, three emulator videos read frame by frame): turning the screen on over the PIN lock shows, for
+  exactly one frame (~33 ms) before the lock, a stale picture of what was in front before the screen went off
+  - an incoming-call screen "Ringer deg ... Pappa" with its status bar at 08:00 (the clock 13:3x; no
+  `InCallActivity` alive afterwards), and after the parent opened Android Settings › Developer options during a
+  pause, that page with its status bar at 14:18 on every power cycle (the lock at 14:23). Between, power
+  cycles with Home or our own screens in front were clean. So design 32's dark lock-up (Home first, then the
+  lock) doesn't keep the previous app's picture from the first frame; the old frame comes either from the
+  task snapshot WM shows until the lock's first frame, or from the display's last buffer before the off
+  animation. Next: (1) check the Jelly Star with a slow-motion phone camera - an emulator's display may
+  behave differently; (2) on the emulator, `dumpsys activity activities` right after a screen-off (which task
+  is top, did Home's dark start land) and `adb shell screenrecord` at the screen-on; (3) design 32 §7's ruled-out
+  options stay out (no turn-screen-on on the lock, no cover overlay, no accessibility service). Our own call
+  screen also gets `finishAndRemoveTask()` and `setRecentsScreenshotEnabled(false)` (a caller's name must
+  never show on a lock screen), and the same for our other own-task screens. A design note (design 32b)
+  before code.
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
