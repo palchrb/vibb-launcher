@@ -570,6 +570,16 @@ findings, merge to `main`, full suite once.
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
+- **Spotify track pictures on the phone before they play** (the user, 2026-10-16: "gir en smidigere
+  opplevelse"): the phone's art want set (`logic/EpisodeArt.kt` `wantedArt`) is the now-playing window (±2)
+  plus the keep sets and Nytt - and a Spotify entry keeps nothing, so a track's picture is fetched only when
+  it comes near the current item, and the carousel and lock screen show the entry's cover first. Add, for a
+  Spotify list-mode entry, the pictures of the next N items from its resume place (and the first N of an
+  unstarted one) to `later` (Wi-Fi, or the downloads switch: the audio's gate, never roaming), within
+  `WANT_ART_MAX`. On the server the art pass takes 20 a check (`ART_PER_CHECK`), so a 100-track playlist
+  needs five checks: give Spotify's CDN pictures a larger per-check share (they are Spotify's own, one GET
+  each). Size: ~50 KB a picture. Music app (+ a server constant). Approved 2026-10-16.
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
