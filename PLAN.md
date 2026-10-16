@@ -493,6 +493,17 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
+- **HIGH - a "set a screen lock" notification opens screen-lock settings in the kiosk** (the user, 2026-10-16,
+  emulator; kiosk on, the notification filter on, the app block presumably on, no pause running): the nag
+  stayed in the shade and its tap opened Android's screen-lock settings. A child who sets an Android PIN there
+  turns Vibb One's PIN lock off (`inactive = android_credential`) - a way around the parent's lock. Find: (1) who
+  posts it and how (package, channel, flags: `dumpsys notification --noredact`) - an essential package the rule
+  never touches (`android`, SystemUI), non-clearable, or no listener access; (2) which activity opens (`dumpsys
+  activity activities` while it shows) - most likely through a kiosk helper we pin on purpose (the permission
+  controller / Safety Center, `lockTaskHelpers`), which then starts Settings' ChooseLock inside the lock task,
+  or the app-block switch off. Fix both: the nag never reaches the shade (or is cancelled however it is posted),
+  and no pinned helper can lead to screen-lock settings (screen-lock pages blocked like Settings; consider what
+  else that helper exposes). Device check on the Jelly Star too. First in the next batch.
 - **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
   sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
   touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
