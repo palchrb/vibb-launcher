@@ -658,7 +658,10 @@ findings, merge to `main`, full suite once.
   and its snapshot behind; design 32 says WM shows the task under the lock (its snapshot) until the lock's
   first frame, and here that was the old call task. Also a privacy leak (a caller's name, on a lock screen).
   Fix: `finishAndRemoveTask()` when the call screen ends, `setRecentsScreenshotEnabled(false)` on it (no
-  snapshot at all), and the same check for our other own-task screens (`VoipWakeActivity`, the time-rule
+  snapshot at all) - design 32's residual: its lock-up puts Home's black ground under the lock, but one of
+  our own show-when-locked tasks above Home still shows; first check whether the call screen was still alive
+  (`dumpsys activity activities | grep -i InCallActivity` with no call - "Ringer deg" hints it hung in the
+  ringing state since 08:00, which `OngoingCalls.reconcile` should have cleared) -, and the same check for our other own-task screens (`VoipWakeActivity`, the time-rule
   screen, the boot cover); the smoke test greps the screen-on frames for the call screen. Launcher only.
 
 ### Before stable `music-v0.4.0`
