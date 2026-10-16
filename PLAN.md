@@ -698,6 +698,11 @@ findings, merge to `main`, full suite once.
   opens anything else; `EmergencyCall`'s flow and the `EmergencyDialer` fallback per number. Crosses the API
   (the policy's list, both directories in one commit). A mockup first.
 
+- **A photo of the child for each phone in the PWA** (the user, 2026-10-16, low priority): the Devices list,
+  the phone's summary header and the Locate switcher show a coloured disc with the first letter; let the
+  parent upload a photo per phone instead (`photos::process` with `Shape::Square`, like contact photos - EXIF
+  and GPS gone, ≤ 512 px - its own `photos::Store` and backups), the disc as before without one. Server only.
+
 ### Tooling and docs
 
 - **Emulator AVD "jellystar"**: the "Nexus S" profile (no display cutout) at 480×854 @240 instead
