@@ -660,7 +660,12 @@ findings, merge to `main`, full suite once.
   lock) doesn't keep the previous app's picture from the first frame; the old frame comes either from the
   task snapshot WM shows until the lock's first frame, or from the display's last buffer before the off
   animation. Next: (1) check the Jelly Star with a slow-motion phone camera - an emulator's display may
-  behave differently; (2) on the emulator, `dumpsys activity activities` right after a screen-off (which task
+  behave differently; (1b) the emulator's own check, 2026-10-16: `dumpsys activity activities` right after a
+  flashing cycle had the order right (PinLockActivity top, Home directly under it, Settings further down and on
+  its search page, not Developer options) and the lock-up logged `NONE` (the lock already on top), so no task
+  under the lock holds the flashed picture - likely the emulator's host-GPU frame buffer (a stale frame from
+  hours before); test with `-gpu swiftshader_indirect` (a flash that goes away = the emulator, not the phone);
+  `adb shell screenrecord` can't follow a screen-off (INVALID_LAYER_STACK, an unusable file); (2) on the emulator, `dumpsys activity activities` right after a screen-off (which task
   is top, did Home's dark start land) and `adb shell screenrecord` at the screen-on; (3) the user's idea - draw the lock while the screen is still on: an app never sees the power key and
   `ACTION_SCREEN_OFF` came after the off animation in design 32's measurements, but the ~300 ms colour fade is
   a window in which the display still draws; measure, on the Jelly Star and the emulator, when
