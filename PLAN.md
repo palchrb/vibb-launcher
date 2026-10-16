@@ -504,6 +504,15 @@ findings, merge to `main`, full suite once.
   or the app-block switch off. Fix both: the nag never reaches the shade (or is cancelled however it is posted),
   and no pinned helper can lead to screen-lock settings (screen-lock pages blocked like Settings; consider what
   else that helper exposes). Device check on the Jelly Star too. First in the next batch.
+  Found 2026-10-16 (`dumpsys notification --noredact`): the nag is `pkg=android`, channel
+  `safety_center_recommendation` (Safety Center's "Advarsler", group `safety_center_channels`), tag
+  "AndroidLockScreen / NoScreenLockIssue", flags only CAN_COLORIZE (clearable); our listener is bound. So the rule
+  left it alone because `android` is an essential package (`nagVerdict`); fix: cancel `android`'s
+  `safety_center_*` channels (recommendation, information; decide on `safety_center_critical_warning`) while
+  keeping every other `android` notification untouched. Still to capture: the activity the tap opens
+  (`topResumedActivity` while the page shows) - Safety Center lives in the permission controller, which the
+  kiosk pins on purpose for permission dialogs; if the tap lands there, the pinned helper exposes Safety
+  Center and its "set a screen lock" path.
 - **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
   sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
   touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
