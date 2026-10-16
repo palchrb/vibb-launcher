@@ -590,6 +590,28 @@ findings, merge to `main`, full suite once.
   sound row (the parent decides whether the row shows); never on the PIN lock. Launcher + the server's
   switch. Approved 2026-10-16.
 
+- **Notifications to the parent, phase 1: Web Push and an inbox in the PWA** (the user, 2026-10-16: "la oss
+  begynne med web push", and "the PWA needs a clear place where we see notifications"):
+  - **An inbox**: one clear place in the PWA - "Notifications" (a bell in the large-title bar of every tab
+    page with an unread count, and its own page) - listing every event newest first, per phone, read/unread,
+    each opening the page that shows it. Events are stored on the server (kept e.g. 90 days), so nothing
+    depends on a push arriving. Mark read when opened, "Mark all as read".
+  - **Web Push** to the installed PWA: VAPID keys made and kept in `data/keys/`, the payload encrypted end to
+    end (RFC 8291) so Apple's and Google's services see nothing; iOS 16.4+ only once added to the Home Screen
+    (the page says how, and whether this device is subscribed); subscribe per browser/device on the inbox
+    page; a subscription the push service refuses (404/410) is dropped. The service worker gets a push and a
+    click handler (still no offline caching); it posts a receipt when it shows a notification, so the server
+    knows which pushes arrived (shown in the inbox).
+  - **Events** (each switchable on the inbox page): an emergency call made (always on), the parent PIN used
+    or locked out, foreign access or a start without Vibb One, offline for X hours; later a new blocked app
+    or an extra-time request. Titles only, never message content.
+  - A design note first (design QA, then the usual process).
+  - **Phase 2, later**: on no receipt for an important event within ~2 minutes, a second channel - ntfy
+    (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
+    once. Web Push on Safari can't break through Focus and iOS may drop a subscription silently, so phase 2
+    is what makes the important ones reliable.
+  Approved 2026-10-16 (phase 1).
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
@@ -650,18 +672,6 @@ findings, merge to `main`, full suite once.
   is a way around the lock) - the PWA says so when one is added. Glyphs, Vibb's language, nothing on the sheet
   opens anything else; `EmergencyCall`'s flow and the `EmergencyDialer` fallback per number. Crosses the API
   (the policy's list, both directories in one commit). A mockup first.
-- **Push notifications to the parent** (the user, 2026-10-16): Web Push to the installed PWA (VAPID keys
-  made and kept on the server in `data/keys/`; the payload encrypted end to end, RFC 8291, so Apple's and
-  Google's push services see nothing; iOS 16.4+ for an installed PWA), and optionally a webhook (ntfy, Home
-  Assistant, Matrix). Events, each chosen in the PWA: an emergency call made (always), the parent PIN used or
-  locked out, foreign access or a start without Vibb One, offline for X hours, later a new blocked app or an
-  extra-time request. Titles only, never message content; a tap opens the page that shows it. The service
-  worker gets a push handler only (still no offline caching). **Web Push alone isn't trusted for what
-  matters** (the user: no delivery guarantee - iOS drops subscriptions silently, Focus, battery saving): the
-  PWA's service worker posts a receipt when it shows a notification; an important event without a receipt
-  within ~2 minutes goes again through a second channel - ntfy (self-hosted or ntfy.sh, top priority) or
-  Matrix through a webhook - and an emergency call goes to both at once. Every event also stays in the PWA
-  (Attention/Today) whatever the push did. A design note first.
 
 ### Tooling and docs
 
