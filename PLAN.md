@@ -601,7 +601,15 @@ findings, merge to `main`, full suite once.
     (the page says how, and whether this device is subscribed); subscribe per browser/device on the inbox
     page; a subscription the push service refuses (404/410) is dropped. The service worker gets a push and a
     click handler (still no offline caching); it posts a receipt when it shows a notification, so the server
-    knows which pushes arrived (shown in the inbox).
+    knows which pushes arrived (shown in the inbox). Apple's guide (the user's link, 2026-10-16:
+    developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers;
+    the page needs JavaScript, so read it in a browser for the design note): permission asked only from a
+    tap, `userVisibleOnly: true`, VAPID (RFC 8292: ES256 JWT, `aud` the push service's origin, `exp` under
+    24 h, `sub` a `mailto:`/`https:` contact), `aes128gcm` (RFC 8291), `Urgency`/`TTL`/`Topic` headers, every
+    push shows a notification (a silent one may cost the permission), the app badge
+    (`navigator.setAppBadge`) for the unread count. Check whether Safari's **declarative Web Push** (Safari
+    18.4/iOS 18.4: a JSON payload Safari shows itself, without the service worker running) fits - it would make
+    delivery on iPhone less fragile; a standard push stays the fallback for other browsers.
   - **Events** (each switchable on the inbox page): an emergency call made (always on), the parent PIN used
     or locked out, foreign access or a start without Vibb One, offline for X hours; later a new blocked app
     or an extra-time request. Titles only, never message content.
