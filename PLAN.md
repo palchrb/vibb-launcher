@@ -493,7 +493,7 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
-- **HIGH - a "set a screen lock" notification opens screen-lock settings in the kiosk** (the user, 2026-10-16,
+- **Medium - a "set a screen lock" notification opens Safety Center in the kiosk** (was High until tested: no lock can be set) (the user, 2026-10-16,
   emulator; kiosk on, the notification filter on, the app block presumably on, no pause running): the nag
   stayed in the shade and its tap opened Android's screen-lock settings. A child who sets an Android PIN there
   turns Vibb One's PIN lock off (`inactive = android_credential`) - a way around the parent's lock. Find: (1) who
@@ -519,8 +519,9 @@ findings, merge to `main`, full suite once.
   any permission-controller page that isn't a permission/role request we or an allowed app made) comes up in
   the kiosk; (3) a safety net: an Android credential set outside a parent window is reported to the parent
   (Attention, later push) and removed where possible (`resetPasswordWithToken` needs the token, set only in a
-  window - design 24b). Still to test: whether Safety Center's "set a screen lock" reaches Settings' ChooseLock
-  (Settings isn't pinned, so the app block should stop it) or gets through.
+  window - design 24b). Tested 2026-10-16: Safety Center's "set a screen lock" does **not** get through - the
+  kiosk's app block stops Settings' ChooseLock, so no lock can be set; what remains is the nag and Safety Center
+  showing in the kiosk (Medium now, not High): (1) and (2) stay, (3) is a belt for later.
 - **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
   sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
   touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
