@@ -642,7 +642,8 @@ findings, merge to `main`, full suite once.
   collaborator (list mode), the same playlist plays fine. So the list path works with the real SDK and the
   context path doesn't. Suspects: the `context_uri` start (no live track yet: from Spotify's start, else
   `offset.uri`), how its answer maps to a problem (a 403/404 from the play call landing as `UNREACHABLE`), or
-  Spotify's development-mode limits on playlists the app may not read (Spotify-owned/editorial ones). Find it
+  Spotify's development-mode limits on playlists the app may not read (Spotify-owned/editorial ones). Rule out a host
+  the web player refuses (a debug build counts them) - list mode works with the same list. Find it
   with the debug music app on the emulator (`spotifyLog`, the state recorder) and the real account; fix with a
   test that replays the recorded answer. Must be fixed before stable music-v0.4.0.
 
@@ -652,10 +653,11 @@ findings, merge to `main`, full suite once.
 
 ### Parked
 
-- **Spotify DNS capture** (design 26c §6.2): replace the provisional `spotify_hosts.json` (three
-  byte-identical copies) and the six constants with the real host set, from a real Premium login
-  (an emulator `-tcpdump` capture, or the Jelly Star's DNS log). Until then a missing host shows as
-  a blocked request in the DNS log.
+- **The Spotify host list is good enough** (the user, 2026-10-16: list-mode playback works on the emulator
+  with every blocklist on, so the DNS capture is dropped): mark it final in one commit - the "PROVISIONAL"
+  wording out of the three `spotify_hosts.json` copies, the six constants' doc comments, design 26c and the
+  CLAUDE.md files. If a host ever turns out missing, it shows as a blocked request in the phone's DNS log
+  (or the web player's refused count in a debug build) and is a one-line fix in all three copies.
 - **§6l part B and the 26c QA checklist** on the Jelly Star with the real account (the user's).
 - **Emulator re-check leftovers**: R2 the debug proxy stalls after a seek (debug only); R3 no
   now-playing bar after a list→context flip; R4 the VPN session name and launcher notifications
