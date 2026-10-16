@@ -697,6 +697,15 @@ findings, merge to `main`, full suite once.
   never show on a lock screen), and the same for our other own-task screens. A design note (design 32b)
   before code.
 
+- **"Update waiting" for the version the phone already runs** (the user, 2026-10-16: the release launcher
+  0.26.0, installed by setup, shows "Update waiting 0.26.0@641676265" on Advanced › Updates): the launcher only
+  records its own installs (`TrackedAppUpdateState`), so after a QR/adb install it takes the catalog's current
+  release as new, downloads it and waits for the night window, where `pendingApkCheck` finds the same versionCode
+  and records it installed - one wasted download and a wrong line in the PWA until then. Fix: before
+  downloading its own update, compare the release tag's version (`launcher-vX.Y.Z` -> X.Y.Z; an `-rc.N` -> its
+  code minus 1) with the running build's versionCode; equal or older = installed at once (no download, no
+  pending). Launcher only (+ a test).
+
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
