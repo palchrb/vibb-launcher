@@ -640,6 +640,13 @@ findings, merge to `main`, full suite once.
   Tailscale key, left out of backups) - small; or (B) push the family's Wi-Fi networks to every
   phone through the policy - server, launcher and contract, larger. Waiting for the choice.
 
+- **Three emergency choices** (the user, 2026-10-16): "Nødsamtale" (the PIN lock's keypad and glance page,
+  the VoIP ring card, the time-rule screen, the phone book's 112 tile) opens a sheet with three large choices
+  instead of "Ringe 112?": Politi 112 (first, largest, red), Ambulanse 113, Brann 110, and Avbryt - one tap
+  calls (the sheet is the confirm). Only for Norway (the SIM's or the network's country +47); elsewhere 112
+  alone. Glyphs for each, Vibb's language, nothing on it opens anything else; `EmergencyCall`'s flow and the
+  `EmergencyDialer` fallback unchanged per number. A mockup first for the order and wording.
+
 ### Tooling and docs
 
 - **Emulator AVD "jellystar"**: the "Nexus S" profile (no display cutout) at 480×854 @240 instead
