@@ -571,6 +571,15 @@ findings, merge to `main`, full suite once.
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
 ### Before stable `music-v0.4.0`
+- **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
+  music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
+  "context"`) shows "Trenger internett" at once and never plays, while NRK and the rest play; made a
+  collaborator (list mode), the same playlist plays fine. So the list path works with the real SDK and the
+  context path doesn't. Suspects: the `context_uri` start (no live track yet: from Spotify's start, else
+  `offset.uri`), how its answer maps to a problem (a 403/404 from the play call landing as `UNREACHABLE`), or
+  Spotify's development-mode limits on playlists the app may not read (Spotify-owned/editorial ones). Find it
+  with the debug music app on the emulator (`spotifyLog`, the state recorder) and the real account; fix with a
+  test that replays the recorded answer. Must be fixed before stable music-v0.4.0.
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
   after our resume; the launcher's HOLD/RELEASE are right).
