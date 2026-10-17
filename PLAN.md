@@ -723,7 +723,9 @@ findings, merge to `main`, full suite once.
   only when it is certain, as on the time-rule screen). Unlocking still leads to today's time-rule screen
   (design 34 P6) with what the rule allows. The card is part of `glanceFit` (it may push rows to "+ N varsler
   til" on a small screen; it never scrolls), follows the lock re-checks (`TimeRulesRuntime`, the boundary
-  alarm) and goes when the rule ends or is lifted. Not tappable, or a tap = "Lås opp" (the design note decides).
+  alarm) and goes when the rule ends or is lifted. Decided by the user (2026-10-17): for **every** lock
+  reason (school, bedtime, custom rules and the used-up screen time), and the card is **information only** (no
+  tap action; TalkBack reads it as text).
   Launcher only; a mockup first, then the usual process.
 
 ### Before stable `music-v0.4.0`
