@@ -583,8 +583,7 @@ findings, merge to `main`, full suite once.
     (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
     once. Web Push on Safari can't break through Focus and iOS may drop a subscription silently, so phase 2
     is what makes the important ones reliable.
-  Approved 2026-10-16 (phase 1). Design 35; step 1 (events, the inbox, the bell, the battery wire) built on branch
-  `notif-s1` (2026-10-18), awaiting code QA; steps 2 (Web Push) and 3 (launcher) to come.
+  Approved 2026-10-16 (phase 1).
 
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
