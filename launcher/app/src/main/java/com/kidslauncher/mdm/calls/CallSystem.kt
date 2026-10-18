@@ -207,16 +207,14 @@ object CallPrefs {
      * call - [EmergencyConnects]): the status report's `last_emergency_call_at` (design 35 step 3).
      */
     fun recordEmergencyConnected(context: Context, connectedAtMs: Long) {
-        val start = WindowStart(
-            untilWallMs = System.currentTimeMillis() + CALLBACK_WINDOW_MS,
-            elapsedStartMs = SystemClock.elapsedRealtime(),
-            bootCount = bootCount(context),
+        val (start, at) = emergencyRecord(
+            System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(context), connectedAtMs,
         )
         bootPrefs(context).edit()
             .putLong(EMERGENCY_UNTIL_WALL_MS, start.untilWallMs)
             .putLong(EMERGENCY_ELAPSED_START_MS, start.elapsedStartMs)
             .putInt(EMERGENCY_BOOT, start.bootCount)
-            .putLong(EMERGENCY_CONNECTED_AT_MS, connectedAtMs)
+            .putLong(EMERGENCY_CONNECTED_AT_MS, at)
             .commit()
     }
 
@@ -238,7 +236,7 @@ object CallPrefs {
     /** When the recorded emergency call connected (for the status report only); a record an older
      * build wrote has no connect time and gives its window's start. */
     fun recordedEmergencyAtMs(context: Context): Long? = recordedWindow(context)?.let {
-        bootPrefs(context).getLong(EMERGENCY_CONNECTED_AT_MS, 0).takeIf { at -> at > 0 } ?: (it.untilWallMs - CALLBACK_WINDOW_MS)
+        reportedEmergencyAt(bootPrefs(context).getLong(EMERGENCY_CONNECTED_AT_MS, 0), it.untilWallMs)
     }
 
     private fun bootCount(context: Context): Int = try {

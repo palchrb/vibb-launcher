@@ -13,8 +13,8 @@ class EmergencyConnectsTest {
     private val recorded = mutableListOf<Long>()
     private val connects = EmergencyConnects(unlocked = { unlocked }, requestSync = { syncs++ })
 
-    private fun connected(call: Any, connectTime: Long = 1_000, now: Long = 5_000) =
-        connects.connected(call, connectTime, now) { recorded += it }
+    private fun connected(call: Any, connectTime: Long = 1_000, now: Long = 5_000, creationTime: Long = 0) =
+        connects.connected(call, connectTime, creationTime, now) { recorded += it }
 
     @Test
     fun `a call syncs once over all its connected states, with one instant`() {
@@ -27,11 +27,32 @@ class EmergencyConnectsTest {
     }
 
     @Test
-    fun `without a connect time the first sighting is the instant`() {
+    fun `without a connect time the creation time, else the first sighting is the instant`() {
         val call = Any()
         connected(call, connectTime = 0, now = 5_000)
         connected(call, connectTime = 4_000, now = 7_000)
         assertEquals(listOf(5_000L, 5_000L), recorded)
+        // Telecom's creation time survives a restart of our process mid-call (a new Call object).
+        connected(Any(), connectTime = 0, creationTime = 800, now = 9_000)
+        connected(Any(), connectTime = 0, creationTime = 800, now = 20_000)
+        assertEquals(listOf(800L, 800L), recorded.takeLast(2))
+    }
+
+    @Test
+    fun `the callback window runs from the last record, the report's instant from the call`() {
+        val connect = 1_000_000L
+        val hangUp = connect + 50 * 60_000L // a 50-minute call
+        val (atConnect, first) = emergencyRecord(connect, 10, 4, connectedAtMs = connect)
+        val (atHangUp, last) = emergencyRecord(hangUp, 3_000_010, 4, connectedAtMs = connect)
+        assertEquals(connect + CALLBACK_WINDOW_MS, atConnect.untilWallMs)
+        assertEquals(hangUp + CALLBACK_WINDOW_MS, atHangUp.untilWallMs) // an hour after the hang-up
+        assertEquals(3_000_010L, atHangUp.elapsedStartMs)
+        assertEquals(4, atHangUp.bootCount)
+        // One value per call in the report, whichever record is stored.
+        assertEquals(connect, reportedEmergencyAt(first, atConnect.untilWallMs))
+        assertEquals(connect, reportedEmergencyAt(last, atHangUp.untilWallMs))
+        // A record an older build wrote (no instant): its window's start, as before.
+        assertEquals(hangUp, reportedEmergencyAt(0, atHangUp.untilWallMs))
     }
 
     @Test
@@ -65,11 +86,20 @@ class EmergencyConnectsTest {
         val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
         val service = sources.walkTopDown().first { it.name == "KidInCallService.kt" }.readText()
         val record = service.substringAfter("private fun recordEmergency(").substringBefore("\n    }\n")
-        assertTrue("emergencyConnects.connected(call, call.details.connectTimeMillis" in record)
+        val prefs = sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText()
+            .substringAfter("fun recordEmergencyConnected(").substringBefore("\n    }\n")
+        assertTrue("emergencyRecord(" in prefs && "System.currentTimeMillis()" in prefs)
+        assertTrue("reportedEmergencyAt(" in sources.walkTopDown().first { it.name == "CallSystem.kt" }.readText())
+        assertTrue("emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis" in record)
         assertTrue("CallPrefs.recordEmergencyConnected(this, it)" in record)
         assertTrue("emergencyConnects.removed(call)" in service.substringAfter("override fun onCallRemoved("))
         assertTrue("unlocked = { CallPolicyStore.userUnlocked(this) }" in service)
-        assertTrue("SyncRunner.request(this, EMERGENCY_SYNC_REASON)" in service)
+        // Called directly and caught: a post could be dropped by onDestroy, a throw would reach the
+        // main thread of the process that runs the in-call UI.
+        val request = service.substringAfter("requestSync = {").substringBefore("\n    )\n")
+        assertTrue("SyncRunner.request(this, EMERGENCY_SYNC_REASON)" in request)
+        assertTrue("handler.post" !in request)
+        assertEquals(1, Regex("""catch \(e: Exception\)""").findAll(request).count())
         assertEquals("emergency_call", EMERGENCY_SYNC_REASON)
     }
 }

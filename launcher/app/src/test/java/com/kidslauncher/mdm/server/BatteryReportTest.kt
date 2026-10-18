@@ -85,7 +85,10 @@ class BatteryReportTest {
         assertTrue("BatteryStatus.watch(this)" in initRest)
         val status = code("BatteryStatus.kt")
         val watch = status.substringAfter("fun watch(app: Context)")
-        assertTrue("registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))" in status)
+        val report = status.substringAfter("fun report(context: Context)").substringBefore("fun watch(")
+        assertTrue("context, null, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED" in report)
+        // A failed read never fails the sync.
+        assertEquals(1, Regex("""catch \(e: Exception\)""").findAll(report).count())
         assertTrue("addAction(Intent.ACTION_BATTERY_LOW)" in watch)
         assertTrue("addAction(Intent.ACTION_BATTERY_OKAY)" in watch)
         assertTrue("ContextCompat.RECEIVER_NOT_EXPORTED" in watch)

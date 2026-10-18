@@ -8,7 +8,8 @@ import java.util.IdentityHashMap
  *
  * [connected] runs at every state change that shows the call connected (active, held and active
  * again, disconnected after connecting): it records the call with the same instant each time - the
- * call's own connect time, else the first time it was seen - so the report's
+ * call's own connect time, else its creation time (both Telecom's, so a restart of our process
+ * mid-call gives the same value), else the first time it was seen - so the report's
  * `last_emergency_call_at` doesn't move between the report sent while the call is on and the next
  * one (the server announces a newer instant as a new emergency call). After the record is
  * committed it asks for one sync per call, so the parent hears of it within seconds; never before
@@ -24,9 +25,12 @@ internal class EmergencyConnects(
 
     private val calls = IdentityHashMap<Any, Seen>()
 
-    /** [connectTimeMs]: `Call.Details.connectTimeMillis` (0 = not known yet); [record] commits it. */
-    fun connected(call: Any, connectTimeMs: Long, nowMs: Long, record: (atMs: Long) -> Unit) {
-        val seen = calls.getOrPut(call) { Seen(if (connectTimeMs > 0) connectTimeMs else nowMs) }
+    /** [connectTimeMs]/[creationTimeMs]: `Call.Details.connectTimeMillis`/`creationTimeMillis` (0 =
+     * not known); [record] commits the instant. */
+    fun connected(call: Any, connectTimeMs: Long, creationTimeMs: Long, nowMs: Long, record: (atMs: Long) -> Unit) {
+        val seen = calls.getOrPut(call) {
+            Seen(connectTimeMs.takeIf { it > 0 } ?: creationTimeMs.takeIf { it > 0 } ?: nowMs)
+        }
         record(seen.atMs)
         if (!seen.synced && unlocked()) {
             seen.synced = true

@@ -117,7 +117,8 @@ class KidInCallService : InCallService() {
         if (!connected) return
         val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         if (Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) {
-            emergencyConnects.connected(call, call.details.connectTimeMillis, System.currentTimeMillis()) {
+            val details = call.details
+            emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis, System.currentTimeMillis()) {
                 CallPrefs.recordEmergencyConnected(this, it)
             }
         }
@@ -184,16 +185,16 @@ class KidInCallService : InCallService() {
     private val handler = Handler(Looper.getMainLooper())
 
     /** Design 35 step 3: an emergency call that connected syncs at once (once per call, never
-     * before the first unlock), posted so the call's own callback finishes first. */
+     * before the first unlock). Called right here, not posted: Telecom's callbacks already run on the
+     * main looper, the request is a wake lock and a service start (as every receiver's), and a post
+     * could be dropped by `onDestroy`'s `removeCallbacksAndMessages` when the call ends at once. */
     private val emergencyConnects = EmergencyConnects(
         unlocked = { CallPolicyStore.userUnlocked(this) },
         requestSync = {
-            handler.post {
-                try {
-                    com.kidslauncher.mdm.push.SyncRunner.request(this, EMERGENCY_SYNC_REASON)
-                } catch (e: Exception) {
-                    Log.w(LOG_TAG, "Couldn't request a sync after an emergency call: ${e.javaClass.simpleName}")
-                }
+            try {
+                com.kidslauncher.mdm.push.SyncRunner.request(this, EMERGENCY_SYNC_REASON)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't request a sync after an emergency call: ${e.javaClass.simpleName}")
             }
         },
     )

@@ -24,7 +24,9 @@ object BatteryStatus {
     /** The reading at every status report, from the sticky `ACTION_BATTERY_CHANGED` (no receiver is
      * registered for it); `null` - left out of the report - when there is none or it can't be read. */
     fun report(context: Context): BatteryReport? = try {
-        context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.let {
+        ContextCompat.registerReceiver(
+            context, null, IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
+        )?.let {
             BatteryReport.of(
                 level = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
                 scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1),

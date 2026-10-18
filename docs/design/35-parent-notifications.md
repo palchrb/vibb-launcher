@@ -523,3 +523,15 @@ Device checks owed (Jelly Star): the BATTERY_LOW threshold and whether `EXTRA_BA
 event: the server keys off `low`); the receiver surviving Doze (the home process and the anchor are long-lived, but
 an edge in deep sleep must still reach it); the emergency sync over mobile data while the call is on (the report
 must reach the server within seconds; tsnet over mobile).
+
+Code QA fix round (`docs/review/qa-35-s3-code.md`, 2026-10-18; no High/Medium):
+- L1: the emergency sync is requested directly in the Telecom callback (already on the main looper), no longer posted
+  to the handler `onDestroy` clears, so a call that ends at once can't drop it; still caught.
+- L2: without a connect time the instant falls back to Telecom's `creationTimeMillis` before "now", so a restart of
+  our process mid-call can't move it.
+- L3: the two rules are pure functions beside `callbackWindowUntil` (`emergencyRecord`: the window from this record,
+  the hang-up's last; `reportedEmergencyAt`: the stored instant, else the window's start), tested.
+- L4: the source checks count the catch around the emergency request and the one in `BatteryStatus.report()`.
+- N1: the sticky read goes through `ContextCompat.registerReceiver(context, null, ..)`, as `SelfUpdate`'s; N3: §6n
+  says an emergency call that never connects gets no immediate sync; N2 (a stale instant after a downgrade and
+  re-upgrade) accepted.

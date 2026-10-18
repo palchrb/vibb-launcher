@@ -1476,7 +1476,8 @@ adb logcat -s SyncRunner BatteryStatus KidInCallService
    call" -> "Call 112?" on the emulator, which fakes 112). When the call is active logcat shows `Sync for
    [emergency_call]` at once (one per call - holding and resuming it, or hanging up, adds none), and the PWA's bell
    counts "<phone> called an emergency number" within seconds, not at the next backstop. The report after the call
-   ends carries the same `last_emergency_call_at`, so no second event.
+   ends carries the same `last_emergency_call_at`, so no second event. An emergency call that never connects gets no
+   immediate sync: its call-log row reaches the parent with the next report.
 6. Before the first unlock (only on a phone with an Android screen lock, so not the usual setup): an emergency call
    then sends no sync (the anchor isn't direct-boot-aware); the first report after the unlock carries the call.
 
