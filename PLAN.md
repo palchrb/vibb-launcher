@@ -512,7 +512,10 @@ findings, merge to `main`, full suite once.
   2026-10-15; the user confirmed the same day that DoH/DoT with a client id to their own AdGuard Home
   is a must - and (2026-10-18) **any** DNS server: a plain DoH URL (`https://dns.example/dns-query`, with or
   without a client id in the path), a DoT host name, or a plain IP over DoT; the field takes what the parent has,
-  the server works out the kind and validates it.
+  the server works out the kind and validates it. **Design 36** (`docs/design/36-custom-dns.md`, design QA done,
+  revised after the user's decisions 2026-10-18): a second field "Backup server" the parent chooses (prefilled
+  `1.1.1.3`, required under Custom) instead of a hard-coded fallback; any address allowed (LAN, tailnet, `*.ts.net`),
+  the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) in progress.
 
 - **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
   and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as
@@ -568,9 +571,12 @@ findings, merge to `main`, full suite once.
     - a visible test push on a tap, never an invisible one. A 410 marks it "Turned off on that device - turn it
     on again there". The same counts feed phase 2's second channel.
   - **Events** (each switchable on the inbox page): an emergency call made (always on), the parent PIN used
-    or locked out, foreign access or a start without Vibb One, offline for X hours; later a new blocked app
-    or an extra-time request. Titles only, never message content.
-  - A design note first (design QA, then the usual process).
+    or locked out, foreign access or a start without Vibb One, **battery low** (the user, 2026-10-18, instead of
+    "offline for X hours", which was dropped); later a new blocked app or an extra-time request. Titles only,
+    never message content.
+  - **Design 35** (`docs/design/35-parent-notifications.md`, design QA done, revised after the user's decisions
+    2026-10-18). Step 1 (events, inbox, the `battery` wire field) in progress; then step 2 (Web Push) and step 3
+    (launcher: the battery reading and receiver, a sync right after an emergency call).
   - **Phase 2, later**: on no receipt for an important event within ~2 minutes, a second channel - ntfy
     (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
     once. Web Push on Safari can't break through Focus and iOS may drop a subscription silently, so phase 2
