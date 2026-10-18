@@ -163,7 +163,7 @@ struct ServerGroup {
     stale: bool,
     /// The Custom Server row is open.
     open: bool,
-    /// What the inputs hold: never a stored value - empty, `1.1.1.3` in the backup's while none
+    /// What the inputs hold: never a stored value - empty, the backup prefill (`BACKUP_PREFILL`) while none
     /// is stored, or what a refused save typed.
     typed_server: String,
     typed_backup: String,
@@ -189,10 +189,12 @@ struct CustomRefusal {
 }
 
 /// The backup field's prefill while none is stored: Cloudflare for Families, our public default -
-/// the only value ever rendered into either input.
-const BACKUP_PREFILL: &str = "1.1.1.3";
+/// the only value ever rendered into either input. Over DNS-over-HTTPS (port 443), so it also
+/// answers on a network that blocks DNS-over-TLS's port 853 (design 36 §10.1 addendum).
+const BACKUP_PREFILL: &str = "https://1.1.1.3/dns-query";
 const TYPE_YOURS_FIRST: &str = "Type your server's address first.";
-const BACKUP_NEEDED: &str = "Custom needs a backup server: 1.1.1.3 is Cloudflare for Families.";
+const BACKUP_NEEDED: &str =
+    "Custom needs a backup server: https://1.1.1.3/dns-query is Cloudflare for Families.";
 const BACKUP_SAME: &str = "The backup must be another server than yours.";
 
 /// Why a typed address isn't taken, under its field.
@@ -708,7 +710,7 @@ fn check_custom(
     }
 }
 
-/// The backup input's value when nothing was typed: `1.1.1.3` only while no usable backup is
+/// The backup input's value when nothing was typed: `BACKUP_PREFILL` only while no usable backup is
 /// stored, so a parent typing only "Your server" never replaces a stored backup.
 fn backup_prefill(settings: &DnsFilterSettings) -> String {
     match dns_server::parse_dns_server(&settings.custom_backup) {

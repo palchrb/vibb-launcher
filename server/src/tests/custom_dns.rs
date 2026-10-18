@@ -74,7 +74,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     check_forms("/dns", &page);
     assert!(field(&page, "custom_server").contains("value=\"\""));
     assert!(field(&page, "custom_server").contains("Not set."));
-    assert!(field(&page, "custom_backup").contains("value=\"1.1.1.3\""));
+    assert!(field(&page, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
     assert!(!page.contains("forget_custom"));
     assert!(page.contains("<details class=\"disclosure cell\" id=\"custom-server\">"));
 
@@ -108,7 +108,8 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     assert!(field(&page, "custom_server").contains("Set (dns.example · DNS-over-HTTPS)."));
     assert!(field(&page, "custom_backup").contains("Set (1.1.1.3 · DNS-over-TLS)."));
     assert!(
-        !page.contains("abc123") && !page.contains("dns-query"),
+        // The stored path never shows (the prefill's own `/dns-query` is ours, not the parent's).
+        !page.contains("abc123") && !page.contains("dns.example/dns-query"),
         "{page}"
     );
     assert!(field(&page, "custom_server").contains("value=\"\""));
@@ -200,7 +201,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         r#"{"server":"cloudflare"}"#
     );
     let page = app.get_page("/dns", &cookie).await.text();
-    assert!(field(&page, "custom_backup").contains("value=\"1.1.1.3\""));
+    assert!(field(&page, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
     assert!(!page.contains("forget_custom"));
     for detail in events(&app).await {
         assert!(
@@ -361,7 +362,7 @@ async fn an_equal_stored_pair_keeps_its_hints_and_backup() {
     let html = refused(&pick(&app, &cookie, "custom").await);
     assert!(!field(&html, "custom_server").contains("field-error"));
     assert!(field(&html, "custom_backup").contains("Custom needs a backup server"));
-    assert!(field(&html, "custom_backup").contains("value=\"1.1.1.3\""));
+    assert!(field(&html, "custom_backup").contains("value=\"https://1.1.1.3/dns-query\""));
 }
 
 /// QA M1: both routes need a full session and refuse a cross-site post; nothing is written.
@@ -402,6 +403,37 @@ async fn the_dns_server_routes_refuse_without_a_session_or_from_another_site() {
         ("cloudflare".into(), String::new(), String::new(), 0)
     );
     assert!(events(&app).await.is_empty());
+}
+
+/// Step 3's QA M3: the prefill posted untouched is a DoH backup (port 443, so it answers where
+/// 853 is blocked), stored and sent as one.
+#[tokio::test]
+async fn the_prefilled_backup_is_saved_as_dns_over_https() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (_, token) = app.enrolled_device("Anna").await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    let prefill = "https://1.1.1.3/dns-query";
+    assert!(field(&page, "custom_backup").contains(&format!("value=\"{prefill}\"")));
+    let res = save(
+        &app,
+        &cookie,
+        &[
+            ("custom_server", "tls://dns.example"),
+            ("custom_backup", prefill),
+        ],
+    )
+    .await;
+    assert_redirect(&res, "/dns?open=custom-server", Some("server"));
+    assert_eq!(stored(&app).await.2, prefill);
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(
+        policy["dns_upstream"]["backup"],
+        json!({"kind": "doh", "url": prefill})
+    );
 }
 
 #[tokio::test]

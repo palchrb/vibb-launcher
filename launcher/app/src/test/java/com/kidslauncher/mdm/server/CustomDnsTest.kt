@@ -27,6 +27,7 @@ import org.xbill.DNS.Type
 class CustomDnsTest {
     private val primaryDoh = UpstreamTarget.Doh("https://192.0.2.10/dns-query/abc123")
     private val backupDot = UpstreamTarget.Dot("192.0.2.20", 853)
+    private val cloudflareDoh = UpstreamTarget.Doh("https://1.1.1.1/dns-query")
     private val request = Message.newQuery(Record.newRecord(Name.fromString("example.com."), Type.A, DClass.IN))
     private val query = request.toWire()
 
@@ -59,6 +60,7 @@ class CustomDnsTest {
         backup: UpstreamTarget = backupDot,
         clock: () -> Long = { 1_000 },
         calls: Calls = Calls(),
+        cacheFile: java.io.File? = null,
         answer: (UpstreamTarget, Message) -> Attempt,
     ) = CustomDns(
         CustomUpstream(primary, backup, rev = 4),
@@ -71,6 +73,8 @@ class CustomDnsTest {
             synchronized(calls) { calls.asks += Ask(target, m.question.name.toString(), m.question.type) }
             answer(target, m)
         },
+        cloudflare = cloudflareResolver(clock, {}),
+        cacheFile = cacheFile,
     )
 
     @Test
@@ -247,9 +251,12 @@ class CustomDnsTest {
                 else -> Attempt.Answer(backupAnswer)
             }
         }
-        // Both resolvers fail: the start's look-up gives nothing, a bootstrap period starts.
+        // Both resolvers fail (Cloudflare's DoH too): the start's look-up gives nothing, a bootstrap period starts.
         d.start()
-        assertEquals(listOf(backupDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A), calls.lookups("abc123.dns.example"))
+        assertEquals(
+            listOf(backupDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, cloudflareDoh to Type.A),
+            calls.lookups("abc123.dns.example"),
+        )
         assertEquals(BackupReason.BOOTSTRAP, d.state().reason)
         val failures = d.state().failures
         assertArrayEquals(backupAnswer, d.resolve(query, request))
@@ -264,6 +271,84 @@ class CustomDnsTest {
         assertArrayEquals(answer(Rcode.NOERROR), d.resolve(query, request))
         assertFalse(d.state().backup)
         assertEquals(listOf(backupDot, backupDot, named), calls.targets)
+    }
+
+    @Test
+    fun `on a network that blocks 853 the bootstrap's Cloudflare step asks its DoH on 443`() {
+        val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
+        val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        val calls = Calls()
+        val d = dns(primary = homeDot, backup = familyDoh, calls = calls) { target, m ->
+            when (target) {
+                homeDot, CLOUDFLARE_BOOTSTRAP -> Attempt.Transport(BackupReason.CONNECT)
+                cloudflareDoh -> lookupAnswer(m, "192.0.2.30")
+                else -> Attempt.Answer(backupAnswer)
+            }
+        }
+        d.start()
+        assertEquals(
+            listOf(
+                homeDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, cloudflareDoh to Type.A,
+                CLOUDFLARE_BOOTSTRAP to Type.AAAA, cloudflareDoh to Type.AAAA,
+            ),
+            calls.lookups("family.dns.example"),
+        )
+        // The backup's address came over 443: it answers.
+        assertArrayEquals(backupAnswer, d.resolve(query, request))
+    }
+
+    @Test
+    fun `the disk cache - written after a look-up, read before any look-up by the next instance, none for IP literals`() {
+        val dir = java.nio.file.Files.createTempDirectory("dns-cache").toFile()
+        val file = java.io.File(dir, BootstrapDiskCache.FILE_NAME)
+        val named = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        var now = 1_000L
+        val calls = Calls()
+        dns(backup = named, clock = { now }, calls = calls, cacheFile = file) { _, m -> lookupAnswer(m, "192.0.2.30") }.start()
+        assertTrue(file.readText().contains("family.dns.example\t"))
+        assertFalse(java.io.File(dir, file.name + ".tmp").exists())
+        // A restart (a new instance, as after a reboot): the address is in hand, no look-up.
+        val again = Calls()
+        now = 2_000
+        val d = dns(backup = named, clock = { now }, calls = again, cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }
+        d.start()
+        assertTrue(again.lookups("family.dns.example").isEmpty())
+        // Both servers IP literals: nothing to look up, nothing kept.
+        dns(cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }.start()
+        assertFalse(file.exists())
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `the disk cache keeps only this config's names, and a closed instance never writes it`() {
+        val dir = java.nio.file.Files.createTempDirectory("dns-cache").toFile()
+        val file = java.io.File(dir, BootstrapDiskCache.FILE_NAME)
+        val named = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        val one = listOf(InetAddress.getByName("192.0.2.30"))
+        val far = System.currentTimeMillis() + 3_600_000
+        file.writeText("v1\nfamily.dns.example\t$far\t192.0.2.30\nold.dns.example\t$far\t192.0.2.31\n")
+        dns(backup = named, cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }
+        assertTrue(file.readText().contains("family.dns.example\t"))
+        assertFalse(file.readText().contains("old.dns.example"))
+        // Nothing usable in it: it goes.
+        file.writeText("not a cache")
+        dns(backup = named, cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }
+        assertFalse(file.exists())
+        // A look-up still running when its instance is closed (new servers, a Forget) writes nothing.
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val d = dns(backup = named, cacheFile = file) { _, m ->
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            lookupAnswer(m, one.single().hostAddress!!)
+        }
+        val lookUp = thread { d.start() }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        d.close()
+        release.countDown()
+        lookUp.join(5_000)
+        assertFalse(file.exists())
+        dir.deleteRecursively()
     }
 
     @Test

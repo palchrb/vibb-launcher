@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.net.Socket
+import okhttp3.OkHttpClient
 import org.xbill.DNS.DClass
 import org.xbill.DNS.Flags
 import org.xbill.DNS.Message
@@ -90,11 +91,6 @@ object DnsFilterEngine {
         onCustomChanged?.invoke()
     }
 
-    private val upstreamServers = mapOf(
-        "cloudflare" to Pair("1.1.1.1", "cloudflare-dns.com"),
-        "quad9" to Pair("9.9.9.9", "dns.quad9.net"),
-    )
-
     /** Loads whatever's cached on disk into memory - call once when [KidVpnService] starts, before
      * the packet loop begins (a device reboot restarts the service with an empty in-memory map,
      * independent of whether a sync has happened yet this boot). No-ops if nothing's cached yet -
@@ -164,21 +160,19 @@ object DnsFilterEngine {
     fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn)
 
     /**
-     * Forwards an allowed DNS query to the admin-configured public upstream (Cloudflare or Quad9)
-     * over DNS-over-TLS by its fixed address, SNI and certificate on its name ([resolveDoT], with
-     * [PROVIDER_BUDGET] - today's timeouts). Returns the response to relay, or null on any failure
-     * (the query is dropped; the client's own retry handles it). The parent's own server goes
+     * Forwards an allowed DNS query to the admin-configured public resolver (Cloudflare or Quad9,
+     * [PublicResolvers.of]): DoT by its fixed address, SNI and certificate on its name, with
+     * [PROVIDER_BUDGET] (2.5 s connect), and on a network that blocks 853 the same provider's DoH
+     * on 443 through [dohClient], built at its first use (design 36 step 3). Returns the response to relay, or null on any
+     * failure (the query is dropped; the client's own retry handles it). The parent's own server goes
      * through [CustomDns] instead.
      */
-    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean): ByteArray? {
-        val (ip, tlsHostname) = upstreamServers[upstream] ?: upstreamServers.getValue("cloudflare")
-        val address = ipLiteral(ip) ?: return null
-        return when (val outcome = resolveDoT(query, listOf(address), tlsHostname, 853, PROVIDER_BUDGET, protectSocket)) {
+    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean, dohClient: () -> OkHttpClient): ByteArray? =
+        when (val outcome = PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket))) {
             is Attempt.Answer -> outcome.bytes
             is Attempt.Odd -> outcome.bytes
             is Attempt.Transport -> null
         }
-    }
 }
 
 /** The phone's block answer: NODATA (NOERROR, empty answer, a negative-cache SOA in the authority

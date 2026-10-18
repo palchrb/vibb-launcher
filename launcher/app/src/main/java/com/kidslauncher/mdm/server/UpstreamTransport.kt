@@ -49,8 +49,10 @@ val UPSTREAM_BUDGET = Budget(1500, 2500)
 val CANARY_BUDGET = Budget(1500, 2000)
 /** A bootstrap look-up (§5.3: 1 s connect, 1 s read). */
 val BOOTSTRAP_BUDGET = Budget(1000, 2000)
-/** Today's Cloudflare/Quad9 forwarding, as before design 36 (5 s connect, 5 s reads). */
-val PROVIDER_BUDGET = Budget(5000, 10_000)
+/** Cloudflare/Quad9 over DoT: a 2.5 s connect (design 36 step 3, qa-36-s3-code M2 - before, 5 s), so a
+ * connect a network drops still leaves [BACKUP_FLOOR_MS] of the query's [QUERY_DEADLINE_MS] for the
+ * same provider's DoH; 10 s in all once connected, as before design 36. */
+val PROVIDER_BUDGET = Budget(2500, 10_000)
 
 /** [bytes] as a DNS answer: parsable, then by its rcode. Garbage is a transport failure for [garbage]. */
 fun classifyAnswer(bytes: ByteArray, garbage: BackupReason): Attempt {
@@ -227,6 +229,23 @@ fun buildDohClient(dns: okhttp3.Dns, protect: (Socket) -> Boolean): OkHttpClient
         }
     }
     .build()
+
+/** One attempt at [target] - DoH through [client] (asked for at the first DoH use), DoT through [protect]ed sockets to its [addresses]
+ * (the transport [CustomDns] and [PublicResolver] are given). */
+fun targetTransport(client: () -> OkHttpClient, protect: (Socket) -> Boolean): (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt =
+    { target, addresses, query, budget ->
+        when (target) {
+            is UpstreamTarget.Doh -> resolveDoh(client(), target.url, query, budget)
+            is UpstreamTarget.Dot -> resolveDoT(query, addresses, target.host, target.port, budget, protect)
+        }
+    }
+
+/** The public resolvers' DoH client's [okhttp3.Dns] (design 36 step 3): their URLs are IP literals,
+ * which OkHttp never looks up; anything else has no address (never the system resolver). */
+val IP_LITERAL_DNS: okhttp3.Dns = object : okhttp3.Dns {
+    override fun lookup(hostname: String): List<InetAddress> =
+        listOfNotNull(ipLiteral(hostname)).ifEmpty { throw java.net.UnknownHostException("not an IP literal") }
+}
 
 /** One DoH query: POST [url] with the query (ID 0), both media types `application/dns-message`, within [budget]. */
 fun resolveDoh(client: OkHttpClient, url: String, query: ByteArray, budget: Budget): Attempt {
