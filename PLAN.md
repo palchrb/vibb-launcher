@@ -517,7 +517,7 @@ findings, merge to `main`, full suite once.
   `1.1.1.3`, required under Custom) instead of a hard-coded fallback; any address allowed (LAN, tailnet, `*.ts.net`),
   the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) merged 2026-10-18
   after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) merged 2026-10-18 after code QA
-  (`docs/review/qa-36-s2-code.md`); step 3 (DoH on 443 for networks that block 853) open. Device checks owed: a real
+  (`docs/review/qa-36-s2-code.md`); step 3 (DoH on 443 for networks that block 853) in progress. Device checks owed: a real
   DoH/DoT server by name and IP, a home-network server on and off the home Wi-Fi, a network blocking 853, AdGuard
   Home's REFUSED (the design note's step 2 status).
 
@@ -580,8 +580,10 @@ findings, merge to `main`, full suite once.
     never message content.
   - **Design 35** (`docs/design/35-parent-notifications.md`, design QA done, revised after the user's decisions
     2026-10-18). Step 1 (events, inbox, the `battery` wire field) merged 2026-10-18 after code QA
-    (`docs/review/qa-35-s1-code.md`); step 2 (Web Push) in code QA and step 3 (launcher: the battery reading and
-    receiver, a sync right after an emergency call) in progress.
+    (`docs/review/qa-35-s1-code.md`); step 2 (Web Push) merged 2026-10-18 after code QA (`docs/review/qa-35-s2-code.md`;
+    device checks owed: iPhone 18.4+ and older, macOS Safari, Android Chrome, Firefox, a 410 after removing the app, a Pi
+    with a wrong clock); step 3 (launcher: the battery reading and receiver, a sync right after an emergency call) in
+    its code QA fix round.
   - **Phase 2, later**: on no receipt for an important event within ~2 minutes, a second channel - ntfy
     (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
     once. Web Push on Safari can't break through Focus and iOS may drop a subscription silently, so phase 2
