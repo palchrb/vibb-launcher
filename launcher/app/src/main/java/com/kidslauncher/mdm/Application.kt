@@ -84,6 +84,10 @@ class Application : android.app.Application() {
             p0?.let { packageName ->
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        // The music app updated (a catalog install, Play, adb): it syncs and reports now.
+                        com.kidslauncher.mdm.music.musicNudgeOnChange(packageName)?.let {
+                            com.kidslauncher.mdm.music.MusicSync.nudge(this@Application, it)
+                        }
                         if (com.kidslauncher.mdm.server.WindowRelock.onPackageInstalled(this@Application, packageName)) {
                             AppEnforcer.apply(this@Application, com.kidslauncher.mdm.server.currentPolicyDecision().policy)
                             // The block set or cleared reaches the device page now (relock_blocks).

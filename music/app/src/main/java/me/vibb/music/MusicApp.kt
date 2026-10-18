@@ -66,6 +66,19 @@ class BridgeChangedReceiver : BroadcastReceiver() {
 }
 
 /**
+ * This app was updated in place (`MY_PACKAGE_REPLACED`): nothing else would wake the new process
+ * until the launcher's next nudge, and Device > Music would keep the old app's report. The process
+ * start this broadcast causes ([MusicApp.onCreate]) applies the managed config and runs
+ * [Sync.atStart]; the nudge states the sync the update asks for (one already waiting covers it).
+ */
+class PackageReplacedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        Sync.nudge(context)
+    }
+}
+
+/**
  * The launcher suspended this app (a time rule, 21 §3): stop the sound at once. The launcher pauses
  * the session itself first where it can; this is the fallback without its notification access
  * (QA #8). A Sonos room is stopped too, with or without the player service (design 26a §6.1, QA

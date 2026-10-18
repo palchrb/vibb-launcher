@@ -158,7 +158,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
   under a Keystore key) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
-  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. The two mobile-data switches
+  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. An in-place update syncs at once (`PackageReplacedReceiver` on `MY_PACKAGE_REPLACED`; the launcher nudges too), so Device › Music never keeps the old app's report. The two mobile-data switches
   (`stream_mobile_data`, `download_mobile_data`; a launcher from before design 30 writes neither, and then the old
   `mobile_data` counts for both - `mobileSwitch`), the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
   2 GB - `storageLimit`; the played extras' eviction counts against it) and `volume_cap_pct` (the parent's cap on our
