@@ -19,10 +19,10 @@
         <div class="attention-text">The push service refused the server's signature - check the server's clock<div class="attention-sub">Without the right time no notification gets through. The Pi has no clock of its own: it needs the internet (NTP) after a power cut.</div></div>
     </div>
     {% endif %}
-    {% for label in not_showing %}
+    {% for (title, sub) in not_showing %}
     <a class="attention attention-action" href="#devices" data-warning="not-showing">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span class="attention-text">Notifications may not be showing on {{ label }}<span class="attention-sub">Pushed, but that device didn't confirm them</span></span>
+        <span class="attention-text">{{ title }}<span class="attention-sub">{{ sub }}</span></span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% endfor %}

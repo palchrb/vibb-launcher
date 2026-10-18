@@ -534,3 +534,20 @@ Device checks owed before step 2 is done (§9):
 - macOS Safari, Android Chrome, desktop Firefox: subscribe, a push, the receipt, the click.
 - A 410: remove the app from the iPhone's Home Screen, raise an event -> the device shows "Turned off".
 - The clock: a Pi booted with a wrong clock shows the red row on Notifications and recovers once NTP synced.
+
+Code QA fix round (`docs/review/qa-35-s2-code.md`, 2026-10-18):
+- M1: a fourth health state, "Not getting through": the subscription's newest finished delivery (accepted or failed,
+  by id) is `failed` and none was accepted after it. The badge says so, the row's line gives the reason
+  (`push::failure_text`: "The push service couldn't be reached" for a network error, 429 or 5xx - also when the
+  retries ran past the TTL -, "refused the server's signature" for 401/403, "refused it (400)" otherwise, "The server
+  couldn't send it" for its own refusals) and "· trying again" while one waits; the same orange rows as "may not be
+  showing" on Notifications ("Notifications aren't reaching …") and the Devices list. A device with a push waiting
+  and none finished says "Sending…", so Send a Test's answer shows right after its redirect.
+- L1: `data-subscribed` lists every admin's active endpoints (`push::active_endpoint_hashes`), so This Device never
+  drops another parent's subscription on a shared device; Turn Off deletes the browser's row whichever account made it.
+- L2: the fold never takes an urgent kind (`Kind::urgent`: the emergency call, a PIN lockout, a foreign app).
+- L3: a `queued` delivery that already has a receipt is marked `accepted` at the next pass and never sent again; a
+  receipt with an older token for a delivery sent more than once is a 404 that doesn't count against the client.
+- N1: the fresh salt and key per message have their own test; N2: a retry past the TTL ends the delivery at once
+  (tested with a test push and three network errors); N3: the JWT's `sub` falls back only to an `https://` origin,
+  else none; N4: "In a summary" only when that summary was accepted (a folded delivery takes its summary's status).

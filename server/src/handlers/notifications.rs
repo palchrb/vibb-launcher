@@ -114,8 +114,9 @@ struct NotificationsTemplate {
     /// The admin's active endpoints' 16-hex SHA-256 prefixes, comma-separated (§5.2).
     subscribed: String,
     devices: Vec<DeviceRow>,
-    /// The devices that may not be showing notifications (the warnings, §6).
-    not_showing: Vec<String>,
+    /// The devices that may not be showing notifications, or that pushes don't reach (the
+    /// warnings, §6): `(title, sub-line)`.
+    not_showing: Vec<(String, String)>,
     /// A push refused the server's signature in the last day (§4.4).
     clock_warning: bool,
     /// A flash in This Device or in Getting Notifications: `(text, error)`.
@@ -187,10 +188,11 @@ pub async fn page(
         let ids: Vec<i64> = page.1.iter().map(|r| r.0).collect();
         let lines = delivery_lines(&state.db, &ids).await?;
         let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
-        Ok::<_, sqlx::Error>((page, lines, subscriptions))
+        let known = push::active_endpoint_hashes(&state.db).await?;
+        Ok::<_, sqlx::Error>((page, lines, subscriptions, known))
     };
     match read.await {
-        Ok(((phones, raw, unread, settings), mut lines, subscriptions)) => {
+        Ok(((phones, raw, unread, settings), mut lines, subscriptions, known)) => {
             let zone = Zone::load(&state.db).await;
             let older_than = (raw.len() as i64 > parent_events::PAGE)
                 .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
@@ -236,17 +238,8 @@ pub async fn page(
                 .map(|((name, label), on)| Switch { name, label, on })
                 .collect();
             let notice = notice_of(params.get("notice").map(String::as_str));
-            let subscribed = subscriptions
-                .iter()
-                .filter(|s| s.health != Health::Gone)
-                .map(|s| s.endpoint_hash.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            let not_showing = subscriptions
-                .iter()
-                .filter(|s| s.health == Health::MayNotShow)
-                .map(|s| s.label.clone())
-                .collect();
+            let subscribed = known.join(",");
+            let not_showing = subscriptions.iter().filter_map(warning_of).collect();
             let devices = subscriptions
                 .iter()
                 .map(|s| device_row(s, &zone, now))
@@ -424,6 +417,21 @@ fn db_error(err: sqlx::Error) -> Response {
         .into_response()
 }
 
+/// A subscription's warning, `(title, sub-line)`, when it needs the parent (§6, qa-35-s2-code M1).
+fn warning_of(sub: &push::Subscription) -> Option<(String, String)> {
+    match sub.health {
+        Health::MayNotShow => Some((
+            format!("Notifications may not be showing on {}", sub.label),
+            "Pushed, but that device didn't confirm them".to_string(),
+        )),
+        Health::NotGettingThrough => Some((
+            format!("Notifications aren't reaching {}", sub.label),
+            sub.failure.clone().unwrap_or_default(),
+        )),
+        _ => None,
+    }
+}
+
 /// A subscription as Getting Notifications shows it.
 fn device_row(
     sub: &push::Subscription,
@@ -435,9 +443,20 @@ fn device_row(
         .map(|t| format!("Last shown {}", zone.relative(t, now)));
     let (badge, sub_line) = match sub.health {
         Health::Ok => (("On", "badge badge-on"), shown),
+        Health::NeverSent if sub.sending => {
+            (("On", "badge badge-on"), Some("Sending…".to_string()))
+        }
         Health::NeverSent => (
             ("On", "badge badge-on"),
             Some("Nothing sent yet".to_string()),
+        ),
+        Health::NotGettingThrough => (
+            ("Not getting through", "badge badge-warn"),
+            Some(format!(
+                "{}{}",
+                sub.failure.as_deref().unwrap_or(""),
+                if sub.sending { " · trying again" } else { "" }
+            )),
         ),
         Health::MayNotShow => (
             ("May not be showing", "badge badge-warn"),
@@ -465,8 +484,15 @@ async fn delivery_lines(
     db: &sqlx::SqlitePool,
     event_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<DeliveryState>>, sqlx::Error> {
+    // A folded delivery takes its summary's status (the subscription's next summary after it),
+    // so "In a summary" means the summary itself went out (qa-35-s2-code N4).
     let rows: Vec<(i64, String, Option<String>, bool, String)> = sqlx::query_as(
-        "SELECT d.event_id, d.status, d.reason, d.receipt_at IS NOT NULL, s.label \
+        "SELECT d.event_id, \
+                CASE WHEN d.reason = 'folded' THEN COALESCE((SELECT m.status \
+                    FROM push_deliveries m WHERE m.subscription_id = d.subscription_id \
+                    AND m.kind = 'summary' AND m.id > d.id ORDER BY m.id LIMIT 1), 'failed') \
+                ELSE d.status END, \
+                d.reason, d.receipt_at IS NOT NULL, s.label \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          WHERE d.event_id IN (SELECT value FROM json_each(?)) ORDER BY d.id",
     )
@@ -484,15 +510,20 @@ async fn delivery_lines(
 }
 
 /// An inbox row's delivery line (§5.1): "Shown on iPhone · Safari", "Pushed to iPhone · Safari,
-/// not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary", "Not sent";
-/// nothing when no push was made.
+/// not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary" (its summary was
+/// accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
+/// summary's ([delivery_lines]).
 pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
-    let accepted: Vec<&DeliveryState> = deliveries.iter().filter(|d| d.0 == "accepted").collect();
+    let folded = |d: &&DeliveryState| d.1.as_deref() == Some("folded");
+    let accepted: Vec<&DeliveryState> = deliveries
+        .iter()
+        .filter(|d| d.0 == "accepted" && !folded(d))
+        .collect();
     let shown = accepted.iter().filter(|d| d.2).count();
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
         [] if deliveries.iter().any(|d| d.0 == "queued") => "Sending".to_string(),
-        [] if deliveries.iter().any(|d| d.1.as_deref() == Some("folded")) => {
+        [] if deliveries.iter().any(|d| folded(&d) && d.0 == "accepted") => {
             "In a summary".to_string()
         }
         [] => "Not sent".to_string(),
@@ -502,7 +533,8 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
     })
 }
 
-/// The Devices list's warning row (§6): a device that may not be showing notifications.
+/// The Devices list's warning row (§6): a device that may not be showing notifications, or that
+/// pushes don't reach (qa-35-s2-code M1).
 pub async fn warning_row(
     state: &AppState,
     admin_id: i64,
@@ -513,14 +545,10 @@ pub async fn warning_row(
             tracing::error!(%err, "can't read the notification subscriptions");
             Vec::new()
         });
-    let labels: Vec<&str> = subscriptions
-        .iter()
-        .filter(|s| s.health == Health::MayNotShow)
-        .map(|s| s.label.as_str())
-        .collect();
-    let title = match labels.as_slice() {
+    let warnings: Vec<(String, String)> = subscriptions.iter().filter_map(warning_of).collect();
+    let title = match warnings.as_slice() {
         [] => return None,
-        [one] => format!("Notifications may not be showing on {one}"),
+        [(one, _)] => one.clone(),
         many => format!("Notifications may not be showing on {} devices", many.len()),
     };
     Some(crate::handlers::auth::WarningRow {
@@ -633,15 +661,14 @@ pub async fn subscribe(
     }
 }
 
-/// This Device's Turn Off (§5.2): the browser unsubscribed; its row goes.
+/// This Device's Turn Off (§5.2): the browser unsubscribed; its row goes, whichever account
+/// made it (This Device shows On for any account's subscription of this browser, L1).
 pub async fn unsubscribe(
     State(state): State<AppState>,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let done = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ?")
+    let done = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ?")
         .bind(form.get("endpoint").map(|e| e.trim()).unwrap_or(""))
-        .bind(admin.id)
         .execute(&state.db)
         .await;
     match done {
@@ -732,8 +759,9 @@ pub async fn receipt(
         return StatusCode::BAD_REQUEST;
     };
     match push::receipt(&state.db, receipt.d, &receipt.t, receipt.a == "clicked").await {
-        Ok(true) => StatusCode::NO_CONTENT,
-        Ok(false) => {
+        Ok(push::Receipt::Matched) => StatusCode::NO_CONTENT,
+        Ok(push::Receipt::Stale) => StatusCode::NOT_FOUND,
+        Ok(push::Receipt::Unknown) => {
             state.limits.ip_failed(&key);
             StatusCode::NOT_FOUND
         }
@@ -778,9 +806,18 @@ mod tests {
                 Some("Pushed to 2 devices · shown on 1"),
             ),
             (vec![d("queued", None, false, iphone)], Some("Sending")),
+            // A folded delivery carries its summary's status.
             (
-                vec![d("dropped", Some("folded"), false, iphone)],
+                vec![d("accepted", Some("folded"), false, iphone)],
                 Some("In a summary"),
+            ),
+            (
+                vec![d("queued", Some("folded"), false, iphone)],
+                Some("Sending"),
+            ),
+            (
+                vec![d("failed", Some("folded"), false, iphone)],
+                Some("Not sent"),
             ),
             (
                 vec![

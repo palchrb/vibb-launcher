@@ -63,12 +63,15 @@ impl std::fmt::Debug for VapidKey {
 }
 
 /// The VAPID JWT for one push service (`aud`, "https://host") and contact (`sub`, a `mailto:` or
-/// `https:` URL), issued at `iat` (Unix seconds): `exp` = `iat` + [JWT_LIFETIME_SECS].
-pub fn vapid_jwt(key: &VapidKey, aud: &str, sub: &str, iat: i64) -> String {
+/// `https:` URL; none when the server has neither), issued at `iat` (Unix seconds): `exp` = `iat`
+/// + [JWT_LIFETIME_SECS].
+pub fn vapid_jwt(key: &VapidKey, aud: &str, sub: Option<&str>, iat: i64) -> String {
     let header = B64.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
-    let claims = B64.encode(
-        serde_json::json!({ "aud": aud, "exp": iat + JWT_LIFETIME_SECS, "sub": sub }).to_string(),
-    );
+    let mut claims = serde_json::json!({ "aud": aud, "exp": iat + JWT_LIFETIME_SECS });
+    if let Some(sub) = sub {
+        claims["sub"] = sub.into();
+    }
+    let claims = B64.encode(claims.to_string());
     let signing_input = format!("{header}.{claims}");
     let signature = key
         .pair
@@ -344,13 +347,21 @@ mod tests {
         assert_eq!(decrypt(&body).unwrap(), bytes(PLAINTEXT));
     }
 
+    /// Its own test (qa-35-s2-code N1): a fixed salt or key fails here, not only inside
+    /// Appendix A, whose fixed random aborts the binary on a failure.
     #[test]
-    fn fresh_keys_per_message_the_cap_and_bad_keys() {
+    fn a_fresh_salt_and_key_per_message() {
         let system = ring::rand::SystemRandom::new();
         let one = encrypt(&system, &bytes(UA_PUBLIC), &bytes(AUTH), b"{}").unwrap();
         let two = encrypt(&system, &bytes(UA_PUBLIC), &bytes(AUTH), b"{}").unwrap();
-        assert_ne!(one[..86], two[..86], "a fresh salt and key each time");
+        assert_ne!(one[..16], two[..16], "a fresh salt each time");
+        assert_ne!(one[21..86], two[21..86], "a fresh ephemeral key each time");
         assert_eq!(decrypt(&two).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn the_cap_and_bad_keys() {
+        let system = ring::rand::SystemRandom::new();
         let full = vec![b'x'; PLAINTEXT_MAX];
         let body = encrypt(&system, &bytes(UA_PUBLIC), &bytes(AUTH), &full).unwrap();
         assert_eq!(decrypt(&body).unwrap(), full);
@@ -383,7 +394,7 @@ mod tests {
         let jwt = vapid_jwt(
             &key,
             "https://web.push.apple.com",
-            "mailto:parent@example.org",
+            Some("mailto:parent@example.org"),
             1000,
         );
         let parts: Vec<&str> = jwt.split('.').collect();

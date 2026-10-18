@@ -132,7 +132,8 @@ impl Transport for HttpTransport {
 /// the contact, the transport, the sender's wake-up, the JWT cache and the test pushes' spacing.
 pub struct Push {
     pub key: Option<Arc<VapidKey>>,
-    /// `VAPID_SUBJECT` (`mailto:` or `https:`); else each subscription's origin.
+    /// `VAPID_SUBJECT` (`mailto:` or `https:`); else each subscription's `https://` origin, else
+    /// none (RFC 8292 takes no `http:` contact).
     subject: Option<String>,
     transport: Arc<dyn Transport>,
     wake: tokio::sync::Notify,
@@ -165,9 +166,9 @@ impl Push {
 
     /// The JWT for `(aud, sub)` at `now`: the cached one while `now` is within
     /// `[iat, iat + 1 h]` (a clock jump either way mints a new one), else a fresh one.
-    fn jwt(&self, key: &VapidKey, aud: &str, sub: &str, now: i64) -> String {
+    fn jwt(&self, key: &VapidKey, aud: &str, sub: Option<&str>, now: i64) -> String {
         let mut jwts = self.jwts.lock().unwrap_or_else(|e| e.into_inner());
-        let slot = (aud.to_string(), sub.to_string());
+        let slot = (aud.to_string(), sub.unwrap_or("").to_string());
         if let Some((iat, jwt)) = jwts.get(&slot)
             && (*iat..=*iat + JWT_REUSE_SECS).contains(&now)
         {
@@ -186,11 +187,11 @@ impl Push {
             .is_ok()
     }
 
-    fn forget_jwt(&self, aud: &str, sub: &str) {
+    fn forget_jwt(&self, aud: &str, sub: Option<&str>) {
         self.jwts
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(&(aud.to_string(), sub.to_string()));
+            .remove(&(aud.to_string(), sub.unwrap_or("").to_string()));
     }
 
     /// Whether a test push for `subscription` may go now (one per [TEST_SPACING_SECS]); takes
@@ -367,12 +368,23 @@ type DueRow = (
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
 /// with more than [FOLD_ABOVE] event pushes for one subscription folded into its newest two and
-/// one summary (an emergency call always goes on its own). Deliveries to a turned-off
+/// one summary (an urgent kind - the emergency call, a PIN lockout, a foreign app - always goes on
+/// its own). Deliveries to a turned-off
 /// subscription or of a pruned event are dropped. Nothing happens without a key.
 pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
     let Some(key) = state.push.key.clone() else {
         return Ok(());
     };
+    // A push the service took although its request looked failed (a network error after the
+    // body went): the worker's receipt came before the retry, so it is accepted, never sent
+    // again (qa-35-s2-code L3).
+    sqlx::query(
+        "UPDATE push_deliveries SET status = 'accepted', \
+         accepted_at = COALESCE(accepted_at, receipt_at), next_try_at = NULL, reason = NULL \
+         WHERE status = 'queued' AND receipt_at IS NOT NULL",
+    )
+    .execute(&state.db)
+    .await?;
     let rows: Vec<DueRow> = sqlx::query_as(
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
                 s.auth, s.origin, s.label, s.state, d.event_id, e.kind, e.title, e.summary, e.target \
@@ -453,13 +465,14 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
 }
 
 /// [send_due]'s cap per pass (§4.6): a subscription with more than [FOLD_ABOVE] due event pushes
-/// (the emergency call aside) gets the newest two and one summary; the rest are `dropped`,
-/// `folded`.
+/// of the normal kinds gets the newest two and one summary; the rest are `dropped`, `folded`.
+/// The urgent kinds (`Kind::urgent`) are never folded into a normal-urgency summary
+/// (qa-35-s2-code L2).
 async fn fold(state: &AppState, due: Vec<Due>) -> Result<Vec<Due>, sqlx::Error> {
     let mut sends = Vec::new();
     let mut by_subscription: Vec<(i64, Vec<Due>)> = Vec::new();
     for delivery in due {
-        let foldable = matches!(delivery.what, What::Event(kind) if kind != Kind::EmergencyCall);
+        let foldable = matches!(delivery.what, What::Event(kind) if !kind.urgent());
         if !foldable {
             sends.push(delivery);
             continue;
@@ -651,11 +664,13 @@ async fn send_one(
         .bind(delivery.id)
         .execute(&state.db)
         .await?;
-    let sub = state
-        .push
-        .subject
-        .clone()
-        .unwrap_or_else(|| delivery.origin.clone());
+    let sub = state.push.subject.clone().or_else(|| {
+        delivery
+            .origin
+            .starts_with("https://")
+            .then(|| delivery.origin.clone())
+    });
+    let sub = sub.as_deref();
     let request = |jwt: &str| PushRequest {
         endpoint: delivery.endpoint.clone(),
         headers: vec![
@@ -671,15 +686,15 @@ async fn send_one(
     let mut answer = state
         .push
         .transport
-        .send(request(&state.push.jwt(key, &aud, &sub, at)))
+        .send(request(&state.push.jwt(key, &aud, sub, at)))
         .await;
     if outcome(&answer) == Outcome::BadSignature {
         log_refusal(&host, &answer);
-        state.push.forget_jwt(&aud, &sub);
+        state.push.forget_jwt(&aud, sub);
         answer = state
             .push
             .transport
-            .send(request(&state.push.jwt(key, &aud, &sub, at)))
+            .send(request(&state.push.jwt(key, &aud, sub, at)))
             .await;
     }
     let status = answer.as_ref().ok().map(|a| a.status);
@@ -807,14 +822,18 @@ pub enum Health {
     Ok,
     /// 3 or more pushes without a receipt since the last one, or the oldest a day old.
     MayNotShow,
+    /// The newest finished push to it failed and none was accepted after it: they don't reach
+    /// the push service (a blocked outbound 443, its refusal) - qa-35-s2-code M1.
+    NotGettingThrough,
     Gone,
     NeverSent,
 }
 
-/// [Health] from a subscription's state and its unconfirmed pushes (accepted, no receipt, after
-/// its last receipt).
+/// [Health] from a subscription's state, whether its newest finished push failed, and its
+/// unconfirmed pushes (accepted, no receipt, after its last receipt).
 pub fn health(
     gone: bool,
+    latest_failed: bool,
     ever_accepted: bool,
     unconfirmed: i64,
     oldest_unconfirmed: Option<DateTime<Utc>>,
@@ -822,6 +841,8 @@ pub fn health(
 ) -> Health {
     if gone {
         Health::Gone
+    } else if latest_failed {
+        Health::NotGettingThrough
     } else if unconfirmed >= UNCONFIRMED_MAX
         || oldest_unconfirmed.is_some_and(|t| now - t >= chrono::Duration::hours(UNCONFIRMED_HOURS))
     {
@@ -837,9 +858,26 @@ pub fn health(
 pub struct Subscription {
     pub id: i64,
     pub label: String,
-    pub endpoint_hash: String,
     pub last_receipt_at: Option<DateTime<Utc>>,
     pub health: Health,
+    /// Why the newest finished push failed ([failure_text]), with [Health::NotGettingThrough].
+    pub failure: Option<String>,
+    /// A push waits to go (queued, or to be tried again).
+    pub sending: bool,
+}
+
+/// Why a push failed, in words: the push service out of reach (a network error, 429, 5xx - also
+/// once retries ran past the TTL), its refusal of the server's signature, another refusal, or
+/// the server's own problem.
+pub fn failure_text(http_status: Option<i64>, reason: Option<&str>) -> String {
+    match (http_status, reason) {
+        (_, Some("too_large" | "bad_key" | "endpoint_not_allowed")) => {
+            "The server couldn't send it".to_string()
+        }
+        (None | Some(429) | Some(500..), _) => "The push service couldn't be reached".to_string(),
+        (Some(401 | 403), _) => "The push service refused the server's signature".to_string(),
+        (Some(status), _) => format!("The push service refused it ({status})"),
+    }
 }
 
 /// The admin's subscriptions, oldest first, with their health.
@@ -852,41 +890,84 @@ pub async fn subscriptions(
         i64,
         String,
         String,
-        String,
         Option<String>,
         i64,
         Option<String>,
         bool,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        bool,
     );
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT s.id, s.label, s.endpoint, s.state, s.last_receipt_at, \
+    // The newest finished delivery (accepted or failed) by id: its status, push-service status
+    // and reason.
+    const LATEST: &str = "FROM push_deliveries f WHERE f.subscription_id = s.id \
+         AND f.status IN ('accepted', 'failed') ORDER BY f.id DESC LIMIT 1";
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT s.id, s.label, s.state, s.last_receipt_at, \
                 COUNT(u.id), MIN(u.accepted_at), \
                 EXISTS (SELECT 1 FROM push_deliveries a \
-                        WHERE a.subscription_id = s.id AND a.accepted_at IS NOT NULL) \
+                        WHERE a.subscription_id = s.id AND a.accepted_at IS NOT NULL), \
+                (SELECT f.status {LATEST}), (SELECT f.http_status {LATEST}), \
+                (SELECT f.reason {LATEST}), \
+                EXISTS (SELECT 1 FROM push_deliveries q \
+                        WHERE q.subscription_id = s.id AND q.status = 'queued') \
          FROM push_subscriptions s \
          LEFT JOIN push_deliveries u ON u.subscription_id = s.id AND u.status = 'accepted' \
               AND u.receipt_at IS NULL AND u.accepted_at > COALESCE(s.last_receipt_at, '') \
-         WHERE s.admin_id = ? GROUP BY s.id ORDER BY s.id",
-    )
+         WHERE s.admin_id = ? GROUP BY s.id ORDER BY s.id"
+    ))
     .bind(admin_id)
     .fetch_all(db)
     .await?;
     Ok(rows
         .into_iter()
         .map(
-            |(id, label, endpoint, state, last_receipt, unconfirmed, oldest, ever)| {
+            |(
+                id,
+                label,
+                state,
+                last_receipt,
+                unconfirmed,
+                oldest,
+                ever,
+                latest,
+                latest_status,
+                latest_reason,
+                sending,
+            )| {
                 let parse =
                     |t: Option<String>| t.as_deref().and_then(crate::display_time::parse_db_utc);
+                let failed = latest.as_deref() == Some("failed");
                 Subscription {
                     id,
                     label,
-                    endpoint_hash: endpoint_hash(&endpoint),
                     last_receipt_at: parse(last_receipt),
-                    health: health(state == "gone", ever, unconfirmed, parse(oldest), now),
+                    health: health(
+                        state == "gone",
+                        failed,
+                        ever,
+                        unconfirmed,
+                        parse(oldest),
+                        now,
+                    ),
+                    failure: failed.then(|| failure_text(latest_status, latest_reason.as_deref())),
+                    sending,
                 }
             },
         )
         .collect())
+}
+
+/// The hashes ([endpoint_hash]) of every active subscription, every admin's: This Device drops a
+/// browser's subscription only when no account knows it (qa-35-s2-code L1: two parents on one
+/// family iPad).
+pub async fn active_endpoint_hashes(db: &sqlx::SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    let endpoints: Vec<String> =
+        sqlx::query_scalar("SELECT endpoint FROM push_subscriptions WHERE state = 'active'")
+            .fetch_all(db)
+            .await?;
+    Ok(endpoints.iter().map(|e| endpoint_hash(e)).collect())
 }
 
 /// The 16-hex SHA-256 prefix of an endpoint: what the page names a subscription by (§5.2; the
@@ -913,29 +994,47 @@ pub async fn signature_refused(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> boo
     })
 }
 
-/// A receipt from the worker (§7): `token` (base64url) must match delivery `id`'s hash. `true`
-/// when it did (the delivery, its subscription and - clicked - the event are marked).
+/// What a receipt matched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Receipt {
+    /// The delivery's current token: marked.
+    Matched,
+    /// Not its current token, for a delivery sent more than once: a late receipt for an earlier
+    /// attempt's token (a retry replaced it) - nothing marked, and not a miss against the client
+    /// (qa-35-s2-code L3).
+    Stale,
+    /// No such delivery, or not a token of it.
+    Unknown,
+}
+
+/// A receipt from the worker (§7): `token` (base64url) must match delivery `id`'s hash. On a
+/// match the delivery, its subscription and - clicked - the event are marked.
 pub async fn receipt(
     db: &sqlx::SqlitePool,
     id: i64,
     token: &str,
     clicked: bool,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Receipt, sqlx::Error> {
+    let row: Option<(Vec<u8>, i64, Option<i64>, i64)> = sqlx::query_as(
+        "SELECT token_hash, subscription_id, event_id, attempts FROM push_deliveries WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    let Some((stored, subscription_id, event_id, attempts)) = row else {
+        return Ok(Receipt::Unknown);
+    };
+    let miss = if attempts > 1 {
+        Receipt::Stale
+    } else {
+        Receipt::Unknown
+    };
     let Some(token) = B64
         .decode(token.trim_end_matches('='))
         .ok()
         .filter(|t| t.len() == 16)
     else {
-        return Ok(false);
-    };
-    let row: Option<(Vec<u8>, i64, Option<i64>)> = sqlx::query_as(
-        "SELECT token_hash, subscription_id, event_id FROM push_deliveries WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await?;
-    let Some((stored, subscription_id, event_id)) = row else {
-        return Ok(false);
+        return Ok(Receipt::Unknown);
     };
     let hash = Sha256::digest(&token);
     // Constant time over the 32 bytes; an unsent delivery's empty hash never matches.
@@ -946,7 +1045,7 @@ pub async fn receipt(
             .fold(0u8, |acc, (a, b)| acc | (a ^ b))
             != 0
     {
-        return Ok(false);
+        return Ok(miss);
     }
     let mut tx = db.begin().await?;
     sqlx::query(
@@ -971,7 +1070,7 @@ pub async fn receipt(
         .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(Receipt::Matched)
 }
 
 /// "iPhone · Safari" from a User-Agent (the raw string is never stored, §3).
@@ -1065,14 +1164,46 @@ mod tests {
     fn health_rules() {
         let now = utc("2026-10-18 12:00:00");
         let hour_ago = Some(utc("2026-10-18 11:00:00"));
-        assert_eq!(health(true, true, 5, hour_ago, now), Health::Gone);
-        assert_eq!(health(false, false, 0, None, now), Health::NeverSent);
-        assert_eq!(health(false, true, 0, None, now), Health::Ok);
-        assert_eq!(health(false, true, 2, hour_ago, now), Health::Ok);
-        assert_eq!(health(false, true, 3, hour_ago, now), Health::MayNotShow);
+        assert_eq!(health(true, true, true, 5, hour_ago, now), Health::Gone);
+        assert_eq!(health(false, false, false, 0, None, now), Health::NeverSent);
+        assert_eq!(health(false, false, true, 0, None, now), Health::Ok);
+        assert_eq!(health(false, false, true, 2, hour_ago, now), Health::Ok);
         assert_eq!(
-            health(false, true, 1, Some(utc("2026-10-17 12:00:00")), now),
+            health(false, false, true, 3, hour_ago, now),
             Health::MayNotShow
+        );
+        assert_eq!(
+            health(false, false, true, 1, Some(utc("2026-10-17 12:00:00")), now),
+            Health::MayNotShow
+        );
+        // M1: the newest finished push failed - before it was ever accepted too.
+        assert_eq!(
+            health(false, true, false, 0, None, now),
+            Health::NotGettingThrough
+        );
+        assert_eq!(
+            health(false, true, true, 3, hour_ago, now),
+            Health::NotGettingThrough
+        );
+        assert_eq!(
+            failure_text(None, Some("network")),
+            "The push service couldn't be reached"
+        );
+        assert_eq!(
+            failure_text(Some(503), Some("expired")),
+            "The push service couldn't be reached"
+        );
+        assert_eq!(
+            failure_text(Some(400), Some("BadDeviceToken")),
+            "The push service refused it (400)"
+        );
+        assert_eq!(
+            failure_text(Some(403), None),
+            "The push service refused the server's signature"
+        );
+        assert_eq!(
+            failure_text(None, Some("too_large")),
+            "The server couldn't send it"
         );
     }
 
@@ -1086,7 +1217,10 @@ mod tests {
         }
         let key = VapidKey::from_pkcs8(&VapidKey::generate_pkcs8()).unwrap();
         let push = Push::new(None, None, Arc::new(Never));
-        let (aud, sub) = ("https://fcm.googleapis.com", "https://kid.example.ts.net");
+        let (aud, sub) = (
+            "https://fcm.googleapis.com",
+            Some("https://kid.example.ts.net"),
+        );
         let first = push.jwt(&key, aud, sub, 1_000_000);
         assert_eq!(push.jwt(&key, aud, sub, 1_000_000 + 3600), first);
         // Another service or contact, an hour on, or a clock that went back: a new one.
@@ -1095,7 +1229,7 @@ mod tests {
             first
         );
         assert_ne!(
-            push.jwt(&key, aud, "mailto:p@example.org", 1_000_000),
+            push.jwt(&key, aud, Some("mailto:p@example.org"), 1_000_000),
             first
         );
         assert_ne!(push.jwt(&key, aud, sub, 1_000_000 + 3601), first);

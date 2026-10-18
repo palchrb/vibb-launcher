@@ -1917,7 +1917,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   a rename and a directory sync in a 0700 directory; a non-empty file is never replaced; `music_secret` uses it too),
   `src/webpush.rs` (pure, on `ring` - now a direct dependency, `default-features = false, features = ["alloc"]`,
   already compiled in through rustls, so `Cargo.lock` gained only the dependency line: `VapidKey` (PKCS#8, `public`
-  base64url, `fingerprint` 16 hex), `vapid_jwt` (ES256, `aud` = "https://host", `exp` = `iat` + 12 h, `sub`),
+  base64url, `fingerprint` 16 hex), `vapid_jwt` (ES256, `aud` = "https://host", `exp` = `iat` + 12 h, `sub` - `VAPID_SUBJECT`, else an `https://` origin, else none),
   `authorization` ("vapid t=…, k=…"), `encrypt` (RFC 8291 + RFC 8188 `aes128gcm`, one record, a fresh ephemeral key
   then a fresh salt per message, plaintext cap 3072), `allowed` (https, port 443, no userinfo, no IP literal;
   `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`),
@@ -1933,7 +1933,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`state.push.wake()`, a `Notify`) after the commit. `push::run_sender` (spawned by `main`) runs `send_due(state,
   now)` at start, on every wake and at the earliest `next_try_at`; tests call `send_due` directly. A pass: due rows
   (`queued`, `next_try_at` NULL or past) of a gone subscription or a pruned event are `dropped`; more than 3 due event
-  pushes for one subscription (the emergency call aside) -> the newest 2 + one `summary` delivery ("New
+  pushes of the normal kinds for one subscription (an urgent kind is never folded, L2) -> the newest 2 + one `summary` delivery ("New
   notifications", tag `s<id>`), the rest `dropped`/`folded`; sent one at a time, the emergency call first, then
   `Urgency: high`. Each send: TTL expired -> `failed`/`expired`; endpoint re-checked with `allowed`; a fresh 16-byte
   receipt token (its SHA-256 stored before the request); the payload of design 35 §5.3 (`navigate` = the
@@ -1949,9 +1949,11 @@ needed to manage the phone, delete on a schedule, never store notification or me
   429/500/502/503/504/network error -> retried after 1 min, 5 min, 30 min, 2 h (`Retry-After` seconds honoured up to
   2 h), then `failed`, never past the TTL (`expired`); other statuses `failed`. Every refusal logs the status, the
   JSON `reason`, `apns-id` and the host - never the path, a key, the JWT or a token.
-- **Health** (`push::subscriptions`, derived when read): unconfirmed = accepted, no receipt, after the
-  subscription's `last_receipt_at`; `MayNotShow` at 3 or the oldest 24 h old, `Gone`, `NeverSent`, `Ok`. A receipt for
-  any delivery clears it. The clock warning (`push::signature_refused`): a 401/403 failure in the last day and none
+- **Health** (`push::subscriptions`, derived when read): `Gone`; `NotGettingThrough` when the newest finished
+  delivery (accepted or failed, by id) is `failed` - nothing accepted after it -, with `push::failure_text`'s reason
+  (qa-35-s2-code M1: a blocked outbound 443 shows); unconfirmed = accepted, no receipt, after the subscription's
+  `last_receipt_at`, `MayNotShow` at 3 or the oldest 24 h old; `NeverSent` ("Sending…" while one is queued); `Ok`. A
+  receipt for any delivery clears the unconfirmed. Both warning states get the orange rows (`notifications::warning_of`). The clock warning (`push::signature_refused`): a 401/403 failure in the last day and none
   accepted since.
 - **Routes** (`handlers::notifications`, full auth + CSRF, each back to its group with `?notice=`):
   `POST /notifications/subscriptions` (This Device's Turn On: `endpoint` allowed and <= 1024, `p256dh` a P-256 point,
@@ -1959,12 +1961,13 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "iPhone · Safari", `push_subscribed`; refusals flash in `#this-device`), `.../subscriptions/unsubscribe`,
   `.../subscriptions/{id}/test` (one per 30 s, in memory), `.../subscriptions/{id}/delete` (both `#devices`).
   `POST /notifications/receipt` is in `public_routes` with a 1 KiB limit: `{d, t, a}`, the token's hash compared in
-  constant time, 204 (repeats too) / 404 counted in `limits::ip_failed` (429 while blocked); `clicked` marks the event
-  read. Sign Out Everywhere and `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions;
+  constant time, 204 (repeats too) / 404 counted in `limits::ip_failed` (429 while blocked) - except an older token of
+  a delivery sent more than once (`push::Receipt::Stale`, not counted); `clicked` marks the event read. A `queued`
+  delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere and `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions;
   `backups::strip_secrets_in` deletes `push_deliveries` and `push_subscriptions` from every copy.
 - **PWA**: `/notifications` gained the warnings (the clock row, a "may not be showing" row per device to `#devices`),
   This Device (`#this-device`: the form carries `data-key` = the public key and `data-subscribed` = 16-hex SHA-256
-  prefixes of the admin's active endpoints - never an endpoint, browser key, auth secret or token;
+  prefixes of every admin's active endpoints (`push::active_endpoint_hashes`, L1) - never an endpoint, browser key, auth secret or token;
   `static/notifications.js` - the state order of H2, `subscribe` as the tap's first call with a `Uint8Array` key, a
   local subscription the server doesn't know is dropped first), each inbox row's delivery line (`delivery_line`:
   "Shown on …", "Pushed to …, not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary", "Not

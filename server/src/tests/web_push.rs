@@ -347,13 +347,40 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
         .as_str()
         .unwrap()
         .to_string();
+    // The other parent's subscription on a shared device is known too (qa-35-s2-code L1), so
+    // This Device never drops it; a turned-off one isn't.
+    let key = app.state.push.key.as_ref().unwrap();
+    let other: i64 = sqlx::query_scalar(
+        "INSERT INTO admin_users (username, password_hash) VALUES ('other', 'x') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    for (endpoint, state) in [
+        ("https://fcm.googleapis.com/fcm/send/other-parent", "active"),
+        ("https://fcm.googleapis.com/fcm/send/other-gone", "gone"),
+    ] {
+        sqlx::query(
+            "INSERT INTO push_subscriptions \
+             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state) \
+             VALUES (?, ?, x'00', x'00', ?, 'iPad · Safari', ?, ?)",
+        )
+        .bind(other)
+        .bind(endpoint)
+        .bind(ORIGIN)
+        .bind(&key.fingerprint)
+        .bind(state)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
 
     let html = app.get_page("/notifications", &cookie).await.text();
-    let key = app.state.push.key.as_ref().unwrap();
     assert!(html.contains(&format!("data-key=\"{}\"", key.public)));
     assert!(html.contains(&format!(
-        "data-subscribed=\"{}\"",
-        crate::push::endpoint_hash(ENDPOINT)
+        "data-subscribed=\"{},{}\"",
+        crate::push::endpoint_hash(ENDPOINT),
+        crate::push::endpoint_hash("https://fcm.googleapis.com/fcm/send/other-parent")
     )));
     for secret in [
         ENDPOINT,
@@ -620,6 +647,10 @@ async fn switches_the_emergency_call_and_a_burst() {
             json!({ "id": format!("{n:032x}"), "kind": "unlocked", "entry": "override",
                     "at_ms": now_ms - 60_000 + n })
         })
+        .chain(std::iter::once(json!({
+            "id": "f".repeat(32), "kind": "lockout", "entry": "pin_lock",
+            "at_ms": now_ms - 59_990, "until_ms": now_ms + 900_000, "level": 1,
+        })))
         .collect();
     let res = app
         .request(
@@ -648,11 +679,13 @@ async fn switches_the_emergency_call_and_a_burst() {
             )
         })
         .collect();
-    assert_eq!(pushed.len(), 4, "{pushed:?}");
+    assert_eq!(pushed.len(), 5, "{pushed:?}");
     assert_eq!(
         pushed[0].0, "Anna called an emergency number",
         "the emergency call first, on its own"
     );
+    // An urgent kind is never folded (qa-35-s2-code L2): the lockout goes on its own, next.
+    assert_eq!(pushed[1].0, "Parent PIN locked on Anna");
     let count = |title: &str| pushed.iter().filter(|(t, _)| t == title).count();
     assert_eq!(count("New notifications"), 1);
     assert_eq!(count("Parent PIN used on Anna"), 2);
@@ -662,7 +695,7 @@ async fn switches_the_emergency_call_and_a_burst() {
         .unwrap();
     assert!(summary.1.starts_with('s'));
     let tags: std::collections::HashSet<&String> = pushed.iter().map(|(_, tag)| tag).collect();
-    assert_eq!(tags.len(), 4, "unique tags: nothing replaces another");
+    assert_eq!(tags.len(), 5, "unique tags: nothing replaces another");
     assert_eq!(
         scalar(
             &app,
@@ -987,4 +1020,141 @@ async fn the_key_file_and_a_changed_key() {
     assert_eq!(scalar(&app, active).await, 1);
     crate::push::forget_other_keys(&app.db, &made).await;
     assert_eq!(scalar(&app, active).await, 0);
+}
+
+/// The page's text with Askama's apostrophes back.
+fn words(html: String) -> String {
+    html.replace("&#x27;", "'").replace("&#39;", "'")
+}
+
+/// qa-35-s2-code M1, N2: a device whose pushes never reach the push service says so - "Sending…"
+/// right after Send a Test, then "Not getting through" with the reason and the orange rows once
+/// the retries ran past the test's 10-minute TTL (failed at once, never a retry scheduled past
+/// it); an accepted push ends it.
+#[tokio::test]
+async fn a_device_whose_pushes_dont_get_through_says_so() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/notifications/subscriptions/{id}/test"),
+            Some(&cookie),
+            &[("from", "devices")],
+        )
+        .await;
+    let page = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(page.contains("A test is on its way."));
+    assert!(page.contains("Sending…"), "the row says a push waits");
+
+    // The push service out of reach: tried at once, after 1 min and after 5 more; the next
+    // retry (30 min) would be past the 600 s TTL, so the third failure ends it.
+    for _ in 0..3 {
+        app.pushes.fail();
+    }
+    let mut at = chrono::Utc::now();
+    for (wait, status) in [(0, "queued"), (60, "queued"), (300, "failed")] {
+        at += chrono::Duration::seconds(wait);
+        send_at(&app, at).await;
+        let now: String = sqlx::query_scalar("SELECT status FROM push_deliveries")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(now, status, "after {wait} s");
+    }
+    assert_eq!(app.pushes.take().len(), 3);
+    let page = words(app.get_page("/notifications", &cookie).await.text());
+    assert!(page.contains("Not getting through"));
+    assert!(page.contains("The push service couldn't be reached"));
+    assert!(page.contains("Notifications aren't reaching iPhone · Safari"));
+    assert!(!page.contains("Nothing sent yet"));
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(devices.contains("id=\"push-warning\""));
+
+    // A refusal says which; an accepted push afterwards ends the state.
+    app.pushes.answer(400, Some("BadDeviceToken"), None);
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let page = words(app.get_page("/notifications", &cookie).await.text());
+    assert!(page.contains("The push service refused it (400)"));
+    raise(&app, &anna.unseen_boot(2, None)).await;
+    send(&app).await;
+    let page = words(app.get_page("/notifications", &cookie).await.text());
+    assert!(!page.contains("Not getting through"));
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(!devices.contains("id=\"push-warning\""));
+}
+
+/// qa-35-s2-code L3: a receipt for a push whose request looked failed (the push service took it)
+/// marks it accepted, and the retry never goes; a late receipt for a token a retry replaced is a
+/// 404 that doesn't count against the parent's device.
+#[tokio::test]
+async fn a_receipt_before_the_retry_ends_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    app.pushes.fail();
+    let event = raise(&app, &anna.unseen_boot(1, None)).await;
+    let now = chrono::Utc::now();
+    send_at(&app, now).await;
+    let first = app.pushes.take().remove(0);
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&first, "shown"), "same-origin").await,
+        StatusCode::NO_CONTENT
+    );
+    send_at(&app, now + chrono::Duration::seconds(61)).await;
+    assert!(app.pushes.take().is_empty(), "never sent again");
+    assert_eq!(delivery_of(&app, event).await.0, "accepted");
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("Shown on iPhone · Safari"));
+
+    // The receipt arrives only after the retry went out with a new token.
+    app.pushes.fail();
+    raise(&app, &anna.unseen_boot(2, None)).await;
+    send_at(&app, now).await;
+    let stale = app.pushes.take().remove(0);
+    send_at(&app, now + chrono::Duration::seconds(61)).await;
+    let retried = app.pushes.take().remove(0);
+    for _ in 0..40 {
+        assert_eq!(
+            post_receipt(&app, &receipt_of(&stale, "shown"), "same-origin").await,
+            StatusCode::NOT_FOUND
+        );
+    }
+    // Not counted as misses: the current token still works.
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&retried, "shown"), "same-origin").await,
+        StatusCode::NO_CONTENT
+    );
+}
+
+/// qa-35-s2-code N3: an `http://` Origin (a dev install on 127.0.0.1) is never the JWT's `sub` -
+/// RFC 8292 takes `mailto:` or `https:` only; the push still goes, without one.
+#[tokio::test]
+async fn an_http_origin_is_no_jwt_subject() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    post_as_browser(
+        &app,
+        "/notifications/subscriptions",
+        Some(&cookie),
+        Some("http://127.0.0.1:3100"),
+        &[
+            ("endpoint", ENDPOINT),
+            ("p256dh", test_browser::UA_PUBLIC),
+            ("auth", test_browser::AUTH),
+        ],
+    )
+    .await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    let (_, claims, _) = vapid(&requests[0]);
+    assert!(claims.get("sub").is_none(), "{claims}");
+    assert_eq!(claims["aud"], "https://web.push.apple.com");
 }
