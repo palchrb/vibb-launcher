@@ -580,7 +580,9 @@ findings, merge to `main`, full suite once.
   question: plain DNS to a server on the home network or the tailnet (a tailnet address isn't reachable
   from the VPN's own socket; tsnet is inside the launcher). A short design note first. Approved
   2026-10-15; the user confirmed the same day that DoH/DoT with a client id to their own AdGuard Home
-  is a must.
+  is a must - and (2026-10-18) **any** DNS server: a plain DoH URL (`https://dns.example/dns-query`, with or
+  without a client id in the path), a DoT host name, or a plain IP over DoT; the field takes what the parent has,
+  the server works out the kind and validates it.
 
 - **The Locate map's marker is a broken image** (the user, 2026-10-15: a broken-image icon with
   the alt text "Mark" instead of the pin). Cause: `device_locate.html` sets
