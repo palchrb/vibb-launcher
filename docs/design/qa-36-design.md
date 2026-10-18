@@ -284,3 +284,21 @@ footer say "while a phone uses Cloudflare, only its own lists filter". Ask the u
    (`https://1.1.1.1/dns-query`, 443) when 853 fails? Recommended: yes, as a separate small step after this one, or
    park it in the backlog - but decide, because it changes L6.
 4. **`*.ts.net` through Funnel** (M5): allow it and document it in DEPLOY.md? Recommended: yes.
+
+## Revision 2026-10-18 (owner's decisions)
+
+The note was revised on branch `design-36b` after the owner answered the questions above. Versus the QA'd version:
+- **Q1/M7 changed**: no hard-coded Cloudflare for Families. Under Custom the parent gives a second field, "Backup
+  server", with §2's grammar, refusals and write-only handling; required, prefilled `1.1.1.3`, not equal to the
+  primary. It is a column in the same migration (0079), a nested `backup` target in `dns_upstream`, and §5.4's
+  fallback target; a failing backup drops the query (no third tier). The status word is `backup`.
+- **Bootstrap**: through the backup when it is an IP, else the primary when it is an IP, else Cloudflare `1.1.1.1`
+  DoT; both names looked up when a config loads, a failed refresh keeps the cached entry.
+- **Q4/M4/M5 changed**: any address is allowed (private, tailnet, `*.ts.net`, single-label names); only loopback,
+  unspecified, multicast (and the forms that can't be dialled: `255.255.255.255`, unzoned IPv6 link-local) are
+  refused. The phone reaches the server directly over its own network, never through tsnet; a home server works on
+  the home Wi-Fi, the backup elsewhere.
+- Q2, Q3 (step 3, each provider's DoH on 443), Q5-Q7: as recommended.
+- **H1 still holds**: the canary judges only the primary, and the backup is used only on a primary transport failure
+  or a failed canary, never for a name a healthy primary refused or timed out on. Who chose the backup doesn't
+  change that rule; a parent-chosen backup only decides how much the backup itself filters.
