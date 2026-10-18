@@ -1501,7 +1501,10 @@ async fn the_page_says_an_older_phone_uses_mobile_data_only_with_both() {
     .await;
     let form = settings_form(&music_page(&app, &cookie, device).await).to_string();
     assert!(form.contains("Update Vibb One") && !form.contains("and the music app"));
-    let summary = app.get_page(&format!("/devices/{device}"), &cookie).await.text();
+    let summary = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
     assert!(summary.contains("Update Vibb One") && !summary.contains("and the music app"));
     save_switches(&app, &cookie, device, false, true).await;
     assert!(music_page(&app, &cookie, device).await.contains(NOTE));

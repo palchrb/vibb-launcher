@@ -3253,12 +3253,14 @@ mod tests {
         let (other, _) = app.enrolled_device("Ola").await;
         let (not_enrolled, _) = app.create_device("Kari").await;
         for device in [ticked, not_enrolled] {
-            sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
-                .bind(device)
-                .bind(id)
-                .execute(&app.db)
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)",
+            )
+            .bind(device)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
         }
         let mut nudges = app.state.command_notify.subscribe();
         let mut nudged = || {
@@ -3273,7 +3275,11 @@ mod tests {
         sync_release(&app.state, &row().await, "v1", &asset(1, "key1"), false)
             .await
             .unwrap();
-        assert_eq!(nudged(), vec![ticked], "only the enrolled phone that has it");
+        assert_eq!(
+            nudged(),
+            vec![ticked],
+            "only the enrolled phone that has it"
+        );
         // The same (tag, asset id) again: a no-op check, no nudge.
         sync_release(&app.state, &row().await, "v1", &asset(1, "key1"), false)
             .await
