@@ -462,3 +462,67 @@ release, with step 2's launcher.
 0079, sqlx applies it out of order and the pre-migration backup (`MAX(version)`) takes none - 35 must ship before or
 with 36. (2) The "Waiting for the phone" vs "Web filter off" split above. (3) The picker's 400 keeps "Custom server"
 selected in the answer (the choice the parent made), though nothing was stored.
+
+## Step 2 implementation status
+
+Branch `dns-s2` (from `b0d59eb1`), 2026-10-18. Launcher only; the wire, the contract files and `server/` are untouched.
+
+**Shipped as specified**: §5.1 - `dns_upstream_custom` written with `dns_upstream_provider` in `storeAcceptedPolicy`'s
+one `commit()` (removed by an accepted policy without a valid pair; a decode failure or a rejected policy never reach
+it), `DnsFilterEngine.setCustomUpstream` after the commit, `loadFromDisk` from the pref; the policy decode failure and a
+corrupt cache logged by exception class only (`PolicyGate`). §5.2 - `buildDohClient` (fresh builder, `NO_PROXY`,
+`ProtectedSocketFactory`, `BootstrapDns` as `Dns`, 1.5 s / 2.5 s, no redirects/cache/cookies, the `CallMarks` event
+listener), POST `application/dns-message` with ID 0, the response checks and the ID restored. §5.3 - `resolveDoT`
+generalized (two addresses, IPv4 first, one budget, SNI/endpoint identification for a name, no SNI + the default
+hostname verifier for an IP), `bootstrapResolver`'s order, `BootstrapCache` (CNAME chain, 5 min-24 h clamp, stale while
+one refresh runs, kept on failure), both names looked up at load, the primary's miss to the backup and a failed
+look-up = `bootstrap`, the backup's miss dropped. §5.4 - `UpstreamChooser` (`route`, `afterTransport`, `afterAnswer`,
+`afterOdd`, `needsCanary`, `reset`) in one `AtomicReference` by CAS, the canary `. IN NS` (2 s, one in flight, 60 s),
+REFUSED from a healthy server = the phone's NODATA, SERVFAIL/silence = SERVFAIL, the chooser judging only the primary,
+`registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN) with the pure `networkChanged`. §4.2 - the status field
+while the VPN runs with a custom server, `dns_custom_v1`. The lists block first; the FCM/Spotify exemptions, the NODATA
+answer and `BlockedEventLog` are unchanged; no underlying networks, lockdown off, never tsnet. Tests per §8's launcher
+list (`UpstreamChooserTest` with `networkChanged` and the status field, `CustomDnsTest`, `BootstrapResolverTest` with
+the cache, `DohMessageTest`, `CustomUpstreamPrefTest` with the log scan).
+
+**Deviations, with the reason**:
+- **Reasons the contract has no word for**: a canary SERVFAIL or any non-NOERROR answer is `timeout`; a DoT stream
+  closed or garbled after the request is `connect`; a connect that times out is `connect` (`timeout` only once the TCP
+  connection is up) - the PWA's "can't reach your server from where the phone is" reads right for a home server away
+  from home. The contract file stays as it is.
+- **`releaseProbe`** (new in the chooser): the back-off's probe whose primary has no address yet (its look-up runs)
+  gives the slot back, so the next query probes once the address is there; otherwise `probing` would stick.
+- **A failed look-up with nothing cached is retried after 30 s** (or at a network reset), one look-up per name at a
+  time: without it a name backup on a captive portal or offline would start a look-up per query. The primary's
+  look-ups are paced by the back-off anyway.
+- **The DoH client is owned by `CustomDns`** (one per config while the VPN runs), not built in `startVpn` directly:
+  `KidVpnService.syncCustom` builds a `CustomDns` when the VPN comes up with a config and whenever the config changes
+  (any change, not only `rev`), and closes (evicts) the old one; `stopSelfCleanly` closes it.
+- **Gen checks**: `afterAnswer` also ignores an answer from an older `gen` (a slow answer that began before a period
+  doesn't end it); the canary's verdict is kept whatever the `gen` (so one canary per 60 s holds); `reset` keeps
+  `sinceMs` while healthy (the report's "since" stays the time the server came into use).
+- **Cloudflare/Quad9 keep today's timeouts** (`PROVIDER_BUDGET`: 5 s connect, 10 s in all) through the generalized
+  `resolveDoT`; the 2.5 s budget is for the parent's servers, where a backup answer must land inside the stub's first
+  try. A garbled provider answer is now dropped rather than relayed.
+- **`cloudflare-dns.com` is always `1.1.1.1`** in `BootstrapDns` (the bootstrap fallback's fixed address), also when
+  a parent types that name.
+- **The addresses kept are one IPv4 and one IPv6** (`ipv4First`), not two of one family.
+- `CustomDns` takes its clock, log and transport as parameters (Android's by default) so `CustomDnsTest` runs the glue
+  on the JVM.
+
+**Device checks owed** (`docs/testing/emulator.md` §6m covers the emulator part): a real DoH and a real DoT server
+(by name and by IP) through the protected sockets, `NO_PROXY` and the bootstrap; a LAN server on the home Wi-Fi, then
+away on mobile data (backup, `connect`), then back home (the network reset tries it at once); a network that blocks
+853 (a DoT primary goes to the backup; step 3 is not built); the canary against AdGuard Home's REFUSED - a
+REFUSED-mode block stays blocked, an id removed from "Allowed clients" is `refused`; the id in AdGuard Home's query
+log; Wi-Fi/mobile switches on the Jelly Star.
+
+**Open points for the code QA**: (1) the reason words above (`connect` for a connect timeout and a closed DoT stream,
+`timeout` for a canary SERVFAIL). (2) A config change closes the old client while its queries may be in flight; those
+are dropped once (the stub retries). (3) With the backup a name and the primary an IP, the backup's look-up goes
+through the primary (§5.3's order) also during a period: a LAN primary after a reboot away from home leaves a name
+backup without an address (the memory cache is empty), so every query is dropped - fail closed, never unfiltered -
+until the primary is reachable (retried every 30 s and at each network reset). Once looked up, the address is kept
+(a failed refresh keeps it). The prefill `1.1.1.3` and the PWA's "give the backup as an IP" line avoid it; step 3's
+disk cache would close it, or a Cloudflare fallback for this one case - the owner's call. (4) A canary waiter gives up after 3 s and counts as a failed canary for
+its own query only (the canary's own verdict is what the state keeps).

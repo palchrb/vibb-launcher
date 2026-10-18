@@ -1421,6 +1421,36 @@ on https, or the paste; the parent's account is never logged in, design 26c step
   play from the top - never "Trenger internett".
 - [ ] The DNS capture of design 26c §6.2 (the host list), as `docs/testing/spotify-spike.md` describes.
 
+## 6m. A custom DNS server with a backup (design 36 step 2)
+
+Design 36 (`docs/design/36-custom-dns.md` §5, §8): with Settings › Web Filter › "Look-ups go to: Custom server", the
+phone forwards every query its lists let through to the parent's server, and to the backup while that server is
+unhealthy. The emulator reaches public resolvers, so a public DoH/DoT server stands in for the parent's. The Web
+filter must be on for the phone (its Web Filter page) and the launcher must be the debug build of this step or later.
+
+1. On the PWA, Settings › Web Filter › Custom Server: **Your server** `https://dns.quad9.net/dns-query`, **Backup
+   server** the prefilled `1.1.1.3`; Save. The phone syncs at once (the nudge). Then:
+   ```
+   adb logcat -s CustomDns DnsUpstream KidVpnService
+   adb shell ping -c1 example.com          # resolves through the custom server (with Chrome open, browse too)
+   ```
+   logcat shows `Custom DNS server: doh` and no `Upstream: backup`. After the next status report (Sync now in the
+   phone's Settings, or wait) the footer under the group reads "<phone> · Your server in use". A name on the phone's
+   own lists stays blocked (it never reaches the server).
+2. The same with **Your server** `dns.adguard-dns.com` (DoT by name: the bootstrap looks it up at the backup, an IP)
+   and `9.9.9.9` (DoT by IP: the certificate must name the IP; Quad9's does).
+3. A server whose certificate fails: `https://wrong.host.badssl.com/dns-query`. Look-ups still work (through the
+   backup); logcat `Upstream: backup, reason=tls, failures=1`, then one probe per back-off (60 s, 120 s, ...); the
+   footer says "Backup server since ... - your server's certificate wasn't accepted".
+4. A network reset: `adb shell svc wifi disable` then `enable` (or toggle mobile data): the next query tries the
+   primary again at once (`Upstream: custom` after a working server, or a new `failures=1` period).
+5. A backup given as a DoH URL (`https://1.1.1.3/dns-query`) with a failing primary answers too.
+6. Forget Custom Server (or pick Cloudflare): logcat `Custom DNS server: none`, the next report has no
+   `dns_upstream`, look-ups go to Cloudflare as before.
+
+What the emulator can't show (device checks, design 36 "Step 2 implementation status"): a home-network server on the
+home Wi-Fi and away from it, a network that blocks 853, AdGuard Home's REFUSED for a client id it doesn't allow.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online

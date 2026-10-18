@@ -2,14 +2,15 @@ package com.kidslauncher.mdm.server
 
 import android.content.Context
 import android.util.Log
-import java.io.EOFException
 import java.io.File
-import java.io.InputStream
-import java.net.InetSocketAddress
 import java.net.Socket
-import javax.net.ssl.SNIHostName
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
+import org.xbill.DNS.DClass
+import org.xbill.DNS.Flags
+import org.xbill.DNS.Message
+import org.xbill.DNS.Name
+import org.xbill.DNS.Rcode
+import org.xbill.DNS.SOARecord
+import org.xbill.DNS.Section
 
 private const val LOG_TAG = "DnsFilterEngine"
 private const val BLOCKLIST_FILE = "dns_blocklist.tsv"
@@ -71,6 +72,24 @@ object DnsFilterEngine {
         spotifyOn = on
     }
 
+    /** The parent's own server and its backup (design 36 §5.1), parsed from the pref
+     * `dns_upstream_custom`: set by every accepted sync ([setCustomUpstream]) and from the pref when
+     * the VPN starts ([loadFromDisk]); `null` = forward to the provider. */
+    @Volatile
+    private var customUpstream: CustomUpstream? = null
+
+    /** Told when [setCustomUpstream] runs ([KidVpnService] while its VPN is up). */
+    @Volatile
+    var onCustomChanged: (() -> Unit)? = null
+
+    fun customUpstream(): CustomUpstream? = customUpstream
+
+    /** The accepted policy's servers, after they were committed with it (`MdmSyncWorker`). */
+    fun setCustomUpstream(upstream: CustomUpstream?) {
+        customUpstream = upstream
+        onCustomChanged?.invoke()
+    }
+
     private val upstreamServers = mapOf(
         "cloudflare" to Pair("1.1.1.1", "cloudflare-dns.com"),
         "quad9" to Pair("9.9.9.9", "dns.quad9.net"),
@@ -86,6 +105,7 @@ object DnsFilterEngine {
         spotifyOn = runCatching {
             com.kidslauncher.mdm.music.musicSpotify((cachedPolicy() as? CachedPolicy.Ok)?.policy?.music)
         }.getOrDefault(false)
+        customUpstream = customUpstreamFromPref(com.kidslauncher.mdm.preferences.LauncherPreferences.mdm().dnsUpstreamCustom())
         try {
             val listFile = File(context.filesDir, BLOCKLIST_FILE)
             if (!listFile.exists()) return
@@ -144,71 +164,49 @@ object DnsFilterEngine {
     fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn)
 
     /**
-     * Forwards an allowed DNS query to the admin-configured public upstream over DNS-over-TLS
-     * (RFC 7858: a 2-byte big-endian length prefix, then the raw DNS message, over TLS on port
-     * 853) - a small, well-defined protocol, no library needed. Returns the raw response message
-     * bytes, or null on any failure (caller should just drop the query - the client's own retry/
-     * timeout handles a dropped response the same as any transient DNS failure).
-     *
-     * [protectSocket] must be [android.net.VpnService.protect], called on the plain TCP socket
-     * before the TLS handshake - without it, this connection would itself get swept into
-     * [KidVpnService]'s own tunnel and never reach the real network (Android routes any socket the
-     * active VPN app itself opens through its own tunnel by default, regardless of whether the
-     * destination matches an added route - the same reason DNS66's own upstream-forwarding socket
-     * needs this).
-     *
-     * SNI/hostname verification uses the resolver's real hostname (e.g. "cloudflare-dns.com"),
-     * even though the actual TCP connection targets a pinned IP - connecting by IP avoids yet
-     * another DNS lookup just to resolve the resolver itself, but the certificate must still be
-     * validated against the name the cert was actually issued for, not the bare IP (a bare
-     * SSLSocket does not do this by default unless explicitly configured, unlike HttpsURLConnection).
+     * Forwards an allowed DNS query to the admin-configured public upstream (Cloudflare or Quad9)
+     * over DNS-over-TLS by its fixed address, SNI and certificate on its name ([resolveDoT], with
+     * [PROVIDER_BUDGET] - today's timeouts). Returns the response to relay, or null on any failure
+     * (the query is dropped; the client's own retry handles it). The parent's own server goes
+     * through [CustomDns] instead.
      */
-    fun resolveUpstream(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean): ByteArray? {
+    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean): ByteArray? {
         val (ip, tlsHostname) = upstreamServers[upstream] ?: upstreamServers.getValue("cloudflare")
-        return try {
-            Socket().use { plain ->
-                protectSocket(plain)
-                plain.connect(InetSocketAddress(ip, 853), 5000)
-                // SSLSocketFactory.getDefault()'s *declared* return type is the base SocketFactory
-                // class (a real JDK API quirk, not a typo) - createSocket(Socket, String, int,
-                // boolean) is only declared on SSLSocketFactory itself, so an explicit cast is
-                // required even though the runtime object always actually is one.
-                val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                val tls = factory.createSocket(plain, tlsHostname, 853, true) as SSLSocket
-                tls.use { socket ->
-                    val params = socket.sslParameters
-                    params.endpointIdentificationAlgorithm = "HTTPS"
-                    params.serverNames = listOf(SNIHostName(tlsHostname))
-                    socket.sslParameters = params
-                    socket.soTimeout = 5000
-                    socket.startHandshake()
-
-                    val out = socket.outputStream
-                    out.write(byteArrayOf((query.size shr 8).toByte(), (query.size and 0xFF).toByte()))
-                    out.write(query)
-                    out.flush()
-
-                    val input = socket.inputStream
-                    val lenBytes = ByteArray(2)
-                    readFully(input, lenBytes)
-                    val respLen = ((lenBytes[0].toInt() and 0xFF) shl 8) or (lenBytes[1].toInt() and 0xFF)
-                    val resp = ByteArray(respLen)
-                    readFully(input, resp)
-                    resp
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Upstream DoT query to $upstream failed", e)
-            null
+        val address = ipLiteral(ip) ?: return null
+        return when (val outcome = resolveDoT(query, listOf(address), tlsHostname, 853, PROVIDER_BUDGET, protectSocket)) {
+            is Attempt.Answer -> outcome.bytes
+            is Attempt.Odd -> outcome.bytes
+            is Attempt.Transport -> null
         }
     }
+}
 
-    private fun readFully(input: InputStream, buf: ByteArray) {
-        var offset = 0
-        while (offset < buf.size) {
-            val n = input.read(buf, offset, buf.size - offset)
-            if (n < 0) throw EOFException("upstream closed connection mid-response")
-            offset += n
-        }
-    }
+/** The phone's block answer: NODATA (NOERROR, empty answer, a negative-cache SOA in the authority
+ * section) - well handled by every client, without the retry storms NXDOMAIN sometimes provokes.
+ * Also what a healthy custom server's REFUSED becomes (design 36 §5.4). */
+internal fun blockedResponse(request: Message): ByteArray {
+    val response = answerTo(request, Rcode.NOERROR)
+    response.addRecord(
+        SOARecord(
+            request.question.name, DClass.IN, 300L,
+            Name.fromConstantString("localhost."),
+            Name.fromConstantString("admin.localhost."),
+            1L, 300L, 300L, 300L, 300L,
+        ),
+        Section.AUTHORITY,
+    )
+    return response.toWire()
+}
+
+/** SERVFAIL for [request]: a healthy custom server's SERVFAIL or silence (design 36 §5.4). */
+internal fun servfailResponse(request: Message): ByteArray = answerTo(request, Rcode.SERVFAIL).toWire()
+
+private fun answerTo(request: Message, rcode: Int): Message {
+    val response = Message(request.header.id)
+    response.header.setFlag(Flags.QR.toInt())
+    if (request.header.getFlag(Flags.RD.toInt())) response.header.setFlag(Flags.RD.toInt())
+    response.header.setFlag(Flags.RA.toInt())
+    response.header.rcode = rcode
+    response.addRecord(request.question, Section.QUESTION)
+    return response
 }

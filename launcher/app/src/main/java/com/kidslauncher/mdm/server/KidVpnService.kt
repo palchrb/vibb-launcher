@@ -2,7 +2,13 @@ package com.kidslauncher.mdm.server
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -11,6 +17,7 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_VPN_FILTER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.VPN_FILTER_NOTIFICATION_ID
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.dto.DnsUpstreamReport
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import kotlinx.coroutines.CoroutineScope
@@ -22,12 +29,7 @@ import org.pcap4j.packet.IpSelector
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.UdpPacket
 import org.pcap4j.packet.UnknownPacket
-import org.xbill.DNS.DClass
-import org.xbill.DNS.Flags
 import org.xbill.DNS.Message
-import org.xbill.DNS.Name
-import org.xbill.DNS.SOARecord
-import org.xbill.DNS.Section
 
 private const val LOG_TAG = "KidVpnService"
 
@@ -61,11 +63,19 @@ private const val MTU = 32767
  * synthesized NODATA response (empty answer, NOERROR + a negative-cache SOA - the same technique
  * DNS66 itself uses, chosen because it's well-handled by virtually every DNS client without the
  * retry storms NXDOMAIN sometimes provokes), allowed ones get forwarded to the admin-configured
- * public DoT resolver and the real response relayed back.
+ * public DoT resolver - or the parent's own server and its backup ([CustomDns], design 36) - and
+ * the real response relayed back. The phone's lists always decide first.
  */
 class KidVpnService : VpnService() {
     private var pfd: ParcelFileDescriptor? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+
+    /** The parent's own server at work (design 36), while the VPN is up and one is configured. */
+    @Volatile
+    private var custom: CustomDns? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var lastNetwork: NetworkSnapshot? = null
+    private var stopped = false
 
     override fun onCreate() {
         super.onCreate()
@@ -107,10 +117,57 @@ class KidVpnService : VpnService() {
                 return
             }
             pfd = established
+            DnsFilterEngine.onCustomChanged = ::syncCustom
+            syncCustom()
+            watchNetwork()
             scope.launch { readLoop(established) }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to establish VPN", e)
         }
+    }
+
+    /** Follows [DnsFilterEngine.customUpstream]: new servers are a new [CustomDns] (fresh state, a
+     * fresh DoH client), none drop it. */
+    @Synchronized
+    private fun syncCustom() {
+        val config = DnsFilterEngine.customUpstream().takeUnless { stopped }
+        if (config == custom?.config) return
+        custom?.close()
+        custom = config?.let { CustomDns(it, ::protect, scope).also(CustomDns::start) }
+        live = custom
+        Log.i(LOG_TAG, "Custom DNS server: ${config?.primary?.kind ?: "none"}")
+    }
+
+    /** The best non-VPN network (this VPN is our own default network, which never changes): a new
+     * one, or one that gained VALIDATED, resets the parent's server's state (pure [networkChanged]). */
+    private fun watchNetwork() {
+        if (networkCallback != null) return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                onNetwork(NetworkSnapshot(network.networkHandle, capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)))
+            }
+
+            override fun onLost(network: Network) {
+                onNetwork(null)
+            }
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        try {
+            getSystemService(ConnectivityManager::class.java)
+                ?.registerBestMatchingNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
+            networkCallback = callback
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't watch the network: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun onNetwork(snapshot: NetworkSnapshot?) {
+        val changed = networkChanged(lastNetwork, snapshot)
+        lastNetwork = snapshot
+        if (changed) custom?.networkReset()
     }
 
     private fun readLoop(fd: ParcelFileDescriptor) {
@@ -151,13 +208,17 @@ class KidVpnService : VpnService() {
             val question = message.question ?: return
             val domain = question.name.toString(true)
 
+            // The phone's lists first, always: nothing reaches any resolver before them.
             val category = DnsFilterEngine.classify(domain)
+            val custom = custom
             val responseBytes = if (category != null) {
                 BlockedEventLog.record(applicationContext, domain, category)
-                buildBlockedResponse(message)
+                blockedResponse(message)
+            } else if (custom != null) {
+                custom.resolve(query, message)
             } else {
                 val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
-                DnsFilterEngine.resolveUpstream(query, upstream, ::protect)
+                DnsFilterEngine.resolveProvider(query, upstream, ::protect)
             }
             if (responseBytes == null) return
 
@@ -166,31 +227,8 @@ class KidVpnService : VpnService() {
                 output.write(responsePacket.rawData)
             }
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to handle a DNS packet", e)
+            Log.w(LOG_TAG, "Failed to handle a DNS packet: ${e.javaClass.simpleName}")
         }
-    }
-
-    /** NODATA response (NOERROR, empty answer, a negative-cache SOA in the authority section) -
-     * see this class's doc comment for why this shape rather than NXDOMAIN. */
-    private fun buildBlockedResponse(request: Message): ByteArray {
-        val response = Message(request.header.id)
-        response.header.setFlag(Flags.QR.toInt())
-        if (request.header.getFlag(Flags.RD.toInt())) {
-            response.header.setFlag(Flags.RD.toInt())
-        }
-        response.header.setFlag(Flags.RA.toInt())
-        response.addRecord(request.question, Section.QUESTION)
-        val zone = request.question.name
-        response.addRecord(
-            SOARecord(
-                zone, DClass.IN, 300L,
-                Name.fromConstantString("localhost."),
-                Name.fromConstantString("admin.localhost."),
-                1L, 300L, 300L, 300L, 300L,
-            ),
-            Section.AUTHORITY,
-        )
-        return response.toWire()
     }
 
     private fun buildResponsePacket(reqIp: IpV4Packet, reqUdp: UdpPacket, dnsResponse: ByteArray): IpV4Packet {
@@ -234,6 +272,17 @@ class KidVpnService : VpnService() {
     }
 
     private fun stopSelfCleanly() {
+        DnsFilterEngine.onCustomChanged = null
+        networkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
+        synchronized(this) {
+            stopped = true
+            custom?.close()
+            custom = null
+            live = null
+        }
         scope.cancel()
         try {
             pfd?.close()
@@ -244,6 +293,14 @@ class KidVpnService : VpnService() {
     }
 
     companion object {
+        /** The running service's [CustomDns], for the status report. */
+        @Volatile
+        private var live: CustomDns? = null
+
+        /** The status report's `dns_upstream` (design 36 §4.2): only while the VPN runs with the
+         * parent's own server; `null` (left out) otherwise. */
+        fun dnsUpstreamReport(): DnsUpstreamReport? = live?.report()
+
         /**
          * Call once at app startup - safe to call repeatedly, Android no-ops a redundant start
          * (matches [CommandListenerService.start]'s own established pattern). Unconditional, not

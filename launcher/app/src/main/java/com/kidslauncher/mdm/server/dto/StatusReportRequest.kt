@@ -92,7 +92,7 @@ data class StatusReportRequest(
     val clockFormatApplied: Boolean? = null,
     /** Design 36 §4.2 (capability `dns_custom_v1`): which of the parent's DNS servers the phone
      * forwards to - see [DnsUpstreamReport]; `null` (left out) while the Web filter is off or no
-     * custom server is configured. Sent from design 36 step 2 on. */
+     * custom server is configured (`KidVpnService.dnsUpstreamReport`). */
     val dnsUpstream: DnsUpstreamReport? = null,
     /** Design 35 §2.5: the battery, for the parent's "Battery low" event and the PWA's battery
      * line - see [BatteryReport]. Not set yet (design 35 step 3 reads it); `null` = left out. */

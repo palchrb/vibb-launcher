@@ -57,6 +57,19 @@ private fun targetOf(target: JsonObject): UpstreamTarget? = when (target.text("k
     else -> null
 }
 
+/**
+ * The pref `dns_upstream_custom` for an accepted policy's `dns_upstream` (design 36 §5.1): the raw
+ * JSON when [customUpstreamFrom] takes it, else `null` (the pref is removed: the provider). Written
+ * only with the accepted policy, in the same `commit()`; a decode failure or a rejected policy never
+ * reaches it.
+ */
+fun customUpstreamPref(element: JsonElement?): String? =
+    element?.takeIf { customUpstreamFrom(it) != null }?.let { ServerJson.encodeToString(JsonElement.serializer(), it) }
+
+/** The servers in the pref, read back; anything unreadable is `null` (the provider). */
+fun customUpstreamFromPref(raw: String?): CustomUpstream? =
+    raw?.let { runCatching { customUpstreamFrom(ServerJson.parseToJsonElement(it)) }.getOrNull() }
+
 /** A JSON string field, `null` for anything else. */
 private fun JsonObject.text(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content

@@ -133,6 +133,11 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                         // policy sync (PolicyResponse.dnsUpstreamProvider) so the VPN service can
                         // read it without needing to touch the network itself.
                         @Preference(name = "dns_upstream_provider", type = String.class, defaultValue = "\"cloudflare\""),
+                        // The parent's own DNS server and its backup (design 36 §5.1): the accepted
+                        // policy's raw `dns_upstream` when customUpstreamFrom takes it, written with
+                        // dns_upstream_provider in storeAcceptedPolicy's one commit(), removed by an
+                        // accepted policy without one. A secret (it may hold a client id): never logged.
+                        @Preference(name = "dns_upstream_custom", type = String.class),
                         // BlockedEventLog's own persisted queue - see that class. Separate from
                         // tracked_app_update_state/cached_location_json above since it's a list,
                         // not a single blob, and gets drained (not just replaced) each sync.
