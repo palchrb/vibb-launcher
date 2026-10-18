@@ -892,4 +892,54 @@ class PolicyResponseCompatTest {
         )
         assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
     }
+
+    /** Design 36 §4.1: the server's `dns_upstream` (its `custom_server_in_the_policy` shapes) and anything
+     * else - nothing in it can fail the policy, and only a whole, valid pair is a custom server. */
+    @Test
+    fun `dns_upstream never fails the policy and only a valid pair is a custom server`() {
+        fun upstream(value: String): CustomUpstream? {
+            val json = serverResponse.trimEnd('}', '\n', ' ') + ",\n\"dns_upstream\": $value}"
+            val fresh = decodeFresh(json)
+            assertTrue("$value: $fresh", fresh is FreshDecode.Ok)
+            return customUpstreamFrom((fresh as FreshDecode.Ok).policy.dnsUpstream)
+        }
+        // An older server: no key, the provider word.
+        val old = (decodeCached(serverResponse) as CachedPolicy.Ok).policy
+        assertNull(old.dnsUpstream)
+        assertNull(customUpstreamFrom(old.dnsUpstream))
+
+        assertEquals(
+            CustomUpstream(UpstreamTarget.Doh("https://dns.example/dns-query/abc123"), UpstreamTarget.Dot("1.1.1.3", 853), 4),
+            upstream("""{"kind": "doh", "url": "https://dns.example/dns-query/abc123", "rev": 4,
+                "backup": {"kind": "dot", "host": "1.1.1.3", "port": 853}}"""),
+        )
+        assertEquals(
+            CustomUpstream(UpstreamTarget.Dot("abc123.dns.example", 8853), UpstreamTarget.Doh("https://[2606:4700:4700::1111]/dns-query"), 4),
+            upstream("""{"kind": "dot", "host": "abc123.dns.example", "port": 8853, "rev": 4,
+                "backup": {"kind": "doh", "url": "https://[2606:4700:4700::1111]/dns-query"}}"""),
+        )
+        val backup = """"backup": {"kind": "dot", "host": "1.1.1.3", "port": 853}"""
+        for (bad in listOf(
+            "null",
+            "\"https://dns.example\"",
+            """{"kind": "doq", "url": "https://dns.example/dns-query", "rev": 1, $backup}""",
+            """{"kind": "doh", "url": "http://dns.example/dns-query", "rev": 1, $backup}""",
+            """{"kind": "doh", "url": "https://", "rev": 1, $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": "x", "rev": 1, $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": "853", "rev": 1, $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": 0, "rev": 1, $backup}""",
+            """{"kind": "dot", "host": "", "port": 853, "rev": 1, $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": 853, "rev": "1", $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": 853, $backup}""",
+            """{"kind": "dot", "host": "dns.example", "port": 853, "rev": 1}""",
+            """{"kind": "dot", "host": "dns.example", "port": 853, "rev": 1, "backup": null}""",
+            """{"kind": "dot", "host": "dns.example", "port": 853, "rev": 1, "backup": {"kind": "dot", "host": "1.1.1.3"}}""",
+            """{"kind": 7, "host": "dns.example", "port": 853, "rev": 1, $backup}""",
+        )) {
+            assertNull(bad, upstream(bad))
+        }
+        // The targets are secrets: never in a log line through toString.
+        val shown = upstream("""{"kind": "doh", "url": "https://abc123.dns.example/dns-query", "rev": 4, $backup}""").toString()
+        assertFalse(shown, shown.contains("abc123") || shown.contains("1.1.1.3"))
+    }
 }

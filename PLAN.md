@@ -515,7 +515,8 @@ findings, merge to `main`, full suite once.
   the server works out the kind and validates it. **Design 36** (`docs/design/36-custom-dns.md`, design QA done,
   revised after the user's decisions 2026-10-18): a second field "Backup server" the parent chooses (prefilled
   `1.1.1.3`, required under Custom) instead of a hard-coded fallback; any address allowed (LAN, tailnet, `*.ts.net`),
-  the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) in progress.
+  the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) merged 2026-10-18
+  after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) and step 3 (networks that block 853) open.
 
 - **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
   and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as

@@ -379,6 +379,8 @@ pub struct DeviceStatus {
     /// should be but can't be (no "Modify system settings" access, or the write was refused).
     /// `None` = "Follow the phone", or an older launcher.
     pub clock_format_applied: Option<bool>,
+    // dns_upstream_json (migrations/0079, design 36 §4.2) is read directly by
+    // handlers::dns_filter::phone_lines.
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -460,8 +462,16 @@ impl TrackedApp {
 #[derive(sqlx::FromRow, Clone)]
 pub struct DnsFilterSettings {
     pub id: i64,
+    /// `cloudflare`, `quad9` or `custom` (design 36; `custom` counts only with a valid pair, else
+    /// it reads as `cloudflare` - `dns_server::valid_pair`).
     pub upstream: String,
     pub updated_at: String,
+    /// The custom server and its backup, stored normalized (`dns_server::DnsServer::normalized`),
+    /// '' = not set; write-only in the PWA (migration 0079).
+    pub custom_server: String,
+    pub custom_backup: String,
+    /// Up by one on every change of either value and on Forget; the phone echoes it.
+    pub custom_rev: i64,
 }
 
 /// Singleton row (id always 1) - see migrations/0018_provisioning_settings.sql. Embedded into
@@ -868,6 +878,10 @@ pub struct PolicyResponse {
     /// allowed (non-blocked) queries to - "cloudflare" or "quad9", mirrors
     /// `dns_filter_settings.upstream`.
     pub dns_upstream_provider: String,
+    /// The parent's own DNS server and its backup (design 36 §4.1), `null` unless
+    /// `dns_filter_settings.upstream` is `custom` with a valid pair - `dns_upstream_provider` is
+    /// then `cloudflare`, for a launcher that doesn't read this. Always the key.
+    pub dns_upstream: Option<crate::dns_server::DnsUpstream>,
     /// Packages the device should silently uninstall - see migrations/0014_device_pending_uninstalls.sql
     /// and `handlers::devices::toggle_tracked_app`. Populated fresh on every fetch (not a one-shot
     /// queue like `pending_command`); the row backing an entry here is only cleared once a status
@@ -1109,6 +1123,11 @@ pub struct StatusReportRequest {
     /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,
+    /// Design 36 §4.2 (capability `dns_custom_v1`): `{rev, in_use, since_ms, reason}` - which of
+    /// the parent's servers the phone forwards to, only while its filter runs with Custom. Stored
+    /// through the known words only (`dns_server::sanitize_dns_upstream`); never an address.
+    #[serde(default)]
+    pub dns_upstream: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.install_mode`.

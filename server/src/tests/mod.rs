@@ -11,6 +11,7 @@ mod catalog_pins;
 mod cleanup;
 mod command_expiry;
 mod command_receipts;
+mod custom_dns;
 mod deploy_scripts;
 mod device_api;
 mod device_pages;

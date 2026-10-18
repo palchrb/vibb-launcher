@@ -2053,3 +2053,8 @@ details.app-display[open] > summary .section-chev {
     -webkit-transform: rotate(90deg);
     transform: rotate(90deg);
 }
+
+/* ---- Web Filter's DNS Server (design 36 §6): one line per phone in the group's footer ---- */
+
+.phone-lines { list-style: none; margin: 6px 0; padding: 0; }
+.phone-lines > li + li { margin-top: 2px; }

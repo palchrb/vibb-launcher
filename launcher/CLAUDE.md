@@ -725,6 +725,24 @@ Together: an app store install of something not on the allowlist would still nee
 
 **Standing rule, going forward: every restriction added to `AppEnforcer` must be liftable via the offline-override PIN / pause-restrictions kill-switch, unless explicitly told otherwise for that specific case.** The call rules (see "Calls & SMS") are such an explicit exception: the override and pause never open calls or SMS. The hardening switches (see "Hardening (handy step 4)") are the second one: only the server lifts them. `applyPrivateDnsLock` predates this rule and is the other deliberate exception on record (still unconditional - see its own doc comment for why); don't treat it as a precedent for a *new* restriction without checking first. The underlying reasoning, confirmed live twice now (once for the VPN filter toggle, once for this sideload restriction): the whole point of those overrides is a guaranteed, fully-unblocked device when something's wrong, and a parent should never find a restriction they can't reach through their own offline PIN.
 
+## A custom DNS server: the wire (design 36 step 1, `docs/design/36-custom-dns.md`, at the monorepo root)
+
+- **Wire only - no behaviour yet** (step 2 adds the pref, `UpstreamChooser`, the canary, `BootstrapDns`, the DoH
+  client, the status field's filling and the capability `dns_custom_v1` in `STATUS_CAPABILITIES`).
+- **Policy**: `PolicyResponse.dnsUpstream` is a raw `JsonElement?` (missing/`null` = forward to `dnsUpstreamProvider`,
+  which the server sends as "cloudflare" while Custom is chosen). Raw like `music`/`lockGlance` rather than a typed DTO
+  with nullable fields: a wrong type (`"port": "x"`) would still fail a typed decode without `coerceInputValues`. The
+  pure `server/CustomUpstream.kt` `customUpstreamFrom` reads it field by field: kind `doh` with an `https://` URL
+  OkHttp parses, or kind `dot` with a non-empty host and a numeric port 1-65535, a numeric `rev`, and a `backup`
+  target that passes the same check - anything else is `null` (the provider). Both targets are secrets:
+  `CustomUpstream`/`UpstreamTarget` have redacted `toString`s; nothing may log them.
+- **Status**: `StatusReportRequest.dnsUpstream: DnsUpstreamReport?` (`{rev, in_use, since_ms, reason}`, every field
+  always sent; `null` = left out). Contract `dns_upstream_status.json` in the test resources, byte-identical with
+  `../server/testdata/` (`DnsUpstreamStatusTest` encodes exactly it and compares the copies; root `CLAUDE.md`).
+  `time_status_report.json` is unchanged (the new field defaults to `null`, which `ServerJson` leaves out).
+- Tests: `PolicyResponseCompatTest` (the server's shapes, an older server, every invalid case still decoding the
+  policy), `DnsUpstreamStatusTest`.
+
 ## Retention (cleanup 2026-10-06)
 
 - **Blocked-domain log is opt-in**: `PolicyResponse.dnsLogEnabled` (missing = off, not in `LastEnforcedPlan`) -> `BlockedEventLog.setEnabled` after every accepted policy (pref `dns_log_enabled`, `commit()`); while off nothing is recorded, `drain` is empty and switching off clears the queue. The server keeps entries 7 days.
