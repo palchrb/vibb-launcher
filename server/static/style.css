@@ -1,7 +1,7 @@
 /* Vibb Phone, the parent PWA (design 31). The look comes from the approved mockups
    (docs/design/mockups/parent-pwa/), iOS Settings style. Browser floor (§5.7): Chrome/WebView 80+
    and iOS Safari 14+ render the design; older ones get plain, working controls. Not used here:
-   :has(), color-mix(), CSS nesting, @layer, container queries, dvh. Bump ?v= in
+   :has(), color-mix(), CSS nesting, @layer, container queries; dvh only after a vh fallback. Bump ?v= in
    templates/partials/head.html with every change. */
 
 /* ---- Tokens ------------------------------------------------------------------------------ */
@@ -144,6 +144,11 @@
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* A classic scrollbar (a desktop window) is always there, so the fixed tab bar and every tab
+       in it have the same width on a short page as on a long one. Not scrollbar-gutter: stable -
+       Chromium keeps that room for the page's flow but not for fixed boxes. Overlay scrollbars
+       (phones, macOS) take no room either way. */
+    overflow-y: scroll;
 }
 
 body {
@@ -202,9 +207,14 @@ input[type="radio"] {
 .container {
     max-width: 720px;
     margin: 0 auto;
-    /* The tab bar is 56px plus the home indicator's inset. */
+    /* viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar or
+       notch above, the notch's sides in landscape, and below the tab bar (about 60px plus the
+       home indicator's inset). */
     padding: 8px 16px 96px;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
     padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
 }
 
 .container-narrow {
@@ -246,7 +256,10 @@ input[type="radio"] {
     background: var(--bar);
     border-top: 1px solid var(--bar-line);
     padding: 4px 4px 4px;
-    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    padding-right: max(4px, env(safe-area-inset-right, 0px));
+    /* Clear of the home indicator, with a little room above it. */
+    padding-bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) + 6px));
+    padding-left: max(4px, env(safe-area-inset-left, 0px));
 }
 
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
@@ -870,11 +883,16 @@ details.confirm > summary.row {
 /* ---- The pages not redesigned yet: today's classes on the new tokens ---- */
 
 .auth-page {
+    /* The visible height (iOS: the toolbars and a standalone app's resume change it), 100vh
+       where dvh is unknown (iOS 14). */
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px 16px;
+    padding: calc(24px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+        calc(24px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
 }
 
 label {
@@ -1898,7 +1916,7 @@ input.row-num { width: 6.5em; text-align: right; }
 
 /* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
-.editor-bar { position: -webkit-sticky; position: sticky; top: 0; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
+.editor-bar { position: -webkit-sticky; position: sticky; top: 0; top: env(safe-area-inset-top, 0px); z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 .editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
