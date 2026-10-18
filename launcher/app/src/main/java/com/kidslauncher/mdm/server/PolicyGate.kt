@@ -25,7 +25,8 @@ sealed interface CachedPolicy {
 
     data class Ok(val policy: PolicyResponse) : CachedPolicy
 
-    /** Something is cached but doesn't decode. [error] is for logs only. */
+    /** Something is cached but doesn't decode. [error] is for logs only: the exception class, never its
+     * message (a decode error quotes the input, which may hold design 36's secret servers). */
     data class Corrupt(val error: String) : CachedPolicy
 }
 
@@ -34,7 +35,7 @@ fun decodeCached(json: String?): CachedPolicy {
     return try {
         CachedPolicy.Ok(ServerJson.decodeFromString(PolicyResponse.serializer(), json))
     } catch (e: Exception) {
-        CachedPolicy.Corrupt(e.toString())
+        CachedPolicy.Corrupt(e.javaClass.simpleName)
     }
 }
 
@@ -44,7 +45,8 @@ sealed interface FreshDecode {
 
     /** The server answered but the launcher can't read it - typically a version mismatch, e.g. a
      * `null` for a field this DTO declares non-nullable. Reported as `fresh_decode_failed` rather
-     * than looking like "server unreachable" forever. */
+     * than looking like "server unreachable" forever. [error]: the exception class only, like
+     * [CachedPolicy.Corrupt]. */
     data class Failed(val error: String) : FreshDecode
 }
 
@@ -53,7 +55,7 @@ fun decodeFresh(json: String?): FreshDecode {
     return try {
         FreshDecode.Ok(ServerJson.decodeFromString(PolicyResponse.serializer(), json))
     } catch (e: Exception) {
-        FreshDecode.Failed(e.toString())
+        FreshDecode.Failed(e.javaClass.simpleName)
     }
 }
 

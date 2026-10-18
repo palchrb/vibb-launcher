@@ -737,23 +737,83 @@ Together: an app store install of something not on the allowlist would still nee
 
 **Standing rule, going forward: every restriction added to `AppEnforcer` must be liftable via the offline-override PIN / pause-restrictions kill-switch, unless explicitly told otherwise for that specific case.** The call rules (see "Calls & SMS") are such an explicit exception: the override and pause never open calls or SMS. The hardening switches (see "Hardening (handy step 4)") are the second one: only the server lifts them. `applyPrivateDnsLock` predates this rule and is the other deliberate exception on record (still unconditional - see its own doc comment for why); don't treat it as a precedent for a *new* restriction without checking first. The underlying reasoning, confirmed live twice now (once for the VPN filter toggle, once for this sideload restriction): the whole point of those overrides is a guaranteed, fully-unblocked device when something's wrong, and a parent should never find a restriction they can't reach through their own offline PIN.
 
-## A custom DNS server: the wire (design 36 step 1, `docs/design/36-custom-dns.md`, at the monorepo root)
+## A custom DNS server with a parent-chosen backup (design 36 steps 1-2, `docs/design/36-custom-dns.md`, at the monorepo root)
 
-- **Wire only - no behaviour yet** (step 2 adds the pref, `UpstreamChooser`, the canary, `BootstrapDns`, the DoH
-  client, the status field's filling and the capability `dns_custom_v1` in `STATUS_CAPABILITIES`).
-- **Policy**: `PolicyResponse.dnsUpstream` is a raw `JsonElement?` (missing/`null` = forward to `dnsUpstreamProvider`,
-  which the server sends as "cloudflare" while Custom is chosen). Raw like `music`/`lockGlance` rather than a typed DTO
-  with nullable fields: a wrong type (`"port": "x"`) would still fail a typed decode without `coerceInputValues`. The
-  pure `server/CustomUpstream.kt` `customUpstreamFrom` reads it field by field: kind `doh` with an `https://` URL
-  OkHttp parses, or kind `dot` with a non-empty host and a numeric port 1-65535, a numeric `rev`, and a `backup`
-  target that passes the same check - anything else is `null` (the provider). Both targets are secrets:
-  `CustomUpstream`/`UpstreamTarget` have redacted `toString`s; nothing may log them.
-- **Status**: `StatusReportRequest.dnsUpstream: DnsUpstreamReport?` (`{rev, in_use, since_ms, reason}`, every field
-  always sent; `null` = left out). Contract `dns_upstream_status.json` in the test resources, byte-identical with
-  `../server/testdata/` (`DnsUpstreamStatusTest` encodes exactly it and compares the copies; root `CLAUDE.md`).
-  `time_status_report.json` is unchanged (the new field defaults to `null`, which `ServerJson` leaves out).
-- Tests: `PolicyResponseCompatTest` (the server's shapes, an older server, every invalid case still decoding the
-  policy), `DnsUpstreamStatusTest`.
+- **What it does**: with Settings › Web Filter › "Custom server" the VPN forwards every query **the phone's lists let
+  through** (FCM/Spotify exemptions and `BlockedEventLog` unchanged - the lists always block first) to the parent's
+  server - DoH or DoT, by name or IP - and, only while that server as a whole is unhealthy, to the parent's backup.
+  A failing backup drops the query as a failing Cloudflare does (no third tier); never plain DNS, never unfiltered.
+  Every connection is a `protect()`ed socket on the phone's current network, **never through tsnet** (a home-network
+  server works on the home Wi-Fi, the backup answers elsewhere). Without a custom server nothing changed:
+  `DnsFilterEngine.resolveProvider` is today's DoT to Cloudflare/Quad9 (now through `resolveDoT`, same timeouts).
+- **Policy and pref** (step 1's wire): `PolicyResponse.dnsUpstream` is raw `JsonElement?` read field by field by the
+  pure `server/CustomUpstream.kt` `customUpstreamFrom` (kind `doh` with an `https://` URL OkHttp parses, or `dot` with
+  a host and a port 1-65535, a numeric `rev`, a backup passing the same check - anything else is `null` = the provider;
+  `PolicyResponseCompatTest`). `storeAcceptedPolicy` writes `dns_upstream_provider` and `dns_upstream_custom`
+  (`customUpstreamPref`: the raw JSON when valid, else removed) in the policy's one `commit()`; a decode failure or a
+  rejected policy never touches either; not in `LastEnforcedPlan`. Then `DnsFilterEngine.setCustomUpstream` (memory,
+  `@Volatile`; `loadFromDisk` reads the pref at VPN start, so a reboot offline keeps the last accepted servers) tells
+  the running VPN (`onCustomChanged`). `CustomUpstreamPrefTest` pins the one writer.
+- **`server/CustomDns.kt`** (glue, one per config while the VPN is up; `KidVpnService.syncCustom` builds a new one for
+  new servers - fresh state, fresh client - and `close()`s the old): routes a query, runs the canary and the
+  bootstrap look-ups, relays. The backup's answer is relayed as is; the backup's outcomes never touch the state.
+- **The rule** (pure `server/UpstreamChooser.kt`, state `ChooserState` in one `AtomicReference` changed by CAS): an
+  attempt at the primary is an `Answer` (relayed - NXDOMAIN and `0.0.0.0` included), a `Transport` failure (no
+  address, connect, TLS, HTTP, a stream closed or silent before the request was written - a period starts: backup for
+  60 s doubling to 15 min, `gen` up so a burst counts once) or `Odd` (REFUSED, SERVFAIL, silence after the request was
+  written). `Odd` asks the canary (`. IN NS` to the primary, 2 s, one in flight, verdict kept 60 s): a healthy canary
+  makes the name's own outcome stand - **REFUSED is the phone's NODATA (`blockedResponse`), SERVFAIL/silence a
+  SERVFAIL, never the backup for that name** -; a failed one is a transport failure (`refused` for a REFUSED canary,
+  AdGuard Home's answer to a client id it doesn't allow). A query that gives up waiting for another's canary leaves
+  the state alone and answers as from a healthy server. One ~4.8 s deadline per query (`QUERY_DEADLINE_MS`: primary
+  2.5 s, canary 1-2 s, backup the rest, 1.3-2.5 s) keeps a failed canary's query inside the stub's first try. In a period one query per back-off probes the primary
+  (`probing`), the rest go to the backup. `reset` (a network reset or new servers) tries the primary at once.
+  Battery: one probe per back-off, one canary per 60 s at most.
+- **Transport** (`server/UpstreamTransport.kt`): `resolveDoT(query, addresses, host, port, budget, protect)` - at most
+  two addresses, IPv4 first, one budget (1.5 s connect, 2.5 s in all for the parent's servers), the next address only
+  while nothing was written; a name gets SNI + endpoint identification, an IP no SNI and the default hostname
+  verifier on the IP after the handshake. DoH: `buildDohClient` - **one OkHttpClient per `CustomDns`, from a fresh
+  `OkHttpClient.Builder()` (never `newBuilder()` of the API/SSE clients, which carry tsnet's SOCKS proxy)**,
+  `Proxy.NO_PROXY`, `ProtectedSocketFactory` (sockets protected before they connect), `BootstrapDns` as its `Dns`,
+  1.5 s connect / 2.5 s call, no redirects, no cache, no cookies, system CAs; a per-call `EventListener` (`CallMarks`)
+  splits a timeout at the written request. POST `application/dns-message`, ID 0 out, the query's ID back in; a
+  response that isn't 200 + `application/dns-message` (parameters ignored) + <= 65535 bytes + parsable is `http`.
+  Pool evicted on a network reset and on close.
+- **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` parses it into bytes - never
+  `InetAddress.getByName`, which would resolve a malformed one through our own VPN), `cloudflare-dns.com` is
+  `1.1.1.1`; a name is A then AAAA through the bootstrap resolvers (`bootstrapResolvers`: the backup if it is an IP,
+  the primary if it is, then Cloudflare `1.1.1.1` DoT; the look-up - never a query - falls through to the next on a
+  transport failure or silence, and a step that failed for A is skipped for AAAA, so a home-IP primary away from home
+  still lets a backup by name be found), never the system resolver and never through the lists or the chooser, 1 s
+  connect (DoH too, per call from its `Budget`), 2 s in all. `BootstrapCache` (memory): the CNAME chain's final name,
+  TTL clamped 5 min-24 h, stale served while one refresh runs and kept when it fails, one look-up per name at a time,
+  a failed look-up (stale or with nothing cached) retried after 30 s or a network reset. Both
+  names are looked up when a config loads. A primary with no address yet sends that query to the backup (no failure);
+  nothing at all after its look-up is a `bootstrap` period (not stepped again inside a period). A backup with no address drops the query.
+- **Network reset**: `KidVpnService` registers `registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN; the VPN is
+  its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
+  a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks
+  (`VpnMeteredInvariantTest`); lockdown stays off.
+- **Status**: `StatusReportRequest.dnsUpstream` = `KidVpnService.dnsUpstreamReport()` - only while the VPN runs with a
+  custom server: `{rev, in_use: custom|backup, since_ms (wall clock, from elapsed time), reason (backup only):
+  bootstrap|connect|tls|http|refused|timeout}`, never an address (`upstreamReport`; contract
+  `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
+  `UpstreamChooserTest`). Capability `dns_custom_v1` in `STATUS_CAPABILITIES`.
+- **Secrets**: both targets may hold an AdGuard Home client id. `CustomUpstream`/`UpstreamTarget` `toString`s are
+  redacted; log lines name modes, kinds, reasons, counts and exception classes only (never `e.message`, which OkHttp
+  fills with the URL) - `CustomUpstreamPrefTest` scans the log calls; the policy decode failure and a corrupt cache are
+  logged by exception class only (`PolicyGate`: a `JsonDecodingException` quotes the input).
+- Tests: `UpstreamChooserTest` (every transition, the burst, the back-off cap, the canary verdicts, reset, the outcome
+  mapping, `networkChanged`, the status field against the contract), `CustomDnsTest` (the glue with a fake transport:
+  backup DoT/DoH, its failure leaving the state, REFUSED/silence from a healthy server, the canary reused and its
+  waiter, reset, the bootstrap glue and its fall-through), `CustomDnsGuardsTest` (the lists first, the DoH client's
+  protected sockets and no proxy, no status field once the VPN is off),
+  `BootstrapResolverTest`, `DohMessageTest`, `CustomUpstreamPrefTest`, `PolicyResponseCompatTest`,
+  `DnsUpstreamStatusTest`.
+- **Not device-tested**: a real DoH/DoT server through the protected sockets (emulator check `docs/testing/emulator.md`
+  §6m), a LAN server on the home Wi-Fi then away, a network that blocks 853, the canary against AdGuard Home's REFUSED
+  for a removed client id, Wi-Fi/mobile resets on the Jelly Star. Step 3 (DoH on 443 when 853 is blocked, a disk
+  cache for the bootstrap) is not built.
 
 ## Retention (cleanup 2026-10-06)
 

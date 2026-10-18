@@ -207,6 +207,10 @@ One `OkHttpClient` for both targets, owned by the `KidVpnService` instance (buil
 2. the primary, when it is an IP literal; else
 3. Cloudflare `1.1.1.1` DoT (`cloudflare-dns.com`), the only case a look-up leaves for anyone else.
 
+When the bootstrap resolver fails at the transport level (silence after the request included), the look-up (only the
+look-up, never a query) falls through to the next in this order, with the same budget per step; a step that failed
+for A is skipped for AAAA, and an NXDOMAIN or an empty answer is an answer, not a failure.
+
 The A/AAAA records of the final name of a CNAME chain in the answer are taken. A memory cache, TTL clamped to 5 min-
 24 h; an expired entry is still served while one refresh runs, and kept when the refresh fails. Both names are looked
 up when a config loads, so the backup's address is in hand before it is needed. A cache miss for the primary answers
@@ -246,7 +250,10 @@ State: `{gen, mode: Healthy | Backup, failures, skipUntilMs, probing, sinceMs, r
   `SERVFAIL`. **Never the backup for that name.**
 - `needsCanary(s, now)`: no verdict younger than 60 s. The canary is `. IN NS` to the primary (every resolver
   answers the root from its priming cache; no list blocks it), 2 s budget; ok = a NOERROR answer. At most one in
-  flight (a shared `CompletableDeferred` in the glue); its verdict cached 60 s in the state.
+  flight (a shared `CompletableDeferred` in the glue); its verdict cached 60 s in the state. A query waiting for
+  another's canary that gives up leaves the state alone and answers as from a healthy server.
+- One deadline per query, ~4.8 s (inside the stub's first ~5 s try): the primary at most 2.5 s, the canary what is
+  left above the backup's floor (1-2 s), the backup the rest (1.3-2.5 s).
 - `reset(s)` - a network reset or a new `rev`: `Healthy`, `failures = 0`, `skipUntilMs = 0`, `probing = false`,
   `canary = null`, `gen + 1`; the glue evicts the OkHttp pool (a new `rev` rebuilds the client).
 
@@ -325,7 +332,8 @@ unchanged.
 - **Downgrade**: a TLS-breaking MITM, or a network that blocks the primary, can only push the phone to the backup
   over TLS (encrypted, the parent's choice).
 - **Servers the parent chose** see every allowed query sent to them and can answer anything (as Cloudflare can
-  today); the bootstrap resolver sees the servers' names only. The FCM/Spotify exemptions are block decisions a forged
+  today); the bootstrap resolver sees the servers' names only - Cloudflare also when the parent's IP servers are
+  unreachable for a look-up (§5.3's fall-through). The FCM/Spotify exemptions are block decisions a forged
   answer can't touch.
 - **Shape and size**: responses ≤ 65535 bytes, parsed, ID restored, no redirects; each value ≤ 512.
 
@@ -462,3 +470,77 @@ release, with step 2's launcher.
 0079, sqlx applies it out of order and the pre-migration backup (`MAX(version)`) takes none - 35 must ship before or
 with 36. (2) The "Waiting for the phone" vs "Web filter off" split above. (3) The picker's 400 keeps "Custom server"
 selected in the answer (the choice the parent made), though nothing was stored.
+
+## Step 2 implementation status
+
+Branch `dns-s2` (from `b0d59eb1`), 2026-10-18. Launcher only; the wire, the contract files and `server/` are untouched.
+
+**Shipped as specified**: §5.1 - `dns_upstream_custom` written with `dns_upstream_provider` in `storeAcceptedPolicy`'s
+one `commit()` (removed by an accepted policy without a valid pair; a decode failure or a rejected policy never reach
+it), `DnsFilterEngine.setCustomUpstream` after the commit, `loadFromDisk` from the pref; the policy decode failure and a
+corrupt cache logged by exception class only (`PolicyGate`). §5.2 - `buildDohClient` (fresh builder, `NO_PROXY`,
+`ProtectedSocketFactory`, `BootstrapDns` as `Dns`, 1.5 s / 2.5 s, no redirects/cache/cookies, the `CallMarks` event
+listener), POST `application/dns-message` with ID 0, the response checks and the ID restored. §5.3 - `resolveDoT`
+generalized (two addresses, IPv4 first, one budget, SNI/endpoint identification for a name, no SNI + the default
+hostname verifier for an IP), `bootstrapResolver`'s order, `BootstrapCache` (CNAME chain, 5 min-24 h clamp, stale while
+one refresh runs, kept on failure), both names looked up at load, the primary's miss to the backup and a failed
+look-up = `bootstrap`, the backup's miss dropped. §5.4 - `UpstreamChooser` (`route`, `afterTransport`, `afterAnswer`,
+`afterOdd`, `needsCanary`, `reset`) in one `AtomicReference` by CAS, the canary `. IN NS` (2 s, one in flight, 60 s),
+REFUSED from a healthy server = the phone's NODATA, SERVFAIL/silence = SERVFAIL, the chooser judging only the primary,
+`registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN) with the pure `networkChanged`. §4.2 - the status field
+while the VPN runs with a custom server, `dns_custom_v1`. The lists block first; the FCM/Spotify exemptions, the NODATA
+answer and `BlockedEventLog` are unchanged; no underlying networks, lockdown off, never tsnet. Tests per §8's launcher
+list (`UpstreamChooserTest` with `networkChanged` and the status field, `CustomDnsTest`, `BootstrapResolverTest` with
+the cache, `DohMessageTest`, `CustomUpstreamPrefTest` with the log scan).
+
+**Deviations, with the reason**:
+- **Reasons the contract has no word for**: a canary SERVFAIL or any non-NOERROR answer is `timeout`; a DoT stream
+  closed or garbled after the request is `connect`; a connect that times out is `connect` (`timeout` only once the TCP
+  connection is up) - the PWA's "can't reach your server from where the phone is" reads right for a home server away
+  from home. The contract file stays as it is.
+- **`releaseProbe`** (new in the chooser): the back-off's probe whose primary has no address yet (its look-up runs)
+  gives the slot back, so the next query probes once the address is there; otherwise `probing` would stick.
+- **A failed look-up with nothing cached is retried after 30 s** (or at a network reset), one look-up per name at a
+  time: without it a name backup on a captive portal or offline would start a look-up per query. The primary's
+  look-ups are paced by the back-off anyway.
+- **The DoH client is owned by `CustomDns`** (one per config while the VPN runs), not built in `startVpn` directly:
+  `KidVpnService.syncCustom` builds a `CustomDns` when the VPN comes up with a config and whenever the config changes
+  (any change, not only `rev`), and closes (evicts) the old one; `stopSelfCleanly` closes it.
+- **Gen checks**: `afterAnswer` also ignores an answer from an older `gen` (a slow answer that began before a period
+  doesn't end it); the canary's verdict is kept whatever the `gen` (so one canary per 60 s holds); `reset` keeps
+  `sinceMs` while healthy (the report's "since" stays the time the server came into use).
+- **Cloudflare/Quad9 keep today's timeouts** (`PROVIDER_BUDGET`: 5 s connect, 10 s in all) through the generalized
+  `resolveDoT`; the 2.5 s budget is for the parent's servers, where a backup answer must land inside the stub's first
+  try. A garbled provider answer is now dropped rather than relayed.
+- **`cloudflare-dns.com` is always `1.1.1.1`** in `BootstrapDns` (the bootstrap fallback's fixed address), also when
+  a parent types that name.
+- **The addresses kept are one IPv4 and one IPv6** (`ipv4First`), not two of one family.
+- `CustomDns` takes its clock, log and transport as parameters (Android's by default) so `CustomDnsTest` runs the glue
+  on the JVM.
+
+**Device checks owed** (`docs/testing/emulator.md` §6m covers the emulator part): a real DoH and a real DoT server
+(by name and by IP) through the protected sockets, `NO_PROXY` and the bootstrap; a LAN server on the home Wi-Fi, then
+away on mobile data (backup, `connect`), then back home (the network reset tries it at once); a network that blocks
+853 (a DoT primary goes to the backup; step 3 is not built); the canary against AdGuard Home's REFUSED - a
+REFUSED-mode block stays blocked, an id removed from "Allowed clients" is `refused`; the id in AdGuard Home's query
+log; Wi-Fi/mobile switches on the Jelly Star.
+
+**Open points for the code QA**: (1) the reason words above (`connect` for a connect timeout and a closed DoT stream,
+`timeout` for a canary SERVFAIL). (2) A config change closes the old client while its queries may be in flight; those
+are dropped once (the stub retries). (3) The bootstrap hole (a home-IP primary, a backup by name, a reboot away from home) - closed
+by the fix round's fall-through (H1). (4) A canary waiter that gives up - since the fix round it leaves the state alone and answers
+its own query as from a healthy server (L2).
+
+**Code QA fix round** (`docs/review/qa-36-s2-code.md`, branch `qa-dns-s2`): H1 - the bootstrap look-up falls through
+backup-IP → primary-IP → Cloudflare on a transport failure or silence (`bootstrapResolvers`, `CustomDns.lookUp`), for
+the look-up only; a step that failed for A is skipped for AAAA; §5.3 and §7 say so. M1 - a stale entry whose refresh
+failed waits the same 30 s before the next look-up. L1 - the canary's winner re-reads the cached verdict after its
+claim. L2 - a waiter that gives up returns no verdict: the state is untouched and its own query gets the NODATA or
+SERVFAIL of a healthy server. L3 - `CustomDnsGuardsTest` pins the lists before any resolver, the DoH client's
+`ProtectedSocketFactory`/`NO_PROXY`/no redirects or cache (and no `.newBuilder(`), and `live = null` under the monitor
+in `stopSelfCleanly`. L4 - `CustomDnsTest` drives the bootstrap glue: `start()`, the fall-through, a working or
+NXDOMAIN resolver not passed by, the primary's miss to the backup with the probe slot given back, the `bootstrap`
+period, the backup's miss dropping the query. N1 - `ipLiteral` parses IPv4/IPv6 into bytes itself (never
+`InetAddress.getByName`). N2 - every DoH call's connect timeout comes from its `Budget` (an interceptor), so a DoH
+bootstrap resolver gets 1 s. N3 - a failed look-up inside a period doesn't step the back-off. N4 - one ~4.8 s deadline
+per query (`QUERY_DEADLINE_MS`, `canaryBudget`, `backupBudget`; §5.4).

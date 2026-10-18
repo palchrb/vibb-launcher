@@ -128,9 +128,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
         OfflineOverride.clear()
-        // KidVpnService reads this cached value directly (it never talks to the network itself for
-        // policy) - see DnsFilterEngine.resolveUpstream.
-        mdm.dnsUpstreamProvider(freshPolicy.dnsUpstreamProvider)
+        // The provider and the parent's own servers were committed with the policy
+        // (storeAcceptedPolicy); the running VPN takes the servers from memory (design 36 §5.1).
+        DnsFilterEngine.setCustomUpstream(customUpstreamFrom(freshPolicy.dnsUpstream))
         // The blocked-domain log is a per-phone opt-in (off by default, cleanup 2026-10-06): off
         // also drops whatever is still queued.
         BlockedEventLog.setEnabled(context, freshPolicy.dnsLogEnabled)
@@ -254,6 +254,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 remoteWipeReady = LocateCommands.remoteWipeReady(context),
                 adminPoliciesPending = AdminPolicies.pending(context),
                 clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
+                // Design 36 §4.2: only while the VPN runs with the parent's own server.
+                dnsUpstream = KidVpnService.dnsUpstreamReport(),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -880,7 +882,8 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
 }
 
 /** Caches an accepted policy, its [LastEnforcedPlan], the "a policy has been applied" flag, the
- * "this phone has had time rules" flag ([judgeFresh]) and the
+ * "this phone has had time rules" flag ([judgeFresh]), the DNS upstream prefs (the provider and
+ * `dns_upstream_custom`, design 36 §5.1) and the
  * call prefs ([callPrefsUpdate]: `calls_managed_last` only from an explicit `managed`, and the last
  * managed call rules) in one synchronous `commit()` - they must never disagree, and the generated
  * preference setters only `apply()` asynchronously (see CLAUDE.md on writes racing a process death). */
@@ -891,6 +894,11 @@ private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit 
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)
+    // What KidVpnService forwards to (it never fetches policy itself): the provider, and the
+    // parent's own servers or none (design 36 §5.1) - with the policy, so they never disagree.
+    editor.putString(keys.dnsUpstreamProvider(), policy.dnsUpstreamProvider)
+    val custom = customUpstreamPref(policy.dnsUpstream)
+    if (custom != null) editor.putString(keys.dnsUpstreamCustom(), custom) else editor.remove(keys.dnsUpstreamCustom())
     callPrefsUpdate(policy)?.let { update ->
         editor.putBoolean(keys.callsManagedLast(), update.callsManagedLast)
         if (update.lastCallRules != null) {

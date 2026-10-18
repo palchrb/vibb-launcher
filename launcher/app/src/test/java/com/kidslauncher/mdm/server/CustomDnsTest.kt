@@ -1,0 +1,285 @@
+package com.kidslauncher.mdm.server
+
+import java.net.InetAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.xbill.DNS.ARecord
+import org.xbill.DNS.DClass
+import org.xbill.DNS.Message
+import org.xbill.DNS.Name
+import org.xbill.DNS.Rcode
+import org.xbill.DNS.Record
+import org.xbill.DNS.Section
+import org.xbill.DNS.Type
+
+/** Design 36 §5: the glue around the chooser - where each query goes, what is relayed, and the
+ * bootstrap look-ups - with a fake transport and clock (documentation names and addresses only).
+ * The scope is `Unconfined`, so a look-up runs inline when it starts. */
+class CustomDnsTest {
+    private val primaryDoh = UpstreamTarget.Doh("https://192.0.2.10/dns-query/abc123")
+    private val backupDot = UpstreamTarget.Dot("192.0.2.20", 853)
+    private val request = Message.newQuery(Record.newRecord(Name.fromString("example.com."), Type.A, DClass.IN))
+    private val query = request.toWire()
+
+    private fun answer(rcode: Int, id: Int = request.header.id) = Message(id).apply { header.rcode = rcode }.toWire()
+    private val backupAnswer = answer(Rcode.NOERROR, id = 7)
+
+    /** What the fake transport was asked: the target and the question. */
+    private data class Ask(val target: UpstreamTarget, val name: String, val type: Int)
+
+    private class Calls {
+        val asks = mutableListOf<Ask>()
+        val targets get() = asks.filter { it.name == "example.com." }.map { it.target }
+        val canaries get() = asks.count { it.type == Type.NS }
+        fun lookups(name: String) = asks.filter { it.name == "$name." }.map { it.target to it.type }
+    }
+
+    private fun Message.isCanary() = question.type == Type.NS
+
+    /** A look-up's answer: [name] -> [address], TTL 600. */
+    private fun lookupAnswer(m: Message, address: String): Attempt {
+        val reply = Message(m.header.id).apply {
+            addRecord(m.question, Section.QUESTION)
+            if (m.question.type == Type.A) addRecord(ARecord(m.question.name, DClass.IN, 600, InetAddress.getByName(address)), Section.ANSWER)
+        }
+        return Attempt.Answer(reply.toWire())
+    }
+
+    private fun dns(
+        primary: UpstreamTarget = primaryDoh,
+        backup: UpstreamTarget = backupDot,
+        clock: () -> Long = { 1_000 },
+        calls: Calls = Calls(),
+        answer: (UpstreamTarget, Message) -> Attempt,
+    ) = CustomDns(
+        CustomUpstream(primary, backup, rev = 4),
+        protect = { true },
+        scope = CoroutineScope(Dispatchers.Unconfined),
+        elapsed = clock,
+        log = {},
+        transport = { target: UpstreamTarget, _: List<InetAddress>, bytes: ByteArray, _: Budget ->
+            val m = Message(bytes)
+            synchronized(calls) { calls.asks += Ask(target, m.question.name.toString(), m.question.type) }
+            answer(target, m)
+        },
+    )
+
+    @Test
+    fun `a primary answer is relayed and the backup never asked`() {
+        val calls = Calls()
+        val relayed = answer(Rcode.NXDOMAIN)
+        val d = dns(calls = calls) { _, _ -> Attempt.Answer(relayed) }
+        assertArrayEquals(relayed, d.resolve(query, request))
+        assertEquals(listOf<UpstreamTarget>(primaryDoh), calls.targets)
+    }
+
+    @Test
+    fun `a transport failure goes to the configured backup, whose failure drops the query and leaves the state`() {
+        for (backup in listOf(backupDot, UpstreamTarget.Doh("https://[2001:db8::20]/dns-query"))) {
+            val calls = Calls()
+            var backupWorks = true
+            val d = dns(backup = backup, calls = calls) { target, _ ->
+                when {
+                    target == primaryDoh -> Attempt.Transport(BackupReason.CONNECT)
+                    backupWorks -> Attempt.Answer(backupAnswer)
+                    else -> Attempt.Transport(BackupReason.TLS)
+                }
+            }
+            assertArrayEquals(backupAnswer, d.resolve(query, request))
+            assertEquals(listOf(primaryDoh, backup), calls.targets)
+            val period = d.state()
+            assertTrue(period.backup)
+            assertEquals(BackupReason.CONNECT, period.reason)
+            // In the period the backup answers alone; when it fails too, the query is dropped.
+            backupWorks = false
+            assertNull(d.resolve(query, request))
+            assertEquals(listOf(primaryDoh, backup, backup), calls.targets)
+            assertEquals(period, d.state())
+        }
+    }
+
+    @Test
+    fun `REFUSED from a healthy server is the phone's NODATA, never the backup`() {
+        val calls = Calls()
+        val d = dns(calls = calls) { _, m ->
+            if (m.isCanary()) Attempt.Answer(answer(Rcode.NOERROR)) else Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED))
+        }
+        val blocked = Message(d.resolve(query, request)!!)
+        assertEquals(Rcode.NOERROR, blocked.rcode)
+        assertEquals(request.header.id, blocked.header.id)
+        assertEquals(0, blocked.getSection(Section.ANSWER).size)
+        assertEquals(1, blocked.getSection(Section.AUTHORITY).size)
+        assertEquals(listOf<UpstreamTarget>(primaryDoh), calls.targets)
+        assertFalse(d.state().backup)
+    }
+
+    @Test
+    fun `silence after the request from a healthy server is a SERVFAIL, and the canary is reused`() {
+        val calls = Calls()
+        var now = 1_000L
+        val d = dns(calls = calls, clock = { now }) { _, m ->
+            if (m.isCanary()) Attempt.Answer(answer(Rcode.NOERROR)) else Attempt.Odd(OddKind.TIMEOUT, null)
+        }
+        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request)!!).rcode)
+        now += 59_000
+        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request)!!).rcode)
+        assertEquals(1, calls.canaries)
+        now += 1_000
+        d.resolve(query, request)
+        assertEquals(2, calls.canaries)
+        assertEquals(listOf(primaryDoh, primaryDoh, primaryDoh), calls.targets)
+        assertFalse(d.state().backup)
+    }
+
+    @Test
+    fun `REFUSED with a refused canary - an id the server doesn't allow - goes to the backup`() {
+        val calls = Calls()
+        val d = dns(calls = calls) { target, _ ->
+            if (target == primaryDoh) Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED)) else Attempt.Answer(backupAnswer)
+        }
+        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertEquals(listOf(primaryDoh, backupDot), calls.targets)
+        assertEquals(BackupReason.REFUSED, d.state().reason)
+        assertEquals("backup", d.report().inUse)
+        assertEquals("refused", d.report().reason)
+    }
+
+    @Test
+    fun `a query that gives up waiting for another's canary answers alone and changes nothing`() {
+        val canaryStarted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val d = dns { _, m ->
+            if (m.isCanary()) {
+                canaryStarted.countDown()
+                release.await(10, TimeUnit.SECONDS)
+                Attempt.Transport(BackupReason.CONNECT)
+            } else {
+                Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED))
+            }
+        }
+        val first = thread { d.resolve(query, request) }
+        assertTrue(canaryStarted.await(5, TimeUnit.SECONDS))
+        // The second query waits at most its canary budget + 0.5 s, then answers its own REFUSED as NODATA.
+        val waited = Message(d.resolve(query, request)!!)
+        assertEquals(Rcode.NOERROR, waited.rcode)
+        assertEquals(1, waited.getSection(Section.AUTHORITY).size)
+        assertFalse(d.state().backup)
+        release.countDown()
+        first.join(5_000)
+        // The canary's own failure is what starts the period.
+        assertTrue(d.state().backup)
+    }
+
+    @Test
+    fun `a network reset sends the next query to the primary again`() {
+        val calls = Calls()
+        var primaryUp = false
+        val d = dns(calls = calls) { target, _ ->
+            if (target == primaryDoh && !primaryUp) Attempt.Transport(BackupReason.CONNECT) else Attempt.Answer(backupAnswer)
+        }
+        d.resolve(query, request)
+        assertTrue(d.state().backup)
+        primaryUp = true
+        d.networkReset()
+        d.resolve(query, request)
+        assertEquals(listOf(primaryDoh, backupDot, primaryDoh), calls.targets)
+        assertFalse(d.state().backup)
+        d.close()
+    }
+
+    @Test
+    fun `a home-IP primary away from home, a backup by name, nothing cached - the look-up falls through and the backup answers`() {
+        val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
+        val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        val calls = Calls()
+        val d = dns(primary = homeDot, backup = familyDoh, calls = calls) { target, m ->
+            when {
+                target == homeDot -> Attempt.Transport(BackupReason.CONNECT)
+                target == CLOUDFLARE_BOOTSTRAP -> lookupAnswer(m, "192.0.2.30")
+                else -> Attempt.Answer(backupAnswer)
+            }
+        }
+        d.start()
+        // A through the primary (unreachable), then Cloudflare; AAAA skips the dead step.
+        assertEquals(
+            listOf(homeDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, CLOUDFLARE_BOOTSTRAP to Type.AAAA),
+            calls.lookups("family.dns.example"),
+        )
+        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertEquals(listOf(homeDot, familyDoh), calls.targets)
+        assertEquals(BackupReason.CONNECT, d.state().reason)
+    }
+
+    @Test
+    fun `a working or answering bootstrap resolver is never passed by`() {
+        val homeDot = UpstreamTarget.Dot("192.0.2.10", 853)
+        val familyDoh = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        for (nxdomain in listOf(false, true)) {
+            val calls = Calls()
+            val d = dns(primary = homeDot, backup = familyDoh, calls = calls) { _, m ->
+                if (nxdomain) Attempt.Answer(answer(Rcode.NXDOMAIN, m.header.id)) else lookupAnswer(m, "192.0.2.30")
+            }
+            d.start()
+            assertEquals(listOf(homeDot to Type.A, homeDot to Type.AAAA), calls.lookups("family.dns.example"))
+        }
+    }
+
+    @Test
+    fun `the primary's name - looked up at start, a miss goes to the backup, nothing at all is a bootstrap period`() {
+        val named = UpstreamTarget.Dot("abc123.dns.example", 853)
+        val calls = Calls()
+        var lookupsWork = false
+        var now = 1_000L
+        val d = dns(primary = named, calls = calls, clock = { now }) { target, m ->
+            when {
+                m.question.name.toString() == "abc123.dns.example." ->
+                    if (lookupsWork) lookupAnswer(m, "192.0.2.40") else Attempt.Transport(BackupReason.CONNECT)
+                target == named -> Attempt.Answer(answer(Rcode.NOERROR))
+                else -> Attempt.Answer(backupAnswer)
+            }
+        }
+        // Both resolvers fail: the start's look-up gives nothing, a bootstrap period starts.
+        d.start()
+        assertEquals(listOf(backupDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A), calls.lookups("abc123.dns.example"))
+        assertEquals(BackupReason.BOOTSTRAP, d.state().reason)
+        val failures = d.state().failures
+        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        // The back-off ends; the probe finds no address: the look-up runs again (30 s passed), the
+        // query goes to the backup, the probe slot is given back and the period doesn't step.
+        now += 61_000
+        lookupsWork = true
+        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertFalse(d.state().probing)
+        assertEquals(failures, d.state().failures)
+        // Now the address is in hand: the next query probes the primary and ends the period.
+        assertArrayEquals(answer(Rcode.NOERROR), d.resolve(query, request))
+        assertFalse(d.state().backup)
+        assertEquals(listOf(backupDot, backupDot, named), calls.targets)
+    }
+
+    @Test
+    fun `a backup by name with no address drops the query, the state untouched`() {
+        val named = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        val calls = Calls()
+        val d = dns(backup = named, calls = calls) { target, m ->
+            when {
+                m.question.name.toString() == "family.dns.example." -> Attempt.Transport(BackupReason.CONNECT)
+                target == primaryDoh -> Attempt.Transport(BackupReason.TLS)
+                else -> Attempt.Answer(backupAnswer)
+            }
+        }
+        d.start()
+        assertNull(d.resolve(query, request))
+        assertEquals(listOf<UpstreamTarget>(primaryDoh), calls.targets)
+        assertEquals(BackupReason.TLS, d.state().reason)
+    }
+}
