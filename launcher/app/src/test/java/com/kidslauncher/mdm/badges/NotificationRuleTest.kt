@@ -74,6 +74,19 @@ class NotificationRuleTest {
     }
 
     @Test
+    fun `the platform's Safety Center nags are cancelled, its critical warning and other system notifications stay`() {
+        for (channel in listOf("safety_center_recommendation", "safety_center_information")) {
+            assertEquals(channel, NagVerdict.Cancel, nagVerdict(nag(pkg = "android", channel = channel), policy))
+            assertEquals("switch off", keep(NagKeep.SWITCHED_OFF), nagVerdict(nag(pkg = "android", channel = channel), policy.copy(enabled = false)))
+            assertEquals("not clearable", keep(NagKeep.NOT_CLEARABLE), nagVerdict(nag(pkg = "android", channel = channel, clearable = false), policy))
+            assertEquals("only android's", keep(NagKeep.ESSENTIAL_PACKAGE), nagVerdict(nag(pkg = "com.android.systemui", channel = channel), policy))
+        }
+        for (channel in listOf("safety_center_critical_warning", "SAFETY_CENTER_RECOMMENDATION", "USB", null)) {
+            assertEquals("$channel", keep(NagKeep.ESSENTIAL_PACKAGE), nagVerdict(nag(pkg = "android", channel = channel), policy))
+        }
+    }
+
+    @Test
     fun `GMS earthquake alerts stay - full-screen, insistent or an alert channel`() {
         assertEquals(keep(NagKeep.FULL_SCREEN), nagVerdict(nag(channel = "ealert_take_action", fsi = true), policy))
         assertEquals(keep(NagKeep.FULL_SCREEN), nagVerdict(nag(channel = "anything", fsi = true), policy))
