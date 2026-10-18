@@ -764,7 +764,9 @@ Together: an app store install of something not on the allowlist would still nee
   written). `Odd` asks the canary (`. IN NS` to the primary, 2 s, one in flight, verdict kept 60 s): a healthy canary
   makes the name's own outcome stand - **REFUSED is the phone's NODATA (`blockedResponse`), SERVFAIL/silence a
   SERVFAIL, never the backup for that name** -; a failed one is a transport failure (`refused` for a REFUSED canary,
-  AdGuard Home's answer to a client id it doesn't allow). In a period one query per back-off probes the primary
+  AdGuard Home's answer to a client id it doesn't allow). A query that gives up waiting for another's canary leaves
+  the state alone and answers as from a healthy server. One ~4.8 s deadline per query (`QUERY_DEADLINE_MS`: primary
+  2.5 s, canary 1-2 s, backup the rest, 1.3-2.5 s) keeps a failed canary's query inside the stub's first try. In a period one query per back-off probes the primary
   (`probing`), the rest go to the backup. `reset` (a network reset or new servers) tries the primary at once.
   Battery: one probe per back-off, one canary per 60 s at most.
 - **Transport** (`server/UpstreamTransport.kt`): `resolveDoT(query, addresses, host, port, budget, protect)` - at most
@@ -777,14 +779,17 @@ Together: an app store install of something not on the allowlist would still nee
   splits a timeout at the written request. POST `application/dns-message`, ID 0 out, the query's ID back in; a
   response that isn't 200 + `application/dns-message` (parameters ignored) + <= 65535 bytes + parsable is `http`.
   Pool evicted on a network reset and on close.
-- **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` never hands a name to
-  `InetAddress`), `cloudflare-dns.com` is `1.1.1.1`; a name is A then AAAA through the bootstrap resolver
-  (`bootstrapResolver`: the backup if it is an IP, else the primary if it is, else Cloudflare `1.1.1.1` DoT), never
-  the system resolver and never through the lists or the chooser, 1 s connect, 2 s in all. `BootstrapCache` (memory):
-  the CNAME chain's final name, TTL clamped 5 min-24 h, stale served while one refresh runs and kept when it fails,
-  one look-up per name at a time, a failed look-up with nothing cached retried after 30 s or a network reset. Both
+- **Bootstrap** (`server/BootstrapDns.kt`): an IP literal is itself (`ipLiteral` parses it into bytes - never
+  `InetAddress.getByName`, which would resolve a malformed one through our own VPN), `cloudflare-dns.com` is
+  `1.1.1.1`; a name is A then AAAA through the bootstrap resolvers (`bootstrapResolvers`: the backup if it is an IP,
+  the primary if it is, then Cloudflare `1.1.1.1` DoT; the look-up - never a query - falls through to the next on a
+  transport failure or silence, and a step that failed for A is skipped for AAAA, so a home-IP primary away from home
+  still lets a backup by name be found), never the system resolver and never through the lists or the chooser, 1 s
+  connect (DoH too, per call from its `Budget`), 2 s in all. `BootstrapCache` (memory): the CNAME chain's final name,
+  TTL clamped 5 min-24 h, stale served while one refresh runs and kept when it fails, one look-up per name at a time,
+  a failed look-up (stale or with nothing cached) retried after 30 s or a network reset. Both
   names are looked up when a config loads. A primary with no address yet sends that query to the backup (no failure);
-  nothing at all after its look-up is a `bootstrap` period. A backup with no address drops the query.
+  nothing at all after its look-up is a `bootstrap` period (not stepped again inside a period). A backup with no address drops the query.
 - **Network reset**: `KidVpnService` registers `registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN; the VPN is
   its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
   a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks
@@ -800,7 +805,9 @@ Together: an app store install of something not on the allowlist would still nee
   logged by exception class only (`PolicyGate`: a `JsonDecodingException` quotes the input).
 - Tests: `UpstreamChooserTest` (every transition, the burst, the back-off cap, the canary verdicts, reset, the outcome
   mapping, `networkChanged`, the status field against the contract), `CustomDnsTest` (the glue with a fake transport:
-  backup DoT/DoH, its failure leaving the state, REFUSED/silence from a healthy server, the canary reused, reset),
+  backup DoT/DoH, its failure leaving the state, REFUSED/silence from a healthy server, the canary reused and its
+  waiter, reset, the bootstrap glue and its fall-through), `CustomDnsGuardsTest` (the lists first, the DoH client's
+  protected sockets and no proxy, no status field once the VPN is off),
   `BootstrapResolverTest`, `DohMessageTest`, `CustomUpstreamPrefTest`, `PolicyResponseCompatTest`,
   `DnsUpstreamStatusTest`.
 - **Not device-tested**: a real DoH/DoT server through the protected sockets (emulator check `docs/testing/emulator.md`

@@ -212,6 +212,12 @@ fun buildDohClient(dns: okhttp3.Dns, protect: (Socket) -> Boolean): OkHttpClient
     .callTimeout(UPSTREAM_BUDGET.totalMs.toLong(), TimeUnit.MILLISECONDS)
     .followRedirects(false)
     .followSslRedirects(false)
+    // Each call's own connect timeout (a bootstrap look-up's 1 s, §5.3) from its Budget tag.
+    .addInterceptor { chain ->
+        val budget = chain.request().tag(Budget::class.java)
+        if (budget == null) chain.proceed(chain.request())
+        else chain.withConnectTimeout(budget.connectMs, TimeUnit.MILLISECONDS).proceed(chain.request())
+    }
     .eventListenerFactory { call ->
         val marks = call.request().tag(CallMarks::class.java) ?: return@eventListenerFactory EventListener.NONE
         object : EventListener() {
@@ -230,6 +236,7 @@ fun resolveDoh(client: OkHttpClient, url: String, query: ByteArray, budget: Budg
         .header("Accept", DNS_MESSAGE.toString())
         .post(dohQuery(query).toRequestBody(DNS_MESSAGE))
         .tag(CallMarks::class.java, marks)
+        .tag(Budget::class.java, budget)
         .build()
     val call = client.newCall(request)
     call.timeout().timeout(budget.totalMs.toLong(), TimeUnit.MILLISECONDS)

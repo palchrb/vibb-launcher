@@ -42,7 +42,7 @@ class CustomDns(
 ) {
     private val state = AtomicReference(ChooserState(sinceMs = elapsed()))
     private val canaryInFlight = AtomicReference<CompletableFuture<CanaryVerdict>?>(null)
-    private val resolver = bootstrapResolver(config)
+    private val resolvers = bootstrapResolvers(config)
     private val bootstrap = BootstrapDns(elapsed) { host -> scope.launch { lookUp(host) } }
     private val client = buildDohClient(bootstrap, protect)
     private val transport = transport ?: ::attempt
@@ -65,13 +65,16 @@ class CustomDns(
     }
 
     private fun resolveChecked(query: ByteArray, request: Message): ByteArray? {
-        val (route, gen) = route(elapsed())
-        if (route == UpstreamRoute.BACKUP) return backup(query)
+        val startedAt = elapsed()
+        // One deadline for the whole query (design 36 §5.4): an answer inside the stub's first ~5 s try.
+        val deadline = startedAt + QUERY_DEADLINE_MS
+        val (route, gen) = route(startedAt)
+        if (route == UpstreamRoute.BACKUP) return backup(query, deadline)
         val addresses = bootstrap.addresses(config.primary.serverHost)
         if (addresses.isEmpty()) {
             // Not looked up yet (the look-up runs): this query goes to the backup, no failure.
             if (route == UpstreamRoute.PROBE) update { UpstreamChooser.releaseProbe(it, gen) }
-            return backup(query)
+            return backup(query, deadline)
         }
         var settled = false
         try {
@@ -85,13 +88,17 @@ class CustomDns(
                 is Attempt.Transport -> {
                     update { UpstreamChooser.afterTransport(it, gen, elapsed(), outcome.reason) }
                     settled = true
-                    return backup(query)
+                    return backup(query, deadline)
                 }
                 is Attempt.Odd -> {
-                    val verdict = canary(addresses)
-                    update { UpstreamChooser.afterOdd(it, gen, elapsed(), verdict) }
-                    settled = true
-                    if (!verdict.ok) return backup(query)
+                    val verdict = canary(addresses, canaryBudget(deadline - elapsed()))
+                    if (verdict != null) {
+                        update { UpstreamChooser.afterOdd(it, gen, elapsed(), verdict) }
+                        settled = true
+                        if (!verdict.ok) return backup(query, deadline)
+                    }
+                    // A healthy canary - or one this query gave up waiting for, which changes nothing:
+                    // the name's own outcome stands, never the backup.
                     return when (oddAnswer(outcome.kind)) {
                         OddAnswer.BLOCKED -> blockedResponse(request)
                         OddAnswer.SERVFAIL -> servfailResponse(request)
@@ -103,11 +110,12 @@ class CustomDns(
         }
     }
 
-    /** The backup's answer relayed as is (REFUSED/SERVFAIL included); a failure drops the query. */
-    private fun backup(query: ByteArray): ByteArray? {
+    /** The backup's answer relayed as is (REFUSED/SERVFAIL included), within what is left of the
+     * query's [deadline]; a failure drops the query. */
+    private fun backup(query: ByteArray, deadline: Long): ByteArray? {
         val addresses = bootstrap.addresses(config.backup.serverHost)
         if (addresses.isEmpty()) return null
-        return when (val outcome = transport(config.backup, addresses, query, UPSTREAM_BUDGET)) {
+        return when (val outcome = transport(config.backup, addresses, query, backupBudget(deadline - elapsed()))) {
             is Attempt.Answer -> outcome.bytes
             is Attempt.Odd -> outcome.bytes
             is Attempt.Transport -> null
@@ -120,23 +128,32 @@ class CustomDns(
             is UpstreamTarget.Dot -> resolveDoT(query, addresses, target.host, target.port, budget, protect)
         }
 
-    /** The canary's verdict: a cached one younger than 60 s, else `. IN NS` to the primary, one in
-     * flight at a time (the others wait for it). */
-    private fun canary(addresses: List<InetAddress>): CanaryVerdict {
-        state.get().let { s -> if (!UpstreamChooser.needsCanary(s, elapsed())) return s.canary!! }
+    /**
+     * The canary's verdict: a cached one younger than 60 s, else `. IN NS` to the primary within
+     * [budget], one in flight at a time. A query that finds one running waits for it; `null` when it
+     * gives up (then nothing changes for anyone, and its own name's outcome stands).
+     */
+    private fun canary(addresses: List<InetAddress>, budget: Budget): CanaryVerdict? {
+        cachedCanary()?.let { return it }
         val mine = CompletableFuture<CanaryVerdict>()
         val running = canaryInFlight.compareAndExchange(null, mine)
         if (running != null) {
             return try {
-                running.get(CANARY_BUDGET.totalMs + 1000L, TimeUnit.MILLISECONDS)
+                running.get(budget.totalMs + CANARY_WAIT_SLACK_MS, TimeUnit.MILLISECONDS)
             } catch (e: Exception) {
-                CanaryVerdict(elapsed(), ok = false, reason = BackupReason.TIMEOUT)
+                null
             }
+        }
+        // Won the claim: a canary that finished just before it already decided.
+        cachedCanary()?.let { cached ->
+            canaryInFlight.set(null)
+            mine.complete(cached)
+            return cached
         }
         var verdict = CanaryVerdict(elapsed(), ok = false, reason = BackupReason.TIMEOUT)
         try {
             val query = Message.newQuery(Record.newRecord(Name.root, Type.NS, DClass.IN)).toWire()
-            verdict = canaryVerdict(transport(config.primary, addresses, query, CANARY_BUDGET), elapsed())
+            verdict = canaryVerdict(transport(config.primary, addresses, query, budget), elapsed())
             update { UpstreamChooser.withCanary(it, verdict) }
             log("Canary: ok=${verdict.ok}, reason=${verdict.reason?.wire}")
         } finally {
@@ -146,29 +163,46 @@ class CustomDns(
         return verdict
     }
 
-    /** A look-up of one server's name (A, then AAAA) through the bootstrap resolver, in the
-     * background. Nothing at all for the primary's name, with nothing cached, starts a period
-     * (`bootstrap`); for the backup's, its queries stay dropped. */
+    private fun cachedCanary(): CanaryVerdict? =
+        state.get().takeUnless { UpstreamChooser.needsCanary(it, elapsed()) }?.canary
+
+    /**
+     * A look-up of one server's name (A, then AAAA) in the background (§5.3). The bootstrap resolvers
+     * are tried in order, the next one only when a step fails at the transport level (silence after
+     * the request included) - an NXDOMAIN or an empty answer is an answer -, and a step that failed
+     * for A is skipped for AAAA. Nothing at all for the primary's name, with nothing cached, starts
+     * a period (`bootstrap`) unless one runs already; for the backup's, its queries stay dropped.
+     */
     private fun lookUp(host: String) {
         val gen = state.get().gen
         val found = mutableListOf<InetAddress>()
         var ttl = Long.MAX_VALUE
-        val via = resolver
-        if (via != null) {
-            for (type in intArrayOf(Type.A, Type.AAAA)) {
-                val answer = try {
-                    val qname = Name.fromString("$host.")
-                    val query = Message.newQuery(Record.newRecord(qname, type, DClass.IN)).toWire()
-                    val viaAddresses = bootstrap.addresses(via.serverHost)
-                    (transport(via, viaAddresses, query, BOOTSTRAP_BUDGET) as? Attempt.Answer)
-                        ?.let { addressesFromAnswer(Message(it.bytes), qname) }
+        var step = 0
+        for (type in intArrayOf(Type.A, Type.AAAA)) {
+            val qname = try {
+                Name.fromString("$host.")
+            } catch (e: Exception) {
+                break
+            }
+            val query = Message.newQuery(Record.newRecord(qname, type, DClass.IN)).toWire()
+            while (step < resolvers.size) {
+                val via = resolvers[step]
+                val outcome = try {
+                    transport(via, bootstrap.addresses(via.serverHost), query, BOOTSTRAP_BUDGET)
                 } catch (e: Exception) {
-                    null
+                    Attempt.Transport(BackupReason.CONNECT)
                 }
+                if (outcome is Attempt.Transport || (outcome is Attempt.Odd && outcome.kind == OddKind.TIMEOUT)) {
+                    step++
+                    continue
+                }
+                val answer = (outcome as? Attempt.Answer)
+                    ?.let { runCatching { addressesFromAnswer(Message(it.bytes), qname) }.getOrNull() }
                 if (answer != null && answer.addresses.isNotEmpty()) {
                     found += answer.addresses
                     ttl = minOf(ttl, answer.ttlSeconds)
                 }
+                break
             }
         }
         val now = elapsed()
@@ -180,7 +214,8 @@ class CustomDns(
         val isPrimary = host == config.primary.serverHost
         log("Look-up gave nothing (primary=$isPrimary)")
         if (isPrimary && !bootstrap.cache.has(host)) {
-            update { UpstreamChooser.afterTransport(it, gen, now, BackupReason.BOOTSTRAP) }
+            // A retry inside a period doesn't step the back-off again: the probe schedule does.
+            update { if (it.backup) it else UpstreamChooser.afterTransport(it, gen, now, BackupReason.BOOTSTRAP) }
         }
     }
 
@@ -221,6 +256,27 @@ class CustomDns(
             }
         }
     }
+}
+
+/** A query's deadline from its start, the canary's floor and its waiters' slack (design 36 §5.4,
+ * QA N4): the primary takes at most 2.5 s, the canary what is left above [BACKUP_FLOOR_MS] (at least
+ * [CANARY_MIN_MS], at most its own 2 s), the backup the rest (at least [BACKUP_FLOOR_MS], at most
+ * 2.5 s) - so a failed canary's query is answered in under ~5 s. */
+const val QUERY_DEADLINE_MS = 4_800L
+const val CANARY_MIN_MS = 1_000L
+const val BACKUP_FLOOR_MS = 1_300L
+const val CANARY_WAIT_SLACK_MS = 500L
+
+/** The canary's budget with [leftMs] of the query's deadline left. */
+fun canaryBudget(leftMs: Long): Budget {
+    val total = (leftMs - BACKUP_FLOOR_MS).coerceIn(CANARY_MIN_MS, CANARY_BUDGET.totalMs.toLong()).toInt()
+    return Budget(minOf(CANARY_BUDGET.connectMs, total), total)
+}
+
+/** The backup's budget with [leftMs] of the query's deadline left. */
+fun backupBudget(leftMs: Long): Budget {
+    val total = leftMs.coerceIn(BACKUP_FLOOR_MS, UPSTREAM_BUDGET.totalMs.toLong()).toInt()
+    return Budget(minOf(UPSTREAM_BUDGET.connectMs, total), total)
 }
 
 /** The canary's answer as a verdict: ok = a NOERROR answer; REFUSED is `refused` (AdGuard Home's

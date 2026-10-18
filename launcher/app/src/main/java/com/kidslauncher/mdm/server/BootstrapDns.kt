@@ -20,21 +20,58 @@ val UpstreamTarget.serverHost: String
         is UpstreamTarget.Dot -> host
     }
 
-private val DOTTED_QUAD = Regex("""\d{1,3}(\.\d{1,3}){3}""")
-
 /**
  * [host] as an IP address when it is an IP literal (dotted-quad IPv4, or IPv6 with or without
- * brackets), else `null`. Never a DNS look-up: a name is never handed to [InetAddress].
+ * brackets), else `null`. Parsed here into bytes, never by [InetAddress.getByName]: on Android a
+ * string that isn't numeric would be a system look-up (into our own VPN).
  */
 fun ipLiteral(host: String): InetAddress? {
     val bare = host.removePrefix("[").removeSuffix("]")
-    val literal = when {
-        ':' in bare -> true
-        DOTTED_QUAD.matches(bare) -> bare.split('.').all { it.toInt() <= 255 }
-        else -> false
+    val bytes = (if (':' in bare) ipv6Bytes(bare) else ipv4Bytes(bare)) ?: return null
+    return InetAddress.getByAddress(bytes)
+}
+
+private fun ipv4Bytes(text: String): ByteArray? {
+    val parts = text.split('.')
+    if (parts.size != 4) return null
+    val bytes = ByteArray(4)
+    for ((i, part) in parts.withIndex()) {
+        if (part.isEmpty() || part.length > 3 || !part.all { it in '0'..'9' }) return null
+        val value = part.toInt()
+        if (value > 255) return null
+        bytes[i] = value.toByte()
     }
-    if (!literal) return null
-    return runCatching { InetAddress.getByName(bare) }.getOrNull()
+    return bytes
+}
+
+private val HEX_GROUP = Regex("[0-9A-Fa-f]{1,4}")
+
+private fun ipv6Bytes(text: String): ByteArray? {
+    var groups = text
+    // An embedded IPv4 tail (`::ffff:192.0.2.1`) becomes two hex groups.
+    val tail = text.substringAfterLast(':')
+    if ('.' in tail) {
+        val v4 = ipv4Bytes(tail) ?: return null
+        val hi = ((v4[0].toInt() and 0xFF) shl 8) or (v4[1].toInt() and 0xFF)
+        val lo = ((v4[2].toInt() and 0xFF) shl 8) or (v4[3].toInt() and 0xFF)
+        groups = text.substring(0, text.length - tail.length) + "%x:%x".format(hi, lo)
+    }
+    val halves = groups.split("::")
+    if (halves.size > 2) return null
+    fun list(part: String): List<String>? =
+        if (part.isEmpty()) emptyList() else part.split(':').takeIf { gs -> gs.all { HEX_GROUP.matches(it) } }
+    val head = list(halves[0]) ?: return null
+    val rest = if (halves.size == 2) list(halves[1]) ?: return null else emptyList()
+    val count = head.size + rest.size
+    if (if (halves.size == 2) count > 7 else count != 8) return null
+    val all = head + List(8 - count) { "0" } + rest
+    val bytes = ByteArray(16)
+    for ((i, group) in all.withIndex()) {
+        val value = group.toInt(16)
+        bytes[2 * i] = (value shr 8).toByte()
+        bytes[2 * i + 1] = value.toByte()
+    }
+    return bytes
 }
 
 /** The last fallback for the bootstrap resolver (design 36 §5.3): Cloudflare over DoT, by its
@@ -43,19 +80,17 @@ val CLOUDFLARE_BOOTSTRAP = UpstreamTarget.Dot("cloudflare-dns.com", 853)
 private val CLOUDFLARE_BOOTSTRAP_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))
 
 /**
- * Where the servers' names are looked up (design 36 §5.3), fixed per config: the backup when it is
- * an IP literal, else the primary when it is, else [CLOUDFLARE_BOOTSTRAP]; `null` when both are
- * IP literals (nothing to look up).
+ * Where the servers' names are looked up (design 36 §5.3), in order: the backup when it is an IP
+ * literal, the primary when it is, then [CLOUDFLARE_BOOTSTRAP]. A look-up (only a look-up, never a
+ * query) moves to the next when one fails at the transport level, so a home-network primary by IP
+ * away from home still lets the backup's name be found. Empty when both are IP literals (nothing to
+ * look up).
  */
-fun bootstrapResolver(config: CustomUpstream): UpstreamTarget? {
+fun bootstrapResolvers(config: CustomUpstream): List<UpstreamTarget> {
     val backupIp = ipLiteral(config.backup.serverHost) != null
     val primaryIp = ipLiteral(config.primary.serverHost) != null
-    return when {
-        backupIp && primaryIp -> null
-        backupIp -> config.backup
-        primaryIp -> config.primary
-        else -> CLOUDFLARE_BOOTSTRAP
-    }
+    if (backupIp && primaryIp) return emptyList()
+    return listOfNotNull(config.backup.takeIf { backupIp }, config.primary.takeIf { primaryIp }, CLOUDFLARE_BOOTSTRAP)
 }
 
 /** At most two addresses, IPv4 first (one of each family when there are both). */
@@ -96,7 +131,7 @@ fun addressesFromAnswer(response: Message, qname: Name): LookupAnswer {
 /**
  * The bootstrap's memory cache (design 36 §5.3). Pure: the clock is passed in. A TTL is clamped to
  * 5 min - 24 h. An expired entry is still served while one refresh runs, and kept when the refresh
- * fails. A name with nothing cached is looked up once at a time, and not again within
+ * fails. A name is looked up once at a time, and - stale or with nothing cached - not again within
  * [RETRY_AFTER_FAILURE_MS] of a failed look-up (a network reset clears that, [forgetFailures]).
  */
 class BootstrapCache {
@@ -120,7 +155,8 @@ class BootstrapCache {
         val due = when {
             entry == null -> true
             entry.lookingUp -> false
-            addresses.isNotEmpty() -> now >= entry.expiresAtMs
+            addresses.isNotEmpty() && now < entry.expiresAtMs -> false
+            // Stale or missing: refresh, but not again within 30 s of a failed one.
             else -> entry.failedAtMs == null || now - entry.failedAtMs >= RETRY_AFTER_FAILURE_MS
         }
         if (due) entries[host] = Entry(addresses, entry?.expiresAtMs ?: 0, lookingUp = true, failedAtMs = entry?.failedAtMs)

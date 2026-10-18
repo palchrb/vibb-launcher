@@ -4,7 +4,6 @@ import java.net.InetAddress
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.xbill.DNS.ARecord
@@ -26,12 +25,12 @@ class BootstrapResolverTest {
     private fun config(primary: UpstreamTarget, backup: UpstreamTarget) = CustomUpstream(primary, backup, rev = 1)
 
     @Test
-    fun `the backup's IP first, then the primary's, else Cloudflare - and nothing to look up with two IPs`() {
-        assertSame(dotIp, bootstrapResolver(config(dohName, dotIp)))
-        assertSame(dohIp, bootstrapResolver(config(dotName, dohIp)))
-        assertSame(dotIp, bootstrapResolver(config(dotIp, dohName)))
-        assertSame(CLOUDFLARE_BOOTSTRAP, bootstrapResolver(config(dohName, dotName)))
-        assertNull(bootstrapResolver(config(dotIp, dohIp)))
+    fun `the backup's IP first, then the primary's, then Cloudflare - and nothing to look up with two IPs`() {
+        assertEquals(listOf(dotIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dohName, dotIp)))
+        assertEquals(listOf(dohIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dotName, dohIp)))
+        assertEquals(listOf(dotIp, CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dotIp, dohName)))
+        assertEquals(listOf(CLOUDFLARE_BOOTSTRAP), bootstrapResolvers(config(dohName, dotName)))
+        assertEquals(emptyList<UpstreamTarget>(), bootstrapResolvers(config(dotIp, dohIp)))
     }
 
     @Test
@@ -39,7 +38,15 @@ class BootstrapResolverTest {
         assertEquals(InetAddress.getByName("192.0.2.53"), ipLiteral("192.0.2.53"))
         assertEquals(InetAddress.getByName("2001:db8::53"), ipLiteral("[2001:db8::53]"))
         assertEquals(InetAddress.getByName("2001:db8::53"), ipLiteral(dohIp.serverHost))
-        for (name in listOf("dns.example", "abc123.dns.example", "1.1", "999.0.2.1", "192.0.2.1.example", "")) {
+        assertEquals(InetAddress.getByName("::1"), ipLiteral("::1"))
+        assertEquals(InetAddress.getByName("2001:db8::"), ipLiteral("2001:db8::"))
+        assertEquals(InetAddress.getByName("::ffff:192.0.2.1"), ipLiteral("::ffff:192.0.2.1"))
+        assertEquals(InetAddress.getByName("2001:db8:0:0:0:0:0:53"), ipLiteral("2001:db8:0:0:0:0:0:53"))
+        // Parsed, never resolved: anything not numeric is null, never a look-up.
+        for (name in listOf(
+            "dns.example", "abc123.dns.example", "1.1", "999.0.2.1", "192.0.2.1.example", "", "01.2.3.4.5",
+            "dns.example:853", "1:2", "2001:db8::1::2", "2001:db8:0:0:0:0:0:0:1", "g::1", "[dns.example]",
+        )) {
             assertNull(name, ipLiteral(name))
         }
         val lookedUp = mutableListOf<String>()
@@ -66,7 +73,9 @@ class BootstrapResolverTest {
         assertEquals(CacheView(a, false), view(cache.get("dns.example", 300_001)))
         cache.failed("dns.example", 300_500)
         assertTrue(cache.has("dns.example"))
-        assertEquals(a, cache.get("dns.example", 300_600).addresses)
+        // A failed refresh: still served, no look-up per query - the next one 30 s later.
+        assertEquals(CacheView(a, false), view(cache.get("dns.example", 300_600)))
+        assertEquals(CacheView(a, true), view(cache.get("dns.example", 330_500)))
         // The 24 h ceiling.
         cache.put("dns.example", a, ttlSeconds = 7 * 86_400, now = 0)
         assertFalse(cache.get("dns.example", 86_399_999).lookUp)
