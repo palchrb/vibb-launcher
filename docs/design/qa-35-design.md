@@ -364,3 +364,19 @@ health, the switches):
 5. **Migration order with design 36 (M1):** all of 35 in `0078` and 36 in `0079`? QA recommends yes.
 6. **No `Topic` coalescing in phase 1 (M4.6)?** QA leans to no Topic, which keeps the code smaller and the health
    more honest.
+
+## Revision 2026-10-18 (owner's decisions)
+
+What changed in the note versus the version QA'd above (every finding's resolution kept):
+- The `offline` kind is gone: §2.3 is void (kept as a number), no 5-min task, no `offline_hours`, no "Offline for"
+  picker, no `Instant` guard (M4's item and L3 are void). Question 4 is void.
+- New kind `low_battery` (§2.5): the status report's optional `battery {level, charging, low}` in both directories
+  in step 1's commit (null by default, so `time_status_report.json` stays valid); `battery_v1`.
+- Trigger: a runtime receiver for `ACTION_BATTERY_LOW`/`OKAY` in `Application.initRest` calls `SyncRunner.request`;
+  a process not running is covered by the next report (sticky intent).
+- Rule: latched in `devices.battery_low_since` by a conditional UPDATE (one event per latch, parallel reports
+  included); re-armed only by `!low && !charging`, so plugging in and out at 12 % doesn't push again.
+- TTL 3600 / normal for `low_battery`; switch `push_low_battery` (default on); the battery line on the Devices row and
+  the device page from two new `device_status` columns. Migration 0078 stays one file.
+- Step 3 is no longer optional (battery receiver + the sync after an emergency call); §10 is now "Decisions
+  2026-10-18": store every kind, "PIN used" on, 0078/0079, no `Topic`.

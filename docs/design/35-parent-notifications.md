@@ -1,8 +1,9 @@
 # 35 - Notifications to the parent, phase 1: an inbox in the PWA and Web Push (buildable spec)
 
-Backlog item "Notifications to the parent, phase 1" (PLAN.md, approved 2026-10-16). Steps 1 and 2 are server only
-(no device API change, no contract file); step 3 is a small optional launcher change. Revised after design QA
-(`docs/design/qa-35-design.md`, §11).
+Backlog item "Notifications to the parent, phase 1" (PLAN.md, approved 2026-10-16). Step 1 is the server plus one
+optional status-report field in both directories (`battery`, §2.5); step 2 is server only; step 3 is the launcher's
+part (the battery reading and its receiver, a sync after an emergency call). Revised after design QA
+(`docs/design/qa-35-design.md`, §11) and after the owner's decisions of 2026-10-18 (§10).
 
 ## 0. Goal and non-goals
 
@@ -16,13 +17,12 @@ so the server can say "Notifications may not be showing" per device.
   `push_deliveries.channel` (`webpush` only now; an ntfy or Matrix delivery is another row), every delivery's
   `accepted_at`/`receipt_at` ("no receipt within 2 min" is one query), and `Kind::urgent()` (§2.2).
 - A new blocked app, an extra-time request (reserved kinds); wrong PIN tries as events; message content; `Topic`
-  coalescing; offline caching; per-parent read state (one admin account, `security::bootstrap_admin`).
+  coalescing; a service-worker cache; per-parent read state (one admin account, `security::bootstrap_admin`).
 
 ## 1. Decisions
 
 1. **The events are rows on the server** (`parent_events`, §3), and the inbox is complete: every kind is stored.
-   The switches govern push only (orchestrator's call). One exception: "Offline for" = Off skips the offline check
-   itself, so no `offline` events at all.
+   The switches govern push only (orchestrator's call, decided 2026-10-18).
 2. **One raise function**: `parent_events::raise(conn, NewEvent) -> Option<i64>`, `INSERT ... ON CONFLICT DO
    NOTHING RETURNING id` on `UNIQUE (device_id, kind, dedup_key)`. A repeated report, a retried POST or two parallel
    ones give one row. Only a new row queues deliveries (for a kind whose push is on, §4.6); the sender is woken
@@ -46,13 +46,13 @@ so the server can say "Notifications may not be showing" per device.
 | `pin_used` | the same place, for a newly stored `unlocked` | the phone's `event_id` |
 | `foreign_access` | `handlers::window_relock::log_foreign_access`, when the set changed and the new one isn't empty | `<previous device_status id or 0>:<hex(sha256(new sanitized json))[..16]>` |
 | `unseen_boot` | `device_api::status`, where `boot_witness::log_line` returns a line (the count rose) | `<count>:<last_at_ms>` |
-| `offline` | `parent_events::run_offline_check` (§2.3) | the last contact, RFC 3339 to the second |
+| `low_battery` | `device_api::status`, when the report's `battery` latches the phone (§2.5) | the latch instant (`devices.battery_low_since`), RFC 3339 with ms, UTC |
 | `app_blocked`, `extra_time_request` | reserved, not raised in phase 1 | - |
 
 - **Latency.** An emergency call and a PIN event reach the server only with the phone's next status report /
   `pin-events` POST: today the 30-min backstop (up to ~52 min with inexact alarms) or another trigger. The phone
   reports only its last emergency call, so two calls between reports make one event. Step 3 (§9) makes the call's
-  report immediate; the Notify Me About footer says "as soon as the phone next reports".
+  and a low battery's report immediate; the Notify Me About footer says "as soon as the phone next reports".
 - The previous-report reads (`last_emergency_call_at`, the previous row's id for foreign access) join the queries
   the intake already runs before its insert. An upgrade announces no old call: the previous row has the same
   instant. No phone-vs-server clock comparison except the first-report case.
@@ -72,40 +72,71 @@ Made once, at raise, from typed values (never phone-supplied text in a title), t
 | `pin_used` | "Parent PIN used on Anna" | "Time lock · 14:02" | `/devices/{id}/lock#parent-pin` | no |
 | `foreign_access` | "An app may read the PIN on Anna" | "1 app with device admin" | `/devices/{id}#foreign-access` | yes |
 | `unseen_boot` | "Anna started without Vibb One" | "Safe mode or a start cut short" | `/devices/{id}/about#diagnostics` | no |
-| `offline` | "Anna offline since 12 Oct 08:12" | "No contact for 3 days" | `/devices/{id}` | no |
+| `low_battery` | "Battery low on Anna (14 %)" | "Not charging · 14:02" | `/devices/{id}` | no |
 
 `detail` (optional, inbox only, never pushed): e.g. the foreign apps by the phone's name for them. Typed as
 `parent_events::Kind` with `title()`, `target()`, `urgent()`, `ttl()`, `urgency()`; this table is
 `parent_events::tests`' table.
 
-### 2.3 The offline check
+### 2.3 (void)
 
-`run_offline_check` (spawned from `main` only, every 5 min; it calls a pure, tested `due(...)`): skipped while
-`offline_hours` = 0. A phone enrolled with a token whose last contact (the newest of `connection_of`'s inputs:
-`last_seen_at`, the in-memory last access, an open stream's `since`) is older than `offline_hours` raises `offline`
-keyed by that contact. One event per silent stretch; a phone that came back on its stream alone and fell silent
-again has a newer contact, so a new key. Guard: a `std::time::Instant` taken when the task starts; nothing is raised
-until `offline_hours` have passed since, so a server that was down itself announces nothing. Not set up,
-Disconnected or never seen: nothing. Nothing clears when the phone comes back; there is no "back online" event.
-The first deploy announces each long-silent phone once, with its real date.
+The connection check was dropped on 2026-10-18, with its kind and its setting; the number stays because §11 and the
+QA cite it. The Devices page's connection state is unchanged; nothing is notified on it.
 
 ### 2.4 Switches and retention
 
 - `notification_settings` (singleton `id = 1`): `push_pin_used`, `push_pin_lockout`, `push_foreign_access`,
-  `push_unseen_boot` (0/1, default 1), `offline_hours` (0 = off, 2/6/12/24, default 6). No column for the
-  emergency call (always pushed). Footer: "Off: still listed here, no notification. Offline off: not checked."
+  `push_unseen_boot`, `push_low_battery` (0/1, default 1). No column for the emergency call (always pushed).
+  Footer: "Off: still listed here, no notification."
 - `retention::prune`: `parent_events` after 90 days by `created_at`; `push_deliveries` after 30 days;
   `push_subscriptions` in state `gone` after 30 days. Deleting a phone cascades its events.
 
+### 2.5 The battery (`low_battery`)
+
+- **Wire** (step 1's commit, both directories): the status report gains `battery: {"level": 0-100, "charging": bool,
+  "low": bool}`, optional. Kotlin `BatteryReport`, `battery: BatteryReport? = null` in `StatusReportRequest`:
+  `ServerJson` leaves it out while null, so `time_status_report.json` (both copies) and `TimeStateZoneTest` stay as
+  they are. Rust `Option<BatteryReport>` with `level: i64`; a level outside 0..=100 drops the `battery`, never the
+  report. The server keys off the field, not the capability; the launcher lists `battery_v1` in
+  `STATUS_CAPABILITIES` (step 3) like its other features.
+- **The reading** (launcher, step 3), at every report, from the sticky `ACTION_BATTERY_CHANGED`
+  (`registerReceiver(null, filter)`): `level` = `EXTRA_LEVEL * 100 / EXTRA_SCALE`, rounded; `charging` =
+  `EXTRA_PLUGGED != 0` or `EXTRA_STATUS` is `CHARGING`/`FULL`; `low` = `EXTRA_BATTERY_LOW` (API 28; minSdk 34). A
+  pure `BatteryReport.of(level, scale, status, plugged, low)`, null when the level or scale is missing (-1, scale
+  <= 0).
+- **The trigger** (launcher, step 3): `Application.initRest`, where the process keeps its long-lived receivers and
+  its package receiver already calls `SyncRunner.request`, registers one receiver (`RECEIVER_NOT_EXPORTED`; system
+  broadcasts reach it) for `ACTION_BATTERY_LOW` and `ACTION_BATTERY_OKAY` (neither reaches a manifest receiver since
+  Android 8) that calls `SyncRunner.request(app, "battery")`: the report with `low=true` arrives within seconds. The
+  process is long-lived (home app, the anchor foreground service). When it isn't running (killed, or before the
+  first unlock: `initRest` runs after it) the broadcast is lost and the next report (the 30-min backstop, a nudge,
+  process start) carries `low=true` from the sticky intent.
+- **The rule** (server, pure, tested): `parent_events::battery_edge(latched, &BatteryReport) -> Edge`: not latched
+  and `low` → `Raise`; latched and `!low && !charging` → `Rearm`; else `None`. In `device_api::status`, in the
+  intake's transaction: `Raise` is `UPDATE devices SET battery_low_since = <now> WHERE id = ? AND battery_low_since
+  IS NULL` and raises only when that changed a row (two parallel reports latch once); `Rearm` sets it NULL. A report
+  without `battery` (an old launcher) touches nothing.
+- Why `!charging` too: Android clears `low` the moment the phone is plugged in and sets it again (with another
+  `BATTERY_LOW`) when it is unplugged below the warning level; re-arming on `!low` alone would push at every plug and
+  unplug at 12 %. Re-armed once the phone runs on battery above Android's close level (`BATTERY_OKAY`, ~20 %); the
+  next low is a new event.
+- **Shown**: `device_status` gains `battery_level`, `battery_charging` (NULL without `battery`), read from the newest
+  row like the ringer mode: one line "Battery 14 %, charging" in the Devices row's subtitle and the device page's
+  status group; nothing when NULL.
+- **Versions**: a new server with an old launcher (or one before step 3): no line, no event. A new launcher with an
+  old server: the field is ignored (serde, no `deny_unknown_fields`).
+
 ## 3. Data model: one migration, `0078_parent_events.sql`, in step 1
 
-All of design 35 in one file (orchestrator's call, M1): empty push tables in step 1 cost nothing and step 2 adds
-no migration. Design 36 takes `0079`. The migrations-in-order test gains 0078.
+All of design 35 in one file (orchestrator's call, M1; decided 2026-10-18): empty push tables in step 1 cost
+nothing and step 2 adds no migration. Design 36 takes `0079`. The migrations-in-order test gains 0078.
 - `parent_events` - `id`, `device_id` (NOT NULL, FK `devices` ON DELETE CASCADE), `kind`, `dedup_key`, `title`,
   `summary`, `target`, `detail` (NULL), `happened_at` (RFC 3339), `created_at` (`datetime('now')`), `read_at`
   (NULL); `UNIQUE (device_id, kind, dedup_key)`; index `(created_at DESC)`; partial index `ON parent_events(id)
   WHERE read_at IS NULL` (the bell's count).
 - `notification_settings` - as §2.4, its row inserted by the migration.
+- `devices.battery_low_since` (TEXT, NULL = armed); `device_status.battery_level`, `battery_charging` (INTEGER,
+  NULL) - §2.5.
 - `push_subscriptions` - `id`, `admin_id` (FK `admin_users` ON DELETE CASCADE), `endpoint` (UNIQUE, <= 1024),
   `p256dh` (BLOB, 65), `auth` (BLOB, 16), `origin` (from `Origin` at subscribe), `label` ("iPhone · Safari", from
   the User-Agent at subscribe; the raw UA is never stored), `vapid_fp`, `created_at`, `last_receipt_at` (survives
@@ -166,8 +197,9 @@ e.g. a restore onto a new machine: backups never copy `data/keys/`).
   `(aud, sub)`; re-minted when `now` is outside `[iat, iat + 1 h]` (a clock jump re-mints, never keeps a stale one)
   or after a 401/403 (§4.4). Never minted more often than that.
 - TTL / Urgency: `emergency_call` 86400 / high; `pin_lockout`, `foreign_access` 43200 / high; `pin_used`,
-  `unseen_boot`, `offline`, summary 43200 / normal; test 600 / high. No `Topic` (orchestrator's call, M4.6):
-  coalescing would drop pushes that then never get a receipt.
+  `unseen_boot`, summary 43200 / normal; `low_battery` 3600 / normal (an hour later the phone is charging or flat:
+  a late push says nothing the device page doesn't); test 600 / high. No `Topic` (orchestrator's call, M4.6,
+  decided 2026-10-18): coalescing would drop pushes that then never get a receipt.
 - Plaintext capped at 3072 bytes (Apple's 4 KB is the encrypted body); `title` cut at 60, `body` at 100 chars on a
   char boundary. Over the cap is a bug: the delivery fails with `reason = too_large`.
 
@@ -233,8 +265,8 @@ Internet, Brave, Opera, Firefox and Safari. Redirects are never followed.
      `POST /notifications/subscriptions/{id}/delete`), both back to `/notifications?notice=…#devices`.
   5. **Notify Me About** (`#events`): one form, the handler writes every field (`POST /notifications/settings`,
      back to `#events`): "Emergency call" (checked, disabled, "Always on"), "Parent PIN used", "Parent PIN locked",
-     "An app may read the PIN", "Start without Vibb One", picker "Offline for" (Off, 2, 6, 12, 24 h); the footer of
-     §2.4 and "as soon as the phone next reports".
+     "An app may read the PIN", "Start without Vibb One", "Battery low"; the footer of §2.4 and "as soon as the phone
+     next reports".
 - **The delivery line** (step 2, M6), from one grouped query over the page's events' deliveries by `event_id`:
   "Pushed to 2 devices · shown on 1" (accepted / with `receipt_at`; one device: "Shown on iPhone · Safari" or
   "Pushed to iPhone · Safari, not confirmed"), "Not sent" (all failed), "In a summary" (folded), nothing when no
@@ -339,19 +371,22 @@ The payload (plaintext JSON, every browser):
   3072-byte cap; the JWT's header, `aud` per service, `exp`, the `sub` fallback, the signature verified with
   `ring`; re-mint outside `[iat, iat + 1 h]` and per `(aud, sub)`; `allowed` - each service,
   `push.apple.com.example.net`, `http:`, an IP, a port, userinfo.
-- `parent_events::tests`: the words/targets table; `due` (the start guard, Off).
+- `parent_events::tests`: the words/targets table; `battery_edge` (latched or not × low × charging).
 - `src/tests/notifications.rs` (TestApp with a scripted `Transport` that records requests, decrypts with
   `fake_browser_decrypt` and answers from a script):
-  - each kind from its real input (a status report, `pin-events`, the offline check), posted twice → one event; an
-    emergency call already in the previous report → none; a first report with a 2-day-old call → none;
-  - a switched-off kind → stored, no delivery; Offline Off → no check; the emergency call can't be switched off;
+  - each kind from its real input (a status report, `pin-events`), posted twice → one event; an emergency call
+    already in the previous report → none; a first report with a 2-day-old call → none;
+  - the battery: `low` → one event; then `low` + charging, then unplugged at 12 % (`low`) → still one; `!low &&
+    !charging`, then `low` → a second; a report without `battery` → nothing, no line; level 150 → the battery
+    dropped, the report stored; the line on the Devices row and the device page;
+  - a switched-off kind → stored, no delivery; the emergency call can't be switched off;
   - the bell's count on all five tab pages; `/notifications` per phone, read/unread, `open` marks read and 303s,
     Mark All as Read, the delivery line's states; `check_forms("/notifications")`, `assert_lands` per redirect;
   - subscribe: refusals (host, key, 11th, no `Origin`), upsert; unsubscribe; Remove; Sign Out Everywhere and
     `reset-2fa` clear them; a backup zip holds none;
-  - send: headers, the decrypted payload's fields, no `detail`; 2xx; 410 → gone; 403 `BadJwtToken` → still
-    `active`, the retry carries a new JWT, the clock warning; 429 with `Retry-After` → retried; 20 `pin_used` → 2
-    pushes and one summary with a unique tag; an emergency call alone;
+  - send: headers (`low_battery`'s TTL 3600), the decrypted payload's fields, no `detail`; 2xx; 410 → gone; 403
+    `BadJwtToken` → still `active`, the retry carries a new JWT, the clock warning; 429 with `Retry-After` →
+    retried; 20 `pin_used` → 2 pushes and one summary with a unique tag; an emergency call alone;
   - the receipt: wrong token 404 and nothing changed, a repeat 204, cross-site `Sec-Fetch-Site` 403, no session
     needed, over 1 KiB 413, `clicked` marks read; health: 3 unconfirmed → the warnings, a receipt clears them, a
     day-old one; a changed VAPID key at startup → gone; a damaged key file → push off, the file untouched;
@@ -362,21 +397,28 @@ The payload (plaintext JSON, every browser):
   `jstest/notifications.test.js`: the state order (an iOS-like fake without `PushManager`, `standalone: false` →
   the Home Screen steps), `subscribe` is the click's first call with a `Uint8Array`, success fills and submits, the
   hash comparison.
+- Launcher (step 3): `BatteryReport.of` (rounding, unreadable → null, plugged or `FULL` → charging); a report with a
+  battery encodes `battery.level`/`charging`/`low`, one without stays `time_status_report.json`; `battery_v1` in
+  `STATUS_CAPABILITIES` (`SyncScheduleTest`); the emergency-call record requests a sync.
 
 ## 9. Steps
 
-1. **Events and the inbox** (server, `0078_parent_events.sql` with all four tables): §2, §3, §5.1 without This
-   Device, Getting Notifications and the delivery line; the bell on the five tab pages, the Settings hub row,
-   retention. Shippable alone: the inbox works with no push.
+1. **Events and the inbox** (server, `0078_parent_events.sql` with all four tables and the battery columns): §2,
+   §3, §5.1 without This Device, Getting Notifications and the delivery line; the bell on the five tab pages, the
+   Settings hub row, retention. The `battery` field on both sides in this commit (Rust and Kotlin `BatteryReport`,
+   the Kotlin one never set yet; root CLAUDE.md: an API change goes into both directories at once). Shippable alone:
+   the inbox works with no push.
 2. **Web Push** (server, no migration): the `ring` line, `keys.rs`, `webpush.rs`, `push.rs`, §4, §5.2, §5.3, §6,
    §7, the delivery line; register-sw.js; DEPLOY.md; `server/CLAUDE.md`. Device checks before done: iPhone on iOS
    18.4+ and 16.4-18.3 if at hand (Safari tab → the Home Screen steps; the prompt from `subscribe` alone; each
    kind; the receipt; Focus on; the worker failing → Safari's declarative fallback; where `app_badge` goes), macOS
    Safari, Android Chrome, desktop Firefox; a 410 by removing the app from the Home Screen.
-3. **Optional, launcher only (user question 1)**: right after an emergency call connects
-   (`KidInCallService` → `CallPrefs.recordEmergencyConnected`), `SyncRunner.request(context, "emergency_call")`,
-   so the status report with `last_emergency_call_at` arrives within seconds. No API change; a unit test that the
-   record requests a sync.
+3. **Launcher** (decided 2026-10-18): the battery reading in `MdmSyncWorker`'s status report, `battery_v1`, the
+   receiver in `Application.initRest` (§2.5); and right after an emergency call connects (`KidInCallService` →
+   `CallPrefs.recordEmergencyConnected`), `SyncRunner.request(context, "emergency_call")`, so the report with
+   `last_emergency_call_at` arrives within seconds. No API change beyond step 1's. Emulator check
+   (`docs/testing/emulator.md`): console `power ac off`, `power capacity 10` → the push within seconds; `power ac
+   on`, `power ac off` → no second one; `power capacity 30`, then 10 → a second.
 
 `server/DEPLOY.md` ("Notifications"): outbound HTTPS (443) to `*.push.apple.com`, `fcm.googleapis.com`,
 `*.notify.windows.com`, `updates.push.services.mozilla.com`, from the Pi's firewall and the Docker network; the
@@ -384,20 +426,18 @@ clock must be right (NTP) or the push services refuse the signature; `VAPID_SUBJ
 `data/keys/` isn't backed up - after a restore onto a new machine, turn notifications on again on each device; the
 parent's device needs Tailscale on for receipts.
 
-## 10. Questions for the user (with a recommendation)
+## 10. Decisions 2026-10-18 (the owner)
 
-1. **Emergency call latency**: without step 3 the parent hears of an emergency call at the phone's next report
-   (usually within 30 min, at worst ~50). Recommend step 3, right after step 1.
-2. **Switched-off kinds**: stored and listed, push only switched (the orchestrator's call), or not stored at all?
-   Recommend stored: the inbox is complete; Offline Off skips the check.
-3. **"Parent PIN used" on by default?** It fires when the parent uses it too. Recommend on.
-4. **Offline default 6 h** (Off/2/6/12/24 h), worded "offline since …"? Recommend 6 h.
-5. **Migrations**: all of 35 in `0078`, design 36 in `0079`? Recommend yes.
-6. **No `Topic` coalescing in phase 1?** Recommend none: smaller, and the health stays honest.
+1. Step 3 is in, right after step 1: the sync after an emergency call and the battery receiver.
+2. Every kind is stored; the switches govern push only.
+3. "Parent PIN used" is on by default.
+4. No event for a silent phone (the former question 4 is void, §2.3); `low_battery` instead (§2.5), on by default.
+5. All of 35 in `0078`, design 36 in `0079`.
+6. No `Topic` coalescing in phase 1.
 
 ## 11. Design QA (2026-10-18, `docs/design/qa-35-design.md`)
 
 Every finding taken (none "not taken"); the orchestrator's calls are marked in the text. H1 Decision 4, §4.3-4.4;
 H2 §5.2; M1 §3; M2 §4.2; M3 §4.1; M4 (no IndexedDB queue, derived counters, a cap per pass, the per-IP limiter, an
-`Instant`, no `Topic`) §4.3, §4.6, §6, §7; M5 §2.1, step 3; M6 §5.1. L1 §5.3; L2 §2.1; L3 §2.3; L4 §4.3; L5 §2.2,
-§5.2; L6 §7; L7 §4.3, §8; L8 §1 (changed by the orchestrator: push only); L9 §6, DEPLOY.md; N1-N5 in place.
+`Instant` (void with §2.3), no `Topic`) §4.3, §4.6, §6, §7; M5 §2.1, step 3; M6 §5.1. L1 §5.3; L2 §2.1; L3 §2.3
+(void since 2026-10-18); L4 §4.3; L5 §2.2, §5.2; L6 §7; L7 §4.3, §8; L8 §1 (changed by the orchestrator: push only); L9 §6, DEPLOY.md; N1-N5 in place.
