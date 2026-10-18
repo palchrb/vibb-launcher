@@ -548,9 +548,8 @@ async fn admin_responses_carry_the_security_headers_and_cache_rules() {
             cache
         );
     };
-    // The tab pages carry the unread count (design 35): never stored, so Back reloads them.
     let page = app.get_page("/devices", &cookie).await;
-    check(&page, Some("no-store"));
+    check(&page, Some("private, no-cache"));
     let page = app.get_page(&format!("/devices/{id}"), &cookie).await;
     check(&page, Some("private, no-cache"));
     for path in [

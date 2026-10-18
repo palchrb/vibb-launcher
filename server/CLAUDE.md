@@ -1233,8 +1233,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password` (QA 22 M4). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
-  JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox and the
-  five tab pages with the bell) `no-store`. `csrf_guard` (unsafe
+  JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
@@ -1856,8 +1855,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   older" `?before=`, each row a form `POST /notifications/{id}/open` - marks read, 303 to the target, a gone event or
   a non-local target back to `#inbox` -, Mark All as Read `POST /notifications/read-all` back to `#inbox` with `from`
   and `device`), Notify Me About (`#events`, one auto-saving form, `POST /notifications/settings` writes every switch,
-  the columns named by `Kind::switch()`). The inbox and the five tab pages are `no-store` (`no_store_path`), so
-  Back never shows the back-forward cache's stale dots or count. The Settings hub's first row "Notifications · 3 unread". This Device,
+  the columns named by `Kind::switch()`). The inbox is `no-store` (`no_store_path`), so Back never shows its stale
+  dots; the tab pages keep their cache, so the bell's count may lag one navigation after Back. The Settings hub's first row "Notifications · 3 unread". This Device,
   Getting Notifications, the warnings and the delivery line are step 2. CSS under "/* Design 35 */" at the end of
   `style.css` (`?v=31`).
 - **Retention**: `parent_events` 90 days by `created_at`, `push_deliveries` 30 days, `gone` subscriptions 30 days

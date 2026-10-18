@@ -338,26 +338,27 @@ async fn the_bell_counts_on_every_tab_page() {
     assert!(html.contains("aria-hidden=\"true\">99+</span>"), "{html}");
 }
 
-/// Back never shows a read event as unread or an old bell count (qa-35-s1-code L4): the inbox
-/// and the pages with the bell are never stored, so the back-forward cache doesn't keep them.
+/// Back never shows a read event as unread (qa-35-s1-code L4): the inbox is never stored, so the
+/// back-forward cache doesn't keep it. The tab pages keep their cache (the bell may lag one
+/// navigation after Back - accepted).
 #[tokio::test]
-async fn the_pages_with_the_count_are_never_stored() {
+async fn the_inbox_is_never_stored_the_tab_pages_keep_their_cache() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    for page in [
-        "/notifications",
-        "/devices",
-        "/apps",
-        "/devices/locate",
-        "/music",
-        "/settings",
+    for (page, cache) in [
+        ("/notifications", "no-store"),
+        ("/devices", "private, no-cache"),
+        ("/apps", "private, no-cache"),
+        ("/devices/locate", "private, no-cache"),
+        ("/music", "private, no-cache"),
+        ("/settings", "private, no-cache"),
     ] {
         let res = app.get_page(page, &cookie).await;
         assert_eq!(
             res.headers
                 .get(axum::http::header::CACHE_CONTROL)
                 .and_then(|v| v.to_str().ok()),
-            Some("no-store"),
+            Some(cache),
             "{page}"
         );
     }

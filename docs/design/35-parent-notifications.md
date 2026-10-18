@@ -476,9 +476,8 @@ Code QA fix round (`docs/review/qa-35-s1-code.md`, 2026-10-18):
 - L1: the intake reads the previous report once (`PreviousReport`: its id, apps, install mode, call state, foreign
   apps and unseen-boot count), so the foreign apps' dedup key and the "did the set change" comparison come from the same
   row and two parallel reports agree on the key (`previous_foreign_access` is gone).
-- L4: the inbox and the five tab pages (the bell) are `Cache-Control: no-store` (`admin_auth::no_store_path`): Back
-  loads them again instead of showing the back-forward cache's unread dots and count, with or without JS. Every other
-  page keeps `private, no-cache` and the back-forward cache.
+- L4: the inbox is no-store (`admin_auth::no_store_path`); the tab pages keep their cache (back-forward cache and
+  scroll restore), the count may lag one navigation after Back.
 - The emergency call's 24-hour bound now applies whenever the previous report named no call (none, or no
   `call_state`), not only to a first report: only a report with a newer `last_emergency_call_at` than the previous
   one's raises otherwise.
