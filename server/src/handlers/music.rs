@@ -3984,8 +3984,9 @@ pub struct MusicWarnings {
     pub storytel_refused: bool,
     /// The kept items alone pass the storage limit: what they use ("3.2 GB") and the limit in GB.
     pub over_limit: Option<(String, i64)>,
-    /// The two mobile-data switches differ and the phone still reads the old one (design 30 §1.3).
-    pub older_phone: bool,
+    /// The two mobile-data switches differ and the phone still reads the old one (design 30 §1.3):
+    /// which app to update.
+    pub older_phone: Option<music::OlderApps>,
     /// Entries switched on for this phone that the phone reported an error for.
     pub failing_entries: usize,
     /// The phone plays as a Spotify account and its last Spotify outcome is one the parent must
@@ -4086,6 +4087,8 @@ pub fn music_warnings(
             policy.music_download_mobile_data,
             report.and_then(|r| r.cache_bytes),
             report.and_then(|r| r.extra_bytes),
+            latest.and_then(|s| s.app_version_code),
+            report.and_then(|r| r.version_code),
         ),
         failing_entries: report
             .map(|r| {
@@ -4348,9 +4351,9 @@ pub(crate) async fn device_card(
         stream_mobile_data: policy.music_stream_mobile_data,
         download_mobile_data: policy.music_download_mobile_data,
         // An app report without `extra_bytes` is a phone on the one old switch (design 30 §1.3).
-        older_phone: found.older_phone.then(|| {
+        older_phone: found.older_phone.map(|apps| {
             warning(
-                "Update Vibb One and the music app",
+                apps.title(),
                 "Until then this phone uses mobile data for music only when both switches are on."
                     .to_string(),
             )

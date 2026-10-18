@@ -1490,6 +1490,19 @@ async fn the_page_says_an_older_phone_uses_mobile_data_only_with_both() {
     assert!(form.contains(NOTE), "{shown}");
     assert!(form.contains("Update Vibb One and the music app"));
     assert!(form.find(NOTE) < form.find("name=\"stream_mobile_data\""));
+    // A music app new enough to send `extra_bytes` (music-v0.4.0): Vibb One dropped it, so only
+    // Vibb One is named - on the page and in the summary's Attention row.
+    report_music_state(
+        &app,
+        &token,
+        json!({"package": "me.vibb.music", "version_code": 4_000, "bridge": "bound",
+               "cache_bytes": 1_000_000}),
+    )
+    .await;
+    let form = settings_form(&music_page(&app, &cookie, device).await).to_string();
+    assert!(form.contains("Update Vibb One") && !form.contains("and the music app"));
+    let summary = app.get_page(&format!("/devices/{device}"), &cookie).await.text();
+    assert!(summary.contains("Update Vibb One") && !summary.contains("and the music app"));
     save_switches(&app, &cookie, device, false, true).await;
     assert!(music_page(&app, &cookie, device).await.contains(NOTE));
     // Equal switches: nothing to say.

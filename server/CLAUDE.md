@@ -603,7 +603,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
   sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
   a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb One and the music app" while the
-  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`), the storage
+  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`; it names only the app that is too old - `music::OlderApps` from
+  `app_version_code` >= 25_999 (launcher-v0.26.0-rc) and `music_state.version_code` >= 3_999 (music-v0.4.0-rc), the
+  first that pass `extra_bytes` on: "Update the music app", "Update Vibb One", else both), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
   played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
   design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
@@ -1453,7 +1455,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
   warnings and six orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
-  "Update Vibb One and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  "Update Vibb One and the music app" / "Update Vibb One" / "Update the music app" (`OlderApps::title`, → `#music-settings`), "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row

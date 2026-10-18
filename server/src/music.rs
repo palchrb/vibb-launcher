@@ -121,17 +121,61 @@ pub fn mobile_data_wire(stream: bool, download: bool) -> (bool, bool, bool) {
     (stream && download, stream, download)
 }
 
+/// The first versionCodes that pass `extra_bytes` on (design 30 step 3a, 1c95b241): Vibb One
+/// forwards it from launcher-v0.26.0 (an rc build is one less: 25_999) - its `musicState` key list
+/// drops every key it doesn't know -, the music app sends it from music-v0.4.0 (rc: 3_999).
+pub const VIBB_ONE_EXTRA_BYTES_FROM: i64 = 25_999;
+pub const MUSIC_APP_EXTRA_BYTES_FROM: i64 = 3_999;
+
+/// Which app keeps a phone on the one old mobile-data switch (design 30 §1.3): the one whose
+/// reported versionCode is older than the first that passes `extra_bytes` on. Both when both are,
+/// or when a code is unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OlderApps {
+    VibbOne,
+    MusicApp,
+    Both,
+}
+
+impl OlderApps {
+    /// From Vibb One's `app_version_code` and the music app's `music_state.version_code`.
+    pub fn of(vibb_one: Option<i64>, music_app: Option<i64>) -> Self {
+        let new = |code: Option<i64>, from| code.is_some_and(|code| code >= from);
+        match (
+            new(vibb_one, VIBB_ONE_EXTRA_BYTES_FROM),
+            new(music_app, MUSIC_APP_EXTRA_BYTES_FROM),
+        ) {
+            (true, false) => OlderApps::MusicApp,
+            (false, true) => OlderApps::VibbOne,
+            _ => OlderApps::Both,
+        }
+    }
+
+    /// Device › Music's warning and the Attention row.
+    pub fn title(self) -> &'static str {
+        match self {
+            OlderApps::VibbOne => "Update Vibb One",
+            OlderApps::MusicApp => "Update the music app",
+            OlderApps::Both => "Update Vibb One and the music app",
+        }
+    }
+}
+
 /// The phone runs on the one old mobile-data switch while the parent's two differ (design 30
 /// §1.3): an app report (`cache_bytes`, always sent since design 21) without `extra_bytes` (sent
-/// from the music app's step 3a on, passed on by a launcher of the same step). No app report (a
-/// fresh phone, or the launcher's own fields only): nothing to say. Device › Music's warning.
+/// from the music app's step 3a on, passed on by a launcher of the same step), and which app is too
+/// old ([OlderApps], from the two reported versionCodes). No app report (a fresh phone, or the
+/// launcher's own fields only): nothing to say. Device › Music's warning.
 pub fn older_phone(
     stream: bool,
     download: bool,
     cache_bytes: Option<i64>,
     extra_bytes: Option<i64>,
-) -> bool {
-    stream != download && cache_bytes.is_some() && extra_bytes.is_none()
+    vibb_one_code: Option<i64>,
+    music_app_code: Option<i64>,
+) -> Option<OlderApps> {
+    (stream != download && cache_bytes.is_some() && extra_bytes.is_none())
+        .then(|| OlderApps::of(vibb_one_code, music_app_code))
 }
 
 /// What the phone stores for music, as Device › Music's rows (design 30 §1.10; typed in design 31
@@ -1987,16 +2031,47 @@ mod tests {
     #[test]
     fn an_older_phone_needs_an_app_report_without_extra_bytes() {
         let app_report = Some(1_000_000);
+        let old = |stream, download, cache, extra| {
+            older_phone(stream, download, cache, extra, None, None).is_some()
+        };
         // The switches differ, an app report without `extra_bytes`: the warning.
-        assert!(older_phone(true, false, app_report, None));
-        assert!(older_phone(false, true, app_report, None));
+        assert!(old(true, false, app_report, None));
+        assert!(old(false, true, app_report, None));
         // Equal switches: the old switch is the same thing.
-        assert!(!older_phone(true, true, app_report, None));
-        assert!(!older_phone(false, false, app_report, None));
+        assert!(!old(true, true, app_report, None));
+        assert!(!old(false, false, app_report, None));
         // A phone that sends `extra_bytes` reads both switches (0 counts: always sent).
-        assert!(!older_phone(true, false, app_report, Some(0)));
+        assert!(!old(true, false, app_report, Some(0)));
         // No app report (none yet, or the launcher's fields only): nothing to say.
-        assert!(!older_phone(true, false, None, None));
+        assert!(!old(true, false, None, None));
+    }
+
+    /// The warning names only the app that is too old to pass `extra_bytes` on; both when both
+    /// are or a versionCode is unknown.
+    #[test]
+    fn an_older_phone_names_the_app_to_update() {
+        let names = |vibb_one, music_app| {
+            older_phone(true, false, Some(1), None, vibb_one, music_app).map(OlderApps::title)
+        };
+        // launcher-v0.26.0-rc.N and music-v0.4.0-rc.N are the first that pass it on.
+        assert_eq!(names(Some(25_999), Some(2)), Some("Update the music app"));
+        assert_eq!(names(Some(25_000), Some(3_999)), Some("Update Vibb One"));
+        assert_eq!(
+            names(Some(25_998), Some(3_998)),
+            Some("Update Vibb One and the music app")
+        );
+        assert_eq!(names(None, Some(4_000)), Some("Update Vibb One"));
+        assert_eq!(
+            names(Some(26_000), None),
+            Some("Update the music app"),
+            "an unknown music app code with a new Vibb One: the music app"
+        );
+        assert_eq!(names(None, None), Some("Update Vibb One and the music app"));
+        // Both new and still no `extra_bytes` (a dev build): both, as before.
+        assert_eq!(
+            names(Some(26_000), Some(4_000)),
+            Some("Update Vibb One and the music app")
+        );
     }
 
     #[test]
