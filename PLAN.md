@@ -493,76 +493,6 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
-- **Medium - a "set a screen lock" notification opens Safety Center in the kiosk** (was High until tested: no lock can be set) (the user, 2026-10-16,
-  emulator; kiosk on, the notification filter on, the app block presumably on, no pause running): the nag
-  stayed in the shade and its tap opened Android's screen-lock settings. A child who sets an Android PIN there
-  turns Vibb One's PIN lock off (`inactive = android_credential`) - a way around the parent's lock. Find: (1) who
-  posts it and how (package, channel, flags: `dumpsys notification --noredact`) - an essential package the rule
-  never touches (`android`, SystemUI), non-clearable, or no listener access; (2) which activity opens (`dumpsys
-  activity activities` while it shows) - most likely through a kiosk helper we pin on purpose (the permission
-  controller / Safety Center, `lockTaskHelpers`), which then starts Settings' ChooseLock inside the lock task,
-  or the app-block switch off. Fix both: the nag never reaches the shade (or is cancelled however it is posted),
-  and no pinned helper can lead to screen-lock settings (screen-lock pages blocked like Settings; consider what
-  else that helper exposes). Device check on the Jelly Star too. First in the next batch.
-  Found 2026-10-16 (`dumpsys notification --noredact`): the nag is `pkg=android`, channel
-  `safety_center_recommendation` (Safety Center's "Advarsler", group `safety_center_channels`), tag
-  "AndroidLockScreen / NoScreenLockIssue", flags only CAN_COLORIZE (clearable); our listener is bound. So the rule
-  left it alone because `android` is an essential package (`nagVerdict`); fix: cancel `android`'s
-  `safety_center_*` channels (recommendation, information; decide on `safety_center_critical_warning`) while
-  keeping every other `android` notification untouched. Still to capture: the activity the tap opens
-  (`topResumedActivity` while the page shows) - Safety Center lives in the permission controller, which the
-  kiosk pins on purpose for permission dialogs; if the tap lands there, the pinned helper exposes Safety
-  Center and its "set a screen lock" path. **Confirmed**: the tap opens
-  `com.google.android.permissioncontroller/...safetycenter.ui.SafetyCenterActivity` inside the lock task. Fix
-  plan: (1) cancel `android`'s `safety_center_*` notifications; (2) the pinned permission controller can't be
-  narrowed to its dialogs (lock task pins packages), so Vibb One sends Home to the front when Safety Center (or
-  any permission-controller page that isn't a permission/role request we or an allowed app made) comes up in
-  the kiosk; (3) a safety net: an Android credential set outside a parent window is reported to the parent
-  (Attention, later push) and removed where possible (`resetPasswordWithToken` needs the token, set only in a
-  window - design 24b). Tested 2026-10-16: Safety Center's "set a screen lock" does **not** get through - the
-  kiosk's app block stops Settings' ChooseLock, so no lock can be set; what remains is the nag and Safety Center
-  showing in the kiosk (Medium now, not High): (1) and (2) stay, (3) is a belt for later.
-- **Contacts-row swipe** (qa-34-s4-code M1, a design 08 bug): Home's gesture detector never
-  sees a DOWN that lands on a contact, so a swipe starting there is decided with the previous
-  touch's DOWN. Decide every swipe from its real DOWN (feed the detector once from
-  `dispatchTouchEvent`, in screen coordinates). Approved 2026-10-14.
-- **The music app syncs after its own update** (found 2026-10-15 on the emulator): `music/` has
-  no `MY_PACKAGE_REPLACED` receiver, and the launcher nudges (`BRIDGE_CHANGED`) only when the
-  managed config or the library changes. A freshly updated music app sends no report until
-  something else happens, so Device › Music keeps the old app's report ("Library: Update
-  waiting", no "Music downloads", the older-phone warning). Fix: `Sync.nudge` on
-  `MY_PACKAGE_REPLACED` in the music app, and/or the launcher nudges after a music-package
-  install succeeds. Approved 2026-10-15.
-- **"Update Vibb One and the music app" warning** (`music::older_phone`): it fires on the music
-  app's report alone but names the launcher too. Name only what is actually old ("Update the
-  music app" when the launcher is new enough). Approved 2026-10-15.
-- **Nudge phones on a new catalog release**: today a phone sees a new release only at its next
-  sync (≤ 30 min backstop, or "Sync now"). Approved with the item above, 2026-10-15.
-
-- **The PWA's tab bar moves when switching tabs** (the user, 2026-10-15, narrow window): the five
-  bottom tabs (Devices, Apps, Locate, Music, Settings) shift a little between pages; they must stand
-  completely still. Likely cause: the fixed `.tab-bar` spans the viewport (`left: 0; right: 0`),
-  and a page tall enough for a classic scrollbar makes the viewport ~15 px narrower than one that
-  isn't, so every equal-width tab moves. Likely fix: `scrollbar-gutter: stable` on `html` (and
-  check that nothing else changes the tabs' widths between pages). Verify with the headless browser
-  at a narrow width on a short and a long page. Approved 2026-10-15.
-
-- **The PWA's tab bar sits too low on an iPhone** (the user, 2026-10-15, screenshot of the
-  installed PWA): the labels end right at the screen's bottom edge, on top of the home indicator,
-  and are hard to tap. Cause: `partials/head.html`'s viewport meta has no `viewport-fit=cover`, so
-  `env(safe-area-inset-bottom)` is 0 and `.tab-bar`'s bottom padding never grows. Fix: add
-  `viewport-fit=cover`, then make sure every edge that touches the screen takes its inset (the
-  top of the page under the status bar and the notch, the sides in landscape, the tab bar's
-  bottom), and give the tabs a little more room above the home indicator. Check in a WebKit
-  browser with a simulated inset and on the user's iPhone. Approved 2026-10-15.
-  Also (the user, 2026-10-15): after the installed PWA came back from the background, the tab bar was
-  gone altogether until the app was killed and reopened - the known iOS standalone bug where the
-  viewport's height is stale on resume and a `position: fixed; bottom: 0` bar lands below the visible
-  area. Fix with the same change: size the page by the dynamic viewport (`100dvh`, with a `100vh`
-  fallback for iOS 14), and re-read the size on `pageshow`/`visibilitychange`/`resize` if CSS alone
-  isn't enough (a tiny script, no layout jumps, never a scroll to the top). Verify on the user's iPhone:
-  background the app, open the keyboard, rotate, come back.
-
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
   the launcher's `DnsFilterEngine` knows only those two, `1.1.1.1`/`cloudflare-dns.com` and
@@ -584,15 +514,6 @@ findings, merge to `main`, full suite once.
   without a client id in the path), a DoT host name, or a plain IP over DoT; the field takes what the parent has,
   the server works out the kind and validates it.
 
-- **The Locate map's marker is a broken image** (the user, 2026-10-15: a broken-image icon with
-  the alt text "Mark" instead of the pin). Cause: `device_locate.html` sets
-  `L.Icon.Default.mergeOptions({iconUrl: '/static/leaflet/images/marker-icon.png', ...})`, but
-  Leaflet 1.9.4's `Icon.Default._getIconUrl` prepends its `imagePath` (detected from leaflet.css as
-  `.../static/leaflet/images/`) to that, so the browser asks for
-  `/static/leaflet/images//static/leaflet/images/marker-icon.png`. Fix: set
-  `L.Icon.Default.imagePath = '/static/leaflet/images/'` instead (file names stay Leaflet's), and
-  check the pin, its shadow and the retina icon in the headless browser.
-
 - **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
   and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as
   Element X's own unread badge. Idea: the listener's Element X reader (design 15: it already matches a DM's
@@ -600,16 +521,6 @@ findings, merge to `main`, full suite once.
   missed-call notification and counts it for that contact, cleared when the sheet opens, as a phone call's. Unknown:
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
-
-- **Spotify track pictures on the phone before they play** (the user, 2026-10-16: "gir en smidigere
-  opplevelse"): the phone's art want set (`logic/EpisodeArt.kt` `wantedArt`) is the now-playing window (±2)
-  plus the keep sets and Nytt - and a Spotify entry keeps nothing, so a track's picture is fetched only when
-  it comes near the current item, and the carousel and lock screen show the entry's cover first. Add, for a
-  Spotify list-mode entry, the pictures of the next N items from its resume place (and the first N of an
-  unstarted one) to `later` (Wi-Fi, or the downloads switch: the audio's gate, never roaming), within
-  `WANT_ART_MAX`. On the server the art pass takes 20 a check (`ART_PER_CHECK`), so a 100-track playlist
-  needs five checks: give Spotify's CDN pictures a larger per-check share (they are Spotify's own, one GET
-  each). Size: ~50 KB a picture. Music app (+ a server constant). Approved 2026-10-16.
 
 - **Touch sounds and vibration on Kid Settings** (the user, 2026-10-16): a row on the child's Settings
   (swipe left) to turn key/touch sounds on and off, and vibration on touch. Android's switches are
@@ -708,14 +619,6 @@ findings, merge to `main`, full suite once.
   never show on a lock screen), and the same for our other own-task screens. A design note (design 32b)
   before code.
 
-- **"Update waiting" for the version the phone already runs** (the user, 2026-10-16: the release launcher
-  0.26.0, installed by setup, shows "Update waiting 0.26.0@641676265" on Advanced › Updates): the launcher only
-  records its own installs (`TrackedAppUpdateState`), so after a QR/adb install it takes the catalog's current
-  release as new, downloads it and waits for the night window, where `pendingApkCheck` finds the same versionCode
-  and records it installed - one wasted download and a wrong line in the PWA until then. Fix: before
-  downloading its own update, compare the release tag's version (`launcher-vX.Y.Z` -> X.Y.Z; an `-rc.N` -> its
-  code minus 1) with the running build's versionCode; equal or older = installed at once (no download, no
-  pending). Launcher only (+ a test).
 
 - **A time rule shows as a card on the PIN lock** (the user, 2026-10-16, clarified: "vanlig låseskjerm med et
   kort à la musikkspillerkortet som forteller deg at skolemodus er aktivert"): while a time rule locks, the
@@ -807,6 +710,17 @@ findings, merge to `main`, full suite once.
   `systemd-run --user --scope -p MemoryHigh=4G -p MemoryMax=5G` around the emulator.
 
 ### Done (not released yet)
+
+- **Round 1 (2026-10-18, main 5911178a; QA: `docs/review/qa-r1-server-code.md`, `qa-r1-apps-code.md`)**:
+  the Locate marker; the tab bar still in a narrow window (`html { overflow-y: scroll }`) and inset on an iPhone
+  (`viewport-fit=cover`, `tab-bar.js` - **the user verifies on the iPhone**: the bar above the home indicator, and
+  back after the app was in the background > 1 min; if the resume still fails, the app-shell fallback); the
+  older-phone warning names only the old app; phones nudged on a new catalog release; the music app syncs after its
+  own update; no self-update download for the running version; the Safety Center nag cancelled (Safety Center itself
+  can still show in the kiosk - no clean signal exists to send Home to the front; ChooseLock stays blocked); the
+  contacts-row swipe decided from its real DOWN (new: a swipe up from a contact opens the drawer, approved
+  2026-10-18); Spotify track pictures ahead of play (50 a list-mode entry, 100 a check on the server, at most half
+  of the day's budget). Goes out with server-v0.26.1, launcher-v0.27.0, music-v0.4.0-rc.2.
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
