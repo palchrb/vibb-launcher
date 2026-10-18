@@ -1,384 +1,403 @@
 # 35 - Notifications to the parent, phase 1: an inbox in the PWA and Web Push (buildable spec)
 
-Backlog item "Notifications to the parent, phase 1" (PLAN.md, approved 2026-10-16). Server only: no launcher or
-music change, no device API change, no contract file touched.
+Backlog item "Notifications to the parent, phase 1" (PLAN.md, approved 2026-10-16). Steps 1 and 2 are server only
+(no device API change, no contract file); step 3 is a small optional launcher change. Revised after design QA
+(`docs/design/qa-35-design.md`, §11).
 
 ## 0. Goal and non-goals
 
-**Goal.** One place in the PWA where the parent sees what happened on the phones: a bell with an unread count on
-every tab page and a page `/notifications`. The events live on the server, so nothing depends on a push arriving.
-On top, Web Push to the installed PWA (iPhone 16.4+ from the Home Screen, macOS Safari 16+, Chrome, Firefox, Edge),
-end-to-end encrypted, with a receipt from the service worker so the server knows which pushes were shown and can
-say "Notifications may not be showing" per device.
+**Goal.** One place in the PWA for what happened on the phones: a bell with an unread count on every tab page and
+`/notifications`, from events stored on the server. On top, end-to-end encrypted Web Push to the installed PWA
+(iPhone 16.4+ from the Home Screen, macOS Safari 16+, Chrome, Firefox, Edge), with a receipt from the service worker
+so the server can say "Notifications may not be showing" per device.
 
 **Non-goals.**
-- Phase 2 (ntfy, Matrix, the second channel after ~2 min without a receipt). Phase 1 leaves it ready:
-  - `push_deliveries.channel` (`webpush` only now) - an ntfy or Matrix delivery is another row of the same table;
-  - every delivery has `accepted_at` and `receipt_at`, so "no receipt within 2 min" is one query;
-  - `parent_events` kinds carry an `urgent` flag (§2.2) - phase 2 escalates exactly the urgent ones.
-- A new blocked app and an extra-time request (the user's "later"): the kinds are reserved (§2.2), not raised.
-- Wrong PIN tries as events (they stay in the PWA's Recent use); message content of any kind (there is none).
-- Offline caching in the service worker: still none.
-- Per-parent read state: there is one admin account (`security::bootstrap_admin` is the only insert).
+- Phase 2 (ntfy, Matrix, a second channel after ~2 min without a receipt). Phase 1 leaves it ready:
+  `push_deliveries.channel` (`webpush` only now; an ntfy or Matrix delivery is another row), every delivery's
+  `accepted_at`/`receipt_at` ("no receipt within 2 min" is one query), and `Kind::urgent()` (§2.2).
+- A new blocked app, an extra-time request (reserved kinds); wrong PIN tries as events; message content; `Topic`
+  coalescing; offline caching; per-parent read state (one admin account, `security::bootstrap_admin`).
 
 ## 1. Decisions
 
-1. **The events are rows on the server** (`parent_events`, §3). The inbox reads them; Web Push is one way to hear
-   about a new one. A switched-off kind is neither stored nor pushed.
+1. **The events are rows on the server** (`parent_events`, §3), and the inbox is complete: every kind is stored.
+   The switches govern push only (orchestrator's call). One exception: "Offline for" = Off skips the offline check
+   itself, so no `offline` events at all.
 2. **One raise function**: `parent_events::raise(conn, NewEvent) -> Option<i64>`, `INSERT ... ON CONFLICT DO
    NOTHING RETURNING id` on `UNIQUE (device_id, kind, dedup_key)`. A repeated report, a retried POST or two parallel
-   ones give one row. It returns the new id only when it inserted; only then are deliveries queued (§4.6) and the
-   sender woken (`AppState.push.wake()`, a `tokio::sync::Notify`) - after the caller's transaction commits.
-3. **Web Push is built in-house on `ring`** (§4.2), no new crate.
-4. **Push endpoints are an allow-list** of the four push services (§4.5), never any URL a browser hands over.
-5. **One payload for every browser: Safari's declarative Web Push format with `mutable: true`** (§5.3). Safari
-   18.4+ shows it even when the service worker fails; every other browser gets the same JSON as plain push data.
-6. **The receipt is authenticated by a per-delivery token** in the payload, not the session cookie (§7).
-7. **Health is computed when read** from three subscription columns (§6); no background job marks it.
-8. **"Sign Out Everywhere" also deletes every push subscription** (a lost phone stops getting titles); a password
-   change doesn't.
+   ones give one row. Only a new row queues deliveries (for a kind whose push is on, §4.6); the sender is woken
+   (`AppState.push.wake()`, a `tokio::sync::Notify`) after the caller's transaction commits.
+3. **Web Push in-house on `ring`** (§4.2); **an endpoint allow-list** (§4.5); **one declarative payload with
+   `mutable: true`** (§5.3); **a per-delivery receipt token**, not the cookie (§7); **health derived when read**
+   from the delivery rows (§6).
+4. **Only 404/410 turn a subscription off.** A 401/403 is the server's signature (usually the Pi's clock): a fresh
+   JWT, one retry, then `failed` and a server-level warning (orchestrator's call, H1).
+5. **"Sign Out Everywhere" and `reset-2fa` delete every push subscription** (a lost phone stops getting titles); a
+   password change doesn't. Backups never carry subscriptions.
 
 ## 2. Events
 
 ### 2.1 Where each is raised (one place per kind)
 
-| kind | raised in | dedup_key | default |
-|---|---|---|---|
-| `emergency_call` | `device_api::status`, after the `device_status` insert, from `call_state.last_emergency_call_at` (parsed as `calls.rs` does) when it is at most 24 h old by the server's clock | the instant, RFC 3339 with ms, UTC | always on |
-| `pin_lockout` | `handlers::parent_pin::pin_events`, in the transaction that writes `parent_pin_lockout`, only for a newly stored row | the phone's `event_id` (32 hex) | on |
-| `pin_used` | the same place, for a newly stored `unlocked` (`parent_pin_used`) | the phone's `event_id` | on |
-| `foreign_access` | `handlers::window_relock::log_foreign_access`, when the set changed and the new one isn't empty | `<previous device_status id or 0>:<hex(sha256(new sanitized json))[..16]>` | on |
-| `unseen_boot` | `device_api::status`, where `boot_witness::log_line` returns a line (the count rose) | `<count>:<last_at_ms>` | on |
-| `offline` | `parent_events::run_offline_check` (§2.3) | `devices.last_seen_at` text | on, 6 h |
-| `app_blocked`, `extra_time_request` | reserved, not raised in phase 1 | - | - |
+| kind | raised in | dedup_key |
+|---|---|---|
+| `emergency_call` | `device_api::status`, after the `device_status` insert: `call_state.last_emergency_call_at` (parsed as `calls.rs` does) is newer than the previous report's for this phone; with no previous report, only when at most 24 h old by the server's clock | the instant, RFC 3339 with ms, UTC |
+| `pin_lockout` | `handlers::parent_pin::pin_events`, in the transaction that writes `parent_pin_lockout`, when the `INSERT OR IGNORE` stored the row (`rows_affected() == 1`) | the phone's `event_id` |
+| `pin_used` | the same place, for a newly stored `unlocked` | the phone's `event_id` |
+| `foreign_access` | `handlers::window_relock::log_foreign_access`, when the set changed and the new one isn't empty | `<previous device_status id or 0>:<hex(sha256(new sanitized json))[..16]>` |
+| `unseen_boot` | `device_api::status`, where `boot_witness::log_line` returns a line (the count rose) | `<count>:<last_at_ms>` |
+| `offline` | `parent_events::run_offline_check` (§2.3) | the last contact, RFC 3339 to the second |
+| `app_blocked`, `extra_time_request` | reserved, not raised in phase 1 | - |
 
-- The emergency call's 24 h limit keeps an upgrade from announcing a call made days ago; the dedup key keeps the
-  phone's 30-minute reports from raising it again.
-- `pin_*`: `parent_pin::clean_event` already decides "newly stored" (`INSERT OR IGNORE` rows affected). The event's
-  `happened_at` is the phone's `at_ms` unless `clock_off`, then the arrival.
-- `foreign_access`: `previous_foreign_access` also returns the previous row's id (one more column in its query).
-  Two parallel reports see the same previous row, so they make one key; the same set coming back after it went
-  away is a new key, so a new event.
-- `log_foreign_access` and the status intake pass `&AppState` (they need `push.wake()`), not only the pool.
+- **Latency.** An emergency call and a PIN event reach the server only with the phone's next status report /
+  `pin-events` POST: today the 30-min backstop (up to ~52 min with inexact alarms) or another trigger. The phone
+  reports only its last emergency call, so two calls between reports make one event. Step 3 (§9) makes the call's
+  report immediate; the Notify Me About footer says "as soon as the phone next reports".
+- The previous-report reads (`last_emergency_call_at`, the previous row's id for foreign access) join the queries
+  the intake already runs before its insert. An upgrade announces no old call: the previous row has the same
+  instant. No phone-vs-server clock comparison except the first-report case.
+- `happened_at` of a PIN event is the phone's `at_ms` unless `clock_off`, then the arrival.
+- `log_foreign_access` and the status intake take `&AppState` (they need `push.wake()`), not only the pool.
 
 ### 2.2 Words and targets
 
-Words are made once, at raise, from typed values (never phone-supplied text in a title), times local via
+Made once, at raise, from typed values (never phone-supplied text in a title), times local via
 `display_time::Zone`. Stored, so the push and the inbox say the same; a renamed phone keeps old rows' words.
+`target` must start with `/` and not `//` (checked at raise, and again in the worker).
 
 | kind | title (<= 60 chars) | summary (<= 100) | target | urgent |
 |---|---|---|---|---|
 | `emergency_call` | "Anna called an emergency number" | "At 14:02" | `/devices/{id}/calls` (the group the finding renders in) | yes |
 | `pin_lockout` | "Parent PIN locked on Anna" | "Too many wrong tries · until 14:30" | `/devices/{id}/lock#parent-pin` | yes |
-| `pin_used` | "Parent PIN used on Anna" | "Time lock · 14:02" (the `entry` in words) | `/devices/{id}/lock#parent-pin` | no |
+| `pin_used` | "Parent PIN used on Anna" | "Time lock · 14:02" | `/devices/{id}/lock#parent-pin` | no |
 | `foreign_access` | "An app may read the PIN on Anna" | "1 app with device admin" | `/devices/{id}#foreign-access` | yes |
 | `unseen_boot` | "Anna started without Vibb One" | "Safe mode or a start cut short" | `/devices/{id}/about#diagnostics` | no |
-| `offline` | "Anna offline for 6 h" | "Last seen 08:12" | `/devices/{id}` | no |
+| `offline` | "Anna offline since 12 Oct 08:12" | "No contact for 3 days" | `/devices/{id}` | no |
 
 `detail` (optional, inbox only, never pushed): e.g. the foreign apps by the phone's name for them. Typed as
-`parent_events::Kind` with `title()`, `target()`, `urgent()`, `ttl()`, `coalesce()`; the table above is
+`parent_events::Kind` with `title()`, `target()`, `urgent()`, `ttl()`, `urgency()`; this table is
 `parent_events::tests`' table.
 
 ### 2.3 The offline check
 
-`run_offline_check` (spawned from `main` only, every 5 min; a pure `due(...)` it calls is tested): a phone that is
-enrolled with a token, whose last contact (`devices::connection_of`'s newest of `last_seen_at`, the in-memory last
-access and an open stream) is older than `offline_hours`, raises `offline` keyed by `last_seen_at`. One event per
-silent stretch; the next report moves `last_seen_at`, so the next stretch is a new key. Guard: the check waits until
-the server has run `offline_hours` (`AppState.started_at`), so a server that was down itself announces nothing.
-A phone not set up, Disconnected or never seen raises nothing.
+`run_offline_check` (spawned from `main` only, every 5 min; it calls a pure, tested `due(...)`): skipped while
+`offline_hours` = 0. A phone enrolled with a token whose last contact (the newest of `connection_of`'s inputs:
+`last_seen_at`, the in-memory last access, an open stream's `since`) is older than `offline_hours` raises `offline`
+keyed by that contact. One event per silent stretch; a phone that came back on its stream alone and fell silent
+again has a newer contact, so a new key. Guard: a `std::time::Instant` taken when the task starts; nothing is raised
+until `offline_hours` have passed since, so a server that was down itself announces nothing. Not set up,
+Disconnected or never seen: nothing. Nothing clears when the phone comes back; there is no "back online" event.
+The first deploy announces each long-silent phone once, with its real date.
 
 ### 2.4 Switches and retention
 
-- `notification_settings` (singleton `id = 1`): `pin_used`, `pin_lockout`, `foreign_access`, `unseen_boot`
-  (0/1, default 1), `offline_hours` (0 = off, 2/6/12/24, default 6). No column for `emergency_call`. `raise`
-  reads it (one row) and returns `None` for an off kind.
-- `retention::prune`: `parent_events` older than 90 days by `created_at`; `push_deliveries` older than 30 days;
-  `push_subscriptions` in state `gone` for 30 days. Deleting a phone cascades its events.
+- `notification_settings` (singleton `id = 1`): `push_pin_used`, `push_pin_lockout`, `push_foreign_access`,
+  `push_unseen_boot` (0/1, default 1), `offline_hours` (0 = off, 2/6/12/24, default 6). No column for the
+  emergency call (always pushed). Footer: "Off: still listed here, no notification. Offline off: not checked."
+- `retention::prune`: `parent_events` after 90 days by `created_at`; `push_deliveries` after 30 days;
+  `push_subscriptions` in state `gone` after 30 days. Deleting a phone cascades its events.
 
-## 3. Data model
+## 3. Data model: one migration, `0078_parent_events.sql`, in step 1
 
-`0078_parent_events.sql` (step 1):
+All of design 35 in one file (orchestrator's call, M1): empty push tables in step 1 cost nothing and step 2 adds
+no migration. Design 36 takes `0079`. The migrations-in-order test gains 0078.
 - `parent_events` - `id`, `device_id` (NOT NULL, FK `devices` ON DELETE CASCADE), `kind`, `dedup_key`, `title`,
-  `summary`, `target` (a path starting `/`, checked at raise), `detail` (NULL), `happened_at` (RFC 3339),
-  `created_at` (`datetime('now')`), `read_at` (NULL); `UNIQUE (device_id, kind, dedup_key)`; index
-  `(created_at DESC)`, partial index `ON parent_events(id) WHERE read_at IS NULL` (the bell's count).
+  `summary`, `target`, `detail` (NULL), `happened_at` (RFC 3339), `created_at` (`datetime('now')`), `read_at`
+  (NULL); `UNIQUE (device_id, kind, dedup_key)`; index `(created_at DESC)`; partial index `ON parent_events(id)
+  WHERE read_at IS NULL` (the bell's count).
 - `notification_settings` - as §2.4, its row inserted by the migration.
-
-`0079_web_push.sql` (step 2):
 - `push_subscriptions` - `id`, `admin_id` (FK `admin_users` ON DELETE CASCADE), `endpoint` (UNIQUE, <= 1024),
-  `p256dh` (65 bytes, BLOB), `auth` (16 bytes, BLOB), `origin` (the page's origin at subscribe, from `Origin`),
-  `label` ("iPhone · Safari", from the User-Agent at subscribe; the raw UA is never stored), `vapid_fp` (the key it
-  was made with), `created_at`, `last_accepted_at`, `last_receipt_at`, `unacked` (INTEGER, accepted since the last
-  receipt), `first_unacked_at`, `state` (`active` | `gone`), `gone_reason`, `gone_at`.
+  `p256dh` (BLOB, 65), `auth` (BLOB, 16), `origin` (from `Origin` at subscribe), `label` ("iPhone · Safari", from
+  the User-Agent at subscribe; the raw UA is never stored), `vapid_fp`, `created_at`, `last_receipt_at` (survives
+  delivery pruning), `state` (`active` | `gone`), `gone_at`.
 - `push_deliveries` - `id`, `channel` (`webpush`), `subscription_id` (FK, CASCADE), `event_id` (NULL for a test or
-  a summary; FK, SET NULL), `kind` (`event` | `summary` | `test`), `token_hash` (SHA-256 of the receipt token),
+  summary; FK, SET NULL), `kind` (`event` | `summary` | `test`), `token_hash` (SHA-256 of the receipt token),
   `status` (`queued` | `accepted` | `failed` | `dropped`), `attempts`, `next_try_at`, `http_status`, `reason`,
-  `created_at`, `accepted_at`, `receipt_at`, `clicked_at`.
+  `created_at`, `accepted_at`, `receipt_at` (arrival), `clicked_at`; index `(subscription_id, accepted_at)`, index
+  `(event_id)`.
 
 ## 4. Web Push on the server
 
 ### 4.1 The VAPID key
 
-`data/keys/vapid-p256.pk8` (PKCS#8 from `ring::signature::EcdsaKeyPair::generate_pkcs8`), made at first need -
-the first render of the inbox's This Device group, which hands the browser the public key - 0600 in the 0700
-directory, with `music_secret`'s file helpers (moved to a shared `keys.rs` if they're private). Loaded into
-`AppState.push` (a `OnceCell`). Backups never copy `data/keys/` (as the music key). `vapid_fp` = first 16 hex of
-SHA-256 of the public key. A lost key: at startup every `active` subscription with another `vapid_fp` becomes
-`gone` ("Turned off - turn it on again on that device"); a 403 `VapidPkHashMismatch` does the same.
+`push::load_key(file)` in `main`, next to `music_secret::load`, the same semantics (orchestrator's call, M3): file
+`data/keys/vapid-p256.pk8` (PKCS#8 DER from `EcdsaKeyPair::generate_pkcs8`); a missing or empty file is created
+through `.tmp` and a rename, 0600, in the 0700 directory; a non-empty file that doesn't parse is refused, never
+replaced - push stays off and the log line names the file. `music_secret`'s directory/tmp handling moves to a shared
+`keys.rs` taking bytes. `AppState.push_key: Option<Arc<VapidKey>>`. `vapid_fp` = first 16 hex of SHA-256 of the
+public key. Right after the load, every `active` subscription with another `vapid_fp` becomes `gone` (a lost key,
+e.g. a restore onto a new machine: backups never copy `data/keys/`).
 
 ### 4.2 Crypto: in-house on `ring`, not the `web-push` crate
 
-- `ring` 0.17 is already compiled in (the rustls provider, `main.rs`). It has all four pieces: P-256 ECDH
-  (`agreement::ECDH_P256`, ephemeral keys - exactly RFC 8291's per-message sender key), ES256 with the fixed r||s
-  signature JWS needs (`ECDSA_P256_SHA256_FIXED_SIGNING`), HKDF-SHA256 (`ring::hkdf`, any info and length) and
-  AES-128-GCM (`aead::AES_128_GCM`).
-- The `web-push` crate would bring `ece` (whose default backend is OpenSSL, absent from the distroless static
-  image), a JWT crate and its own HTTP client features - a new subtree in `Cargo.lock`, each crate to review and
-  pin, for a few hundred lines of well-specified code. No.
-- `src/webpush.rs`, pure (no I/O): `encrypt(rng, ua_public, auth, plaintext) -> Vec<u8>` (RFC 8291 §3.4 key
-  derivation with `"WebPush: info\0" || ua_public || as_public`, RFC 8188 `aes128gcm` single record: salt (16) ||
-  rs = 4096 (u32 BE) || idlen 65 || as_public, then the ciphertext of `plaintext || 0x02`), `vapid_jwt(key, aud,
-  sub, now) -> String`, `aud_of(endpoint)`, `topic(secret, device_id, kind)`, `allowed(endpoint)`. `rng` is a
-  `&dyn ring::rand::SecureRandom` - `SystemRandom` in production, `ring::test::rand::FixedSliceSequenceRandom` in
-  tests, which makes RFC 8291 Appendix A reproducible end to end (its fixed sender key and salt).
-- The derivation is split as `derive(ecdh_secret, auth, ua_public, as_public, salt) -> (cek, nonce)` so each
-  Appendix A intermediate (PRK_key, IKM, PRK, CEK, NONCE) is asserted too.
+- `ring` 0.17.14 is already compiled in through `rustls`'s `ring` feature. Step 2 adds the direct line
+  `ring = { version = "0.17", default-features = false, features = ["alloc"] }`; `Cargo.lock` and the
+  verification metadata don't change. It has every piece: P-256 ECDH (`agreement::ECDH_P256`, ephemeral keys -
+  RFC 8291's per-message sender key), ES256 with the fixed r||s JWS needs (`ECDSA_P256_SHA256_FIXED_SIGNING`),
+  HKDF-SHA256 (`hkdf`, `Len(usize)` as `KeyType`), AES-128-GCM (`aead::AES_128_GCM`). All of `webpush.rs` uses
+  `ring`, not the tree's `aes-gcm`/`hkdf`.
+- The `web-push` crate brings `ece` (OpenSSL by default, absent from the distroless image), a JWT crate and its own
+  HTTP features: a new subtree to review and pin, for ~300 lines checked against a published vector. No.
+- `src/webpush.rs`, pure (keys passed in, no I/O): `encrypt(rng, ua_public, auth, plaintext) -> Vec<u8>` (RFC 8291
+  §3.4 with `"WebPush: info\0" || ua_public || as_public`; RFC 8188 `aes128gcm`, one record: salt (16) || rs = 4096
+  (u32 BE) || idlen 65 || as_public, then the ciphertext of `plaintext || 0x02`), `vapid_jwt(key, aud, sub, now)`,
+  `aud_of(endpoint)`, `allowed(endpoint)`. `encrypt`'s doc comment pins the draw order: the ephemeral key's 32 bytes
+  first, then the 16-byte salt.
+- **Tests and the deprecated helper.** `ring`'s `SecureRandom` is sealed, and `ring` has no ECDH with an imported
+  static key. Appendix A's fixed keys therefore go through `ring::test::rand::FixedSliceSequenceRandom` (public,
+  `#[doc(hidden)]`, deprecated "internal API that will be removed"; its `Drop` asserts each slice is drawn once).
+  One `#[cfg(test)]` module in `webpush.rs` holds `fixed_rng(&[&[u8]])` and `fake_browser_decrypt` (a fresh
+  `EphemeralPrivateKey` over the fixed `ua_private` per decryption) - the only `#[allow(deprecated)]`. If a `ring`
+  bump removes the type, only tests break and they move to `p256` as a dev-dependency (test-only supply chain).
+- Asserted from Appendix A: the ECDH secret, IKM, CEK, NONCE, the header, and the whole body end to end. PRK_key
+  and PRK are opaque `hkdf::Prk`s and aren't asserted.
 
 ### 4.3 The request (Apple's rules, which every service accepts)
 
-- `POST <endpoint>`, HTTP/1.1 (reqwest is built without `http2`; Apple accepts 1.1), TLS with SNI and ALPN by
-  rustls. One `reqwest::Client` for push: `redirect::Policy::none()`, connect 5 s, total 15 s, at most 4 requests
-  in flight (far under Apple's 100 unacknowledged).
-- `Content-Encoding: aes128gcm`, `Content-Type: application/octet-stream`.
-- `Authorization: vapid t=<jwt>, k=<public key, base64url, uncompressed 65 bytes>`. JWT `{"typ":"JWT",
-  "alg":"ES256"}`, claims `aud` = the endpoint's origin (scheme://host, `:port` only when not 443), `exp` = now +
-  12 h, `sub` = `VAPID_SUBJECT` from `.env` when set (`mailto:` or `https:`), else the subscription's `origin`.
-  Cached per `aud` and reused for an hour (never minted more often; `exp` stays <= 24 h).
-- `TTL`, `Urgency`, `Topic` per kind:
-
-  | kind | TTL | Urgency | Topic |
-  |---|---|---|---|
-  | `emergency_call` | 86400 | high | none (never coalesced away) |
-  | `pin_lockout`, `foreign_access` | 43200 | high | per phone and kind |
-  | `pin_used`, `unseen_boot`, `offline` | 43200 | normal | per phone and kind |
-  | summary (§4.6) | 43200 | normal | one fixed |
-  | test | 600 | high | one fixed |
-
-- `Topic` = base64url (no padding) of the first 16 bytes of HMAC-SHA256(key = SHA-256 of the VAPID key
-  file's bytes, `"topic:<device_id>:<kind>"`) - 22 characters, stable, says nothing about the phone or the kind to the push
-  service.
-- Payload plaintext capped at 3072 bytes before encryption (Apple's 4 KB is the encrypted body); `title` cut at 60,
-  `body` at 100 characters on a char boundary. Over the cap is a bug: the delivery fails with `reason = too_large`.
+- `push::Transport` trait (`send(PushRequest) -> PushAnswer`: headers and body in, status and headers out) in
+  `AppState`, as `music_net::Source`. The real one: one `reqwest::Client`, HTTP/1.1 (built without `http2`; Apple
+  accepts it), TLS with SNI and ALPN by rustls, `redirect::Policy::none()`, connect 5 s, total 15 s, at most 4 in
+  flight (far under Apple's 100 unacknowledged).
+- `POST <endpoint>`, `Content-Encoding: aes128gcm`, `Content-Type: application/octet-stream`, `TTL`, `Urgency`
+  (reqwest's `gzip` adds `Accept-Encoding`: tests don't pin the exact header set).
+- `Authorization: vapid t=<jwt>, k=<public key, base64url, 65 bytes>`. JWT `{"typ":"JWT","alg":"ES256"}`, claims
+  `aud` = the endpoint's `https://host` (the allow-list admits port 443 only), `exp` = `iat` + 12 h, `sub` =
+  `VAPID_SUBJECT` from `.env` when set (`mailto:` or `https:`), else the subscription's `origin`. Cached per
+  `(aud, sub)`; re-minted when `now` is outside `[iat, iat + 1 h]` (a clock jump re-mints, never keeps a stale one)
+  or after a 401/403 (§4.4). Never minted more often than that.
+- TTL / Urgency: `emergency_call` 86400 / high; `pin_lockout`, `foreign_access` 43200 / high; `pin_used`,
+  `unseen_boot`, `offline`, summary 43200 / normal; test 600 / high. No `Topic` (orchestrator's call, M4.6):
+  coalescing would drop pushes that then never get a receipt.
+- Plaintext capped at 3072 bytes (Apple's 4 KB is the encrypted body); `title` cut at 60, `body` at 100 chars on a
+  char boundary. Over the cap is a bug: the delivery fails with `reason = too_large`.
 
 ### 4.4 Responses
 
 | answer | action |
 |---|---|
-| 201 (any 2xx) | `accepted`, `accepted_at`; subscription `last_accepted_at`, `unacked += 1`, `first_unacked_at` if NULL |
-| 404, 410 | `dropped`; subscription `gone`, `gone_reason = expired`; security event `push_subscription_gone` |
-| 403 with `VapidPkHashMismatch` or `BadJwtToken` 3 times in a row | subscription `gone`, `gone_reason = refused` |
+| 2xx | `accepted`, `accepted_at` |
+| 404, 410 | `dropped`; subscription `gone`; security event `push_subscription_gone` |
+| 401, 403 | drop the cached JWT for that `(aud, sub)`, retry once at once with a fresh one; a second 401/403 → `failed`, the reason kept |
 | 429, 500, 502, 503, 504, a network error | retry: 1 min, 5 min, 30 min, 2 h (`Retry-After` honoured up to 2 h), then `failed`; never after the TTL ran out |
-| other 4xx | `failed`; log the JSON `reason`, `apns-id`, status and the endpoint's host - never the path |
+| other 4xx | `failed` |
 
-Nothing secret is logged: no endpoint path, key, auth secret, JWT or token.
+Every non-2xx logs the status, the JSON `reason`, `apns-id` and the endpoint's host - never the path, a key, the
+auth secret, the JWT or a token. **Server-level warning**: while a delivery `failed` on 401/403 in the last 24 h
+and none was accepted since, `/notifications` shows one red row "The push service refused the server's signature -
+check the server's clock" (the Pi has no RTC; fake-hwclock or 1970 until NTP syncs).
 
 ### 4.5 Endpoints: an allow-list
 
 `webpush::allowed(endpoint)`: `https`, no userinfo, port 443 or none, a host name (no IP literal) that is
 `fcm.googleapis.com`, `updates.push.services.mozilla.com`, or ends with `.push.apple.com` or `.notify.windows.com`
-(a label boundary: `push.apple.com.example.net` fails). Checked at subscribe (refused with "This browser's push
-service isn't supported") and again before every send. Why not any https URL: the endpoint arrives from a browser
-session, and the server would POST wherever it says - a stolen session or an XSS could aim it at the Pi's LAN or
-loopback. Chrome, Edge, Firefox, Safari, Brave and Samsung Internet use these four. Redirects are never followed.
+(a label boundary: `push.apple.com.example.net` fails). Checked at subscribe ("This browser's push service isn't
+supported") and again before every send, in every build (tests use the `Transport` seam, not a local server).
+Why: a stolen session or an XSS could otherwise aim the server at the LAN. The four cover Chrome, Edge, Samsung
+Internet, Brave, Opera, Firefox and Safari. Redirects are never followed.
 
 ### 4.6 Queueing, bursts, the sender
 
-- `raise` (in the same transaction) inserts one `queued` delivery per `active` subscription.
-- `push::run_sender` (spawned from `main` only): waits on `wake()` or the earliest `next_try_at`; takes due rows
-  oldest first.
-- Per subscription a token bucket of 6 pushes per 10 min. `emergency_call` and tests skip it. Past it, waiting
-  event deliveries are folded into one `summary` push ("3 new notifications", target `/notifications`) when a token
-  frees; the folded rows become `dropped` with `reason = folded`, the summary row carries no event.
-- Tests drive `push::send_due(state, now)` directly; the task only loops over it.
+- `raise` (same transaction) inserts one `queued` delivery per `active` subscription, when the kind's push is on.
+- `push::run_sender` (spawned from `main` only) waits on `wake()` or the earliest `next_try_at` and calls
+  `push::send_due(state, now)`, which tests drive directly.
+- **A cap per pass**: when `send_due` finds more than 3 due event deliveries for one subscription, it sends the
+  newest 2 and one `summary` ("5 new notifications", target `/notifications`); the rest become `dropped`, `reason =
+  folded`. An `emergency_call` always goes on its own. The bursts that matter come from one intake (a phone back
+  after a week posting 20 PIN events); the dedup keys stop repeats.
 
 ## 5. The PWA
 
 ### 5.1 The bell and the inbox
 
-- `partials/bell.html` in the `.title-bar` of the five tab pages (Devices, Apps, Locate, Music, Settings; Locate and
-  Settings get the bar they lack). On the right, before the page's own action ("+", Edit). A link to
-  `/notifications?from=<tab>`, `aria-label="Notifications, 3 unread"`, a red count pill when > 0 ("99+" past 99).
-  The count is `parent_events::unread_count` (the partial index), passed as `bell: Bell` by each tab handler.
+- `partials/bell.html` in the `.title-bar` of the five tab pages (`devices_list.html`, `apps_list.html`,
+  `music.html`, and `device_locate.html` (`/devices/locate`) and `settings_hub.html`, which gain the bar). On the
+  right, before the page's own action ("+", Edit). A link to `/notifications?from=<tab>`,
+  `aria-label="Notifications, 3 unread"`, a red count pill when > 0 ("99+"), `data-unread` for the app badge.
+  `Bell::load(&db)` is one partial-index `COUNT`, called by seven handlers (five tabs, the Settings hub row,
+  `/notifications`); no cache.
 - `/notifications` (`handlers::notifications::page`, `notifications.html`): back link to the tab it came from
   (`from`, one of the five, else Devices), large title "Notifications", the tab bar with no tab current. Groups:
-  1. **Warnings** (only when one applies): an orange attention row per unhealthy subscription (§6), to `#devices`.
+  1. **Warnings** (only when one applies): the server-signature row (§4.4); an orange row per subscription that may
+     not be showing (§6), to `#devices`.
   2. **This Device** (`#this-device`, §5.2).
-  3. **Inbox** (`#inbox`): a picker "All phones / Anna / ..." (`?device=`, a GET filter, `<noscript>` Show), then
-     the newest 100 events, newest first, a "Show older" link (`?before=<id>`). A row: the phone's avatar, the title
-     (bold with a blue dot while unread), the summary and the relative time (exact in `title=`), a chevron. Each row
-     is a `<form method="post" action="/notifications/{id}/open">` with the row as its button: it marks the event
-     read and 303s to its target (no GET changes state; `leaves_the_page` gets `["notifications", _, "open"]`).
-     Footer action "Mark All as Read" (`POST /notifications/read-all`, back to `/notifications#inbox`, honours
-     `device`). Empty: "Nothing yet. Events are kept 90 days."
+  3. **Inbox** (`#inbox`): a picker "All phones / Anna / ..." (`?device=`, a GET filter, `<noscript>` Show), the
+     newest 100 events, newest first, "Show older" (`?before=<id>`). A row: the phone's avatar, the title (bold
+     with a blue dot while unread), the summary and relative time (exact in `title=`), a delivery line (below), a
+     chevron. Each row is a `<form method="post" action="/notifications/{id}/open">` with the row as its button: it
+     marks the event read and 303s to its target (no GET changes state; `leaves_the_page` gets
+     `["notifications", _, "open"]`). Footer action "Mark All as Read" (`POST /notifications/read-all`, back to
+     `/notifications#inbox`, honours `device`). Empty: "Nothing yet. Events are kept 90 days."
   4. **Getting Notifications** (`#devices`): one row per subscription - label, a badge (On / May not be showing /
-     Turned off), "Last shown 2 h ago"; an ⓘ with the counts and what to check; actions Send a Test
+     Turned off), "Last shown 2 h ago"; an ⓘ with what to check (§6); Send a Test
      (`POST /notifications/subscriptions/{id}/test`) and Remove… (a `<details>` confirm,
-     `POST /notifications/subscriptions/{id}/delete`). Both back to `/notifications?notice=…#devices`, the flash in
-     the group.
+     `POST /notifications/subscriptions/{id}/delete`), both back to `/notifications?notice=…#devices`.
   5. **Notify Me About** (`#events`): one form, the handler writes every field (`POST /notifications/settings`,
-     back to `#events`): "Emergency call" (a checked, disabled switch, "Always on"), "Parent PIN used", "Parent PIN
-     locked", "An app may read the PIN", "Start without Vibb One", picker "Offline for" (Off, 2, 6, 12, 24 h).
-- Settings hub: a row "Notifications · 3 unread" to `/notifications?from=settings`.
-- Every form carries its group's fragment in its action and its redirect (`check_forms("/notifications")`,
-  `assert_lands`); scroll-restore keeps the parent's place.
+     back to `#events`): "Emergency call" (checked, disabled, "Always on"), "Parent PIN used", "Parent PIN locked",
+     "An app may read the PIN", "Start without Vibb One", picker "Offline for" (Off, 2, 6, 12, 24 h); the footer of
+     §2.4 and "as soon as the phone next reports".
+- **The delivery line** (step 2, M6), from one grouped query over the page's events' deliveries by `event_id`:
+  "Pushed to 2 devices · shown on 1" (accepted / with `receipt_at`; one device: "Shown on iPhone · Safari" or
+  "Pushed to iPhone · Safari, not confirmed"), "Not sent" (all failed), "In a summary" (folded), nothing when no
+  push was made.
+- Settings hub: a row "Notifications · 3 unread". Every form carries its group's fragment in its action and its
+  redirect (`check_forms`, `assert_lands`); scroll-restore keeps the parent's place.
 
 ### 5.2 This Device: subscribe from a tap
 
-- `static/notifications.js` (deferred, ES5 apart from what the Push API forces; no inline JS). States, each a row
-  value and one action row:
-  - no `PushManager`, or not a secure context: "Not available in this browser";
-  - iPhone/iPad not standalone (`navigator.standalone === false`): "Add Vibb Phone to the Home Screen first" with
-    the steps (Share › Add to Home Screen, then open it from there);
-  - `Notification.permission === "denied"`: "Blocked - allow notifications for Vibb Phone in Settings";
-  - subscribed here and known to the server: "On" + "Turn Off on This Device";
-  - else "Off" + "Turn On Notifications".
+- `static/notifications.js` (deferred, no inline JS). At load it takes `navigator.serviceWorker.ready` into a
+  variable; Turn On stays disabled until it resolved. States, checked in this order (H2), each a row value and one
+  action row:
+  1. `navigator.standalone === false` (exists only on iOS/iPadOS WebKit): "Add Vibb Phone to the Home Screen
+     first", with the steps (Share › Add to Home Screen, then open it from there);
+  2. no `PushManager` or not a secure context: "Not available in this browser";
+  3. `Notification.permission === "denied"`: "Blocked - allow notifications for Vibb Phone in Settings";
+  4. subscribed here and known to the server: "On" + "Turn Off on This Device";
+  5. else "Off" + "Turn On Notifications".
   Without JS the footer says notifications need JavaScript.
-- "Turn On": the click handler calls `Notification.requestPermission()` first, synchronously in the handler (Safari
-  requires the user gesture), then `pushManager.subscribe({userVisibleOnly: true, applicationServerKey})` with the
-  form's `data-key`, fills the form's hidden `endpoint`, `p256dh`, `auth` and submits
-  `POST /notifications/subscriptions` (303 to `/notifications?notice=push_on#this-device`).
-- "Known to the server": the page renders `data-subscribed` = the hex SHA-256 prefixes (16) of the admin's active
-  endpoints; the script hashes its own endpoint (`crypto.subtle`) and compares. A local subscription the server
-  doesn't know (removed, or `gone`) shows "Off" and Turn On posts it again (upsert on `endpoint`, state reset).
-- "Turn Off": `subscription.unsubscribe()`, then `POST /notifications/subscriptions/unsubscribe` with the endpoint.
-- The subscribe handler: full auth; `endpoint` allowed (§4.5) and <= 1024; `p256dh` base64url of 65 bytes
-  beginning 0x04 and a valid point (one throwaway `ring` agreement); `auth` 16 bytes; at most 10 active per admin;
-  `origin` from the `Origin` header (the CSRF guard already matched it to `Host`); security event `push_subscribed`
-  with the label. A refusal flashes in `#this-device`.
+- **Turn On**: the click handler's first call is `reg.pushManager.subscribe({userVisibleOnly: true,
+  applicationServerKey})`, synchronously (Apple: "at once" in the tap's handler); `subscribe` asks for the
+  permission itself, so no separate `requestPermission()`. `applicationServerKey` is a `Uint8Array` decoded from
+  the form's `data-key` (older Safari takes no string). Then it fills the hidden `endpoint`, `p256dh`, `auth` and
+  submits `POST /notifications/subscriptions` (303 to `/notifications?notice=push_on#this-device`).
+- "Known to the server": the page renders `data-subscribed` = 16-hex SHA-256 prefixes of the admin's active
+  endpoints; the script hashes its own (`crypto.subtle`). A local subscription the server doesn't know shows "Off";
+  Turn On posts it again (upsert on `endpoint`, state reset).
+- **Turn Off**: `subscription.unsubscribe()`, then `POST /notifications/subscriptions/unsubscribe` with the
+  endpoint.
+- The subscribe handler: full auth; `endpoint` allowed (§4.5) and <= 1024; `p256dh` base64url of 65 bytes, a valid
+  point (one throwaway `ring` agreement); `auth` 16 bytes; at most 10 active per admin; `origin` from the `Origin`
+  header, which must be present ("This browser didn't say where the page came from" otherwise: `csrf_check` passes
+  `Sec-Fetch-Site: same-origin` without it); security event `push_subscribed` with the label. A refusal flashes in
+  `#this-device`.
 
 ### 5.3 The service worker (`templates/sw.js`)
 
 The payload (plaintext JSON, every browser):
 
 ```json
-{"web_push": 8030,
+{"web_push": 8030, "mutable": true,
  "notification": {"title": "Anna called an emergency number", "body": "At 14:02", "lang": "en",
    "navigate": "https://kidphone.example.ts.net/devices/3/calls", "tag": "e812",
-   "data": {"d": 4411, "t": "<receipt token, 22 chars base64url>"}},
- "app_badge": 3, "mutable": true}
+   "data": {"d": 4411, "t": "<receipt token, 22 chars base64url>", "b": 3}}}
 ```
 
-- `navigate` is absolute (the subscription's `origin` + target): declarative push requires it. `app_badge` is the
-  unread count when sent. Safari 18.4+ shows this itself if the worker doesn't; `mutable: true` makes it dispatch
-  the `push` event to our worker first, so the worker shows it (and posts the receipt). Older Safari, Chrome and
-  Firefox see plain push data and the worker does the same. Field placement follows the WHATWG declarative push
-  message; step 2's device check confirms it on iOS 18.4.
-- `push`: `event.waitUntil(...)` parse `event.data.json()`; on any failure show "Vibb Phone" / "Something new -
-  open Notifications" with target `/notifications` (never an invisible push). `showNotification(title, {body, tag,
-  lang, data: {navigate, d, t}, icon: "/static/icons/icon-192.png"})`, then `self.navigator.setAppBadge(app_badge)`
-  where it exists, then the receipt: `fetch("/notifications/receipt", {method: "POST", credentials: "omit",
-  headers: {"Content-Type": "application/json"}, body: {"d", "t", "a": "shown", "at": Date.now()}})` - after
-  `showNotification` resolves. A failed receipt goes into IndexedDB (at most 20, oldest dropped) and is retried at
-  the next `push` and `notificationclick`; the server takes the receipt's `at` (clamped to accepted..now) as
-  `receipt_at`, so a late receipt still counts as shown in time.
-- `notificationclick`: close it; post `"a": "clicked"` (marks the event read); focus an open client on our origin and
-  `navigate` it to the target, else `clients.openWindow(target)`. Only same-origin targets (the worker checks).
-- No `fetch` handler, still. The CSP needs no change: the worker is `'self'`, the push channel is the browser's,
-  the receipt is same-origin (`connect-src 'self'`).
-- `static/register-sw.js`: registers as today; adds the app badge on load - the bell's `data-unread` (the five tab
-  pages and `/notifications`): `setAppBadge(n)` or `clearAppBadge()` where supported.
+- `navigate` is absolute (the subscription's `origin` + target; declarative push requires it). `tag` is `e<event
+  id>`, a summary's `s<delivery id>`, a test's `t<delivery id>` - unique, so nothing silently replaces another.
+  `b` is the unread count. No top-level `app_badge` until the device check shows where Safari wants it (L1).
+- Chrome and Firefox read it as plain data (`event.data.json()`). A Safari with declarative push dispatches `push`
+  to our worker first (`mutable: true`) and shows the declarative notification only when the worker shows nothing:
+  never a double, as long as the worker always calls `showNotification` inside `waitUntil`. A declarative fallback
+  display leaves no receipt - an honest "not confirmed". Field placement is checked on iOS 18.4 in step 2.
+- `push`: inside `event.waitUntil`: parse; on any failure show "Vibb Phone" / "Something new - open Notifications"
+  with target `/notifications` (never an invisible push). `showNotification(title, {body, tag, lang, data:
+  {navigate, d, t}, icon: "/static/icons/icon-192.png"})`, then `self.navigator.setAppBadge(b)` where it exists,
+  then - after `showNotification` resolved - `fetch("/notifications/receipt", {method: "POST", credentials: "omit",
+  headers: {"Content-Type": "application/json"}, body: {"d", "t", "a": "shown"}})`. A failed receipt is not kept.
+- `notificationclick`: close it; post `"a": "clicked"` (marks the event read); only a same-origin `navigate` whose
+  path starts with `/` and not `//` (else `/notifications`); focus an open client and navigate it, else
+  `clients.openWindow`.
+- No `fetch` handler, still; no CSP change. `static/register-sw.js` also sets the app badge on load from the
+  bell's `data-unread` (`setAppBadge(n)` / `clearAppBadge()` where supported).
 
 ## 6. Delivery health
 
-- Per subscription: `last_accepted_at`, `last_receipt_at`, `unacked`, `first_unacked_at`. A receipt (any of its
-  deliveries) sets `unacked = 0`, `first_unacked_at = NULL`.
-- `push::health(sub, now)`, typed: `Gone(reason)` | `MayNotShow` when `unacked >= 3` or `first_unacked_at` is older
-  than 24 h | `Ok` | `NeverSent`.
-- `MayNotShow`: on `/notifications` the warning row ("Notifications may not be showing on iPhone · Safari") and the
-  subscription's badge; on the Devices list a short orange row at the top (as the sign-in warnings,
-  `notifications::warning_row`) to `/notifications#devices`. Its ⓘ: added to the Home Screen and opened from there?
-  Notifications allowed for Vibb Phone in Settings? A Focus mode on? The phone reaching the server (the receipt
-  needs the tailnet)? Then Send a Test.
-- `Gone`: badge "Turned off", row text "Turned off on that device - turn it on again there"; no warning row (it is
-  known, not suspected); kept 30 days, then pruned.
-- Send a Test: a visible push ("Test from Vibb Phone" / "If you see this, notifications work on <label>"), at most
-  one per subscription per 30 s (else the flash says wait). Its acceptance and receipt count like any other.
+- `push::health(sub, deliveries, now)`, typed, from `push_deliveries` (index `(subscription_id, accepted_at)`):
+  the unconfirmed = `status = 'accepted' AND receipt_at IS NULL AND accepted_at > COALESCE(sub.last_receipt_at,
+  '')`. `Gone` | `MayNotShow` when 3 or more unconfirmed, or the oldest is older than 24 h (the user's rule) | `Ok`
+  | `NeverSent`. A receipt for any delivery sets `last_receipt_at`, which clears it.
+- `MayNotShow`: the warning row on `/notifications`, the subscription's badge, and a short orange row at the top of
+  the Devices list (as the sign-in warnings, `notifications::warning_row`) to `/notifications#devices`. Its ⓘ, in
+  this order: Is Tailscale on on that device (the receipt needs the tailnet)? Added to the Home Screen and opened
+  from there? Notifications allowed for Vibb Phone in Settings? A Focus mode on? Then Send a Test.
+- `Gone`: "Turned off on that device - turn it on again there"; no warning row; pruned after 30 days.
+- Send a Test: a visible push ("Test from Vibb Phone" / "If you see this, notifications work on <label>"), one per
+  subscription per 30 s; it counts like any other.
 
 ## 7. Security
 
-- **Admin gate and CSRF** on every route; `/notifications/*` are admin routes with full auth, except the receipt.
-- **The receipt** (`POST /notifications/receipt`): a service worker's same-origin fetch would carry the
-  `SameSite=Strict` cookie, but the session may have expired (30 days idle) while the subscription lives on, and a
-  receipt must not depend on it. So: a random 128-bit token per delivery, in the encrypted payload, stored as
-  SHA-256 in `push_deliveries.token_hash`; the route takes `{d, t, a, at}`, JSON <= 1 KiB, compares in constant time,
-  answers 204 on a match and 404 otherwise, and changes only that delivery's `receipt_at`/`clicked_at`, its
-  subscription's counters and (clicked) its event's `read_at`. Repeating it is harmless. Behind the admin gate (a
-  tailnet client) and `csrf_guard` (the worker's fetch is `Sec-Fetch-Site: same-origin`); its own limit bucket
-  (60 per minute per client key). `credentials: "omit"`: the cookie isn't needed.
-- **Subscriptions** belong to the admin (`admin_id`); Sign Out Everywhere deletes them (Decision 8); deleting the
-  admin cascades.
+- **Admin gate and CSRF** on every route; `/notifications/*` are under `require_full_auth`, except the receipt.
+- **The receipt** (`POST /notifications/receipt`) sits in `public_routes`, with its own `DefaultBodyLimit` of 1 KiB:
+  the session may have expired (30 days idle) while the subscription lives. A random 128-bit token per delivery, in
+  the encrypted payload, stored as SHA-256; `{d, t, a}` compared in constant time; 204 on a match, 404 otherwise; it
+  changes only that delivery's `receipt_at`/`clicked_at`, its subscription's `last_receipt_at` and (clicked) the
+  event's `read_at`. Repeating it is harmless. The admin gate still applies (tailnet/loopback), `csrf_guard` passes
+  the worker's `Sec-Fetch-Site: same-origin`; a 404 counts against `limits::ip_failed`/`ip_blocked`.
+- **Subscriptions** belong to the admin; Sign Out Everywhere and `reset-2fa` delete them; deleting the admin
+  cascades. `backups::strip_secrets_in` deletes `push_deliveries` then `push_subscriptions` from the zip's copy
+  (the `auth` secrets; a restore would make them `gone` anyway).
 - **Nothing secret in pages or logs**: pages carry the VAPID public key and endpoint hash prefixes only - never an
-  endpoint, `p256dh`, `auth`, token or the private key (a test greps the page). The key file 0600; not in backups.
-- **What a push service sees**: the endpoint, size, TTL, Urgency and an opaque Topic; the payload is RFC 8291
-  ciphertext. **A stolen subscription** (endpoint + `p256dh` + `auth`, e.g. from a database copy) decrypts nothing
-  without the browser's private key, and pushing to it needs our VAPID private key. A stolen *subscribed device*
-  receives titles until Remove or Sign Out Everywhere. Titles name a phone and a kind, never content; `detail`
-  never leaves the server.
-- **SSRF**: the allow-list (§4.5), no redirects, no IP literals.
+  endpoint, `p256dh`, `auth`, token or the private key (a test greps the page). The key file 0600, never backed up.
+- **What a push service sees**: the endpoint, size, TTL, Urgency; the payload is RFC 8291 ciphertext. A stolen
+  subscription (endpoint + `p256dh` + `auth`) decrypts nothing without the browser's private key, and pushing to it
+  needs our VAPID key. A stolen *subscribed device* gets titles until Remove or Sign Out Everywhere. Titles name a
+  phone and a kind, never content; `detail` never leaves the server.
+- **SSRF**: the allow-list (§4.5), no redirects, no IP literals. **Open redirect**: targets refuse `//` (§2.2).
 
 ## 8. Tests (required)
 
-- `webpush::tests`: RFC 8291 Appendix A end to end (fixed sender key and salt) and each intermediate; the header
-  layout and the 0x02 delimiter; the 3072-byte cap; the JWT's header, `aud` for each service and a port, `exp`,
-  `sub` fallback, the signature verified with `ring`; the JWT reused within the hour, renewed after; `topic` is 22
-  base64url characters and differs per phone and kind; `allowed` - each service, `push.apple.com.example.net`,
-  `http:`, an IP, a port, userinfo.
-- `parent_events::tests`: the words/targets table; `due` for the offline check (the started-at guard).
-- `src/tests/notifications.rs` (TestApp): a fake push service - an axum server on 127.0.0.1 that records requests,
-  decrypts each body with the fake browser's fixed key and answers a scripted status; the allow-list admits it only
-  through a `#[cfg(test)]` constructor of `PushConfig`. Cases:
-  - each kind from its real input (a status report, `pin-events`, the offline check), posted twice → one event;
-  - a switched-off kind → nothing; the emergency call can't be switched off (a forged field is ignored);
-  - the bell's count on all five tab pages; `/notifications` per phone, read/unread, `open` marks read and 303s
-    to the target, Mark All as Read; `check_forms("/notifications")` and `assert_lands` for every redirect;
-  - subscribe: refusals (host, key length, 11th), upsert; unsubscribe; Remove; Sign Out Everywhere clears them;
-  - send: headers (TTL, Urgency, Topic, `Authorization`, `Content-Encoding`), the decrypted payload's fields, no
-    `detail`; 201 → counters; 410 → gone and its text; 429 with `Retry-After` → retried; 400 `reason` stored;
-    20 `pin_used` → 6 pushes and one summary; an emergency call passes a full bucket;
-  - the receipt: wrong token 404 and nothing changed, a repeat 204, a cross-site `Sec-Fetch-Site` 403, no session
-    needed, `clicked` marks read; health: 3 accepted → the warning on `/notifications` and Devices, a receipt clears
-    it; a day-old unacked one; a changed VAPID key at startup → gone;
-  - no endpoint, `p256dh`, `auth` or token in any page; the key file 0600 and absent from a backup zip;
-  - retention: 90 / 30 / 30 days.
+- `webpush::tests`: Appendix A (ECDH secret, IKM, CEK, NONCE, header, the whole body); the 0x02 delimiter; the
+  3072-byte cap; the JWT's header, `aud` per service, `exp`, the `sub` fallback, the signature verified with
+  `ring`; re-mint outside `[iat, iat + 1 h]` and per `(aud, sub)`; `allowed` - each service,
+  `push.apple.com.example.net`, `http:`, an IP, a port, userinfo.
+- `parent_events::tests`: the words/targets table; `due` (the start guard, Off).
+- `src/tests/notifications.rs` (TestApp with a scripted `Transport` that records requests, decrypts with
+  `fake_browser_decrypt` and answers from a script):
+  - each kind from its real input (a status report, `pin-events`, the offline check), posted twice → one event; an
+    emergency call already in the previous report → none; a first report with a 2-day-old call → none;
+  - a switched-off kind → stored, no delivery; Offline Off → no check; the emergency call can't be switched off;
+  - the bell's count on all five tab pages; `/notifications` per phone, read/unread, `open` marks read and 303s,
+    Mark All as Read, the delivery line's states; `check_forms("/notifications")`, `assert_lands` per redirect;
+  - subscribe: refusals (host, key, 11th, no `Origin`), upsert; unsubscribe; Remove; Sign Out Everywhere and
+    `reset-2fa` clear them; a backup zip holds none;
+  - send: headers, the decrypted payload's fields, no `detail`; 2xx; 410 → gone; 403 `BadJwtToken` → still
+    `active`, the retry carries a new JWT, the clock warning; 429 with `Retry-After` → retried; 20 `pin_used` → 2
+    pushes and one summary with a unique tag; an emergency call alone;
+  - the receipt: wrong token 404 and nothing changed, a repeat 204, cross-site `Sec-Fetch-Site` 403, no session
+    needed, over 1 KiB 413, `clicked` marks read; health: 3 unconfirmed → the warnings, a receipt clears them, a
+    day-old one; a changed VAPID key at startup → gone; a damaged key file → push off, the file untouched;
+  - no endpoint, `p256dh`, `auth` or token in any page; the key file 0600; a target `//x` refused; retention.
 - `jstest/sw.test.js` (templates/sw.js with `{{ app_version }}` replaced, a fake `self`): `push` always shows (bad
-  JSON, no data), the receipt is posted only after `showNotification` resolves, a failed receipt is queued and
-  retried, the badge set; `notificationclick` focuses or opens the same-origin target, refuses another origin,
-  posts `clicked`; no `fetch` listener. `jstest/notifications.test.js`: `requestPermission` is called before any
-  await in the click, denied shows Blocked, success fills the fields and submits, the hash comparison.
+  JSON, no data), the receipt only after `showNotification` resolves, the badge; `notificationclick` focuses or
+  opens a same-origin target, refuses another origin and `//`, posts `clicked`; no `fetch` listener.
+  `jstest/notifications.test.js`: the state order (an iOS-like fake without `PushManager`, `standalone: false` →
+  the Home Screen steps), `subscribe` is the click's first call with a `Uint8Array`, success fills and submits, the
+  hash comparison.
 
 ## 9. Steps
 
-1. **Events and the inbox** (server, migration `0078_parent_events.sql`): §2, §3's first half, §5.1 without This
-   Device and Getting Notifications, the bell on the five tab pages, the Settings hub row, retention. Shippable alone: the inbox
-   works with no push.
-2. **Web Push** (server, `0079_web_push.sql`): `webpush.rs`, `push.rs`, §4, §5.2, §5.3, §6, §7; register-sw.js;
-   DEPLOY.md; `server/CLAUDE.md`. Device checks before it's called done: iPhone on iOS 18.4+ and on 16.4-18.3 if
-   one is at hand (Home Screen, subscribe, each kind, the receipt, Focus on, the worker killed → Safari's declarative
-   fallback), macOS Safari, Android Chrome, desktop Firefox; a 410 by removing the app from the Home Screen.
+1. **Events and the inbox** (server, `0078_parent_events.sql` with all four tables): §2, §3, §5.1 without This
+   Device, Getting Notifications and the delivery line; the bell on the five tab pages, the Settings hub row,
+   retention. Shippable alone: the inbox works with no push.
+2. **Web Push** (server, no migration): the `ring` line, `keys.rs`, `webpush.rs`, `push.rs`, §4, §5.2, §5.3, §6,
+   §7, the delivery line; register-sw.js; DEPLOY.md; `server/CLAUDE.md`. Device checks before done: iPhone on iOS
+   18.4+ and 16.4-18.3 if at hand (Safari tab → the Home Screen steps; the prompt from `subscribe` alone; each
+   kind; the receipt; Focus on; the worker failing → Safari's declarative fallback; where `app_badge` goes), macOS
+   Safari, Android Chrome, desktop Firefox; a 410 by removing the app from the Home Screen.
+3. **Optional, launcher only (user question 1)**: right after an emergency call connects
+   (`KidInCallService` → `CallPrefs.recordEmergencyConnected`), `SyncRunner.request(context, "emergency_call")`,
+   so the status report with `last_emergency_call_at` arrives within seconds. No API change; a unit test that the
+   record requests a sync.
 
-`server/DEPLOY.md` ("Notifications"): the server needs outbound HTTPS (443) to `*.push.apple.com`,
-`fcm.googleapis.com`, `*.notify.windows.com` and `updates.push.services.mozilla.com` - from the Pi's firewall and
-from the Docker network (no egress rule blocks it by default); `VAPID_SUBJECT` optional; the VAPID key lives in
-`data/keys/` and isn't backed up - a restore onto a new machine means turning notifications on again on each device;
-the parent's device must reach the server (tailnet) for receipts.
+`server/DEPLOY.md` ("Notifications"): outbound HTTPS (443) to `*.push.apple.com`, `fcm.googleapis.com`,
+`*.notify.windows.com`, `updates.push.services.mozilla.com`, from the Pi's firewall and the Docker network; the
+clock must be right (NTP) or the push services refuse the signature; `VAPID_SUBJECT` optional; the VAPID key in
+`data/keys/` isn't backed up - after a restore onto a new machine, turn notifications on again on each device; the
+parent's device needs Tailscale on for receipts.
 
-## 10. Open questions (with a recommendation)
+## 10. Questions for the user (with a recommendation)
 
-1. **"Parent PIN used" on by default?** It fires when the parent uses it too. Recommend on: the point is to catch
-   a use the parent didn't make; the parent can switch it off.
-2. **Offline default 6 h** (choices Off/2/6/12/24 h)? Recommend 6 h: the backstop sync is 30 min, a phone left off
-   overnight is normal and 6 h avoids a nightly alert for a phone switched off at 21:00 - unless the parent wants
-   12 h.
-3. **No escape hatch in the allow-list** (no `PUSH_EXTRA_HOSTS`)? Recommend none in phase 1; add one if a browser
-   the family uses turns out to need another host.
+1. **Emergency call latency**: without step 3 the parent hears of an emergency call at the phone's next report
+   (usually within 30 min, at worst ~50). Recommend step 3, right after step 1.
+2. **Switched-off kinds**: stored and listed, push only switched (the orchestrator's call), or not stored at all?
+   Recommend stored: the inbox is complete; Offline Off skips the check.
+3. **"Parent PIN used" on by default?** It fires when the parent uses it too. Recommend on.
+4. **Offline default 6 h** (Off/2/6/12/24 h), worded "offline since …"? Recommend 6 h.
+5. **Migrations**: all of 35 in `0078`, design 36 in `0079`? Recommend yes.
+6. **No `Topic` coalescing in phase 1?** Recommend none: smaller, and the health stays honest.
+
+## 11. Design QA (2026-10-18, `docs/design/qa-35-design.md`)
+
+Every finding taken (none "not taken"); the orchestrator's calls are marked in the text. H1 Decision 4, §4.3-4.4;
+H2 §5.2; M1 §3; M2 §4.2; M3 §4.1; M4 (no IndexedDB queue, derived counters, a cap per pass, the per-IP limiter, an
+`Instant`, no `Topic`) §4.3, §4.6, §6, §7; M5 §2.1, step 3; M6 §5.1. L1 §5.3; L2 §2.1; L3 §2.3; L4 §4.3; L5 §2.2,
+§5.2; L6 §7; L7 §4.3, §8; L8 §1 (changed by the orchestrator: push only); L9 §6, DEPLOY.md; N1-N5 in place.
