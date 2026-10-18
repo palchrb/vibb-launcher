@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.server.dto
 
+import android.os.BatteryManager
 import kotlinx.serialization.Serializable
+import kotlin.math.roundToInt
 
 /** Body for `POST /api/devices/status` - a best-effort heartbeat; a failed send must never affect
  * the local lock decision, only the admin site's visibility into it. [policyState] is `"ok"` or
@@ -95,7 +97,7 @@ data class StatusReportRequest(
      * custom server is configured (`KidVpnService.dnsUpstreamReport`). */
     val dnsUpstream: DnsUpstreamReport? = null,
     /** Design 35 §2.5: the battery, for the parent's "Battery low" event and the PWA's battery
-     * line - see [BatteryReport]. Not set yet (design 35 step 3 reads it); `null` = left out. */
+     * line - see [BatteryReport] (`BatteryStatus.report`); `null` = unreadable, left out. */
     val battery: BatteryReport? = null,
 )
 
@@ -117,7 +119,25 @@ data class DnsUpstreamReport(
  * (plugged in, or charging/full), and Android's own "battery low" (`EXTRA_BATTERY_LOW`).
  */
 @Serializable
-data class BatteryReport(val level: Int, val charging: Boolean, val low: Boolean)
+data class BatteryReport(val level: Int, val charging: Boolean, val low: Boolean) {
+    companion object {
+        /**
+         * The reading from the sticky `ACTION_BATTERY_CHANGED`'s extras (design 35 §2.5): the level
+         * in percent, rounded and clamped to 0..100; charging when plugged in or the status is
+         * charging/full; [low] is `EXTRA_BATTERY_LOW` as it is. `null` when the level or the scale is
+         * missing (`-1`, a scale of 0 or less).
+         */
+        fun of(level: Int, scale: Int, status: Int, plugged: Int, low: Boolean): BatteryReport? {
+            if (level < 0 || scale <= 0) return null
+            return BatteryReport(
+                level = (level * 100.0 / scale).roundToInt().coerceIn(0, 100),
+                charging = plugged != 0 ||
+                    status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL,
+                low = low,
+            )
+        }
+    }
+}
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the
  * device admins and accessibility services found. Both keys always sent. */

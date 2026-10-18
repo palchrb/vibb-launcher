@@ -1451,6 +1451,38 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
 What the emulator can't show (device checks, design 36 "Step 2 implementation status"): a home-network server on the
 home Wi-Fi and away from it, a network that blocks 853, AdGuard Home's REFUSED for a client id it doesn't allow.
 
+## 6n. Battery low and the emergency call reach the parent at once (design 35 step 3)
+
+Design 35 §2.5 and §9 step 3: the launcher reports the battery in every status report and syncs on Android's
+battery-low/okay edges and right after an emergency call connects. The emulator's battery is set from its console
+(`adb emu ...`, or `telnet localhost 5554` + the auth token). The launcher must be the debug build of this step or
+later, enrolled; watch:
+```
+adb logcat -s SyncRunner BatteryStatus KidInCallService
+```
+
+1. Run on battery at a normal level first: `adb emu power ac off`, `adb emu power status discharging`,
+   `adb emu power capacity 50`. After the next report (Sync now, or wait) the Devices row and the phone's summary say
+   "Battery 50 %".
+2. **Low**: `adb emu power capacity 10`. Within seconds logcat `Sync for [battery]`, and the PWA's bell counts
+   "Battery low on <phone> (10 %)" (Notifications › Inbox; with step 2's push on, the push too); the line says
+   "Battery 10 %".
+3. **No second one while it stays low**: `adb emu power ac on` (Android clears its low flag and sends no edge, so no
+   sync; "charging" shows after the next report), then `adb emu power ac off` (BATTERY_LOW again: `Sync for [battery]`) - **no**
+   second event, the latch holds (it re-arms only on battery above Android's level).
+4. **Re-armed, then a second**: `adb emu power capacity 30` (BATTERY_OKAY: `Sync for [battery]`, the latch clears),
+   then `adb emu power capacity 10`: a second "Battery low" event.
+5. **Emergency call**: the smoke test's manual 112 step (`scripts/smoke-test.sh`'s end, or the PIN lock's "Emergency
+   call" -> "Call 112?" on the emulator, which fakes 112). When the call is active logcat shows `Sync for
+   [emergency_call]` at once (one per call - holding and resuming it, or hanging up, adds none), and the PWA's bell
+   counts "<phone> called an emergency number" within seconds, not at the next backstop. The report after the call
+   ends carries the same `last_emergency_call_at`, so no second event.
+6. Before the first unlock (only on a phone with an Android screen lock, so not the usual setup): an emergency call
+   then sends no sync (the anchor isn't direct-boot-aware); the first report after the unlock carries the call.
+
+The emulator can't show (device checks, design 35 "Step 3 implementation status"): the Jelly Star's BATTERY_LOW
+threshold and whether it sets `EXTRA_BATTERY_LOW`, the receiver in Doze, the emergency sync over mobile data.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online

@@ -375,6 +375,8 @@ class Application : android.app.Application() {
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.
         CommandListenerService.start(this)
+        // Design 35 §2.5: a report at once on Android's battery-low/okay edges (everything caught).
+        com.kidslauncher.mdm.server.BatteryStatus.watch(this)
         // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
         // SDK's files and jobs) is deleted once, in the background.
         com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)

@@ -256,6 +256,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
                 // Design 36 §4.2: only while the VPN runs with the parent's own server.
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
+                battery = BatteryStatus.report(context),
             )
         )
         // The report just landed, so this doesn't need to stay pending - if it was never used,

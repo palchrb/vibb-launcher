@@ -171,6 +171,7 @@ object CallPrefs {
     private const val EMERGENCY_UNTIL_WALL_MS = "mdm.calls.emergency_window_until_wall_ms"
     private const val EMERGENCY_ELAPSED_START_MS = "mdm.calls.emergency_window_elapsed_start_ms"
     private const val EMERGENCY_BOOT = "mdm.calls.emergency_window_boot"
+    private const val EMERGENCY_CONNECTED_AT_MS = "mdm.calls.emergency_connected_at_ms"
     private const val ROLE_PROMPT_LAST_MS = "mdm.calls.role_prompt_last_ms"
     private const val LAST_ERROR = "mdm.calls.last_error"
     private const val ROLES_SIGNALLED = "mdm.calls.roles_signalled"
@@ -202,8 +203,10 @@ object CallPrefs {
      * Records "a platform-confirmed emergency call is connected now": the callback window then
      * lasts [CALLBACK_WINDOW_MS] by the wall clock AND by elapsed realtime in this boot
      * ([timedWindowActive]), so a clock change or a reboot can't reopen it (QA step 2 #4).
+     * [connectedAtMs] is when that call connected (wall clock, the same for every record of one
+     * call - [EmergencyConnects]): the status report's `last_emergency_call_at` (design 35 step 3).
      */
-    fun recordEmergencyConnected(context: Context) {
+    fun recordEmergencyConnected(context: Context, connectedAtMs: Long) {
         val start = WindowStart(
             untilWallMs = System.currentTimeMillis() + CALLBACK_WINDOW_MS,
             elapsedStartMs = SystemClock.elapsedRealtime(),
@@ -213,6 +216,7 @@ object CallPrefs {
             .putLong(EMERGENCY_UNTIL_WALL_MS, start.untilWallMs)
             .putLong(EMERGENCY_ELAPSED_START_MS, start.elapsedStartMs)
             .putInt(EMERGENCY_BOOT, start.bootCount)
+            .putLong(EMERGENCY_CONNECTED_AT_MS, connectedAtMs)
             .commit()
     }
 
@@ -231,8 +235,11 @@ object CallPrefs {
         return if (open) window.untilWallMs else null
     }
 
-    /** When the recorded emergency call connected (for the status report only). */
-    fun recordedEmergencyAtMs(context: Context): Long? = recordedWindow(context)?.let { it.untilWallMs - CALLBACK_WINDOW_MS }
+    /** When the recorded emergency call connected (for the status report only); a record an older
+     * build wrote has no connect time and gives its window's start. */
+    fun recordedEmergencyAtMs(context: Context): Long? = recordedWindow(context)?.let {
+        bootPrefs(context).getLong(EMERGENCY_CONNECTED_AT_MS, 0).takeIf { at -> at > 0 } ?: (it.untilWallMs - CALLBACK_WINDOW_MS)
+    }
 
     private fun bootCount(context: Context): Int = try {
         Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT)
