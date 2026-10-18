@@ -516,7 +516,7 @@ findings, merge to `main`, full suite once.
   revised after the user's decisions 2026-10-18): a second field "Backup server" the parent chooses (prefilled
   `1.1.1.3`, required under Custom) instead of a hard-coded fallback; any address allowed (LAN, tailnet, `*.ts.net`),
   the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) merged 2026-10-18
-  after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) and step 3 (networks that block 853) open.
+  after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) in progress, step 3 (networks that block 853) open.
 
 - **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
   and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as
@@ -576,8 +576,9 @@ findings, merge to `main`, full suite once.
     "offline for X hours", which was dropped); later a new blocked app or an extra-time request. Titles only,
     never message content.
   - **Design 35** (`docs/design/35-parent-notifications.md`, design QA done, revised after the user's decisions
-    2026-10-18). Step 1 (events, inbox, the `battery` wire field) in progress; then step 2 (Web Push) and step 3
-    (launcher: the battery reading and receiver, a sync right after an emergency call).
+    2026-10-18). Step 1 (events, inbox, the `battery` wire field) merged 2026-10-18 after code QA
+    (`docs/review/qa-35-s1-code.md`); step 2 (Web Push) in progress; then step 3 (launcher: the battery reading
+    and receiver, a sync right after an emergency call).
   - **Phase 2, later**: on no receipt for an important event within ~2 minutes, a second channel - ntfy
     (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
     once. Web Push on Safari can't break through Focus and iOS may drop a subscription silently, so phase 2
