@@ -25,7 +25,6 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.Observer
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
@@ -82,6 +81,9 @@ import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import com.kidslauncher.mdm.ui.home.HomeSwipe
+import com.kidslauncher.mdm.ui.home.SwipeStart
+import com.kidslauncher.mdm.ui.home.homeSwipe
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -89,12 +91,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
-private const val SWIPE_UP_MIN_DISTANCE = 100
-private const val SWIPE_UP_MIN_VELOCITY = 100
-private const val SWIPE_LEFT_MIN_DISTANCE = 100
-private const val SWIPE_LEFT_MIN_VELOCITY = 100
 private const val BADGE_DEBOUNCE_MS = 300L
 private const val MAX_OVERLAYS = 8
 
@@ -316,6 +313,8 @@ class HomeActivity : UIObjectActivity() {
             }
         }
 
+        // Home's swipes (HomeSwipe.kt): the detector is fed once, in dispatchTouchEvent, so each
+        // swipe is decided from its own DOWN - also one that lands on a contact or a tile.
         gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(
                 e1: MotionEvent?,
@@ -324,75 +323,58 @@ class HomeActivity : UIObjectActivity() {
                 velocityY: Float
             ): Boolean {
                 if (e1 == null) return false
-                val diffY = e2.y - e1.y
-                val diffX = e2.x - e1.x
-                // Only once the grid can't scroll further down, so scrolling a long grid
-                // doesn't open the drawer. The drawer shows the same apps as the grid (same
-                // AppFilter), plus the PIN-gated Settings button.
-                if (abs(diffY) > abs(diffX) &&
-                    -diffY > SWIPE_UP_MIN_DISTANCE &&
-                    abs(velocityY) > SWIPE_UP_MIN_VELOCITY &&
-                    !binding.homeGrid.canScrollVertically(1)
-                ) {
-                    openAppsList(this@HomeActivity)
-                    return true
+                val swipe = homeSwipe(
+                    e1.x, e1.y, e2.x, e2.y, velocityX, velocityY,
+                    start = swipeStart(e1),
+                    gridCanScrollDown = binding.homeGrid.canScrollVertically(1),
+                    rowCanScrollRight = binding.homeContactsScroll.canScrollHorizontally(1),
+                    contentShown = contentShown,
+                )
+                when (swipe) {
+                    // The drawer shows the same apps as the grid (same AppFilter), plus the PIN-gated Settings button.
+                    HomeSwipe.DRAWER -> openAppsList(this@HomeActivity)
+                    // The kid's own settings (also the grid's last tile) - the replacement for Android's Quick Settings shade.
+                    HomeSwipe.KID_SETTINGS -> startActivity(Intent(this@HomeActivity, KidSettingsActivity::class.java))
+                    HomeSwipe.NONE -> return false
                 }
-                // The kid's own settings (also the grid's last tile) - the replacement for
-                // Android's Quick Settings shade. A swipe that starts in the contacts row only
-                // counts once that row can't scroll further (same rule as the grid's swipe-up).
-                if (abs(diffX) > abs(diffY) &&
-                    -diffX > SWIPE_LEFT_MIN_DISTANCE &&
-                    abs(velocityX) > SWIPE_LEFT_MIN_VELOCITY &&
-                    !(startedInContactsRow(e1) && binding.homeContactsScroll.canScrollHorizontally(1))
-                ) {
-                    startActivity(Intent(this@HomeActivity, KidSettingsActivity::class.java))
-                    return true
-                }
-                return false
+                return true
             }
         })
+    }
 
-        // The Activity-level onTouchEvent() below only ever sees touches nobody else claimed -
-        // it's a last resort, called only if the whole view hierarchy declines an event. The
-        // grid's tiles are clickable, so a swipe starting on top of one (as opposed to the blank
-        // space around them) gets consumed entirely by that tile's own click handling
-        // and never reaches onTouchEvent() at all. RecyclerView.OnItemTouchListener is the
-        // official hook for exactly this: it's invoked for every event that flows through the
-        // RecyclerView, before it's dispatched to a child row. Always returning false here means
-        // it's purely observing (not stealing the gesture from clicks/scrolling) - a real drag
-        // already exceeds the framework's own touch-slop threshold, which independently cancels a
-        // pending click on the row without any help from this listener.
-        binding.homeGrid.addOnItemTouchListener(object : RecyclerView.OnItemTouchListener {
-            override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
-                gestureDetector.onTouchEvent(e)
-                return false
-            }
-
-            override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {}
-
-            override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
-        })
-        // Same for the Home contacts row: observe only, the buttons keep their clicks.
-        binding.homeContactsScroll.setOnTouchListener { _, event ->
-            gestureDetector.onTouchEvent(event)
-            false
+    /**
+     * Every touch passes the detector once, in window coordinates, before the views get it - it
+     * only observes: the tiles, contacts, scrolls and long-presses get the touch as before. A swipe
+     * that opened the drawer or kid Settings ends as a cancel for the views, so a short swipe that
+     * ends on the contact or tile it started on isn't also its tap. Fed on the night ground too
+     * (the content made the first time it shows): [homeSwipe] says nothing there, and a swipe whose
+     * DOWN came before the content showed is still decided from that DOWN.
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        val swiped = ::gestureDetector.isInitialized && gestureDetector.onTouchEvent(ev)
+        if (!swiped || ev.actionMasked != MotionEvent.ACTION_UP) return super.dispatchTouchEvent(ev)
+        val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
+        try {
+            super.dispatchTouchEvent(cancel)
+        } finally {
+            cancel.recycle()
         }
-    }
-
-    /** Whether a gesture's down event was inside the contacts row (screen coordinates: the
-     * detector gets events from the row, the grid and the activity, each in its own space). */
-    private fun startedInContactsRow(down: MotionEvent): Boolean {
-        val row = binding.homeContactsScroll
-        if (row.visibility != View.VISIBLE) return false
-        val rect = Rect()
-        if (!row.getGlobalVisibleRect(rect)) return false
-        return rect.contains(down.rawX.toInt(), down.rawY.toInt())
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        // No drawer or kid Settings swipe on the night ground (16c).
-        if (contentShown) gestureDetector.onTouchEvent(event)
         return true
+    }
+
+    /** Where a swipe's DOWN landed ([down] in window coordinates, as [View.getGlobalVisibleRect]). */
+    private fun swipeStart(down: MotionEvent): SwipeStart {
+        fun hit(view: View): Boolean {
+            if (!view.isShown) return false
+            val rect = Rect()
+            return view.getGlobalVisibleRect(rect) && rect.contains(down.x.toInt(), down.y.toInt())
+        }
+        return when {
+            hit(binding.homeCallCard) || hit(binding.homeMusicCard.root) || hit(binding.homeWindowLockAgain) -> SwipeStart.CARD
+            hit(binding.homeContactsScroll) -> SwipeStart.CONTACTS_ROW
+            hit(binding.homeGrid) -> SwipeStart.GRID
+            else -> SwipeStart.BLANK
+        }
     }
 
     /** Design 32: Home brought under the lock at a lock-up, the screen still off ([homeDarkResume]). */

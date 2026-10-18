@@ -115,8 +115,8 @@ class HomeGateTest {
         assertTrue(night.contains("setContentView(ground.root)"))
         assertTrue(night.contains("closeOverlays()"))
         // No swipe to the drawer or the kid's Settings on the night ground.
-        val touch = home.substringAfter("override fun onTouchEvent(event: MotionEvent)").substringBefore("\n    }")
-        assertTrue(touch, touch.contains("if (contentShown) gestureDetector.onTouchEvent(event)"))
+        val fling = home.substringAfter("override fun onFling(").substringBefore("\n        })")
+        assertTrue(fling, fling.contains("contentShown = contentShown"))
         // Every render binds only while the content is shown.
         for (render in listOf("render", "renderCallParts", "renderGrid", "renderWallpaper", "renderCallCard", "refreshApps", "loadMissedCalls", "resumeContent")) {
             val first = body(home, render).lines().drop(1).first { it.isNotBlank() }.trim()
