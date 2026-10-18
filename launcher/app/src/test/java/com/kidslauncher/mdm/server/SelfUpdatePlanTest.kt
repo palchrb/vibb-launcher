@@ -218,6 +218,37 @@ class SelfUpdatePlanTest {
         assertEquals("unknown Telecom state counts as a call", false, boot(12, 11, telecom = null))
     }
 
+    // ---- the release the phone already runs (QR/adb install, no record) ------------------------
+
+    private fun running(advertised: String, code: Long, pending: PendingSelfUpdate? = null) =
+        launcherUpdateStep(advertised, null, null, null, false, pending, true, now, backoff, runningVersionCode = code)
+
+    @Test
+    fun `a release tag's versionCode follows the release workflow`() {
+        assertEquals(1_003_000L, launcherTagVersionCode("launcher-v1.3.0@99"))
+        assertEquals(34_002L, launcherTagVersionCode("launcher-v0.34.2"))
+        assertEquals(1_002_999L, launcherTagVersionCode("launcher-v1.3.0-rc.2@7"))
+        for (bad in listOf("v1.3.0", "launcher-v1.3", "launcher-v1.3.0-beta", "launcher-v0.0.0-rc.1", "x@launcher-v1.3.0")) {
+            assertEquals(bad, null, launcherTagVersionCode(bad))
+        }
+    }
+
+    @Test
+    fun `the running version or an older one is recorded installed without a download`() {
+        assertEquals("equal", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 1_003_000))
+        assertEquals("older", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.2.9@5", 1_003_000))
+        assertEquals("an rc of the running version", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0-rc.1@5", 1_003_000))
+        assertEquals("a stale pending goes too", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 1_003_000, pending))
+    }
+
+    @Test
+    fun `a newer release, the final over its rc, or an unparseable tag is downloaded as before`() {
+        assertEquals("newer", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.1@5", 1_003_000))
+        assertEquals("the final over its rc", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.0@5", 1_002_999))
+        assertEquals("unparseable", LauncherUpdateStep.DOWNLOAD, running("v26.09.4@14", 99_000_000))
+        assertEquals("a debug build's low code", LauncherUpdateStep.DOWNLOAD, running("launcher-v0.34.0@5", 116))
+    }
+
     // ---- qa-11-code #2-#4 ----------------------------------------------------------------------
 
     @Test
