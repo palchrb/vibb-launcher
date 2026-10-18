@@ -28,6 +28,14 @@ class MusicPlanTest {
     // The contract with music/.
 
     @Test
+    fun `only a music app's update nudges it`() {
+        assertEquals("me.vibb.music", musicNudgeOnChange("me.vibb.music"))
+        assertEquals("me.vibb.music.debug", musicNudgeOnChange("me.vibb.music.debug"))
+        assertNull(musicNudgeOnChange("org.example.chat"))
+        assertNull(musicNudgeOnChange(null))
+    }
+
+    @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
         for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl")) {
             val ours = module("src/main/aidl/me/vibb/bridge/$name")

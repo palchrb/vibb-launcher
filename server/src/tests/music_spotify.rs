@@ -2627,6 +2627,41 @@ pub(in crate::tests) mod listing {
         }
     }
 
+    /// A Spotify listing's pictures are one CDN GET each: a check fetches up to 100 of them, an
+    /// NRK, RSS or Storytel check 20; the daily budget is shared.
+    #[test]
+    fn a_spotify_check_fetches_more_pictures() {
+        let spotify = Link::Spotify {
+            kind: LinkKind::Playlist,
+            id: "x".to_string(),
+        };
+        let rss = Link::Rss {
+            url: "https://example.org/feed.xml".to_string(),
+        };
+        let nrk = Link::NrkPodcast {
+            slug: "x".to_string(),
+        };
+        let storytel = Link::Storytel {
+            kind: crate::storytel::TargetKind::Series,
+            id: "1".to_string(),
+        };
+        let s = sweep::Sweep::default();
+        assert_eq!(s.art_per_check(&spotify), 100);
+        for other in [&rss, &nrk, &storytel] {
+            assert_eq!(s.art_per_check(other), 20);
+        }
+        // The tests' knob overrides both.
+        s.set_art_per_check(7);
+        assert_eq!(s.art_per_check(&spotify), 7);
+        assert_eq!(s.art_per_check(&rss), 7);
+        // A Spotify check takes at most half of what is left of the day; the others all of it.
+        assert_eq!(sweep::art_gets(100, 400, &spotify), 100);
+        assert_eq!(sweep::art_gets(100, 120, &spotify), 60);
+        assert_eq!(sweep::art_gets(20, 10, &rss), 10);
+        assert_eq!(sweep::art_gets(20, 0, &spotify), 0);
+        assert_eq!(sweep::art_gets(20, -3, &rss), 0);
+    }
+
     /// Art (§3.5): a playlist's track pictures are each its own (never the playlist's mosaic,
     /// never `same`), one request per URL in a pass - a picture that failed is not asked twice;
     /// a show's episode pictures are judged against the show's picture.

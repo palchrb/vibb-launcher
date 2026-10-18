@@ -72,6 +72,19 @@ val ESSENTIAL_PACKAGES: Set<String> = setOf(
 )
 
 /**
+ * The platform's own nags among `android`'s notifications: Safety Center's recommendation and
+ * information channels ("set a screen lock", tag "AndroidLockScreen / NoScreenLockIssue", seen on
+ * the emulator). Their tap opens the permission controller's SafetyCenterActivity inside the lock
+ * task (the permission controller is a pinned kiosk helper), where the kiosk's app block stops
+ * Settings' ChooseLock anyway. Only these exact ids: `safety_center_critical_warning` and every
+ * other `android` notification (battery, USB, system) stay essential.
+ */
+val PLATFORM_NAG_CHANNELS: Set<String> = setOf("safety_center_recommendation", "safety_center_information")
+
+private fun platformNag(facts: NotificationFacts): Boolean =
+    facts.packageName == "android" && facts.channelId in PLATFORM_NAG_CHANNELS
+
+/**
  * Channel ids that look like a public-safety alert (Play services posts the Android Earthquake
  * Alerts and personal-safety alerts; the B1 device check classifies the real ids). Matching is
  * deliberately generous: a nag kept by mistake is harmless, a cancelled alert is not.
@@ -101,7 +114,8 @@ sealed interface NagVerdict {
  * nor essential - only while managed, with the switch on and the policy known. Never an ongoing
  * one (lock task still blocks its tap), never a full-screen or insistent one (calls, alarms,
  * emergency alerts), never a call/missed-call/alarm/stopwatch, never a channel that looks like a
- * public-safety alert.
+ * public-safety alert. The one exception among the essential packages: `android`'s Safety Center
+ * nags ([PLATFORM_NAG_CHANNELS]) are cancelled like any nag.
  */
 fun nagVerdict(facts: NotificationFacts, policy: NagPolicy?): NagVerdict {
     val keep = when {
@@ -114,7 +128,8 @@ fun nagVerdict(facts: NotificationFacts, policy: NagPolicy?): NagVerdict {
         facts.fullScreenIntent -> NagKeep.FULL_SCREEN
         facts.insistent -> NagKeep.INSISTENT
         facts.category in ESSENTIAL_CATEGORIES -> NagKeep.ESSENTIAL_CATEGORY
-        facts.packageName in ESSENTIAL_PACKAGES || facts.packageName in policy.essential -> NagKeep.ESSENTIAL_PACKAGE
+        (facts.packageName in ESSENTIAL_PACKAGES || facts.packageName in policy.essential) && !platformNag(facts) ->
+            NagKeep.ESSENTIAL_PACKAGE
         essentialChannel(facts.channelId) -> NagKeep.ESSENTIAL_CHANNEL
         facts.packageName in policy.allowed -> NagKeep.ALLOWED
         else -> null

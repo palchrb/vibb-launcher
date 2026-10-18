@@ -1075,7 +1075,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   episode picture can count as a flat series cover (the cover shows), and a recoloured series picture is `same`. A
   failure never fails the check: a 4xx, a refused address or an undecodable picture uses one of 3 tries; a network
   error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row end the pass (code QA M2). Budgets:
-  `ART_PER_CHECK` 20 (`Sweep::set_art_per_check` in the tests; 0 in tests that count listing requests),
+  `ART_PER_CHECK` 20, a Spotify listing `ART_PER_CHECK_SPOTIFY` 100 (`art_per_check_for`: one CDN GET a picture; `art_gets`: a Spotify check takes at most half of what is left of the day's 400; `Sweep::set_art_per_check` overrides both in the tests; 0 in tests that count listing requests),
   `ART_PER_DAY` 400 counted in `music_art_requests` (one row per image request, the 16:9 reference included; rows
   older than a day go; code QA M1); a request the budget stops leaves its item untried (QA L1 b). The log line adds `, art N (o own, s same)`.
 - **Reference prints** (QA M2, `music_listings`): `cover_print` (of a newly fetched cover, else read once from the

@@ -158,7 +158,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   in every sync (library, changed listings, covers, own files copied + checked + released, the Storytel login sealed
   under a Keystore key) and `push` sends the report (with the own files held) at its end; `LiveBridge` sends
   `setNowPlaying`/`setForeground` and retries a bind. Bind only the restrictions' launcher, and only when it is
-  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. The two mobile-data switches
+  signed like this app; honour `BRIDGE_CHANGED` only from a launcher. An in-place update syncs at once (`PackageReplacedReceiver` on `MY_PACKAGE_REPLACED`; the launcher nudges too), so Device › Music never keeps the old app's report. The two mobile-data switches
   (`stream_mobile_data`, `download_mobile_data`; a launcher from before design 30 writes neither, and then the old
   `mobile_data` counts for both - `mobileSwitch`), the storage limit (`storage_limit_gb`, 0 = none, absent or junk =
   2 GB - `storageLimit`; the played extras' eviction counts against it) and `volume_cap_pct` (the parent's cap on our
@@ -443,7 +443,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   could fetch (design 26a, "Merge of main with design 27").
 - Episode pictures (design 27): an item's own art is `items.artHash` (Room 2; its auto migration empties every
   listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
-  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt; sent as
+  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt, then each Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50) tracks from where a cover tap starts it, in `later` - a Spotify entry keeps nothing, and the server fetches up to `ART_PER_CHECK_SPOTIFY` (100) of its pictures a check; sent as
   `wantArt` at each sync's end and from the player 2 s after an item change; `sync/ArtPlan.kt`'s `artWant` takes a
   Storytel series' keep set from the download plan's rule, `storytelKeepSet` + `storytelWanted`: the books on the
   phone; a book's cover is its own `artHash` from the server's art pass, design 26b §5.5), the prune (covers dir and the

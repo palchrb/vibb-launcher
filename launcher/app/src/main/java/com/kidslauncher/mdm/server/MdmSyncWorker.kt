@@ -635,9 +635,17 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): T
         pendingFileOk = SelfUpdate.fileOk(context, pending),
         nowMs = now,
         failedBackoffMs = FAILED_RETRY_BACKOFF_MS,
+        runningVersionCode = BuildConfig.VERSION_CODE.toLong(),
     )
     return when (step) {
         LauncherUpdateStep.NOTHING, LauncherUpdateStep.KEEP_PENDING -> null
+        LauncherUpdateStep.ALREADY_RUNNING -> {
+            // update is non-null here: a withdrawn row never reaches this step.
+            Log.i(LOG_TAG, "The launcher row ${update?.releaseTag} is not newer than the running build - recorded as installed")
+            if (pending != null) SelfUpdate.dropPending(context)
+            if (update != null) TrackedAppUpdateState.recordInstalled(context, key, update.releaseTag)
+            null
+        }
         LauncherUpdateStep.DROP_PENDING -> {
             Log.i(LOG_TAG, "Dropping the pending launcher update ${pending?.releaseTag} (installed or withdrawn)")
             SelfUpdate.dropPending(context)

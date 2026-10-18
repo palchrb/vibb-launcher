@@ -39,6 +39,23 @@ enum class LauncherUpdateStep {
     REPLACE_PENDING,
     /** The release is installed already, or the server withdrew it: delete the pending APK. */
     DROP_PENDING,
+    /** The running build already is this release or newer (a QR/adb install the launcher has no
+     * record of): record it installed, delete any pending APK, download nothing. */
+    ALREADY_RUNNING,
+}
+
+private val LAUNCHER_TAG = Regex("""^launcher-v(\d{1,4})\.(\d{1,3})\.(\d{1,3})(-rc\.\d+)?$""")
+
+/**
+ * The versionCode the release workflow builds for [releaseTag] (the part before `@` of the
+ * server's `release_tag`): `launcher-vX.Y.Z` -> `X*1_000_000 + Y*1_000 + Z`, `launcher-vX.Y.Z-rc.N`
+ * -> that minus 1 (.github/workflows/launcher.yml); null for any other tag.
+ */
+fun launcherTagVersionCode(releaseTag: String): Long? {
+    val m = LAUNCHER_TAG.matchEntire(releaseTag.substringBefore('@')) ?: return null
+    val (x, y, z) = m.destructured
+    val code = x.toLong() * 1_000_000 + y.toLong() * 1_000 + z.toLong() - if (m.groupValues[4].isEmpty()) 0 else 1
+    return code.takeIf { it >= 1 }
 }
 
 /**
@@ -47,6 +64,8 @@ enum class LauncherUpdateStep {
  *   pending APK is dropped (withdrawn release);
  * - the advertised release is installed, or was refused for good ([refusedTag]): nothing (a
  *   pending leftover is dropped);
+ * - the advertised tag's versionCode ([launcherTagVersionCode]) is not above the running build's
+ *   ([runningVersionCode]): [LauncherUpdateStep.ALREADY_RUNNING] - a tag that doesn't parse goes on;
  * - a download or commit in flight ([attemptInFlight]): nothing;
  * - the advertised release failed less than an hour ago: nothing (the backoff), a pending APK of
  *   another release is dropped;
@@ -65,12 +84,15 @@ fun launcherUpdateStep(
     nowMs: Long,
     failedBackoffMs: Long,
     refusedTag: String? = null,
+    runningVersionCode: Long? = null,
 ): LauncherUpdateStep {
     // Installed, withdrawn, or refused for good (a deterministic failure - wrong signer, older,
     // not ours: qa-11-code #4) until the server advertises another release.
     if (advertisedTag == null || advertisedTag == lastInstalledTag || advertisedTag == refusedTag) {
         return if (pending != null) LauncherUpdateStep.DROP_PENDING else LauncherUpdateStep.NOTHING
     }
+    val tagCode = launcherTagVersionCode(advertisedTag)
+    if (tagCode != null && runningVersionCode != null && tagCode <= runningVersionCode) return LauncherUpdateStep.ALREADY_RUNNING
     if (attemptInFlight) return LauncherUpdateStep.NOTHING
     val backingOff = advertisedTag == lastFailedTag && lastFailedAtMs != null && nowMs - lastFailedAtMs < failedBackoffMs
     if (backingOff) {

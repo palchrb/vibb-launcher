@@ -115,8 +115,18 @@ class HomeGateTest {
         assertTrue(night.contains("setContentView(ground.root)"))
         assertTrue(night.contains("closeOverlays()"))
         // No swipe to the drawer or the kid's Settings on the night ground.
-        val touch = home.substringAfter("override fun onTouchEvent(event: MotionEvent)").substringBefore("\n    }")
-        assertTrue(touch, touch.contains("if (contentShown) gestureDetector.onTouchEvent(event)"))
+        val fling = home.substringAfter("override fun onFling(").substringBefore("\n        })")
+        assertTrue(fling, fling.contains("contentShown = contentShown"))
+        // qa-r1-apps-code L2: the detector is fed from one place only, dispatchTouchEvent, which
+        // records the DOWN's inputs and turns a swipe's UP into a cancel for the views.
+        assertEquals(1, Regex(Regex.escape("gestureDetector.onTouchEvent(")).findAll(home).count())
+        val dispatch = home.substringAfter("override fun dispatchTouchEvent(ev: MotionEvent)").substringBefore("\n    }")
+        for (part in listOf("gestureDetector.onTouchEvent(ev)", "ACTION_DOWN", "downStart = swipeStart(ev)", "ACTION_CANCEL", "super.dispatchTouchEvent(cancel)", "recycle()")) {
+            assertTrue(part, dispatch.contains(part))
+        }
+        for (banned in listOf("override fun onTouchEvent", "addOnItemTouchListener", "homeContactsScroll.setOnTouchListener")) {
+            assertFalse(banned, home.contains(banned))
+        }
         // Every render binds only while the content is shown.
         for (render in listOf("render", "renderCallParts", "renderGrid", "renderWallpaper", "renderCallCard", "refreshApps", "loadMissedCalls", "resumeContent")) {
             val first = body(home, render).lines().drop(1).first { it.isNotBlank() }.trim()

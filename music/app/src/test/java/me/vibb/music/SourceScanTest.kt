@@ -126,6 +126,10 @@ class SourceScanTest {
         assertFalse("never androidx.webkit (no new dependency, §11)", host.contains("androidx.webkit"))
         assertFalse("never mixed content", host.contains("mixedContentMode"))
         val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        // qa-r1-apps-code N3: the update receiver takes the system's protected broadcast only
+        val replaced = manifest.substringAfter("android:name=\".PackageReplacedReceiver\"").substringBefore("</receiver>")
+        assertTrue("PackageReplacedReceiver is not exported", replaced.contains("android:exported=\"false\""))
+        assertTrue(replaced.contains("android.intent.action.MY_PACKAGE_REPLACED"))
         assertTrue(manifest.contains(WEBVIEW_META_SAFE_BROWSING) && manifest.contains(WEBVIEW_META_METRICS))
         assertTrue(manifest.contains("$WEBVIEW_META_SAFE_BROWSING\"\n            android:value=\"false\""))
         assertTrue(manifest.contains("$WEBVIEW_META_METRICS\"\n            android:value=\"true\""))

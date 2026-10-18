@@ -87,6 +87,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Updated in place: sync, so Device > Music gets the new app's report (a protected
+             broadcast only the system sends, so not exported). -->
+        <receiver
+            android:name=".PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Media3's receiver, but a press with nothing to resume never starts the service (M2). -->
         <receiver
             android:name=".playback.KidMediaButtonReceiver"

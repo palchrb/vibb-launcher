@@ -107,6 +107,45 @@ class EpisodeArtTest {
         assertFalse("book 3 isn't kept", pics.getValue("b3") in w.keep)
     }
 
+    @Test
+    fun `ahead comes last in later, deduplicated, within the cap`() {
+        val w = wantedArt(listOf(a), listOf(b), listOf(c), emptyList(), held = setOf(e), libraryCovers = emptySet(), ahead = listOf(d, b, a, e, f))
+        assertEquals(listOf(a), w.now)
+        assertEquals(listOf(b, c, d, f), w.later)
+        assertTrue("a held one ahead is kept", e in w.keep)
+        val many = (0 until 700).map { art("s$it") }
+        val capped = wantedArt(emptyList(), listOf(a), emptyList(), emptyList(), emptySet(), emptySet(), ahead = many)
+        assertEquals(listOf(a) + many.take(WANT_ART_MAX - 1), capped.later)
+    }
+
+    /** A Spotify list-mode entry keeps nothing: its next tracks' pictures come ahead of play. */
+    @Test
+    fun `a Spotify list entry wants its next tracks' art from where a tap starts it`() {
+        val tracks = (1..80).map { "t$it" }
+        val pics = tracks.associateWith { art(it) }
+        fun spotify(id: Long, mode: String) =
+            entry(id, Source.SPOTIFY, target = "spotify:playlist:FAKEid$id", order = "oldest_first", cache = 0).copy(spotifyMode = mode)
+        val list = spotify(8, "list")
+        val context = spotify(9, "context")
+        val rss = entry(1, cache = 0)
+        val lib = library(listOf(rss, list, context))
+        val rows = items(8, tracks, art = pics) + items(9, listOf("c1"), art = mapOf("c1" to a)) + items(1, listOf("r1"), art = mapOf("r1" to b))
+        // Unstarted: its first 50 in play order. The context entry's one item is given a picture here
+        // (its synthetic item has none), so only the context-mode skip keeps it out.
+        val base = snapshot(lib, rows)
+        val withContextArt = base.copy(listed = base.listed + (9L to base.listed.getValue(9L).map { it.copy(artHash = a) }))
+        val fresh = artWant(withContextArt, emptyList(), -1, held = emptySet(), recent = emptyList())
+        assertEquals(tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.later)
+        assertFalse("a context entry and an RSS entry at depth 0 want nothing", a in fresh.keep || b in fresh.keep)
+        // Bookmarked on t60: t60..t80, then round to t1..t29, as the rotated queue plays.
+        val started = artWant(snapshot(lib, rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, held = emptySet(), recent = emptyList())
+        val expected = (tracks.drop(59) + tracks.take(59)).take(SPOTIFY_ART_AHEAD)
+        assertEquals(expected.map { pics.getValue(it) }, started.later)
+        // Resume off: always from the first.
+        val noResume = artWant(snapshot(library(listOf(list.copy(resume = false))), rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, emptySet(), emptyList())
+        assertEquals(fresh.later, noResume.later)
+    }
+
     /** Design 30 §1.11 (L3): a kept episode's picture stays as long as its audio - a played extra's too. */
     @Test
     fun `an extra's picture is kept`() {
