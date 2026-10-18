@@ -98,8 +98,9 @@ there are more than two (the first label may be an id), never the path; an IP as
 
 ## 3. Data model
 
-Migration `NNNN_custom_dns.sql`, the next free number on `main` when this merges (0078 today; 0079 if design 35
-lands first); added to the migrations-in-order test.
+Migration `0079_custom_dns.sql` (design 35 takes 0078 as one file for both of its steps, decided 2026-10-18 after
+its design QA; if 36 ships first, 0078 stays reserved for 35 and this is still 0079); added to the
+migrations-in-order test.
 
 ```sql
 ALTER TABLE dns_filter_settings ADD COLUMN custom_server TEXT NOT NULL DEFAULT '';
