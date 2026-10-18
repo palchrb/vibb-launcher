@@ -313,6 +313,7 @@ struct MusicTemplate {
     /// in" (an account that can read), "No login", or "No app".
     spotify_state: &'static str,
     phones: Vec<PhoneRow>,
+    bell: crate::parent_events::Bell,
 }
 
 /// `/music/settings`: new episodes, Storytel, the music app, files no entry uses.
@@ -510,6 +511,7 @@ async fn music_page(
             "No login"
         },
         phones,
+        bell: crate::parent_events::Bell::load(&state.db).await,
     })
 }
 

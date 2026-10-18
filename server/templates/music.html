@@ -9,6 +9,7 @@
 <main class="container">
     {#- The bar is always there, so the title doesn't move when Edit appears with the second entry. -#}
     <div class="title-bar">
+        {% include "partials/bell.html" %}
         {% if edit %}
         <a class="title-action" href="/music#entries" data-edit="done">Done</a>
         {% else if entries.len() > 1 %}

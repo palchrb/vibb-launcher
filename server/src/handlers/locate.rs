@@ -31,6 +31,7 @@ struct LocateTemplate {
     /// Every phone: the switcher above the chosen one, or the list when none is chosen.
     phones: Vec<PhoneLink>,
     selected: Option<Locate>,
+    bell: crate::parent_events::Bell,
 }
 
 /// A phone in the switcher (or the list): its state as a dot and, for screen readers, in its
@@ -510,6 +511,7 @@ async fn render_locate_page(
             title: "Locate".to_string(),
             phones,
             selected,
+            bell: crate::parent_events::Bell::load(&state.db).await,
         }
         .render()
         .unwrap(),

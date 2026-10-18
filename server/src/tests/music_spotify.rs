@@ -191,11 +191,12 @@ fn migrations_73_to_79_in_order() {
             (75, "clock format".to_string()),
             (76, "softer wallpapers".to_string()),
             (77, "vibb one".to_string()),
+            (78, "parent events".to_string()),
             (79, "custom dns".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
-         wallpapers), 0077 (Vibb One) and 0079 (the custom DNS server) stay in this order: the \
-         backup before migrating compares only the highest version"
+         wallpapers), 0077 (Vibb One), 0078 (design 35) and 0079 (the custom DNS server) stay in \
+         this order: the backup before migrating compares only the highest version"
     );
 }
 

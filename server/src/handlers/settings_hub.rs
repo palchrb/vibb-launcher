@@ -26,6 +26,8 @@ use crate::handlers::backups::{BACKUP_DIR, is_safe_backup_filename};
 struct SettingsHubTemplate {
     title: String,
     values: HubValues,
+    /// The bell and the Notifications row's "3 unread" (design 35 §5.1).
+    bell: crate::parent_events::Bell,
 }
 
 /// The value at the end of each hub row; `None` shows nothing (none yet, or a read failed - the
@@ -60,6 +62,7 @@ pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
         SettingsHubTemplate {
             title: "Settings".to_string(),
             values,
+            bell: crate::parent_events::Bell::load(&state.db).await,
         }
         .render()
         .unwrap(),

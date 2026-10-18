@@ -109,8 +109,11 @@ fn every_template_with_the_bar_sets_its_tab() {
             .strip_prefix("{% let tab = \"")
             .and_then(|rest| rest.strip_suffix("\" %}"))
             .unwrap_or_else(|| panic!("{}: no tab before the header", path.display()));
+        // Notifications is reached from the bell on every tab page: no tab is current (design 35
+        // §5.1).
         assert!(
-            ["devices", "apps", "locate", "music", "settings"].contains(&tab),
+            ["devices", "apps", "locate", "music", "settings"].contains(&tab)
+                || (file == "notifications.html" && tab.is_empty()),
             "{}: {tab}",
             path.display()
         );
@@ -586,6 +589,7 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         "/account".to_string(),
         "/security".to_string(),
         "/backups".to_string(),
+        "/notifications".to_string(),
     ];
     for phone in [id, not_set_up] {
         for section in [

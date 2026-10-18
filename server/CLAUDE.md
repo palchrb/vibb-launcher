@@ -400,7 +400,10 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_79_in_order`). **0078 is reserved for design 35** (decided 2026-10-18); `0079_custom_dns.sql` (design 36) sits above it, so 0078 must reach a server before or with 0079, never after (the out-of-order hazard above). The next free number after both is 0080.
+(`migrations_73_to_79_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+`0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
+out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both). The next
+free number is 0080.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -417,6 +420,7 @@ this file or the design doc; a dev database that ran an earlier text needs a fre
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows) and `device_policy.lock_glance_text` - see "The lock's glance page"
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
+- `parent_events` (kept 90 days), `notification_settings` (singleton), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
@@ -431,7 +435,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message, requested_at?}` → 204 (implies the receipt; a wipe only when it was refused)
 - `POST /api/devices/command-receipt` (bearer) - `{command_id, requested_at?}` → 204: the phone got the command and is about to run it (security review L12; the first receipt counts). `pending_command` is `{id, command, requested_at}`: an id alone isn't unique across a restored backup or another server, so the phone keys "ran it already" on both and sends `requested_at` back; an answer that names another `requested_at` counts for nothing (QA of the launcher wave, Medium 1)
-- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots}` (installed apps may carry `installer`) → 204
+- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots, battery}` (installed apps may carry `installer`) → 204
 - `GET /api/devices/contact-photos/{hash}` (bearer) - a contact photo, only for this device's contacts
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
@@ -1231,7 +1235,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password` (QA 22 M4). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
-  JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
+  JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
@@ -1870,6 +1874,43 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (save/refusals/Forget/the event, the policy shapes, a pair that isn't valid, the status contract and both copies,
   the footer's lines), `policy_json_keys_snapshot` (`dns_upstream` and its `backup`), the settings redirect table,
   `migrations_73_to_79_in_order`.
+
+## Notifications to the parent, step 1: events and the inbox (design 35 §9 step 1, `docs/design/35-parent-notifications.md`, migration `0078_parent_events.sql`)
+
+- **Events** (`src/parent_events.rs`): one row per event in `parent_events`, stored by `parent_events::raise(conn,
+  &NewEvent)` (`INSERT ... ON CONFLICT (device_id, kind, dedup_key) DO NOTHING RETURNING id`, on the caller's
+  connection, so `pin_events`' transaction holds it; a target that isn't a local path - `local_target`: one leading `/`,
+  never `//` or `/\` - is refused). The words are made at raise by `Phone` (name, battery latch, Phone Setup zone, now;
+  `Phone::load`) from typed values, cut to 60/100 characters (a long phone name gets "…", the rest stays), local times:
+  `emergency_call` (`device_api::status`, `parent_events::new_emergency_call`: newer than the previous report's
+  `call_state.last_emergency_call_at`; when that report named none - or there is none - at most 24 h old), `pin_lockout`/`pin_used`
+  (`handlers::parent_pin::pin_events`, a newly stored `lockout`/`unlocked`, in its transaction), `foreign_access`
+  (`handlers::window_relock::log_foreign_access`, now on `&AppState`: the set changed and isn't empty; key = previous
+  report id + 16 hex of the stored set's SHA-256, both from the intake's one read of the previous report,
+  `PreviousReport`, so parallel reports agree; `detail` = the apps by the phone's names), `unseen_boot` (where
+  `boot_witness::log_line` returns a line), `low_battery` (below). Every kind is stored; `notification_settings`'
+  switches govern the push only (step 2). `Kind::urgent()/ttl()/urgency()` and the reserved kinds come with step 2.
+- **The battery** (§2.5): status `battery` `{level, charging, low}` (`models::BatteryReport`, read by
+  `lenient_battery`: not an object with a level in 0..=100 drops the reading, never the report) ->
+  `device_status.battery_level`/`battery_charging`; the pure `battery_edge(latched, &battery)` (armed + `low` → Raise,
+  latched + neither low nor charging → Rearm), `battery_report` latches `devices.battery_low_since` with a conditional
+  UPDATE and raises only when that changed the row, in one transaction. "Battery 14 %, charging · 3 min ago"
+  (`battery_line`, the report's age) on the Devices row (`time_glance` reads it with the badge) and in the summary's header.
+- **PWA**: the bell (`partials/bell.html`, `parent_events::Bell::load`, one partial-index COUNT, no cache) in the
+  `.title-bar` of the five tab pages (Locate and Settings gained the bar), before the page's own action; the count
+  renders server-side ("99+", `data-unread`). `/notifications` (`handlers::notifications`, full auth): back link to the
+  tab of `?from=`, no tab current (`shell::every_template_with_the_bar_sets_its_tab` allows `""` for it alone), Inbox
+  (`#inbox`: the phone picker `?device=` as an auto-saving GET form with a `<noscript>` Show, 100 newest, "Show
+  older" `?before=`, each row a form `POST /notifications/{id}/open` - marks read, 303 to the target, a gone event or
+  a non-local target back to `#inbox` -, Mark All as Read `POST /notifications/read-all` back to `#inbox` with `from`
+  and `device`), Notify Me About (`#events`, one auto-saving form, `POST /notifications/settings` writes every switch,
+  the columns named by `Kind::switch()`). The inbox is `no-store` (`no_store_path`), so Back never shows its stale
+  dots; the tab pages keep their cache, so the bell's count may lag one navigation after Back. The Settings hub's first row "Notifications · 3 unread". This Device,
+  Getting Notifications, the warnings and the delivery line are step 2. CSS under "/* Design 35 */" at the end of
+  `style.css` (`?v=32`).
+- **Retention**: `parent_events` 90 days by `created_at`, `push_deliveries` 30 days, `gone` subscriptions 30 days
+  after `gone_at` (`retention::Pruned::parent_events`/`push_rows`); a deleted phone's events cascade.
+- Tests: `parent_events::tests` (the words/targets table, the battery edge, the emergency rule), `src/tests/notifications.rs`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

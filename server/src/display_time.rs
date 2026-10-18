@@ -178,6 +178,18 @@ impl Zone {
         }
     }
 
+    /// [when] that always carries the clock time: "10:59" today, "yesterday 21:40", else
+    /// "12 Oct 08:12" ("12 Oct 2025 08:12") - for a notification's summary, which may arrive days
+    /// late (design 35).
+    pub fn at(&self, t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+        let (day, today) = (self.local(t).date_naive(), self.today(now));
+        if day == today || today.pred_opt() == Some(day) {
+            self.when(t, now)
+        } else {
+            format!("{} {}", self.date(t, now), self.clock(t))
+        }
+    }
+
     /// [until] for a stored time (`datetime('now')` text, UTC); a text that doesn't parse is shown
     /// as stored, labelled "UTC".
     pub fn until_db(&self, stored: &str, now: DateTime<Utc>) -> String {
@@ -309,6 +321,17 @@ mod tests {
             zone.relative(utc("2026-10-12 21:50:00"), after_midnight),
             "20 min ago"
         );
+    }
+
+    #[test]
+    fn at_always_carries_the_clock_time() {
+        let zone = oslo();
+        let now = utc("2026-10-13 12:00:00"); // 14:00 in Oslo
+        let at = |s: &str| zone.at(utc(s), now);
+        assert_eq!(at("2026-10-13 06:12:00"), "08:12");
+        assert_eq!(at("2026-10-12 21:59:00"), "yesterday 23:59");
+        assert_eq!(at("2026-10-11 21:59:00"), "11 Oct 23:59");
+        assert_eq!(at("2025-12-31 12:00:00"), "31 Dec 2025 13:00");
     }
 
     #[test]

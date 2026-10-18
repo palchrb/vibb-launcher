@@ -94,6 +94,9 @@ data class StatusReportRequest(
      * forwards to - see [DnsUpstreamReport]; `null` (left out) while the Web filter is off or no
      * custom server is configured. Sent from design 36 step 2 on. */
     val dnsUpstream: DnsUpstreamReport? = null,
+    /** Design 35 §2.5: the battery, for the parent's "Battery low" event and the PWA's battery
+     * line - see [BatteryReport]. Not set yet (design 35 step 3 reads it); `null` = left out. */
+    val battery: BatteryReport? = null,
 )
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the
@@ -107,6 +110,14 @@ data class DnsUpstreamReport(
     val sinceMs: Long?,
     val reason: String?,
 )
+
+/**
+ * `StatusReportRequest.battery` (design 35 §2.5; no defaults: every field is always sent): the
+ * level in percent (0..100; the server drops the reading otherwise), whether the phone is charging
+ * (plugged in, or charging/full), and Android's own "battery low" (`EXTRA_BATTERY_LOW`).
+ */
+@Serializable
+data class BatteryReport(val level: Int, val charging: Boolean, val low: Boolean)
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the
  * device admins and accessibility services found. Both keys always sent. */

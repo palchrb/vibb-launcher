@@ -28,6 +28,7 @@ mod music_secret;
 mod music_sources;
 mod music_sweep;
 mod net;
+mod parent_events;
 mod parent_pin;
 mod phone;
 mod photos;
@@ -1196,6 +1197,20 @@ pub fn build_admin_router(
         .route("/updates", get(handlers::updates::show_updates_page))
         .route("/security", get(handlers::admin::security_log))
         .route("/security/unban", post(handlers::admin::unban_ip))
+        // Design 35: the inbox and Notify Me About.
+        .route("/notifications", get(handlers::notifications::page))
+        .route(
+            "/notifications/{id}/open",
+            post(handlers::notifications::open),
+        )
+        .route(
+            "/notifications/read-all",
+            post(handlers::notifications::read_all),
+        )
+        .route(
+            "/notifications/settings",
+            post(handlers::notifications::save_settings),
+        )
         .route("/account", get(handlers::auth::account_page))
         .route(
             "/account/password",

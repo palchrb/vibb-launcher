@@ -362,28 +362,16 @@ pub async fn log_relock_blocks(
     }
 }
 
-/// The latest report's `foreign_access`, read before a new report is stored.
-pub async fn previous_foreign_access(db: &sqlx::SqlitePool, device_id: i64) -> Option<String> {
-    let json: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT foreign_access_json FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(db)
-    .await
-    .unwrap_or_else(|err| {
-        tracing::error!(device_id, %err, "can't read the previous foreign access");
-        None
-    });
-    json.flatten()
-}
-
-/// `phone_foreign_access` when the finding appears, changes or goes.
+/// `phone_foreign_access` when the finding appears, changes or goes; and, when it appears or
+/// changes, the parent's `foreign_access` event (design 35 §2.1) about `phone` (with the phone's
+/// report before this one, 0 for none), the apps by the phone's names (`installed_json`).
 pub async fn log_foreign_access(
-    db: &sqlx::SqlitePool,
+    state: &AppState,
     device_id: i64,
+    phone: Option<(&crate::parent_events::Phone, i64)>,
     previous: Option<&str>,
     now: Option<&str>,
+    installed_json: Option<&str>,
 ) {
     let before = window_relock::parse_foreign_access(previous);
     let after = window_relock::parse_foreign_access(now);
@@ -391,13 +379,18 @@ pub async fn log_foreign_access(
         return;
     }
     security::record_security_event(
-        db,
+        &state.db,
         "phone_foreign_access",
         None,
         None,
         Some(&window_relock::foreign_log_line(device_id, after.as_ref())),
     )
     .await;
+    if let (Some((phone, previous_status_id)), Some(found), Some(stored)) = (phone, &after, now) {
+        let names = window_relock::app_names(installed_json);
+        let event = phone.foreign_access(found, stored, previous_status_id, &names);
+        crate::parent_events::raise_logged(&state.db, &event).await;
+    }
 }
 
 /// The latest report's relock time, read before a new report is stored.

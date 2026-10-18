@@ -2058,3 +2058,16 @@ details.app-display[open] > summary .section-chev {
 
 .phone-lines { list-style: none; margin: 6px 0; padding: 0; }
 .phone-lines > li + li { margin-top: 2px; }
+
+/* Design 35 */
+
+/* The bell in a tab page's bar, before the page's own action; the unread count as a red pill on
+   its corner. */
+.title-bell { position: relative; justify-content: center; min-width: 44px; padding: 0; }
+.title-bell svg { width: 22px; height: 22px; }
+.title-bell + .title-action { margin-left: 4px; }
+.bell-count { position: absolute; top: 4px; left: 24px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--count-bg); color: #FFFFFF; font-size: 0.6875rem; font-weight: 700; line-height: 18px; text-align: center; }
+/* The inbox: a row is a form's button; unread is bold with a blue dot. */
+.inbox-row { cursor: pointer; }
+.inbox-unread .inbox-title { font-weight: 600; }
+.unread-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--tint); vertical-align: middle; }
