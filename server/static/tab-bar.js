@@ -1,9 +1,11 @@
-// The tab bar comes back after an iOS resume. An installed app (standalone) that returns from the
-// background can keep a stale viewport, and the fixed `bottom: 0` bar then sits below the visible
-// area until the app is killed. CSS can't reach that: when the page shows again (`pageshow`, a
-// `visibilitychange` to visible) or the viewport changes size, the bar is laid out once more
-// against the current viewport. The bar is fixed - outside the page's flow - so nothing else moves
-// and the page never scrolls; it happens within one frame, so nothing flickers.
+// The tab bar back after an iOS resume. [needs device check: resume a standalone install on the
+// iPhone after > 1 min in the background, the bar visible.] The bug it targets is a hypothesis: an
+// installed app (standalone) that returns from the background may keep a stale viewport, and the
+// fixed `bottom: 0` bar then sits below the visible area until the app is killed. When the page
+// shows again (`pageshow`, a `visibilitychange` to visible) - and, in an installed app only, when
+// the viewport changes size (Safari's toolbars resize it during every scroll) - the bar is laid out
+// once more against the current viewport. The bar is fixed - outside the page's flow - so nothing
+// else moves and the page never scrolls. Delete this file if the device check shows no effect.
 // Run its tests: node --test jstest/tab-bar.test.js
 (function (root) {
     "use strict";
@@ -29,7 +31,8 @@
         }
 
         win.addEventListener("pageshow", queue);
-        win.addEventListener("resize", queue);
+        var standalone = win.matchMedia && win.matchMedia("(display-mode: standalone)").matches;
+        if (standalone) win.addEventListener("resize", queue);
         doc.addEventListener("visibilitychange", function () {
             if (doc.visibilityState === "visible") queue();
         });

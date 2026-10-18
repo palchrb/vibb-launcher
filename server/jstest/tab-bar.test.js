@@ -6,7 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { install } = require("../static/tab-bar.js");
 
-function fakeWindow({ bar = true } = {}) {
+function fakeWindow({ bar = true, standalone = true } = {}) {
     const listeners = {};
     const frames = [];
     const tabBar = {
@@ -38,6 +38,9 @@ function fakeWindow({ bar = true } = {}) {
         addEventListener: (type, fn) => {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
         },
+        matchMedia: (query) => ({
+            matches: query === "(display-mode: standalone)" && standalone,
+        }),
         requestAnimationFrame: (fn) => {
             frames.push(fn);
         },
@@ -80,4 +83,14 @@ test("going to the background does nothing; a page without the bar is fine", () 
     install(bare);
     bare.fire("win:pageshow");
     assert.doesNotThrow(() => bare.runFrames());
+});
+
+test("in Safari (not installed) a resize does nothing; a pageshow still lays the bar out", () => {
+    const win = fakeWindow({ standalone: false });
+    install(win);
+    win.fire("win:resize");
+    assert.strictEqual(win.frames.length, 0);
+    win.fire("win:pageshow");
+    win.runFrames();
+    assert.deepStrictEqual(win.tabBar.displays, ["none", "read", ""]);
 });

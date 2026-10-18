@@ -1917,6 +1917,8 @@ input.row-num { width: 6.5em; text-align: right; }
 /* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
 .editor-bar { position: -webkit-sticky; position: sticky; top: 0; top: env(safe-area-inset-top, 0px); z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
+/* The container's sides take the notch's inset in landscape: the bar's background reaches its edge too. */
+.editor-bar { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
 
 /* ---- Design 31 step 10: the phone's summary ---- */
