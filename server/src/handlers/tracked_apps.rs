@@ -1371,6 +1371,7 @@ struct AppsListTemplate {
     title: String,
     phones: Vec<PhoneRow>,
     apps: Vec<CatalogRow>,
+    bell: crate::parent_events::Bell,
 }
 
 /// The Apps tab (design 31 §3.3): each phone with how many apps it allows, the catalog - every
@@ -1429,6 +1430,7 @@ pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
             title: "Apps".to_string(),
             phones,
             apps,
+            bell: crate::parent_events::Bell::load(&state.db).await,
         }
         .render()
         .unwrap(),

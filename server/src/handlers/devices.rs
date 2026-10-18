@@ -25,6 +25,8 @@ struct DeviceListRow {
     /// While a rule locks the phone: "Skole until 14:30".
     lock: Option<String>,
     screen_time: Option<crate::time_state::ScreenTime>,
+    /// "Battery 14 %, charging" from the last report (design 35 §2.5); `None` without one.
+    battery: Option<String>,
     /// Attention rows on the phone's page (the red badge).
     attention: usize,
 }
@@ -50,6 +52,7 @@ struct DevicesListTemplate {
     /// Failed 2FA codes since this sign-in, and the lock (QA 22 Low 9).
     live_warning: Option<crate::handlers::auth::WarningRow>,
     warning_back: &'static str,
+    bell: crate::parent_events::Bell,
 }
 
 pub async fn list_devices(
@@ -80,6 +83,7 @@ pub async fn list_devices(
             ),
             live_warning: crate::handlers::auth::live_warning_row(&admin, &zone, now),
             warning_back: "/devices",
+            bell: crate::parent_events::Bell::load(&state.db).await,
         }
         .render()
         .unwrap(),
@@ -108,7 +112,7 @@ async fn list_row(
     };
     let facts = crate::attention::facts(state, &device, connection).await;
     let attention = crate::attention::items(device.id, &facts).len();
-    let (lock, screen_time) = if device.enrolled_at.is_some() {
+    let (lock, screen_time, battery) = if device.enrolled_at.is_some() {
         time_glance(
             state,
             device.id,
@@ -119,7 +123,7 @@ async fn list_row(
         )
         .await
     } else {
-        (None, None)
+        (None, None, None)
     };
     let lock = lock.map(|badge| match &detail {
         Some(seen) => badge.text_beside(seen.trim_start_matches("seen ")),
@@ -141,16 +145,22 @@ async fn list_row(
         detail_title,
         lock,
         screen_time,
+        battery,
         attention,
     }
 }
 
 /// A phone's avatar colour (also on the Apps tab): grey until it is set up, else by its id.
 pub(crate) fn avatar_class(device: &Device) -> &'static str {
-    if device.enrolled_at.is_none() {
-        "avatar-grey"
+    avatar_class_of(device.id, device.enrolled_at.is_some())
+}
+
+/// [avatar_class] from the phone's id and whether it is set up (the inbox's rows).
+pub(crate) fn avatar_class_of(id: i64, enrolled: bool) -> &'static str {
+    if enrolled {
+        AVATAR_COLOURS[id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
     } else {
-        AVATAR_COLOURS[device.id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
+        "avatar-grey"
     }
 }
 
@@ -196,9 +206,9 @@ pub(crate) fn connection_inputs(
     }
 }
 
-/// The lock badge and today's screen time from the phone's last report (design 31 §3.10, M4), for
-/// the Devices list: one small read, and the rules only while one locks the phone. A failed read
-/// is logged and shows neither.
+/// The lock badge, today's screen time and the battery ("Battery 14 %", design 35 §2.5) from the
+/// phone's last report (design 31 §3.10, M4), for the Devices list: one small read, and the rules
+/// only while one locks the phone. A failed read is logged and shows none of them.
 pub(crate) async fn time_glance(
     state: &AppState,
     device_id: i64,
@@ -209,10 +219,12 @@ pub(crate) async fn time_glance(
 ) -> (
     Option<crate::time_state::LockBadge>,
     Option<crate::time_state::ScreenTime>,
+    Option<String>,
 ) {
-    let latest: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT reported_at, lock_reason, time_state_json FROM device_status \
-         WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    type Latest = (String, String, Option<String>, Option<i64>, Option<bool>);
+    let latest: Option<Latest> = sqlx::query_as(
+        "SELECT reported_at, lock_reason, time_state_json, battery_level, battery_charging \
+         FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device_id)
     .fetch_optional(&state.db)
@@ -221,11 +233,14 @@ pub(crate) async fn time_glance(
         tracing::error!(device_id, %err, "can't read the last report for the time badge");
         None
     });
+    let battery = latest
+        .as_ref()
+        .and_then(|l| crate::parent_events::battery_line(l.3, l.4));
     let Some((reported_at, report)) = latest
         .as_ref()
-        .and_then(|(at, reason, json)| time_report(at, reason, json.as_deref()))
+        .and_then(|(at, reason, json, ..)| time_report(at, reason, json.as_deref()))
     else {
-        return (None, None);
+        return (None, None, battery);
     };
     // Every effective rule's days (an end is shown only if none locks at it), only while a rule
     // locks the phone. A rule whose days don't read is kept as "always on" (no end).
@@ -244,7 +259,7 @@ pub(crate) async fn time_glance(
             .await
             .unwrap_or_default();
     }
-    badge_and_screen(
+    let (lock, screen) = badge_and_screen(
         &report,
         reported_at,
         &rules,
@@ -252,7 +267,8 @@ pub(crate) async fn time_glance(
         calls_enforced,
         zone,
         now,
-    )
+    );
+    (lock, screen, battery)
 }
 
 /// A report's time and its typed `time_state` (or, from an older launcher, its lock reason).
@@ -708,6 +724,8 @@ struct DeviceDetailTemplate {
     seen_tail: Option<&'static str>,
     lock: Option<String>,
     screen_time: Option<crate::time_state::ScreenTime>,
+    /// "Battery 14 %, charging" from the last report (design 35 §2.5).
+    battery: Option<String>,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -1566,6 +1584,9 @@ async fn render_device(
             seen_tail,
             lock,
             screen_time,
+            battery: latest.as_ref().and_then(|s| {
+                crate::parent_events::battery_line(s.battery_level, s.battery_charging)
+            }),
             attention,
             pause_rules: time_rules
                 .as_deref()

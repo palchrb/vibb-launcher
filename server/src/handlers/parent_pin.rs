@@ -265,6 +265,8 @@ pub async fn pin_events(
         return StatusCode::PAYLOAD_TOO_LARGE;
     }
     let received_ms = chrono::Utc::now().timestamp_millis();
+    // The parent's events (design 35 §2.1): a newly stored use or lockout, in this transaction.
+    let phone = crate::parent_events::Phone::load(&state.db, device.id).await;
     let Ok(mut tx) = state.db.begin().await else {
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
@@ -302,12 +304,19 @@ pub async fn pin_events(
                 } else {
                     "parent_pin_lockout"
                 };
-                sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
-                    .bind(event_type)
-                    .bind(parent_pin::log_line(device.id, &event))
-                    .execute(&mut *tx)
-                    .await
-                    .map(|_| ())
+                let logged =
+                    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
+                        .bind(event_type)
+                        .bind(parent_pin::log_line(device.id, &event))
+                        .execute(&mut *tx)
+                        .await
+                        .map(|_| ());
+                match phone.as_ref().and_then(|phone| phone.pin_event(&event)) {
+                    Some(new) if logged.is_ok() => {
+                        crate::parent_events::raise(&mut tx, &new).await.map(|_| ())
+                    }
+                    _ => logged,
+                }
             }
             (Ok(_), _) => Ok(()),
         };

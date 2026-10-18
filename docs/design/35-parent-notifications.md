@@ -441,3 +441,36 @@ Every finding taken (none "not taken"); the orchestrator's calls are marked in t
 H2 §5.2; M1 §3; M2 §4.2; M3 §4.1; M4 (no IndexedDB queue, derived counters, a cap per pass, the per-IP limiter, an
 `Instant` (void with §2.3), no `Topic`) §4.3, §4.6, §6, §7; M5 §2.1, step 3; M6 §5.1. L1 §5.3; L2 §2.1; L3 §2.3
 (void since 2026-10-18); L4 §4.3; L5 §2.2, §5.2; L6 §7; L7 §4.3, §8; L8 §1 (changed by the orchestrator: push only); L9 §6, DEPLOY.md; N1-N5 in place.
+
+## Step 1 implementation status (2026-10-18, branch `notif-s1`)
+
+Built as §9 step 1: `0078_parent_events.sql` (all four tables, the switches' row, the battery columns),
+`src/parent_events.rs` (`Kind`, `Phone` - the words -, `NewEvent`, `raise`, `new_emergency_call`, `battery_edge`,
+`battery_report`, `battery_line`, `Bell`), every kind raised from its real input, the battery wire on both sides
+(Rust `Option<BatteryReport>`, Kotlin `BatteryReport` never set yet - `TimeStateZoneTest` and both copies of
+`time_status_report.json` unchanged), the battery line on the Devices row and the summary's header, the bell on the
+five tab pages, `/notifications` (Inbox, Notify Me About), the Settings hub row, retention. No Web Push, no launcher
+behaviour.
+
+Where the code differs from or fills in the text above:
+- `Kind` has no `urgent()`, `ttl()`, `urgency()` and no variants for the reserved kinds yet: nothing in step 1 reads
+  them (no dead code); they come with step 2's sender. `parent_events::tests`' table pins title, summary and target.
+- The status intake has no transaction of its own (it never had): the emergency call, the start without Vibb One and
+  the foreign app are each one `raise` on a pool connection (the dedup key makes repeats and parallel reports one
+  row); the battery's latch and its event share one transaction (`battery_report`). `raise` takes a
+  `&mut SqliteConnection`, so step 2 adds the delivery rows inside it. `pin_events` raises in its own transaction.
+- `battery` is read leniently: anything that isn't an object with a numeric level in 0..=100 and two booleans drops
+  the reading (logged), never the report.
+- Words not in §2.2's table: an emergency call on another day "Yesterday 21:40" / "12 Oct 08:12"; any other time in a
+  summary "14:02" today, "yesterday 21:40", else "12 Oct 08:12"; a lockout whose end has passed "Too many wrong
+  tries · <when it happened>"; foreign apps "N apps with accessibility on" / "with device admin or accessibility";
+  the use's place "Time lock", "Lock screen", "Vibb One's Settings", "Pause", "Play install mode". A long phone name
+  is cut with "…" so the title stays within 60 characters with the rest of its words.
+- The foreign apps' detail names them by the same report's app list (else the package).
+- The phone picker shows only with two or more phones; Mark All as Read only while something under the filter is
+  unread; the Settings hub's row says "3 unread" only above 0, and sits in its own group at the top of the hub. The
+  forms carry `from` (and `device`) so every redirect lands on the same view of the page.
+- Until step 2 the switches change nothing visible (every event is listed; nothing is pushed yet).
+
+Open for step 2: the delivery line, This Device, Getting Notifications, the warnings, the push tables' writers,
+`Kind`'s push properties, `log_foreign_access`'s and the intake's `push.wake()` after the raise.

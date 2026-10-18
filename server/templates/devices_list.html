@@ -9,6 +9,7 @@
 <main class="container">
     {#- A tab's landing page opens on its large title (design 31 step 15), under the mockup's bar. -#}
     <div class="title-bar">
+        {% include "partials/bell.html" %}
         <a class="title-action title-add" href="/devices/new" aria-label="Add phone"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 3v16M3 11h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></a>
     </div>
     <h1 class="page-title">Devices</h1>
@@ -44,6 +45,7 @@
                 {% if let Some(percent) = st.percent() %}<span class="meter device-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
                 <span class="row-sub" data-screen-time>{{ st.text() }}</span>
                 {% endif %}
+                {% if let Some(battery) = d.battery %}<span class="row-sub" data-battery>{{ battery }}</span>{% endif %}
             </span>
             {% if d.attention > 0 %}<span class="count" data-attention-count="{{ d.attention }}"><span aria-hidden="true">{{ d.attention }}</span><span class="visually-hidden">, {{ d.attention }} to check</span></span>{% endif %}
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

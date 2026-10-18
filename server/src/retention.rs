@@ -22,6 +22,8 @@ pub const STATUS_HISTORY_DAYS: i64 = 30;
 pub const CRASH_REPORT_DAYS: i64 = 30;
 /// The security log (`security_events`, design 22 QA c): sign-ins, refused requests, enrollments.
 pub const SECURITY_EVENT_DAYS: i64 = 180;
+/// Web Push deliveries, and subscriptions after they were turned off (design 35 §2.4).
+pub const PUSH_DAYS: i64 = 30;
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -34,6 +36,9 @@ pub struct Pruned {
     pub crashes: u64,
     pub security_events: u64,
     pub pin_events: u64,
+    pub parent_events: u64,
+    /// Push deliveries and turned-off subscriptions (design 35 §2.4).
+    pub push_rows: u64,
 }
 
 /// One pruning pass:
@@ -45,7 +50,9 @@ pub struct Pruned {
 ///   one that reported call enforcement (`call_policy_v1`);
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
 /// - security log entries older than [SECURITY_EVENT_DAYS];
-/// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived).
+/// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
+/// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries and turned-off
+///   subscriptions after [PUSH_DAYS] (design 35 §2.4).
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
         "DELETE FROM device_dns_events \
@@ -117,6 +124,28 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    let parent_events = sqlx::query(
+        "DELETE FROM parent_events WHERE created_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(crate::parent_events::EVENT_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
+    let deliveries = sqlx::query(
+        "DELETE FROM push_deliveries WHERE created_at < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(PUSH_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
+    let gone = sqlx::query(
+        "DELETE FROM push_subscriptions \
+         WHERE state = 'gone' AND COALESCE(gone_at, created_at) < datetime('now', '-' || ? || ' days')",
+    )
+    .bind(PUSH_DAYS)
+    .execute(db)
+    .await?
+    .rows_affected();
     Ok(Pruned {
         dns_events,
         locations,
@@ -124,6 +153,8 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
         crashes,
         security_events,
         pin_events,
+        parent_events,
+        push_rows: deliveries + gone,
     })
 }
 

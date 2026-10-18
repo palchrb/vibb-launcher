@@ -31,6 +31,7 @@ mod music_art;
 mod music_spotify;
 mod music_storytel;
 mod music_sweep;
+mod notifications;
 mod parent_pin;
 mod play;
 mod provisioning;

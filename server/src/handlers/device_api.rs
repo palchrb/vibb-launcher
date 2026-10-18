@@ -1093,9 +1093,11 @@ pub async fn status(
     .flatten()
     .flatten();
 
-    // The previous report, for the security log below (install mode started, new apps).
-    let previous: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT installed_apps_json, install_mode_until_ms FROM device_status \
+    // The previous report, for the security log below (install mode started, new apps) and the
+    // parent's events (design 35 §2.1: its emergency call, its id for foreign access).
+    type Previous = (Option<String>, Option<i64>, i64, Option<String>);
+    let previous: Option<Previous> = sqlx::query_as(
+        "SELECT installed_apps_json, install_mode_until_ms, id, call_state_json FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device.id)
@@ -1117,8 +1119,8 @@ pub async fn status(
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
-          relock_blocks_total, clock_format_applied) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          relock_blocks_total, clock_format_applied, battery_level, battery_charging) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1169,9 +1171,27 @@ pub async fn status(
             .map(|n| n.clamp(0, MAX_RELOCK_BLOCKS_TOTAL))
     }))
     .bind(report.clock_format_applied)
+    .bind(report.battery.map(|b| b.level))
+    .bind(report.battery.map(|b| b.charging))
     .execute(&state.db)
     .await
     .ok();
+    // Design 35 §2: the parent's events from this report, each raised once (its dedup key).
+    let phone = crate::parent_events::Phone::load(&state.db, device.id).await;
+    let previous_status_id = previous.as_ref().map_or(0, |p| p.2);
+    if let Some(phone) = &phone {
+        let previous_call = previous.as_ref().map(|p| emergency_call_at(p.3.as_deref()));
+        if let Some(at) = crate::parent_events::new_emergency_call(
+            emergency_call_at(call_state_json.as_deref()),
+            previous_call,
+            phone.now,
+        ) {
+            crate::parent_events::raise_logged(&state.db, &phone.emergency_call(at)).await;
+        }
+        if let Some(battery) = &report.battery {
+            crate::parent_events::battery_report(&state.db, phone, battery).await;
+        }
+    }
     if let Some(line) = crate::boot_witness::log_line(
         device.id,
         previous_unseen,
@@ -1179,6 +1199,10 @@ pub async fn status(
     ) {
         crate::security::record_security_event(&state.db, "boot_unseen", None, None, Some(&line))
             .await;
+        if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
+            crate::parent_events::raise_logged(&state.db, &phone.unseen_boot(count, last_at_ms))
+                .await;
+        }
     }
     crate::handlers::window_relock::log_relock(
         &state.db,
@@ -1188,10 +1212,12 @@ pub async fn status(
     )
     .await;
     crate::handlers::window_relock::log_foreign_access(
-        &state.db,
+        &state,
         device.id,
+        phone.as_ref().map(|phone| (phone, previous_status_id)),
         previous_foreign.as_deref(),
         foreign_access_json.as_deref(),
+        installed_apps_json.as_deref(),
     )
     .await;
     crate::handlers::window_relock::log_relock_blocks(
@@ -1220,7 +1246,13 @@ pub async fn status(
         }
     }
 
-    log_play_events(&state, device.id, &report, previous).await;
+    log_play_events(
+        &state,
+        device.id,
+        &report,
+        previous.map(|(apps, until, _, _)| (apps, until)),
+    )
+    .await;
 
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?")
         .bind(device.id)
@@ -1337,6 +1369,13 @@ pub async fn status(
     }
 
     StatusCode::NO_CONTENT
+}
+
+/// A stored `call_state`'s last emergency call (`last_emergency_call_at`, RFC 3339, read as the
+/// Calls page reads it).
+fn emergency_call_at(call_state_json: Option<&str>) -> Option<chrono::DateTime<chrono::Utc>> {
+    let state: serde_json::Value = serde_json::from_str(call_state_json?).ok()?;
+    crate::handlers::calls::parse_time(state.get("last_emergency_call_at")?.as_str()?)
 }
 
 /// Security-log lines from a status report compared with the previous one: Play install mode

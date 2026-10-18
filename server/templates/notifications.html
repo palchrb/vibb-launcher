@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{#- Reached from the bell on any tab page (design 35 §5.1): no tab is current, the back link goes
+    to the tab it came from. -#}
+{% let tab = "" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="{{ back.1 }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back.2 }}</a>
+    <h1 class="page-title">Notifications</h1>
+
+    {#- A row is a form: its POST marks the event read and goes to where it happened (no GET
+        changes state). Mark All as Read and the picker come back here (#inbox). -#}
+    <section id="inbox" aria-labelledby="inbox-title">
+        <h2 class="group-header" id="inbox-title">Inbox</h2>
+        {% if phones.len() > 1 %}
+        <form method="get" action="/notifications#inbox" class="group">
+            <input type="hidden" name="from" value="{{ back.0 }}">
+            <label class="row">
+                <span class="row-label">Show</span>
+                <select class="pick" name="device" data-autosave>
+                    <option value=""{% if device.is_none() %} selected{% endif %}>All phones</option>
+                    {% for (id, name, selected) in phones %}
+                    <option value="{{ id }}"{% if *selected %} selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">Show</button></noscript>
+        </form>
+        {% endif %}
+        <div class="group group-avatars">
+            {% if paged %}
+            <a class="row" href="/notifications{{ query }}#inbox" data-row="newest">
+                <span class="row-label">Newest</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
+            {% for e in rows %}
+            <form method="post" action="/notifications/{{ e.id }}/open" class="cell">
+                <button type="submit" class="row inbox-row{% if e.unread %} inbox-unread{% endif %}" data-event="{{ e.id }}">
+                    <span class="avatar {{ e.avatar }}" aria-hidden="true">{{ e.initial }}</span>
+                    <span class="row-label"><span class="inbox-title">{% if e.unread %}<span class="unread-dot" aria-hidden="true"></span><span class="visually-hidden">Unread: </span>{% endif %}{{ e.title }}</span><span class="row-sub">{{ e.summary }} · <span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+            </form>
+            {% else %}
+            <p class="row row-note">Nothing yet. Events are kept 90 days.</p>
+            {% endfor %}
+            {% if let Some(id) = older_than %}
+            <a class="row" href="/notifications{{ query }}&amp;before={{ id }}#inbox" data-row="older">
+                <span class="row-label">Show older</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
+        </div>
+        {% if unread > 0 %}
+        <form method="post" action="/notifications/read-all#inbox" class="group">
+            <input type="hidden" name="from" value="{{ back.0 }}">
+            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
+            <button type="submit" class="row row-button">Mark All as Read</button>
+        </form>
+        {% endif %}
+        {% if !rows.is_empty() %}<p class="group-footer">Newest first, kept 90 days.</p>{% endif %}
+    </section>
+
+    {#- One form, the handler writes every switch (a missing one is off). The switches govern the
+        push only: every event is listed above. -#}
+    <section id="events" aria-labelledby="events-title">
+        <h2 class="group-header" id="events-title">Notify Me About</h2>
+        <form method="post" action="/notifications/settings#events" class="group">
+            <input type="hidden" name="from" value="{{ back.0 }}">
+            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
+            <label class="row">
+                <span class="row-label">Emergency call<span class="row-sub">Always on</span></span>
+                <input type="checkbox" role="switch" class="sw" checked disabled><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% for s in switches %}
+            <label class="row">
+                <span class="row-label">{{ s.label }}</span>
+                <input type="checkbox" role="switch" class="sw" name="{{ s.name }}" value="on"{% if s.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">Save</button></noscript>
+        </form>
+        <p class="group-footer">Off: still listed here, no notification. Events arrive as soon as the phone next reports.</p>
+    </section>
+</main>
+</body>
+</html>

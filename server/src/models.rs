@@ -379,6 +379,10 @@ pub struct DeviceStatus {
     /// should be but can't be (no "Modify system settings" access, or the write was refused).
     /// `None` = "Follow the phone", or an older launcher.
     pub clock_format_applied: Option<bool>,
+    /// The battery's level and whether it charged (design 35 §2.5, migrations/0078). `None`
+    /// without a `battery` in the report (an older launcher).
+    pub battery_level: Option<i64>,
+    pub battery_charging: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -1109,6 +1113,37 @@ pub struct StatusReportRequest {
     /// Absent from older launchers.
     #[serde(default)]
     pub clock_format_applied: Option<bool>,
+    /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Absent from
+    /// older launchers; anything that isn't one with a level in 0..=100 is dropped, never the
+    /// report ([lenient_battery]).
+    #[serde(default, deserialize_with = "lenient_battery")]
+    pub battery: Option<BatteryReport>,
+}
+
+/// `StatusReportRequest.battery` (design 35 §2.5): the level in percent, whether the phone charges,
+/// and Android's own "battery low" (`EXTRA_BATTERY_LOW`).
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatteryReport {
+    pub level: i64,
+    pub charging: bool,
+    pub low: bool,
+}
+
+/// The report's `battery` when it is one with a level in 0..=100, else `None` (logged): a bad
+/// reading costs the reading, not the whole report.
+fn lenient_battery<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<BatteryReport>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.filter(|v| !v.is_null()).and_then(|v| {
+        let battery = serde_json::from_value::<BatteryReport>(v)
+            .ok()
+            .filter(|b| (0..=100).contains(&b.level));
+        if battery.is_none() {
+            tracing::warn!("dropped a status report's battery that isn't one");
+        }
+        battery
+    }))
 }
 
 /// `StatusReportRequest.install_mode`.

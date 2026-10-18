@@ -82,6 +82,8 @@ fn leaves_the_page(action: &str) -> bool {
             | ["devices" | "apps", "new"]
             | ["apps", "tracked", "new"]
             | ["devices", _, "regenerate-code"]
+            // An inbox row marks its event read and goes where it happened (design 35 §5.1).
+            | ["notifications", _, "open"]
             // Spotify's login answers with a 303 to Spotify's authorize page (design 26c §2.3).
             | ["music", "spotify", "login"]
     ) || matches!(

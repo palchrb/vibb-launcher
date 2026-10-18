@@ -419,6 +419,18 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - Every status report sends `battery_optimization_exempt` (`PowerManager.isIgnoringBatteryOptimizations`, left out when unreadable; `PolicyResponseCompatTest`). The manifest declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (`PushManifestTest`) - without it Android's dialog finishes silently.
 - The PIN-gated Settings' "Background connection" row (`server/BatteryExemption.kt`, `BatteryExemptionTest`) opens Android's dialog only when it resolves to an unsuspended system package that isn't ours (`dialogTarget`) - on a managed phone that is during "Pause all restrictions"; otherwise it says to pause first. Never Android Settings' battery page: it shows a device owner as "Unrestricted" whatever the truth. On return the state is read again and a change requests a sync. Phase 2 (a prompt in QR provisioning) only if the Jelly Star run shows it matters.
 
+## The battery in the status report (design 35 §2.5, `docs/design/35-parent-notifications.md`, at the monorepo root)
+
+- **Wire only so far** (design 35 step 1, in the server's commit): `StatusReportRequest.battery: BatteryReport? = null`
+  with `BatteryReport(level, charging, low)` (every field always sent). Nothing sets it yet, so `ServerJson` leaves it
+  out and `time_status_report.json` / `TimeStateZoneTest` are unchanged. The server stores the level and charging for
+  the PWA's "Battery 14 %, charging" line and raises the parent's "Battery low" event from `low` (latched; re-armed on
+  battery above Android's level); a level outside 0..100 drops the reading, never the report.
+- **Step 3 pending**: the reading from the sticky `ACTION_BATTERY_CHANGED` at every report (a pure
+  `BatteryReport.of(level, scale, status, plugged, low)`), `battery_v1` in `STATUS_CAPABILITIES`, a receiver for
+  `ACTION_BATTERY_LOW`/`OKAY` in `Application.initRest` calling `SyncRunner.request(app, "battery")`, and a sync right
+  after an emergency call connects.
+
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
 - **Depth on the view, never in the bitmap** (QA M2): `ui/home/PressFeedback.depth` gives Home's `tile_icon` and the contact avatar (`contact_avatar`, Home's row and the phone book) an oval `ViewOutlineProvider`, `elevation` 2 dp and black shadow colours. The icon cache, its sizes and the glance/time-rule renders are untouched. The parents don't clip the shadow (`tile_frame` `clipChildren=false`; the contact item already had it). Elevation changes the drawing order among siblings, so the badges are lifted to the same 2 dp with no outline of their own (`KidBadge` style: `elevation` + `outlineProvider none`; the call badge in `PressFeedback.contact`). No top light.

@@ -27,6 +27,7 @@
         {% if let Some(percent) = st.percent() %}<span class="meter summary-meter" aria-hidden="true"><i style="width: {{ percent }}%"></i></span>{% endif %}
         <span class="summary-screen" data-screen-time>{{ st.text() }}</span>
         {% endif %}
+        {% if let Some(battery) = battery %}<span class="summary-screen" data-battery>{{ battery }}</span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}

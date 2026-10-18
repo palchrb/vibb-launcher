@@ -8,6 +8,9 @@
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
+    <div class="title-bar">
+        {% include "partials/bell.html" %}
+    </div>
     <h1 class="page-title">Locate</h1>
 
     {%- if phones.is_empty() %}
