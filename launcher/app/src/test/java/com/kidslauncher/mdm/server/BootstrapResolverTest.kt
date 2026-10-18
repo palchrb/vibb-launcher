@@ -118,6 +118,55 @@ class BootstrapResolverTest {
         assertTrue(addressesFromAnswer(nx, qname).addresses.isEmpty())
     }
 
+    @Test
+    fun `the disk cache round-trips by the wall clock, honours the expiry and ignores a corrupt file`() {
+        val a = listOf(InetAddress.getByName("192.0.2.1"), InetAddress.getByName("2001:db8::1"))
+        val names = setOf("dns.example", "family.dns.example")
+        val written = BootstrapDiskCache.encode(
+            mapOf("dns.example" to CachedAddresses(a, 600_000), "family.dns.example" to CachedAddresses(a.take(1), 50_000)),
+            elapsedNow = 100_000, wallNow = 5_000_000,
+        )
+        // After a reboot: elapsed time restarted, the wall clock went on by 200 s.
+        val read = BootstrapDiskCache.decode(written, names, elapsedNow = 1_000, wallNow = 5_200_000)
+        assertEquals(CachedAddresses(a, 1_000 + 300_000), read["dns.example"])
+        assertEquals(CachedAddresses(a.take(1), 1_000 - 250_000), read["family.dns.example"])
+        // Seeded: the fresh one is used as is, the expired one is served while one refresh runs.
+        val cache = BootstrapCache()
+        read.forEach { (host, cached) -> cache.seed(host, cached) }
+        assertEquals(CacheView(a, false), view(cache.get("dns.example", 1_000)))
+        assertEquals(CacheView(a.take(1), true), view(cache.get("family.dns.example", 1_000)))
+        assertEquals(read, cache.snapshot())
+        // Only the current config's names; a clock far behind can't make an entry live past 24 h.
+        assertEquals(setOf("dns.example"), BootstrapDiskCache.decode(written, setOf("dns.example"), 0, 0).keys)
+        assertEquals(BootstrapCache.MAX_TTL_S * 1000, BootstrapDiskCache.decode(written, names, 0, -100_000_000)["dns.example"]!!.expiresAtMs)
+        // Anything malformed is no cache at all - never a look-up of what's in it.
+        for (corrupt in listOf(
+            "", "v2\n", written.replace("192.0.2.1", "dns.example"), written.replace("\t", " "),
+            written + "x\t1\t192.0.2.7,192.0.2.8,192.0.2.9\n", written.replaceFirst("\t", "\tsoon"), "v1\ndns.example\t1\t\n",
+        )) {
+            assertTrue(corrupt, BootstrapDiskCache.decode(corrupt, names, 0, 0).isEmpty())
+        }
+    }
+
+    @Test
+    fun `only the names are kept, and the file is replaced through a rename`() {
+        assertEquals(setOf("dns.example"), BootstrapDiskCache.namesOf(config(dotName, dohIp)))
+        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, dohIp)))
+        assertEquals(emptySet<String>(), BootstrapDiskCache.namesOf(config(dotIp, UpstreamTarget.Dot(CLOUDFLARE_BOOTSTRAP.host, 853))))
+        val dir = java.nio.file.Files.createTempDirectory("dns-cache").toFile()
+        val file = java.io.File(dir, BootstrapDiskCache.FILE_NAME)
+        writeAtomically(file, "old")
+        writeAtomically(file, "new")
+        assertEquals("new", file.readText())
+        assertEquals(listOf(file.name), dir.list()!!.toList())
+        dir.deleteRecursively()
+        // Never device-protected storage, never logged with what it holds.
+        val src = listOf("src", "app/src").map { java.io.File(it) }.first { java.io.File(it, "main/java").isDirectory }
+        val vpn = java.io.File(src, "main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
+        assertTrue("File(noBackupFilesDir, BootstrapDiskCache.FILE_NAME)" in vpn)
+        assertFalse("DeviceProtectedStorage" in vpn)
+    }
+
     private data class CacheView(val addresses: List<InetAddress>, val lookUp: Boolean)
 
     private fun view(found: BootstrapCache.Found) = CacheView(found.addresses, found.lookUp)

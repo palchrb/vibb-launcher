@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.VPN_FILTER_NOTIFICATION_ID
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.DnsUpstreamReport
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +74,9 @@ class KidVpnService : VpnService() {
     /** The parent's own server at work (design 36), while the VPN is up and one is configured. */
     @Volatile
     private var custom: CustomDns? = null
+    /** Cloudflare's and Quad9's DoH on 443 where 853 is blocked (design 36 step 3): IP-literal URLs,
+     * this service's protected sockets, no proxy - [buildDohClient], never tsnet. */
+    private val providerDoh = lazy { buildDohClient(IP_LITERAL_DNS, ::protect) }
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastNetwork: NetworkSnapshot? = null
     private var stopped = false
@@ -133,7 +137,10 @@ class KidVpnService : VpnService() {
         val config = DnsFilterEngine.customUpstream().takeUnless { stopped }
         if (config == custom?.config) return
         custom?.close()
-        custom = config?.let { CustomDns(it, ::protect, scope).also(CustomDns::start) }
+        val cacheFile = File(noBackupFilesDir, BootstrapDiskCache.FILE_NAME)
+        // No custom server: its names' cache goes too (it holds a name the parent typed).
+        if (DnsFilterEngine.customUpstream() == null) cacheFile.delete()
+        custom = config?.let { CustomDns(it, ::protect, scope, cacheFile = cacheFile).also(CustomDns::start) }
         live = custom
         Log.i(LOG_TAG, "Custom DNS server: ${config?.primary?.kind ?: "none"}")
     }
@@ -167,7 +174,15 @@ class KidVpnService : VpnService() {
     private fun onNetwork(snapshot: NetworkSnapshot?) {
         val changed = networkChanged(lastNetwork, snapshot)
         lastNetwork = snapshot
-        if (changed) custom?.networkReset()
+        if (changed) {
+            PublicResolvers.reset()
+            custom?.networkReset()
+            evictProviderDoh()
+        }
+    }
+
+    private fun evictProviderDoh() {
+        if (providerDoh.isInitialized()) Thread({ providerDoh.value.connectionPool.evictAll() }, "dns-evict").start()
     }
 
     private fun readLoop(fd: ParcelFileDescriptor) {
@@ -218,7 +233,7 @@ class KidVpnService : VpnService() {
                 custom.resolve(query, message)
             } else {
                 val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
-                DnsFilterEngine.resolveProvider(query, upstream, ::protect)
+                DnsFilterEngine.resolveProvider(query, upstream, ::protect, providerDoh.value)
             }
             if (responseBytes == null) return
 
@@ -284,6 +299,7 @@ class KidVpnService : VpnService() {
             live = null
         }
         scope.cancel()
+        evictProviderDoh()
         try {
             pfd?.close()
         } catch (e: Exception) {

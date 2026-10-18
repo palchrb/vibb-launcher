@@ -3,6 +3,7 @@ package com.kidslauncher.mdm.server
 import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.server.dto.DnsUpstreamReport
+import java.io.File
 import java.net.InetAddress
 import java.net.Socket
 import java.util.concurrent.CompletableFuture
@@ -37,15 +38,26 @@ class CustomDns(
     /** Elapsed realtime; a test's clock otherwise. */
     private val elapsed: () -> Long = SystemClock::elapsedRealtime,
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
-    /** One attempt at a target: DoH or DoT ([attempt]); a test's fake otherwise. */
+    /** One attempt at a target: DoH or DoT ([targetTransport]); a test's fake otherwise. */
     transport: ((UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt)? = null,
+    /** The bootstrap's last resolver, Cloudflare - DoT, or its DoH where 853 is blocked (step 3). */
+    private val cloudflare: PublicResolver = PublicResolvers.cloudflare,
+    /** The bootstrap's disk cache ([BootstrapDiskCache]); `null` = none (tests). */
+    private val cacheFile: File? = null,
 ) {
     private val state = AtomicReference(ChooserState(sinceMs = elapsed()))
     private val canaryInFlight = AtomicReference<CompletableFuture<CanaryVerdict>?>(null)
     private val resolvers = bootstrapResolvers(config)
     private val bootstrap = BootstrapDns(elapsed) { host -> scope.launch { lookUp(host) } }
     private val client = buildDohClient(bootstrap, protect)
-    private val transport = transport ?: ::attempt
+    private val transport = transport ?: targetTransport(client, protect)
+
+    /** Set by [close]: a look-up still running for old servers writes no cache. */
+    private var closed = false
+
+    init {
+        loadDiskCache()
+    }
 
     /** The chooser's state, for tests. */
     internal fun state(): ChooserState = state.get()
@@ -122,12 +134,6 @@ class CustomDns(
         }
     }
 
-    private fun attempt(target: UpstreamTarget, addresses: List<InetAddress>, query: ByteArray, budget: Budget): Attempt =
-        when (target) {
-            is UpstreamTarget.Doh -> resolveDoh(client, target.url, query, budget)
-            is UpstreamTarget.Dot -> resolveDoT(query, addresses, target.host, target.port, budget, protect)
-        }
-
     /**
      * The canary's verdict: a cached one younger than 60 s, else `. IN NS` to the primary within
      * [budget], one in flight at a time. A query that finds one running waits for it; `null` when it
@@ -188,7 +194,8 @@ class CustomDns(
             while (step < resolvers.size) {
                 val via = resolvers[step]
                 val outcome = try {
-                    transport(via, bootstrap.addresses(via.serverHost), query, BOOTSTRAP_BUDGET)
+                    if (via == cloudflare.dot) cloudflare.resolve(query, BOOTSTRAP_BUDGET, BOOTSTRAP_BUDGET, transport)
+                    else transport(via, bootstrap.addresses(via.serverHost), query, BOOTSTRAP_BUDGET)
                 } catch (e: Exception) {
                     Attempt.Transport(BackupReason.CONNECT)
                 }
@@ -208,6 +215,7 @@ class CustomDns(
         val now = elapsed()
         if (found.isNotEmpty()) {
             bootstrap.cache.put(host, found, ttl, now)
+            saveDiskCache()
             return
         }
         bootstrap.cache.failed(host, now)
@@ -216,6 +224,38 @@ class CustomDns(
         if (isPrimary && !bootstrap.cache.has(host)) {
             // A retry inside a period doesn't step the back-off again: the probe schedule does.
             update { if (it.backup) it else UpstreamChooser.afterTransport(it, gen, now, BackupReason.BOOTSTRAP) }
+        }
+    }
+
+    /** The disk cache's entries for this config's names, before any look-up; a config with no names
+     * keeps no file. Any failure is no cache (logged by class only). */
+    private fun loadDiskCache() {
+        val file = cacheFile ?: return
+        val names = BootstrapDiskCache.namesOf(config)
+        try {
+            if (names.isEmpty()) {
+                file.delete()
+                return
+            }
+            if (!file.exists()) return
+            val entries = BootstrapDiskCache.decode(file.readText(), names, elapsed(), System.currentTimeMillis())
+            for ((host, cached) in entries) bootstrap.cache.seed(host, cached)
+            log("Bootstrap cache: ${entries.size} names")
+        } catch (e: Exception) {
+            log("Bootstrap cache unreadable: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** After a look-up found addresses (once per TTL per name at most): the cache to disk. */
+    private fun saveDiskCache() {
+        val file = cacheFile ?: return
+        try {
+            synchronized(this) {
+                if (closed) return
+                writeAtomically(file, BootstrapDiskCache.encode(bootstrap.cache.snapshot(), elapsed(), System.currentTimeMillis()))
+            }
+        } catch (e: Exception) {
+            log("Bootstrap cache not written: ${e.javaClass.simpleName}")
         }
     }
 
@@ -231,6 +271,7 @@ class CustomDns(
     fun report(): DnsUpstreamReport = upstreamReport(state.get(), config.rev, elapsed(), System.currentTimeMillis())
 
     fun close() {
+        synchronized(this) { closed = true }
         thread(name = "dns-evict") { client.connectionPool.evictAll() }
     }
 

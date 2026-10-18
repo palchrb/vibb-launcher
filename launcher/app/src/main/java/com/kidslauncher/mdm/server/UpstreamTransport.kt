@@ -228,6 +228,23 @@ fun buildDohClient(dns: okhttp3.Dns, protect: (Socket) -> Boolean): OkHttpClient
     }
     .build()
 
+/** One attempt at [target] - DoH through [client], DoT through [protect]ed sockets to its [addresses]
+ * (the transport [CustomDns] and [PublicResolver] are given). */
+fun targetTransport(client: OkHttpClient, protect: (Socket) -> Boolean): (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt =
+    { target, addresses, query, budget ->
+        when (target) {
+            is UpstreamTarget.Doh -> resolveDoh(client, target.url, query, budget)
+            is UpstreamTarget.Dot -> resolveDoT(query, addresses, target.host, target.port, budget, protect)
+        }
+    }
+
+/** The public resolvers' DoH client's [okhttp3.Dns] (design 36 step 3): their URLs are IP literals,
+ * which OkHttp never looks up; anything else has no address (never the system resolver). */
+val IP_LITERAL_DNS: okhttp3.Dns = object : okhttp3.Dns {
+    override fun lookup(hostname: String): List<InetAddress> =
+        listOfNotNull(ipLiteral(hostname)).ifEmpty { throw java.net.UnknownHostException("not an IP literal") }
+}
+
 /** One DoH query: POST [url] with the query (ID 0), both media types `application/dns-message`, within [budget]. */
 fun resolveDoh(client: OkHttpClient, url: String, query: ByteArray, budget: Budget): Attempt {
     val marks = CallMarks()

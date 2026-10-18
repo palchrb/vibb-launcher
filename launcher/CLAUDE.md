@@ -737,15 +737,16 @@ Together: an app store install of something not on the allowlist would still nee
 
 **Standing rule, going forward: every restriction added to `AppEnforcer` must be liftable via the offline-override PIN / pause-restrictions kill-switch, unless explicitly told otherwise for that specific case.** The call rules (see "Calls & SMS") are such an explicit exception: the override and pause never open calls or SMS. The hardening switches (see "Hardening (handy step 4)") are the second one: only the server lifts them. `applyPrivateDnsLock` predates this rule and is the other deliberate exception on record (still unconditional - see its own doc comment for why); don't treat it as a precedent for a *new* restriction without checking first. The underlying reasoning, confirmed live twice now (once for the VPN filter toggle, once for this sideload restriction): the whole point of those overrides is a guaranteed, fully-unblocked device when something's wrong, and a parent should never find a restriction they can't reach through their own offline PIN.
 
-## A custom DNS server with a parent-chosen backup (design 36 steps 1-2, `docs/design/36-custom-dns.md`, at the monorepo root)
+## A custom DNS server with a parent-chosen backup (design 36 steps 1-3, `docs/design/36-custom-dns.md`, at the monorepo root)
 
 - **What it does**: with Settings › Web Filter › "Custom server" the VPN forwards every query **the phone's lists let
   through** (FCM/Spotify exemptions and `BlockedEventLog` unchanged - the lists always block first) to the parent's
   server - DoH or DoT, by name or IP - and, only while that server as a whole is unhealthy, to the parent's backup.
   A failing backup drops the query as a failing Cloudflare does (no third tier); never plain DNS, never unfiltered.
   Every connection is a `protect()`ed socket on the phone's current network, **never through tsnet** (a home-network
-  server works on the home Wi-Fi, the backup answers elsewhere). Without a custom server nothing changed:
-  `DnsFilterEngine.resolveProvider` is today's DoT to Cloudflare/Quad9 (now through `resolveDoT`, same timeouts).
+  server works on the home Wi-Fi, the backup answers elsewhere). Without a custom server
+  `DnsFilterEngine.resolveProvider` is today's DoT to Cloudflare/Quad9 (through `resolveDoT`, same timeouts), with
+  step 3's DoH on 443 where 853 is blocked (below).
 - **Policy and pref** (step 1's wire): `PolicyResponse.dnsUpstream` is raw `JsonElement?` read field by field by the
   pure `server/CustomUpstream.kt` `customUpstreamFrom` (kind `doh` with an `https://` URL OkHttp parses, or `dot` with
   a host and a port 1-65535, a numeric `rev`, a backup passing the same check - anything else is `null` = the provider;
@@ -790,6 +791,29 @@ Together: an app store install of something not on the allowlist would still nee
   a failed look-up (stale or with nothing cached) retried after 30 s or a network reset. Both
   names are looked up when a config loads. A primary with no address yet sends that query to the backup (no failure);
   nothing at all after its look-up is a `bootstrap` period (not stepped again inside a period). A backup with no address drops the query.
+- **Networks that block 853** (step 3, pure `DotBlockedRule` + glue `PublicResolver` in `server/PublicResolver.kt`):
+  Cloudflare and Quad9 (`PublicResolvers`, one state each per process) fall back to **the same provider's** DoH on 443 by
+  its IP-literal URL - `https://1.1.1.1/dns-query`, `https://9.9.9.9/dns-query` (no SNI, OkHttp's verifier on the IP;
+  their certificates name it), never the other provider's. A DoT `Transport` failure (connect refused/timed out, reset,
+  TLS) counts; 3 within 60 s start a DoH period of 5 min, doubling with each failed probe to 1 h; in a period one query
+  per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
+  to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`
+  from the VPN's `networkChanged`) ends it. A query whose DoT fails goes on to DoH itself while its ~4.8 s deadline
+  (`QUERY_DEADLINE_MS`) leaves at least `BACKUP_FLOOR_MS` (a refused connect does; a dropped SYN under the providers'
+  5 s connect doesn't - that query is dropped and counted). The providers' DoH client is the VPN's own
+  `buildDohClient(IP_LITERAL_DNS, ::protect)` (lazy, evicted on a reset and at stop; `IP_LITERAL_DNS` never looks a
+  name up), never tsnet. The bootstrap's last resolver is `PublicResolvers.cloudflare` too (its DoT, or its DoH on
+  443), with the bootstrap's budgets. **Under Custom the parent's servers are what they are** - a parent's DoT server
+  never gets a guessed DoH URL (`PublicResolverTest` pins that a DoH target is built only from the parent's URL or the
+  two public ones); a DoT backup on a network that blocks 853 fails like any backup. The status field is unchanged.
+- **The bootstrap's disk cache** (step 3, `BootstrapDiskCache` in `BootstrapDns.kt`): `noBackupFilesDir/
+  dns_bootstrap_cache.txt` (CE storage, 0600 by default, **never device-protected storage, never logged** - it holds a
+  host name the parent typed): `v1`, then a line per name: host, expiry as wall-clock ms, at most two addresses. Read
+  when a `CustomDns` is built, before any look-up (only the config's names; the expiry back in elapsed time, at most
+  24 h ahead; an expired entry is stale - served while one refresh runs; anything malformed = no cache; addresses parsed
+  by `ipLiteral`, never looked up), written after each look-up that found addresses through a temp file + rename
+  (`writeAtomically`). A config with no names (both IP literals) deletes it, as does the VPN starting or syncing with no
+  custom server.
 - **Network reset**: `KidVpnService` registers `registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN; the VPN is
   its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
   a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks
@@ -808,12 +832,16 @@ Together: an app store install of something not on the allowlist would still nee
   backup DoT/DoH, its failure leaving the state, REFUSED/silence from a healthy server, the canary reused and its
   waiter, reset, the bootstrap glue and its fall-through), `CustomDnsGuardsTest` (the lists first, the DoH client's
   protected sockets and no proxy, no status field once the VPN is off),
-  `BootstrapResolverTest`, `DohMessageTest`, `CustomUpstreamPrefTest`, `PolicyResponseCompatTest`,
-  `DnsUpstreamStatusTest`.
+  `BootstrapResolverTest` (with the disk cache's codec, expiry, corrupt files and the rename), `DohMessageTest`,
+  `CustomUpstreamPrefTest` (its log scan covers `PublicResolver.kt`), `PolicyResponseCompatTest`,
+  `DnsUpstreamStatusTest`, `PublicResolverTest` (step 3: the rule's threshold, window, back-off and cap, the probe,
+  reset; each provider's own DoH; the probe's budget; no guessed DoH URL; the providers' client). `CustomDnsTest` also
+  covers the bootstrap's Cloudflare step over DoH and the disk cache across two instances.
 - **Not device-tested**: a real DoH/DoT server through the protected sockets (emulator check `docs/testing/emulator.md`
   §6m), a LAN server on the home Wi-Fi then away, a network that blocks 853, the canary against AdGuard Home's REFUSED
-  for a removed client id, Wi-Fi/mobile resets on the Jelly Star. Step 3 (DoH on 443 when 853 is blocked, a disk
-  cache for the bootstrap) is not built.
+  for a removed client id, Wi-Fi/mobile resets on the Jelly Star; step 3's DoH on 443 on a network that blocks 853
+  (both providers' certificates on their IPs, the period and its probe, a reboot there with a parent's server by name -
+  `docs/testing/emulator.md` §6m step 7).
 
 ## Retention (cleanup 2026-10-06)
 

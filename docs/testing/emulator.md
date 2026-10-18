@@ -1421,7 +1421,7 @@ on https, or the paste; the parent's account is never logged in, design 26c step
   play from the top - never "Trenger internett".
 - [ ] The DNS capture of design 26c §6.2 (the host list), as `docs/testing/spotify-spike.md` describes.
 
-## 6m. A custom DNS server with a backup (design 36 step 2)
+## 6m. A custom DNS server with a backup, networks that block 853 (design 36 steps 2-3)
 
 Design 36 (`docs/design/36-custom-dns.md` §5, §8): with Settings › Web Filter › "Look-ups go to: Custom server", the
 phone forwards every query its lists let through to the parent's server, and to the backup while that server is
@@ -1447,9 +1447,26 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
 5. A backup given as a DoH URL (`https://1.1.1.3/dns-query`) with a failing primary answers too.
 6. Forget Custom Server (or pick Cloudflare): logcat `Custom DNS server: none`, the next report has no
    `dns_upstream`, look-ups go to Cloudflare as before.
+7. **A network that blocks 853** (design 36 step 3). Blocking a port needs root somewhere: either the host
+   (`sudo iptables -I OUTPUT -p tcp --dport 853 -j REJECT --reject-with tcp-reset` - the emulator's user-mode network
+   makes the emulator process the one that connects; `-j DROP` instead for the silent kind) or the guest, which takes a
+   rootable image (`google_apis`, not handy36's Play image): `adb root`, then
+   `adb shell iptables -I OUTPUT -p tcp --dport 853 -j REJECT --reject-with tcp-reset` (the VPN's protected sockets
+   still pass the guest's OUTPUT chain). The console's `redir` only forwards host ports into the guest, so it can't do
+   this. With **Cloudflare** (then **Quad9**) picked and the rule in place, `adb logcat -s DnsUpstream`: `DoT attempt
+   failed: ...` three times, then `DoT blocked: cloudflare over DoH, periods=1`; `adb shell ping -c1 example.com`
+   still resolves (over `https://1.1.1.1/dns-query`, resp. `9.9.9.9` - their certificates name the IPs). With REJECT
+   the very first queries resolve too (a refused DoT goes on to DoH in the same query); with DROP the first few are
+   dropped (5 s connect) until the period starts. After 5 min one probe (`periods=2` while the rule stays); remove
+   the rule (`-D` for `-I`) and the next probe logs `DoT works again: cloudflare` - or toggle Wi-Fi for a network
+   reset, which tries DoT at once. Under **Custom server** with `https://dns.quad9.net/dns-query` and a backup by name
+   (`https://family.cloudflare-dns.com/dns-query`): the bootstrap's look-ups go over Cloudflare's DoH and the names
+   resolve; reboot with the rule in place and logcat `CustomDns` shows `Bootstrap cache: 2 names` before any look-up
+   (the disk cache). A parent's own DoT server (`9.9.9.9`) is never moved to DoH: its queries go to the backup.
+   Without root anywhere this stays a device check (a router rule dropping 853, or a school Wi-Fi).
 
 What the emulator can't show (device checks, design 36 "Step 2 implementation status"): a home-network server on the
-home Wi-Fi and away from it, a network that blocks 853, AdGuard Home's REFUSED for a client id it doesn't allow.
+home Wi-Fi and away from it, AdGuard Home's REFUSED for a client id it doesn't allow; and, without root, step 7.
 
 ## 6b. Step 7: Play (optional)
 

@@ -75,9 +75,9 @@ private fun ipv6Bytes(text: String): ByteArray? {
 }
 
 /** The last fallback for the bootstrap resolver (design 36 §5.3): Cloudflare over DoT, by its
- * fixed address - the only case a look-up leaves for anyone but the parent's servers. */
-val CLOUDFLARE_BOOTSTRAP = UpstreamTarget.Dot("cloudflare-dns.com", 853)
-private val CLOUDFLARE_BOOTSTRAP_ADDRESS: InetAddress = InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))
+ * fixed address - the only case a look-up leaves for anyone but the parent's servers. Asked through
+ * [PublicResolvers.cloudflare], so on a network that blocks 853 it is Cloudflare's DoH on 443 (step 3). */
+val CLOUDFLARE_BOOTSTRAP = CLOUDFLARE_DOT
 
 /**
  * Where the servers' names are looked up (design 36 §5.3), in order: the backup when it is an IP
@@ -180,6 +180,19 @@ class BootstrapCache {
         entries[host] = Entry(entry?.addresses.orEmpty(), entry?.expiresAtMs ?: 0, lookingUp = false, failedAtMs = now)
     }
 
+    /** Every name with addresses and when they expire (elapsed ms), for the disk cache. */
+    @Synchronized
+    fun snapshot(): Map<String, CachedAddresses> = entries
+        .filterValues { it.addresses.isNotEmpty() }
+        .mapValues { (_, entry) -> CachedAddresses(entry.addresses, entry.expiresAtMs) }
+
+    /** What the disk cache held, before any look-up: fresh until it expires, then stale (served
+     * while one refresh runs, like any expired entry). */
+    @Synchronized
+    fun seed(host: String, cached: CachedAddresses) {
+        entries[host] = Entry(ipv4First(cached.addresses), cached.expiresAtMs, lookingUp = false, failedAtMs = null)
+    }
+
     @Synchronized
     fun forgetFailures() {
         for ((host, entry) in entries.entries.toList()) {
@@ -210,7 +223,7 @@ class BootstrapDns(
     /** The addresses to connect to now, at most two, IPv4 first; empty = not looked up yet. */
     fun addresses(host: String): List<InetAddress> {
         ipLiteral(host)?.let { return listOf(it) }
-        if (host == CLOUDFLARE_BOOTSTRAP.host) return listOf(CLOUDFLARE_BOOTSTRAP_ADDRESS)
+        if (host == CLOUDFLARE_BOOTSTRAP.host) return listOf(CLOUDFLARE_ADDRESS)
         val found = cache.get(host, clock())
         if (found.lookUp) lookUp(host)
         return found.addresses
@@ -219,4 +232,66 @@ class BootstrapDns(
     /** Never blocks: OkHttp asks only after [addresses] found some (the stale ones included). */
     override fun lookup(hostname: String): List<InetAddress> =
         addresses(hostname).ifEmpty { throw UnknownHostException("not looked up yet") }
+}
+
+/** A name's addresses and when they expire (elapsed realtime ms). */
+data class CachedAddresses(val addresses: List<InetAddress>, val expiresAtMs: Long)
+
+/**
+ * The bootstrap's disk cache (design 36 §5.3's last sentence, step 3): the looked-up addresses of the
+ * parent's servers' names with their expiry, so a reboot on a network where no look-up gets through
+ * still finds them. It holds a host name the parent typed, so it lives in CE storage only
+ * (`noBackupFilesDir`, 0600 by default - never device-protected storage) and is never logged. A
+ * line per name: the host, the expiry as wall-clock ms (elapsed time restarts at boot), the
+ * addresses. Pure; the file is written through a temp file and a rename ([writeAtomically]).
+ */
+object BootstrapDiskCache {
+    const val FILE_NAME = "dns_bootstrap_cache.txt"
+    private const val VERSION = "v1"
+
+    fun encode(entries: Map<String, CachedAddresses>, elapsedNow: Long, wallNow: Long): String = buildString {
+        append(VERSION).append('\n')
+        for ((host, cached) in entries.toSortedMap()) {
+            append(host).append('\t').append(wallNow + (cached.expiresAtMs - elapsedNow)).append('\t')
+            append(cached.addresses.joinToString(",") { it.hostAddress.orEmpty() }).append('\n')
+        }
+    }
+
+    /**
+     * The entries for [hosts] (the current config's names), their expiry back in elapsed time - at
+     * most [BootstrapCache.MAX_TTL_S] ahead, whatever the wall clock did. Anything malformed makes the
+     * whole file nothing (an address is parsed into bytes, never looked up).
+     */
+    fun decode(text: String, hosts: Set<String>, elapsedNow: Long, wallNow: Long): Map<String, CachedAddresses> {
+        val lines = text.lines().dropLastWhile { it.isEmpty() }
+        if (lines.firstOrNull() != VERSION) return emptyMap()
+        val found = HashMap<String, CachedAddresses>()
+        for (line in lines.drop(1)) {
+            val parts = line.split('\t')
+            if (parts.size != 3) return emptyMap()
+            val expiresWall = parts[1].toLongOrNull() ?: return emptyMap()
+            val addresses = parts[2].split(',').map { ipLiteral(it) ?: return emptyMap() }
+            if (addresses.size > 2) return emptyMap()
+            if (parts[0] !in hosts) continue
+            val ahead = minOf(expiresWall - wallNow, BootstrapCache.MAX_TTL_S * 1000)
+            found[parts[0]] = CachedAddresses(addresses, elapsedNow + ahead)
+        }
+        return found
+    }
+
+    /** The names of [config] that are looked up (IP literals and Cloudflare's fixed name never are). */
+    fun namesOf(config: CustomUpstream): Set<String> = listOf(config.primary.serverHost, config.backup.serverHost)
+        .filter { ipLiteral(it) == null && it != CLOUDFLARE_BOOTSTRAP.host }
+        .toSet()
+}
+
+/** [text] into [file] through a temp file next to it and a rename, so a reader finds the old file or
+ * the new one, never half of one. */
+fun writeAtomically(file: java.io.File, text: String) {
+    val temp = java.io.File(file.parentFile, file.name + ".tmp")
+    temp.writeText(text)
+    if (!temp.renameTo(file)) {
+        temp.delete()
+        throw java.io.IOException("rename failed")
+    }
 }

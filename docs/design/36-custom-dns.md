@@ -544,3 +544,59 @@ period, the backup's miss dropping the query. N1 - `ipLiteral` parses IPv4/IPv6 
 `InetAddress.getByName`). N2 - every DoH call's connect timeout comes from its `Budget` (an interceptor), so a DoH
 bootstrap resolver gets 1 s. N3 - a failed look-up inside a period doesn't step the back-off. N4 - one ~4.8 s deadline
 per query (`QUERY_DEADLINE_MS`, `canaryBudget`, `backupBudget`; §5.4).
+
+## Step 3 implementation status
+
+Branch `dns-s3` (from `9e785e47`), 2026-10-18. Launcher only; the wire, the contract files (`dns_upstream_status.json`
+included) and `server/` are untouched, and the status field has no new word.
+
+**Shipped as specified**: for today's choices, Cloudflare and Quad9 (`server/PublicResolver.kt`, `PublicResolvers`, one
+state each per process) fall back from DoT on 853 to **the same provider's** DoH on 443 by its IP-literal URL -
+`https://1.1.1.1/dns-query`, `https://9.9.9.9/dns-query` (OkHttp sends no SNI for an IP and verifies the IP against the
+certificate) - never the other provider's; the bootstrap's last resolver (Cloudflare `1.1.1.1` DoT) is the same
+`PublicResolvers.cloudflare`, so a look-up reaches `https://1.1.1.1/dns-query` when 853 fails. The pure rule
+`DotBlockedRule` (state `DotBlocked` in one `AtomicReference` by CAS, like the chooser): a DoT `Transport` failure counts;
+3 within 60 s start a DoH period of 5 min, doubled by each failed probe to a 1 h cap; one query per period probes DoT,
+the rest go straight to DoH; DoT that reaches the server (an `Answer`, or an `Odd` - anything above TLS) or a network
+reset (`PublicResolvers.reset` from the VPN's existing `networkChanged`) ends it. The providers' DoH client is
+`buildDohClient` (fresh builder, `NO_PROXY`, `ProtectedSocketFactory`, no redirects/cache/cookies) with `IP_LITERAL_DNS`
+(no name is ever looked up), owned by `KidVpnService` (lazy, evicted on a network reset and at stop), never tsnet. Under
+Custom nothing changed: a parent's DoT server never gets a guessed DoH URL. The bootstrap's disk cache
+(`BootstrapDiskCache`): `noBackupFilesDir/dns_bootstrap_cache.txt`, CE storage only (0600 by default, never DE, never
+logged), `v1` then host, expiry as wall-clock ms and at most two addresses per line; read when a `CustomDns` is built,
+before any look-up; written through a temp file and a rename after each look-up that found addresses; nothing for
+IP-literal servers (the file is deleted then, and whenever the VPN runs with no custom server). Battery: no background
+work per query; one DoT probe per period; one small write per look-up (at most once per TTL per name). Logs name the
+provider (`cloudflare`/`quad9`), periods, counts and exception classes only. Tests: `PublicResolverTest` (6),
+`BootstrapResolverTest` (+2), `CustomDnsTest` (+2, one existing expectation extended by Cloudflare's DoH step),
+`CustomUpstreamPrefTest`'s log scan extended to `PublicResolver.kt` (and `periods`, `size`, `label`).
+
+**Deviations, with the reason**:
+- **The query itself goes on to DoH** after its own DoT transport failure, before the threshold, while the ~4.8 s
+  deadline (`QUERY_DEADLINE_MS`) leaves at least `BACKUP_FLOOR_MS` (DoH capped at §5.2's 1.5 s / 2.5 s, the bootstrap's at
+  1 s / 2 s): on a network that *refuses* 853 the first queries are answered at once, not only after the period starts.
+  On one that *drops* 853 the providers' DoT keeps today's 5 s connect (`PROVIDER_BUDGET`, step 2's decision), so those
+  first queries are dropped (the stub retries) until 3 failures start the period - a few seconds. The period's probe
+  takes at most `UPSTREAM_BUDGET` (1.5 s / 2.5 s), so its own query still gets DoH in time.
+- **The threshold, window and back-off** (3 in 60 s; 5 min doubling to 1 h) are this step's choice - the design gave
+  none. A burst of parallel queries on a blocked network reaches 3 at once, which is right; a transient blip costs at
+  most one 5-minute DoH period with the same provider.
+- **A TLS failure on 853 counts** like a refused or silent connect (a middlebox that intercepts 853); the DoH on 443 is
+  verified the same way, so nothing is weakened. Silence after the request was written does not count (853 worked).
+- **The disk cache keeps an expired entry as stale** (served while one refresh runs, as the memory cache does), never as
+  fresh; its expiry is read back at most 24 h ahead whatever the wall clock did. A malformed file is ignored whole.
+- **The providers' and the bootstrap's Cloudflare share one state**: both are `1.1.1.1:853` on the same network.
+
+**Device checks owed** (`docs/testing/emulator.md` §6m step 7 - needs root on the host or a rootable `google_apis`
+image for the iptables rule; otherwise a router rule or a school Wi-Fi): both providers over DoH on 443 (their
+certificates naming `1.1.1.1` and `9.9.9.9` through OkHttp's verifier, the IP-literal URL without SNI), REJECT vs DROP
+(the first queries), the period, its probe and the doubling, `DoT works again` after the rule goes, a Wi-Fi toggle
+resetting it; under Custom the bootstrap's look-ups over Cloudflare's DoH, and a reboot on that network with a parent's
+server by name (`Bootstrap cache: 2 names` before any look-up).
+
+**Open points for the code QA**: (1) Under Custom the prefilled backup `1.1.1.3` is DoT by IP, so on a network that
+blocks 853 a DoT primary *and* that backup fail (queries dropped); §10 says the parent's servers are what they are - a
+parent who wants such networks covered gives `https://1.1.1.3/dns-query`. Worth a line in the ⓘ or DEPLOY.md? (2) The
+query-level DoH fall-through above (not only after the threshold). (3) The disk cache is read in `CustomDns`'s
+constructor, which `syncCustom` runs on the main thread at VPN start - one tiny file, next to `loadFromDisk`'s
+blocklist read there. (4) The 3 / 60 s / 5 min / 1 h numbers.

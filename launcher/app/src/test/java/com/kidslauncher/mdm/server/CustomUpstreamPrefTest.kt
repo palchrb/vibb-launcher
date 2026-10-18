@@ -57,9 +57,9 @@ class CustomUpstreamPrefTest {
 
     @Test
     fun `nothing logs a server - kinds, reasons, counts and exception classes only`() {
-        val allowed = Regex("""^(mode|isPrimary|[\w.?]*\.(kind|wire|ok|failures|simpleName))$""")
+        val allowed = Regex("""^(mode|isPrimary|label|[\w.?]*\.(kind|wire|ok|failures|periods|size|simpleName))$""")
         val offenders = mutableListOf<String>()
-        val files = listOf("CustomDns.kt", "UpstreamTransport.kt", "BootstrapDns.kt", "UpstreamChooser.kt", "CustomUpstream.kt", "KidVpnService.kt")
+        val files = listOf("CustomDns.kt", "UpstreamTransport.kt", "BootstrapDns.kt", "UpstreamChooser.kt", "CustomUpstream.kt", "KidVpnService.kt", "PublicResolver.kt")
         for (name in files) {
             val text = source(name)
             for (call in Regex("""\b(Log\.[a-z]|log)\(""").findAll(text)) {
