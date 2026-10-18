@@ -1692,6 +1692,35 @@ async fn scoped_apps(
     .await
 }
 
+/// Nudges every enrolled phone whose app list carries catalog app `app_id` - [scoped_apps]' own
+/// rule, so the nudge and the list never disagree - after a new release of it was stored (a sync
+/// or an upload): the phone fetches the list in that sync instead of at its 30-minute backstop;
+/// its Wi-Fi and night-window gates are its own. A DB error is logged: the backstop still comes.
+pub(crate) async fn nudge_phones_with_app(state: &AppState, app_id: i64) {
+    let devices: Vec<i64> =
+        match sqlx::query_scalar("SELECT id FROM devices WHERE token_hash IS NOT NULL")
+            .fetch_all(&state.db)
+            .await
+        {
+            Ok(devices) => devices,
+            Err(err) => {
+                tracing::warn!(app_id, %err, "couldn't read the phones to nudge for a new release");
+                return;
+            }
+        };
+    for device in devices {
+        match scoped_apps(state, device, Some(app_id)).await {
+            Ok(apps) if !apps.is_empty() => {
+                let _ = state.command_notify.send(device);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(app_id, device, %err, "couldn't check a phone's apps for a new release")
+            }
+        }
+    }
+}
+
 /// `release_tag` as the device sees it: composited with the asset id when one's cached
 /// (GitHub-sourced apps) - see `handlers::tracked_apps::sync_one_app`'s doc comment for why a
 /// rolling tag alone can't be trusted to signal "this is a new build" client-side.
