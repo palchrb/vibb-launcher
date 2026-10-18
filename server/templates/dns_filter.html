@@ -145,9 +145,9 @@
                     <div class="field">
                         <label class="field-label" for="custom_backup">Backup server</label>
                         <p class="field-hint" data-hint="backup">{% if let Some(hint) = server.backup_hint %}Set ({{ hint }}).{% else %}Not set.{% endif %}</p>
-                        <input type="text" id="custom_backup" name="custom_backup" value="{{ server.typed_backup }}" placeholder="1.1.1.3" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.backup_error.is_some() %} aria-invalid="true" aria-describedby="custom_backup-error"{% if server.server_error.is_none() %} autofocus{% endif %}{% endif %}>
+                        <input type="text" id="custom_backup" name="custom_backup" value="{{ server.typed_backup }}" placeholder="https://1.1.1.3/dns-query" maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false"{% if server.backup_error.is_some() %} aria-invalid="true" aria-describedby="custom_backup-error"{% if server.server_error.is_none() %} autofocus{% endif %}{% endif %}>
                         {% if let Some(why) = server.backup_error %}<p class="field-error" id="custom_backup-error">{{ why }}</p>{% endif %}
-                        <p class="field-hint">Answers while your server can't be reached. 1.1.1.3 is Cloudflare for Families.</p>
+                        <p class="field-hint">Answers while your server can't be reached. https://1.1.1.3/dns-query is Cloudflare for Families, over DNS-over-HTTPS, so it also answers on networks that block DNS-over-TLS.</p>
                         {% if server.both_names %}<p class="field-hint" data-hint="backup-ip">Give the backup as an IP address and no look-up ever leaves for anyone else.</p>{% endif %}
                     </div>
                     {% if server.stored %}
@@ -169,8 +169,8 @@
             <details class="info">
                 <summary aria-label="About the DNS server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Cloudflare is 1.1.1.1, Quad9 is 9.9.9.9, both over DNS-over-TLS. Each phone filters by itself, on any network; this is where it asks about everything it lets through.</p>
-                    <p>A custom server: a bare name or IP address means DNS-over-TLS on port 853; for DNS-over-HTTPS type the https:// address. The phone checks the server's certificate, so an IP address works only if the certificate names it.</p>
+                    <p>Cloudflare is 1.1.1.1, Quad9 is 9.9.9.9, both over DNS-over-TLS (on a network that blocks it, over DNS-over-HTTPS to the same provider). Each phone filters by itself, on any network; this is where it asks about everything it lets through.</p>
+                    <p>A custom server: a bare name or IP address means DNS-over-TLS on port 853; for DNS-over-HTTPS type the https:// address. The phone checks the server's certificate, so an IP address works only if the certificate names it. On a network that blocks port 853 a DNS-over-TLS server can't be reached; a DNS-over-HTTPS backup still answers.</p>
                     <p>The phone reaches your server directly over its mobile data or Wi-Fi, not through Tailscale: a server on your home network works on the home Wi-Fi, and the backup answers elsewhere. An id in the https:// path stays inside the encryption. The phone's own lists still block first.</p>
                 </div>
             </details>

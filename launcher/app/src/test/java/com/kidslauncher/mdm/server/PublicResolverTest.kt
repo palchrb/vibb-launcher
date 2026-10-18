@@ -125,6 +125,49 @@ class PublicResolverTest {
     }
 
     @Test
+    fun `a dropped connect at the providers' 2_5 s still gets DoH in time, under the floor it doesn't`() {
+        // The providers' connect must leave the floor for DoH inside the deadline (M2).
+        assertTrue(PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS <= QUERY_DEADLINE_MS)
+        for ((dotTakes, dohAsked) in listOf(PROVIDER_BUDGET.connectMs.toLong() to true, 4_000L to false)) {
+            var now = 0L
+            val resolver = quad9Resolver({ now }, {})
+            val asked = mutableListOf<Pair<UpstreamTarget, Budget>>()
+            val got = resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET) { target, _, _, budget ->
+                asked += target to budget
+                if (target is UpstreamTarget.Dot) { now += dotTakes; blocked } else Attempt.Answer(answer)
+            }
+            assertEquals(dohAsked, got is Attempt.Answer)
+            assertEquals(if (dohAsked) listOf<UpstreamTarget>(resolver.dot, resolver.doh) else listOf(resolver.dot), asked.map { it.first })
+            if (dohAsked) assertEquals(Budget(1500, 2300), asked[1].second)
+        }
+    }
+
+    @Test
+    fun `in a DoH period a blocked DoH tries DoT in the same query, and DoT that works ends the period`() {
+        val resolver = cloudflareResolver({ 0 }, {})
+        val asked = mutableListOf<UpstreamTarget>()
+        var dotWorks = false
+        val transport = { target: UpstreamTarget, _: List<InetAddress>, _: ByteArray, _: Budget ->
+            asked += target
+            when {
+                target is UpstreamTarget.Doh -> if (dotWorks) blocked else Attempt.Answer(answer)
+                dotWorks -> Attempt.Answer(answer)
+                else -> blocked
+            }
+        }
+        repeat(3) { resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport) }
+        assertTrue(resolver.state().doh)
+        // Now the network blocks 443 to the provider but not 853 (and a transport that throws counts as a failure).
+        dotWorks = true
+        asked.clear()
+        assertTrue(resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, transport) is Attempt.Answer)
+        assertEquals(listOf<UpstreamTarget>(resolver.doh, resolver.dot), asked)
+        assertEquals(DotBlocked(), resolver.state())
+        val thrown = resolver.resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET) { _, _, _, _ -> throw IllegalStateException() }
+        assertEquals(Attempt.Transport(BackupReason.CONNECT), thrown)
+    }
+
+    @Test
     fun `under Custom a parent's DoT server never gets a DoH URL, and only two DoH URLs exist`() {
         val primary = UpstreamTarget.Dot("192.0.2.10", 853)
         val backup = UpstreamTarget.Dot("192.0.2.20", 853)
@@ -159,7 +202,12 @@ class PublicResolverTest {
     fun `the public resolvers' DoH client is the protected one and never looks a name up`() {
         val vpn = File(listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }, "main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
         assertTrue("buildDohClient(IP_LITERAL_DNS, ::protect)" in vpn)
-        assertTrue("resolveProvider(query, upstream, ::protect, providerDoh.value)" in vpn)
+        // Built at the first DoH use, not the first provider query (N2).
+        assertTrue("resolveProvider(query, upstream, ::protect) { providerDoh.value }" in vpn)
+        // A network reset puts both providers back on DoT (L2: the reset is wired).
+        val onNetwork = vpn.substringAfter("private fun onNetwork(").substringBefore("\n    }\n")
+        val changed = onNetwork.substringAfter("if (changed) {")
+        assertTrue("PublicResolvers.reset()" in changed && "custom?.networkReset()" in changed)
         assertEquals(listOf(InetAddress.getByName("192.0.2.1")), IP_LITERAL_DNS.lookup("192.0.2.1"))
         try {
             IP_LITERAL_DNS.lookup("dns.example")

@@ -745,7 +745,8 @@ Together: an app store install of something not on the allowlist would still nee
   A failing backup drops the query as a failing Cloudflare does (no third tier); never plain DNS, never unfiltered.
   Every connection is a `protect()`ed socket on the phone's current network, **never through tsnet** (a home-network
   server works on the home Wi-Fi, the backup answers elsewhere). Without a custom server
-  `DnsFilterEngine.resolveProvider` is today's DoT to Cloudflare/Quad9 (through `resolveDoT`, same timeouts), with
+  `DnsFilterEngine.resolveProvider` is DoT to Cloudflare/Quad9 (through `resolveDoT`; `PROVIDER_BUDGET` 2.5 s connect
+  since step 3's fix round, 10 s in all), with
   step 3's DoH on 443 where 853 is blocked (below).
 - **Policy and pref** (step 1's wire): `PolicyResponse.dnsUpstream` is raw `JsonElement?` read field by field by the
   pure `server/CustomUpstream.kt` `customUpstreamFrom` (kind `doh` with an `https://` URL OkHttp parses, or `dot` with
@@ -799,10 +800,12 @@ Together: an app store install of something not on the allowlist would still nee
   per period probes DoT (within at most `UPSTREAM_BUDGET`, so its query still gets DoH in time), the rest go straight
   to DoH; DoT that reaches the server (an answer, or anything above TLS) or a network reset (`PublicResolvers.reset`
   from the VPN's `networkChanged`) ends it. A query whose DoT fails goes on to DoH itself while its ~4.8 s deadline
-  (`QUERY_DEADLINE_MS`) leaves at least `BACKUP_FLOOR_MS` (a refused connect does; a dropped SYN under the providers'
-  5 s connect doesn't - that query is dropped and counted). The providers' DoH client is the VPN's own
-  `buildDohClient(IP_LITERAL_DNS, ::protect)` (lazy, evicted on a reset and at stop; `IP_LITERAL_DNS` never looks a
-  name up), never tsnet. The bootstrap's last resolver is `PublicResolvers.cloudflare` too (its DoT, or its DoH on
+  (`QUERY_DEADLINE_MS`) leaves at least `BACKUP_FLOOR_MS` - a refused connect and a dropped one alike, since the
+  providers' DoT connect is 2.5 s (`PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS <= QUERY_DEADLINE_MS`, pinned). In a
+  period a DoH transport failure goes on to DoT the same way, and a DoT that works ends the period (a network that
+  blocks the provider's 443 but not 853). A transport that throws counts as a connect failure (`probing` can't stick).
+  The providers' DoH client is the VPN's own `buildDohClient(IP_LITERAL_DNS, ::protect)` (built at its first DoH use,
+  evicted on a reset and at stop; `IP_LITERAL_DNS` never looks a name up), never tsnet. The bootstrap's last resolver is `PublicResolvers.cloudflare` too (its DoT, or its DoH on
   443), with the bootstrap's budgets. **Under Custom the parent's servers are what they are** - a parent's DoT server
   never gets a guessed DoH URL (`PublicResolverTest` pins that a DoH target is built only from the parent's URL or the
   two public ones); a DoT backup on a network that blocks 853 fails like any backup. The status field is unchanged.
@@ -812,8 +815,11 @@ Together: an app store install of something not on the allowlist would still nee
   when a `CustomDns` is built, before any look-up (only the config's names; the expiry back in elapsed time, at most
   24 h ahead; an expired entry is stale - served while one refresh runs; anything malformed = no cache; addresses parsed
   by `ipLiteral`, never looked up), written after each look-up that found addresses through a temp file + rename
-  (`writeAtomically`). A config with no names (both IP literals) deletes it, as does the VPN starting or syncing with no
-  custom server.
+  (`writeAtomically`), never by a closed `CustomDns`. Kept only for a custom server with a name
+  (`BootstrapDiskCache.keptFor`): `syncCustom` deletes it otherwise **before its early return**, so a Forget while the
+  VPN was off is forgotten at the next start; reading it drops another config's names (rewritten, or deleted when
+  nothing usable is left). The parent's prefilled backup is `https://1.1.1.3/dns-query` (DoH, so it answers where 853
+  is blocked; a stored `tls://1.1.1.3` stays as the parent saved it).
 - **Network reset**: `KidVpnService` registers `registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN; the VPN is
   its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
   a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks

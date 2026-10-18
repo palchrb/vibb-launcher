@@ -305,7 +305,7 @@ class CustomDnsTest {
         var now = 1_000L
         val calls = Calls()
         dns(backup = named, clock = { now }, calls = calls, cacheFile = file) { _, m -> lookupAnswer(m, "192.0.2.30") }.start()
-        assertTrue(file.readText().contains("family.dns.example	"))
+        assertTrue(file.readText().contains("family.dns.example\t"))
         assertFalse(java.io.File(dir, file.name + ".tmp").exists())
         // A restart (a new instance, as after a reboot): the address is in hand, no look-up.
         val again = Calls()
@@ -315,6 +315,38 @@ class CustomDnsTest {
         assertTrue(again.lookups("family.dns.example").isEmpty())
         // Both servers IP literals: nothing to look up, nothing kept.
         dns(cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }.start()
+        assertFalse(file.exists())
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `the disk cache keeps only this config's names, and a closed instance never writes it`() {
+        val dir = java.nio.file.Files.createTempDirectory("dns-cache").toFile()
+        val file = java.io.File(dir, BootstrapDiskCache.FILE_NAME)
+        val named = UpstreamTarget.Doh("https://family.dns.example/dns-query")
+        val one = listOf(InetAddress.getByName("192.0.2.30"))
+        val far = System.currentTimeMillis() + 3_600_000
+        file.writeText("v1\nfamily.dns.example\t$far\t192.0.2.30\nold.dns.example\t$far\t192.0.2.31\n")
+        dns(backup = named, cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }
+        assertTrue(file.readText().contains("family.dns.example\t"))
+        assertFalse(file.readText().contains("old.dns.example"))
+        // Nothing usable in it: it goes.
+        file.writeText("not a cache")
+        dns(backup = named, cacheFile = file) { _, _ -> Attempt.Answer(backupAnswer) }
+        assertFalse(file.exists())
+        // A look-up still running when its instance is closed (new servers, a Forget) writes nothing.
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val d = dns(backup = named, cacheFile = file) { _, m ->
+            started.countDown()
+            release.await(5, TimeUnit.SECONDS)
+            lookupAnswer(m, one.single().hostAddress!!)
+        }
+        val lookUp = thread { d.start() }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        d.close()
+        release.countDown()
+        lookUp.join(5_000)
         assertFalse(file.exists())
         dir.deleteRecursively()
     }

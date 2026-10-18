@@ -1857,17 +1857,21 @@ needed to manage the phone, delete on a schedule, never store notification or me
   valid stored pair renders the page in place, 400, the Custom Server row open, "Type your server's address first.");
   the "Custom Server" row (`<details id="custom-server">`, its sub-line the server's hint) holds one form, `POST
   /dns/upstream/custom` (`dns_filter::set_custom`, full auth): "Your server" and "Backup server", both `type="text"`,
-  **write-only** (never filled from storage; the backup prefilled `1.1.1.3` only while none is stored), hints "Set
+  **write-only** (never filled from storage; the backup prefilled `https://1.1.1.3/dns-query` - `BACKUP_PREFILL`,
+  Cloudflare for Families over DoH, so it also answers where port 853 is blocked (design 36 step 3's QA) - only while
+  none is stored; a stored `tls://1.1.1.3` stays as saved, no migration), hints "Set
   (…dns.example · DNS-over-HTTPS)." / "Not set.", "Forget Custom Server" while something is stored. All or nothing:
   each field typed = parsed, empty = the stored value; a refusal, a missing value or the same server twice renders
   in place (400, `Cache-Control: no-store`, the typed values back in the body only, `aria-invalid` and the reason under
   the field); something typed and valid stores both normalized, sets `upstream = 'custom'`, moves `custom_rev` if
   either changed; Forget with both fields empty clears both and puts Custom back on Cloudflare; nothing typed changes
-  nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the `1.1.1.3` prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
+  nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the backup prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
   (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Cloudflare - update Vibb
   One on this phone ..." without the capability, "Waiting for the phone" without a report at the current `rev`, "Web
   filter off" when the phone's filter switch is off); a stored but no longer valid pair says so instead. The ⓘ says
-  DoT on 853 for a bare name, the certificate check, direct reach (not through Tailscale) and the path id.
+  DoT on 853 for a bare name, the certificate check, direct reach (not through Tailscale), the path id, that
+  Cloudflare/Quad9 fall back to the same provider's DoH where DoT is blocked, and that only a DoH backup answers on a
+  network that blocks port 853.
 - **Security event** `dns_server_changed` ("DNS server changed") on every change of the choice or either address,
   detail `{"server":..,"kind":..,"backup_kind":..}` - kinds only, never a host or path; nothing logs either value.
 - Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer), `tests::custom_dns`

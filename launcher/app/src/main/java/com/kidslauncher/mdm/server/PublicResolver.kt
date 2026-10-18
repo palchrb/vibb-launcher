@@ -56,7 +56,10 @@ object DotBlockedRule {
     }
 
     /** DoT reached the server (an answer, or anything above TLS): 853 isn't blocked here. */
-    fun afterDotWorked(s: DotBlocked): DotBlocked = if (s == DotBlocked()) s else DotBlocked()
+    fun afterDotWorked(s: DotBlocked): DotBlocked = if (s == IDLE) s else IDLE
+
+    /** DoT works, nothing counted (shared: no allocation per answered query). */
+    val IDLE = DotBlocked()
 
     fun backoff(periods: Int): Long = minOf(BACKOFF_BASE_MS shl (periods - 1).coerceIn(0, 10), BACKOFF_CAP_MS)
 }
@@ -79,18 +82,20 @@ class PublicResolver(
     private val elapsed: () -> Long = SystemClock::elapsedRealtime,
     private val log: (String) -> Unit = { Log.i(LOG_TAG, it) },
 ) {
-    private val state = AtomicReference(DotBlocked())
+    private val state = AtomicReference(DotBlockedRule.IDLE)
 
     internal fun state(): DotBlocked = state.get()
 
     /** A network reset: DoT first again. */
-    fun reset() = update { DotBlocked() }
+    fun reset() = update { DotBlockedRule.IDLE }
 
     /**
      * One query: DoT within [dotBudget] (a probe within at most [UPSTREAM_BUDGET], so its query still
      * gets DoH in time), or DoH within [dohCap] in a DoH period. A DoT transport failure counts towards
      * the period, and the query itself goes on to DoH while [QUERY_DEADLINE_MS] leaves at least
-     * [BACKUP_FLOOR_MS]. [transport] is one attempt at a target (DoT or DoH).
+     * [BACKUP_FLOOR_MS]. In a period a DoH transport failure goes on to DoT the same way (QA L1: a
+     * network that blocks the provider's 443 but not 853), and a DoT that works ends the period.
+     * [transport] is one attempt at a target (DoT or DoH); one that throws counts as a connect failure.
      */
     fun resolve(
         query: ByteArray,
@@ -99,19 +104,33 @@ class PublicResolver(
         transport: (UpstreamTarget, List<InetAddress>, ByteArray, Budget) -> Attempt,
     ): Attempt {
         val deadline = elapsed() + QUERY_DEADLINE_MS
+        val addresses = listOf(address)
+        fun attempt(target: UpstreamTarget, budget: Budget): Attempt = try {
+            transport(target, addresses, query, budget)
+        } catch (e: Exception) {
+            Attempt.Transport(BackupReason.CONNECT)
+        }
+        fun left(cap: Budget): Budget? {
+            val left = deadline - elapsed()
+            return if (left < BACKUP_FLOOR_MS) null else cap.atMost(Budget(left.toInt(), left.toInt()))
+        }
         var route = DotRoute.DOT
         update { s -> DotBlockedRule.route(s, elapsed()).let { (r, next) -> route = r; next } }
-        val addresses = listOf(address)
-        if (route == DotRoute.DOH) return transport(doh, addresses, query, dohCap)
-        val outcome = transport(dot, addresses, query, if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
+        if (route == DotRoute.DOH) {
+            val outcome = attempt(doh, dohCap)
+            if (outcome !is Attempt.Transport) return outcome
+            val budget = left(dotBudget.atMost(UPSTREAM_BUDGET)) ?: return outcome
+            val fallback = attempt(dot, budget)
+            if (fallback !is Attempt.Transport) update(DotBlockedRule::afterDotWorked)
+            return fallback
+        }
+        val outcome = attempt(dot, if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
         if (outcome !is Attempt.Transport) {
             update(DotBlockedRule::afterDotWorked)
             return outcome
         }
         update { DotBlockedRule.afterDotFailure(it, elapsed(), route == DotRoute.PROBE) }
-        val left = deadline - elapsed()
-        if (left < BACKUP_FLOOR_MS) return outcome
-        return transport(doh, addresses, query, dohCap.atMost(Budget(left.toInt(), left.toInt())))
+        return attempt(doh, left(dohCap) ?: return outcome)
     }
 
     private inline fun update(change: (DotBlocked) -> DotBlocked) {

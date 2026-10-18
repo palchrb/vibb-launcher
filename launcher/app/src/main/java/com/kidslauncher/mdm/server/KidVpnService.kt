@@ -134,12 +134,15 @@ class KidVpnService : VpnService() {
      * fresh DoH client), none drop it. */
     @Synchronized
     private fun syncCustom() {
-        val config = DnsFilterEngine.customUpstream().takeUnless { stopped }
-        if (config == custom?.config) return
-        custom?.close()
+        val wanted = DnsFilterEngine.customUpstream()
+        val config = wanted.takeUnless { stopped }
+        val changed = config != custom?.config
+        if (changed) custom?.close()
         val cacheFile = File(noBackupFilesDir, BootstrapDiskCache.FILE_NAME)
-        // No custom server: its names' cache goes too (it holds a name the parent typed).
-        if (DnsFilterEngine.customUpstream() == null) cacheFile.delete()
+        // Nothing to keep (no custom server, or one without names): the file goes - it holds a name the
+        // parent typed. Also at a start with none, after a Forget while the VPN was off (qa-36-s3-code M1).
+        if (!BootstrapDiskCache.keptFor(wanted)) cacheFile.delete()
+        if (!changed) return
         custom = config?.let { CustomDns(it, ::protect, scope, cacheFile = cacheFile).also(CustomDns::start) }
         live = custom
         Log.i(LOG_TAG, "Custom DNS server: ${config?.primary?.kind ?: "none"}")
@@ -233,7 +236,7 @@ class KidVpnService : VpnService() {
                 custom.resolve(query, message)
             } else {
                 val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
-                DnsFilterEngine.resolveProvider(query, upstream, ::protect, providerDoh.value)
+                DnsFilterEngine.resolveProvider(query, upstream, ::protect) { providerDoh.value }
             }
             if (responseBytes == null) return
 

@@ -50,7 +50,7 @@ class CustomDns(
     private val resolvers = bootstrapResolvers(config)
     private val bootstrap = BootstrapDns(elapsed) { host -> scope.launch { lookUp(host) } }
     private val client = buildDohClient(bootstrap, protect)
-    private val transport = transport ?: targetTransport(client, protect)
+    private val transport = transport ?: targetTransport({ client }, protect)
 
     /** Set by [close]: a look-up still running for old servers writes no cache. */
     private var closed = false
@@ -233,13 +233,20 @@ class CustomDns(
         val file = cacheFile ?: return
         val names = BootstrapDiskCache.namesOf(config)
         try {
-            if (names.isEmpty()) {
+            if (!BootstrapDiskCache.keptFor(config)) {
                 file.delete()
                 return
             }
             if (!file.exists()) return
-            val entries = BootstrapDiskCache.decode(file.readText(), names, elapsed(), System.currentTimeMillis())
+            val text = file.readText()
+            val entries = BootstrapDiskCache.decode(text, names, elapsed(), System.currentTimeMillis())
             for ((host, cached) in entries) bootstrap.cache.seed(host, cached)
+            // Lines for other servers' names (an earlier config) or a malformed file: keep only these.
+            if (entries.isEmpty()) {
+                file.delete()
+            } else if (BootstrapDiskCache.lineCount(text) != entries.size) {
+                writeAtomically(file, BootstrapDiskCache.encode(entries, elapsed(), System.currentTimeMillis()))
+            }
             log("Bootstrap cache: ${entries.size} names")
         } catch (e: Exception) {
             log("Bootstrap cache unreadable: ${e.javaClass.simpleName}")

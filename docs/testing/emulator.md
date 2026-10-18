@@ -1444,7 +1444,9 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
    footer says "Backup server since ... - your server's certificate wasn't accepted".
 4. A network reset: `adb shell svc wifi disable` then `enable` (or toggle mobile data): the next query tries the
    primary again at once (`Upstream: custom` after a working server, or a new `failures=1` period).
-5. A backup given as a DoH URL (`https://1.1.1.3/dns-query`) with a failing primary answers too.
+5. A backup given as a DoH URL (`https://1.1.1.3/dns-query` - the PWA's prefill since design 36 step 3's fix round)
+   with a failing primary answers too. It must filter as Cloudflare for Families does: with the primary failing,
+   Cloudflare's adult-category test domain resolves to `0.0.0.0` / `::`, and the certificate names `1.1.1.3`.
 6. Forget Custom Server (or pick Cloudflare): logcat `Custom DNS server: none`, the next report has no
    `dns_upstream`, look-ups go to Cloudflare as before.
 7. **A network that blocks 853** (design 36 step 3). Blocking a port needs root somewhere: either the host
@@ -1456,8 +1458,8 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
    this. With **Cloudflare** (then **Quad9**) picked and the rule in place, `adb logcat -s DnsUpstream`: `DoT attempt
    failed: ...` three times, then `DoT blocked: cloudflare over DoH, periods=1`; `adb shell ping -c1 example.com`
    still resolves (over `https://1.1.1.1/dns-query`, resp. `9.9.9.9` - their certificates name the IPs). With REJECT
-   the very first queries resolve too (a refused DoT goes on to DoH in the same query); with DROP the first few are
-   dropped (5 s connect) until the period starts. After 5 min one probe (`periods=2` while the rule stays); remove
+   the very first queries resolve too (a refused DoT goes on to DoH in the same query); with DROP each query takes
+   ~2.5 s more (the providers' DoT connect) until the period starts, and still resolves. After 5 min one probe (`periods=2` while the rule stays); remove
    the rule (`-D` for `-I`) and the next probe logs `DoT works again: cloudflare` - or toggle Wi-Fi for a network
    reset, which tries DoT at once. Under **Custom server** with `https://dns.quad9.net/dns-query` and a backup by name
    (`https://family.cloudflare-dns.com/dns-query`): the bootstrap's look-ups go over Cloudflare's DoH and the names

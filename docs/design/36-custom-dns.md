@@ -20,7 +20,8 @@ policy's `dns_upstream_provider` names one; the phone forwards every query its b
 
 **Goal**: a third choice, **Custom server**, with two fields that take whatever address the parent has - a DoH URL
 (an AdGuard Home client id in the path or the first label, or none), a DoT host name, or an IP for DoT: **Your
-server** and **Backup server** (prefilled `1.1.1.3`, Cloudflare for Families). The server classifies and validates
+server** and **Backup server** (prefilled `https://1.1.1.3/dns-query`, Cloudflare for Families over DoH - §10.1's
+addendum). The server classifies and validates
 both without any network access. The phone forwards to the first, checks its certificate by the system CAs, and
 while that server as a whole is unhealthy answers through the backup - never unfiltered plaintext. A name the healthy
 server refuses stays refused. The PWA shows, per phone, which is in use.
@@ -47,7 +48,8 @@ server refuses stays refused. The PWA shows, per phone, which is in use.
    carries both servers.
 6. **The backup answers only while your server as a whole is unhealthy, never a name a healthy server didn't
    resolve** (§5.4): transport failures start a period; an odd answer is judged by a canary query.
-7. The backup is the parent's: required under Custom, prefilled `1.1.1.3`, not equal to the primary. Cloudflare and
+7. The backup is the parent's: required under Custom, prefilled `https://1.1.1.3/dns-query` (DoH on 443, so it also
+   answers where 853 is blocked; §10.1's addendum), not equal to the primary. Cloudflare and
    Quad9 are unchanged (no backup).
 8. Bootstrap through the backup if it is an IP, else through the primary if it is an IP, else Cloudflare `1.1.1.1`
    DoT; cached in memory by TTL; no server-resolved IPs (§5.3).
@@ -279,16 +281,18 @@ Design 31's shapes. The group:
    stored a "Forget Custom Server" checkbox (the Tailscale key's pattern):
    - **Your server**: the hint (`Set (…dns.example · DNS-over-HTTPS).` / `Not set.`), an empty input, placeholder
      `https://… or a host name`.
-   - **Backup server**: the hint, and an input that is empty when a backup is stored and prefilled `1.1.1.3` when
-     none is (our public default, the only value ever rendered into either input); below it "Answers while your
-     server can't be reached. 1.1.1.3 is Cloudflare for Families."; while both stored values are names, also "Give
+   - **Backup server**: the hint, and an input that is empty when a backup is stored and prefilled
+     `https://1.1.1.3/dns-query` when none is (our public default, the only value ever rendered into either input);
+     below it "Answers while your server can't be reached. https://1.1.1.3/dns-query is Cloudflare for Families, over
+     DNS-over-HTTPS, so it also answers on networks that block DNS-over-TLS."; while both stored values are names, also "Give
      the backup as an IP address and no look-up ever leaves for anyone else."
    - Both inputs `type="text"`, `autocomplete="off"`, `autocapitalize="none"`, `spellcheck="false"`, never filled from
      storage (write-only; text, not password, so the prefill shows and no password manager offers to keep an id).
 
    On Save, each field: typed → `parse_dns_server`; empty → the stored value. Then, all or nothing:
    - a refusal → under that field; no primary at all → "Type your server's address first"; no backup at all (the
-     prefill cleared, nothing stored) → "Custom needs a backup server: 1.1.1.3 is Cloudflare for Families"; equal
+     prefill cleared, nothing stored) → "Custom needs a backup server: https://1.1.1.3/dns-query is Cloudflare for
+     Families"; equal
      `normalized()` → under the backup, "The backup must be another server than yours". **400, rendered in place**
      (form action `…#server`), the typed values back in their inputs (body only, never a URL; `Cache-Control:
      no-store`), `aria-invalid` and the reason under the field (`aria-describedby`); nothing written.
@@ -348,7 +352,8 @@ Server:
   (provider `cloudflare`, DoH `{kind,url,rev,backup}`, DoT `{kind,host,port,rev,backup}`, backup DoH and DoT);
   `custom_without_a_valid_pair_is_cloudflare` (empty, unparsable or equal backup).
 - `tests::settings_pages`: save → 303 `/dns#server`, both hints shown, never a path or a first label; the backup
-  input prefilled `1.1.1.3` with none stored and empty with one stored, the primary input always empty; each refusal
+  input prefilled `https://1.1.1.3/dns-query` with none stored and empty with one stored (posted untouched it is
+  stored and sent as a DoH backup), the primary input always empty; each refusal
   in either field → 400, the reason under that field, nothing written; the prefill cleared with none stored → 400
   (backup required); equal values (`9.9.9.9` and `tls://9.9.9.9:853`) → 400; a backup-only change with a primary
   stored; Custom picked with nothing stored → 400; Forget clears both; both empty keeps; the "give the backup as an
@@ -409,6 +414,7 @@ need step 2's launcher (the PWA names those that don't).
 
 1. **Backup under Custom**: the parent's own, a second field with §2's grammar; required, prefilled `1.1.1.3`
    (Cloudflare for Families), not equal to the primary. No hard-coded fallback; no fail-closed mode.
+   *Addendum 2026-10-18, step 3 QA (qa-36-s3-code M3): the prefill is `https://1.1.1.3/dns-query`.*
 2. **REFUSED from a healthy server = blocked** (the phone's NODATA, the canary deciding "healthy"): yes.
 3. **Networks that block 853**: yes, as step 3.
 4. **Addresses**: any, refusing only loopback, unspecified and multicast; no tailnet-specific rules. The phone never
@@ -509,7 +515,8 @@ the cache, `DohMessageTest`, `CustomUpstreamPrefTest` with the log scan).
 - **Gen checks**: `afterAnswer` also ignores an answer from an older `gen` (a slow answer that began before a period
   doesn't end it); the canary's verdict is kept whatever the `gen` (so one canary per 60 s holds); `reset` keeps
   `sinceMs` while healthy (the report's "since" stays the time the server came into use).
-- **Cloudflare/Quad9 keep today's timeouts** (`PROVIDER_BUDGET`: 5 s connect, 10 s in all) through the generalized
+- **Cloudflare/Quad9 keep today's timeouts** (`PROVIDER_BUDGET`: 5 s connect, 10 s in all - until step 3's fix round:
+  2.5 s connect, so a dropped 853 still leaves time for the same provider's DoH) through the generalized
   `resolveDoT`; the 2.5 s budget is for the parent's servers, where a backup answer must land inside the stub's first
   try. A garbled provider answer is now dropped rather than relayed.
 - **`cloudflare-dns.com` is always `1.1.1.1`** in `BootstrapDns` (the bootstrap fallback's fixed address), also when
@@ -565,7 +572,8 @@ Custom nothing changed: a parent's DoT server never gets a guessed DoH URL. The 
 (`BootstrapDiskCache`): `noBackupFilesDir/dns_bootstrap_cache.txt`, CE storage only (0600 by default, never DE, never
 logged), `v1` then host, expiry as wall-clock ms and at most two addresses per line; read when a `CustomDns` is built,
 before any look-up; written through a temp file and a rename after each look-up that found addresses; nothing for
-IP-literal servers (the file is deleted then, and whenever the VPN runs with no custom server). Battery: no background
+IP-literal servers (the file is deleted then, and - since the fix round - whenever the VPN starts or syncs with no
+custom server, a Forget while it was off included; lines of another config's names are dropped when it is read). Battery: no background
 work per query; one DoT probe per period; one small write per look-up (at most once per TTL per name). Logs name the
 provider (`cloudflare`/`quad9`), periods, counts and exception classes only. Tests: `PublicResolverTest` (6),
 `BootstrapResolverTest` (+2), `CustomDnsTest` (+2, one existing expectation extended by Cloudflare's DoH step),
@@ -575,8 +583,9 @@ provider (`cloudflare`/`quad9`), periods, counts and exception classes only. Tes
 - **The query itself goes on to DoH** after its own DoT transport failure, before the threshold, while the ~4.8 s
   deadline (`QUERY_DEADLINE_MS`) leaves at least `BACKUP_FLOOR_MS` (DoH capped at §5.2's 1.5 s / 2.5 s, the bootstrap's at
   1 s / 2 s): on a network that *refuses* 853 the first queries are answered at once, not only after the period starts.
-  On one that *drops* 853 the providers' DoT keeps today's 5 s connect (`PROVIDER_BUDGET`, step 2's decision), so those
-  first queries are dropped (the stub retries) until 3 failures start the period - a few seconds. The period's probe
+  On one that *drops* 853 the providers' DoT connect is 2.5 s since the fix round (`PROVIDER_BUDGET`, M2: it was 5 s,
+  which left the query no time for DoH), so each query there takes ~2.5 s longer until 3 failures start the period, and
+  is still answered inside the stub's first ~5 s try. The period's probe
   takes at most `UPSTREAM_BUDGET` (1.5 s / 2.5 s), so its own query still gets DoH in time.
 - **The threshold, window and back-off** (3 in 60 s; 5 min doubling to 1 h) are this step's choice - the design gave
   none. A burst of parallel queries on a blocked network reaches 3 at once, which is right; a transient blip costs at
@@ -594,9 +603,29 @@ certificates naming `1.1.1.1` and `9.9.9.9` through OkHttp's verifier, the IP-li
 resetting it; under Custom the bootstrap's look-ups over Cloudflare's DoH, and a reboot on that network with a parent's
 server by name (`Bootstrap cache: 2 names` before any look-up).
 
-**Open points for the code QA**: (1) Under Custom the prefilled backup `1.1.1.3` is DoT by IP, so on a network that
-blocks 853 a DoT primary *and* that backup fail (queries dropped); §10 says the parent's servers are what they are - a
-parent who wants such networks covered gives `https://1.1.1.3/dns-query`. Worth a line in the ⓘ or DEPLOY.md? (2) The
+**Open points for the code QA** (as handed over; (1) closed by the fix round's M3, (4) kept by the QA): (1) Under
+Custom the prefilled backup `1.1.1.3` is DoT by IP, so on a network that blocks 853 a DoT primary *and* that backup
+fail (queries dropped). (2) The
 query-level DoH fall-through above (not only after the threshold). (3) The disk cache is read in `CustomDns`'s
 constructor, which `syncCustom` runs on the main thread at VPN start - one tiny file, next to `loadFromDisk`'s
 blocklist read there. (4) The 3 / 60 s / 5 min / 1 h numbers.
+
+**Code QA fix round** (`docs/review/qa-36-s3-code.md`, branch `qa-dns-s3`): M1 - `syncCustom` deletes the bootstrap
+cache before its early return whenever the policy has no custom server with a name (`BootstrapDiskCache.keptFor`, pure,
+and a source pin on its place), so a Forget while the VPN was off forgets on the phone at the next start; reading the
+file keeps only the current config's names (rewritten, or deleted when nothing is left or it is malformed). M2 -
+`PROVIDER_BUDGET = Budget(2500, 10_000)`: a dropped 853 connect now leaves the floor for DoH in the same query
+(`PROVIDER_BUDGET.connectMs + BACKUP_FLOOR_MS <= QUERY_DEADLINE_MS` pinned); a TLS blackhole after a connect still uses
+the 10 s and is dropped until the period starts (rare, a known residual). M3 (server) - the prefilled backup is
+`https://1.1.1.3/dns-query` (`BACKUP_PREFILL`, `BACKUP_NEEDED`, the placeholder, the footer and the ⓘ in
+`templates/dns_filter.html`; §0, §1.7, §6, §8 and §10.1's addendum); a backup already stored as `tls://1.1.1.3` stays as
+the parent saved it (no migration) - a parent can type the new one; a save that posts the prefill untouched stores and
+sends a DoH backup (`the_prefilled_backup_is_saved_as_dns_over_https`). L1 - in a DoH period a DoH transport failure
+goes on to DoT inside the same deadline (within `UPSTREAM_BUDGET`), and a DoT that works ends the period: a network that
+blocks the provider's 443 but not 853 no longer costs a 5-minute outage. L2 - tests for the DoH floor (a DoT failure
+after 4 s gets no DoH), a closed `CustomDns` never writing the cache (a look-up held past `close()`), and
+`PublicResolvers.reset()` in `onNetwork` (a source pin). N1 - `resolve` turns a transport that throws into a counted
+`Transport(CONNECT)`, so `probing` can't stick. N2 - the providers' DoH client is built at its first DoH use
+(`resolveProvider` takes a `() -> OkHttpClient`). N3 - `DotBlockedRule.IDLE`, no allocation per answered query. N4 -
+nothing. Device check added: `https://1.1.1.3/dns-query` filters as Families does (Cloudflare's adult test domain
+answers `0.0.0.0`/`::`, the certificate names `1.1.1.3`; `docs/testing/emulator.md` §6m step 5).

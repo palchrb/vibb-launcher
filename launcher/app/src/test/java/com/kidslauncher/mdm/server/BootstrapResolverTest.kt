@@ -164,6 +164,13 @@ class BootstrapResolverTest {
         val src = listOf("src", "app/src").map { java.io.File(it) }.first { java.io.File(it, "main/java").isDirectory }
         val vpn = java.io.File(src, "main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
         assertTrue("File(noBackupFilesDir, BootstrapDiskCache.FILE_NAME)" in vpn)
+        // Kept only for a custom server with a name; decided before syncCustom's early return (M1).
+        assertFalse(BootstrapDiskCache.keptFor(null))
+        assertFalse(BootstrapDiskCache.keptFor(config(dotIp, dohIp)))
+        assertTrue(BootstrapDiskCache.keptFor(config(dotName, dohIp)))
+        val sync = vpn.substringAfter("private fun syncCustom()").substringBefore("\n    }\n")
+        val delete = sync.indexOf("if (!BootstrapDiskCache.keptFor(wanted)) cacheFile.delete()")
+        assertTrue(delete >= 0 && delete < sync.indexOf("if (!changed) return"))
         assertFalse("DeviceProtectedStorage" in vpn)
     }
 

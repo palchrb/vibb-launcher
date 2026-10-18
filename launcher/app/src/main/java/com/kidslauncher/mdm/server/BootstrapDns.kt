@@ -279,6 +279,12 @@ object BootstrapDiskCache {
         return found
     }
 
+    /** The number of name lines in [text] (what [decode] would read if every one were this config's). */
+    fun lineCount(text: String): Int = text.lines().drop(1).count { it.isNotEmpty() }
+
+    /** Whether the file may exist at all: a custom server with a name to look up. */
+    fun keptFor(config: CustomUpstream?): Boolean = config != null && namesOf(config).isNotEmpty()
+
     /** The names of [config] that are looked up (IP literals and Cloudflare's fixed name never are). */
     fun namesOf(config: CustomUpstream): Set<String> = listOf(config.primary.serverHost, config.backup.serverHost)
         .filter { ipLiteral(it) == null && it != CLOUDFLARE_BOOTSTRAP.host }
