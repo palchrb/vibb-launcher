@@ -1,0 +1,990 @@
+//! Design 35 step 2: Web Push - subscribe and its refusals, the sender against a scripted push
+//! service (headers, the decrypted payload, every answer incl. H1's 403), the fold, the receipt,
+//! health and its warnings, the key at startup, Sign Out Everywhere, backups, the delivery line.
+
+use std::collections::VecDeque;
+use std::sync::Mutex;
+
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
+use serde_json::{Value, json};
+
+use super::settings_pages::check_forms;
+use super::{TestApp, TestResponse};
+use crate::music_net::BoxFut;
+use crate::push::{PushAnswer, PushRequest, Transport};
+use crate::webpush::test_browser;
+
+/// A push service in the tests: records every request and answers from a script (201 when it
+/// runs out).
+#[derive(Default)]
+pub struct ScriptedPush {
+    pub requests: Mutex<Vec<PushRequest>>,
+    answers: Mutex<VecDeque<Result<PushAnswer, String>>>,
+}
+
+impl ScriptedPush {
+    pub fn answer(&self, status: u16, reason: Option<&str>, retry_after: Option<&str>) {
+        self.answers.lock().unwrap().push_back(Ok(PushAnswer {
+            status,
+            reason: reason.map(str::to_string),
+            retry_after: retry_after.map(str::to_string),
+            apns_id: None,
+        }));
+    }
+
+    pub fn fail(&self) {
+        self.answers
+            .lock()
+            .unwrap()
+            .push_back(Err("connection refused".to_string()));
+    }
+
+    /// The requests so far, taken.
+    pub fn take(&self) -> Vec<PushRequest> {
+        std::mem::take(&mut *self.requests.lock().unwrap())
+    }
+}
+
+impl Transport for ScriptedPush {
+    fn send(&self, request: PushRequest) -> BoxFut<'_, Result<PushAnswer, String>> {
+        self.requests.lock().unwrap().push(request);
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Ok(PushAnswer {
+                status: 201,
+                ..Default::default()
+            }));
+        Box::pin(async move { answer })
+    }
+}
+
+const ORIGIN: &str = "https://kidphone.example.ts.net";
+const ENDPOINT: &str = "https://web.push.apple.com/QK1-fake-endpoint";
+const IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+
+/// A POST as the browser sends This Device's form: same-origin, with `Origin` (unless `None`)
+/// and an iPhone's User-Agent.
+async fn post_as_browser(
+    app: &TestApp,
+    uri: &str,
+    cookie: Option<&str>,
+    origin: Option<&str>,
+    fields: &[(&str, &str)],
+) -> TestResponse {
+    let body = form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(fields)
+        .finish();
+    let mut builder = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("sec-fetch-site", "same-origin")
+        .header(header::USER_AGENT, IPHONE);
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    if let Some(origin) = origin {
+        builder = builder.header(header::ORIGIN, origin);
+    }
+    app.send_via(
+        &app.router,
+        super::LOOPBACK_PEER,
+        builder.body(Body::from(body)).unwrap(),
+    )
+    .await
+}
+
+/// Turns notifications on for `endpoint` with the RFC 8291 test browser's keys.
+async fn subscribe(app: &TestApp, cookie: &str, endpoint: &str) -> TestResponse {
+    post_as_browser(
+        app,
+        "/notifications/subscriptions",
+        Some(cookie),
+        Some(ORIGIN),
+        &[
+            ("from", "devices"),
+            ("endpoint", endpoint),
+            ("p256dh", test_browser::UA_PUBLIC),
+            ("auth", test_browser::AUTH),
+        ],
+    )
+    .await
+}
+
+async fn scalar(app: &TestApp, sql: &str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+}
+
+async fn send(app: &TestApp) {
+    send_at(app, chrono::Utc::now()).await;
+}
+
+async fn send_at(app: &TestApp, now: chrono::DateTime<chrono::Utc>) {
+    crate::push::send_due(&app.state, now).await.unwrap();
+}
+
+/// A phone, as the intake loads it for the words.
+async fn phone(app: &TestApp, name: &str) -> crate::parent_events::Phone {
+    let (id, _) = app.create_device(name).await;
+    crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap()
+}
+
+/// Raises `event` as an intake does (its own transaction, then the wake-up); its id.
+async fn raise(app: &TestApp, event: &crate::parent_events::NewEvent) -> i64 {
+    crate::parent_events::raise_logged(&app.state, event).await;
+    scalar(app, "SELECT MAX(id) FROM parent_events").await
+}
+
+/// The decrypted payload of a recorded push.
+fn payload(request: &PushRequest) -> Value {
+    let plain = test_browser::decrypt(&request.body).expect("the test browser can't read it");
+    serde_json::from_slice(&plain).unwrap()
+}
+
+/// The JWT, its claims and the `k` of a request's `Authorization`.
+fn vapid(request: &PushRequest) -> (String, Value, String) {
+    let auth = request.header("Authorization").unwrap();
+    let (t, k) = auth
+        .strip_prefix("vapid t=")
+        .and_then(|rest| rest.split_once(", k="))
+        .unwrap();
+    let claims = t.split('.').nth(1).unwrap();
+    let claims =
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, claims).unwrap();
+    (
+        t.to_string(),
+        serde_json::from_slice(&claims).unwrap(),
+        k.to_string(),
+    )
+}
+
+/// The receipt as the worker posts it (no cookie), from the loopback peer.
+async fn post_receipt(app: &TestApp, body: &str, site: &str) -> StatusCode {
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/notifications/receipt")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("sec-fetch-site", site)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    app.send_via(&app.router, super::LOOPBACK_PEER, request)
+        .await
+        .status
+}
+
+fn receipt_of(request: &PushRequest, action: &str) -> String {
+    let data = &payload(request)["notification"]["data"];
+    json!({ "d": data["d"], "t": data["t"], "a": action }).to_string()
+}
+
+#[tokio::test]
+async fn subscribe_refusals_upsert_and_unsubscribe() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let active = "SELECT COUNT(*) FROM push_subscriptions WHERE state = 'active'";
+
+    // Nothing is stored without a session, or from another site.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions",
+        None,
+        Some(ORIGIN),
+        &[("endpoint", ENDPOINT)],
+    )
+    .await;
+    assert_eq!(res.location(), Some("/login"));
+    let cross = Request::builder()
+        .method(Method::POST)
+        .uri("/notifications/subscriptions")
+        .header(header::COOKIE, &cookie)
+        .header("sec-fetch-site", "cross-site")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.send_via(&app.router, super::LOOPBACK_PEER, cross)
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+
+    // The refusals, each a flash back in #this-device.
+    let mut off_curve = test_browser::bytes(test_browser::UA_PUBLIC);
+    off_curve[64] ^= 1;
+    let off_curve =
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, off_curve);
+    let (ua, auth) = (test_browser::UA_PUBLIC, test_browser::AUTH);
+    for (endpoint, p256dh, auth, origin, notice) in [
+        (
+            "https://push.apple.com.example.net/x",
+            ua,
+            auth,
+            Some(ORIGIN),
+            "push_service",
+        ),
+        (
+            "http://fcm.googleapis.com/fcm/send/x",
+            ua,
+            auth,
+            Some(ORIGIN),
+            "push_service",
+        ),
+        (ENDPOINT, off_curve.as_str(), auth, Some(ORIGIN), "push_key"),
+        (ENDPOINT, ua, "c2hvcnQ", Some(ORIGIN), "push_key"),
+        (ENDPOINT, ua, auth, None, "push_origin"),
+    ] {
+        let res = post_as_browser(
+            &app,
+            "/notifications/subscriptions",
+            Some(&cookie),
+            origin,
+            &[
+                ("from", "music"),
+                ("endpoint", endpoint),
+                ("p256dh", p256dh),
+                ("auth", auth),
+            ],
+        )
+        .await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/notifications?from=music&notice={notice}#this-device").as_str()),
+            "{endpoint} {origin:?}"
+        );
+        app.assert_lands(&res, &cookie).await;
+    }
+    assert_eq!(scalar(&app, active).await, 0);
+
+    // On: one row with the browser's label, a security line; the same endpoint again is the
+    // same row (active again after it was turned off).
+    let res = subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications?from=devices&notice=push_on#this-device")
+    );
+    let page = app.get_page(res.location().unwrap(), &cookie).await.text();
+    assert!(page.contains("Notifications are on for this device."));
+    let (label, origin): (String, String) =
+        sqlx::query_as("SELECT label, origin FROM push_subscriptions")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        (label.as_str(), origin.as_str()),
+        ("iPhone · Safari", ORIGIN)
+    );
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscribed'"
+        )
+        .await,
+        1
+    );
+    sqlx::query("UPDATE push_subscriptions SET state = 'gone', gone_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(scalar(&app, active).await, 1);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_subscriptions WHERE gone_at IS NULL"
+        )
+        .await,
+        1
+    );
+
+    // At most 10 devices: the 11th is refused.
+    for n in 2..=10 {
+        subscribe(
+            &app,
+            &cookie,
+            &format!("https://fcm.googleapis.com/fcm/send/fake-{n}"),
+        )
+        .await;
+    }
+    assert_eq!(scalar(&app, active).await, 10);
+    let res = subscribe(&app, &cookie, "https://fcm.googleapis.com/fcm/send/fake-11").await;
+    assert!(res.location().unwrap().contains("notice=push_many"));
+    assert_eq!(scalar(&app, active).await, 10);
+
+    // Turn Off: the row goes.
+    let res = post_as_browser(
+        &app,
+        "/notifications/subscriptions/unsubscribe",
+        Some(&cookie),
+        Some(ORIGIN),
+        &[("from", "devices"), ("endpoint", ENDPOINT)],
+    )
+    .await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications?from=devices&notice=push_off#this-device")
+    );
+    app.assert_lands(&res, &cookie).await;
+    assert_eq!(scalar(&app, active).await, 9);
+}
+
+/// §7: the page carries the public key and endpoint hash prefixes - never an endpoint, a browser
+/// key, the auth secret or a token; every form lands on its own group.
+#[tokio::test]
+async fn the_page_carries_no_secret_and_every_form_lands() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let request = app.pushes.take().remove(0);
+    let token = payload(&request)["notification"]["data"]["t"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let html = app.get_page("/notifications", &cookie).await.text();
+    let key = app.state.push.key.as_ref().unwrap();
+    assert!(html.contains(&format!("data-key=\"{}\"", key.public)));
+    assert!(html.contains(&format!(
+        "data-subscribed=\"{}\"",
+        crate::push::endpoint_hash(ENDPOINT)
+    )));
+    for secret in [
+        ENDPOINT,
+        "QK1-fake",
+        test_browser::UA_PUBLIC,
+        test_browser::AUTH,
+        token.as_str(),
+    ] {
+        assert!(!html.contains(secret), "{secret} is on the page");
+    }
+    assert!(html.contains("<script src=\"/static/notifications.js?v=1\" defer></script>"));
+    check_forms("/notifications", &html);
+    assert!(html.contains("Pushed to iPhone · Safari, not confirmed"));
+}
+
+/// §4.3, §5.3: the headers, the JWT, and the payload the browser decrypts - no `detail`.
+#[tokio::test]
+async fn a_push_carries_its_headers_and_an_encrypted_payload() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let found = crate::window_relock::ForeignAccess {
+        admins: vec!["org.example.spy".to_string()],
+        accessibility: vec![],
+    };
+    let mut names = std::collections::HashMap::new();
+    names.insert("org.example.spy".to_string(), "Helper".to_string());
+    let foreign = raise(&app, &anna.foreign_access(&found, "{}", 0, &names)).await;
+    assert!(app.state.push.woken().await, "the raise wakes the sender");
+    let battery = crate::models::BatteryReport {
+        level: 14,
+        charging: false,
+        low: true,
+    };
+    raise(&app, &anna.low_battery(&battery, anna.now)).await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 2);
+
+    let first = &requests[0];
+    assert_eq!(first.endpoint, ENDPOINT);
+    assert_eq!(first.header("Content-Encoding"), Some("aes128gcm"));
+    assert_eq!(
+        first.header("Content-Type"),
+        Some("application/octet-stream")
+    );
+    assert_eq!(
+        (first.header("TTL"), first.header("Urgency")),
+        (Some("43200"), Some("high"))
+    );
+    assert!(first.header("Topic").is_none());
+    let (jwt, claims, k) = vapid(first);
+    assert_eq!(k, app.state.push.key.as_ref().unwrap().public);
+    assert_eq!(claims["aud"], "https://web.push.apple.com");
+    assert_eq!(
+        claims["sub"], ORIGIN,
+        "no VAPID_SUBJECT: the subscription's origin"
+    );
+    let exp = claims["exp"].as_i64().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    assert!(exp > now && exp <= now + 24 * 3600);
+    // The second push reuses the JWT; a low battery is kept an hour.
+    assert_eq!(vapid(&requests[1]).0, jwt);
+    assert_eq!(
+        (requests[1].header("TTL"), requests[1].header("Urgency")),
+        (Some("3600"), Some("normal"))
+    );
+
+    let message = payload(first);
+    let delivery = scalar(
+        &app,
+        &format!("SELECT id FROM push_deliveries WHERE event_id = {foreign}"),
+    )
+    .await;
+    assert_eq!(message["web_push"], 8030);
+    assert_eq!(message["mutable"], true);
+    let n = &message["notification"];
+    assert_eq!(n["title"], "An app may read the PIN on Anna");
+    assert_eq!(n["body"], "1 app with device admin");
+    assert_eq!(n["lang"], "en");
+    assert_eq!(
+        n["navigate"],
+        format!("{ORIGIN}/devices/{}#foreign-access", anna.id)
+    );
+    assert_eq!(n["tag"], format!("e{foreign}"));
+    assert_eq!(n["data"]["d"], delivery);
+    assert_eq!(n["data"]["t"].as_str().unwrap().len(), 22);
+    assert_eq!(n["data"]["b"], 2);
+    assert!(
+        !message.to_string().contains("Helper"),
+        "the detail never leaves the server"
+    );
+    let (status, hash): (String, Vec<u8>) =
+        sqlx::query_as("SELECT status, token_hash FROM push_deliveries WHERE id = ?")
+            .bind(delivery)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), hash.len()), ("accepted", 32));
+    send(&app).await;
+    assert!(app.pushes.take().is_empty(), "nothing more to send");
+}
+
+async fn delivery_of(app: &TestApp, event: i64) -> (String, Option<i64>, Option<String>) {
+    sqlx::query_as("SELECT status, http_status, reason FROM push_deliveries WHERE event_id = ?")
+        .bind(event)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// §4.4, H1: 410 turns the subscription off; a 403 BadJwtToken never does - a fresh JWT, one
+/// retry, then failed and the clock warning; 429 waits for its Retry-After; a network error and
+/// 5xx retry on the schedule; other 4xx fail; nothing goes after its TTL.
+#[tokio::test]
+async fn the_push_services_answers() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let active = "SELECT COUNT(*) FROM push_subscriptions WHERE state = 'active'";
+
+    // 403 BadJwtToken twice: still active, the retry carried a new JWT, the delivery failed.
+    app.pushes.answer(403, Some("BadJwtToken"), None);
+    app.pushes.answer(403, Some("BadJwtToken"), None);
+    let one = raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let tries = app.pushes.take();
+    assert_eq!(tries.len(), 2);
+    assert_ne!(
+        vapid(&tries[0]).0,
+        vapid(&tries[1]).0,
+        "the retry mints a fresh JWT"
+    );
+    assert_eq!(
+        delivery_of(&app, one).await,
+        ("failed".into(), Some(403), Some("BadJwtToken".into()))
+    );
+    assert_eq!(scalar(&app, active).await, 1);
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("id=\"clock-warning\""));
+    assert!(page.contains("Not sent"));
+
+    // A 403 then a 201 (the clock was fixed): accepted, the warning goes.
+    app.pushes.answer(403, Some("BadJwtToken"), None);
+    let two = raise(&app, &anna.unseen_boot(2, None)).await;
+    send(&app).await;
+    assert_eq!(app.pushes.take().len(), 2);
+    assert_eq!(delivery_of(&app, two).await.0, "accepted");
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(!page.contains("id=\"clock-warning\""));
+
+    // 429 with Retry-After: not again before it, then sent.
+    app.pushes.answer(429, None, Some("120"));
+    let three = raise(&app, &anna.unseen_boot(3, None)).await;
+    let now = chrono::Utc::now();
+    send_at(&app, now).await;
+    assert_eq!(delivery_of(&app, three).await.0, "queued");
+    send_at(&app, now + chrono::Duration::seconds(60)).await;
+    assert_eq!(app.pushes.take().len(), 1, "nothing before the Retry-After");
+    send_at(&app, now + chrono::Duration::seconds(121)).await;
+    assert_eq!(app.pushes.take().len(), 1);
+    assert_eq!(delivery_of(&app, three).await.0, "accepted");
+
+    // A network error, then 503 four times: retried on the schedule, then failed.
+    app.pushes.fail();
+    for _ in 0..4 {
+        app.pushes.answer(503, None, None);
+    }
+    let four = raise(&app, &anna.unseen_boot(4, None)).await;
+    let mut at = chrono::Utc::now();
+    for wait in [0, 60, 300, 1800, 7200] {
+        at += chrono::Duration::seconds(wait);
+        send_at(&app, at).await;
+    }
+    assert_eq!(app.pushes.take().len(), 5);
+    assert_eq!(
+        delivery_of(&app, four).await,
+        ("failed".into(), Some(503), None)
+    );
+
+    // A low battery waiting to retry past its hour's TTL: failed, never sent late.
+    app.pushes.answer(500, None, None);
+    let battery = crate::models::BatteryReport {
+        level: 9,
+        charging: false,
+        low: true,
+    };
+    let five = raise(&app, &anna.low_battery(&battery, anna.now)).await;
+    let now = chrono::Utc::now();
+    send_at(&app, now).await;
+    send_at(&app, now + chrono::Duration::seconds(3700)).await;
+    assert_eq!(app.pushes.take().len(), 1);
+    assert_eq!(
+        delivery_of(&app, five).await,
+        ("failed".into(), Some(500), Some("expired".into()))
+    );
+
+    // Another 4xx: failed.
+    app.pushes.answer(400, Some("BadDeviceToken"), None);
+    let six = raise(&app, &anna.unseen_boot(6, None)).await;
+    send(&app).await;
+    assert_eq!(delivery_of(&app, six).await.0, "failed");
+
+    // 410: dropped, the subscription turned off (a security line), nothing queued for it again.
+    app.pushes.answer(410, Some("Unregistered"), None);
+    let seven = raise(&app, &anna.unseen_boot(7, None)).await;
+    send(&app).await;
+    assert_eq!(delivery_of(&app, seven).await.0, "dropped");
+    assert_eq!(scalar(&app, active).await, 0);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'push_subscription_gone'"
+        )
+        .await,
+        1
+    );
+    raise(&app, &anna.unseen_boot(8, None)).await;
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries WHERE status = 'queued'"
+        )
+        .await,
+        0
+    );
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("Turned off on that device"));
+    assert!(
+        !page.contains(&crate::push::endpoint_hash(ENDPOINT)),
+        "a turned-off one isn't known to This Device"
+    );
+}
+
+/// §2.4, §4.6: a switched-off kind is stored but not pushed, the emergency call always is; a
+/// burst from one intake is the newest two and one summary, the emergency call on its own.
+#[tokio::test]
+async fn switches_the_emergency_call_and_a_burst() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let anna = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE notification_settings SET push_unseen_boot = 0")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_deliveries").await,
+        0
+    );
+    assert_eq!(scalar(&app, "SELECT COUNT(*) FROM parent_events").await, 1);
+
+    // 20 PIN uses in one pin-events POST, and an emergency call.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let events: Vec<Value> = (0..20)
+        .map(|n| {
+            json!({ "id": format!("{n:032x}"), "kind": "unlocked", "entry": "override",
+                    "at_ms": now_ms - 60_000 + n })
+        })
+        .collect();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/pin-events",
+            Some(&token),
+            Some(json!({ "events": events })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert!(
+        app.state.push.woken().await,
+        "pin-events wakes the sender after its commit"
+    );
+    raise(&app, &anna.emergency_call(anna.now)).await;
+    send(&app).await;
+    let pushed: Vec<(String, String)> = app
+        .pushes
+        .take()
+        .iter()
+        .map(|r| {
+            let n = &payload(r)["notification"];
+            (
+                n["title"].as_str().unwrap().to_string(),
+                n["tag"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(pushed.len(), 4, "{pushed:?}");
+    assert_eq!(
+        pushed[0].0, "Anna called an emergency number",
+        "the emergency call first, on its own"
+    );
+    let count = |title: &str| pushed.iter().filter(|(t, _)| t == title).count();
+    assert_eq!(count("New notifications"), 1);
+    assert_eq!(count("Parent PIN used on Anna"), 2);
+    let summary = pushed
+        .iter()
+        .find(|(t, _)| t == "New notifications")
+        .unwrap();
+    assert!(summary.1.starts_with('s'));
+    let tags: std::collections::HashSet<&String> = pushed.iter().map(|(_, tag)| tag).collect();
+    assert_eq!(tags.len(), 4, "unique tags: nothing replaces another");
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries WHERE reason = 'folded'"
+        )
+        .await,
+        18
+    );
+    // The two sent are the newest.
+    let newest = scalar(
+        &app,
+        "SELECT MAX(id) FROM parent_events WHERE kind = 'pin_used'",
+    )
+    .await;
+    let sent = scalar(
+        &app,
+        &format!("SELECT status = 'accepted' FROM push_deliveries WHERE event_id = {newest}"),
+    )
+    .await;
+    assert_eq!(sent, 1);
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("In a summary"));
+}
+
+/// §7: the receipt needs no session, only the delivery's token; a repeat is harmless; clicked
+/// marks the event read; cross-site and oversized are refused; misses count against the client.
+#[tokio::test]
+async fn the_receipt() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let event = raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let request = app.pushes.take().remove(0);
+    let receipts = "SELECT COUNT(*) FROM push_deliveries WHERE receipt_at IS NOT NULL";
+
+    let data = &payload(&request)["notification"]["data"];
+    let wrong = json!({ "d": data["d"], "t": "AAAAAAAAAAAAAAAAAAAAAA", "a": "shown" }).to_string();
+    assert_eq!(
+        post_receipt(&app, &wrong, "same-origin").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&request, "shown"), "cross-site").await,
+        StatusCode::FORBIDDEN
+    );
+    let big = format!("{{\"d\":1,\"t\":\"{}\",\"a\":\"shown\"}}", "x".repeat(1100));
+    assert_eq!(
+        post_receipt(&app, &big, "same-origin").await,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(scalar(&app, receipts).await, 0);
+
+    // No cookie: the token is enough. Twice is the same.
+    for _ in 0..2 {
+        assert_eq!(
+            post_receipt(&app, &receipt_of(&request, "shown"), "same-origin").await,
+            StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(scalar(&app, receipts).await, 1);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_subscriptions WHERE last_receipt_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("Shown on iPhone · Safari"));
+    let unread = format!("SELECT read_at IS NULL FROM parent_events WHERE id = {event}");
+    assert_eq!(scalar(&app, &unread).await, 1);
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&request, "clicked"), "same-origin").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(scalar(&app, &unread).await, 0, "clicked marks it read");
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries WHERE clicked_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+
+    // Misses count: after 30 the client is refused, even with a good token.
+    for _ in 0..29 {
+        post_receipt(&app, &wrong, "same-origin").await;
+    }
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&request, "shown"), "same-origin").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+/// §6: three pushes without a receipt, or one a day old, warn on /notifications and the Devices
+/// list; a receipt for any clears it.
+#[tokio::test]
+async fn health_and_its_warnings() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let warned = || async {
+        let inbox = app.get_page("/notifications", &cookie).await.text();
+        let devices = app.get_page("/devices", &cookie).await.text();
+        (
+            inbox.contains("data-warning=\"not-showing\"") && inbox.contains("May not be showing"),
+            devices.contains("id=\"push-warning\""),
+        )
+    };
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("Nothing sent yet"));
+    for n in 1..=2 {
+        raise(&app, &anna.unseen_boot(n, None)).await;
+    }
+    send(&app).await;
+    assert_eq!(warned().await, (false, false));
+    raise(&app, &anna.unseen_boot(3, None)).await;
+    send(&app).await;
+    assert_eq!(warned().await, (true, true));
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(devices.contains("Notifications may not be showing on iPhone · Safari"));
+    assert!(devices.contains("href=\"/notifications?from=devices#devices\""));
+
+    // A receipt for the newest clears it.
+    let last = app.pushes.take().pop().unwrap();
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&last, "shown"), "same-origin").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(warned().await, (false, false));
+    let page = app.get_page("/notifications", &cookie).await.text();
+    assert!(page.contains("Last shown"));
+
+    // One unconfirmed push, a day old: the warning again.
+    raise(&app, &anna.unseen_boot(4, None)).await;
+    send(&app).await;
+    sqlx::query("UPDATE push_subscriptions SET last_receipt_at = datetime('now', '-26 hours')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE push_deliveries SET accepted_at = datetime('now', '-25 hours') \
+         WHERE id = (SELECT MAX(id) FROM push_deliveries)",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(warned().await, (true, true));
+}
+
+/// §6: Send a Test is a visible push, one per 30 s; Remove ends a device's notifications. Both
+/// come back to #devices.
+#[tokio::test]
+async fn send_a_test_and_remove() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    let test_uri = format!("/notifications/subscriptions/{id}/test");
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &test_uri,
+            Some(&cookie),
+            &[("from", "settings")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications?from=settings&notice=test_sent#devices")
+    );
+    app.assert_lands(&res, &cookie).await;
+    assert!(app.state.push.woken().await);
+    let again = app
+        .request_form(
+            Method::POST,
+            &test_uri,
+            Some(&cookie),
+            &[("from", "settings")],
+        )
+        .await;
+    assert!(again.location().unwrap().contains("notice=test_wait"));
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(requests.len(), 1);
+    let n = &payload(&requests[0])["notification"];
+    assert_eq!(n["title"], "Test from Vibb Phone");
+    assert_eq!(
+        n["body"],
+        "If you see this, notifications work on iPhone · Safari"
+    );
+    assert!(n["tag"].as_str().unwrap().starts_with('t'));
+    assert_eq!(
+        (requests[0].header("TTL"), requests[0].header("Urgency")),
+        (Some("600"), Some("high"))
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/notifications/subscriptions/{id}/delete"),
+            Some(&cookie),
+            &[("from", "devices")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some("/notifications?from=devices&notice=removed#devices")
+    );
+    app.assert_lands(&res, &cookie).await;
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+    let res = app
+        .request_form(Method::POST, &test_uri, Some(&cookie), &[])
+        .await;
+    assert!(res.location().unwrap().contains("notice=test_gone"));
+}
+
+/// §7: Sign Out Everywhere and `reset-2fa` delete every subscription; a backup's copy holds none.
+#[tokio::test]
+async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("snapshot.db");
+    crate::handlers::backups::snapshot(&app.db, &dir.path().join("scratch.db"), &target)
+        .await
+        .unwrap();
+    let copy = sqlx::SqlitePool::connect(&format!("sqlite://{}", target.display()))
+        .await
+        .unwrap();
+    let rows: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM push_subscriptions), (SELECT COUNT(*) FROM push_deliveries)",
+    )
+    .fetch_one(&copy)
+    .await
+    .unwrap();
+    copy.close().await;
+    assert_eq!(rows, (0, 0));
+    let bytes = std::fs::read(&target).unwrap();
+    assert!(
+        !bytes
+            .windows(ENDPOINT.len())
+            .any(|w| w == ENDPOINT.as_bytes())
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/sign-out-everywhere",
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1
+    );
+    std::fs::create_dir_all(&*app.state.data_dir).unwrap();
+    crate::admin_auth::reset_2fa(&app.db, "parent", &app.state.data_dir)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+}
+
+/// §4.1: the key file is made once, 0600; a damaged one turns push off and stays as it was; a
+/// subscription made for another key is turned off at startup.
+#[tokio::test]
+async fn the_key_file_and_a_changed_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("data").join("keys").join("vapid-p256.pk8");
+    let made = crate::push::load_key(&file).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert_eq!(
+        crate::push::load_key(&file).unwrap().fingerprint,
+        made.fingerprint
+    );
+    let damaged = dir.path().join("damaged.pk8");
+    std::fs::write(&damaged, b"not a key at all").unwrap();
+    let err = crate::push::load_key(&damaged).unwrap_err();
+    assert!(
+        err.contains("damaged.pk8") && err.contains("remove it"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&damaged).unwrap(), b"not a key at all");
+
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let key = app.state.push.key.clone().unwrap();
+    let active = "SELECT COUNT(*) FROM push_subscriptions WHERE state = 'active'";
+    crate::push::forget_other_keys(&app.db, &key).await;
+    assert_eq!(scalar(&app, active).await, 1);
+    crate::push::forget_other_keys(&app.db, &made).await;
+    assert_eq!(scalar(&app, active).await, 0);
+}

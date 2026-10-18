@@ -1197,10 +1197,10 @@ pub async fn status(
             previous_call,
             phone.now,
         ) {
-            crate::parent_events::raise_logged(&state.db, &phone.emergency_call(at)).await;
+            crate::parent_events::raise_logged(&state, &phone.emergency_call(at)).await;
         }
         if let Some(battery) = &report.battery {
-            crate::parent_events::battery_report(&state.db, phone, battery).await;
+            crate::parent_events::battery_report(&state, phone, battery).await;
         }
     }
     if let Some(line) = crate::boot_witness::log_line(
@@ -1211,8 +1211,7 @@ pub async fn status(
         crate::security::record_security_event(&state.db, "boot_unseen", None, None, Some(&line))
             .await;
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
-            crate::parent_events::raise_logged(&state.db, &phone.unseen_boot(count, last_at_ms))
-                .await;
+            crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
         }
     }
     crate::handlers::window_relock::log_relock(

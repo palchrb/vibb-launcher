@@ -53,6 +53,8 @@ struct DevicesListTemplate {
     live_warning: Option<crate::handlers::auth::WarningRow>,
     warning_back: &'static str,
     bell: crate::parent_events::Bell,
+    /// A device that may not be showing notifications (design 35 §6).
+    push_warning: Option<crate::handlers::auth::WarningRow>,
 }
 
 pub async fn list_devices(
@@ -84,6 +86,7 @@ pub async fn list_devices(
             live_warning: crate::handlers::auth::live_warning_row(&admin, &zone, now),
             warning_back: "/devices",
             bell: crate::parent_events::Bell::load(&state.db).await,
+            push_warning: crate::handlers::notifications::warning_row(&state, admin.id).await,
         }
         .render()
         .unwrap(),

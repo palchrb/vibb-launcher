@@ -94,6 +94,8 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "phone_relock_findings" => "Phone locked again: findings",
         "phone_app_blocked" => "App blocked on phone",
         "boot_unseen" => "Phone started without Vibb One",
+        "push_subscribed" => "Notifications turned on on a device",
+        "push_subscription_gone" => "Notifications turned off on a device",
         "app_installed" => "App installed on phone",
         "play_install_mode" => "Play Store opened for installs",
         "time_lift" => "Time rule paused",
@@ -319,13 +321,15 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 25] = [
+    const NOT_EVENTS: [&str; 28] = [
         // A failed Spotify login's codes (`spotify_login_failed`'s details, design 26c §2.3).
         "access_denied",
         "admin_id",
         "authorize_error",
         "clear_kid_pin",
         "clear_pin",
+        // A push delivery's reason and This Device's notices (design 35 step 2).
+        "event_gone",
         "gone_unsaved",
         "invalid_grant",
         "music_entries",
@@ -342,6 +346,8 @@ mod tests {
         "parent_pin_invalid",
         "parent_pin_saved",
         "parent_pin_saved_easy",
+        "push_many",
+        "push_on",
         "saved_safe_boot",
         "show_text",
         "stop_ring",

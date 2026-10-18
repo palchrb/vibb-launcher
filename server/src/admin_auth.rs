@@ -310,7 +310,8 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 }
 
 /// `kid_phone_server reset-2fa <user>` (§3.2.3): clears the TOTP (the next sign-in sets it up
-/// again), the lock and its counter, signs out every session - and replaces the password with a
+/// again), the lock and its counter, signs out every session, removes every device's
+/// notifications (design 35 §7) - and replaces the password with a
 /// new one in `data_dir/initial-admin-password` (0600, to be changed at the next sign-in). The CLI
 /// exists for someone who knows the password keeping the account locked; keeping the password
 /// would hand the account to whoever signs in first and sets up an authenticator (QA 22 M4).
@@ -342,6 +343,15 @@ pub async fn reset_2fa(
     .execute(db)
     .await
     .map_err(|err| format!("couldn't reset: {err}"))?;
+    // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
+    sqlx::query(
+        "DELETE FROM push_subscriptions \
+         WHERE admin_id = (SELECT id FROM admin_users WHERE username = ?)",
+    )
+    .bind(username)
+    .execute(db)
+    .await
+    .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
     crate::security::record_security_event(
         db,
         "totp_reset",
@@ -349,13 +359,13 @@ pub async fn reset_2fa(
         None,
         Some(
             "from the command line (reset-2fa): new password, 2FA cleared, every session \
-             signed out",
+             signed out, notifications removed from every device",
         ),
     )
     .await;
     Ok(format!(
-        "Two-factor login for {username} is reset, every session is signed out, and the password \
-         is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
+        "Two-factor login for {username} is reset, every session is signed out, notifications are \
+         turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
         path.display()
     ))

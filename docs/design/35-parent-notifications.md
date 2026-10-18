@@ -487,3 +487,50 @@ Code QA fix round (`docs/review/qa-35-s1-code.md`, 2026-10-18):
 
 Open for step 2: the delivery line, This Device, Getting Notifications, the warnings, the push tables' writers,
 `Kind`'s push properties, `log_foreign_access`'s and the intake's `push.wake()` after the raise.
+
+## Step 2 implementation status (2026-10-18, branch `notif-s2`)
+
+Built as §9 step 2, server only, no migration: the `ring` line (`Cargo.lock` gained only the dependency line),
+`src/keys.rs` (the key-file helper, shared with `music_secret`), `src/webpush.rs` (VAPID JWT, RFC 8291 encryption,
+the allow-list; Appendix A asserted end to end), `src/push.rs` (the key at startup, the queue, the sender, the answer
+table, health, the receipt), the routes and the page (§5.1's warnings, This Device, the delivery line, Getting
+Notifications), the Devices list's warning row, `templates/sw.js` (`push`, `notificationclick`),
+`static/notifications.js`, `static/register-sw.js` (the badge), `strip_secrets_in`, Sign Out Everywhere and
+`reset-2fa`, DEPLOY.md's "Notifications", `server/CLAUDE.md`.
+
+Where the code differs from or fills in the text above:
+- **The summary has no count**: "New notifications" / "More than 3 at once - open Notifications to see them". A
+  summary that has to be retried (after a 5xx or a restart) is a delivery row with no place for its words; fixed words
+  need no new column. The inbox lists every event.
+- **One push at a time**, not up to 4 in flight: the emergency call first, then the `Urgency: high` ones. A dead push
+  service costs at most 15 s per push; for one family's handful of devices that is simpler than a pool.
+- **The receipt token is made at each send**, its hash stored before the request: a retry carries a fresh token. A
+  push a service accepted although the request looked failed (a network error after the body went) loses its
+  receipt and shows "not confirmed" - honest, and rare.
+- **A tap** posts `clicked` (which marks the event read, §5.3) and opens the target directly; it doesn't go through
+  the inbox's `POST /notifications/{id}/open` (a worker can't post a form and follow its 303 into a window).
+- **Endings**: a TTL that ran out is `failed` with `reason = expired`; a delivery to a subscription that turned `gone`
+  is `dropped`/`gone`; one whose event was pruned is `dropped`/`event_gone`. The delivery line adds "Sending" while
+  a push waits to be retried.
+- **The clock warning** looks at the failed delivery's `created_at` (there is no `failed_at`): the 401/403 retry
+  happens in the same pass as the first try, so it is the failure's time give or take a retry.
+- **`reset-2fa`** is the command line one (§1 decision 5, qa-35 L6); the PWA's own Reset Two-Factor keeps the subscriptions
+  (the parent is signed in on the device that resets it).
+- **This Device drops a local subscription the server doesn't know** at load (removed there, or made for an older
+  server key after a restore): Turn On then makes a fresh one, since a `subscribe` with another key over an old
+  subscription fails in the browsers.
+- The subscription is the form POST of §5.2 and the public key rides in the form's `data-key`: no JSON endpoint and
+  no separate public-key route.
+- `raise_logged` now runs `raise` (and so the queue) in a transaction of its own, then wakes the sender.
+- With no usable key file the page says notifications are off on this server (no Turn On); nothing is sent, queued
+  rows age out with the 30-day retention.
+
+Device checks owed before step 2 is done (§9):
+- iPhone on iOS 18.4+: a Safari tab shows the Home Screen steps; from the Home Screen app the prompt comes from
+  `subscribe` alone; each kind arrives with its words and opens its page; the receipt arrives (shown, then clicked);
+  Focus on; the worker failing (e.g. a thrown error) -> Safari's declarative fallback shows once, never twice; where
+  `app_badge` goes (L1).
+- iPhone on 16.4-18.3 if at hand (no declarative push: the worker path only).
+- macOS Safari, Android Chrome, desktop Firefox: subscribe, a push, the receipt, the click.
+- A 410: remove the app from the iPhone's Home Screen, raise an event -> the device shows "Turned off".
+- The clock: a Pi booted with a wrong clock shows the red row on Notifications and recovers once NTP synced.

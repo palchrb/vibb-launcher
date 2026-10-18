@@ -828,7 +828,7 @@ pub async fn reset_totp(
 }
 
 /// "Sign Out Everywhere…" (design 22 §3.2.2, behind a confirm since design 31): every session of
-/// this account ends, this one too. If the epoch can't be moved, nothing is signed out and the
+/// this account ends, this one too, and every device's notifications (design 35 §7). If the epoch can't be moved, nothing is signed out and the
 /// parent is told so (500) - this session is kept, so they know it failed.
 pub async fn sign_out_everywhere(
     State(state): State<AppState>,
@@ -843,6 +843,8 @@ pub async fn sign_out_everywhere(
         )
             .into_response();
     }
+    // A lost device stops getting notifications too (design 35 §7).
+    crate::push::forget_subscriptions(&state.db, admin.id).await;
     security::record_security_event(
         &state.db,
         "signed_out_everywhere",

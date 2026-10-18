@@ -15,7 +15,6 @@
 //! ([MusicKey::seal_with], the associated data `spotify-v1:<fingerprint>:<spotify user>`); a lost
 //! key means logging those accounts in again.
 
-use std::io::Write;
 use std::path::Path;
 
 use aes_gcm::Aes256Gcm;
@@ -115,107 +114,42 @@ fn decode_key(text: &str) -> Option<[u8; 32]> {
 }
 
 /// The key from `env_value` (`MUSIC_SECRET_KEY`) when set, else from `file`, which is created
-/// (0600, a fresh random key, its directory 0700) when it doesn't exist or is empty. `Err` =
-/// Storytel stays off (logged by the caller): an invalid variable, an unreadable or invalid file,
-/// or one that can't be created - each says which file and why.
+/// (0600, a fresh random key, its directory 0700 - `keys::load_or_create`) when it doesn't exist or
+/// is empty. `Err` = Storytel stays off (logged by the caller): an invalid variable, an unreadable
+/// or invalid file, or one that can't be created - each says which file and why.
 pub fn load(env_value: Option<&str>, file: &Path) -> Result<MusicKey, String> {
     if let Some(value) = env_value.map(str::trim).filter(|v| !v.is_empty()) {
         return decode_key(value)
             .map(|key| MusicKey::from_bytes(&key))
             .ok_or_else(|| "MUSIC_SECRET_KEY is not 32 bytes of base64".to_string());
     }
-    match std::fs::read_to_string(file) {
-        // An empty file is what a crash between creating and writing it used to leave: made
-        // again. A non-empty invalid one may be a real key that got mangled - refused, not
-        // replaced (qa-21-step1-code #9).
-        Ok(text) if text.trim().is_empty() => create_key_file(file),
-        Ok(text) => {
-            restrict_permissions(file);
-            decode_key(&text)
-                .map(|key| MusicKey::from_bytes(&key))
-                .ok_or_else(|| {
-                    format!(
-                        "{} is not 32 bytes of base64 - fix it, or remove it to make a new key \
-                         (the saved Storytel login then has to be entered again)",
-                        file.display()
-                    )
-                })
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => create_key_file(file),
-        Err(err) => Err(format!("can't read {}: {err}", file.display())),
+    let loaded = crate::keys::load_or_create(file, || {
+        let mut key = [0u8; 32];
+        OsRng.fill_bytes(&mut key);
+        format!(
+            "{}\n",
+            base64::engine::general_purpose::STANDARD.encode(key)
+        )
+        .into_bytes()
+    })?;
+    if loaded.created {
+        tracing::info!(
+            "created the music key file {} (Storytel logins are sealed with it; no backup holds it)",
+            file.display()
+        );
     }
-}
-
-/// Writes a new key through `<file>.tmp` (0600, synced), renames it into place and syncs the
-/// directory, so a crash or a power cut leaves either no key file or a whole one.
-fn create_key_file(file: &Path) -> Result<MusicKey, String> {
-    let dir = file
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)
-            .map_err(|err| format!("can't create the directory {}: {err}", dir.display()))?;
-        // Only a directory made here is made private; an existing one is the operator's.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-                .map_err(|err| format!("can't make {} private (0700): {err}", dir.display()))?;
-        }
-    }
-    let mut key = [0u8; 32];
-    OsRng.fill_bytes(&mut key);
-    let mut tmp_name = file.as_os_str().to_owned();
-    tmp_name.push(".tmp");
-    let tmp = std::path::PathBuf::from(tmp_name);
-    let _ = std::fs::remove_file(&tmp);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let written = options
-        .open(&tmp)
-        .and_then(|mut out| {
-            let text = format!(
-                "{}\n",
-                base64::engine::general_purpose::STANDARD.encode(key)
-            );
-            out.write_all(text.as_bytes())?;
-            out.sync_all()
+    // A mangled key is refused, not replaced: it may be the real one (qa-21-step1-code #9).
+    std::str::from_utf8(&loaded.bytes)
+        .ok()
+        .and_then(decode_key)
+        .map(|key| MusicKey::from_bytes(&key))
+        .ok_or_else(|| {
+            format!(
+                "{} is not 32 bytes of base64 - fix it, or remove it to make a new key \
+                 (the saved Storytel login then has to be entered again)",
+                file.display()
+            )
         })
-        .and_then(|()| std::fs::rename(&tmp, file))
-        .and_then(|()| std::fs::File::open(dir)?.sync_all());
-    if let Err(err) = written {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("can't create {}: {err}", file.display()));
-    }
-    tracing::info!(
-        "created the music key file {} (Storytel logins are sealed with it; no backup holds it)",
-        file.display()
-    );
-    Ok(MusicKey::from_bytes(&key))
-}
-
-/// A key file anyone else can read is made 0600 (best effort, logged).
-fn restrict_permissions(file: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(file)
-            && meta.permissions().mode() & 0o077 != 0
-        {
-            match std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)) {
-                Ok(()) => tracing::warn!("{} was readable by others - now 0600", file.display()),
-                Err(err) => tracing::warn!("{} is readable by others: {err}", file.display()),
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = file;
 }
 
 #[cfg(test)]

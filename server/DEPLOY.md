@@ -260,7 +260,7 @@ LAUNCHER_SIGNATURE_CHECKSUM=...
 out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
 initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
 
-- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel key) is its own
+- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel and Web Push keys) is its own
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".
@@ -672,6 +672,27 @@ Release note for the parent app's rename and new tab bar:
 The parent's browser loads the map's tiles directly from OpenStreetMap with an origin-only `Referer` (OSM sees
 the PWA's address, e.g. its tailnet host name, never a path), so the parent's browser needs to reach
 `tile.openstreetmap.org`; the server itself never contacts OSM.
+
+## Notifications (design 35)
+
+The bell and the inbox (`/notifications`) need nothing. Notifications on the parents' devices (Web Push) need:
+
+- **Outbound HTTPS (443)** from the server to the browsers' push services: `*.push.apple.com` (iPhone, iPad, Mac
+  Safari), `fcm.googleapis.com` (Chrome, Edge on Android, Samsung Internet, Brave, Opera),
+  `*.notify.windows.com` (Edge on Windows) and `updates.push.services.mozilla.com` (Firefox) - through the Pi's
+  firewall and, in Docker, the container's network. The server sends to no other host.
+- **The right time.** Each push is signed with the time in it; a wrong clock makes the push services refuse every one
+  ("The push service refused the server's signature - check the server's clock" on Notifications). The Pi has no clock
+  of its own: after a power cut it needs NTP (`timedatectl` shows "System clock synchronized: yes").
+- **`VAPID_SUBJECT`** (optional) in `.env`: a `mailto:` or `https:` address the push services may contact about the
+  server's pushes. Without it each device's own address of the PWA is sent.
+- **The key** `data/keys/vapid-p256.pk8` is made on the first start (0600) and is never backed up, like the Storytel
+  key. After a restore onto a new machine (or a lost key file) every device's notifications are turned off: turn them
+  on again on each device (Notifications › This Device). A damaged key file is left as it is and notifications stay
+  off until it is fixed or removed (the log names the file).
+- **Tailscale on the parent's device.** A device that shows a notification confirms it to the server; without the
+  tailnet the confirmation can't arrive and Notifications says it "may not be showing" after three unconfirmed
+  pushes, or one a day old.
 
 ## Useful commands on the Pi
 

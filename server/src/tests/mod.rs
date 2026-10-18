@@ -47,6 +47,7 @@ mod time_pages;
 mod time_rules;
 mod tracked_apps;
 mod wallpapers;
+mod web_push;
 mod window_relock;
 
 use axum::Router;
@@ -70,6 +71,8 @@ pub struct TestApp {
     /// Every music source fetch's canned answers (designs 21, 21b): `fetch.answer(url, status,
     /// body)`.
     pub fetch: std::sync::Arc<music::CannedFetch>,
+    /// The push services (design 35): every push recorded, answered from a script.
+    pub pushes: std::sync::Arc<web_push::ScriptedPush>,
     _dir: tempfile::TempDir,
 }
 
@@ -160,6 +163,7 @@ impl TestApp {
 
         let (command_notify, _) = tokio::sync::broadcast::channel(64);
         let fetch = std::sync::Arc::new(music::CannedFetch::default());
+        let pushes = std::sync::Arc::new(web_push::ScriptedPush::default());
         let state = AppState {
             db: db.clone(),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
@@ -193,6 +197,16 @@ impl TestApp {
             tokens: Default::default(),
             enrollment: Default::default(),
             passwords: Default::default(),
+            push: std::sync::Arc::new(crate::push::Push::new(
+                Some(std::sync::Arc::new(
+                    crate::webpush::VapidKey::from_pkcs8(
+                        &crate::webpush::VapidKey::generate_pkcs8(),
+                    )
+                    .unwrap(),
+                )),
+                None,
+                pushes.clone(),
+            )),
         };
 
         TestApp {
@@ -200,6 +214,7 @@ impl TestApp {
             state,
             db,
             fetch,
+            pushes,
             _dir: dir,
         }
     }

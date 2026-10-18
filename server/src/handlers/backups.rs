@@ -238,7 +238,7 @@ pub(crate) async fn snapshot(
 }
 
 /// Clears, in the database file at `path`, what no copy of it may carry: every admin session
-/// (`tower_sessions`) and the Tailscale auth key for the phones (QA of the security wave, a note
+/// (`tower_sessions`), the browsers' Web Push subscriptions and the Tailscale auth key for the phones (QA of the security wave, a note
 /// on M2: a backup was a way onto the tailnet). The key is write-only in the PWA and one-time, so
 /// after a restore the parent enters a new one before the next phone's setup. In rollback-journal
 /// mode with the journal in memory, so the copy stays a single file; `secure_delete` zeroes the old
@@ -259,6 +259,10 @@ async fn strip_secrets_in(path: &std::path::Path) -> Result<(), String> {
             "provisioning_settings",
             "UPDATE provisioning_settings SET tailscale_auth_key = '' WHERE tailscale_auth_key != ''",
         ),
+        // The browsers' push secrets (design 35 §7); a restore couldn't use them anyway (the
+        // VAPID key isn't backed up). Deliveries first.
+        ("push_deliveries", "DELETE FROM push_deliveries"),
+        ("push_subscriptions", "DELETE FROM push_subscriptions"),
     ] {
         let exists: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)",
