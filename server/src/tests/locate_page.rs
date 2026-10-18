@@ -495,3 +495,17 @@ async fn unknown_phones_and_failed_reads() {
         .await;
     assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+/// Leaflet's `Icon.Default` prepends `imagePath` to its icon file names: an `iconUrl` of our own
+/// was prefixed twice (`/static/leaflet/images//static/...`, a 404 and the marker's alt text).
+#[test]
+fn the_map_marker_uses_leaflets_image_path() {
+    let template = include_str!("../../templates/device_locate.html");
+    assert!(template.contains("L.Icon.Default.imagePath = '/static/leaflet/images/';"));
+    for option in ["iconUrl", "iconRetinaUrl", "shadowUrl"] {
+        assert!(!template.contains(option), "{option} would be prefixed twice");
+    }
+    for file in ["marker-icon.png", "marker-icon-2x.png", "marker-shadow.png"] {
+        assert!(std::path::Path::new("static/leaflet/images").join(file).is_file());
+    }
+}

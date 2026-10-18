@@ -185,14 +185,9 @@
             referrerPolicy: 'strict-origin-when-cross-origin',
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
-        // Point Leaflet's default marker icon at our own vendored images -
-        // its built-in default assumes a CDN-relative path that only works
-        // when a bundler rewrites it, which this project deliberately has none of.
-        L.Icon.Default.mergeOptions({
-            iconUrl: '/static/leaflet/images/marker-icon.png',
-            iconRetinaUrl: '/static/leaflet/images/marker-icon-2x.png',
-            shadowUrl: '/static/leaflet/images/marker-shadow.png'
-        });
+        // Leaflet's default marker icon from our own vendored images: Icon.Default prepends
+        // imagePath to its file names (an icon URL of our own would be prefixed twice - a 404).
+        L.Icon.Default.imagePath = '/static/leaflet/images/';
         var shown = {{ view.last_fix_at_js|safe }};
         var shownText = {{ view.fix_popup_js|safe }};
 
