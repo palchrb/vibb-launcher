@@ -120,8 +120,12 @@ async fn the_header_says_whether_the_phone_is_connected() {
         .text();
     let head = header(&html);
     assert!(head.contains("Offline</span>"), "{head}");
+    // Two hours ago is "2 h ago" on the same local day, "yesterday HH:MM" right after local
+    // midnight (`display_time::relative`); the test runs at any hour.
     assert!(
-        head.contains("seen 2 h ago</span> · changes wait until it&#39;s back"),
+        head.contains("seen 2 h ago</span> · changes wait until it&#39;s back")
+            || (head.contains("seen yesterday ")
+                && head.contains("</span> · changes wait until it&#39;s back")),
         "{head}"
     );
 }

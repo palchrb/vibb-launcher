@@ -94,7 +94,12 @@ async fn the_last_relock_shows_on_the_summary_for_a_week() {
         .text();
     let found = group(&html, "relock");
     assert!(found.contains("Its time was up"), "{found}");
-    assert!(found.contains("1 h ago"), "{found}");
+    // An hour ago reads "1 h ago" on the same local day, "yesterday HH:MM" right after local
+    // midnight (`display_time::relative`); the test runs at any hour.
+    assert!(
+        found.contains("1 h ago") || found.contains("yesterday "),
+        "{found}"
+    );
     // Removed is a warning too (24b §1.7, qa-31-s10-code L2).
     assert!(
         found.contains("<span class=\"row-label text-alarm\">Removed<span class=\"row-sub\">1 Wi-Fi proxy</span>"),

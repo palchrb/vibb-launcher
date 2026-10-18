@@ -517,7 +517,9 @@ findings, merge to `main`, full suite once.
   `1.1.1.3`, required under Custom) instead of a hard-coded fallback; any address allowed (LAN, tailnet, `*.ts.net`),
   the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) merged 2026-10-18
   after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) merged 2026-10-18 after code QA
-  (`docs/review/qa-36-s2-code.md`); step 3 (DoH on 443 for networks that block 853) in progress. Device checks owed: a real
+  (`docs/review/qa-36-s2-code.md`); step 3 (DoH on 443 when 853 is blocked, the bootstrap's disk cache, the backup prefilled as
+  `https://1.1.1.3/dns-query`) merged 2026-10-18 after code QA (`docs/review/qa-36-s3-code.md`). **All three steps
+  are on `main`, not released yet.** Device checks owed: a real
   DoH/DoT server by name and IP, a home-network server on and off the home Wi-Fi, a network blocking 853, AdGuard
   Home's REFUSED (the design note's step 2 status).
 
