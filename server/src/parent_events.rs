@@ -112,12 +112,7 @@ impl Phone {
     /// "14:02" today, "yesterday 21:40", else "12 Oct 14:02": when something happened, with its
     /// clock time (an event may arrive days late, from a phone that was off).
     fn at(&self, t: DateTime<Utc>) -> String {
-        let when = self.zone.when(t, self.now);
-        if when.contains(':') {
-            when
-        } else {
-            format!("{when} {}", self.zone.clock(t))
-        }
+        self.zone.at(t, self.now)
     }
 
     /// `words` with the phone's name in it, the name cut ("…") so the whole is at most `max`
@@ -368,16 +363,17 @@ pub async fn raise_logged(db: &SqlitePool, event: &NewEvent) {
 }
 
 /// An emergency call to announce from a status report (§2.1): the reported call is newer than the
-/// previous report's; with no previous report, only one at most a day old by the server's clock.
-/// `previous` is `None` when there was no previous report, `Some(None)` when it had no call.
+/// previous report's; when the previous report named no call (none, an older report without
+/// `call_state`, or no previous report at all) only one at most a day old by the server's clock -
+/// a months-old call after a report without `call_state` is no news (qa-35-s1-code N4).
 pub fn new_emergency_call(
     reported: Option<DateTime<Utc>>,
-    previous: Option<Option<DateTime<Utc>>>,
+    previous: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
     let at = reported?;
     match previous {
-        Some(previous) => previous.is_none_or(|before| at > before).then_some(at),
+        Some(before) => (at > before).then_some(at),
         None => (now - at <= chrono::Duration::hours(FIRST_REPORT_CALL_HOURS)).then_some(at),
     }
 }
@@ -443,14 +439,25 @@ pub async fn battery_report(
     }
 }
 
-/// A report's battery as the Devices row and the device page show it: "Battery 14 %, charging".
-pub fn battery_line(level: Option<i64>, charging: Option<bool>) -> Option<String> {
+/// A report's battery as the Devices row and the device page show it, with the report's age as
+/// the other status lines have theirs: "Battery 14 %, charging · 3 min ago".
+pub fn battery_line(
+    level: Option<i64>,
+    charging: Option<bool>,
+    reported_at: &str,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<String> {
     let level = level?;
-    Some(if charging == Some(true) {
-        format!("Battery {level} %, charging")
+    let charging = if charging == Some(true) {
+        ", charging"
     } else {
-        format!("Battery {level} %")
-    })
+        ""
+    };
+    let age = crate::display_time::parse_db_utc(reported_at)
+        .map(|at| format!(" · {}", zone.relative(at, now)))
+        .unwrap_or_default();
+    Some(format!("Battery {level} %{charging}{age}"))
 }
 
 /// The bell on the tab pages and the Settings hub's row: the unread count (one partial-index
@@ -709,18 +716,20 @@ mod tests {
     fn an_emergency_call_is_new_only_once() {
         let now = utc("2026-10-18 12:00:00");
         let call = Some(utc("2026-10-18 11:00:00"));
-        assert_eq!(new_emergency_call(call, Some(None), now), call);
-        assert_eq!(new_emergency_call(call, Some(call), now), None);
+        assert_eq!(new_emergency_call(call, call, now), None);
         assert_eq!(
-            new_emergency_call(call, Some(Some(utc("2026-10-17 11:00:00"))), now),
+            new_emergency_call(call, Some(utc("2026-10-17 11:00:00")), now),
             call
         );
-        assert_eq!(new_emergency_call(None, Some(call), now), None);
-        // The first report: only a call at most a day old by the server's clock.
+        assert_eq!(new_emergency_call(None, call, now), None);
+        // No call in the previous report (or none at all): only a call at most a day old by the
+        // server's clock - also an old one newer than an older report's.
+        let old = Some(utc("2026-10-16 12:00:00"));
         assert_eq!(new_emergency_call(call, None, now), call);
+        assert_eq!(new_emergency_call(old, None, now), None);
         assert_eq!(
-            new_emergency_call(Some(utc("2026-10-16 12:00:00")), None, now),
-            None
+            new_emergency_call(old, Some(utc("2026-10-01 12:00:00")), now),
+            old
         );
     }
 
@@ -747,15 +756,19 @@ mod tests {
 
     #[test]
     fn the_battery_line_and_the_bell() {
+        let zone = Zone::from_setting("Europe/Oslo");
+        let now = utc("2026-10-18 12:30:00");
+        let line =
+            |level, charging| battery_line(level, charging, "2026-10-18 12:27:00", &zone, now);
         assert_eq!(
-            battery_line(Some(14), Some(true)).as_deref(),
-            Some("Battery 14 %, charging")
+            line(Some(14), Some(true)).as_deref(),
+            Some("Battery 14 %, charging · 3 min ago")
         );
         assert_eq!(
-            battery_line(Some(80), Some(false)).as_deref(),
-            Some("Battery 80 %")
+            line(Some(80), Some(false)).as_deref(),
+            Some("Battery 80 % · 3 min ago")
         );
-        assert_eq!(battery_line(None, Some(true)), None);
+        assert_eq!(line(None, Some(true)), None);
         assert_eq!(Bell { unread: 3 }.pill(), "3");
         assert_eq!(Bell { unread: 100 }.pill(), "99+");
     }

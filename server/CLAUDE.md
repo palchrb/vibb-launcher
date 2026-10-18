@@ -1233,7 +1233,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password` (QA 22 M4). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
-  JSON, backups, provision, the code page, provisioning settings, account, auth) `no-store`. `csrf_guard` (unsafe
+  JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox and the
+  five tab pages with the bell) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
@@ -1834,18 +1835,19 @@ needed to manage the phone, delete on a schedule, never store notification or me
   never `//` or `/\` - is refused). The words are made at raise by `Phone` (name, battery latch, Phone Setup zone, now;
   `Phone::load`) from typed values, cut to 60/100 characters (a long phone name gets "…", the rest stays), local times:
   `emergency_call` (`device_api::status`, `parent_events::new_emergency_call`: newer than the previous report's
-  `call_state.last_emergency_call_at`, or a first report's at most 24 h old), `pin_lockout`/`pin_used`
+  `call_state.last_emergency_call_at`; when that report named none - or there is none - at most 24 h old), `pin_lockout`/`pin_used`
   (`handlers::parent_pin::pin_events`, a newly stored `lockout`/`unlocked`, in its transaction), `foreign_access`
   (`handlers::window_relock::log_foreign_access`, now on `&AppState`: the set changed and isn't empty; key = previous
-  report id + 16 hex of the stored set's SHA-256; `detail` = the apps by the phone's names), `unseen_boot` (where
+  report id + 16 hex of the stored set's SHA-256, both from the intake's one read of the previous report,
+  `PreviousReport`, so parallel reports agree; `detail` = the apps by the phone's names), `unseen_boot` (where
   `boot_witness::log_line` returns a line), `low_battery` (below). Every kind is stored; `notification_settings`'
   switches govern the push only (step 2). `Kind::urgent()/ttl()/urgency()` and the reserved kinds come with step 2.
 - **The battery** (§2.5): status `battery` `{level, charging, low}` (`models::BatteryReport`, read by
   `lenient_battery`: not an object with a level in 0..=100 drops the reading, never the report) ->
   `device_status.battery_level`/`battery_charging`; the pure `battery_edge(latched, &battery)` (armed + `low` → Raise,
   latched + neither low nor charging → Rearm), `battery_report` latches `devices.battery_low_since` with a conditional
-  UPDATE and raises only when that changed the row, in one transaction. "Battery 14 %, charging"
-  (`battery_line`) on the Devices row (`time_glance` reads it with the badge) and in the summary's header.
+  UPDATE and raises only when that changed the row, in one transaction. "Battery 14 %, charging · 3 min ago"
+  (`battery_line`, the report's age) on the Devices row (`time_glance` reads it with the badge) and in the summary's header.
 - **PWA**: the bell (`partials/bell.html`, `parent_events::Bell::load`, one partial-index COUNT, no cache) in the
   `.title-bar` of the five tab pages (Locate and Settings gained the bar), before the page's own action; the count
   renders server-side ("99+", `data-unread`). `/notifications` (`handlers::notifications`, full auth): back link to the
@@ -1854,7 +1856,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   older" `?before=`, each row a form `POST /notifications/{id}/open` - marks read, 303 to the target, a gone event or
   a non-local target back to `#inbox` -, Mark All as Read `POST /notifications/read-all` back to `#inbox` with `from`
   and `device`), Notify Me About (`#events`, one auto-saving form, `POST /notifications/settings` writes every switch,
-  the columns named by `Kind::switch()`). The Settings hub's first row "Notifications · 3 unread". This Device,
+  the columns named by `Kind::switch()`). The inbox and the five tab pages are `no-store` (`no_store_path`), so
+  Back never shows the back-forward cache's stale dots or count. The Settings hub's first row "Notifications · 3 unread". This Device,
   Getting Notifications, the warnings and the delivery line are step 2. CSS under "/* Design 35 */" at the end of
   `style.css` (`?v=31`).
 - **Retention**: `parent_events` 90 days by `created_at`, `push_deliveries` 30 days, `gone` subscriptions 30 days

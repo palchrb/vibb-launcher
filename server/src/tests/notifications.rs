@@ -119,7 +119,8 @@ async fn each_kind_is_raised_once_from_its_real_input() {
 }
 
 /// The emergency call compares with the previous report (§2.1): a call already reported before
-/// an upgrade is not announced, nor a first report's call that is days old.
+/// an upgrade is not announced, nor a days-old call in a first report or after a report without
+/// `call_state` (qa-35-s1-code N4).
 #[tokio::test]
 async fn an_old_emergency_call_is_not_announced() {
     let app = TestApp::new().await;
@@ -139,7 +140,47 @@ async fn an_old_emergency_call_is_not_announced() {
     let old = ago(48);
     report(&app, &ola_token, call_state(&old)).await;
     report(&app, &ola_token, call_state(&old)).await;
+    // A report without `call_state`, then the old call again.
+    report(&app, &ola_token, json!({})).await;
+    report(&app, &ola_token, call_state(&old)).await;
     assert!(events(&app, ola).await.is_empty());
+}
+
+/// The latch's `AND battery_low_since IS NULL` (qa-35-s1-code L2): two reports that both read the
+/// phone armed latch once, and the first latch's instant stays.
+#[tokio::test]
+async fn two_parallel_low_reports_latch_once() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let first = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    let mut second = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    second.now += chrono::Duration::seconds(5);
+    let low = crate::models::BatteryReport {
+        level: 12,
+        charging: false,
+        low: true,
+    };
+    crate::parent_events::battery_report(&app.db, &first, &low).await;
+    crate::parent_events::battery_report(&app.db, &second, &low).await;
+    assert_eq!(kinds(&app, id).await, ["low_battery"]);
+    let latch: Option<String> =
+        sqlx::query_scalar("SELECT battery_low_since FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        latch,
+        Some(
+            first
+                .now
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        )
+    );
 }
 
 /// Design 35 §2.5: one event per latch; plugged in and out while low is the same latch; re-armed
@@ -185,7 +226,7 @@ async fn the_battery_latches_once() {
         let html = app.get_page(&page, &cookie).await.text();
         assert_eq!(
             line(&html).as_deref(),
-            Some("Battery 12 %, charging"),
+            Some("Battery 12 %, charging · just now"),
             "{page}"
         );
     }
@@ -297,6 +338,31 @@ async fn the_bell_counts_on_every_tab_page() {
     assert!(html.contains("aria-hidden=\"true\">99+</span>"), "{html}");
 }
 
+/// Back never shows a read event as unread or an old bell count (qa-35-s1-code L4): the inbox
+/// and the pages with the bell are never stored, so the back-forward cache doesn't keep them.
+#[tokio::test]
+async fn the_pages_with_the_count_are_never_stored() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    for page in [
+        "/notifications",
+        "/devices",
+        "/apps",
+        "/devices/locate",
+        "/music",
+        "/settings",
+    ] {
+        let res = app.get_page(page, &cookie).await;
+        assert_eq!(
+            res.headers
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "{page}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_inbox_lists_opens_and_marks_read() {
     let app = TestApp::new().await;
@@ -348,9 +414,18 @@ async fn the_inbox_lists_opens_and_marks_read() {
     assert!(html.contains("data-unread=\"2\""), "{html}");
     // An event gone meanwhile, or a target that isn't a local path: back to the inbox.
     let res = app
-        .request_form(Method::POST, "/notifications/999/open", Some(&cookie), &[])
+        .request_form(
+            Method::POST,
+            "/notifications/999/open",
+            Some(&cookie),
+            &[("from", "music"), ("device", &ola.to_string())],
+        )
         .await;
-    assert_redirect(&res, "/notifications", Some("inbox"));
+    assert_redirect(
+        &res,
+        &format!("/notifications?from=music&device={ola}"),
+        Some("inbox"),
+    );
     app.assert_lands(&res, &cookie).await;
     sqlx::query("UPDATE parent_events SET target = '//evil.example/x' WHERE id = ?")
         .bind(call)
@@ -365,7 +440,7 @@ async fn the_inbox_lists_opens_and_marks_read() {
             &[],
         )
         .await;
-    assert_redirect(&res, "/notifications", Some("inbox"));
+    assert_redirect(&res, "/notifications?from=devices", Some("inbox"));
 
     // Mark All as Read, for one phone.
     let res = app
@@ -501,11 +576,17 @@ async fn events_go_with_their_phone_and_after_90_days() {
     report(&app, &anna_token, call_state(&ago(1))).await;
     report(&app, &ola_token, call_state(&ago(1))).await;
     report(&app, &ola_token, call_state(&ago(0))).await;
-    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-91 days') WHERE id = (SELECT MIN(id) FROM parent_events WHERE device_id = ?)")
+    // One of Ola's events 91 days old (gone), the other 89 (kept): the 90 days (qa-35-s1-code L3).
+    for (age, order) in [("-91 days", "MIN"), ("-89 days", "MAX")] {
+        sqlx::query(&format!(
+            "UPDATE parent_events SET created_at = datetime('now', '{age}') \
+             WHERE id = (SELECT {order}(id) FROM parent_events WHERE device_id = ?)"
+        ))
         .bind(ola)
         .execute(&app.db)
         .await
         .unwrap();
+    }
     // Push rows (step 2 fills them): a month-old delivery and a subscription turned off a month ago.
     let admin: i64 = sqlx::query_scalar(
         "INSERT INTO admin_users (username, password_hash) VALUES ('p', 'x') RETURNING id",
@@ -513,26 +594,42 @@ async fn events_go_with_their_phone_and_after_90_days() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    let sub: i64 = sqlx::query_scalar(
-        "INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state, gone_at) \
-         VALUES (?, 'https://push.example/1', x'00', x'00', 'https://pwa.example', 'Test', 'fp', 'gone', datetime('now', '-31 days')) \
-         RETURNING id",
-    )
-    .bind(admin)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO push_deliveries (subscription_id, kind, token_hash, created_at) \
-         VALUES (?, 'test', x'00', datetime('now', '-31 days'))",
-    )
-    .bind(sub)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // Subscriptions turned off 31 days ago (gone) and 29 (kept); on the kept one, deliveries 31
+    // days old (gone) and 29 (kept).
+    let mut kept_sub = 0;
+    for (n, age) in [(1, "-31 days"), (2, "-29 days")] {
+        kept_sub = sqlx::query_scalar(
+            "INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state, gone_at) \
+             VALUES (?, ?, x'00', x'00', 'https://pwa.example', 'Test', 'fp', 'gone', datetime('now', ?)) RETURNING id",
+        )
+        .bind(admin)
+        .bind(format!("https://push.example/{n}"))
+        .bind(age)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    }
+    for age in ["-31 days", "-29 days"] {
+        sqlx::query(
+            "INSERT INTO push_deliveries (subscription_id, kind, token_hash, created_at) \
+             VALUES (?, 'test', x'00', datetime('now', ?))",
+        )
+        .bind(kept_sub)
+        .bind(age)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
     let pruned = crate::retention::prune(&app.db).await.unwrap();
     assert_eq!((pruned.parent_events, pruned.push_rows), (1, 2));
     assert_eq!(events(&app, ola).await.len(), 1);
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM push_subscriptions), (SELECT COUNT(*) FROM push_deliveries)",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, (1, 1));
     // Deleting a phone deletes its events.
     sqlx::query("DELETE FROM devices WHERE id = ?")
         .bind(anna)

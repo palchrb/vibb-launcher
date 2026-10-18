@@ -58,7 +58,7 @@ CREATE TABLE push_subscriptions (
     vapid_fp TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_receipt_at TEXT,
-    state TEXT NOT NULL DEFAULT 'active',
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'gone')),
     gone_at TEXT
 );
 

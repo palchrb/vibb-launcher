@@ -39,6 +39,14 @@ fn page_query(from: &str, device: Option<i64>) -> String {
     }
 }
 
+/// [page_query] from a form's `from` and `device`, for its redirect.
+fn back_query(form: &HashMap<String, String>) -> String {
+    page_query(
+        back_of(form.get("from").map(String::as_str)).0,
+        number(form, "device"),
+    )
+}
+
 fn number(params: &HashMap<String, String>, key: &str) -> Option<i64> {
     params.get(key).and_then(|v| v.trim().parse().ok())
 }
@@ -233,8 +241,12 @@ fn switch_names() -> Vec<&'static str> {
 }
 
 /// A row's tap: marks the event read and goes to its target (a local path; anything else, or an
-/// event pruned meanwhile, goes back to the inbox).
-pub async fn open(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+/// event pruned meanwhile, goes back to the inbox as it was shown - `from`, `device`).
+pub async fn open(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
     let target: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE parent_events SET read_at = COALESCE(read_at, datetime('now')) WHERE id = ? \
          RETURNING target",
@@ -246,7 +258,9 @@ pub async fn open(State(state): State<AppState>, Path(id): Path<i64>) -> Respons
         Ok(Some(target)) if parent_events::local_target(&target) => {
             Redirect::to(&target).into_response()
         }
-        Ok(_) => Redirect::to("/notifications#inbox").into_response(),
+        Ok(_) => {
+            Redirect::to(&format!("/notifications{}#inbox", back_query(&form))).into_response()
+        }
         Err(err) => db_error(err),
     }
 }
@@ -266,9 +280,7 @@ pub async fn read_all(
     .await;
     match done {
         Ok(_) => {
-            let from = back_of(form.get("from").map(String::as_str)).0;
-            Redirect::to(&format!("/notifications{}#inbox", page_query(from, device)))
-                .into_response()
+            Redirect::to(&format!("/notifications{}#inbox", back_query(&form))).into_response()
         }
         Err(err) => db_error(err),
     }
@@ -295,13 +307,7 @@ pub async fn save_settings(
     let done = update.execute(&state.db).await;
     match done {
         Ok(_) => {
-            let from = back_of(form.get("from").map(String::as_str)).0;
-            let device = number(&form, "device");
-            Redirect::to(&format!(
-                "/notifications{}#events",
-                page_query(from, device)
-            ))
-            .into_response()
+            Redirect::to(&format!("/notifications{}#events", back_query(&form))).into_response()
         }
         Err(err) => db_error(err),
     }

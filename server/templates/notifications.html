@@ -40,6 +40,8 @@
             {% endif %}
             {% for e in rows %}
             <form method="post" action="/notifications/{{ e.id }}/open" class="cell">
+                <input type="hidden" name="from" value="{{ back.0 }}">
+                {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
                 <button type="submit" class="row inbox-row{% if e.unread %} inbox-unread{% endif %}" data-event="{{ e.id }}">
                     <span class="avatar {{ e.avatar }}" aria-hidden="true">{{ e.initial }}</span>
                     <span class="row-label"><span class="inbox-title">{% if e.unread %}<span class="unread-dot" aria-hidden="true"></span><span class="visually-hidden">Unread: </span>{% endif %}{{ e.title }}</span><span class="row-sub">{{ e.summary }} · <span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>

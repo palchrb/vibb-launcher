@@ -1068,8 +1068,6 @@ pub async fn status(
         .foreign_access
         .as_ref()
         .and_then(crate::window_relock::sanitize_foreign_access);
-    let previous_foreign =
-        crate::handlers::window_relock::previous_foreign_access(&state.db, device.id).await;
     // Every app blocked now, an install-time block too (fix of 2026-10-12), and the previous list.
     let relock_blocks_json = report
         .relock_blocks
@@ -1082,22 +1080,14 @@ pub async fn status(
         .unseen_boots
         .as_ref()
         .and_then(crate::boot_witness::sanitize);
-    let previous_unseen: Option<i64> = sqlx::query_scalar(
-        "SELECT unseen_boots_count FROM device_status WHERE device_id = ? \
-         ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
-    .bind(device.id)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
 
-    // The previous report, for the security log below (install mode started, new apps) and the
-    // parent's events (design 35 §2.1: its emergency call, its id for foreign access).
-    type Previous = (Option<String>, Option<i64>, i64, Option<String>);
-    let previous: Option<Previous> = sqlx::query_as(
-        "SELECT installed_apps_json, install_mode_until_ms, id, call_state_json FROM device_status \
+    // The previous report, in one read (qa-35-s1-code L1: the foreign apps' dedup key and their
+    // comparison come from the same row, so two parallel reports agree): for the security log
+    // below (install mode started, new apps, the foreign apps, unseen boots) and the parent's
+    // events (design 35 §2.1: its emergency call, its id for foreign access).
+    let previous: Option<PreviousReport> = sqlx::query_as(
+        "SELECT id, installed_apps_json, install_mode_until_ms, call_state_json, \
+                foreign_access_json, unseen_boots_count FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device.id)
@@ -1178,9 +1168,15 @@ pub async fn status(
     .ok();
     // Design 35 §2: the parent's events from this report, each raised once (its dedup key).
     let phone = crate::parent_events::Phone::load(&state.db, device.id).await;
-    let previous_status_id = previous.as_ref().map_or(0, |p| p.2);
+    let previous_status_id = previous.as_ref().map_or(0, |p| p.id);
+    let previous_unseen = previous.as_ref().and_then(|p| p.unseen_boots_count);
+    let previous_foreign = previous
+        .as_ref()
+        .and_then(|p| p.foreign_access_json.clone());
     if let Some(phone) = &phone {
-        let previous_call = previous.as_ref().map(|p| emergency_call_at(p.3.as_deref()));
+        let previous_call = previous
+            .as_ref()
+            .and_then(|p| emergency_call_at(p.call_state_json.as_deref()));
         if let Some(at) = crate::parent_events::new_emergency_call(
             emergency_call_at(call_state_json.as_deref()),
             previous_call,
@@ -1250,7 +1246,7 @@ pub async fn status(
         &state,
         device.id,
         &report,
-        previous.map(|(apps, until, _, _)| (apps, until)),
+        previous.map(|p| (p.installed_apps_json, p.install_mode_until_ms)),
     )
     .await;
 
@@ -1369,6 +1365,17 @@ pub async fn status(
     }
 
     StatusCode::NO_CONTENT
+}
+
+/// The phone's report before this one, as the intake compares with it.
+#[derive(sqlx::FromRow)]
+struct PreviousReport {
+    id: i64,
+    installed_apps_json: Option<String>,
+    install_mode_until_ms: Option<i64>,
+    call_state_json: Option<String>,
+    foreign_access_json: Option<String>,
+    unseen_boots_count: Option<i64>,
 }
 
 /// A stored `call_state`'s last emergency call (`last_emergency_call_at`, RFC 3339, read as the

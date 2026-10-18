@@ -235,7 +235,7 @@ pub(crate) async fn time_glance(
     });
     let battery = latest
         .as_ref()
-        .and_then(|l| crate::parent_events::battery_line(l.3, l.4));
+        .and_then(|l| crate::parent_events::battery_line(l.3, l.4, &l.0, zone, now));
     let Some((reported_at, report)) = latest
         .as_ref()
         .and_then(|(at, reason, json, ..)| time_report(at, reason, json.as_deref()))
@@ -1585,7 +1585,13 @@ async fn render_device(
             lock,
             screen_time,
             battery: latest.as_ref().and_then(|s| {
-                crate::parent_events::battery_line(s.battery_level, s.battery_charging)
+                crate::parent_events::battery_line(
+                    s.battery_level,
+                    s.battery_charging,
+                    &s.reported_at,
+                    &zone,
+                    now,
+                )
             }),
             attention,
             pause_rules: time_rules

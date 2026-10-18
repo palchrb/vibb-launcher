@@ -447,7 +447,10 @@ pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inlin
      object-src 'none'";
 
 /// Admin pages that must never be stored: live locations, backups, the setup QR (an enrollment
-/// code), the provisioning settings, the account and 2FA pages.
+/// code), the provisioning settings, the account and 2FA pages; and the pages with the unread count
+/// (design 35, qa-35-s1-code L4) - the inbox and the five tab pages with its bell - so Back never
+/// shows a read event as unread or an old count from the back-forward cache, with or without JS
+/// (the browser restores the scroll position of a page it loads again).
 pub fn no_store_path(path: &str) -> bool {
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     matches!(
@@ -460,6 +463,9 @@ pub fn no_store_path(path: &str) -> bool {
             | ["settings", "provisioning"]
             | ["account", ..]
             | ["auth", ..]
+            | ["notifications", ..]
+            | ["devices" | "apps" | "music" | "settings"]
+            | ["devices", "locate"]
     )
 }
 
@@ -625,15 +631,19 @@ mod tests {
             "/settings/provisioning",
             "/account",
             "/auth/setup-2fa",
+            "/notifications",
+            "/devices",
+            "/apps",
+            "/devices/locate",
+            "/music",
+            "/settings",
         ] {
             assert!(no_store_path(path), "{path}");
         }
         for path in [
-            "/devices",
             "/devices/3",
-            "/devices/locate",
-            "/settings",
-            "/music",
+            "/settings/wallpapers",
+            "/music/settings",
             "/login",
         ] {
             assert!(!no_store_path(path), "{path}");

@@ -472,5 +472,19 @@ Where the code differs from or fills in the text above:
   forms carry `from` (and `device`) so every redirect lands on the same view of the page.
 - Until step 2 the switches change nothing visible (every event is listed; nothing is pushed yet).
 
+Code QA fix round (`docs/review/qa-35-s1-code.md`, 2026-10-18):
+- L1: the intake reads the previous report once (`PreviousReport`: its id, apps, install mode, call state, foreign
+  apps and unseen-boot count), so the foreign apps' dedup key and the "did the set change" comparison come from the same
+  row and two parallel reports agree on the key (`previous_foreign_access` is gone).
+- L4: the inbox and the five tab pages (the bell) are `Cache-Control: no-store` (`admin_auth::no_store_path`): Back
+  loads them again instead of showing the back-forward cache's unread dots and count, with or without JS. Every other
+  page keeps `private, no-cache` and the back-forward cache.
+- The emergency call's 24-hour bound now applies whenever the previous report named no call (none, or no
+  `call_state`), not only to a first report: only a report with a newer `last_emergency_call_at` than the previous
+  one's raises otherwise.
+- The battery line carries the report's age ("Battery 14 %, charging · 3 min ago"); an inbox row's form carries
+  `from`/`device` like the others; `Zone::at` gives a time with its clock on any day (no more guessing from the text);
+  `push_subscriptions.state` has its CHECK.
+
 Open for step 2: the delivery line, This Device, Getting Notifications, the warnings, the push tables' writers,
 `Kind`'s push properties, `log_foreign_access`'s and the intake's `push.wake()` after the raise.
