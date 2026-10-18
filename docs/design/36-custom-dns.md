@@ -447,6 +447,14 @@ stored, all-or-nothing Save, refusals in place with 400 + `no-store`, Forget, th
   three"), and on Forget only when something was stored. The hint never shows the port.
 - `tls://host/` (a bare trailing slash) is taken as DoT with no path; any other path on `tls://` is refused.
 
+**Code QA fix round** (`docs/review/qa-36-s1-code.md`): L1 - each hint and the `1.1.1.3` prefill follow their own
+stored value, not the pair's validity (a stale or equal stored pair shows its hints and no prefill over a stored
+backup; the policy still reads it as Cloudflare). L2 - a Custom Server save returns to
+`/dns?open=custom-server#server` (§6 said `/dns#server`): the row comes back open, the house rule for a form in a
+closed `<details>`, still landing on its group. L3 - the picker's 400 names what is missing or equal (one check,
+`check_custom`, shared with Save). L4 - phones never set up get no footer line. M1/M2 tests, and the nits
+(`{?dns}` stripped only for DoH, `240/4` and NAT64 `64:ff9b::/96` judged as IPv4, one HTTP refusal per field).
+
 **Not in step 1**: everything of §5 (step 2) and step 3. DEPLOY.md's paragraph (§9's last sentence) waits for the
 release, with step 2's launcher.
 

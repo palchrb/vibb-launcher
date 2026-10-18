@@ -87,8 +87,14 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         ],
     )
     .await;
-    assert_redirect(&res, "/dns", Some("server"));
+    assert_redirect(&res, "/dns?open=custom-server", Some("server"));
     app.assert_lands(&res, &cookie).await;
+    // QA L2: the row comes back open after a save (the house rule for a closed `<details>`).
+    let back = app
+        .get_page("/dns?open=custom-server", &cookie)
+        .await
+        .text();
+    assert!(back.contains("id=\"custom-server\" open"));
     assert_eq!(
         stored(&app).await,
         (
@@ -128,7 +134,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         ],
     )
     .await;
-    assert_redirect(&res, "/dns", Some("server"));
+    assert_redirect(&res, "/dns?open=custom-server", Some("server"));
     let (_, server, backup, rev) = stored(&app).await;
     assert_eq!(
         (server.as_str(), backup.as_str(), rev),
@@ -152,7 +158,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         ],
     ] {
         let res = save(&app, &cookie, &fields).await;
-        assert_redirect(&res, "/dns", Some("server"));
+        assert_redirect(&res, "/dns?open=custom-server", Some("server"));
         assert_eq!(stored(&app).await.3, 2);
     }
     assert_eq!(events(&app).await.len(), 2);
@@ -184,7 +190,7 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
         ],
     )
     .await;
-    assert_redirect(&res, "/dns", Some("server"));
+    assert_redirect(&res, "/dns?open=custom-server", Some("server"));
     assert_eq!(
         stored(&app).await,
         ("cloudflare".into(), String::new(), String::new(), 3)
@@ -204,69 +210,52 @@ async fn a_custom_server_is_saved_write_only_and_lands_on_its_group() {
     }
 }
 
+/// A refused save or pick: 400, `no-store`, in place with the row open, the reason under its
+/// field, what was typed back in the body and nothing written. One refusal per field through
+/// HTTP; the grammar is `dns_server::tests`'.
+fn refused(res: &TestResponse) -> String {
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
+    assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+    let html = res.text();
+    check_forms("/dns (refused)", &html);
+    assert!(html.contains("id=\"custom-server\" open"));
+    html
+}
+
 #[tokio::test]
 async fn refusals_render_in_place_and_write_nothing() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let long = format!("https://dns.example/{}", "a/".repeat(260));
-    let refused = |res: &TestResponse| {
-        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{}", res.text());
-        assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
-        let html = res.text();
-        check_forms("/dns (refused)", &html);
-        assert!(html.contains("id=\"custom-server\" open"));
-        html
-    };
-    for (typed, reason) in [
-        ("http://dns.example/dns-query", "Not encrypted"),
-        ("quic://dns.example", "Use the https://"),
-        ("dns.example:443", "a DNS-over-HTTPS port: add https://"),
-        ("https://user:pw@dns.example", "No user name"),
-        ("https://dns.example/q?x=1", "Remove what follows"),
-        ("tls://dns.example/q", "has no path"),
-        ("dns.example:53", "Port 53 and 80"),
-        ("dns.example:0", "Not a port number"),
-        ("https://dns.example/a+b", "The path takes"),
-        ("1.1", "Not a server&#39;s address"),
-        ("::ffff:127.0.0.1", "can&#39;t be a DNS server"),
-        ("dns .example", "Remove the spaces"),
-        ("dns.exämple", "xn--"),
-        (long.as_str(), "longer than"),
-    ] {
-        for (at, other, fields) in [
-            (
-                "custom_server",
-                "custom_backup",
-                [("custom_server", typed), ("custom_backup", "1.1.1.3")],
-            ),
-            (
-                "custom_backup",
-                "custom_server",
-                [("custom_server", "9.9.9.9"), ("custom_backup", typed)],
-            ),
-        ] {
-            let html = refused(&save(&app, &cookie, &fields).await);
-            let here = field(&html, at);
-            assert!(
-                here.contains(reason) && here.contains("aria-invalid=\"true\""),
-                "{typed} in {at}: {here}"
-            );
-            assert!(!field(&html, other).contains("field-error"), "{typed}");
-        }
-    }
-    // What was typed comes back in its field (the body only).
-    let html = refused(
-        &save(
-            &app,
-            &cookie,
-            &[
+    for (fields, at, other, reason) in [
+        (
+            [
                 ("custom_server", "dns.example:53"),
                 ("custom_backup", "1.1.1.3"),
             ],
-        )
-        .await,
-    );
-    assert!(field(&html, "custom_server").contains("value=\"dns.example:53\""));
+            "custom_server",
+            "custom_backup",
+            "Port 53 and 80",
+        ),
+        (
+            [
+                ("custom_server", "9.9.9.9"),
+                ("custom_backup", "http://dns.example/q"),
+            ],
+            "custom_backup",
+            "custom_server",
+            "Not encrypted",
+        ),
+    ] {
+        let html = refused(&save(&app, &cookie, &fields).await);
+        let here = field(&html, at);
+        assert!(
+            here.contains(reason) && here.contains("aria-invalid=\"true\""),
+            "{at}: {here}"
+        );
+        assert!(!field(&html, other).contains("field-error"));
+        let typed = fields.iter().find(|(name, _)| *name == at).unwrap().1;
+        assert!(here.contains(&format!("value=\"{typed}\"")), "{here}");
+    }
 
     // Nothing stored: no server, no backup (the prefill cleared), or the same server twice.
     for (fields, at, reason) in [
@@ -299,8 +288,115 @@ async fn refusals_render_in_place_and_write_nothing() {
     // Custom picked with nothing stored: the row open, the reason under the first field.
     let html = refused(&pick(&app, &cookie, "custom").await);
     assert!(field(&html, "custom_server").contains("Type your server&#39;s address first."));
+    assert!(!field(&html, "custom_backup").contains("field-error"));
     assert!(html.contains("<option value=\"custom\" selected>"));
 
+    assert_eq!(
+        stored(&app).await,
+        ("cloudflare".into(), String::new(), String::new(), 0)
+    );
+    assert!(events(&app).await.is_empty());
+}
+
+/// QA M2: a refusal never echoes a stored value - the inputs hold only what was typed, the
+/// hints only the hints.
+#[tokio::test]
+async fn a_refused_save_never_shows_the_stored_values() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pair = (
+        "https://abc123.dns.example/dns-query/id456",
+        "tls://def789.dns2.example",
+    );
+    store(&app, "custom", pair.0, pair.1, 1).await;
+    let html = refused(
+        &save(
+            &app,
+            &cookie,
+            &[("custom_server", ""), ("custom_backup", "dns.example:53")],
+        )
+        .await,
+    );
+    for secret in ["abc123", "id456", "def789", pair.0, pair.1] {
+        assert!(!html.contains(secret), "{secret} in the page");
+    }
+    assert!(field(&html, "custom_server").contains("value=\"\""));
+    assert!(field(&html, "custom_server").contains("Set (…dns.example · DNS-over-HTTPS)."));
+    assert_eq!(stored(&app).await.1, pair.0);
+}
+
+/// QA L1/L3: a stored pair that isn't valid keeps its hints, prefills nothing over a stored
+/// backup, and the picker names what is missing; the policy reads it as Cloudflare.
+#[tokio::test]
+async fn an_equal_stored_pair_keeps_its_hints_and_backup() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    store(&app, "quad9", "tls://9.9.9.9", "tls://9.9.9.9", 1).await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(field(&page, "custom_server").contains("Set (9.9.9.9 · DNS-over-TLS)."));
+    assert!(field(&page, "custom_backup").contains("Set (9.9.9.9 · DNS-over-TLS)."));
+    assert!(field(&page, "custom_backup").contains("value=\"\""));
+
+    let html = refused(&pick(&app, &cookie, "custom").await);
+    assert!(!field(&html, "custom_server").contains("field-error"));
+    assert!(field(&html, "custom_backup").contains("The backup must be another server"));
+    assert!(field(&html, "custom_backup").contains("value=\"\""));
+
+    // Typing only "Your server" keeps the stored backup.
+    let res = save(
+        &app,
+        &cookie,
+        &[("custom_server", "dns.quad9.net"), ("custom_backup", "")],
+    )
+    .await;
+    assert_redirect(&res, "/dns?open=custom-server", Some("server"));
+    let (upstream, server, backup, _) = stored(&app).await;
+    assert_eq!(
+        (upstream.as_str(), server.as_str(), backup.as_str()),
+        ("custom", "tls://dns.quad9.net", "tls://9.9.9.9")
+    );
+
+    // The picker with a stored server and no backup: the backup's own reason.
+    store(&app, "quad9", "tls://9.9.9.9", "", 2).await;
+    let html = refused(&pick(&app, &cookie, "custom").await);
+    assert!(!field(&html, "custom_server").contains("field-error"));
+    assert!(field(&html, "custom_backup").contains("Custom needs a backup server"));
+    assert!(field(&html, "custom_backup").contains("value=\"1.1.1.3\""));
+}
+
+/// QA M1: both routes need a full session and refuse a cross-site post; nothing is written.
+#[tokio::test]
+async fn the_dns_server_routes_refuse_without_a_session_or_from_another_site() {
+    use axum::body::Body;
+    use axum::http::Request;
+    let app = TestApp::new().await;
+    let valid = [
+        ("custom_server", "https://dns.example/dns-query"),
+        ("custom_backup", "1.1.1.3"),
+    ];
+    for (path, fields) in [
+        ("/dns/upstream/custom", &valid[..]),
+        ("/dns/upstream", &[("upstream", "quad9")][..]),
+    ] {
+        let res = app.request_form(Method::POST, path, None, fields).await;
+        assert_eq!(res.location(), Some("/login"), "{path}");
+    }
+    let cookie = app.admin_cookie().await;
+    let body = form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(valid)
+        .finish();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/dns/upstream/custom")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::COOKIE, &cookie)
+        .header("sec-fetch-site", "cross-site")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app
+        .send_via(&app.router, super::LOOPBACK_PEER, request)
+        .await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
     assert_eq!(
         stored(&app).await,
         ("cloudflare".into(), String::new(), String::new(), 0)
@@ -509,6 +605,7 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
         .await
         .unwrap();
     let (mia, _) = app.enrolled_device("Mia").await;
+    let (nils, _) = app.create_device("Nils").await;
 
     let line = |html: &str, id: i64| {
         part(html, &format!("data-dns-phone=\"{id}\">"), "</li>")
@@ -533,6 +630,8 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     assert_eq!(line(&page, kari), "Kari · Waiting for the phone");
     assert_eq!(line(&page, liv), "Liv · Web filter off");
     assert_eq!(line(&page, mia), "Mia · Waiting for the phone");
+    // QA L4: a phone never set up gets no line.
+    assert!(!page.contains(&format!("data-dns-phone=\"{nils}\"")));
 
     // One wording per reason; none (or an unknown one) just names the backup.
     for (reason, words) in [

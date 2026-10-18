@@ -292,7 +292,7 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
                 ("custom_server", "https://dns.example/dns-query"),
                 ("custom_backup", "1.1.1.3"),
             ],
-            to("/dns", "server"),
+            to("/dns?open=custom-server", "server"),
         ),
     ]);
     check("/dns", table).await;

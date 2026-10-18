@@ -22,7 +22,7 @@ use std::time::Duration;
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::dns_engine;
-use crate::dns_server::{self, Refusal};
+use crate::dns_server::{self, DnsServer, Refusal};
 use crate::models::{Device, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
 use crate::security::CurrentAdmin;
 
@@ -301,6 +301,7 @@ async fn phone_lines(state: &AppState, rev: i64) -> Result<Vec<(i64, String)>, s
          LEFT JOIN device_policy p ON p.device_id = d.id \
          LEFT JOIN device_status s ON s.id = (SELECT id FROM device_status \
              WHERE device_id = d.id ORDER BY reported_at DESC, id DESC LIMIT 1) \
+         WHERE d.enrolled_at IS NOT NULL \
          ORDER BY d.name, d.id",
     )
     .fetch_all(&state.db)
@@ -441,7 +442,9 @@ async fn render_page(
     } else {
         Vec::new()
     };
-    let is_name = |server: &dns_server::DnsServer| server.host.parse::<std::net::IpAddr>().is_err();
+    let stored_server = dns_server::parse_dns_server(&settings.custom_server).ok();
+    let stored_backup = dns_server::parse_dns_server(&settings.custom_backup).ok();
+    let is_name = |server: &DnsServer| server.host.parse::<std::net::IpAddr>().is_err();
     let stale = settings.upstream == "custom" && pair.is_none();
     let refused_save = refusal.is_some();
     let custom = refusal.unwrap_or_default();
@@ -451,23 +454,26 @@ async fn render_page(
         } else {
             settings.upstream.clone()
         },
-        server_hint: pair.as_ref().map(|(server, _)| server.hint()),
-        backup_hint: pair.as_ref().map(|(_, backup)| backup.hint()),
+        server_hint: stored_server.as_ref().map(DnsServer::hint),
+        backup_hint: stored_backup.as_ref().map(DnsServer::hint),
         stored: !settings.custom_server.is_empty() || !settings.custom_backup.is_empty(),
         stale,
-        open: refused_save || stale,
+        open: refused_save
+            || stale
+            || params
+                .get("open")
+                .is_some_and(|open| open == "custom-server"),
         typed_server: custom.typed_server,
-        typed_backup: match (refused_save, &pair) {
-            (true, _) => custom.typed_backup,
-            (false, Some(_)) => String::new(),
-            (false, None) => BACKUP_PREFILL.to_string(),
+        typed_backup: if refused_save {
+            custom.typed_backup
+        } else {
+            backup_prefill(&settings)
         },
         server_error: custom.server_error,
         backup_error: custom.backup_error,
         forget: custom.forget,
-        both_names: pair
-            .as_ref()
-            .is_some_and(|(server, backup)| is_name(server) && is_name(backup)),
+        both_names: stored_server.as_ref().is_some_and(is_name)
+            && stored_backup.as_ref().is_some_and(is_name),
         phones,
     };
     let page = DnsFilterTemplate {
@@ -530,12 +536,15 @@ pub async fn set_upstream(
         Err(err) => return read_failed(err),
     };
     if upstream == "custom"
-        && dns_server::valid_pair(&settings.custom_server, &settings.custom_backup).is_none()
+        && let Err((server_error, backup_error)) = check_custom("", "", &settings)
     {
+        // With no server either, the prefilled backup needs no reason of its own yet.
+        let backup_error = backup_error.filter(|_| server_error.is_none());
         let refusal = CustomRefusal {
             picked: true,
-            typed_backup: BACKUP_PREFILL.to_string(),
-            server_error: Some(TYPE_YOURS_FIRST),
+            typed_backup: backup_prefill(&settings),
+            server_error,
+            backup_error,
             ..CustomRefusal::default()
         };
         return render_page(&state, &HashMap::new(), Some(refusal)).await;
@@ -625,39 +634,25 @@ pub async fn set_custom(
             let detail = dns_server::event_detail(upstream, "", "");
             server_changed(&state, &admin.username, &detail).await;
         }
-        return Redirect::to("/dns#server").into_response();
+        return Redirect::to(SAVED).into_response();
     }
 
-    // Each field: typed and parsed, else the stored value (while it still parses).
-    let pick = |typed: &str, stored: &str, missing: &'static str| {
-        if typed.is_empty() {
-            dns_server::parse_dns_server(stored).map_err(|_| missing)
-        } else {
-            dns_server::parse_dns_server(typed).map_err(refusal_text)
-        }
-    };
-    let server = pick(typed_server, &settings.custom_server, TYPE_YOURS_FIRST);
-    let backup = pick(typed_backup, &settings.custom_backup, BACKUP_NEEDED);
-    let (server, backup) = match (server, backup) {
-        (Ok(server), Ok(backup)) if !server.same_as(&backup) => (server, backup),
-        (server, backup) => {
+    let (server, backup) = match check_custom(typed_server, typed_backup, &settings) {
+        Ok(pair) => pair,
+        Err((server_error, backup_error)) => {
             let refusal = CustomRefusal {
                 picked: false,
                 typed_server: typed_back(typed_server),
                 typed_backup: typed_back(typed_backup),
-                server_error: server.as_ref().err().copied(),
-                backup_error: match (&server, &backup) {
-                    (_, Err(why)) => Some(*why),
-                    (Ok(_), Ok(_)) => Some(BACKUP_SAME),
-                    (Err(_), Ok(_)) => None,
-                },
+                server_error,
+                backup_error,
                 forget,
             };
             return render_page(&state, &HashMap::new(), Some(refusal)).await;
         }
     };
     if typed_server.is_empty() && typed_backup.is_empty() {
-        return Redirect::to("/dns#server").into_response();
+        return Redirect::to(SAVED).into_response();
     }
     let (server, backup) = (server.normalized(), backup.normalized());
     let result = sqlx::query(
@@ -680,7 +675,46 @@ pub async fn set_custom(
         let detail = dns_server::event_detail("custom", &server, &backup);
         server_changed(&state, &admin.username, &detail).await;
     }
-    Redirect::to("/dns#server").into_response()
+    Redirect::to(SAVED).into_response()
+}
+
+/// Where a Custom Server save returns: its group, with the row open again (a form in a closed
+/// `<details>` comes back open, `?open=`).
+const SAVED: &str = "/dns?open=custom-server#server";
+
+/// The reasons under "Your server" and "Backup server" (`None` = that field is fine).
+type FieldReasons = (Option<&'static str>, Option<&'static str>);
+
+/// The pair a save would store (design 36 §6.2): each field typed = parsed, empty = the stored
+/// value while it still parses; then not the same server twice. Else the reason under each field.
+fn check_custom(
+    typed_server: &str,
+    typed_backup: &str,
+    settings: &DnsFilterSettings,
+) -> Result<(DnsServer, DnsServer), FieldReasons> {
+    let pick = |typed: &str, stored: &str, missing: &'static str| {
+        if typed.is_empty() {
+            dns_server::parse_dns_server(stored).map_err(|_| missing)
+        } else {
+            dns_server::parse_dns_server(typed).map_err(refusal_text)
+        }
+    };
+    let server = pick(typed_server, &settings.custom_server, TYPE_YOURS_FIRST);
+    let backup = pick(typed_backup, &settings.custom_backup, BACKUP_NEEDED);
+    match (server, backup) {
+        (Ok(server), Ok(backup)) if !server.same_as(&backup) => Ok((server, backup)),
+        (Ok(_), Ok(_)) => Err((None, Some(BACKUP_SAME))),
+        (server, backup) => Err((server.err(), backup.err())),
+    }
+}
+
+/// The backup input's value when nothing was typed: `1.1.1.3` only while no usable backup is
+/// stored, so a parent typing only "Your server" never replaces a stored backup.
+fn backup_prefill(settings: &DnsFilterSettings) -> String {
+    match dns_server::parse_dns_server(&settings.custom_backup) {
+        Ok(_) => String::new(),
+        Err(_) => BACKUP_PREFILL.to_string(),
+    }
 }
 
 /// Adds a shared list (on for every phone). A name and an http(s) URL, else nothing is added and
@@ -1054,5 +1088,41 @@ pub async fn run_blocklist_refresh(state: AppState) {
         let wait = if failing { 5 * 60 } else { 60 * 60 };
         tokio::time::sleep(Duration::from_secs(wait)).await;
         dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every refusal has its own sentence (the grammar is `dns_server::tests`'; the page only
+    /// words a `Refusal`).
+    #[test]
+    fn every_refusal_has_its_own_text() {
+        use Refusal::*;
+        let all = [
+            Empty,
+            TooLong,
+            Spaces,
+            NotAscii,
+            Plaintext,
+            OtherScheme,
+            DohPortWithoutScheme,
+            UserInfo,
+            QueryOrFragment,
+            PathOnDot,
+            UnencryptedPort,
+            BadPort,
+            BadPath,
+            NotAnAddress,
+            NeverAServer,
+        ];
+        let texts: std::collections::BTreeSet<&str> = all.into_iter().map(refusal_text).collect();
+        assert_eq!(texts.len(), all.len());
+        assert!(
+            texts
+                .iter()
+                .all(|text| text.ends_with('.') && text.len() > 10)
+        );
     }
 }

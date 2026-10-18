@@ -1859,7 +1859,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   in place (400, `Cache-Control: no-store`, the typed values back in the body only, `aria-invalid` and the reason under
   the field); something typed and valid stores both normalized, sets `upstream = 'custom'`, moves `custom_rev` if
   either changed; Forget with both fields empty clears both and puts Custom back on Cloudflare; nothing typed changes
-  nothing. Every redirect is `/dns#server`. While Custom is in force the footer has one line per phone
+  nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the `1.1.1.3` prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
   (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Cloudflare - update Vibb
   One on this phone ..." without the capability, "Waiting for the phone" without a report at the current `rev`, "Web
   filter off" when the phone's filter switch is off); a stored but no longer valid pair says so instead. The ⓘ says

@@ -270,8 +270,16 @@ pub fn parse_dns_server(typed: &str) -> Result<DnsServer, Refusal> {
         Some(_) => return Err(Refusal::OtherScheme),
     }
 
-    // RFC 8484's URI template may trail a DoH URL; anything else after ? or # is refused.
-    let rest = rest.strip_suffix("{?dns}").unwrap_or(rest);
+    // RFC 8484's URI template may trail a DoH URL (https://, or no scheme with a path); anything
+    // else after ? or # is refused.
+    let doh_shaped = match scheme.as_deref() {
+        Some(scheme) => scheme == "https",
+        None => rest.contains('/'),
+    };
+    let rest = match rest.strip_suffix("{?dns}") {
+        Some(stripped) if doh_shaped => stripped,
+        _ => rest,
+    };
     if rest.contains(['?', '#']) {
         return Err(Refusal::QueryOrFragment);
     }
@@ -351,8 +359,15 @@ fn checked_port(port: &str) -> Result<u16, Refusal> {
 
 fn checked_ipv6(address: &str) -> Result<String, Refusal> {
     let ip: Ipv6Addr = address.parse().map_err(|_| Refusal::NotAnAddress)?;
-    // `::ffff:127.0.0.1` and `::127.0.0.1` are judged as the IPv4 address they carry.
-    let never = match ip.to_ipv4() {
+    // `::ffff:127.0.0.1`, `::127.0.0.1` and NAT64's `64:ff9b::7f00:1` are judged as the IPv4
+    // address they carry.
+    let [a, b, c, d, e, f, g, h] = ip.segments();
+    let carried = if [a, b, c, d, e, f] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        Some(Ipv4Addr::from((u32::from(g) << 16) | u32::from(h)))
+    } else {
+        ip.to_ipv4()
+    };
+    let never = match carried {
         Some(v4) => never_a_server_v4(v4),
         None => {
             ip.is_loopback()
@@ -368,7 +383,8 @@ fn checked_ipv6(address: &str) -> Result<String, Refusal> {
 }
 
 fn never_a_server_v4(ip: Ipv4Addr) -> bool {
-    ip.is_loopback() || ip.octets()[0] == 0 || ip.is_multicast() || ip.is_broadcast()
+    // 240/4 (reserved, `255.255.255.255` included) can't be a server either.
+    ip.is_loopback() || ip.octets()[0] == 0 || ip.is_multicast() || ip.octets()[0] >= 240
 }
 
 /// A host name (LDH labels) or a dotted-quad IPv4, lowercased, one trailing dot stripped. A name
@@ -553,6 +569,7 @@ mod tests {
             ("tls://10.0.0.5", Dot, "10.0.0.5", 853, ""),
             ("fd7a:115c:a1e0::1", Dot, "fd7a:115c:a1e0::1", 853, ""),
             ("fc00::53", Dot, "fc00::53", 853, ""),
+            ("64:ff9b::101:103", Dot, "64:ff9b::101:103", 853, ""),
             ("pi", Dot, "pi", 853, ""),
             ("router.local", Dot, "router.local", 853, ""),
             ("dns.internal", Dot, "dns.internal", 853, ""),
@@ -649,6 +666,10 @@ mod tests {
             ("224.0.0.1", NeverAServer),
             ("239.255.255.250", NeverAServer),
             ("255.255.255.255", NeverAServer),
+            ("240.0.0.1", NeverAServer),
+            ("64:ff9b::7f00:1", NeverAServer),
+            ("tls://dns.example{?dns}", QueryOrFragment),
+            ("dns.example{?dns}", QueryOrFragment),
             ("ff02::1", NeverAServer),
             ("fe80::1", NeverAServer),
             ("https://[fe80::1]/dns-query", NeverAServer),
