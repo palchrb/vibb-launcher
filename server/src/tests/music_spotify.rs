@@ -2627,6 +2627,24 @@ pub(in crate::tests) mod listing {
         }
     }
 
+    /// A Spotify listing's pictures are one CDN GET each: a check fetches up to 100 of them, an
+    /// NRK, RSS or Storytel check 20; the daily budget is shared.
+    #[test]
+    fn a_spotify_check_fetches_more_pictures() {
+        let spotify = Link::Spotify {
+            kind: LinkKind::Playlist,
+            id: "x".to_string(),
+        };
+        let rss = Link::Rss {
+            url: "https://example.org/feed.xml".to_string(),
+        };
+        assert_eq!(
+            sweep::art_per_check_for(&spotify),
+            sweep::ART_PER_CHECK_SPOTIFY
+        );
+        assert_eq!(sweep::art_per_check_for(&rss), sweep::ART_PER_CHECK);
+    }
+
     /// Art (§3.5): a playlist's track pictures are each its own (never the playlist's mosaic,
     /// never `same`), one request per URL in a pass - a picture that failed is not asked twice;
     /// a show's episode pictures are judged against the show's picture.

@@ -443,7 +443,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   could fetch (design 26a, "Merge of main with design 27").
 - Episode pictures (design 27): an item's own art is `items.artHash` (Room 2; its auto migration empties every
   listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
-  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt; sent as
+  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt, then each Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50) tracks from where a cover tap starts it, in `later` - a Spotify entry keeps nothing, and the server fetches up to `ART_PER_CHECK_SPOTIFY` (100) of its pictures a check; sent as
   `wantArt` at each sync's end and from the player 2 s after an item change; `sync/ArtPlan.kt`'s `artWant` takes a
   Storytel series' keep set from the download plan's rule, `storytelKeepSet` + `storytelWanted`: the books on the
   phone; a book's cover is its own `artHash` from the server's art pass, design 26b §5.5), the prune (covers dir and the

@@ -6,7 +6,10 @@ import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
 import me.vibb.music.logic.KeepItem
+import me.vibb.music.logic.SPOTIFY_ART_AHEAD
 import me.vibb.music.logic.WantedArt
+import me.vibb.music.logic.coverTapPlan
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.keepSet
 import me.vibb.music.logic.nowWindow
 import me.vibb.music.logic.storytelKeepSet
@@ -22,14 +25,26 @@ import me.vibb.music.playback.PlayerHub
  * window, then per NRK/RSS entry the art of its keep set (the bookmarked item and the next first,
  * then newest first, as the downloads go; a Storytel series' kept books in its download order, the
  * bookmarked book first, then reading order - `downloadPlan`'s rule, design 26b §3.3), then the Nytt
- * tray. Own entries' art is in the library's covers. The played extras' pictures are kept with the keep
- * sets' (design 30 §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
+ * tray, then each Spotify list-mode entry's next [SPOTIFY_ART_AHEAD] tracks in the order a cover tap
+ * plays them (from the bookmark when resume is on; an unstarted entry from its first). Own entries'
+ * art is in the library's covers. The played extras' pictures are kept with the keep sets' (design 30
+ * §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
  */
 fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<String>, recent: List<String>, extras: List<DownloadRow> = emptyList()): WantedArt {
     val lib = snap.library
     val kept = mutableListOf<String?>()
+    val ahead = mutableListOf<String?>()
     for (entry in lib?.entries.orEmpty()) {
         if (entry.source == Source.OWN) continue
+        if (entry.source == Source.SPOTIFY) {
+            // Nothing is kept; a context-mode entry's one item has no picture of its own.
+            if (isSpotifyContext(entry)) continue
+            val order = snap.order(entry)
+            val plan = coverTapPlan(order.map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle = false) ?: continue
+            val byKey = order.associateBy { it.key }
+            ahead += plan.keys.take(SPOTIFY_ART_AHEAD).map { byKey[it]?.artHash }
+            continue
+        }
         val listed = snap.listed[entry.id].orEmpty()
         val bookmark = snap.bookmarks[entry.key]?.itemKey
         val keys = listed.map { it.key }
@@ -46,7 +61,7 @@ fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<S
     }
     kept += extras.map { snap.item(it.entryId, it.itemKey)?.artHash }
     val news = snap.news.map { snap.item(it.entryId, it.key)?.artHash }
-    return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty())
+    return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty(), ahead)
 }
 
 /** The queue the player holds (live), else the stored one, with its current index; empty when there is none. */

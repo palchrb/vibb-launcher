@@ -20,6 +20,13 @@ const val WANT_ART_MAX = 600
 const val WANT_ART_NOW_MAX = 5
 const val NOW_REACH = 2
 
+/**
+ * A Spotify list-mode entry keeps no audio, so without this its track pictures came only as each
+ * track neared the now window. Its next this many tracks from where a tap would start it go into
+ * `later` (the audio's network gate): ~50 KB a picture, so ~2.5 MB an entry, within [WANT_ART_MAX].
+ */
+const val SPOTIFY_ART_AHEAD = 50
+
 /** The pictures shown last are kept a while, so swiping back and forth doesn't fetch them again (QA L4). */
 const val RECENT_ART_MAX = 20
 
@@ -47,9 +54,10 @@ fun <T> nowWindow(queue: List<T>, index: Int, reach: Int = NOW_REACH): List<T> {
 /**
  * The want set. [now]: the own-art hashes of the now-playing window ([nowWindow]); [kept]: those of
  * every entry's keep set (the art of the episodes kept offline goes with their audio); [news]: the
- * Nytt tray's. Library covers come their own way, so they are left out. Deduplicated, [now] first,
- * at most [WANT_ART_MAX] in all; the lists leave out what the phone already [held], [keep] includes
- * it, plus the [recent] pictures shown.
+ * Nytt tray's; [ahead]: the Spotify list-mode entries' next tracks ([SPOTIFY_ART_AHEAD] each), last.
+ * Library covers come their own way, so they are left out. Deduplicated, [now] first, at most
+ * [WANT_ART_MAX] in all; the lists leave out what the phone already [held], [keep] includes it,
+ * plus the [recent] pictures shown.
  */
 fun wantedArt(
     now: List<String?>,
@@ -58,10 +66,11 @@ fun wantedArt(
     recent: List<String>,
     held: Set<String>,
     libraryCovers: Set<String>,
+    ahead: List<String?> = emptyList(),
 ): WantedArt {
     fun own(hashes: List<String?>) = hashes.filter { isArtHash(it) && it !in libraryCovers }.map { it!! }.distinct()
     val nowAll = own(now).take(WANT_ART_NOW_MAX).toSet()
-    val ordered = (nowAll + own(kept + news)).distinct().take(WANT_ART_MAX)
+    val ordered = (nowAll + own(kept + news + ahead)).distinct().take(WANT_ART_MAX)
     return WantedArt(
         now = ordered.filter { it in nowAll && it !in held },
         later = ordered.filter { it !in nowAll && it !in held },

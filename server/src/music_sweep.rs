@@ -22,7 +22,8 @@
 //!   `photos::MUSIC_COVERS`, at most once a day.
 //! - **Episode art** ([art_pass], design `docs/design/27-music-episode-art.md` §1 with its QA): an
 //!   item's own picture as a 512 px JPEG in `photos::MUSIC_ART`, judged against the series
-//!   pictures by print; at most [ART_PER_CHECK] requests a check and [ART_PER_DAY] a day, the first
+//!   pictures by print; at most [ART_PER_CHECK] requests a check (a Spotify listing
+//!   [ART_PER_CHECK_SPOTIFY]) and [ART_PER_DAY] a day, the first
 //!   [ART_WINDOW] items in play order. The listing's `art` is its hash.
 //! - **The listing** ([build_listing]): `{v, entry, version, items}`, the `ok` and `gone` items
 //!   oldest first, at most [MAX_LISTING_BYTES]; served by `GET /api/devices/music/entries/{id}/items`.
@@ -110,6 +111,9 @@ pub const LISTING_FORMAT: u32 = 1;
 /// Episode art (design 27 §1.4): image requests per check, and per day server-wide (only requests
 /// count, QA L1 a)...
 pub const ART_PER_CHECK: u32 = 20;
+/// ...a Spotify listing's share: its pictures are Spotify's own CDN, one GET each, so a 100-track
+/// playlist has them after one check, not five. The day's [ART_PER_DAY] is the same.
+pub const ART_PER_CHECK_SPOTIFY: u32 = 100;
 pub const ART_PER_DAY: i64 = 400;
 /// ...for the first this many `ok` items in play order.
 pub const ART_WINDOW: usize = 200;
@@ -163,7 +167,8 @@ pub struct Sweep {
     /// [MAX_CHECK_REQUESTS] and [ENTRY_SPACING] (smaller in the tests).
     request_budget: std::sync::atomic::AtomicU32,
     spacing_ms: std::sync::atomic::AtomicU64,
-    /// [ART_PER_CHECK] (0 in the tests that count other requests).
+    /// The tests' override of [art_per_check_for] (0 in the tests that count other requests);
+    /// `u32::MAX` = none.
     art_per_check: std::sync::atomic::AtomicU32,
     /// The tests' fake clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
@@ -186,7 +191,7 @@ impl Default for Sweep {
             current: Default::default(),
             request_budget: MAX_CHECK_REQUESTS.into(),
             spacing_ms: (ENTRY_SPACING.as_millis() as u64).into(),
-            art_per_check: ART_PER_CHECK.into(),
+            art_per_check: u32::MAX.into(),
             clock: Default::default(),
             #[cfg(test)]
             before_commit: Default::default(),
@@ -211,8 +216,11 @@ impl Sweep {
             .store(requests, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn art_per_check(&self) -> u32 {
-        self.art_per_check.load(std::sync::atomic::Ordering::SeqCst)
+    fn art_per_check(&self, link: &Link) -> u32 {
+        match self.art_per_check.load(std::sync::atomic::Ordering::SeqCst) {
+            u32::MAX => art_per_check_for(link),
+            set => set,
+        }
     }
 
     /// The tests' knob: the next check stops right before its commit (the store locks held, the
@@ -434,6 +442,15 @@ const SPOTIFY_LOGIN_ERRORS: [&str; 5] = [
     "key",
     "app_refused",
 ];
+
+/// The image requests one check of `link` may make: [ART_PER_CHECK_SPOTIFY] for a Spotify entry,
+/// else [ART_PER_CHECK].
+pub fn art_per_check_for(link: &Link) -> u32 {
+    match link {
+        Link::Spotify { .. } => ART_PER_CHECK_SPOTIFY,
+        _ => ART_PER_CHECK,
+    }
+}
 
 /// How often a listed entry is checked (§2.2's table; design 26c §3.4: by the link's kind): NRK
 /// every `max(I, min(2I, 12 h))`; a Spotify album, track, episode or artist daily (vibb's daily
@@ -1659,7 +1676,7 @@ async fn run_check(
                 // Episode art (design 27 §1.4): after the listing, the manifests and the cover.
                 reference_prints(state, &mut job, &mut plan, old, &found).await?;
                 let room = (ART_PER_DAY - art_requests_today(&state.db, now).await?).max(0);
-                let gets = (state.music_sweep.art_per_check() as i64).min(room) as u32;
+                let gets = (state.music_sweep.art_per_check(link) as i64).min(room) as u32;
                 art_pass(&state.db, &mut job, &mut plan, link, play_order, gets).await?;
             }
             Ok(found)
