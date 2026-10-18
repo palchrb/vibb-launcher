@@ -109,6 +109,35 @@ async fn sessions_from_before_the_update_are_ended() {
     assert_eq!(page.location(), Some("/login"));
 }
 
+/// Design 36 §7: the custom DNS server and its backup stay in a copy - stripping them would make a
+/// restore lose them (the TOTP secret's precedent), and they unlock nothing of ours.
+#[tokio::test]
+async fn a_snapshot_keeps_the_custom_dns_server() {
+    let app = TestApp::new().await;
+    let pair = ("https://dns.example/dns-query/abc123", "tls://1.1.1.3");
+    sqlx::query("UPDATE dns_filter_settings SET custom_server = ?, custom_backup = ?")
+        .bind(pair.0)
+        .bind(pair.1)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("copy.db");
+    crate::handlers::backups::snapshot(&app.db, &dir.path().join("scratch.db"), &target)
+        .await
+        .unwrap();
+    let copy = sqlx::SqlitePool::connect(&format!("sqlite://{}", target.display()))
+        .await
+        .unwrap();
+    let copied: (String, String) =
+        sqlx::query_as("SELECT custom_server, custom_backup FROM dns_filter_settings")
+            .fetch_one(&copy)
+            .await
+            .unwrap();
+    assert_eq!(copied, (pair.0.to_string(), pair.1.to_string()));
+    copy.close().await;
+}
+
 #[tokio::test]
 async fn the_live_database_keeps_the_tailscale_key() {
     let app = TestApp::new().await;

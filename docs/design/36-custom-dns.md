@@ -415,3 +415,42 @@ Every finding taken: H1 → §1.6, §5.4, §7; M1, M3 → §5.4; M2 → §5.2/§
 M7 → §1.7; L1-L3, N2 → §2; L4, L5 → §4.1; L6, L7, L9 → §5.2/§5.3; L8 → §5.1; N1 → §6; N3 → §9; N4 → §3;
 N5 → §1.2. Not taken: none. The owner's decisions (§10) since replaced M4's and M5's refusals (any address allowed,
 §2) and M7's Families fallback (the parent's backup, prefilled Families); see the QA's "Revision 2026-10-18".
+
+## Step 1 implementation status
+
+Branch `dns-s1` (from `c570886e`), 2026-10-18. Server + wire, in one commit with the launcher's side.
+
+**Shipped as specified**: migration `0079_custom_dns.sql` (both columns, `custom_rev`, `device_status.dns_upstream_json`;
+in `migrations_73_to_79_in_order`); `src/dns_server.rs` (§2's grammar, every row and refusal, `normalized()`, `hint()`,
+equality, the §3 pair rule, the policy object, the event detail, `sanitize_dns_upstream`); the policy's `dns_upstream`
+next to an unchanged `dns_upstream_provider` (`"cloudflare"` under Custom); the status field stored through known words
+only; the PWA group of §6 (picker, the Custom Server row, the write-only fields, `1.1.1.3` only while no backup is
+stored, all-or-nothing Save, refusals in place with 400 + `no-store`, Forget, the per-phone lines, the ⓘ); the event
+`dns_server_changed` with kinds only; the contract `dns_upstream_status.json` in both directories, the path filters of
+`launcher.yml` and `server-ci.yml` (music doesn't read it), the root `CLAUDE.md`. Tests per §8's server list,
+`PolicyResponseCompatTest`, `DnsUpstreamStatusTest`.
+
+**Deviations, with the reason**:
+- **The launcher's `dnsUpstream` is a raw `JsonElement?`**, not a typed `DnsUpstream`/`DnsTarget` with nullable
+  fields: `ServerJson` has no `coerceInputValues`, so a wrong type (§8's `"port": "x"`) would still fail the whole
+  decode of a typed field. Raw JSON read field by field is the project's existing pattern (`music`, `lockGlance`,
+  `app_display`) and meets §4.1's "never fails the policy" literally.
+- **`customUpstreamFrom` is in step 1** (pure, `server/CustomUpstream.kt`, unused until step 2): §8's compat test needs
+  it. **`DnsUpstreamStatusTest` too** (listed under step 2 in §8): the contract file is step 1's, and the launcher side
+  compares its copy like `TimeStateZoneTest`.
+- **"Web filter off"** comes from the phone's server-side filter switch (`device_policy.vpn_filter_enabled`). A capable
+  phone whose report has no `dns_upstream` (its VPN not running, or the new servers not yet taken) reads "Waiting for
+  the phone".
+- **Forget with something typed**: the typed values win (Forget acts only with both fields empty), so a parent who
+  ticks Forget and types a new server gets the new server, never a silent loss of what they typed.
+- **The event** is written on every change of the choice too (Cloudflare ↔ Quad9 included: "every change of the
+  three"), and on Forget only when something was stored. The hint never shows the port.
+- `tls://host/` (a bare trailing slash) is taken as DoT with no path; any other path on `tls://` is refused.
+
+**Not in step 1**: everything of §5 (step 2) and step 3. DEPLOY.md's paragraph (§9's last sentence) waits for the
+release, with step 2's launcher.
+
+**Open points for the code QA**: (1) 0079 lands with 0078 unused on `main`: if design 35's 0078 reaches a server after
+0079, sqlx applies it out of order and the pre-migration backup (`MAX(version)`) takes none - 35 must ship before or
+with 36. (2) The "Waiting for the phone" vs "Web filter off" split above. (3) The picker's 400 keeps "Custom server"
+selected in the answer (the choice the parent made), though nothing was stored.

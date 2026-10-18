@@ -285,6 +285,15 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
             vec![("upstream", "quad9")],
             to("/dns", "server"),
         ),
+        // Design 36: typing a custom server means using it (Quad9 above gives way).
+        (
+            "/dns/upstream/custom#server".to_string(),
+            vec![
+                ("custom_server", "https://dns.example/dns-query"),
+                ("custom_backup", "1.1.1.3"),
+            ],
+            to("/dns", "server"),
+        ),
     ]);
     check("/dns", table).await;
 
@@ -368,7 +377,7 @@ async fn every_form_on_the_settings_pages_returns_to_its_group() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(upstream, "quad9");
+    assert_eq!(upstream, "custom");
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM wallpapers WHERE kind = 'image'").await,
         0

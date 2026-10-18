@@ -11,6 +11,7 @@ mod crashes;
 mod device_routes;
 mod display_time;
 mod dns_engine;
+mod dns_server;
 mod enrollment;
 mod gate;
 mod handlers;
@@ -1131,6 +1132,10 @@ pub fn build_admin_router(
         )
         .route("/dns", get(handlers::dns_filter::show_dns_filter))
         .route("/dns/upstream", post(handlers::dns_filter::set_upstream))
+        .route(
+            "/dns/upstream/custom",
+            post(handlers::dns_filter::set_custom),
+        )
         .route(
             "/dns/blocklists/new",
             post(handlers::dns_filter::create_blocklist),

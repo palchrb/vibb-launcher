@@ -90,6 +90,22 @@ data class StatusReportRequest(
      * should be but isn't - no "Modify system settings" access, or the write was refused - (false);
      * `null` (left out) for "Follow the phone" or no policy ([com.kidslauncher.mdm.server.ClockFormatSetting.report]). */
     val clockFormatApplied: Boolean? = null,
+    /** Design 36 §4.2 (capability `dns_custom_v1`): which of the parent's DNS servers the phone
+     * forwards to - see [DnsUpstreamReport]; `null` (left out) while the Web filter is off or no
+     * custom server is configured. Sent from design 36 step 2 on. */
+    val dnsUpstream: DnsUpstreamReport? = null,
+)
+
+/** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the
+ * servers in use, [inUse] `custom` or `backup`, since when (wall clock), and with `backup` why:
+ * `bootstrap`, `connect`, `tls`, `http`, `refused` or `timeout`. Never an address. Pinned by
+ * `dns_upstream_status.json`, byte-identical with the server's `testdata/`. */
+@Serializable
+data class DnsUpstreamReport(
+    val rev: Long,
+    val inUse: String,
+    val sinceMs: Long?,
+    val reason: String?,
 )
 
 /** `StatusReportRequest.foreignAccess`: the packages (valid names, at most 8 each, sorted) of the

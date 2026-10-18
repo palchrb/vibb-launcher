@@ -139,7 +139,7 @@ No prior programming experience - build features directly rather than explaining
 - **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, clock_format: "system"|"24"|"12", wallpapers: [...]}` (wallpapers since step 8, clock_format since design 34 P12) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
 - **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
-- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_77_in_order` (the migration order).
+- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_79_in_order` (the migration order).
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -400,7 +400,7 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_77_in_order`); the next free number is 0078.
+(`migrations_73_to_79_in_order`). **0078 is reserved for design 35** (decided 2026-10-18); `0079_custom_dns.sql` (design 36) sits above it, so 0078 must reach a server before or with 0079, never after (the out-of-order hazard above). The next free number after both is 0080.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -1823,6 +1823,53 @@ needed to manage the phone, delete on a schedule, never store notification or me
   name is the parent's and stays; nothing reads the name. Test:
   `tracked_apps::the_launcher_row_becomes_vibb_one_only_from_a_default_name` (an old database both ways: both
   defaults renamed, a parent's name, "vibb" in another case and non-launcher rows kept).
+
+## A custom DNS server for the Web Filter (design 36 step 1, `docs/design/36-custom-dns.md`, migration `0079_custom_dns.sql`)
+
+- **The server never contacts either address** - no resolve, no probe, no fetch (no SSRF surface); it only parses.
+  The phone is the only client (step 2, launcher).
+- **`src/dns_server.rs`** (pure): `parse_dns_server(&str) -> Result<DnsServer, Refusal>` classifies what the parent
+  typed as DoH (`https://`, or a scheme-less value with a path) or DoT (`tls://`, a bare name or IP, port 853 unless
+  given) per design 36 §2's table, or refuses it (`Refusal`, worded by `dns_filter::refusal_text`): `http://`, other
+  schemes, `host:443` without a scheme, user info, a query/fragment (but a trailing `{?dns}`), a path on `tls://`,
+  ports 0/53/80/>65535, bad path characters or > 256, non-LDH hosts, numeric look-alikes (`1.1`, octal/hex/shorthand,
+  `dns.123`), zone ids, and what can never be a server (localhost, loopback, unspecified, multicast, broadcast, IPv6
+  link-local, checked after mapping IPv4-mapped/-compatible IPv6). Any other address is allowed (private, tailnet,
+  `*.ts.net`, single-label). `DnsServer::normalized()` is what is stored and parses to itself; two servers are the
+  same when their normalized forms are equal; `hint()` is `…` + the last two labels of a longer name (never the path
+  or the first label - it may be a client id) and the kind. `valid_pair`, `upstream_of` (the policy's object),
+  `event_detail` (kinds only), `sanitize_dns_upstream`/`parse_dns_upstream` (the status field).
+- **Data** (0079): `dns_filter_settings.custom_server`/`custom_backup` (normalized, `''` = not set),
+  `custom_rev` (up on every change of either and on Forget; compared by equality only), `device_status.dns_upstream_json`.
+  `upstream` may be `'custom'`; a reader that finds it without a valid pair (both parse, not equal) treats it as
+  `'cloudflare'`. Both values are **kept in backups** (design 36 §7, `backup_secrets::a_snapshot_keeps_the_custom_dns_server`).
+- **Wire**: `PolicyResponse.dns_upstream` (always the key; `null` unless Custom with a valid pair - then
+  `dns_upstream_provider` is `"cloudflare"` for an older launcher): `{kind, url | host+port, rev, backup: {kind, url |
+  host+port}}`. Status `dns_upstream` `{rev, in_use: custom|backup, since_ms, reason}` stored through the known words
+  only (`reason` only with `backup`: bootstrap/connect/tls/http/refused/timeout; `since_ms` 2000..2100), never an
+  address; capability `dns_custom_v1` (`dns_server::DNS_CUSTOM_CAPABILITY`, sent by the launcher from step 2 on).
+  Contract `testdata/dns_upstream_status.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
+- **PWA** (Settings › Web Filter, `#server`): the picker gets "Custom server" (`POST /dns/upstream`; Custom without a
+  valid stored pair renders the page in place, 400, the Custom Server row open, "Type your server's address first.");
+  the "Custom Server" row (`<details id="custom-server">`, its sub-line the server's hint) holds one form, `POST
+  /dns/upstream/custom` (`dns_filter::set_custom`, full auth): "Your server" and "Backup server", both `type="text"`,
+  **write-only** (never filled from storage; the backup prefilled `1.1.1.3` only while none is stored), hints "Set
+  (…dns.example · DNS-over-HTTPS)." / "Not set.", "Forget Custom Server" while something is stored. All or nothing:
+  each field typed = parsed, empty = the stored value; a refusal, a missing value or the same server twice renders
+  in place (400, `Cache-Control: no-store`, the typed values back in the body only, `aria-invalid` and the reason under
+  the field); something typed and valid stores both normalized, sets `upstream = 'custom'`, moves `custom_rev` if
+  either changed; Forget with both fields empty clears both and puts Custom back on Cloudflare; nothing typed changes
+  nothing. Every redirect is `/dns#server`. While Custom is in force the footer has one line per phone
+  (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Cloudflare - update Vibb
+  One on this phone ..." without the capability, "Waiting for the phone" without a report at the current `rev`, "Web
+  filter off" when the phone's filter switch is off); a stored but no longer valid pair says so instead. The ⓘ says
+  DoT on 853 for a bare name, the certificate check, direct reach (not through Tailscale) and the path id.
+- **Security event** `dns_server_changed` ("DNS server changed") on every change of the choice or either address,
+  detail `{"server":..,"kind":..,"backup_kind":..}` - kinds only, never a host or path; nothing logs either value.
+- Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer), `tests::custom_dns`
+  (save/refusals/Forget/the event, the policy shapes, a pair that isn't valid, the status contract and both copies,
+  the footer's lines), `policy_json_keys_snapshot` (`dns_upstream` and its `backup`), the settings redirect table,
+  `migrations_73_to_79_in_order`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

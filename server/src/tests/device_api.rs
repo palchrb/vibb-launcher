@@ -313,6 +313,7 @@ async fn policy_json_keys_snapshot() {
             "call_policy",
             "dns_filter_version",
             "dns_log_enabled",
+            "dns_upstream",
             "dns_upstream_provider",
             "hardening",
             "kid_lock",
@@ -379,6 +380,33 @@ async fn policy_json_keys_snapshot() {
         ]
     );
     assert!(call_policy.values().all(|v| !v.is_null()));
+
+    // Design 36: `dns_upstream` is null until Custom has a valid pair, then the launcher's
+    // `DnsUpstream` (a target, `rev`, `backup`) and `DnsTarget` shapes.
+    assert!(object["dns_upstream"].is_null());
+    sqlx::query(
+        "UPDATE dns_filter_settings SET upstream = 'custom', \
+         custom_server = 'https://dns.example/dns-query', custom_backup = 'tls://1.1.1.3'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let custom = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    let upstream = custom["dns_upstream"].as_object().unwrap();
+    let mut upstream_keys: Vec<&str> = upstream.keys().map(String::as_str).collect();
+    upstream_keys.sort_unstable();
+    assert_eq!(upstream_keys, ["backup", "kind", "rev", "url"]);
+    let mut backup_keys: Vec<&str> = upstream["backup"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    backup_keys.sort_unstable();
+    assert_eq!(backup_keys, ["host", "kind", "port"]);
 
     // The launcher's LauncherUi DTO (steps 5 and 8): every key, wallpapers always a list.
     let launcher_ui = object["launcher_ui"].as_object().unwrap();

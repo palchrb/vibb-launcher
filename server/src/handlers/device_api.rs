@@ -284,12 +284,20 @@ pub(crate) async fn build_policy(
         interval_minutes: policy.location_interval_minutes,
     };
 
-    let dns_upstream_provider =
+    // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
+    // launcher that doesn't read it; Custom without one reads as Cloudflare.
+    let dns_settings =
         sqlx::query_as::<_, DnsFilterSettings>("SELECT * FROM dns_filter_settings WHERE id = 1")
             .fetch_optional(&state.db)
-            .await?
-            .map(|s| s.upstream)
-            .unwrap_or_else(|| "cloudflare".to_string());
+            .await?;
+    let (dns_upstream_provider, dns_upstream) = match dns_settings {
+        Some(s) if s.upstream == "custom" => (
+            "cloudflare".to_string(),
+            crate::dns_server::upstream_of(&s.custom_server, &s.custom_backup, s.custom_rev),
+        ),
+        Some(s) => (s.upstream, None),
+        None => ("cloudflare".to_string(), None),
+    };
 
     let dns_filter_version = compute_dns_filter_version(state, device_id).await?;
 
@@ -435,6 +443,7 @@ pub(crate) async fn build_policy(
         vpn_filter_enabled: policy.vpn_filter_enabled,
         dns_filter_version,
         dns_upstream_provider,
+        dns_upstream,
         packages_to_uninstall,
         call_policy,
         hardening: policy.hardening,
@@ -1082,6 +1091,11 @@ pub async fn status(
         .unseen_boots
         .as_ref()
         .and_then(crate::boot_witness::sanitize);
+    // Design 36 §4.2: which of the parent's DNS servers the phone uses, known words only.
+    let dns_upstream_json = report
+        .dns_upstream
+        .as_ref()
+        .and_then(crate::dns_server::sanitize_dns_upstream);
     let previous_unseen: Option<i64> = sqlx::query_scalar(
         "SELECT unseen_boots_count FROM device_status WHERE device_id = ? \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -1117,8 +1131,8 @@ pub async fn status(
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
-          relock_blocks_total, clock_format_applied) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          relock_blocks_total, clock_format_applied, dns_upstream_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1169,6 +1183,7 @@ pub async fn status(
             .map(|n| n.clamp(0, MAX_RELOCK_BLOCKS_TOTAL))
     }))
     .bind(report.clock_format_applied)
+    .bind(&dns_upstream_json)
     .execute(&state.db)
     .await
     .ok();

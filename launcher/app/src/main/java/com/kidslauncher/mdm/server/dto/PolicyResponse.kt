@@ -61,6 +61,13 @@ data class PolicyResponse(
     val vpnFilterEnabled: Boolean = true,
     val dnsFilterVersion: String? = null,
     val dnsUpstreamProvider: String = "cloudflare",
+    /** The parent's own DNS server and its backup (design 36 §4.1): `{kind, url | host+port, rev,
+     * backup: {kind, url | host+port}}`, or `null` (missing from an older server) = forward to
+     * [dnsUpstreamProvider], which the server then sends as "cloudflare". Raw JSON read field by
+     * field by [com.kidslauncher.mdm.server.customUpstreamFrom], so nothing in it - a future kind,
+     * a wrong type - can fail the policy (like [music]); anything it can't use is the provider.
+     * Used from design 36 step 2 on. */
+    val dnsUpstream: kotlinx.serialization.json.JsonElement? = null,
     val packagesToUninstall: List<String> = emptyList(),
     val callPolicy: CallPolicy? = null,
     val hardening: HardeningPolicy? = null,

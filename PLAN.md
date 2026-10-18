@@ -512,7 +512,9 @@ findings, merge to `main`, full suite once.
   2026-10-15; the user confirmed the same day that DoH/DoT with a client id to their own AdGuard Home
   is a must - and (2026-10-18) **any** DNS server: a plain DoH URL (`https://dns.example/dns-query`, with or
   without a client id in the path), a DoT host name, or a plain IP over DoT; the field takes what the parent has,
-  the server works out the kind and validates it.
+  the server works out the kind and validates it. **Design 36** (`docs/design/36-custom-dns.md`): step 1 (server +
+  wire, branch `dns-s1`) done 2026-10-18, awaiting code QA; step 2 (launcher) and step 3 (networks that block 853)
+  open.
 
 - **Missed Element X calls on the contact card** (the user, 2026-10-15): the contact card, the phone book's badge
   and our missed-call notification count only the system call log, so a missed Element X (VoIP) call shows only as
