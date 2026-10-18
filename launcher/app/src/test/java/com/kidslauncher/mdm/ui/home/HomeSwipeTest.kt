@@ -3,7 +3,11 @@ package com.kidslauncher.mdm.ui.home
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Home's swipes from their own DOWN (qa-34-s4-code M1). */
+/**
+ * Home's swipes from their own DOWN (qa-34-s4-code M1). The rule is stateless; that each swipe gets
+ * its own DOWN (one feed, in dispatchTouchEvent, the inputs read at the DOWN) is the glue's job and
+ * is pinned by HomeGateTest's source check (qa-r1-apps-code L2/N1).
+ */
 class HomeSwipeTest {
     private fun swipe(
         down: Pair<Float, Float>,
@@ -38,7 +42,13 @@ class HomeSwipeTest {
     fun `a swipe up opens the drawer only once the grid can't scroll further`() {
         assertEquals(HomeSwipe.DRAWER, swipe(up.first, up.second, SwipeStart.GRID))
         assertEquals(HomeSwipe.NONE, swipe(up.first, up.second, SwipeStart.GRID, gridCanScroll = true))
+    }
+
+    /** Intended (the user kept it, 2026-10-18): before, a contact kept the vertical drag and nothing opened. */
+    @Test
+    fun `a swipe up from a contact or the row opens the drawer too - approved`() {
         assertEquals(HomeSwipe.DRAWER, swipe(up.first, up.second, SwipeStart.CONTACTS_ROW, rowCanScroll = true))
+        assertEquals(HomeSwipe.NONE, swipe(up.first, up.second, SwipeStart.CONTACTS_ROW, gridCanScroll = true))
     }
 
     @Test
@@ -50,14 +60,5 @@ class HomeSwipeTest {
         assertEquals("down", HomeSwipe.NONE, swipe(up.second, up.first, SwipeStart.GRID))
         assertEquals("card", HomeSwipe.NONE, swipe(left.first, left.second, SwipeStart.CARD))
         assertEquals("night", HomeSwipe.NONE, swipe(left.first, left.second, SwipeStart.BLANK, shown = false))
-    }
-
-    @Test
-    fun `the previous touch doesn't matter - each swipe is decided from its own DOWN`() {
-        // The same row state, two swipes one after the other: a grid swipe, then one on a contact,
-        // then the grid again - each follows its own start, not the touch before it.
-        assertEquals(HomeSwipe.KID_SETTINGS, swipe(900f to 1_300f, 300f to 1_310f, SwipeStart.GRID, rowCanScroll = true))
-        assertEquals(HomeSwipe.NONE, swipe(900f to 300f, 300f to 310f, SwipeStart.CONTACTS_ROW, rowCanScroll = true))
-        assertEquals(HomeSwipe.KID_SETTINGS, swipe(900f to 1_300f, 300f to 1_310f, SwipeStart.GRID, rowCanScroll = true))
     }
 }

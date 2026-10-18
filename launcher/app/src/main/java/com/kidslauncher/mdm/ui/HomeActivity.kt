@@ -122,6 +122,11 @@ class HomeActivity : UIObjectActivity() {
     private lateinit var gridAdapter: HomeGridAdapter
     private lateinit var gridLayout: GridLayoutManager
     private lateinit var gestureDetector: GestureDetector
+    /** The current touch's DOWN, read when it landed: where, and whether the grid and the row could
+     * still scroll on (qa-r1-apps-code L1) - what [homeSwipe] decides the fling with. */
+    private var downStart = SwipeStart.BLANK
+    private var downGridCanScroll = false
+    private var downRowCanScroll = false
 
     /** The night ground while locked (16c). */
     private var night: NightGround? = null
@@ -325,9 +330,9 @@ class HomeActivity : UIObjectActivity() {
                 if (e1 == null) return false
                 val swipe = homeSwipe(
                     e1.x, e1.y, e2.x, e2.y, velocityX, velocityY,
-                    start = swipeStart(e1),
-                    gridCanScrollDown = binding.homeGrid.canScrollVertically(1),
-                    rowCanScrollRight = binding.homeContactsScroll.canScrollHorizontally(1),
+                    start = downStart,
+                    gridCanScrollDown = downGridCanScroll,
+                    rowCanScrollRight = downRowCanScroll,
                     contentShown = contentShown,
                 )
                 when (swipe) {
@@ -351,7 +356,13 @@ class HomeActivity : UIObjectActivity() {
      * DOWN came before the content showed is still decided from that DOWN.
      */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        val swiped = ::gestureDetector.isInitialized && gestureDetector.onTouchEvent(ev)
+        if (!::gestureDetector.isInitialized) return super.dispatchTouchEvent(ev)
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            downStart = swipeStart(ev)
+            downGridCanScroll = binding.homeGrid.canScrollVertically(1)
+            downRowCanScroll = binding.homeContactsScroll.canScrollHorizontally(1)
+        }
+        val swiped = gestureDetector.onTouchEvent(ev)
         if (!swiped || ev.actionMasked != MotionEvent.ACTION_UP) return super.dispatchTouchEvent(ev)
         val cancel = MotionEvent.obtain(ev).apply { action = MotionEvent.ACTION_CANCEL }
         try {

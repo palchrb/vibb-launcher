@@ -26,7 +26,8 @@ import me.vibb.music.playback.PlayerHub
  * then newest first, as the downloads go; a Storytel series' kept books in its download order, the
  * bookmarked book first, then reading order - `downloadPlan`'s rule, design 26b §3.3), then the Nytt
  * tray, then each Spotify list-mode entry's next [SPOTIFY_ART_AHEAD] tracks in the order a cover tap
- * plays them (from the bookmark when resume is on; an unstarted entry from its first). Own entries'
+ * plays them (from the bookmark when resume is on; an unstarted entry from its first; a shuffled one in
+ * list order, since its permutation can't be foreseen). Own entries'
  * art is in the library's covers. The played extras' pictures are kept with the keep sets' (design 30
  * §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
  */

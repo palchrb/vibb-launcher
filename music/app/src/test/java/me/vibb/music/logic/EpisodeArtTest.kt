@@ -130,8 +130,11 @@ class EpisodeArtTest {
         val rss = entry(1, cache = 0)
         val lib = library(listOf(rss, list, context))
         val rows = items(8, tracks, art = pics) + items(9, listOf("c1"), art = mapOf("c1" to a)) + items(1, listOf("r1"), art = mapOf("r1" to b))
-        // Unstarted: its first 50 in play order.
-        val fresh = artWant(snapshot(lib, rows), emptyList(), -1, held = emptySet(), recent = emptyList())
+        // Unstarted: its first 50 in play order. The context entry's one item is given a picture here
+        // (its synthetic item has none), so only the context-mode skip keeps it out.
+        val base = snapshot(lib, rows)
+        val withContextArt = base.copy(listed = base.listed + (9L to base.listed.getValue(9L).map { it.copy(artHash = a) }))
+        val fresh = artWant(withContextArt, emptyList(), -1, held = emptySet(), recent = emptyList())
         assertEquals(tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.later)
         assertFalse("a context entry and an RSS entry at depth 0 want nothing", a in fresh.keep || b in fresh.keep)
         // Bookmarked on t60: t60..t80, then round to t1..t29, as the rotated queue plays.

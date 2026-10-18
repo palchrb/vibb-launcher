@@ -35,7 +35,10 @@ enum class HomeSwipe { NONE, DRAWER, KID_SETTINGS }
  * [start]. Up opens the drawer only once the grid can't scroll further down ([gridCanScrollDown]),
  * so scrolling a long grid doesn't open it; left opens kid Settings, except that a swipe starting in
  * the contacts row stays the row's scroll while the row can still scroll that way
- * ([rowCanScrollRight]: `canScrollHorizontally(1)`). Nothing on the night ground (![contentShown]).
+ * ([rowCanScrollRight]: `canScrollHorizontally(1)`). A swipe up opens the drawer wherever it starts,
+ * on a contact too (the user's decision, 2026-10-18). [start] and both "can scroll" inputs are the
+ * ones read at the DOWN, so a swipe that scrolls the row to its end stays a scroll. Nothing on the
+ * night ground (![contentShown]).
  */
 fun homeSwipe(
     downX: Float,

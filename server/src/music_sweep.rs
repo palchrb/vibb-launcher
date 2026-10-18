@@ -112,7 +112,8 @@ pub const LISTING_FORMAT: u32 = 1;
 /// count, QA L1 a)...
 pub const ART_PER_CHECK: u32 = 20;
 /// ...a Spotify listing's share: its pictures are Spotify's own CDN, one GET each, so a 100-track
-/// playlist has them after one check, not five. The day's [ART_PER_DAY] is the same.
+/// playlist has them after one check, not five. The day's [ART_PER_DAY] is the same, and a Spotify
+/// check takes at most half of what is left of it ([art_gets]).
 pub const ART_PER_CHECK_SPOTIFY: u32 = 100;
 pub const ART_PER_DAY: i64 = 400;
 /// ...for the first this many `ok` items in play order.
@@ -216,7 +217,8 @@ impl Sweep {
             .store(requests, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn art_per_check(&self, link: &Link) -> u32 {
+    /// The image requests a check of `link` may make: [art_per_check_for], or the tests' override.
+    pub(crate) fn art_per_check(&self, link: &Link) -> u32 {
         match self.art_per_check.load(std::sync::atomic::Ordering::SeqCst) {
             u32::MAX => art_per_check_for(link),
             set => set,
@@ -442,6 +444,17 @@ const SPOTIFY_LOGIN_ERRORS: [&str; 5] = [
     "key",
     "app_refused",
 ];
+
+/// The requests one check of `link` makes: its share (`per_check`) within what is `left` of the day's
+/// [ART_PER_DAY]. A Spotify check (100 a check) takes at most half of what is left, so a family that
+/// adds several large playlists in a day still leaves pictures for NRK, RSS and Storytel.
+pub fn art_gets(per_check: u32, left: i64, link: &Link) -> u32 {
+    let room = match link {
+        Link::Spotify { .. } => left / 2,
+        _ => left,
+    };
+    (per_check as i64).min(room.max(0)) as u32
+}
 
 /// The image requests one check of `link` may make: [ART_PER_CHECK_SPOTIFY] for a Spotify entry,
 /// else [ART_PER_CHECK].
@@ -1676,7 +1689,7 @@ async fn run_check(
                 // Episode art (design 27 §1.4): after the listing, the manifests and the cover.
                 reference_prints(state, &mut job, &mut plan, old, &found).await?;
                 let room = (ART_PER_DAY - art_requests_today(&state.db, now).await?).max(0);
-                let gets = (state.music_sweep.art_per_check(link) as i64).min(room) as u32;
+                let gets = art_gets(state.music_sweep.art_per_check(link), room, link);
                 art_pass(&state.db, &mut job, &mut plan, link, play_order, gets).await?;
             }
             Ok(found)

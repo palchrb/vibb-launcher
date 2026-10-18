@@ -24,6 +24,8 @@ const val NOW_REACH = 2
  * A Spotify list-mode entry keeps no audio, so without this its track pictures came only as each
  * track neared the now window. Its next this many tracks from where a tap would start it go into
  * `later` (the audio's network gate): ~50 KB a picture, so ~2.5 MB an entry, within [WANT_ART_MAX].
+ * A shuffled entry (resume off) gets its first ones in list order: a fresh permutation can't be
+ * foreseen, so at worst those ~2.5 MB aren't the tracks that play next.
  */
 const val SPOTIFY_ART_AHEAD = 50
 
@@ -70,7 +72,7 @@ fun wantedArt(
 ): WantedArt {
     fun own(hashes: List<String?>) = hashes.filter { isArtHash(it) && it !in libraryCovers }.map { it!! }.distinct()
     val nowAll = own(now).take(WANT_ART_NOW_MAX).toSet()
-    val ordered = (nowAll + own(kept + news + ahead)).distinct().take(WANT_ART_MAX)
+    val ordered = (nowAll + own(kept + news + ahead)).take(WANT_ART_MAX) // a set: deduplicated, in order
     return WantedArt(
         now = ordered.filter { it in nowAll && it !in held },
         later = ordered.filter { it !in nowAll && it !in held },
