@@ -551,3 +551,51 @@ Code QA fix round (`docs/review/qa-35-s2-code.md`, 2026-10-18):
 - N1: the fresh salt and key per message have their own test; N2: a retry past the TTL ends the delivery at once
   (tested with a test push and three network errors); N3: the JWT's `sub` falls back only to an `https://` origin,
   else none; N4: "In a summary" only when that summary was accepted (a folded delivery takes its summary's status).
+
+## Step 3 implementation status (2026-10-18, branch `notif-s3`)
+
+Built as §9 step 3, launcher only, no API change (the `battery` field and `last_emergency_call_at` are step 1's and
+older; `time_status_report.json`, its copies and `TimeStateZoneTest` are unchanged - that test builds its own request
+without `battery`):
+- **The reading** (`server/BatteryStatus.kt`): `battery = BatteryStatus.report(context)` in every status report, from
+  the sticky `ACTION_BATTERY_CHANGED` through the pure `BatteryReport.of(level, scale, status, plugged, low)` (§2.5's
+  rule, the level clamped to 0..100; `null` - left out - without a sticky intent, with level -1 or scale <= 0, or on
+  any exception). `battery_v1` in `STATUS_CAPABILITIES`.
+- **The trigger**: `BatteryStatus.watch(this)` in `Application.initRest`, one `RECEIVER_NOT_EXPORTED` runtime
+  receiver for `ACTION_BATTERY_LOW`/`ACTION_BATTERY_OKAY` calling `SyncRunner.request(app, "battery")`; the request
+  and the registration are each caught.
+- **The emergency sync** (`calls/EmergencyConnects.kt`, one per `KidInCallService`): after the connected record is
+  committed, `SyncRunner.request(this, "emergency_call")` once per call (keyed by the `Call` object, dropped in
+  `onCallRemoved`), posted to the service's main handler (the Telecom callback runs on the main thread; the request
+  is a wake lock plus a service start - the same as every receiver's - and is caught). Before the first unlock
+  (`CallPolicyStore.userUnlocked` false) nothing is requested and the call isn't marked: its next connected state
+  after the unlock asks, and otherwise the anchor's start sync after the unlock reports it from the DE record.
+- Emulator check: `docs/testing/emulator.md` §6n.
+
+Deviation (needed for the step to be correct, launcher only): **one reported instant per emergency call.**
+`KidInCallService` records the call at every connected state, the disconnect included, and the report's
+`last_emergency_call_at` was the record's window start - the time of the *last* record. With a sync at the connect,
+the server would get the connect time and then, at the next report, the disconnect time, and `new_emergency_call`
+announces any newer instant: two "called an emergency number" pushes for one call. Now `EmergencyConnects` gives
+every record of a call the same instant (`Call.Details.connectTimeMillis`, else the first sighting), `CallPrefs`
+keeps it (`mdm.calls.emergency_connected_at_ms`, DE) and `recordedEmergencyAtMs` reports it (a record an older build
+wrote: the window's start, as before). The callback window is unchanged (it still runs from the last record). The
+self-update gate's "emergency call in the last 10 minutes" now counts from the connect, not the hang-up; its
+callback-window check, which does run from the hang-up, still holds the commit for an hour after any emergency call.
+
+Device checks owed (Jelly Star): the BATTERY_LOW threshold and whether `EXTRA_BATTERY_LOW` is set there (else no
+event: the server keys off `low`); the receiver surviving Doze (the home process and the anchor are long-lived, but
+an edge in deep sleep must still reach it); the emergency sync over mobile data while the call is on (the report
+must reach the server within seconds; tsnet over mobile).
+
+Code QA fix round (`docs/review/qa-35-s3-code.md`, 2026-10-18; no High/Medium):
+- L1: the emergency sync is requested directly in the Telecom callback (already on the main looper), no longer posted
+  to the handler `onDestroy` clears, so a call that ends at once can't drop it; still caught.
+- L2: without a connect time the instant falls back to Telecom's `creationTimeMillis` before "now", so a restart of
+  our process mid-call can't move it.
+- L3: the two rules are pure functions beside `callbackWindowUntil` (`emergencyRecord`: the window from this record,
+  the hang-up's last; `reportedEmergencyAt`: the stored instant, else the window's start), tested.
+- L4: the source checks count the catch around the emergency request and the one in `BatteryStatus.report()`.
+- N1: the sticky read goes through `ContextCompat.registerReceiver(context, null, ..)`, as `SelfUpdate`'s; N3: §6n
+  says an emergency call that never connects gets no immediate sync; N2 (a stale instant after a downgrade and
+  re-upgrade) accepted.

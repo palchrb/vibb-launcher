@@ -115,6 +115,7 @@ class SyncScheduleTest {
         assertFalse("push" in json)
         assertFalse("fcm_push_v1" in json["capabilities"].toString())
         assertTrue("play_policy_v1" in json["capabilities"].toString())
+        assertTrue("battery_v1" in json["capabilities"].toString()) // design 35 step 3
         assertFalse(STATUS_CAPABILITIES.any { "fcm" in it })
         assertEquals("99", json["install_mode"]!!.jsonObject["until_ms"].toString())
         assertEquals("true", json["play_window_active"].toString())

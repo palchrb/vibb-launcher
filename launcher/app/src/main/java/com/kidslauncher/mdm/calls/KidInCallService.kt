@@ -13,6 +13,9 @@ import com.kidslauncher.mdm.lock.PinLockRuntime
 
 private const val LOG_TAG = "KidInCallService"
 
+/** [com.kidslauncher.mdm.push.SyncRunner.request]'s reason after an emergency call connects. */
+internal const val EMERGENCY_SYNC_REASON = "emergency_call"
+
 /**
  * Our in-call UI service: Telecom binds it while we hold the dialer role (manifest:
  * BIND_INCALL_SERVICE, IN_CALL_SERVICE_UI) - for emergency calls too (AOSP
@@ -114,12 +117,16 @@ class KidInCallService : InCallService() {
         if (!connected) return
         val raw = PhoneNumbers.numberFromHandle(call.details.handle?.toString())
         if (Emergency.platformConfirms(raw, CallSystem.platformEmergency(this))) {
-            CallPrefs.recordEmergencyConnected(this)
+            val details = call.details
+            emergencyConnects.connected(call, details.connectTimeMillis, details.creationTimeMillis, System.currentTimeMillis()) {
+                CallPrefs.recordEmergencyConnected(this, it)
+            }
         }
     }
 
     override fun onCallRemoved(call: Call) {
         call.unregisterCallback(callback)
+        emergencyConnects.removed(call)
         OngoingCalls.remove(call)
         // A call back deals with missed calls: the notification is looked at again once the call
         // log has this call (design 12, QA #3).
@@ -176,6 +183,21 @@ class KidInCallService : InCallService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+
+    /** Design 35 step 3: an emergency call that connected syncs at once (once per call, never
+     * before the first unlock). Called right here, not posted: Telecom's callbacks already run on the
+     * main looper, the request is a wake lock and a service start (as every receiver's), and a post
+     * could be dropped by `onDestroy`'s `removeCallbacksAndMessages` when the call ends at once. */
+    private val emergencyConnects = EmergencyConnects(
+        unlocked = { CallPolicyStore.userUnlocked(this) },
+        requestSync = {
+            try {
+                com.kidslauncher.mdm.push.SyncRunner.request(this, EMERGENCY_SYNC_REASON)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't request a sync after an emergency call: ${e.javaClass.simpleName}")
+            }
+        },
+    )
 
     private fun startInCallUi(): Boolean = try {
         startActivity(InCallActivity.intent(this))

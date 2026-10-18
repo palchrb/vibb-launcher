@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.calls
 
+import com.kidslauncher.mdm.server.WindowStart
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -182,6 +183,23 @@ fun callbackWindowUntil(
         .maxOfOrNull { it + CALLBACK_WINDOW_MS }
     return listOfNotNull(fromLog, recordedUntilMs?.takeIf { it > nowMs }).maxOrNull()
 }
+
+/**
+ * Our record of a platform-confirmed emergency call that is connected now (design 35 step 3): the
+ * callback window runs [CALLBACK_WINDOW_MS] from **this** record ([nowWallMs], [nowElapsedMs],
+ * [bootCount]) - every connected state writes one, the hang-up's last, so a 50-minute call still
+ * leaves an hour after the hang-up -, while [connectedAtMs], the call's own instant, is only the
+ * status report's ([reportedEmergencyAt]).
+ */
+fun emergencyRecord(nowWallMs: Long, nowElapsedMs: Long, bootCount: Int, connectedAtMs: Long): Pair<WindowStart, Long> =
+    WindowStart(untilWallMs = nowWallMs + CALLBACK_WINDOW_MS, elapsedStartMs = nowElapsedMs, bootCount = bootCount) to
+        connectedAtMs
+
+/** The status report's instant of the recorded emergency call: the stored connect instant (one
+ * value per call, so the server announces the call once), else - a record an older build wrote -
+ * its window's start. */
+fun reportedEmergencyAt(storedConnectedAtMs: Long, windowUntilWallMs: Long): Long =
+    if (storedConnectedAtMs > 0) storedConnectedAtMs else windowUntilWallMs - CALLBACK_WINDOW_MS
 
 /**
  * A call Telecom reports with an unknown direction (a handover, a conference parent, some

@@ -421,15 +421,44 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 
 ## The battery in the status report (design 35 §2.5, `docs/design/35-parent-notifications.md`, at the monorepo root)
 
-- **Wire only so far** (design 35 step 1, in the server's commit): `StatusReportRequest.battery: BatteryReport? = null`
-  with `BatteryReport(level, charging, low)` (every field always sent). Nothing sets it yet, so `ServerJson` leaves it
-  out and `time_status_report.json` / `TimeStateZoneTest` are unchanged. The server stores the level and charging for
+- **Wire** (design 35 step 1, in the server's commit): `StatusReportRequest.battery: BatteryReport? = null` with
+  `BatteryReport(level, charging, low)` (every field always sent; `null` is left out, so `time_status_report.json` /
+  `TimeStateZoneTest`, which build their own request, are unchanged). The server stores the level and charging for
   the PWA's "Battery 14 %, charging" line and raises the parent's "Battery low" event from `low` (latched; re-armed on
-  battery above Android's level); a level outside 0..100 drops the reading, never the report.
-- **Step 3 pending**: the reading from the sticky `ACTION_BATTERY_CHANGED` at every report (a pure
-  `BatteryReport.of(level, scale, status, plugged, low)`), `battery_v1` in `STATUS_CAPABILITIES`, a receiver for
-  `ACTION_BATTERY_LOW`/`OKAY` in `Application.initRest` calling `SyncRunner.request(app, "battery")`, and a sync right
-  after an emergency call connects.
+  battery, not charging, above Android's level); a level outside 0..100 drops the reading, never the report.
+- **The reading** (step 3, `server/BatteryStatus.kt`): every report sets `battery = BatteryStatus.report(context)` -
+  the sticky `ACTION_BATTERY_CHANGED` (`ContextCompat.registerReceiver(context, null, ..)`, as `SelfUpdate`'s ECBM read) through the pure `BatteryReport.of(level, scale,
+  status, plugged, low)`: level = round(level x 100 / scale) clamped 0..100, charging = plugged != 0 or status
+  CHARGING/FULL, low = `EXTRA_BATTERY_LOW`; `null` (left out) without a sticky intent, with the level -1 or a scale
+  <= 0, or on any exception. Capability `battery_v1` (`BATTERY_CAPABILITY`, in `STATUS_CAPABILITIES`).
+- **The trigger**: `Application.initRest` calls `BatteryStatus.watch(this)` - one runtime receiver
+  (`RECEIVER_NOT_EXPORTED`; the system's broadcasts still reach it) for `ACTION_BATTERY_LOW` and `ACTION_BATTERY_OKAY`
+  that calls `SyncRunner.request(app, "battery")`, so the report with `low=true` lands within seconds (OKAY: the
+  re-arm). The request and the registration are each caught. While the process isn't running (killed, or before the
+  first unlock) the edge is lost and the next report carries the sticky state.
+- **After an emergency call connects** (`calls/EmergencyConnects.kt`, one per `KidInCallService`): every connected
+  state of a platform-confirmed emergency call (active, active again after hold, disconnected after connecting) goes
+  through `connected(call, connectTimeMillis, now) { CallPrefs.recordEmergencyConnected(this, it) }`, which commits
+  the record with **one instant per call** (the call's `connectTimeMillis`, else its `creationTimeMillis` - both
+  Telecom's, stable across a restart of our process mid-call -, else the first sighting; kept per `Call` object,
+  identity map, dropped in `onCallRemoved`) and then asks for **one** sync per call
+  (`SyncRunner.request(this, "emergency_call")`, called directly - Telecom's callbacks are on the main looper, and a
+  post could be dropped by `onDestroy`'s `removeCallbacksAndMessages` - and caught) - so the report with
+  `last_emergency_call_at` reaches the parent within seconds. `CallPrefs` keeps the instant
+  (`mdm.calls.emergency_connected_at_ms`, DE prefs `call_boot_state`); the pure rules beside `callbackWindowUntil`
+  (`CallRules.kt`): `emergencyRecord` - the callback window runs from **this** record, the hang-up's last, so a
+  50-minute call still leaves an hour - and `reportedEmergencyAt` - the stored instant, a record from an older build
+  its window's start. Before the stable instant the report moved from the connect to the disconnect time, which the
+  server announces as a second emergency call. **Never before the first unlock** (`CallPolicyStore.userUnlocked`
+  false: the anchor isn't direct-boot-aware): no request, the call isn't marked, so its next connected state after
+  the unlock asks; else the anchor's start sync after the unlock carries the call from the DE record.
+- Tests: `BatteryReportTest` (`of`: rounding, clamp, the charging rule, every null case; the report with and without
+  `battery`; the receiver's registration, actions and catches by source), `SyncScheduleTest` (`battery_v1`),
+  `EmergencyConnectsTest` (one sync and one instant per call over its states, the creation-time fallback, a second
+  call, never before the unlock and at the next state after it, `emergencyRecord`/`reportedEmergencyAt`, the
+  service's wiring and the request's catch by source; `BatteryReportTest` counts `report()`'s catch too). Emulator check: `docs/testing/emulator.md` §6n.
+- **Not device-tested**: the Jelly Star's BATTERY_LOW threshold and whether `EXTRA_BATTERY_LOW` is set there, the
+  receiver in Doze, the emergency sync over mobile data (design 35 "Step 3 implementation status").
 
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
