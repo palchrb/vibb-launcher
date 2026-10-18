@@ -43,7 +43,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
-- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`, no script; no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
+- **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it and the server marks that tab `aria-current="page"`; one deferred script, `static/tab-bar.js`, lays the bar out again after an iOS resume - "Fix round 1" below; no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
 
 ## About the developer
@@ -180,7 +180,7 @@ No prior programming experience - build features directly rather than explaining
 
 - **Play** (`src/play.rs`): `PLAY_CORE` (vending, gms, gsf) is the launcher's business - never listed on the phone's Apps page, `toggle_app` answers 400 for it, and the first-heartbeat allowlist bootstrap leaves it out. One source per package: turning on a catalog app whose package the phone reports installed by `com.android.vending` writes nothing and returns to its row with the reason (`/devices/{id}/apps?notice=from_play&app=<row>#<row>`; a 409 before design 31 step 6). Security log: `play_install_mode` (a new `install_mode.until_ms`), `app_installed` (a package new since the previous report, with its installer; not on the first report). The device page's "Play and kiosk" card ("Push and Play" until design 19) shows the "Instant changes" line, install mode, the nightly update window and the kiosk app block switch.
 - **Battery (design 19b phase 1, migration `0055_battery_exemption.sql`)**: status `battery_optimization_exempt` (`Option<bool>`, `#[serde(default)]`) is stored in `device_status.battery_optimization_exempt` (NULL from an older launcher or when unreadable); About This Phone shows a "Battery optimisation" row for true ("Off") and false ("On", the fix behind its ⓘ), nothing for NULL. No policy key, no capability.
-- **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Spotify's hosts get the same split **per phone**, only while it is bound to a Spotify account (design 26c, "Vibb music: Spotify on the server"). Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh and new catalog releases don't - phones get those with the 30-min backstop.
+- **DNS**: `dns_blocklist` never delivers the exact FCM hosts (for other apps' FCM - Element X - since design 19) (mtalk*, alt*-mtalk, fcm/fcmtoken/fcmregistrations/firebaseinstallations/android.googleapis.com, android.apis.google.com, android.clients.google.com) as blocked (`play::is_fcm_protected`, QA 07 #10). Parents (`google.com`, `googleapis.com`) **are** delivered as set - dropping them opened all of `*.google.com` (fix round #1); the launcher exempts the exact FCM hosts before its suffix walk. Spotify's hosts get the same split **per phone**, only while it is bound to a Spotify account (design 26c, "Vibb music: Spotify on the server"). Every DNS write (upstream, blocklist create/toggle/delete, custom domain, device override) nudges the affected devices; the hourly blocklist refresh doesn't - phones get it with the 30-min backstop. A new catalog release does ("Catalog downloads", "New releases nudge the phones").
 - **The DNS blocklist fails closed, per feed (security review M6).** `compile_blocklist`: a feed whose download fails
   (an error, a non-2xx, over `MAX_FEED_BYTES` = 32 MB decompressed, or nothing that `parse_feed` takes for a domain
   - a captive portal's page) keeps its previous domains (`CompiledList.last_error`): in memory, else its last good
@@ -285,6 +285,29 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   agrees with the value, else the shape: an FID is 22 chars of base64url, a token has ':') picks
   `message.fid` or `message.token` - `token` is deprecated and takes FIDs only during Firebase's
   migration period. `FcmSender::send` takes a `fcm::Target {id, kind}`; the fake records kinds.
+
+## Fix round 1 (2026-10-18, QA `docs/review/qa-r1-server-code.md`)
+
+- **The tab bar's width**: `html { overflow-y: scroll }` (style.css), so a desktop window with classic scrollbars has
+  the same viewport width - and the fixed bar the same tabs at the same x - on short and long pages. Not
+  `scrollbar-gutter: stable`: measured in Chromium 130 it keeps the room for the page's flow but not for fixed boxes
+  (the bar still spanned 500 px on a short page, 485 on a long one). Overlay scrollbars (phones, macOS) take no room.
+  The cost, accepted: an empty track on short pages there, the sign-in pages included (QA N2).
+- **iPhone edges**: `head.html`'s viewport has `viewport-fit=cover`, without which every `env(safe-area-inset-*)` is 0;
+  the insets then apply to `.container` (top, the sides as `max(16px, inset)`, bottom = 96 px + inset under the bar),
+  the tab bar (sides, bottom `max(4px, inset + 6px)`), `.auth-page` (all four) and `.editor-bar` (sticky top, its side
+  margins matching the container's). **dvh only after a vh fallback** (iOS 14, the floor, drops the `dvh` declaration):
+  `.auth-page` is `min-height: 100vh; min-height: 100dvh` (`shell::every_dvh_follows_a_vh_fallback`).
+- **`static/tab-bar.js`** (loaded deferred by `partials/tab_bar.html`; external, so a CSP needs no inline script;
+  `jstest/tab-bar.test.js`): on `pageshow`, a `visibilitychange` to visible and - in an installed app
+  (`display-mode: standalone`) - `resize`, at most once a frame, it hides and shows the fixed bar again so it is laid
+  out against the current viewport; it never scrolls and moves nothing else. **[needs device check: resume a
+  standalone install on the iPhone after > 1 min in the background, the bar visible]** - the iOS stale-viewport bug it
+  targets is a hypothesis; delete the file if the check shows no effect. If the bar still misbehaves, the robust
+  alternative is an app shell (content scrolls in its own box, the bar a normal flex child).
+- **The Locate marker**: `L.Icon.Default.imagePath = '/static/leaflet/images/'` - Leaflet prepends it to its own file
+  names, so an absolute `iconUrl` was prefixed twice (a 404, the alt text "Mark";
+  `locate_page::the_map_marker_uses_leaflets_image_path`).
 
 ## Kiosk escapes (handy step 11, design `docs/design/11-kiosk-escapes.md`, at the monorepo root)
 
@@ -505,6 +528,12 @@ needed to manage the phone, delete on a schedule, never store notification or me
   every status report; it replaced the package-name backfill, which guessed the package from the one new package in a
   report): the nudge (`command_notify`, the SSE stream) matters, the phone otherwise kept the app hidden and suspended
   until its next backstop sync (found on the emulator).
+- **New releases nudge the phones**: once a sync stores a new `(tag, asset id)` or an upload is stored (after the
+  pins), `device_api::nudge_phones_with_app` sends `command_notify` to every enrolled phone whose list carries the app -
+  `scoped_apps`' own query per phone (ticked, or every phone for the launcher; a disabled app none) - so the phone fetches
+  `/api/devices/apps` in that sync, not at its 30-min backstop; its Wi-Fi and night-window gates are unchanged. A sync
+  that finds what's cached, a refused release and a failed sync nudge nothing (`a_new_release_nudges_the_phones_that_get_the_app`,
+  `catalog_pins` for the upload).
 - Tests: `tracked_apps::tests`, `src/tests/tracked_apps.rs`, `a_new_device_starts_with_all_kid_settings_on`.
 
 ## App downloads: Wi-Fi only, resumable (design 13, `docs/design/13-app-downloads.md`, migration `0043_app_downloads.sql`)
@@ -603,7 +632,9 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `v=2` marks today's page; a post without it is a page from before the update, and its one `mobile_data` checkbox
   sets both - `handlers::music::mobile_switches`), the "Storage limit" picker (1/2/5/10 GB/No limit, `storage_limit` =
   a choice or `none`, else 400; missing = the stored one kept), the warning "Update Vibb One and the music app" while the
-  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`), the storage
+  switches differ and the phone's app report (`cache_bytes`) has no `extra_bytes` (`music::older_phone`; it names only the app that is too old - `music::OlderApps` from
+  `app_version_code` >= 25_999 (launcher-v0.26.0-rc) and `music_state.version_code` >= 3_999 (music-v0.4.0-rc), the
+  first that pass `extra_bytes` on: "Update the music app", "Update Vibb One", else both), the storage
   rows and the "Over the storage limit" warning (`music::storage`, typed: stored, downloads against the limit, the
   played extras, the kept items over the limit; from the report's `audio_bytes`/`extra_bytes`, which a music app from
   design 30 step 3a on always sends - without them, an older app, only "Stored on the phone"; `MusicState` keeps and
@@ -1453,7 +1484,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - **Attention** (qa-31-s7-code M1): `handlers::music::music_warnings` (typed `MusicWarnings`) feeds both the page's
   warnings and six orange rows - "Vibb One can't deliver music yet" and "Music app not reachable" (→ the page),
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
-  "Update Vibb One and the music app" (→ `#music-settings`), "N music entries fail on the phone" (only entries on for the
+  "Update Vibb One and the music app" / "Update Vibb One" / "Update the music app" (`OlderApps::title`, → `#music-settings`), "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row

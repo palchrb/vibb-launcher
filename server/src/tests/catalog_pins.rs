@@ -138,7 +138,9 @@ async fn the_first_release_pins_the_app_and_a_different_one_is_refused() {
         )
     );
     // A release allows nothing by itself (QA of the security wave, Medium 2): only once the
-    // launcher has installed the pinned package on the phone, never from another installer.
+    // launcher has installed the pinned package on the phone, never from another installer. The
+    // upload nudges the phone that has the app, for its list (once).
+    assert_eq!(nudges.try_recv().ok(), Some(device));
     assert!(nudges.try_recv().is_err());
     assert!(!allowed(&app, &token, "me.vibb.testfixture").await);
     report(

@@ -1093,6 +1093,7 @@ async fn sync_release(
         ));
     }
     store_pins(state, app, &identity).await;
+    crate::handlers::device_api::nudge_phones_with_app(state, app.id).await;
     Ok(())
 }
 
@@ -2020,6 +2021,7 @@ pub async fn upload_tracked_app_release(
         .await;
     }
     store_pins(&state, &app, &identity).await;
+    crate::handlers::device_api::nudge_phones_with_app(&state, id).await;
 
     // Back to the app's page at the Upload group, with the result there (a reload doesn't post
     // the file again; [Note]).
@@ -3201,6 +3203,107 @@ mod tests {
             .unwrap();
         assert_eq!(downloads.load(Ordering::SeqCst), 3);
         assert_eq!(row().await.latest_release_tag.as_deref(), Some("v2"));
+    }
+
+    /// A newly stored release nudges exactly the enrolled phones whose list carries the app
+    /// (`device_api::scoped_apps`: ticked, or every phone for the launcher); a sync that finds
+    /// what's cached, and a refused release, nudge none.
+    #[tokio::test]
+    async fn a_new_release_nudges_the_phones_that_get_the_app() {
+        let app = crate::tests::TestApp::new().await;
+        let server = axum::Router::new()
+            .route(
+                "/key1.apk",
+                axum::routing::get(|| async {
+                    std::fs::read("testdata/apk/fixture-key1.apk").unwrap()
+                }),
+            )
+            .route(
+                "/key2.apk",
+                axum::routing::get(|| async {
+                    std::fs::read("testdata/apk/fixture-key2.apk").unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let asset = |id: i64, file: &str| GithubAsset {
+            id,
+            name: format!("{file}.apk"),
+            browser_download_url: format!("{base}/{file}.apk"),
+            size: std::fs::metadata(format!("testdata/apk/fixture-{file}.apk"))
+                .unwrap()
+                .len(),
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Fixture', '', 'o/r') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let row = || async {
+            sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+                .bind(id)
+                .fetch_one(&app.db)
+                .await
+                .unwrap()
+        };
+        let (ticked, _) = app.enrolled_device("Anna").await;
+        let (other, _) = app.enrolled_device("Ola").await;
+        let (not_enrolled, _) = app.create_device("Kari").await;
+        for device in [ticked, not_enrolled] {
+            sqlx::query(
+                "INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)",
+            )
+            .bind(device)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        }
+        let mut nudges = app.state.command_notify.subscribe();
+        let mut nudged = || {
+            let mut devices = Vec::new();
+            while let Ok(device) = nudges.try_recv() {
+                devices.push(device);
+            }
+            devices.sort();
+            devices
+        };
+
+        sync_release(&app.state, &row().await, "v1", &asset(1, "key1"), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            nudged(),
+            vec![ticked],
+            "only the enrolled phone that has it"
+        );
+        // The same (tag, asset id) again: a no-op check, no nudge.
+        sync_release(&app.state, &row().await, "v1", &asset(1, "key1"), false)
+            .await
+            .unwrap();
+        assert_eq!(nudged(), Vec::<i64>::new());
+        // A release signed with another key is refused: nothing new for the phones.
+        assert!(
+            sync_release(&app.state, &row().await, "v2", &asset(2, "key2"), false)
+                .await
+                .is_err()
+        );
+        assert_eq!(nudged(), Vec::<i64>::new());
+        // The launcher's row is on every enrolled phone.
+        sqlx::query("UPDATE tracked_apps SET is_launcher = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        sync_release(&app.state, &row().await, "v3", &asset(3, "key1"), false)
+            .await
+            .unwrap();
+        let mut both = vec![ticked, other];
+        both.sort();
+        assert_eq!(nudged(), both);
     }
 
     fn fork_config(vars: &[(&str, &str)]) -> crate::config::ForkConfig {

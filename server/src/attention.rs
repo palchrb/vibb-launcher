@@ -71,7 +71,7 @@ pub enum Kind {
     MusicUnreachable,
     MusicStorytelRefused,
     MusicOverLimit,
-    MusicOlderPhone,
+    MusicOlderPhone(crate::music::OlderApps),
     MusicFailing(usize),
     /// The phone's Spotify account can't play (design 26c §4.4: the login, the app, Premium or
     /// the phone's web player) - the music app's tiles say "Spør en voksen".
@@ -148,7 +148,7 @@ impl AttentionItem {
             Kind::MusicUnreachable => "music-unreachable",
             Kind::MusicStorytelRefused => "music-storytel-refused",
             Kind::MusicOverLimit => "music-over-limit",
-            Kind::MusicOlderPhone => "music-older-phone",
+            Kind::MusicOlderPhone(_) => "music-older-phone",
             Kind::MusicFailing(_) => "music-entries",
             Kind::MusicSpotify => "music-spotify",
             Kind::MusicSpotifyLogin => "music-spotify-login",
@@ -242,7 +242,9 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(music.unreachable, Kind::MusicUnreachable);
     add(music.storytel_refused, Kind::MusicStorytelRefused);
     add(music.over_limit.is_some(), Kind::MusicOverLimit);
-    add(music.older_phone, Kind::MusicOlderPhone);
+    if let Some(apps) = music.older_phone {
+        add(true, Kind::MusicOlderPhone(apps));
+    }
     add(
         music.failing_entries > 0,
         Kind::MusicFailing(music.failing_entries),
@@ -291,7 +293,7 @@ fn level(kind: Kind) -> Level {
         | Kind::MusicUnreachable
         | Kind::MusicStorytelRefused
         | Kind::MusicOverLimit
-        | Kind::MusicOlderPhone
+        | Kind::MusicOlderPhone(_)
         | Kind::MusicFailing(_)
         | Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -329,7 +331,7 @@ fn title(kind: Kind) -> String {
         Kind::MusicUnreachable => "Music app not reachable",
         Kind::MusicStorytelRefused => "Storytel refused the phone's login",
         Kind::MusicOverLimit => "Music over the storage limit",
-        Kind::MusicOlderPhone => "Update Vibb One and the music app",
+        Kind::MusicOlderPhone(apps) => apps.title(),
         Kind::MusicFailing(1) => "1 music entry fails on the phone",
         Kind::MusicFailing(n) => return format!("{n} music entries fail on the phone"),
         Kind::MusicSpotify => "Spotify can't play on this phone",
@@ -375,7 +377,7 @@ fn target(kind: Kind, id: i64) -> String {
         // The others above their own group (its header) or by their rows.
         Kind::MusicStorytelRefused => ("/music", "storytel-title"),
         Kind::MusicOverLimit => ("/music", "storage-title"),
-        Kind::MusicOlderPhone => ("/music", "music-settings"),
+        Kind::MusicOlderPhone(_) => ("/music", "music-settings"),
         Kind::MusicFailing(_) => ("/music", "library"),
         Kind::MusicSpotify
         | Kind::MusicSpotifyLogin
@@ -640,7 +642,7 @@ mod tests {
                 unreachable: true,
                 storytel_refused: true,
                 over_limit: Some(("3.2 GB".to_string(), 2)),
-                older_phone: true,
+                older_phone: Some(crate::music::OlderApps::Both),
                 failing_entries: 2,
                 spotify_cant_play: true,
                 spotify_account: crate::handlers::music::SpotifyAccountWarnings {

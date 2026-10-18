@@ -160,6 +160,10 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
         // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
         "<script src=\"/static/autosave.js?v=2\"></script>",
+        // Edge to edge on an iPhone, so the safe-area insets are real (style.css takes them).
+        "content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\"",
+        // The tab bar back after an iOS resume.
+        "<script src=\"/static/tab-bar.js?v=1\" defer></script>",
     ] {
         assert!(html.contains(needle), "{needle}");
     }
@@ -756,6 +760,43 @@ fn style_css_has_the_shape_browsers_read() {
     ] {
         assert_eq!(css_shape_error(css).as_deref(), Some(error), "{css}");
     }
+}
+
+/// "dvh only after a vh fallback" (style.css's header; iOS 14, the floor, drops a `dvh` declaration
+/// whole): every declaration with `dvh` follows the same property with `vh` in the same block.
+#[test]
+fn every_dvh_follows_a_vh_fallback() {
+    fn missing(css: &str) -> Vec<String> {
+        let mut text = css.to_string();
+        while let Some(start) = text.find("/*") {
+            let end = text[start..]
+                .find("*/")
+                .map_or(text.len(), |e| start + e + 2);
+            text.replace_range(start..end, " ");
+        }
+        let parts: Vec<&str> = text.split([';', '{', '}']).map(str::trim).collect();
+        let property = |decl: &str| decl.split(':').next().unwrap_or("").trim().to_string();
+        (1..parts.len())
+            .filter(|&i| parts[i].contains("dvh"))
+            .filter(|&i| {
+                let prev = parts[i - 1];
+                property(prev) != property(parts[i]) || !prev.contains("vh") || prev.contains("dvh")
+            })
+            .map(|i| parts[i].to_string())
+            .collect()
+    }
+    let css = std::fs::read_to_string("static/style.css").unwrap();
+    assert!(css.contains("100dvh"), "the guard has something to check");
+    assert_eq!(missing(&css), Vec::<String>::new());
+    assert_eq!(
+        missing("a {\n min-height: 100dvh;\n}"),
+        ["min-height: 100dvh"]
+    );
+    assert_eq!(
+        missing("a { height: 100vh; min-height: 100dvh }"),
+        ["min-height: 100dvh"]
+    );
+    assert!(missing("a { min-height: 100vh; /* x */ min-height: 100dvh }").is_empty());
 }
 
 /// The class names a template's `class="..."` attributes use, with `{{ }}` and `{% %}` taken out:
