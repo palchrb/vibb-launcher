@@ -389,7 +389,7 @@ pub async fn log_foreign_access(
     if let (Some((phone, previous_status_id)), Some(found), Some(stored)) = (phone, &after, now) {
         let names = window_relock::app_names(installed_json);
         let event = phone.foreign_access(found, stored, previous_status_id, &names);
-        crate::parent_events::raise_logged(&state.db, &event).await;
+        crate::parent_events::raise_logged(state, &event).await;
     }
 }
 

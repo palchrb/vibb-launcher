@@ -61,6 +61,34 @@ impl Kind {
         }
     }
 
+    pub fn of(wire: &str) -> Option<Kind> {
+        Kind::ALL.into_iter().find(|kind| kind.wire() == wire)
+    }
+
+    /// Urgent: the parent should see it now (design 35 §2.2; the push's `Urgency: high`, and
+    /// phase 2's second channel).
+    pub fn urgent(self) -> bool {
+        matches!(
+            self,
+            Kind::EmergencyCall | Kind::PinLockout | Kind::ForeignAccess
+        )
+    }
+
+    /// Seconds the push service keeps the push for an offline device (§4.3): a day for the
+    /// emergency call, an hour for a low battery (later it is charging or flat), else 12 h.
+    pub fn ttl(self) -> i64 {
+        match self {
+            Kind::EmergencyCall => 86_400,
+            Kind::LowBattery => 3_600,
+            _ => 43_200,
+        }
+    }
+
+    /// The push's `Urgency` header.
+    pub fn urgency(self) -> &'static str {
+        if self.urgent() { "high" } else { "normal" }
+    }
+
     /// Its push switch: the `notification_settings` column and the label on Notify Me About.
     /// `None` for the emergency call, which is always pushed.
     pub fn switch(self) -> Option<(&'static str, &'static str)> {
@@ -320,8 +348,9 @@ pub fn local_target(target: &str) -> bool {
 }
 
 /// Stores `event` once: the new row's id, or `None` when it was there already (the same phone,
-/// kind and key) or its target isn't a local path (a bug, logged). Runs on the caller's connection,
-/// so a caller's transaction holds it.
+/// kind and key) or its target isn't a local path (a bug, logged). A new row queues its pushes
+/// (`push::queue`). Runs on the caller's connection, so a caller's transaction holds both; the
+/// caller wakes the sender (`state.push.wake()`) once that committed.
 pub async fn raise(
     conn: &mut SqliteConnection,
     event: &NewEvent,
@@ -333,7 +362,7 @@ pub async fn raise(
         );
         return Ok(None);
     }
-    sqlx::query_scalar(
+    let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO parent_events \
          (device_id, kind, dedup_key, title, summary, target, detail, happened_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
@@ -347,18 +376,28 @@ pub async fn raise(
     .bind(&event.target)
     .bind(&event.detail)
     .bind(instant(event.happened_at))
-    .fetch_optional(conn)
-    .await
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(id) = id {
+        crate::push::queue(conn, id, event.kind).await?;
+    }
+    Ok(id)
 }
 
-/// [raise] on a pool connection, for an intake without a transaction; a failure is logged.
-pub async fn raise_logged(db: &SqlitePool, event: &NewEvent) {
-    let result = match db.acquire().await {
-        Ok(mut conn) => raise(&mut conn, event).await,
-        Err(err) => Err(err),
+/// [raise] in its own transaction, for an intake without one, then the sender's wake-up; a
+/// failure is logged.
+pub async fn raise_logged(state: &crate::AppState, event: &NewEvent) {
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        let id = raise(&mut tx, event).await?;
+        tx.commit().await.map(|()| id)
     };
-    if let Err(err) = result {
-        tracing::error!(device_id = event.device_id, kind = event.kind.wire(), %err, "can't store an event");
+    match result.await {
+        Ok(Some(_)) => state.push.wake(),
+        Ok(None) => {}
+        Err(err) => {
+            tracing::error!(device_id = event.device_id, kind = event.kind.wire(), %err, "can't store an event")
+        }
     }
 }
 
@@ -401,12 +440,13 @@ pub fn battery_edge(latched: bool, battery: &crate::models::BatteryReport) -> Ed
 
 /// A report's `battery` against the phone's latch (§2.5), in one transaction: [Edge::Raise]
 /// latches it with a conditional UPDATE and raises only when that changed the row (two parallel
-/// reports latch once); [Edge::Rearm] arms it again. Failures are logged.
+/// reports latch once) and wakes the sender; [Edge::Rearm] arms it again. Failures are logged.
 pub async fn battery_report(
-    db: &SqlitePool,
+    state: &crate::AppState,
     phone: &Phone,
     battery: &crate::models::BatteryReport,
 ) {
+    let db = &state.db;
     let result = async {
         match battery_edge(phone.battery_low_since.is_some(), battery) {
             Edge::Raise => {
@@ -421,10 +461,16 @@ pub async fn battery_report(
                 .execute(&mut *tx)
                 .await?
                 .rows_affected();
-                if latched == 1 {
-                    raise(&mut tx, &phone.low_battery(battery, since)).await?;
+                let raised = if latched == 1 {
+                    raise(&mut tx, &phone.low_battery(battery, since)).await?
+                } else {
+                    None
+                };
+                tx.commit().await?;
+                if raised.is_some() {
+                    state.push.wake();
                 }
-                tx.commit().await
+                Ok(())
             }
             Edge::Rearm => sqlx::query("UPDATE devices SET battery_low_since = NULL WHERE id = ?")
                 .bind(phone.id)

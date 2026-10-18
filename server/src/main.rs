@@ -15,6 +15,7 @@ mod dns_server;
 mod enrollment;
 mod gate;
 mod handlers;
+mod keys;
 mod kid_lock;
 mod kiosk_escapes;
 mod limits;
@@ -33,6 +34,7 @@ mod parent_pin;
 mod phone;
 mod photos;
 mod play;
+mod push;
 mod retention;
 mod security;
 mod sound_mode;
@@ -45,6 +47,7 @@ mod tests;
 mod time_rules;
 mod time_state;
 mod wallpapers;
+mod webpush;
 mod window_relock;
 
 use axum::Router;
@@ -138,6 +141,9 @@ pub struct AppState {
     pub enrollment: std::sync::Arc<enrollment::Enrollment>,
     /// argon2 off the async workers, one at a time with a short queue (`admin_auth`).
     pub passwords: std::sync::Arc<admin_auth::PasswordGate>,
+    /// Web Push to the parents' devices (design 35 §4): the VAPID key (`None` = push is off),
+    /// the transport (scripted in the tests) and the sender's wake-up (`push::Push`).
+    pub push: std::sync::Arc<push::Push>,
 }
 
 pub const APP_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -359,6 +365,24 @@ async fn main() {
         }
     };
 
+    // Web Push's key (design 35 §4.1): data/keys/vapid-p256.pk8, made on the first start; a file
+    // that doesn't parse turns push off, never replaced.
+    let push_key = match push::load_key(std::path::Path::new(push::DEFAULT_KEY_FILE)) {
+        Ok(key) => {
+            push::forget_other_keys(&db, &key).await;
+            Some(std::sync::Arc::new(key))
+        }
+        Err(err) => {
+            tracing::error!("notifications to the parents' devices are off: {err}");
+            None
+        }
+    };
+    let push_subject = push::subject_of(std::env::var("VAPID_SUBJECT").ok().as_deref())
+        .unwrap_or_else(|warning| {
+            tracing::warn!("{warning}");
+            None
+        });
+
     // Spotify (design 26c §2.1, §9.3): the family's own client ID may come from .env, and the
     // base overrides are honoured only on loopback (the fake Spotify).
     let spotify_config = spotify::Config::from_env();
@@ -407,6 +431,11 @@ async fn main() {
         tokens: Default::default(),
         enrollment: Default::default(),
         passwords: Default::default(),
+        push: std::sync::Arc::new(push::Push::new(
+            push_key,
+            push_subject,
+            std::sync::Arc::new(push::HttpTransport::new()),
+        )),
     };
     state
         .tokens
@@ -458,6 +487,8 @@ async fn main() {
     ));
     // Counts of throttled security events (refused admin requests, failed enrollments).
     tokio::task::spawn(audit::run_flusher(state.clone()));
+    // Web Push (design 35 §4.6): what was queued before a restart goes now, the rest when raised.
+    tokio::task::spawn(push::run_sender(state.clone()));
 
     serve(state, session_layer).await;
 }
@@ -711,7 +742,13 @@ pub fn build_admin_router(
         )
         // Where the callback's 303 lands: a same-site step to the Spotify page, so the Strict
         // admin cookie is sent again (no code, no session needed).
-        .route("/music/spotify/done", get(handlers::music_spotify::done));
+        .route("/music/spotify/done", get(handlers::music_spotify::done))
+        // The service worker's receipt (design 35 §7): the session may have expired while the
+        // subscription lives. A per-delivery token instead; 1 KiB; the admin gate still applies.
+        .route(
+            "/notifications/receipt",
+            post(handlers::notifications::receipt).layer(DefaultBodyLimit::max(1024)),
+        );
 
     // Reachable with a valid session, even mid-onboarding (forced password
     // change / mandatory 2FA setup) - these routes ARE the onboarding gate,
@@ -1210,6 +1247,22 @@ pub fn build_admin_router(
         .route(
             "/notifications/settings",
             post(handlers::notifications::save_settings),
+        )
+        .route(
+            "/notifications/subscriptions",
+            post(handlers::notifications::subscribe),
+        )
+        .route(
+            "/notifications/subscriptions/unsubscribe",
+            post(handlers::notifications::unsubscribe),
+        )
+        .route(
+            "/notifications/subscriptions/{id}/test",
+            post(handlers::notifications::send_test),
+        )
+        .route(
+            "/notifications/subscriptions/{id}/delete",
+            post(handlers::notifications::remove),
         )
         .route("/account", get(handlers::auth::account_page))
         .route(

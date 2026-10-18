@@ -59,6 +59,10 @@ rustix = { version = "1", features = ["fs", "process"] }
 # documented as having no semver stability on its accepted argument type; don't retry it without
 # a way to actually run the built binary against a live HTTPS endpoint first, not just compile it.)
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# Web Push (design 35 §4.2): the VAPID signature (ES256), the RFC 8291 content encryption (P-256
+# ECDH, HKDF-SHA256, AES-128-GCM) and the key file's PKCS#8. Already compiled in through rustls's
+# "ring" feature: no new crate, the lock file unchanged.
+ring = { version = "0.17", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 # vibb's state_key: sha1(target)[:12] (design 21); already in the tree.

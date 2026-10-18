@@ -164,8 +164,8 @@ async fn two_parallel_low_reports_latch_once() {
         charging: false,
         low: true,
     };
-    crate::parent_events::battery_report(&app.db, &first, &low).await;
-    crate::parent_events::battery_report(&app.db, &second, &low).await;
+    crate::parent_events::battery_report(&app.state, &first, &low).await;
+    crate::parent_events::battery_report(&app.state, &second, &low).await;
     assert_eq!(kinds(&app, id).await, ["low_battery"]);
     let latch: Option<String> =
         sqlx::query_scalar("SELECT battery_low_since FROM devices WHERE id = ?")

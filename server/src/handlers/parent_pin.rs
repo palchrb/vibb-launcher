@@ -270,6 +270,7 @@ pub async fn pin_events(
     let Ok(mut tx) = state.db.begin().await else {
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
+    let mut raised = false;
     for raw in events {
         let event = match parent_pin::clean_event(raw, received_ms) {
             Ok(event) => event,
@@ -312,9 +313,9 @@ pub async fn pin_events(
                         .await
                         .map(|_| ());
                 match phone.as_ref().and_then(|phone| phone.pin_event(&event)) {
-                    Some(new) if logged.is_ok() => {
-                        crate::parent_events::raise(&mut tx, &new).await.map(|_| ())
-                    }
+                    Some(new) if logged.is_ok() => crate::parent_events::raise(&mut tx, &new)
+                        .await
+                        .map(|id| raised |= id.is_some()),
                     _ => logged,
                 }
             }
@@ -327,6 +328,9 @@ pub async fn pin_events(
     }
     if tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    if raised {
+        state.push.wake();
     }
     StatusCode::NO_CONTENT
 }
