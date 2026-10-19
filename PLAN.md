@@ -748,7 +748,9 @@ findings, merge to `main`, full suite once.
   for design 35's inbox and push, and an outbound webhook (a parent-set URL + secret, e.g. Home Assistant) for parent
   events in general. Not a lost-contact signal: Wi-Fi off or a pocketed phone looks like "away". Scope open.
 
-- **PWA small things**: (1) ~~a switch in the off state loses its knob~~ - fixed 2026-10-19 (d99b3bdc: the knob was
+- **PWA small things**: (0) Notifications › Getting Notifications: after Send a Test the device rows poll for ~30 s
+  (as Install Now's row does) so "Shown just now" appears without a reload (the user, 2026-10-19: "måtte refreshe
+  siden"); only the rows re-render, never a scroll jump. (1) ~~a switch in the off state loses its knob~~ - fixed 2026-10-19 (d99b3bdc: the knob was
   painted under the positioned switch; `position: relative` on it); the toggle "jump" on Device › Apps fixed the same
   day (scroll-name: a row that moved groups keeps the exact position; `window.name` carries the record too); (2) "add an existing family contact" to a phone
   (the server already keeps one address book per number); (3) every `<details>` confirm
