@@ -685,11 +685,11 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
 - **The right time.** Each push is signed with the time in it; a wrong clock makes the push services refuse every one
   ("The push service refused the server's signature - check the server's clock" on Notifications). The Pi has no clock
   of its own: after a power cut it needs NTP (`timedatectl` shows "System clock synchronized: yes").
-- **`PUSH_PAYLOAD`** (optional) in `.env`: `declarative` (the default: Safari 18.4+ shows the notification itself and
-  fires `pushnotification` at the worker, which confirms it) or `classic` (a plain Web Push payload, the worker's
-  `push` everywhere). Switch to `classic` if a device shows pushes but never confirms them; the server log's
-  `push receipt` lines say which worker event confirmed each push (`event=push|pushnotification|click`) and the
-  worker's version.
+- **`PUSH_PAYLOAD`** (optional) in `.env`: `declarative` (the default: Safari 18.4+ reads the notification from the
+  payload itself, so it is shown even when the worker can't run, and hands the worker its proposed notification to
+  replace and confirm) or `classic` (a plain Web Push payload, the worker's `push` everywhere). Switch to `classic`
+  if a device shows pushes but never confirms them; the server log's `push receipt` lines say which worker event
+  confirmed each push (`event=push|push-declarative|pushnotification|click`) and the worker's version.
 - **`VAPID_SUBJECT`** (optional) in `.env`: a `mailto:` or `https:` address the push services may contact about the
   server's pushes. Without it each device's own address of the PWA is sent.
 - **The key** `data/keys/vapid-p256.pk8` is made on the first start (0600) and is never backed up, like the Storytel

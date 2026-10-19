@@ -50,20 +50,44 @@ function receipt(data, action, event) {
     }).catch(() => undefined);
 }
 
-// The push's notification, or the inbox's fallback when the payload can't be read.
+// The push's notification and where it came from: the payload (`event.data`, every browser's
+// legacy path), else the notification Safari proposed (`event.notification`: Safari 18.4+ reads a
+// mutable declarative payload itself, fires `push` with `data` null and its proposed Notification
+// on the event - WWDC25 session 235, the Push API draft; confirmed on the user's iPhone,
+// 2026-10-19, where reading only `data` left every push unconfirmed), else the inbox's fallback.
 function notificationOf(event) {
     try {
         const message = event.data.json();
         const n = message.notification;
-        if (n && typeof n.title === "string") return n;
+        if (n && typeof n.title === "string") return { n, via: "push" };
     } catch (e) {
         // no data, or not JSON
     }
-    return { title: "Vibb Phone", body: "Something new - open Notifications", navigate: "/notifications" };
+    const proposed = event && event.notification;
+    if (proposed && typeof proposed.title === "string") {
+        return {
+            n: {
+                title: proposed.title,
+                body: proposed.body,
+                lang: proposed.lang,
+                tag: proposed.tag,
+                navigate: proposed.navigate,
+                data: proposed.data,
+            },
+            via: "push-declarative",
+        };
+    }
+    return {
+        n: { title: "Vibb Phone", body: "Something new - open Notifications", navigate: "/notifications" },
+        via: "push",
+    };
 }
 
+// Shows the notification (a declarative push's replacement: Safari then drops its proposed one,
+// and shows it itself only when nothing is shown in time - never two), then the badge and the
+// receipt.
 async function show(event) {
-    const n = notificationOf(event);
+    const { n, via } = notificationOf(event);
     const data = n.data || {};
     const options = {
         body: n.body || "",
@@ -80,7 +104,7 @@ async function show(event) {
             // the badge is a nicety
         }
     }
-    await receipt(data, "shown", "push");
+    await receipt(data, "shown", via);
 }
 
 // Inside waitUntil, always: Safari shows its declarative fallback only when the
@@ -89,11 +113,10 @@ self.addEventListener("push", (event) => {
     event.waitUntil(show(event));
 });
 
-// Safari 18.4+ reads the payload as a declarative push (web_push 8030): it shows the
-// notification itself and, because the message is mutable, fires `pushnotification` at
-// this worker instead of `push` (WebKit bug 261805; confirmed on the user's iPhone,
-// 2026-10-19: every push shown, no receipt). Nothing to show here - only the badge and
-// the receipt, from the notification Safari built (its `data` is the payload's).
+// WebKit's explainer names a `pushnotification` event for a mutable declarative push; shipping
+// Safari (18.4-18.5) fires `push` with the proposed notification instead (above). Kept for a
+// WebKit that moves to the explainer's name: nothing to show here - only the badge and the
+// receipt, from the notification Safari built (its `data` is the payload's).
 async function confirmDeclarative(event) {
     const n = (event && (event.notification || event.proposedNotification)) || {};
     const data = n.data || {};

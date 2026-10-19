@@ -120,10 +120,45 @@ test("a push shows its notification, then the badge, then posts the receipt", as
     assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "push", v: "v-test" });
 });
 
-// Safari 18.4+ shows a declarative push itself and fires `pushnotification`, not `push`
-// (the user's iPhone, 2026-10-19: pushes shown, "Nothing shown yet"): the worker shows
+// Safari 18.4+ reads a mutable declarative push itself and fires `push` with `data` null and
+// its proposed Notification on the event (WWDC25 session 235; the user's iPhone, 2026-10-19,
+// where `push` found no data and every push stayed unconfirmed): the worker shows the
+// replacement from it - the same words, our icon, the payload's `data` - then the badge and
+// the receipt, which names the source.
+test("a declarative push on Safari is shown from the proposed notification and confirmed", async () => {
+    const w = fakeWorker();
+    const proposed = Object.assign({ silent: false, dir: "auto" }, MESSAGE.notification);
+    await w.fire("push", { data: null, notification: proposed });
+    assert.deepStrictEqual(w.log.map((e) => e[0]), ["show", "shown", "badge", "fetch"]);
+    assert.strictEqual(w.log[0][1], MESSAGE.notification.title);
+    // (JSON round trip: the worker's objects come from the vm context's own prototypes.)
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(w.log[0][2])), {
+        body: "At 14:02",
+        lang: "en",
+        icon: "/static/icons/icon-192.png",
+        tag: "e812",
+        data: { navigate: ORIGIN + "/devices/3/calls", d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA" },
+    });
+    assert.deepStrictEqual(w.log[2], ["badge", 3]);
+    const [, url, init] = w.log[3];
+    assert.strictEqual(url, "/notifications/receipt");
+    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "push-declarative", v: "v-test" });
+    // The payload wins over a proposed notification when both are there (a browser that gives both).
+    const both = fakeWorker({ badge: false });
+    await both.fire("push", Object.assign(pushOf(MESSAGE), { notification: { title: "proposed" } }));
+    assert.strictEqual(both.log[0][1], MESSAGE.notification.title);
+    assert.strictEqual(JSON.parse(both.log[2][2].body).e, "push");
+    // A proposed notification without our data (an old payload, or none): shown, nothing posted.
+    const bare = fakeWorker({ badge: false });
+    await bare.fire("push", { data: null, notification: { title: "x" } });
+    assert.deepStrictEqual(bare.log.map((e) => e[0]), ["show", "shown"]);
+    assert.strictEqual(bare.log[0][1], "x");
+    assert.strictEqual(bare.log[0][2].data.navigate, "/notifications");
+});
+
+// The explainer's `pushnotification` event (no shipping Safari fires it yet): the worker shows
 // nothing more, sets the badge and posts the receipt from the notification Safari built.
-test("a declarative push on Safari sets the badge and posts the receipt without showing twice", async () => {
+test("a pushnotification event sets the badge and posts the receipt without showing twice", async () => {
     const w = fakeWorker();
     const notification = { title: MESSAGE.notification.title, data: MESSAGE.notification.data };
     await w.fire("pushnotification", { notification });
