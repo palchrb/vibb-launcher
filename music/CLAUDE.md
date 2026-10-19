@@ -443,11 +443,25 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   could fetch (design 26a, "Merge of main with design 27").
 - Episode pictures (design 27): an item's own art is `items.artHash` (Room 2; its auto migration empties every
   listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
-  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`: the now window ±2, the keep sets' art, Nytt, then each Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50) tracks from where a cover tap starts it, in `later` - a Spotify entry keeps nothing, and the server fetches up to `ART_PER_CHECK_SPOTIFY` (100) of its pictures a check; sent as
-  `wantArt` at each sync's end and from the player 2 s after an item change; `sync/ArtPlan.kt`'s `artWant` takes a
+  `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`; `now` is streaming's - the user's rule of 2026-10-19, the
+  launcher fetches it where streaming is allowed - built by `nowArt`: the now window ±5 (`NOW_REACH`), the next
+  `NOW_AHEAD` (50) items the queue reaches, then each Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50) tracks
+  from where a cover tap starts it - a Spotify entry keeps nothing, and the server fetches all of its pictures, a check
+  after another; at most `WANT_ART_NOW_MAX` 500. `later`: the keep sets' art, Nytt, and **on an unmetered network every
+  item's picture of every ticked entry in play order** (`all`, `allLater`; the addendum of 2026-10-19, "alle bilder
+  lastes ned ASAP så lenge den er på wifi" - `ArtWants.compute` reads `netCaps`; a sync on a metered network that
+  leaves pictures for Wi-Fi enqueues the unique work `music-wifi-art`, a sync with an UNMETERED constraint,
+  `wifiSyncWanted`); only what the phone lacks goes on the wire, at most `WANT_ART_MAX` 2000 hashes a call (one oneway
+  Binder call, ~270 KB) - as pictures arrive the next send names the next ones, so it is no cap on the pictures. A
+  picture is ~40-70 KB: a 1000-item feed costs ~50 MB on the phone, kept while the entry is ticked. Sent as
+  `wantArt` at each sync's end (after the listings are applied, so a listing that brings the playing entry new
+  `artHash`es sends them at once) and from the player at once on an item change (`wantArtDelay`: a run of skips sends
+  once more at the end of `WANT_ART_GAP_MS` 2 s); `sync/ArtPlan.kt`'s `artWant` takes a
   Storytel series' keep set from the download plan's rule, `storytelKeepSet` + `storytelWanted`: the books on the
   phone; a book's cover is its own `artHash` from the server's art pass, design 26b §5.5), the prune (covers dir and the
-  small copies: neither a library cover nor in the want set's universe, only on a parsed library), `artOrCover` (the
+  small copies: neither a library cover nor in the want set's universe, only on a parsed library; the universe
+  `keep` has no cap and holds every picture of every ticked entry on any network, so Wi-Fi's pictures stay on mobile
+  data), `artOrCover` (the
   session, `setNowPlaying`) and the carousel's rules: `showsCarousel` (more than one item and at least two different
   pictures on its pages, the entry's cover counting as one), `swipeSkip`, `pagerFollow`, `swipeTarget`. A swipe is a
   `PlayRequest` (`swipeSwitch`) and the `SKIP_TO` command (not in `PLAYS`; via `RESTORE` + `THEN_SKIP_TO` before play).
@@ -466,8 +480,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `LIST_ART_MAX` 60, another entry's list starts empty); only when the window lacks a picture is the want set computed
   and posted to main as a forced `LiveBridge.wantArt` (`wantArtSend`: forced = a `later` hash the last send didn't
   have, whatever `now` is; LiveBridge keeps `sentLater`). `ArtWants.compute` reads `list_art.txt` itself, so every
-  sender carries the list (`wantedArt`'s `list`: on the wire after `now`; `keep` = the 600 without it plus it, so the
-  prune never loses a kept picture to it, QA L2). **The flip**: Room 5 `order_flips` (`FlipRow(entryKey,
+  sender carries the list (`wantedArt`'s `list`: on the wire after `now`, and in `keep`, QA L2). **The flip**: Room 5 `order_flips` (`FlipRow(entryKey,
   parentNewestFirst)`, auto migration 4 -> 5, never synced or reported), written by the UI side
   (`MusicViewModel.flip` -> `Store.setFlip` -> `MusicDao.setFlipTx`, which in the same transaction rewrites the stored
   `NowPlayingRow` when it is this entry's and unshuffled: `flippedNowPlaying` = `flippedQueue` from its current item,

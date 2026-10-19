@@ -17,7 +17,7 @@ import me.vibb.music.logic.WantedArt
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.keepSet
-import me.vibb.music.logic.nowWindow
+import me.vibb.music.logic.nowArt
 import me.vibb.music.logic.storytelKeepSet
 import me.vibb.music.logic.storytelWanted
 import me.vibb.music.logic.wantedArt
@@ -31,11 +31,14 @@ import me.vibb.music.playback.PlayerHub
  * window, then per NRK/RSS entry the art of its keep set (the bookmarked item and the next first,
  * then newest first, as the downloads go; a Storytel series' kept books in its download order, the
  * bookmarked book first, then reading order - `downloadPlan`'s rule, design 26b §3.3), then the Nytt
- * tray, then each Spotify list-mode entry's next [SPOTIFY_ART_AHEAD] tracks in the order a cover tap
+ * tray; in `now` (streaming's gate, the user's rule of 2026-10-19) after the window and the queue's next
+ * items ([nowArt]), each Spotify list-mode entry's next [SPOTIFY_ART_AHEAD] tracks in the order a cover tap
  * plays them (from the bookmark when resume is on; an unstarted entry from its first; a shuffled one in
  * list order, since its permutation can't be foreseen). Own entries'
  * art is in the library's covers. The played extras' pictures are kept with the keep sets' (design 30
- * §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
+ * §1.11, L3: a kept episode's picture stays as long as its audio). Last, every item's picture of every
+ * ticked entry in its play order (the user, 2026-10-19: "alle bilder lastes ned ASAP så lenge den er på
+ * wifi"): always in the prune's universe, in `later` only when [unmetered]. Pure; EpisodeArtTest.
  */
 fun artWant(
     snap: Snapshot,
@@ -46,12 +49,16 @@ fun artWant(
     extras: List<DownloadRow> = emptyList(),
     /** The episode list's held pictures (design 39 §2.2, `list_art.txt`). */
     list: List<String> = emptyList(),
+    /** The phone is on an unmetered network (Wi-Fi): every picture of every ticked entry is wanted now. */
+    unmetered: Boolean = false,
 ): WantedArt {
     val lib = snap.library
     val kept = mutableListOf<String?>()
     val ahead = mutableListOf<String?>()
+    val all = mutableListOf<String?>()
     for (entry in lib?.entries.orEmpty()) {
         if (entry.source == Source.OWN) continue
+        if (!(entry.source == Source.SPOTIFY && isSpotifyContext(entry))) all += snap.order(entry).map { it.artHash }
         if (entry.source == Source.SPOTIFY) {
             // Nothing is kept; a context-mode entry's one item has no picture of its own.
             if (isSpotifyContext(entry)) continue
@@ -77,7 +84,8 @@ fun artWant(
     }
     kept += extras.map { snap.item(it.entryId, it.itemKey)?.artHash }
     val news = snap.news.map { snap.item(it.entryId, it.key)?.artHash }
-    return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty(), ahead, list)
+    val now = nowArt(nowQueue, nowIndex, ahead) { it.artHash }
+    return wantedArt(now, kept, news, recent, held, lib?.covers.orEmpty(), list = list, all = all, allLater = unmetered)
 }
 
 /** The queue the player holds (live), else the stored one, with its current index; empty when there is none. */
@@ -98,12 +106,14 @@ fun nowQueue(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<Li
  * without them (which would drop list pictures in flight, design 27 QA L4), and the prune keeps them.
  */
 object ArtWants {
-    suspend fun compute(context: Context): WantedArt {
+    /** [onWifi]: the network to compute for (null = the phone's now, `netCaps`). */
+    suspend fun compute(context: Context, onWifi: Boolean? = null): WantedArt {
         val store = Store.get(context)
         val snap = store.snapshot()
         val (queue, index) = nowQueue(snap, PlayerHub.state.value, store.db.nowPlaying())
         val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras
-        return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())
+        val unmetered = onWifi ?: (netCaps(context)?.notMetered == true)
+        return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered)
     }
 }
 

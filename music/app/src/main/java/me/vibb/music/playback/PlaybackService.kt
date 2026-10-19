@@ -81,6 +81,7 @@ import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.itemCacheKey
 import me.vibb.music.logic.nextAction
 import me.vibb.music.logic.nowWindow
+import me.vibb.music.logic.wantArtDelay
 import me.vibb.music.logic.overlapStart
 import me.vibb.music.logic.pickPlan
 import me.vibb.music.logic.playAllowed
@@ -1024,16 +1025,24 @@ class PlaybackService : MediaSessionService() {
 
     private val wantArtTick = Runnable { sendWantArt() }
 
-    /** A queue start or an item change: the want set goes to the launcher 2 s later (debounced). */
+    /** When [sendWantArt] last ran (`SystemClock.elapsedRealtime`), null before the first. */
+    private var wantArtAt: Long? = null
+
+    /**
+     * A queue start or an item change: the want set goes to the launcher at once (the user, 2026-10-19: the playing
+     * episode's picture comes now), a run of skips coalesced to one more send at the end of `WANT_ART_GAP_MS`
+     * ([wantArtDelay]).
+     */
     private fun wantArtSoon() {
         handler.removeCallbacks(wantArtTick)
-        handler.postDelayed(wantArtTick, 2_000)
+        handler.postDelayed(wantArtTick, wantArtDelay(wantArtAt, android.os.SystemClock.elapsedRealtime()))
     }
 
     /** The pictures shown (the current item and its neighbours) are noted, and the want set sent when
      * its `now` list has something missing that it didn't ask for last time (LiveBridge.wantArt). */
     private fun sendWantArt() {
         val a = active ?: return
+        wantArtAt = android.os.SystemClock.elapsedRealtime()
         val shown = nowWindow(a.items, renderer.currentIndex(), reach = 1).map { it.artHash }
         scope.launch {
             val want = withContext(writer) {

@@ -328,15 +328,23 @@ fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, la
 
 // Episode pictures (design 27 §2.2): the music app's want set, carried like covers.
 
-/** The want set's caps (bridge_contract.json `want_art`, the music app's own). */
-const val WANT_ART_MAX = 600
-const val WANT_ART_NOW_MAX = 5
+/**
+ * The want set's caps on one call (bridge_contract.json `want_art`, the music app's own): not a cap on the pictures
+ * (the user, 2026-10-19: every picture of every ticked entry on Wi-Fi) - the music app names only what it lacks, so
+ * the next call names the next ones - but one oneway Binder call's size (~136 bytes a hash). `now` is streaming's:
+ * the playing item and five each side, the queue's next items, Spotify's look-ahead.
+ */
+const val WANT_ART_MAX = 2000
+const val WANT_ART_NOW_MAX = 500
 
 /** An episode picture is a 512 px JPEG: at most 1 MB, hash-checked like a cover. */
 const val MAX_ART_BYTES = 1024 * 1024
 
-/** At most this many picture GETs per courier run, `now` first (QA M6). */
-const val ART_PER_RUN = 50
+/**
+ * Picture GETs per round of a courier run, `now` first (QA M6); the run goes on round after round while pictures are
+ * fetchable and the last round stored one ([fetchArtPaced]), the music app nudged after each.
+ */
+const val ART_PER_RUN = 100
 
 /** A picture that failed (an HTTP error or its hash) this often waits a day (as [OWN_FILE_HASH_BACKOFF_MS]). */
 const val ART_MAX_FAILURES = 2
@@ -369,31 +377,46 @@ fun artBackedOff(failure: ArtFailure?, nowMs: Long): Boolean =
     failure != null && failure.count >= ART_MAX_FAILURES && nowMs - failure.lastAt in 0 until ART_BACKOFF_MS
 
 /**
- * The pictures to fetch now, at most [max], `now` first: none without a network ([online]); `now` on
- * any network (roaming too: ~60 KB a picture); `later` only on an unmetered network or with the
- * parent's downloads-on-mobile-data switch (not roaming; design 30 §1.1) - the audio's download
- * gate, since kept art goes with kept audio (21 §4.5). Never one the launcher [has], or one waiting out its failures.
+ * Where the two lists may be fetched (the user's rule of 2026-10-19: pictures count as streaming). [now] (the playing
+ * item ±5, the queue's next items, Spotify's look-ahead) where streaming is allowed: online (INTERNET and a physical
+ * transport), never roaming, unmetered or with the policy's streaming switch (`stream_mobile_data`, an older policy's
+ * `mobile_data`; design 30 §1.1). [later] (the kept episodes', Nytt's, and on Wi-Fi every picture of every ticked
+ * entry) with the audio's download gate: online, unmetered or with the downloads switch and not roaming.
+ */
+data class ArtGates(val now: Boolean, val later: Boolean)
+
+fun artGates(caps: NetCaps?, streamMobileData: Boolean, downloadMobileData: Boolean): ArtGates {
+    val online = caps != null && caps.internet && caps.physical
+    val unmetered = caps?.notMetered == true
+    val notRoaming = caps?.notRoaming == true
+    return ArtGates(
+        now = online && notRoaming && (unmetered || streamMobileData),
+        later = online && (unmetered || (downloadMobileData && notRoaming)),
+    )
+}
+
+/** [artGates] with the policy's switches; no readable music object = neither switch. */
+fun artGatesOn(caps: NetCaps?, music: MusicPolicy?): ArtGates =
+    artGates(caps, music?.streamMobileData == true, music?.downloadMobileData == true)
+
+/**
+ * The pictures to fetch now, at most [max], `now` first, each list only where its gate ([ArtGates]) allows it. Never
+ * one the launcher [has], or one waiting out its failures.
  */
 fun artToFetch(
     want: WantArt,
     has: Set<String>,
     failures: Map<String, ArtFailure>,
-    online: Boolean,
-    unmetered: Boolean,
-    downloadMobileData: Boolean,
+    gates: ArtGates,
     max: Int,
     nowMs: Long,
 ): List<String> {
-    if (!online) return emptyList()
-    val later = if (unmetered || downloadMobileData) want.later else emptyList()
-    return (want.now + later).filter { it !in has && !artBackedOff(failures[it], nowMs) }.distinct().take(max)
+    val now = if (gates.now) want.now else emptyList()
+    val later = if (gates.later) want.later else emptyList()
+    return (now + later).filter { it !in has && !artBackedOff(failures[it], nowMs) }.distinct().take(max)
 }
 
-/**
- * [artToFetch] on the phone's network [caps] (design 27 §2.2, design 30 §1.1): online = INTERNET
- * and a physical transport; `later` on an unmetered network, or with the policy's downloads switch
- * and not roaming. [MusicCourier.artFetchable] only feeds it.
- */
+/** [artToFetch] on the phone's network [caps] and the policy ([artGatesOn]). [MusicCourier.artFetchable] only feeds it. */
 fun artToFetchOn(
     want: WantArt,
     has: Set<String>,
@@ -402,16 +425,39 @@ fun artToFetchOn(
     music: MusicPolicy,
     max: Int,
     nowMs: Long,
-): List<String> = artToFetch(
-    want,
-    has,
-    failures,
-    online = caps != null && caps.internet && caps.physical,
-    unmetered = caps?.notMetered == true,
-    downloadMobileData = music.downloadMobileData && caps?.notRoaming == true,
-    max = max,
-    nowMs = nowMs,
-)
+): List<String> = artToFetch(want, has, failures, artGatesOn(caps, music), max, nowMs)
+
+/**
+ * The `now` pictures to fetch at once, when `wantArt` arrives (the user, 2026-10-19: the playing episode's picture
+ * comes now, not at the next sync), where streaming is allowed ([ArtGates.now]), the first [ART_PER_RUN] (the window
+ * comes first); never one held or waiting out its failures. The rest and `later` are the courier's.
+ */
+fun nowArtToFetch(want: WantArt, has: Set<String>, failures: Map<String, ArtFailure>, caps: NetCaps?, music: MusicPolicy?, nowMs: Long): List<String> =
+    artToFetch(WantArt(want.now, emptyList()), has, failures, artGatesOn(caps, music), ART_PER_RUN, nowMs)
+
+/**
+ * The courier's paced picture fetch: rounds of at most [ART_PER_RUN] ([next] reads the want set, the files and the
+ * network again each round, so a metered network ends it and a new `now` goes first), [fetch] each (true = stored,
+ * false = refused, null = try later), [roundDone] after a round that stored something (the music app's nudge). It
+ * ends when nothing is fetchable or a round stored nothing (a server or network in trouble: the next sync tries
+ * again). Every stored picture leaves [next], so it always ends. The pictures stored in all.
+ */
+suspend fun fetchArtPaced(
+    next: () -> List<String>,
+    fetch: suspend (String) -> Boolean?,
+    roundDone: suspend () -> Unit = {},
+): Int {
+    var stored = 0
+    while (true) {
+        val round = next()
+        if (round.isEmpty()) return stored
+        var got = 0
+        for (hash in round) if (fetch(hash) == true) got++
+        if (got == 0) return stored
+        stored += got
+        roundDone()
+    }
+}
 
 /**
  * The gate for one own file (design 13's [downloadGate], design 30 §1.1): Wi-Fi only unless the

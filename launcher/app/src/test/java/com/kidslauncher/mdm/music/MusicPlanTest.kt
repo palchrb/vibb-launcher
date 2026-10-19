@@ -256,34 +256,53 @@ class MusicPlanTest {
     private fun pic(n: Int) = "%064x".format(n)
 
     @Test
-    fun `wantArt - only 64-hex hashes, each once, at most 5 now and 600 in all`() {
+    fun `wantArt - only 64-hex hashes, each once, at most 500 now and 2000 in all`() {
         val w = wantArtLists(listOf(pic(1), "nope", null, pic(1), pic(2)), listOf(pic(2), pic(3), "A".repeat(64)))
         assertEquals(listOf(pic(1), pic(2)), w.now)
         assertEquals("now wins", listOf(pic(3)), w.later)
-        val big = wantArtLists((1..9).map { pic(it) }, (10..1000).map { pic(it) })
+        val thousands = wantArtLists(listOf(pic(1)), (2..1999).map { pic(it) })
+        assertEquals("a feed of 1998 pictures goes whole", 1998, thousands.later.size)
+        val big = wantArtLists((1..600).map { pic(it) }, (601..3000).map { pic(it) })
         assertEquals(WANT_ART_NOW_MAX, big.now.size)
         assertEquals(WANT_ART_MAX, big.now.size + big.later.size)
         assertEquals(WantArt.NONE, wantArtLists(null, null))
     }
 
     @Test
-    fun `art to fetch - now on any network, later only unmetered or with mobile data, never held or backed off`() {
-        val want = WantArt(listOf(pic(1), pic(2)), listOf(pic(3), pic(4)))
-        val now = 1_800_000_000_000L
-        fun fetch(has: Set<String> = emptySet(), failures: Map<String, ArtFailure> = emptyMap(), online: Boolean = true, unmetered: Boolean = false, mobile: Boolean = false, max: Int = 50) =
-            artToFetch(want, has, failures, online, unmetered, mobile, max, now)
-        assertEquals("metered, no switch: now only", listOf(pic(1), pic(2)), fetch())
-        assertEquals("unmetered: all, now first", listOf(pic(1), pic(2), pic(3), pic(4)), fetch(unmetered = true))
-        assertEquals("the mobile-data switch", listOf(pic(1), pic(2), pic(3), pic(4)), fetch(mobile = true))
-        assertEquals("no network: nothing", emptyList<String>(), fetch(online = false, unmetered = true))
-        assertEquals("held ones aren't fetched", listOf(pic(2), pic(4)), fetch(has = setOf(pic(1), pic(3)), unmetered = true))
-        assertEquals("at most max per run", listOf(pic(1), pic(2), pic(3)), fetch(unmetered = true, max = 3))
-        val failed = mapOf(pic(1) to ArtFailure(2, now - 60_000), pic(2) to ArtFailure(1, now - 60_000), pic(3) to ArtFailure(5, now - ART_BACKOFF_MS))
-        assertEquals("two failures wait a day, one doesn't, a day later it is tried again", listOf(pic(2), pic(3), pic(4)), fetch(failures = failed, unmetered = true))
+    fun `art gates - now is streaming's, later the downloads', never roaming for now (2026-10-19)`() {
+        val wifi = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
+        val mobile = wifi.copy(notMetered = false)
+        val roaming = mobile.copy(notRoaming = false)
+        // (network, stream switch, downloads switch) -> (now, later)
+        assertEquals("unmetered: both", ArtGates(now = true, later = true), artGates(wifi, false, false))
+        assertEquals("metered, streaming on: now", ArtGates(now = true, later = false), artGates(mobile, true, false))
+        assertEquals("metered, streaming off: nothing now", ArtGates(now = false, later = false), artGates(mobile, false, false))
+        assertEquals("metered, downloads on: later", ArtGates(now = false, later = true), artGates(mobile, false, true))
+        assertEquals("roaming: nothing, whatever the switches", ArtGates(now = false, later = false), artGates(roaming, true, true))
+        assertEquals("no network", ArtGates(now = false, later = false), artGates(null, true, true))
+        assertEquals("no physical transport", ArtGates(now = false, later = false), artGates(wifi.copy(physical = false), true, true))
+        assertEquals("no internet", ArtGates(now = false, later = false), artGates(wifi.copy(internet = false), true, true))
+        assertEquals("no readable music object: Wi-Fi only", ArtGates(now = false, later = false), artGatesOn(mobile, null))
     }
 
     @Test
-    fun `later pictures follow the downloads switch`() {
+    fun `art to fetch - each list by its gate, now first, never held or backed off`() {
+        val want = WantArt(listOf(pic(1), pic(2)), listOf(pic(3), pic(4)))
+        val now = 1_800_000_000_000L
+        fun fetch(gates: ArtGates = ArtGates(now = true, later = true), has: Set<String> = emptySet(), failures: Map<String, ArtFailure> = emptyMap(), max: Int = 50) =
+            artToFetch(want, has, failures, gates, max, now)
+        assertEquals("both, now first", listOf(pic(1), pic(2), pic(3), pic(4)), fetch())
+        assertEquals("now only", listOf(pic(1), pic(2)), fetch(ArtGates(now = true, later = false)))
+        assertEquals("later only", listOf(pic(3), pic(4)), fetch(ArtGates(now = false, later = true)))
+        assertEquals("neither", emptyList<String>(), fetch(ArtGates(now = false, later = false)))
+        assertEquals("held ones aren't fetched", listOf(pic(2), pic(4)), fetch(has = setOf(pic(1), pic(3))))
+        assertEquals("at most max per run", listOf(pic(1), pic(2), pic(3)), fetch(max = 3))
+        val failed = mapOf(pic(1) to ArtFailure(2, now - 60_000), pic(2) to ArtFailure(1, now - 60_000), pic(3) to ArtFailure(5, now - ART_BACKOFF_MS))
+        assertEquals("two failures wait a day, one doesn't, a day later it is tried again", listOf(pic(2), pic(3), pic(4)), fetch(failures = failed))
+    }
+
+    @Test
+    fun `art to fetch follows the policy's two switches`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         val now = 1_800_000_000_000L
         // artToFetchOn: the phone's network and the policy, as artFetchable passes them (qa-30-s2-code L2).
@@ -293,12 +312,11 @@ class MusicPlanTest {
         val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
         val neither = musicPolicy(policy30())!!
         assertEquals("streaming alone: now only", listOf(pic(1)), fetch(streamOnly))
-        assertEquals("downloads: later too", listOf(pic(1), pic(2)), fetch(downloadOnly))
-        assertEquals("roaming: now only", listOf(pic(1)), fetch(downloadOnly, metered.copy(notRoaming = false)))
-        assertEquals("Wi-Fi: later without either switch", listOf(pic(1), pic(2)), fetch(neither, metered.copy(notMetered = true)))
+        assertEquals("downloads alone: later only", listOf(pic(2)), fetch(downloadOnly))
+        assertEquals("neither switch on mobile data: nothing", emptyList<String>(), fetch(neither))
+        assertEquals("roaming: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(notRoaming = false)))
+        assertEquals("Wi-Fi: both without either switch", listOf(pic(1), pic(2)), fetch(neither, metered.copy(notMetered = true)))
         assertEquals("no network: nothing", emptyList<String>(), fetch(downloadOnly, null))
-        assertEquals("no physical transport: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(physical = false, notMetered = true)))
-        assertEquals("no internet: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(internet = false)))
         // The glue is one call, pinned whole: nothing between the policy and artToFetchOn.
         val courier = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
         val fetchable = courier.substringAfter("fun artFetchable(app: Context, want: WantArt, music: MusicPolicy): List<String> =").substringBefore("\n\n").trim()
@@ -309,10 +327,65 @@ class MusicPlanTest {
     }
 
     @Test
+    fun `asap - the now pictures at once where streaming is allowed, never later, held or backed off`() {
+        val want = WantArt((1..120).map { pic(it) }, listOf(pic(200), pic(201)))
+        val now = 1_800_000_000_000L
+        val wifi = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
+        val mobile = wifi.copy(notMetered = false)
+        val stream = musicPolicy(policy30(stream = JsonPrimitive(true)))!!
+        val neither = musicPolicy(policy30())!!
+        assertEquals("Wi-Fi: the first round of now, the window first, no later", (1..ART_PER_RUN).map { pic(it) }, nowArtToFetch(want, emptySet(), emptyMap(), wifi, neither, now))
+        assertEquals("mobile data with streaming on", (2..ART_PER_RUN + 1).map { pic(it) }, nowArtToFetch(want, setOf(pic(1)), emptyMap(), mobile, stream, now))
+        assertEquals("mobile data with streaming off: nothing", emptyList<String>(), nowArtToFetch(want, emptySet(), emptyMap(), mobile, neither, now))
+        assertEquals("roaming: nothing", emptyList<String>(), nowArtToFetch(want, emptySet(), emptyMap(), mobile.copy(notRoaming = false), stream, now))
+        assertEquals("backed off", pic(2), nowArtToFetch(want, emptySet(), mapOf(pic(1) to ArtFailure(2, now - 1)), wifi, neither, now).first())
+        // The glue: wantArt's arrival fetches them before it asks the courier, beside a running courier run.
+        val bridge = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
+        val changed = bridge.substringAfter("private suspend fun wantArtChanged(").substringBefore("\n    }\n")
+        assertTrue(changed, changed.indexOf("MusicCourier.fetchNowArt(app, music)") in 0 until changed.indexOf("MusicCourier.request(app, music)"))
+        assertTrue(bridge.contains("scope.launch { wantArtChanged(app, want) }"))
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        assertTrue(sync.contains("val hashes = nowArtToFetch(MusicStore.wantArt(app), MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, System.currentTimeMillis())"))
+    }
+
+    @Test
+    fun `asap - the courier fetches in rounds of 100 while more are fetchable, nudging after each`() {
+        val wanted = (1..250).map { pic(it) }.toMutableList()
+        val has = mutableSetOf<String>()
+        var unmetered = true
+        val rounds = mutableListOf<Int>()
+        var nudges = 0
+        fun next(): List<String> = if (unmetered) wanted.filter { it !in has }.take(ART_PER_RUN) else emptyList()
+        val stored = kotlinx.coroutines.runBlocking {
+            fetchArtPaced(::next, { has += it; true }, { nudges++; rounds += has.size })
+        }
+        assertEquals(250, stored)
+        assertEquals("three rounds: 100, 100, 50", listOf(100, 200, 250), rounds)
+        assertEquals(3, nudges)
+        // A metered network ends it between rounds.
+        has.clear()
+        val ended = kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { has += it; if (has.size == 100) unmetered = false; true }) }
+        assertEquals(100, ended)
+        // A round that stores nothing (the server down) ends it, never a loop.
+        unmetered = true
+        var tries = 0
+        val none = kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { tries++; null }) }
+        assertEquals(0, none)
+        assertEquals("one round tried", ART_PER_RUN, tries)
+        // The glue: syncArt is the paced fetch over artFetchable.
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        assertTrue(sync.contains("next = { artFetchable(app, MusicStore.wantArt(app), music) },"))
+        assertTrue(sync.contains("roundDone = { MusicSync.nudge(app) },"))
+        assertEquals(100, ART_PER_RUN)
+    }
+
+    @Test
     fun `art to delete - keeps library covers and the want set`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         assertEquals(sortedSetOf(pic(4), "junk"), artToDelete(setOf(pic(1), pic(2), pic(3), pic(4), "junk"), setOf(pic(3)), want))
         assertEquals("nothing wanted: only covers stay", sortedSetOf(pic(1), pic(2)), artToDelete(setOf(pic(1), pic(2), pic(3)), setOf(pic(3)), WantArt.NONE))
+        val many = wantArtLists((1..500).map { pic(it) }, (501..2000).map { pic(it) })
+        assertEquals("every wanted picture of a 2000-hash set is kept", emptySet<String>(), artToDelete(many.all, emptySet(), many))
     }
 
     @Test
@@ -354,7 +427,7 @@ class MusicPlanTest {
         val bridge = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
         val call = bridge.substringAfter("override fun wantArt(").substringBefore("\n        }\n")
         assertTrue(call, call.indexOf("MusicStore.setWantArt(app, want)") in 0 until call.indexOf("scope.launch"))
-        assertFalse(bridge.substringAfter("private fun wantArtChanged(").substringBefore("\n    }\n").contains("setWantArt"))
+        assertFalse(bridge.substringAfter("private suspend fun wantArtChanged(").substringBefore("\n    }\n").contains("setWantArt"))
     }
 
     @Test

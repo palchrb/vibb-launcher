@@ -34,10 +34,12 @@ class EpisodeArtTest {
     private val f = art("f")
 
     @Test
-    fun `the now window - the current item and two each side, wrapping as previous and next`() {
-        val q = (0 until 10).toList()
-        assertEquals(listOf(0, 1, 9, 2, 8), nowWindow(q, 0))
-        assertEquals(listOf(5, 6, 4, 7, 3), nowWindow(q, 5))
+    fun `the now window - the current item and five each side, wrapping as previous and next`() {
+        val q = (0 until 20).toList()
+        assertEquals(listOf(0, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15), nowWindow(q, 0))
+        assertEquals(listOf(5, 6, 4, 7, 3, 8, 2, 9, 1, 10, 0), nowWindow(q, 5))
+        assertEquals("the item and five each side", 2 * NOW_REACH + 1, nowWindow(q, 5).size)
+        assertEquals("ten items: each once", 10, nowWindow((0 until 10).toList(), 0).size)
         assertEquals("a short queue lists each once", listOf(0, 1), nowWindow(listOf(0, 1), 0))
         assertEquals(listOf(1, 0), nowWindow(listOf(0, 1), 1))
         assertEquals(emptyList<Int>(), nowWindow(q, -1))
@@ -60,34 +62,39 @@ class EpisodeArtTest {
     }
 
     @Test
-    fun `at most 600 wanted in all, the now list first`() {
-        val many = (0 until 700).map { art("k$it") }
+    fun `at most 2000 on the wire, the now list first, the missing ones only - keep has no cap`() {
+        val many = (0 until 2100).map { art("k$it") }
         val w = wantedArt(listOf(a), many, emptyList(), emptyList(), emptySet(), emptySet())
         assertEquals(listOf(a), w.now)
         assertEquals(WANT_ART_MAX - 1, w.later.size)
         assertEquals(many.take(WANT_ART_MAX - 1), w.later)
-        assertEquals(WANT_ART_MAX, w.keep.size)
+        assertEquals("the prune keeps everything wanted", 2101, w.keep.size)
+        // The first 1500 arrived: the next send names the rest.
+        val next = wantedArt(listOf(a), many, emptyList(), emptyList(), held = many.take(1500).toSet() + a, libraryCovers = emptySet())
+        assertEquals(many.drop(1500), next.later)
     }
 
     @Test
-    fun `over the library - the keep set's art, the now window, Nytt`() {
-        val keys = (1..10).map { "k$it" } // oldest first; RSS plays newest first
+    fun `over the library - the keep set's art, the now window and the queue's next items, Nytt`() {
+        val keys = (1..30).map { "k$it" } // oldest first; RSS plays newest first
         val pics = keys.associateWith { art(it) }
         val lib = library(listOf(entry(1, cache = 2), entry(2, cache = 0)))
         val snap = snapshot(
             lib,
             items(1, keys, art = pics) + items(2, listOf("x1", "x2"), art = mapOf("x2" to a)),
-            bookmarks = mapOf("e1" to ("k3" to 1000L)),
+            bookmarks = mapOf("e1" to ("k20" to 1000L)),
             news = listOf(NewsRow(2, "x2", 1)),
         )
         val queue = snap.order(lib.entries[0])
-        val w = artWant(snap, queue, queue.indexOfFirst { it.key == "k3" }, held = setOf(pics.getValue("k10")), recent = emptyList())
-        // The window around k3 in newest-first order: k3, k2, k4, k1, k5.
-        assertEquals(listOf("k3", "k2", "k4", "k1", "k5").map { pics.getValue(it) }, w.now)
-        // The keep set (newest two and the bookmark + next) less the window and what is held, then Nytt.
-        assertEquals(listOf(pics.getValue("k9"), a), w.later)
-        assertTrue("a kept picture held on the phone stays", pics.getValue("k10") in w.keep)
-        assertFalse(pics.getValue("k6") in w.keep)
+        val w = artWant(snap, queue, queue.indexOfFirst { it.key == "k20" }, held = setOf(pics.getValue("k30")), recent = emptyList())
+        // The window around k20 in newest-first order (±5), then what auto-advance reaches: k14 down to k1.
+        val window = listOf("k20", "k19", "k21", "k18", "k22", "k17", "k23", "k16", "k24", "k15", "k25")
+        assertEquals((window + (14 downTo 1).map { "k$it" }).map { pics.getValue(it) }, w.now)
+        // The keep set (newest two and the bookmark + next) less now and what is held, then Nytt.
+        assertEquals(listOf(pics.getValue("k29"), a), w.later)
+        assertTrue("a kept picture held on the phone stays", pics.getValue("k30") in w.keep)
+        assertFalse("off Wi-Fi only the keep set is fetched later", pics.getValue("k27") in w.later || pics.getValue("k27") in w.now)
+        assertTrue("but every picture of a ticked entry is kept (2026-10-19)", pics.getValue("k27") in w.keep)
     }
 
     @Test
@@ -104,7 +111,7 @@ class EpisodeArtTest {
         )
         val w = artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList())
         assertEquals(listOf("b4", "b1", "b2", "b5").map { pics.getValue(it) }, w.later)
-        assertFalse("book 3 isn't kept", pics.getValue("b3") in w.keep)
+        assertFalse("book 3 isn't fetched off Wi-Fi", pics.getValue("b3") in w.later)
     }
 
     @Test
@@ -135,15 +142,16 @@ class EpisodeArtTest {
         val base = snapshot(lib, rows)
         val withContextArt = base.copy(listed = base.listed + (9L to base.listed.getValue(9L).map { it.copy(artHash = a) }))
         val fresh = artWant(withContextArt, emptyList(), -1, held = emptySet(), recent = emptyList())
-        assertEquals(tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.later)
-        assertFalse("a context entry and an RSS entry at depth 0 want nothing", a in fresh.keep || b in fresh.keep)
+        assertEquals("streaming's: in now (2026-10-19)", tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.now)
+        assertFalse("a context entry and an RSS entry at depth 0 fetch nothing off Wi-Fi", a in fresh.later + fresh.now || b in fresh.later + fresh.now)
+        assertFalse("a context entry's one item has no picture of its own", a in fresh.keep)
         // Bookmarked on t60: t60..t80, then round to t1..t29, as the rotated queue plays.
         val started = artWant(snapshot(lib, rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, held = emptySet(), recent = emptyList())
         val expected = (tracks.drop(59) + tracks.take(59)).take(SPOTIFY_ART_AHEAD)
-        assertEquals(expected.map { pics.getValue(it) }, started.later)
+        assertEquals(expected.map { pics.getValue(it) }, started.now)
         // Resume off: always from the first.
         val noResume = artWant(snapshot(library(listOf(list.copy(resume = false))), rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, emptySet(), emptyList())
-        assertEquals(fresh.later, noResume.later)
+        assertEquals(fresh.now, noResume.now)
     }
 
     /** Design 30 §1.11 (L3): a kept episode's picture stays as long as its audio - a played extra's too. */
@@ -160,11 +168,11 @@ class EpisodeArtTest {
         val w = artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList(), extras = plan.extras)
         assertTrue(pics.getValue("k4") in w.keep)
         assertTrue("fetched like the keep sets' art, later", pics.getValue("k4") in w.later)
-        assertFalse("without it the prune would take it", pics.getValue("k4") in artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList()).keep)
+        assertFalse("without it, not fetched off Wi-Fi", pics.getValue("k4") in artWant(snap, emptyList(), -1, held = emptySet(), recent = emptyList()).later)
         // The glue: the want set over the plan's extras, as the sync and the player compute it.
         val glue = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
         assertTrue(glue.contains("val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras"))
-        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())"))
+        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered)"))
     }
 
     @Test
@@ -269,14 +277,14 @@ class EpisodeArtTest {
         val w = wantedArt(listOf(a), kept = listOf(b, c), news = emptyList(), recent = emptyList(), held = emptySet(), libraryCovers = emptySet(), list = listOf(d, b))
         assertEquals(listOf(a), w.now)
         assertEquals("the wire: the list, then the keep sets", listOf(d, b, c), w.later)
-        val kept = (0 until 700).map { art("k$it") }
+        val kept = (0 until 2100).map { art("k$it") }
         val list = (0 until 60).map { art("l$it") }
         val full = wantedArt(emptyList(), kept, emptyList(), emptyList(), emptySet(), emptySet(), list = list)
         assertEquals(WANT_ART_MAX, full.later.size)
         assertEquals("the list first on the wire", list, full.later.take(60))
-        assertTrue("all 600 kept still in keep", full.keep.containsAll(kept.take(WANT_ART_MAX)))
+        assertTrue("every kept one still in keep", full.keep.containsAll(kept))
         assertTrue("and the list", full.keep.containsAll(list))
-        assertEquals(WANT_ART_MAX + 60, full.keep.size)
+        assertEquals(2100 + 60, full.keep.size)
     }
 
     @Test
@@ -302,9 +310,79 @@ class EpisodeArtTest {
     @Test
     fun `d39 - the want set reads the list - every sender carries it, and the prune keeps it`() {
         val plan = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
-        assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())"))
+        assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered)"))
         val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
         assertTrue("the prune's keep is the want set's", sync.contains("val want = ArtWants.compute(context)\n        if (lib != null) store.pruneCovers(lib.covers, want.keep)"))
+    }
+
+    // The addendum of 2026-10-19: all pictures ASAP on Wi-Fi; the playing episode's picture at once.
+
+    @Test
+    fun `asap - on Wi-Fi every picture of every ticked entry is wanted in play order, now and the keep sets first`() {
+        val keys = (1..300).map { "k$it" } // oldest first; RSS plays newest first
+        val pics = keys.associateWith { art(it) }
+        val other = (1..5).map { "o$it" }
+        val otherPics = other.associateWith { art(it) }
+        val lib = library(listOf(entry(1, cache = 2), entry(2, order = "oldest_first", cache = 0)))
+        val snap = snapshot(lib, items(1, keys, art = pics) + items(2, other, art = otherPics), bookmarks = mapOf("e1" to ("k100" to 1L)))
+        val queue = snap.order(lib.entries[0])
+        val at = queue.indexOfFirst { it.key == "k100" }
+        val held = setOf(pics.getValue("k5"))
+        val metered = artWant(snap, queue, at, held = held, recent = emptyList())
+        val wifi = artWant(snap, queue, at, held = held, recent = emptyList(), unmetered = true)
+        assertEquals("the now list is the same", metered.now, wifi.now)
+        assertEquals("the window (11) and the next 50 the queue reaches, less the 5 in both", 56, wifi.now.size)
+        assertEquals("the keep sets first, as off Wi-Fi", metered.later, wifi.later.take(metered.later.size))
+        val newestFirst = keys.reversed().map { pics.getValue(it) }
+        val expectedRest = (newestFirst + other.map { otherPics.getValue(it) }).filter { it !in wifi.now && it !in metered.later && it !in held }
+        assertEquals("then every item of every entry in play order, less the held", expectedRest, wifi.later.drop(metered.later.size))
+        assertEquals("all 305 pictures less the held one go", 304, wifi.now.size + wifi.later.size)
+        assertTrue("off Wi-Fi far fewer", metered.later.size < 10)
+        assertEquals("the prune keeps the same on both networks", metered.keep, wifi.keep)
+        assertTrue(wifi.keep.containsAll(pics.values + otherPics.values))
+        assertTrue("a Wi-Fi sync is asked for off Wi-Fi", wifiSyncWanted(metered, wifi))
+        assertFalse("not once everything is there", wifiSyncWanted(wifi, wifi))
+    }
+
+    @Test
+    fun `streaming's now - the window, the queue's next items without a wrap, then Spotify's look-ahead`() {
+        val q = (0 until 100).toList()
+        val now = nowArt(q, 10, listOf("s1", null)) { "i$it" }
+        val window = nowWindow(q, 10).map { "i$it" }
+        assertEquals(window, now.take(11))
+        assertEquals((11..60).map { "i$it" }, now.drop(11).take(50))
+        assertEquals(listOf("s1", null), now.takeLast(2))
+        assertEquals("at the end nothing wraps ahead", listOf("i99", "i0", "i98", "i1", "i97", "i2", "i96", "i3", "i95", "i4", "i94"), nowArt(q, 99, emptyList()) { "i$it" })
+        assertEquals("no queue: Spotify's only", listOf("s1"), nowArt(emptyList<Int>(), -1, listOf("s1")) { "i$it" })
+        assertTrue(WANT_ART_NOW_MAX >= 11 + NOW_AHEAD + SPOTIFY_ART_AHEAD)
+    }
+
+    @Test
+    fun `asap - the player sends at once, a run of skips once more at the end of the gap`() {
+        assertEquals("the first item change: at once", 0L, wantArtDelay(null, 10_000L))
+        assertEquals("long after the last send: at once", 0L, wantArtDelay(1_000L, 10_000L))
+        assertEquals("a skip 500 ms after a send: the rest of the gap", WANT_ART_GAP_MS - 500, wantArtDelay(10_000L, 10_500L))
+        assertEquals("a clock that went back: at once", 0L, wantArtDelay(10_000L, 9_000L))
+        val service = moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        assertTrue(service.contains("handler.postDelayed(wantArtTick, wantArtDelay(wantArtAt, android.os.SystemClock.elapsedRealtime()))"))
+        assertFalse("no fixed 2 s wait", service.contains("handler.postDelayed(wantArtTick, 2_000)"))
+    }
+
+    @Test
+    fun `asap - a listing applied while playing re-sends the want set with its new pictures`() {
+        // The launcher nudges on a new listing; the sync applies it, then computes and sends the want set.
+        val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
+        val applied = sync.indexOf("applyListing(store, entry, listing)")
+        val computed = sync.indexOf("val want = ArtWants.compute(context)")
+        assertTrue(applied in 0 until computed)
+        assertTrue(computed < sync.indexOf("BridgeSync.wantArt(context, want)"))
+        // The playing item's new hash is in `now` (the window reads the stored items).
+        val keys = (1..3).map { "k$it" }
+        val lib = library(listOf(entry(1, cache = 0)))
+        val before = snapshot(lib, items(1, keys))
+        val after = snapshot(lib, items(1, keys, art = mapOf("k2" to a)))
+        assertEquals(emptyList<String>(), artWant(before, before.order(lib.entries[0]), 1, emptySet(), emptyList()).now)
+        assertEquals(listOf(a), artWant(after, after.order(lib.entries[0]), 1, emptySet(), emptyList()).now)
     }
 
     @Test

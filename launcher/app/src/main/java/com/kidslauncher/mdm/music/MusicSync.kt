@@ -315,28 +315,53 @@ object MusicCourier {
 
     /**
      * Episode pictures (design 27 §2.2), after the covers: the music app's want set, through the
-     * cover route (≤ 1 MB, hash-checked), at most [ART_PER_RUN], `now` first. An HTTP error or a wrong
-     * hash counts toward the day's wait; a network error doesn't (it is tried again with the next run).
-     * Art in neither the library's covers nor the want set goes: the launcher holds a picture only
-     * until the music app has copied it (its next want set leaves it out).
+     * cover route (≤ 1 MB, hash-checked), `now` first, in rounds of [ART_PER_RUN] for as long as more are fetchable
+     * on this network ([fetchArtPaced]; the addendum of 2026-10-19: on Wi-Fi every picture of every ticked entry), the
+     * music app nudged after each round so it copies them and names the next. An HTTP error or a wrong hash counts
+     * toward the day's wait; a network error doesn't (it is tried again with the next run). Art in neither the
+     * library's covers nor the want set goes: the launcher holds a picture only until the music app has copied it
+     * (its next want set leaves it out).
      */
     private suspend fun syncArt(app: Context, server: MusicServer, music: MusicPolicy): Boolean {
-        val want = MusicStore.wantArt(app)
-        var changed = false
-        for (hash in artFetchable(app, want, music)) {
-            when (fetchCover(app, server, hash, MAX_ART_BYTES)) {
-                true -> {
-                    MusicStore.clearArtFailure(app, hash)
-                    changed = true
-                }
-                false -> MusicStore.recordArtFailure(app, hash, System.currentTimeMillis())
-                null -> Unit
-            }
-        }
+        val stored = fetchArtPaced(
+            next = { artFetchable(app, MusicStore.wantArt(app), music) },
+            fetch = { fetchArt(app, server, it) },
+            roundDone = { MusicSync.nudge(app) },
+        )
         val head = MusicStore.head(app)
         val present = MusicStore.coversDir(app).list().orEmpty().toSet()
         artToDelete(present, head?.covers.orEmpty(), MusicStore.wantArt(app)).forEach { MusicStore.coverFile(app, it).delete() }
-        return changed
+        return stored > 0
+    }
+
+    /**
+     * The `now` pictures, fetched as `wantArt` arrives (the user, 2026-10-19), where streaming is allowed ([nowArtToFetch]),
+     * beside any courier run - a long Wi-Fi run of pictures never holds the playing episode's back. The music app is
+     * nudged when one is stored. False without a server set up.
+     */
+    suspend fun fetchNowArt(app: Context, music: MusicPolicy): Boolean {
+        val mdm = LauncherPreferences.mdm()
+        val url = mdm.serverUrl()
+        val token = mdm.deviceToken()
+        if (url.isNullOrBlank() || token.isNullOrBlank()) return false
+        val hashes = nowArtToFetch(MusicStore.wantArt(app), MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, System.currentTimeMillis())
+        if (hashes.isEmpty()) return false
+        val server = createMusicServer(url, token)
+        var stored = false
+        for (hash in hashes) if (fetchArt(app, server, hash) == true) stored = true
+        if (stored) MusicSync.nudge(app)
+        return stored
+    }
+
+    /** One picture, its failures recorded: true = stored, false = refused, null = try later. */
+    private suspend fun fetchArt(app: Context, server: MusicServer, hash: String): Boolean? {
+        val got = fetchCover(app, server, hash, MAX_ART_BYTES)
+        when (got) {
+            true -> MusicStore.clearArtFailure(app, hash)
+            false -> MusicStore.recordArtFailure(app, hash, System.currentTimeMillis())
+            null -> Unit
+        }
+        return got
     }
 
     /** One cover or picture: true = stored, false = refused (a 4xx, too big, wrong hash), null = try later (a 5xx or a network error). */

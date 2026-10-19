@@ -1,9 +1,11 @@
 package me.vibb.music.sync
 
 import android.content.Context
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -32,6 +34,7 @@ import me.vibb.music.logic.addItemError
 import me.vibb.music.logic.downloadWaiting
 import me.vibb.music.logic.extrasFloor
 import me.vibb.music.logic.stopRunningDownload
+import me.vibb.music.logic.wifiSyncWanted
 import me.vibb.music.logic.storageLimitBytes
 import me.vibb.music.logic.listedOf
 import me.vibb.music.logic.newsApplied
@@ -217,7 +220,18 @@ object Sync {
         } catch (e: Exception) {
             Log.w("Sync", "The want set didn't reach the launcher", e)
         }
+        // On a metered network the pictures of every ticked entry wait for Wi-Fi (the user, 2026-10-19: "alle bilder
+        // lastes ned ASAP så lenge den er på wifi"): a sync then, so the launcher hears the whole set at once.
+        if (netCaps(context)?.notMetered != true && wifiSyncWanted(want, ArtWants.compute(context, onWifi = true))) {
+            val request = OneTimeWorkRequestBuilder<SyncWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build())
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(WIFI_ART, ExistingWorkPolicy.KEEP, request)
+        }
     }
+
+    /** The sync that runs when the phone reaches an unmetered network with pictures waiting for it. */
+    private const val WIFI_ART = "music-wifi-art"
 
     /** Apply one listing: items replaced, errors against another version dropped (NY is phase B's).
      * A failed item whose url changed is retried at once by the plan (`mayRetry`). */
