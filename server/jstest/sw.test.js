@@ -120,6 +120,26 @@ test("a push shows its notification, then the badge, then posts the receipt", as
     assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown" });
 });
 
+// Safari 18.4+ shows a declarative push itself and fires `pushnotification`, not `push`
+// (the user's iPhone, 2026-10-19: pushes shown, "Nothing shown yet"): the worker shows
+// nothing more, sets the badge and posts the receipt from the notification Safari built.
+test("a declarative push on Safari sets the badge and posts the receipt without showing twice", async () => {
+    const w = fakeWorker();
+    const notification = { title: MESSAGE.notification.title, data: MESSAGE.notification.data };
+    await w.fire("pushnotification", { notification });
+    assert.deepStrictEqual(w.log.map((e) => e[0]), ["badge", "fetch"]);
+    assert.deepStrictEqual(w.log[0], ["badge", 3]);
+    const [, url, init] = w.log[1];
+    assert.strictEqual(url, "/notifications/receipt");
+    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown" });
+    // A declarative notification without our data (an old payload, or none): nothing posted, nothing thrown.
+    const bare = fakeWorker({ badge: false });
+    await bare.fire("pushnotification", { notification: { title: "x" } });
+    assert.deepStrictEqual(bare.log, []);
+    await bare.fire("pushnotification", {});
+    assert.deepStrictEqual(bare.log, []);
+});
+
 test("a push that can't be read still shows a notification, and posts nothing", async () => {
     for (const event of [pushOf("not json"), { data: null }, pushOf({ web_push: 8030 })]) {
         const w = fakeWorker({ badge: false });
@@ -178,5 +198,5 @@ test("a tap never leaves this server", async () => {
 
 test("no fetch handler: requests pass straight through", () => {
     const w = fakeWorker();
-    assert.deepStrictEqual(Object.keys(w.listeners).sort(), ["activate", "install", "notificationclick", "push"]);
+    assert.deepStrictEqual(Object.keys(w.listeners).sort(), ["activate", "install", "notificationclick", "push", "pushnotification"]);
 });

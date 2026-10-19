@@ -166,16 +166,62 @@ fn vapid(request: &PushRequest) -> (String, Value, String) {
 
 /// The receipt as the worker posts it (no cookie), from the loopback peer.
 async fn post_receipt(app: &TestApp, body: &str, site: &str) -> StatusCode {
-    let request = Request::builder()
+    post_receipt_with(app, body, &[("sec-fetch-site", site)]).await
+}
+
+/// A receipt with exactly these headers besides the content type.
+async fn post_receipt_with(app: &TestApp, body: &str, headers: &[(&str, &str)]) -> StatusCode {
+    let mut request = Request::builder()
         .method(Method::POST)
         .uri("/notifications/receipt")
-        .header(header::CONTENT_TYPE, "application/json")
-        .header("sec-fetch-site", site)
-        .body(Body::from(body.to_string()))
-        .unwrap();
+        .header(header::CONTENT_TYPE, "application/json");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request.body(Body::from(body.to_string())).unwrap();
     app.send_via(&app.router, super::LOOPBACK_PEER, request)
         .await
         .status
+}
+
+/// The receipt is the token's, not the browser's (design 35 §7): a WebKit service worker posts it
+/// with no Sec-Fetch-Site, and behind a proxy its Origin needn't match Host - the CSRF guard must
+/// let it through to the handler (the user's iPhone, 2026-10-19: every push shown, every receipt
+/// refused, "Nothing shown yet"). A forged one still gets a 404: it has no token.
+#[tokio::test]
+async fn a_receipt_needs_no_fetch_metadata_or_matching_origin() {
+    let app = TestApp::new().await;
+    let bad = json!({ "d": 1, "t": "AAAAAAAAAAAAAAAAAAAAAA", "a": "shown" }).to_string();
+    // No Sec-Fetch-Site, an Origin of another host: the handler answers (404: no such token).
+    assert_eq!(
+        post_receipt_with(
+            &app,
+            &bad,
+            &[(header::ORIGIN.as_str(), "https://pwa.example")]
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    // No metadata at all: the same.
+    assert_eq!(
+        post_receipt_with(&app, &bad, &[]).await,
+        StatusCode::NOT_FOUND
+    );
+    // Even a cross-site one reaches the handler: there is nothing a cookie could lend it.
+    assert_eq!(
+        post_receipt_with(&app, &bad, &[("sec-fetch-site", "cross-site")]).await,
+        StatusCode::NOT_FOUND
+    );
+    // Every other POST without a session is still the guard's business.
+    let other = Request::builder()
+        .method(Method::POST)
+        .uri("/notifications/read-all")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::ORIGIN, "https://pwa.example")
+        .body(Body::from("from=devices".to_string()))
+        .unwrap();
+    let res = app.send_via(&app.router, super::LOOPBACK_PEER, other).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN);
 }
 
 fn receipt_of(request: &PushRequest, action: &str) -> String {
@@ -740,9 +786,11 @@ async fn the_receipt() {
         post_receipt(&app, &wrong, "same-origin").await,
         StatusCode::NOT_FOUND
     );
+    // A receipt isn't the CSRF guard's business (2026-10-19: Safari's worker sends none of the
+    // metadata): a cross-site one reaches the handler, where only the token counts.
     assert_eq!(
-        post_receipt(&app, &receipt_of(&request, "shown"), "cross-site").await,
-        StatusCode::FORBIDDEN
+        post_receipt(&app, &wrong, "cross-site").await,
+        StatusCode::NOT_FOUND
     );
     let big = format!("{{\"d\":1,\"t\":\"{}\",\"a\":\"shown\"}}", "x".repeat(1100));
     assert_eq!(
