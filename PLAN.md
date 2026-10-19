@@ -500,13 +500,17 @@ findings, merge to `main`, full suite once.
   with the release Check Now found. The user's decisions (2026-10-19): one tap = the install happens at once, "ikke
   noe åpent tillatelsesvindu"; the download goes ahead whatever the connection setting says ("det er et valg
   forelderen tar"); the button lives only on the launcher's own page under Apps; no notification when it is done
-  ("dette ser jeg jo live fra pwa"). **Design 37** (`docs/design/37-install-now.md`, proposal 4ab337e1, design QA
-  and a revision in progress 2026-10-19).
+  ("dette ser jeg jo live fra pwa"). **Design 37** (`docs/design/37-install-now.md`, revised ae03013d; design QA
+  `docs/design/qa-37-design.md` approved with the listed changes, all folded into the one implementation step, in
+  progress 2026-10-19).
 - **Phone off / phone on notifications** (the user, 2026-10-19: "notification når tlf slås av/på ... Av og på varsel
   basert på oppstart/omstart og action_shutdown høres bra ut!"): `parent_events` kinds `phone_off` (from
   `ACTION_SHUTDOWN`, write-ahead in DE prefs, a best-effort POST, else reported at the next boot) and `phone_on`
   (boot), with the battery at shutdown as the probable reason; no server-side "lost contact" timer. **Design 38**
-  (`docs/design/38-phone-off-on.md`, in progress 2026-10-19). Replaces design 35's dropped "offline" alert.
+  (`docs/design/38-phone-off-on.md`, revised 671f5c6a: the `off` resent with the next boot's `on`, a 5-minute hold on
+  the server so a restart is one push, one shutdown receiver; design QA `docs/design/qa-38-design.md` approved with
+  the listed changes, all in the note). Implementation queued behind design 37 (one build at a time while the VM is
+  short of memory). Replaces design 35's dropped "offline" alert.
 
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
