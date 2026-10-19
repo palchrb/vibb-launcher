@@ -183,3 +183,84 @@ open question: Install Now with the fence off - allowed (proposed), or only with
 2. **A newer release during the grant**: agree with the note - the grant covers it; every APK check still runs.
 3. **Tell the parent when done**: no for now; the row and Recent say it. If anything later, a Failed answer, not Done.
 4. (new, M5) **Daytime installs with the update fence off**: recommended allowed, with the ⓘ sentence; the user decides.
+
+## Revision check (ae03013d)
+
+Re-read 2026-10-19 against `docs/design/37-install-now.md` at `ae03013d` (§9 Revision), merged into `qa-design-37`.
+The user's model replaces the grant: a one-time, non-expiring command that installs at once on any network, waiting
+only for a call or an emergency. Re-checked against `AppDownloads.kt` (the five gate sites, `RETRY_DELAYS_MS`,
+`MAX_HASH_FAILURES`, the refusal path), `calls/OngoingCalls.kt` (`addListener`), `SelfUpdate.kt` (`armIfPending`,
+`onScreenOn`, the one alarm `PendingIntent`), `commitPendingSelfUpdateIfDue`, `locate::cancel_command`, the pop.
+
+### The earlier findings
+
+- **M1** resolved: no grant window, no wall clock compared across the command (§1.10).
+- **M2** resolved: `install_now_download` worded from `app_downloads`; call/emergency/ready words; no backoff state
+  (skipped); failures answer at once.
+- **M3** resolved: one `gate(…)` helper behind all five sites, the override read live from the record.
+- **M4** resolved: `#phones` always rendered, `#phone-{id}` only for existing rows, every word posted in the tests.
+- **M5** partly: the ⓘ names the home screen; the other half of the minute is still unsaid - see R-M1 below.
+- **L1** reasonably declined: not expiring, so the three index-bound sites stay as they are.
+- **L2** resolved (`NoRelease` for a disabled row; "No answer" gives the button back). **L3** resolved. **L4**
+  resolved (no `expired:` answers; `lastWait` cleared). **L5** resolved (`superseded`, failed). **L6** moot (no
+  Advanced group; the ⓘ is a `details.info`). **L7** resolved. **L8** resolved (listener + 2-minute alarm; but R-L1).
+  **L9** resolved. **L10** resolved. **L11** resolved (stated, with the version-name compare).
+- **Nit 1** kept DE by choice - harmless, but its stated reason is off (R-N1). **Nit 2** kept, fine.
+
+### New findings
+
+**R-M1 (Medium). The ⓘ should also say that calls aren't screened for that minute.** QA 11 #8: the freeze kills
+the screening, redirection and in-call services, so any caller - a blocked number included - rings in the system's
+call screen while the install runs. At night that was a rare corner; Install Now makes it a routine daytime minute,
+at a moment the parent chose. Fix: one more clause in the ⓘ ("...and calls aren't filtered for that minute"). No
+code change; the user decided the at-once model knowing the home-screen half, this half should be in front of them too.
+
+**R-L1. A screen-off overwrites the 2-minute call re-check.** `armIfPending` (every screen-off with a pending APK)
+re-arms the one `SelfUpdateReceiver` alarm (request code 12, `FLAG_UPDATE_CURRENT`) with `commitCheckDelayMs` - the
+night-window delay, often hours. A record waiting on a call the listener can't see (VoIP, Telecom-only) then waits for
+the 30-min backstop instead of 2 minutes. Fix: with a record, `armIfPending` arms the record's recheck (or leaves the
+alarm alone).
+
+**R-L2. Commit-step outcomes that ask for no sync.** With a record, `MISSING`/`CORRUPT` at the commit drop the APK
+("downloading again at the next sync") and `SAME_VERSION` records it installed - all three return without a sync, so
+the row says "Installing" until the 30-min backstop. Fix: with a record, request a sync there (the settle then answers
+"Already on X", or the download restarts at once); a `CORRUPT` after the download's own hash check can go straight to
+`fail("download corrupt")`.
+
+**R-L3. The poll updates only the sub-lines.** After the fetch the Cancel button stays (it answers `too_late`), and
+after Done/Failed the Install Now button doesn't come back until a reload; it also polls every 5 s for up to 25 h.
+Fix: reuse `static/auto-reload.js` (it keeps the place, never reloads mid-save or with a `<details>` open) when the
+JSON's state word changes, else keep the `textContent` swap; stop while the page is hidden. No jump either way.
+
+**R-L4. A call that never ends holds the record indefinitely.** `liveCall` counts `telecomInCall == null` and, without
+READ_PHONE_STATE, an audio mode of `IN_COMMUNICATION`/`RINGTONE` - a background voice app can hold that for hours. With
+no expiry the record then keeps overriding Wi-Fi-only for the launcher's download and installs whenever the mode
+drops, possibly hours later; the server says "Waits for the call to end" for 25 h, then "No answer". Fix (a failure,
+not a window): after e.g. 6 h waiting on `CALL`, `fail("call never ended")`, worded "Not installed: a call stayed on";
+or state the accepted behaviour in §1.5.
+
+**R-N1.** §4.2's reason for DE is inaccurate: `SelfUpdate.init` runs from `initRest`, which `Application.onCreate`
+defers until the unlock (only the call policy and `BootClock` run while locked), so nothing reads the record before
+the first unlock. Keep DE if wanted; fix the sentence.
+
+**R-N2.** §4.2's "a refusal (`CatalogRefusal`) -> fail" never fires for the launcher: `CatalogRefusal` is the catalog
+install's PM pre-check, and the launcher's file goes to `storeSelfUpdate` unchecked - its package/signer refusals come
+from the commit's `pendingApkCheck` (already `fail("refused: <check>")`). Drop the bullet. Also say the pop maps
+`payload` to `release_tag` only for `install_update` (its payload is a plain tag, `allow_blocked`'s is JSON).
+
+### Checked and fine
+
+- `pending_command.release_tag` (`skip_serializing_if`, launcher `String? = null`) leaves the policy keys unchanged;
+  the compat test case with and without it is the right pin.
+- The prompt failure path: `RETRY_DELAYS_MS` = 30/60/120 s and `MAX_HASH_FAILURES` = 2 exist and are the run's own
+  give-up points; `WAIT_SPACE` can only fail once the size is known; `WAIT_NETWORK` waits. One `InstallNow.fail` +
+  one settle answers once.
+- "Done" from the new process: the record (command id, `requested_at`, `fromVersionCode`) survives the kill;
+  `installed beats a failure` in `installNowOutcome`; `command_result` is idempotent.
+- `OngoingCalls.addListener` exists; the call-end sync plus the commit's `installNowDecision` in both checks is right.
+- The four `install_now_*` words fit `MAX_WORD` (32); `wait_text` covers the three that come with a pending tag.
+- No expiry: `cancel_command`'s `NOT IN (expiring)` guard never applies, so Cancel works for the whole unfetched time;
+  the 25 h `Received` limit and "Waiting for the phone" are consistent with Recent's "Goes out when the phone is back".
+- Redirects: `#phone-{id}` / `#phones` with and without JS; the JS swap uses `textContent` and never scrolls.
+
+**Verdict: approve with the listed changes** (R-M1's ⓘ clause; the Lows can be done in the step).
