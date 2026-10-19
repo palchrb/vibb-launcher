@@ -778,6 +778,15 @@ findings, merge to `main`, full suite once.
   opens anything else; `EmergencyCall`'s flow and the `EmergencyDialer` fallback per number. Crosses the API
   (the policy's list, both directories in one commit). A mockup first.
 
+- **Episode pictures on demand, not by the sweep's clock** (the user, 2026-10-19, Snipp Snapp Snute stuck without
+  pictures on rc.4 until "Check now": "tlf må be server om filen med en gang"): today an item has a picture hash only
+  once the server's sweep fetched it, so the phone can't ask for what it doesn't know of, and an entry checked under
+  the old caps waits for its interval (6 h) - `art_more` is 0 for it after the 0.29.0 upgrade. (1) Migration 0082:
+  `art_more = 1` for every listing with items lacking a picture, so the first sweep after an upgrade fetches them.
+  (2) The phone reports in `music_state` the entries it wants pictures for and lacks (the playing one first, then the
+  ticked ones); the server makes them `Why::Art`-due now and wakes the sweep - the same channel as the item errors
+  (`music_check_requests`). Both sides in one commit (`music_state.json` contract). (3) Soften `failures == 0` in the
+  `Why::Art` rule: one bad episode URL shouldn't hold every picture for 6 h.
 - **A per-phone avatar as the push notification's icon** (the user, 2026-10-19: the phone's avatar with the round
   Vibb mark as a small tag bottom-right): the worker's `icon` (and the declarative payload's) can be any URL of ours,
   composited on the server from the phone's picture. Chrome/Edge/Brave/Samsung/Firefox show it; Safari (iPhone, Mac)
