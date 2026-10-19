@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -127,16 +128,36 @@ private data class CoverSlot(val decoded: DecodedCover<ImageBitmap>?, val missin
  * there yet is looked for again when a cover lands ([Store.coversVersion], QA M5).
  */
 @Composable
-fun coverBitmap(hash: String?): ImageBitmap? {
+fun coverBitmap(hash: String?, decodePx: Int? = null): ImageBitmap? {
     val context = LocalContext.current
     val version by Store.get(context).coversVersion.collectAsState()
-    val cached = hash?.let { bitmaps.get(it) }
-    val state = produceState(CoverSlot(null, null), hash, version) {
-        if (hash == null || !shouldDecode(hash, value.decoded, value.missing, version)) return@produceState
-        val image = loadCover(context, hash)
-        value = if (image != null) CoverSlot(DecodedCover(hash, image), null) else value.copy(missing = MissingCover(hash, version))
+    // A row's picture (design 39 §2.3) has its own slot and cache, keyed on hash and size.
+    val key = hash?.let { if (decodePx == null) it else "$it@$decodePx" }
+    val cached = key?.let { if (decodePx == null) bitmaps.get(it) else thumbs.get(it) }
+    val state = produceState(CoverSlot(null, null), key, version) {
+        if (hash == null || key == null || !shouldDecode(key, value.decoded, value.missing, version)) return@produceState
+        val image = if (decodePx == null) loadCover(context, hash) else loadThumb(context, hash, decodePx)
+        value = if (image != null) CoverSlot(DecodedCover(key, image), null) else value.copy(missing = MissingCover(key, version))
     }
-    return coverShown(hash, cached, state.value.decoded)
+    return coverShown(key, cached, state.value.decoded)
+}
+
+/** The list rows' pictures (design 39 §2.3), decoded small: a second cache beside [bitmaps], 2 MiB. */
+private val thumbs = object : LruCache<String, ImageBitmap>(2 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
+}
+
+/**
+ * A row's picture decoded off the main thread at [px] (`inSampleSize`, [thumbSampleSize]: the file is never decoded
+ * whole first), cached in [thumbs] as `"$hash@$px"`; null when there is no file. No small session copy is made.
+ */
+private suspend fun loadThumb(context: Context, hash: String, px: Int): ImageBitmap? = thumbs.get("$hash@$px") ?: withContext(Dispatchers.IO) {
+    val file = Store.get(context).coverFile(hash)
+    if (!file.exists()) return@withContext null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.path, bounds)
+    val options = BitmapFactory.Options().apply { inSampleSize = thumbSampleSize(minOf(bounds.outWidth, bounds.outHeight), px) }
+    BitmapFactory.decodeFile(file.path, options)?.asImageBitmap()?.also { thumbs.put("$hash@$px", it) }
 }
 
 /**
@@ -190,10 +211,13 @@ fun Cover(
     glyph: Dp,
     modifier: Modifier = Modifier,
     fallback: String? = null,
+    /** A list row's picture (design 39 §2.3): decoded for this size, in its own slot; null = the player's size. */
+    decodeDp: Dp? = null,
     content: @Composable () -> Unit = {},
 ) {
-    val own = coverBitmap(hash)
-    val other = coverBitmap(fallback.takeIf { it != hash })
+    val decodePx = decodeDp?.let { with(LocalDensity.current) { it.roundToPx() } }
+    val own = coverBitmap(hash, decodePx)
+    val other = coverBitmap(fallback.takeIf { it != hash }, decodePx)
     val bitmap = own ?: other
     val color = categoryColor(category)
     Box(

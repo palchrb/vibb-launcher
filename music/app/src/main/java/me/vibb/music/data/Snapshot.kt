@@ -14,8 +14,9 @@ import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.SPOTIFY_PLAYABLE
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.contextItem
+import me.vibb.music.logic.flipInEffect
 import me.vibb.music.logic.isSpotifyContext
-import me.vibb.music.logic.playOrder
+import me.vibb.music.logic.newestFirst
 import me.vibb.music.logic.visibleKeys
 import me.vibb.music.model.Entry
 import me.vibb.music.model.Library
@@ -37,6 +38,8 @@ fun buildSnapshot(
     shuffle: Set<String>,
     /** `spotify_context.json` (design 26c §5.9): a context-mode entry's live track, by entry key. */
     spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
+    /** `order_flips` (design 39 §3.1): entry key -> the parent's direction (newest first) at the kid's flip. */
+    flips: Map<String, Boolean> = emptyMap(),
 ): Snapshot {
     val byEntry = items.groupBy { it.entryId }
     val done = downloads.filter { it.done }.groupBy { it.entryId }.mapValues { (_, ds) -> ds.map { it.itemKey }.toSet() }
@@ -67,6 +70,7 @@ fun buildSnapshot(
         bookmarks = bookmarks.associate { it.entryKey to Bookmark(it.itemKey, it.posMs) },
         news = news.map { NewsItem(it.entryId, it.key, it.seq) },
         shuffle = shuffle,
+        flips = flips,
     )
 }
 
@@ -93,6 +97,8 @@ data class Snapshot(
     val remote: Boolean = false,
     /** Spotify items show (design 26c §4.2), since step 5b's player ([SPOTIFY_PLAYABLE]; the tests may turn it off). */
     val spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
+    /** The kid's order flips (design 39 §3.1): entry key -> the parent's direction at the tap (stale once it changed). */
+    val flips: Map<String, Boolean> = emptyMap(),
 ) {
     /**
      * This snapshot for a renderer: [remote] true for a Sonos room (the speaker fetches a Storytel book
@@ -119,7 +125,17 @@ data class Snapshot(
     }
 
     /** [entry]'s visible items in play order. */
-    fun order(entry: Entry): List<PlayItem> = playOrder(entry, visible(entry))
+    fun order(entry: Entry): List<PlayItem> = visible(entry).let { if (shownNewestFirst(entry)) it.asReversed().toList() else it }
+
+    /**
+     * Does [entry] show and play newest first - the parent's direction, or its opposite while the kid's flip is in
+     * effect (design 39 §3.2: the one seam; `playOrder` - the keep set, the downloads, the art's keep sets - stays the
+     * parent's).
+     */
+    fun shownNewestFirst(entry: Entry): Boolean = me.vibb.music.logic.shownNewestFirst(newestFirst(entry), flips[entry.key])
+
+    /** Is the kid's flip of [entry] in effect (the button peach)? */
+    fun flipped(entry: Entry): Boolean = flipInEffect(newestFirst(entry), flips[entry.key])
 
     /** The carousel's entries: those with something to play, in the parent's order. */
     val entries: List<Entry> by lazy {

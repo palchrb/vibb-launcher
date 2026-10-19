@@ -99,4 +99,13 @@ class QueueTest {
         assertEquals(QueuePlan(listOf("c", "a", "b"), 0, 99_000), homePlan(listOf("a", "b", "c"), "c", 99_000))
         assertEquals("an item gone from the order starts the order at 0", QueuePlan(listOf("a", "b"), 0, 0), homePlan(listOf("a", "b"), "x", 99_000))
     }
+
+    @Test
+    fun `d39 - a flip keeps the queue's own keys - what a room's queue left out stays out (QA M1)`() {
+        // newest first e d c b a, the room's queue without c (an HLS item), playing d; flipped to oldest first
+        val roomQueue = listOf("d", "b", "a", "e")
+        assertEquals(listOf("d", "e", "a", "b"), flippedQueue(listOf("a", "b", "c", "d", "e"), roomQueue, "d"))
+        assertEquals("the phone's whole queue", listOf("b", "c", "a"), flippedQueue(listOf("a", "b", "c"), listOf("b", "a", "c"), "b"))
+        assertEquals("flipped back", listOf("b", "a", "c"), flippedQueue(listOf("c", "b", "a"), listOf("b", "c", "a"), "b"))
+    }
 }

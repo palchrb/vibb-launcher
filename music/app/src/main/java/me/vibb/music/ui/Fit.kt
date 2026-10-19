@@ -218,5 +218,27 @@ fun playerPeek(widthDp: Float, artDp: Float): Float = (widthDp - artDp) / 2 - PL
 /** A neighbour scaled to [NEIGHBOUR_SCALE] is pulled in by what that took off its near edge, so its near edge stays put (QA L2 a). */
 fun playerPull(artDp: Float): Float = artDp * (1 - NEIGHBOUR_SCALE) / 2
 
+/**
+ * A list row's picture (design 39 §2.3): the `inSampleSize` that decodes a file of [sidePx] for a slot of [targetPx] -
+ * the largest power of two that keeps at least [targetPx] (512 px: 8 for 60 px, 4 for 120 px), so a row never
+ * decodes the whole 512 px first.
+ */
+fun thumbSampleSize(sidePx: Int, targetPx: Int): Int {
+    var sample = 1
+    while (targetPx > 0 && sidePx / (sample * 2) >= targetPx) sample *= 2
+    return sample
+}
+
+/** The episode list's sub-line glyph and its gap (dp): 16 + 6. */
+const val LIST_LINE_GLYPH_DP = 22f
+
+/**
+ * Do the order words stay on the list's line (design 39 §4)? The joined line ([lineDp], measured at the font scale)
+ * plus the glyph when it has one, within [availableDp]; else the line drops them - the button's look and its state
+ * description carry the order.
+ */
+fun orderWordsFit(lineDp: Float, glyph: Boolean, availableDp: Float): Boolean =
+    lineDp + (if (glyph) LIST_LINE_GLYPH_DP else 0f) <= availableDp
+
 /** The side (px) a cover file of [sidePx] decodes at on a screen of [density]: what the player's 224 dp needs, never more than the file. */
 fun coverDecodePx(sidePx: Int, density: Float): Int = minOf(sidePx, kotlin.math.ceil(PLAYER_ART_MAX_DP * density).toInt()).coerceAtLeast(1)

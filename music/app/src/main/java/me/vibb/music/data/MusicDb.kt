@@ -17,6 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import me.vibb.music.logic.KnownEntry
 import me.vibb.music.logic.Listed
+import me.vibb.music.logic.flippedQueue
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.keepPlayedAt
 import me.vibb.music.logic.newsAfter
@@ -108,6 +109,27 @@ data class ItemErrorRow(val entryId: Long, val itemKey: String, val version: Str
 
 @Entity(tableName = "shuffle")
 data class ShuffleRow(@PrimaryKey val entryKey: String, val on: Boolean)
+
+/**
+ * The kid's order flip of an entry (design 39 §3.1, Room 5): [parentNewestFirst] is the parent's effective direction
+ * at the tap - once it changes the row is stale (ignored, pruned at the next sync). Never synced or reported.
+ */
+@Entity(tableName = "order_flips")
+data class FlipRow(@PrimaryKey val entryKey: String, val parentNewestFirst: Boolean)
+
+/**
+ * The stored queue after a flip of [entryId] (design 39 §3.1, qa-39-design M5): [row]'s keys in [newOrder]'s direction
+ * from its current item (`flippedQueue`), index 0, the position kept - so restore, `RESUME`, Home's card and the bar's
+ * play continue the shown way. Null when the row is another entry's, shuffled, or has no current item.
+ */
+fun flippedNowPlaying(row: NowPlayingRow, entryId: Long, newOrder: List<String>, nowMs: Long): NowPlayingRow? {
+    if (row.entryId != entryId || row.shuffled) return null
+    val keys = row.keys.split('\n').filter { it.isNotEmpty() }
+    val current = keys.getOrNull(row.index) ?: return null
+    // its current item left the listing: rotating would put another item at the old place (qa-39-code N2)
+    if (current !in newOrder) return null
+    return row.copy(keys = flippedQueue(newOrder, keys, current).joinToString("\n"), index = 0, updatedAt = nowMs)
+}
 
 /** The last queue played (one row): back paused after a restart (21 §4.4). Keys joined by '\n'. */
 @Entity(tableName = "now_playing")
@@ -364,6 +386,33 @@ interface MusicDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertShuffle(row: ShuffleRow)
 
+    @Query("SELECT * FROM order_flips")
+    fun flipsFlow(): Flow<List<FlipRow>>
+
+    @Query("SELECT * FROM order_flips")
+    suspend fun allFlips(): List<FlipRow>
+
+    @Query("SELECT * FROM order_flips WHERE entryKey = :entryKey")
+    suspend fun flip(entryKey: String): FlipRow?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertFlip(row: FlipRow)
+
+    @Query("DELETE FROM order_flips WHERE entryKey = :entryKey")
+    suspend fun deleteFlip(entryKey: String)
+
+    /**
+     * The kid's flip of [entryKey] (design 39 §3.1): [parentNewestFirst] the parent's direction at the tap, or null to
+     * unflip; and in the same transaction the stored queue, when it is this entry's and not shuffled, in [newOrder]'s
+     * direction ([flippedNowPlaying], qa-39-design M5).
+     */
+    @Transaction
+    suspend fun setFlipTx(entryKey: String, parentNewestFirst: Boolean?, entryId: Long, newOrder: List<String>, nowMs: Long) {
+        if (parentNewestFirst == null) deleteFlip(entryKey) else upsertFlip(FlipRow(entryKey, parentNewestFirst))
+        val row = nowPlaying() ?: return
+        flippedNowPlaying(row, entryId, newOrder, nowMs)?.let { upsertNowPlaying(it) }
+    }
+
     @Query("SELECT * FROM now_playing WHERE id = 0")
     suspend fun nowPlaying(): NowPlayingRow?
 
@@ -388,9 +437,9 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
     entities = [
         ListingRow::class, ItemRow::class, SeenRow::class, NewsRow::class, PositionRow::class, BookmarkRow::class,
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
-        NewsBaselineRow::class,
+        NewsBaselineRow::class, FlipRow::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
@@ -400,6 +449,8 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         // Design 30: downloads.playedAt, nullable. Null on every existing row: nothing was played as an
         // extra before, so the first sync prunes outside the keep set as before.
         AutoMigration(from = 3, to = 4),
+        // Design 39: order_flips, a new table only. Empty: no entry is flipped.
+        AutoMigration(from = 4, to = 5),
     ],
 )
 abstract class MusicDb : RoomDatabase() {

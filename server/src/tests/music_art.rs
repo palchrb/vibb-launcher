@@ -625,7 +625,8 @@ async fn a_failed_picture_is_retried_daily_three_times_and_a_new_url_resets() {
 // ------------------------------------------------------------------------------------------------
 
 /// 20 requests a check, in play order (newest first for a feed); 400 a day server-wide, counting
-/// only requests; a request the budget stops leaves its item untried (QA L1 b).
+/// only requests; a request the budget stops leaves its item untried (QA L1 b). The day's last
+/// requests go to new items (design 39's reserve), so the second check brings ten.
 #[tokio::test]
 async fn twenty_a_check_and_400_a_day_in_play_order() {
     let app = TestApp::new().await;
@@ -669,16 +670,32 @@ async fn twenty_a_check_and_400_a_day_in_play_order() {
     .execute(&app.db)
     .await
     .unwrap();
+    let new_guids: Vec<String> = (30..40).map(|n| format!("i{n:02}")).collect();
+    let new_urls: Vec<String> = (30..40)
+        .map(|n| format!("https://example.org/n{n}.jpg"))
+        .collect();
+    let mut more = feed_items.clone();
+    more.extend(
+        new_guids
+            .iter()
+            .zip(&new_urls)
+            .map(|(g, u)| (g.as_str(), Some(u.as_str()))),
+    );
+    app.fetch.answer(feed, 200, art_feed(None, &more));
+    for url in &new_urls {
+        app.fetch.answer(url, 404, "");
+    }
     app.fetch.clear_calls();
     check(&app, id, t0() + TimeDelta::hours(1)).await;
-    // 20 at t0 + 375 = 395: 5 left.
+    // 20 at t0 + 375 = 395: 5 left, for the newest of the new items.
+    assert_eq!(calls_starting(&app, "https://example.org/n"), 5);
     assert_eq!(calls_starting(&app, "https://example.org/") - 1, 5);
     let untried = items(&app, id)
         .await
         .iter()
         .filter(|i| i.art_url.is_some() && i.art_from.is_none())
         .count();
-    assert_eq!(untried, 5, "the rest stays untried");
+    assert_eq!(untried, 15, "the rest stays untried");
     assert_eq!(
         sweep::art_requests_today(&app.db, t0() + TimeDelta::hours(1))
             .await
@@ -810,10 +827,10 @@ async fn a_dead_image_host_ends_the_pass_and_costs_no_tries() {
     );
 }
 
-/// Only the first 200 `ok` items in play order get pictures (`ART_WINDOW`); a `gone` item keeps
-/// what it has and gets nothing new; this check's new items go first.
+/// Every `ok` item is tried, past the 200 design 27 stopped at (design 39 §2.4: no window); a
+/// `gone` item keeps what it has and gets nothing new.
 #[tokio::test]
-async fn the_window_is_200_in_play_order_and_gone_items_get_nothing_new() {
+async fn every_ok_item_in_play_order_and_gone_items_get_nothing_new() {
     let app = TestApp::new().await;
     app.state.music_sweep.set_art_per_check(1000);
     let feed = "https://example.org/long.rss";
@@ -836,11 +853,7 @@ async fn the_window_is_200_in_play_order_and_gone_items_get_nothing_new() {
     check(&app, id, t0()).await;
     let list = items(&app, id).await;
     let tried: Vec<bool> = list.iter().map(|i| i.art_from.is_some()).collect();
-    assert!(
-        tried[..200].iter().all(|t| *t),
-        "oldest first: the first 200"
-    );
-    assert!(tried[200..].iter().all(|t| !*t));
+    assert!(tried.iter().all(|t| *t), "all 210 are tried");
 
     // g000 leaves the feed (gone) and changes its picture; nothing is fetched for it.
     let mut changed = feed_items.clone();
@@ -859,9 +872,145 @@ async fn the_window_is_200_in_play_order_and_gone_items_get_nothing_new() {
     assert_eq!(calls_to(&app, new_url), 0);
 }
 
+/// A feed of `n` items oldest first, each with its own picture URL (answered 404: tried, nothing
+/// stored), as `(guid, url)` pairs.
+fn long_feed(app: &TestApp, feed: &str, prefix: &str, n: usize) -> Vec<(String, String)> {
+    let pairs: Vec<(String, String)> = (0..n)
+        .map(|i| {
+            (
+                format!("{prefix}{i:03}"),
+                format!("https://img.example.org/{prefix}/{i}.jpg"),
+            )
+        })
+        .collect();
+    answer_long_feed(app, feed, &pairs);
+    pairs
+}
+
+fn answer_long_feed(app: &TestApp, feed: &str, pairs: &[(String, String)]) {
+    let feed_items: Vec<(&str, Option<&str>)> = pairs
+        .iter()
+        .map(|(g, u)| (g.as_str(), Some(u.as_str())))
+        .collect();
+    app.fetch.answer(feed, 200, art_feed(None, &feed_items));
+    for (_, url) in pairs {
+        app.fetch.answer(url, 404, "");
+    }
+}
+
+/// Design 39 §2.4: 250 items at the default 20 a check get candidates past item 200 over
+/// successive checks, the near end first (a feed newest first), whatever the entry's offline
+/// choice; a check after the day's 400 makes none.
+#[tokio::test]
+async fn a_long_feed_is_walked_past_200_over_checks() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/250.rss";
+    let id = rss_entry(&app, feed).await;
+    sqlx::query("UPDATE music_entries SET cache = 0 WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut pairs = long_feed(&app, feed, "l", 250);
+    check(&app, id, t0()).await;
+    let tried =
+        |list: &[sweep::Item]| -> Vec<bool> { list.iter().map(|i| i.art_from.is_some()).collect() };
+    let first = tried(&items(&app, id).await);
+    assert_eq!(first.iter().filter(|t| **t).count(), 20);
+    assert!(
+        first[230..].iter().all(|t| *t),
+        "the newest 20 first (the feed's near end)"
+    );
+    for n in 1..13 {
+        check(&app, id, t0() + TimeDelta::minutes(20 * n)).await;
+    }
+    let all = tried(&items(&app, id).await);
+    assert!(
+        all[..50].iter().all(|t| *t),
+        "past the first 200 in play order"
+    );
+    assert!(all.iter().all(|t| *t), "all 250 after 13 checks");
+    let later = t0() + TimeDelta::hours(5);
+    assert_eq!(
+        sweep::art_requests_today(&app.db, later).await.unwrap(),
+        250
+    );
+    // The day's 400 hold: with them spent, a check's new items get no request.
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 150) \
+         INSERT INTO music_art_requests (at) SELECT ? FROM n",
+    )
+    .bind(stamp(later))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    pairs.extend((0..5).map(|i| {
+        (
+            format!("m{i}"),
+            format!("https://img.example.org/m/{i}.jpg"),
+        )
+    }));
+    answer_long_feed(&app, feed, &pairs);
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::hours(6)).await;
+    assert_eq!(items(&app, id).await.len(), 255);
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 0);
+}
+
+/// qa-39-design M6: a backfill of older items stops when no more than [sweep::ART_DAY_RESERVE] of
+/// the day is left (at 300 used); a new item on another entry still gets its request.
+#[tokio::test]
+async fn a_backfill_leaves_the_days_reserve_to_new_items() {
+    assert!(sweep::art_backfill_allowed(sweep::ART_DAY_RESERVE + 1));
+    assert!(!sweep::art_backfill_allowed(sweep::ART_DAY_RESERVE));
+    let app = TestApp::new().await;
+    let long = "https://example.org/backfill.rss";
+    let id = rss_entry(&app, long).await;
+    long_feed(&app, long, "b", 250);
+    check(&app, id, t0()).await;
+    // another entry, listed once with one item (one request)
+    let other = "https://example.org/fresh.rss";
+    let fresh = rss_entry(&app, other).await;
+    long_feed(&app, other, "f", 1);
+    check(&app, fresh, t0()).await;
+    // 21 at t0 + 269 elsewhere = 290: 110 left, 10 above the reserve.
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 269) \
+         INSERT INTO music_art_requests (at) SELECT ? FROM n",
+    )
+    .bind(stamp(t0() + TimeDelta::minutes(10)))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    app.fetch.clear_calls();
+    check(&app, id, t0() + TimeDelta::minutes(30)).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/b/"), 10);
+    let at = t0() + TimeDelta::hours(1);
+    assert_eq!(sweep::art_requests_today(&app.db, at).await.unwrap(), 300);
+    app.fetch.clear_calls();
+    check(&app, id, at).await;
+    assert_eq!(
+        calls_starting(&app, "https://img.example.org/b/"),
+        0,
+        "the backfill waits for the next day"
+    );
+    // The other entry's new items take theirs from the reserve.
+    long_feed(&app, other, "f", 6);
+    check(&app, fresh, at).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/f/"), 5);
+    assert_eq!(sweep::art_requests_today(&app.db, at).await.unwrap(), 305);
+    // qa-39-code L2: a brand-new entry's first listing is a backfill - all its items are new, none spends the reserve.
+    let brand_new = "https://example.org/brand-new.rss";
+    let added = rss_entry(&app, brand_new).await;
+    long_feed(&app, brand_new, "n", 5);
+    check(&app, added, at).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/n/"), 0);
+    assert_eq!(items(&app, added).await.len(), 5);
+}
+
 /// A simulated day of 30 NRK podcasts with 100 episodes each (every one with its own picture) and
-/// 10 feeds: the first pass fetches at most 20 a check and 400 in all, and nothing more until the
-/// day is over.
+/// 10 feeds: the first pass fetches at most 20 a check and 300 in all (brand-new entries are a
+/// backfill and leave the reserve, qa-39-code L2), and nothing more until the day is over.
 #[tokio::test]
 async fn a_day_of_backfill_stays_within_the_budgets() {
     let app = TestApp::new().await;
@@ -945,7 +1094,10 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         calls_starting(app, "https://gfx.nrk.no/ep/")
             + calls_starting(app, "https://img.example.org/")
     };
-    assert_eq!(images(&app), sweep::ART_PER_DAY as usize);
+    assert_eq!(
+        images(&app),
+        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
+    );
     let per_entry: Vec<i64> = sqlx::query_scalar(
         "SELECT COUNT(*) FROM music_items WHERE art_fetched_at IS NOT NULL GROUP BY entry_id",
     )
@@ -970,7 +1122,10 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         app.state.music_sweep.set_clock(Some(next.max(now)));
         assert!(sweep::run_pass(&app.state).await);
     }
-    assert_eq!(images(&app), sweep::ART_PER_DAY as usize);
+    assert_eq!(
+        images(&app),
+        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
+    );
 }
 
 // ------------------------------------------------------------------------------------------------

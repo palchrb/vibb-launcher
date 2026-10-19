@@ -59,7 +59,9 @@ fun <T> nowWindow(queue: List<T>, index: Int, reach: Int = NOW_REACH): List<T> {
  * Nytt tray's; [ahead]: the Spotify list-mode entries' next tracks ([SPOTIFY_ART_AHEAD] each), last.
  * Library covers come their own way, so they are left out. Deduplicated, [now] first, at most
  * [WANT_ART_MAX] in all; the lists leave out what the phone already [held], [keep] includes it,
- * plus the [recent] pictures shown.
+ * plus the [recent] pictures shown. The episode list's held pictures ([list], design 39 §2.2) go right after
+ * [now] on the wire; [keep] is the set computed without them plus them, so the list never pushes a kept picture
+ * out of the prune's universe (qa-39-design L2).
  */
 fun wantedArt(
     now: List<String?>,
@@ -69,16 +71,75 @@ fun wantedArt(
     held: Set<String>,
     libraryCovers: Set<String>,
     ahead: List<String?> = emptyList(),
+    list: List<String> = emptyList(),
 ): WantedArt {
     fun own(hashes: List<String?>) = hashes.filter { isArtHash(it) && it !in libraryCovers }.map { it!! }.distinct()
     val nowAll = own(now).take(WANT_ART_NOW_MAX).toSet()
-    val ordered = (nowAll + own(kept + news + ahead)).take(WANT_ART_MAX) // a set: deduplicated, in order
+    val rest = own(kept + news + ahead)
+    val listOwn = own(list)
+    val base = (nowAll + rest).take(WANT_ART_MAX) // a set: deduplicated, in order
+    val ordered = (nowAll + listOwn + rest).take(WANT_ART_MAX)
     return WantedArt(
         now = ordered.filter { it in nowAll && it !in held },
         later = ordered.filter { it !in nowAll && it !in held },
-        keep = ordered.toSet() + recent.filter(::isArtHash),
+        keep = base.toSet() + listOwn + recent.filter(::isArtHash),
     )
 }
+
+/**
+ * Does `LiveBridge` send this want set (design 39 §2.2, qa-39-design H1)? The player's (not [force]d): when its
+ * `now` has something and differs from the last one sent. The list's ([force]): when [later] has a hash the last
+ * send's [sentLater] didn't, whatever `now` is - a downloaded episode plays, its neighbours' pictures came with their
+ * audio, `now` is empty (the launcher's `wantArtLists` takes an empty `now`).
+ */
+fun wantArtSend(now: List<String>, later: List<String>, sentNow: List<String>?, sentLater: Collection<String>?, force: Boolean): Boolean =
+    if (force) later.any { it !in sentLater.orEmpty() } else now.isNotEmpty() && now != sentNow
+
+// The episode list's pictures (design 39 §2; the user's call, not vibb's: vibb shows own art only in the playing row).
+
+/** Does the list show a picture per row? The carousel's rule over the rows shown, so the two never disagree. */
+fun rowPictures(items: List<PlayItem>, cover: String?): Boolean = showsCarousel(items, cover)
+
+/** The rows each side of the visible ones whose pictures are fetched too. */
+const val LIST_ART_MARGIN = 10
+
+/** At most this many list pictures are held (~3 MB), whatever else wants them. */
+const val LIST_ART_MAX = 60
+
+/** The art of the visible rows [first]..[last] of [shown] (the rows' art in their order) and [margin] each side, clamped. */
+fun listArtWindow(shown: List<String?>, first: Int, last: Int, margin: Int = LIST_ART_MARGIN): List<String?> {
+    if (shown.isEmpty()) return emptyList()
+    val from = (minOf(first, last) - margin).coerceIn(0, shown.size - 1)
+    val to = (maxOf(first, last) + margin).coerceIn(0, shown.size - 1)
+    return shown.subList(from, to + 1).toList()
+}
+
+/** The list's held pictures (`list_art.txt`: the entry id on the first line, then the hashes, newest window first). */
+data class ListArt(val entryId: Long, val hashes: List<String>) {
+    fun encode(): String = (listOf(entryId.toString()) + hashes).joinToString("\n")
+
+    companion object {
+        fun decode(text: String?): ListArt? {
+            val lines = text?.lines()?.filter { it.isNotEmpty() } ?: return null
+            val id = lines.first().toLongOrNull() ?: return null
+            return ListArt(id, lines.drop(1).filter(::isArtHash).distinct().take(LIST_ART_MAX))
+        }
+    }
+}
+
+/**
+ * The held list after [window] showed in [entryId]'s list: the window's own hashes first (never a library cover),
+ * then what was held, deduplicated, at most [LIST_ART_MAX]; another entry's list starts empty.
+ */
+fun listArtAfter(before: ListArt?, entryId: Long, window: List<String?>, libraryCovers: Set<String> = emptySet()): ListArt {
+    val own = window.filter { isArtHash(it) && it !in libraryCovers }.map { it!! }
+    val kept = before?.takeIf { it.entryId == entryId }?.hashes.orEmpty()
+    return ListArt(entryId, (own + kept).distinct().take(LIST_ART_MAX))
+}
+
+/** Does [window] hold a picture the phone lacks ([held]: the covers dir)? Only then is the want set computed (QA L7). */
+fun listArtMissing(window: List<String?>, held: Set<String>, libraryCovers: Set<String>): Boolean =
+    window.any { isArtHash(it) && it !in libraryCovers && it !in held }
 
 /** The recent pictures after [shown] (newest first), at most [RECENT_ART_MAX]. */
 fun recentArt(recent: List<String>, shown: List<String?>): List<String> =

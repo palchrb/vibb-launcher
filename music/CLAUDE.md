@@ -454,6 +454,41 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `Store.coversVersion` moves when a cover lands or goes: slots retry, the player swaps the current item's artwork
   in place (`Renderer.replaceItem`: on the phone `replaceMediaItem`, the same source so playback goes on; on a Sonos
   room only the session player's item, no SOAP).
+- **The episode list's pictures and the kid's order flip** (design 39; **the user's decisions, not vibb's**: vibb's
+  list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
+  `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
+  the playing one ringed; a row whose `artHash` is null shows the series cover with its number under `Palette.scrim`
+  (by the listing's hash, so it never changes as files land). The list judges the rows it shows, the carousel the queue: on a room's
+  speaker-playable queue (or a stored queue that lost items) the two may differ (qa-39-code N1). `decodeDp` decodes with `inSampleSize`
+  (`thumbSampleSize`) into its own 2 MiB LRU (`thumbs`, `"$hash@$px"`), its own slot; no small session copy. The
+  list reports its visible rows (settled 1 s) to `ListArtWants.note`: the held list `filesDir/music/list_art.txt`
+  (`listArtAfter`: the window - the visible rows and `LIST_ART_MARGIN` 10 each side - first, own hashes only, at most
+  `LIST_ART_MAX` 60, another entry's list starts empty); only when the window lacks a picture is the want set computed
+  and posted to main as a forced `LiveBridge.wantArt` (`wantArtSend`: forced = a `later` hash the last send didn't
+  have, whatever `now` is; LiveBridge keeps `sentLater`). `ArtWants.compute` reads `list_art.txt` itself, so every
+  sender carries the list (`wantedArt`'s `list`: on the wire after `now`; `keep` = the 600 without it plus it, so the
+  prune never loses a kept picture to it, QA L2). **The flip**: Room 5 `order_flips` (`FlipRow(entryKey,
+  parentNewestFirst)`, auto migration 4 -> 5, never synced or reported), written by the UI side
+  (`MusicViewModel.flip` -> `Store.setFlip` -> `MusicDao.setFlipTx`, which in the same transaction rewrites the stored
+  `NowPlayingRow` when it is this entry's and unshuffled: `flippedNowPlaying` = `flippedQueue` from its current item,
+  index 0, the place kept - restore, `RESUME`, Home's card and the bar continue the shown way, QA M5); then, only to a
+  live player, `Commands.FLIP_ORDER` with the entry key and the new direction (L9): `PlaybackService.flipOrder` reverses
+  `Active.order` (a `var`, with `shownNewestFirst`), the queue becomes `flippedQueue(newOrder, queueKeys, current)` (a
+  room's speaker-playable queue stays that, M1) and `renderer.reorder` - the phone's ExoPlayer, the Sonos controller's
+  bookkeeping (no SOAP), and Spotify list mode (`SpotifyRenderer.reorder`: tracks replaced at once; playing, a fresh
+  start at the current place (`positionMs()`, the measurement carried on - never the last state's raw position,
+  qa-39-code M1) coalesced like a step; paused, no call and `windowStale` so the next Play is a fresh
+  start, never an SDK resume in Spotify's old window; `SpotifyTracker.reorder` keeps the adds, L10). **The one seam**
+  is `Snapshot.order` (`shownNewestFirst(newestFirst(entry), flips[key])`: a row whose parent direction no longer
+  matches is stale - ignored, pruned at the next sync with a gone entry's, `flipsToDelete`): every play path, the
+  numbers, "N av M", the cover's hint and progress and Spotify's `ahead` follow it; `playOrder` - the keep set, the
+  download plan, the art's keep sets, `NewItems`, the server's `keep_end` - stays the parent's. The header's trailing
+  slot is the button (`Icons.flipOrder`, `R.string.flip_order`, peach when flipped, `selected` + the order words as
+  its state description; hidden for a Spotify context, while shuffled, below two rows); the line under it joins the
+  summary and `orderWords` (by kind) with " · ", dropping the words when they don't fit (`orderWordsFit`, measured
+  at the font scale). After a flip the list scrolls to the playing row. Tests: `OrderFlipTest`, `EpisodeArtTest`'s
+  `d39`, `QueueTest`, `FitTest`, `SpotifyRendererTest`/`SpotifyTrackerTest`'s `d39`, `SonosControllerTest`'s `d39`;
+  the emulator round is `docs/testing/emulator.md` §6q.
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item
   (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; until that first
   play every listing is only acknowledged (the baseline is open: no news at all); known keys only grow;

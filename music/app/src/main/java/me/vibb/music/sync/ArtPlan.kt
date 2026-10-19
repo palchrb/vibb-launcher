@@ -1,6 +1,12 @@
 package me.vibb.music.sync
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.logic.listArtMissing
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
@@ -31,7 +37,16 @@ import me.vibb.music.playback.PlayerHub
  * art is in the library's covers. The played extras' pictures are kept with the keep sets' (design 30
  * §1.11, L3: a kept episode's picture stays as long as its audio). Pure; EpisodeArtTest.
  */
-fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<String>, recent: List<String>, extras: List<DownloadRow> = emptyList()): WantedArt {
+fun artWant(
+    snap: Snapshot,
+    nowQueue: List<PlayItem>,
+    nowIndex: Int,
+    held: Set<String>,
+    recent: List<String>,
+    extras: List<DownloadRow> = emptyList(),
+    /** The episode list's held pictures (design 39 §2.2, `list_art.txt`). */
+    list: List<String> = emptyList(),
+): WantedArt {
     val lib = snap.library
     val kept = mutableListOf<String?>()
     val ahead = mutableListOf<String?>()
@@ -62,7 +77,7 @@ fun artWant(snap: Snapshot, nowQueue: List<PlayItem>, nowIndex: Int, held: Set<S
     }
     kept += extras.map { snap.item(it.entryId, it.itemKey)?.artHash }
     val news = snap.news.map { snap.item(it.entryId, it.key)?.artHash }
-    return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty(), ahead)
+    return wantedArt(nowWindow(nowQueue, nowIndex).map { it.artHash }, kept, news, recent, held, lib?.covers.orEmpty(), ahead, list)
 }
 
 /** The queue the player holds (live), else the stored one, with its current index; empty when there is none. */
@@ -77,13 +92,36 @@ fun nowQueue(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<Li
     return queue to queue.indexOfFirst { it.key == current }
 }
 
-/** The want set now, from the store and the player (off the main thread). */
+/**
+ * The want set now, from the store and the player (off the main thread). It reads the list's held pictures itself
+ * (design 39 §2.2), so every sender - the player, the sync's end, the list - carries them: no `later` ever goes
+ * without them (which would drop list pictures in flight, design 27 QA L4), and the prune keeps them.
+ */
 object ArtWants {
     suspend fun compute(context: Context): WantedArt {
         val store = Store.get(context)
         val snap = store.snapshot()
         val (queue, index) = nowQueue(snap, PlayerHub.state.value, store.db.nowPlaying())
         val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras
-        return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras)
+        return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())
+    }
+}
+
+/**
+ * The episode list's rows showed (design 39 §2.2): [window] (`listArtWindow`: the visible rows' art and 10 each side)
+ * of [entryId]'s list. Updates the held list; when the window lacks nothing on the phone it stops there (no want set
+ * per scroll), else computes the want set and posts it to the main thread as a forced `LiveBridge.wantArt` (the
+ * launcher fetches `later` with the downloads' network gate).
+ */
+object ListArtWants {
+    private val main = Handler(Looper.getMainLooper())
+
+    suspend fun note(context: Context, entryId: Long, window: List<String?>) = withContext(Dispatchers.IO) {
+        val store = Store.get(context)
+        val covers = store.library()?.covers.orEmpty()
+        store.noteListArt(entryId, window, covers)
+        if (!listArtMissing(window, store.coverHashes(), covers)) return@withContext
+        val want = ArtWants.compute(context)
+        main.post { LiveBridge.wantArt(want.now, want.later, force = true) }
     }
 }

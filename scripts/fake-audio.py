@@ -26,16 +26,36 @@ played to its end, settles into a copy (check 5).
 The library entry for it is a `lan` RSS entry (a private address is refused for a public one, 21b
 §2.7): the emulator reaches the host's loopback as 10.0.2.2. The log shows every request with its
 Range and the total length served.
+
+Design 39 (episode pictures in the list, the server's art pass for every item; emulator.md §6q):
+
+    python3 -I scripts/fake-audio.py --feed 250 --hls 4    # an RSS feed of 250 items with their own pictures
+
+    GET /feed.xml            --feed N: an RSS feed of N items (f001..fN, oldest first), each with its own
+                             itunes:image, every third the channel picture's URL (the server judges it
+                             `same` by URL, no request); image URLs name the feed request's Host (the
+                             address the server used), enclosures --advertise (the emulator's view);
+                             --hls K: item K's enclosure is /audio/fK.m3u8 (listed `hls: true`; nothing
+                             plays behind it - a Sonos room leaves it out of its queue)
+    GET /img/<n>.png         512 px grey PNGs the server judges `own`: a 9x8 grid of blocks, one per cell
+    GET /img/channel.png     of the server's print (`photos::print_image`: grey, 9x8, triangle filter,
+                             a bit per horizontal pair), levels 64 apart, seeded per n; the selftest models
+                             the print and its filter and checks 12-52 bits, every pair apart, and more than
+                             12 bits between any two pictures, the channel picture included
 """
 
 import argparse
 import http.client
 import json
+import random
 import re
+import struct
 import sys
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from xml.sax.saxutils import escape
 
 T0 = time.monotonic()
 RATE = 22050          # Hz, 16-bit mono: 44 100 bytes a second of silence
@@ -60,6 +80,98 @@ def duration_ms(size):
     return (size - HEADER) * 1000 // (RATE * 2)
 
 
+# --- design 39: the feed's pictures ---------------------------------------------------------------
+
+PIC = 512                       # px, the server's art size
+LEVELS = (32, 96, 160, 224)     # the blocks' greys: neighbours differ by 64 or more
+BLUR = (0.125, 0.75, 0.125)     # the triangle filter's share at 512 -> 9x8: a block 3/4, each neighbour 1/8 per axis
+BLUR_MARGIN = 16                # the filtered neighbours stay this far apart (the bits survive the filter and JPEG)
+MIN_APART = 13                  # bits between any two pictures (the server's same picture is 5 or fewer)
+
+
+def bits_of(cells):
+    """The server's print of a 9x8 grid of greys: a bit per horizontal pair, left brighter than right."""
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = bits << 1 | (1 if cells[y][x] > cells[y][x + 1] else 0)
+    return bits
+
+
+def blurred(grid, y):
+    """Row y of the 9x8 cells as the triangle filter gives them from the blocks (renormalised at the edges)."""
+    row = []
+    for x in range(9):
+        s = wsum = 0.0
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < len(grid) and 0 <= xx < 9:
+                    w = BLUR[dy + 1] * BLUR[dx + 1]
+                    s += w * grid[yy][xx]
+                    wsum += w
+        row.append(s / wsum)
+    return row
+
+
+def holds(grid, y):
+    """Row y's print survives the filter: the same bits as its blocks, every pair BLUR_MARGIN apart."""
+    cells = blurred(grid, y)
+    return all((cells[x] > cells[x + 1]) == (grid[y][x] > grid[y][x + 1]) and abs(cells[x] - cells[x + 1]) >= BLUR_MARGIN
+               for x in range(8))
+
+
+def grid_for(rnd):
+    """A 9x8 grid of block greys, row by row, each row kept only when the one above it still holds."""
+    while True:
+        grid = []
+        for y in range(8):
+            for _ in range(200):
+                row = [rnd.choice(LEVELS)]
+                for _x in range(8):
+                    row.append(rnd.choice([g for g in LEVELS if g != row[-1]]))
+                grid.append(row)
+                if (y == 0 or holds(grid, y - 1)) and (y < 7 or holds(grid, 7)):
+                    break
+                grid.pop()
+            else:
+                break
+        if len(grid) == 8:
+            return grid
+
+
+def pictures(n):
+    """The channel picture (index 0) and items 1..n: seeded per index, each more than MIN_APART - 1 bits from the ones before."""
+    grids, prints = [], []
+    for i in range(n + 1):
+        rnd = random.Random(f"fake-audio-picture-{i}")
+        while True:
+            grid = grid_for(rnd)
+            b = bits_of(grid)
+            if 12 <= bin(b).count("1") <= 52 and all(bin(b ^ p).count("1") >= MIN_APART for p in prints):
+                break
+        grids.append(grid)
+        prints.append(b)
+    return grids
+
+
+def png(grid):
+    """A 512 px 8-bit grey PNG of the grid's blocks (stdlib zlib/struct)."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    rows = bytearray()
+    for py in range(PIC):
+        line = grid[py * 8 // PIC]
+        rows.append(0)
+        rows.extend(line[px * 9 // PIC] for px in range(PIC))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", PIC, PIC, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b""))
+
+
+def feed_key(n):
+    return f"f{n:03d}"
+
+
 class Host:
     """The fake's state: the episodes and how many requests each has had."""
 
@@ -68,6 +180,14 @@ class Host:
         for k in self.keys:
             if not KEY.match(k):
                 raise SystemExit(f"--episodes: {k!r} is not an item key")
+        # design 39: the feed's items play from this host too; their pictures are made once
+        self.feed = getattr(args, "feed", 0) or 0
+        self.hls = getattr(args, "hls", None)
+        if self.hls is not None and not 1 <= self.hls <= self.feed:
+            raise SystemExit("--hls K needs --feed N with 1 <= K <= N")
+        self.keys += [feed_key(n) for n in range(1, self.feed + 1)]
+        self.grids = pictures(self.feed) if self.feed else []
+        self.pngs = {}
         self.size = HEADER + int(args.mb * 1_000_000) // 2 * 2
         self.vary, self.step = args.vary, args.step // 2 * 2
         self.advertise, self.port = args.advertise, args.port
@@ -80,6 +200,34 @@ class Host:
             n = self.requests.get(key, 0)
             self.requests[key] = n + 1
         return self.size + (n * self.step if self.vary else 0)
+
+    def picture(self, n):
+        """Picture n's PNG (0 = the channel's), made once."""
+        with self.lock:
+            if n not in self.pngs:
+                self.pngs[n] = png(self.grids[n])
+            return self.pngs[n]
+
+    def feed_xml(self, host_header):
+        """The RSS feed (design 39): items oldest first; image URLs on the Host the server used, enclosures on --advertise."""
+        img = f"http://{host_header}/img"
+        audio = f"http://{self.advertise}:{self.port}/audio"
+        out = ['<?xml version="1.0" encoding="UTF-8"?>',
+               '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>',
+               "<title>Fake feed with pictures</title>", f'<itunes:image href="{escape(img)}/channel.png"/>']
+        for n in range(1, self.feed + 1):
+            key = feed_key(n)
+            picture = f"{img}/channel.png" if n % 3 == 0 else f"{img}/{n}.png"
+            if n == self.hls:
+                enclosure = f'<enclosure url="{escape(audio)}/{key}.m3u8" type="application/vnd.apple.mpegurl"/>'
+            else:
+                enclosure = f'<enclosure url="{escape(audio)}/{key}.wav" type="audio/wav" length="{self.size}"/>'
+            date = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(1_767_225_600 + n * 3600))
+            out.append(f"<item><title>Bilde {n}</title><guid>{key}</guid>{enclosure}"
+                       f'<itunes:image href="{escape(picture)}"/><itunes:duration>{duration_ms(self.size) // 1000}</itunes:duration>'
+                       f"<pubDate>{date}</pubDate></item>")
+        out.append("</channel></rss>")
+        return "\n".join(out).encode()
 
     def listing(self, entry, version):
         """A listing document (design 21b §2.4) for the debug feed: the episodes oldest first."""
@@ -107,7 +255,29 @@ def handler_for(host):
             self.audio(body=False)
 
         def do_GET(self):
+            if host.feed and (self.path == "/feed.xml" or self.path.startswith("/img/")):
+                return self.feed_or_picture()
             self.audio(body=True)
+
+        def body(self, status, kind, data):
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def feed_or_picture(self):
+            if self.path == "/feed.xml":
+                where = self.headers.get("Host") or f"127.0.0.1:{host.port}"
+                log(f"GET /feed.xml: {host.feed} items, pictures on {where}")
+                return self.body(200, "application/rss+xml", host.feed_xml(where))
+            m = re.match(r"^/img/(channel|\d+)\.png$", self.path)
+            n = None if not m else 0 if m.group(1) == "channel" else int(m.group(1))
+            if n is None or n > host.feed:
+                log(f"GET {self.path}: 404")
+                return self.send(404)
+            log(f"GET {self.path}: 200")
+            self.body(200, "image/png", host.picture(n))
 
         def audio(self, body):
             m = re.match(r"^/audio/([^/?]+)\.wav(\?.*)?$", self.path)
@@ -165,7 +335,7 @@ def serve(host, bind):
 
 def selftest():
     def start(**over):
-        ns = argparse.Namespace(episodes="ep1,ep2", mb=0.2, vary=False, step=4096, advertise="127.0.0.1", port=0)
+        ns = argparse.Namespace(episodes="ep1,ep2", mb=0.2, vary=False, step=4096, advertise="127.0.0.1", port=0, feed=0, hls=None)
         for k, v in over.items():
             setattr(ns, k, v)
         host = Host(ns)
@@ -216,6 +386,53 @@ def selftest():
         print("2. --vary: request n serves n x --step more bytes, per episode, each a valid WAV OK")
     finally:
         srv.shutdown()
+
+    # 3. --feed 250 --hls 4 (design 39): the feed, its addresses, and pictures the server judges `own`
+    host, srv = start(feed=250, hls=4, advertise="10.0.2.2")
+    try:
+        status, headers, body = get(host, "/feed.xml", {"Host": "127.0.0.1:9999"})
+        assert status == 200 and headers["Content-Type"] == "application/rss+xml", (status, headers)
+        text = body.decode()
+        items = re.findall(r"<item>(.*?)</item>", text)
+        assert len(items) == 250, len(items)
+        for n, item in enumerate(items, start=1):
+            image = re.search(r'<itunes:image href="([^"]+)"', item).group(1)
+            enclosure = re.search(r'<enclosure url="([^"]+)"', item).group(1)
+            want = "http://127.0.0.1:9999/img/" + ("channel.png" if n % 3 == 0 else f"{n}.png")
+            assert image == want, (n, image)
+            ext = "m3u8" if n == 4 else "wav"
+            assert enclosure == f"http://10.0.2.2:{host.port}/audio/{feed_key(n)}.{ext}", (n, enclosure)
+        assert '<itunes:image href="http://127.0.0.1:9999/img/channel.png"/>' in text.split("<item>")[0]
+        assert get(host, f"/audio/{feed_key(250)}.wav", {"Range": "bytes=0-9"})[0] == 206, "a feed item plays"
+        # the pictures: the print from the block levels, every compared pair apart, the filter can't flip a bit
+        prints = []
+        for n, grid in enumerate(host.grids):
+            b = bits_of(grid)
+            assert 12 <= bin(b).count("1") <= 52, (n, bin(b).count("1"))
+            assert all(abs(row[x] - row[x + 1]) >= 32 for row in grid for x in range(8)), n
+            assert all(holds(grid, y) for y in range(8)), n
+            assert bits_of([blurred(grid, y) for y in range(8)]) == b, n
+            prints.append(b)
+        apart = min(bin(a ^ b).count("1") for i, a in enumerate(prints) for b in prints[i + 1:])
+        assert apart > 12, apart
+        # a PNG of 512 px whose blocks are the grid's (decoded here: the IDAT rows, filter 0)
+        for n in (0, 1, 250):
+            status, headers, data = get(host, "/img/channel.png" if n == 0 else f"/img/{n}.png")
+            assert status == 200 and headers["Content-Type"] == "image/png" and data[:8] == b"\x89PNG\r\n\x1a\n", n
+            w, h, depth, colour = struct.unpack(">IIBB", data[16:26])
+            assert (w, h, depth, colour) == (PIC, PIC, 8, 0), (w, h, depth, colour)
+            idat = data[data.index(b"IDAT") + 4:data.index(b"IEND") - 8]
+            raw = zlib.decompress(idat)
+            grid = host.grids[n]
+            for by in range(8):
+                for bx in range(9):
+                    py, px = by * 64 + 32, int((bx + 0.5) * PIC / 9)
+                    assert raw[py * (PIC + 1) + 1 + px] == grid[by][bx], (n, by, bx)
+        assert get(host, "/img/251.png")[0] == 404 and get(host, "/img/x.png")[0] == 404
+        print(f"3. --feed 250 --hls 4: the feed on the request's Host, every third the channel picture, item 4 HLS; "
+              f"251 pictures, 12-52 bits, pairs apart through the filter, at least {apart} bits between any two OK")
+    finally:
+        srv.shutdown()
     print("\nFAKE AUDIO SELFTEST OK")
 
 
@@ -230,6 +447,9 @@ def main():
     p.add_argument("--mb", type=float, default=20.0, help="each episode's size in MB (default %(default)s)")
     p.add_argument("--vary", action="store_true", help="serve another total length at every request (ads stitched per request)")
     p.add_argument("--step", type=int, default=65536, help="--vary's growth per request in bytes (default %(default)s)")
+    p.add_argument("--feed", type=int, default=0, metavar="N",
+                   help="serve /feed.xml: an RSS feed of N items with their own pictures, /img/<n>.png (design 39)")
+    p.add_argument("--hls", type=int, metavar="K", help="with --feed: item K's enclosure is an HLS playlist (.m3u8)")
     p.add_argument("--print-listing", type=int, metavar="ENTRY",
                    help="print the listing of these episodes for library entry ENTRY (debug-feed/items/ENTRY.json) and exit")
     p.add_argument("--version", default="00aa00aa00aa00aa", help="the listing's version for --print-listing (default %(default)s)")

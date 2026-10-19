@@ -518,6 +518,23 @@ class SonosControllerTest {
     }
 
     @Test
+    fun `d39 - a flip while ep2 plays reorders the queue, sends the speaker nothing, and next goes the shown way`() {
+        r.start(index = 1)
+        r.speaker("0:03:00")
+        r.poll()
+        val sent = r.spk.commands.toList()
+        // the service's flippedQueue: oldest first ep1 ep2 ep3 -> newest first from ep2: ep2 ep1 ep3
+        r.c.reorder(1, listOf(r.items[0], r.items[2]))
+        assertEquals(listOf("ep2", "ep1", "ep3"), r.c.items.map { it.key })
+        assertEquals(0, r.c.index)
+        assertEquals("the speaker plays on: nothing sent", sent, r.spk.commands)
+        assertTrue(r.c.showsPlaying(r.now))
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertEquals("next is ep1, the shown direction", r.url(0), r.host.played.last().second)
+    }
+
+    @Test
     fun `a failed step is dropped and the worker lives on`() {
         playing()
         r.work.failNext = SpeakerUnreachable("burp")

@@ -417,6 +417,62 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- design 39 §3.3 (qa-39-design M2): the kid's order flip in list mode ---
+
+    /** The service's reorder after a flip at the current [keep]: [order] is the queue's new order, the current first. */
+    private fun SpotifyRenderer.flip(keep: Int, order: List<Int>) = reorder(keep, order.drop(1).map { mediaItems(5)[it] })
+
+    @Test
+    fun `d39 - a flip while paused makes no call, and the next Play is a fresh start in the new order`() = runBlocking {
+        val r = playing(at = 2)
+        post(state(2, 30_000))
+        r.pause()
+        post(state(2, 30_000, paused = true))
+        val plays = api.plays().size
+        r.flip(2, listOf(2, 1, 0, 4, 3))
+        advance(1_000)
+        assertEquals("no call at all", plays, api.plays().size)
+        assertEquals(0, r.currentIndex())
+        assertFalse(r.showsPlaying)
+        r.play()
+        advance(0)
+        assertEquals(plays + 1, api.plays().size)
+        assertEquals("the new order from the current track", listOf(2, 1, 0, 4, 3).map { uri(it) }, windowOf(api.plays().last()))
+        assertEquals("at its place", 30_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        assertFalse("never an SDK resume inside Spotify's old window", page.calls.contains("vibb.resume()"))
+        r.release()
+    }
+
+    @Test
+    fun `d39 - two flips within 300 ms while playing are one play call of the last order, never from 0_00`() = runBlocking {
+        val r = playing(at = 2)
+        post(state(2, 40_000))
+        val plays = api.plays().size
+        r.flip(2, listOf(2, 1, 0, 4, 3))
+        advance(100)
+        r.flip(0, listOf(2, 3, 4, 0, 1)) // flipped back
+        advance(299)
+        assertEquals("coalesced: nothing yet", plays, api.plays().size)
+        advance(1)
+        assertEquals("one PUT for both flips", plays + 1, api.plays().size)
+        assertEquals(listOf(2, 3, 4, 0, 1).map { uri(it) }, windowOf(api.plays().last()))
+        assertEquals("the measured place, not 0:00", 40_000L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        assertTrue("the same item plays on: no item change for the service", events.filterIsInstance<RendererEvent.ItemChanged>().none { it.index == 0 })
+        r.release()
+    }
+
+    @Test
+    fun `qa-39-code M1 - a flip 10 s after the last state restarts where it plays, not at the last state`() = runBlocking {
+        val r = playing(at = 2)
+        post(state(2, 40_000))
+        advance(10_000)
+        r.flip(2, listOf(2, 1, 0, 4, 3))
+        advance(300)
+        val pos = body(api.plays().last())["position_ms"]!!.jsonPrimitive.long
+        assertTrue("about 50 000, was $pos", pos in 49_000..51_000)
+        r.release()
+    }
+
     @Test
     fun `the natural advance sends nothing, and the window's end adds the next item to Spotify's queue one ahead`() = runBlocking {
         val r = playing(count = 60)

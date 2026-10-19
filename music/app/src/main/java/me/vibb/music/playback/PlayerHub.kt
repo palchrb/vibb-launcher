@@ -32,6 +32,16 @@ object Commands {
      * `renderer.seekTo`, a room's `stepTo`; design 26a, the merge of design 27). */
     const val SKIP_TO = "me.vibb.music.SKIP_TO"
 
+    /**
+     * The kid's order flip (design 39 §3.3): sent by the list only to a live player, after `Store.setFlip` has
+     * returned (qa-39-design L9), with the entry's key ([ARG_ENTRY_KEY]) and the new shown direction
+     * ([ARG_NEWEST_FIRST]) - the service uses them, not a snapshot that might predate the row; another entry's is
+     * dropped. The queue goes the new way from the current item, which plays on. Not a play.
+     */
+    const val FLIP_ORDER = "me.vibb.music.FLIP_ORDER"
+    const val ARG_ENTRY_KEY = "entry_key"
+    const val ARG_NEWEST_FIRST = "newest_first"
+
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
@@ -52,7 +62,7 @@ object Commands {
     const val THEN_SKIP_TO = "skip_to"
 
     val ALL: List<SessionCommand> =
-        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO).map { SessionCommand(it, Bundle.EMPTY) }
+        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER).map { SessionCommand(it, Bundle.EMPTY) }
 
     /**
      * The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): a call that rings or is up

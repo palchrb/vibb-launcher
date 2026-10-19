@@ -28,7 +28,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   fixtures; §6i), `fake-spotify.py` (a fake Spotify - the accounts service with PKCE, the Web API the server and the
   phone use, a stub Web Playback SDK playing a tone - answering from `server/testdata/spotify/` and the music app's
   Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-audio.py` (a fake podcast host of
-  silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f).
+  silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f;
+  `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
+  39's list pictures and order flip; §6q).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
