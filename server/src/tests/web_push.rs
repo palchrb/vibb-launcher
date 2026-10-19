@@ -786,9 +786,11 @@ async fn the_receipt() {
         post_receipt(&app, &wrong, "same-origin").await,
         StatusCode::NOT_FOUND
     );
+    // A receipt isn't the CSRF guard's business (2026-10-19: Safari's worker sends none of the
+    // metadata): a cross-site one reaches the handler, where only the token counts.
     assert_eq!(
-        post_receipt(&app, &receipt_of(&request, "shown"), "cross-site").await,
-        StatusCode::FORBIDDEN
+        post_receipt(&app, &wrong, "cross-site").await,
+        StatusCode::NOT_FOUND
     );
     let big = format!("{{\"d\":1,\"t\":\"{}\",\"a\":\"shown\"}}", "x".repeat(1100));
     assert_eq!(

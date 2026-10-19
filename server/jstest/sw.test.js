@@ -198,5 +198,5 @@ test("a tap never leaves this server", async () => {
 
 test("no fetch handler: requests pass straight through", () => {
     const w = fakeWorker();
-    assert.deepStrictEqual(Object.keys(w.listeners).sort(), ["activate", "install", "notificationclick", "push"]);
+    assert.deepStrictEqual(Object.keys(w.listeners).sort(), ["activate", "install", "notificationclick", "push", "pushnotification"]);
 });
