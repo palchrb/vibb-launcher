@@ -87,8 +87,6 @@ function pushOf(message) {
 }
 
 const MESSAGE = {
-    web_push: 8030,
-    mutable: true,
     notification: {
         title: "Anna called an emergency number",
         body: "At 14:02",

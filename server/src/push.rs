@@ -634,9 +634,12 @@ async fn send_one(
         What::Summary => format!("s{}", delivery.id),
         What::Test => format!("t{}", delivery.id),
     };
+    // A plain Web Push payload (RFC 8030's data, read by the worker's `push` handler everywhere -
+    // Chrome, Firefox, Safari 16.4+). It was Safari's declarative form (`web_push` 8030, `mutable`)
+    // until 2026-10-19: Safari 18.4+ then showed the notification itself and never ran the worker's
+    // `push` (and its `pushnotification` event brought no receipt on the user's iPhone either), so
+    // nothing confirmed a push. The classic path is the one the tests cover on every browser.
     let payload = serde_json::json!({
-        "web_push": 8030,
-        "mutable": true,
         "notification": {
             "title": crate::audit::clip(&delivery.title, crate::parent_events::TITLE_MAX),
             "body": crate::audit::clip(&delivery.body, crate::parent_events::SUMMARY_MAX),
