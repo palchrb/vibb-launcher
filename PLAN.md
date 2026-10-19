@@ -493,6 +493,18 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
+- **HIGH - no network after a pause ends (launcher 0.29.0, emulator, 2026-10-19):** after "pause all restrictions"
+  on and off again the VPN comes back but every upstream DNS attempt fails (`DnsUpstream: DoH/DoT attempt failed:
+  IOException` for ever), the SSE stream can't connect, apps get `UnknownHostException`, the PWA shows the phone
+  offline; a reboot or Wi-Fi off/on clears it. Suspected: the engine's transports / the launcher's own clients keep
+  sockets protected by the previous `KidVpnService` instance, so their packets enter the new TUN. Reproduction + fix
+  in progress on branch `vpn-restart-fix`. Until it ships: the phone needs a restart after a pause.
+- **Diagnostics from the same incident:** (1) the music app logs nothing of its own in `onError`; Media3 prints a
+  fixed "UnknownHostException (no network)" for any name failure - log the real cause (class + message) and the error
+  code; (2) "Kan ikke spilles nå" shows for a name/network failure - say "no network" instead when that is the cause;
+  (3) Web Filter's status line should say "upstream DNS can't be reached" while every upstream attempt fails (the
+  status today only distinguishes custom vs backup), so the parent sees the cause before the music app does.
+
 - **"Install now" for the launcher's own update** (the user, 2026-10-19: "hadde egentlig vært fint om det var
   mulig å force update for foreldrene, inne på launcherens setting i app tabben i server pwa"): the launcher's page
   under Apps (and the phone's "Play and kiosk" card) gets a per-phone "Install now" that queues a `device_commands`
