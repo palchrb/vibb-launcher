@@ -512,8 +512,10 @@ findings, merge to `main`, full suite once.
   (boot), with the battery at shutdown as the probable reason; no server-side "lost contact" timer. **Design 38**
   (`docs/design/38-phone-off-on.md`, revised 671f5c6a: the `off` resent with the next boot's `on`, a 5-minute hold on
   the server so a restart is one push, one shutdown receiver; design QA `docs/design/qa-38-design.md` approved with
-  the listed changes, all in the note). Implementation in progress on branch `phone-power` (2026-10-19). Replaces design 35's dropped "offline"
-  alert.
+  the listed changes, all in the note). **Merged into `main` 2026-10-19 (3303e4ea)** after code QA (`docs/review/qa-38-code.md`, 0 High / 1 Medium / 2 Low,
+  all fixed; migration 0080). Device checks owed: §6p on the emulator; the Jelly Star's power menu Power off and
+  Restart, a real flat battery, the shutdown property, Restart against the 5-minute hold on Wi-Fi and mobile data,
+  the shutdown POST over tsnet within 3 s. Replaces design 35's dropped "offline" alert.
 
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
@@ -718,7 +720,9 @@ findings, merge to `main`, full suite once.
   server fetches pictures for every episode, not the first 200, and the phone fetches the playing item's ahead
   whatever the download choice; design QA `docs/design/qa-39-design.md` approved for implementation, with its last
   Medium - reserve ~100 of the day's 400 picture requests for new items during a backfill - for the implementation
-  brief). Implementation queued behind 37 and 38; server + music in one step.
+  brief). **Merged into `main` 2026-10-19 (937bf7eb)** after code QA (`docs/review/qa-39-code.md`, 0 High / 1 Medium / 3 Low,
+  all fixed). Device checks owed: §6q on the emulator; row pictures, TalkBack, the real Spotify SDK through a flip and
+  a real Sonos room's first reorder on the Jelly Star.
 
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
@@ -781,6 +785,9 @@ findings, merge to `main`, full suite once.
   contacts-row swipe decided from its real DOWN (new: a swipe up from a contact opens the drawer, approved
   2026-10-18); Spotify track pictures ahead of play (50 a list-mode entry, 100 a check on the server, at most half
   of the day's budget). Goes out with server-v0.26.1, launcher-v0.27.0, music-v0.4.0-rc.2.
+- **Round 3 (2026-10-19, tagged on the user's standing go "push og tag når du er der"): server-v0.28.0 (migration 0080;
+  designs 37, 38, 39's art pass; the PWA fixes: the switch knob, the Device › Apps toggle jump, the Notifications
+  flashes), launcher-v0.29.0 (designs 37 and 38), music-v0.4.0-rc.3 (design 39).** Device checks owed per design.
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
