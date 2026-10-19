@@ -432,14 +432,14 @@ async fn main() {
         tokens: Default::default(),
         enrollment: Default::default(),
         passwords: Default::default(),
-        push: std::sync::Arc::new(push::Push::new(
-            push_key,
-            push_subject,
-            std::sync::Arc::new(
-                push::HttpTransport::new()
-                    .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
-            ),
-        )),
+        push: std::sync::Arc::new(
+            push::Push::new(
+                push_key,
+                push_subject,
+                std::sync::Arc::new(push::HttpTransport::new()),
+            )
+            .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
+        ),
     };
     state
         .tokens
