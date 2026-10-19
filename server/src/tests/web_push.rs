@@ -268,7 +268,8 @@ async fn subscribe_refusals_upsert_and_unsubscribe() {
         Some("/notifications?from=devices&notice=push_on#this-device")
     );
     let page = app.get_page(res.location().unwrap(), &cookie).await.text();
-    assert!(page.contains("Notifications are on for this device."));
+    // The row itself says On; no flash (the user, 2026-10-19: "rare grønne bokser og for mye tekst").
+    assert!(!page.contains("class=\"flash"), "{page}");
     let (label, origin): (String, String) =
         sqlx::query_as("SELECT label, origin FROM push_subscriptions")
             .fetch_one(&app.db)
@@ -871,7 +872,7 @@ async fn send_a_test_and_remove() {
         .await;
     assert_eq!(
         res.location(),
-        Some("/notifications?from=settings&notice=test_sent#devices")
+        Some(format!("/notifications?from=settings&notice=test_sent&sub={id}#devices").as_str())
     );
     app.assert_lands(&res, &cookie).await;
     assert!(app.state.push.woken().await);
