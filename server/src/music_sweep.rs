@@ -22,10 +22,10 @@
 //!   `photos::MUSIC_COVERS`, at most once a day.
 //! - **Episode art** ([art_pass], design `docs/design/27-music-episode-art.md` §1 with its QA): an
 //!   item's own picture as a 512 px JPEG in `photos::MUSIC_ART`, judged against the series
-//!   pictures by print; at most [ART_PER_CHECK] requests a check (a Spotify listing
-//!   [ART_PER_CHECK_SPOTIFY]) and [ART_PER_DAY] a day, every item in play order (design 39 §2.4),
-//!   older items only while more than [ART_DAY_RESERVE] of the day is left. The listing's `art`
-//!   is its hash.
+//!   pictures by print; every item in play order (design 39 §2.4), with no picture budget (the
+//!   user's decision of 2026-10-19: all pictures as soon as possible) - only the check's own
+//!   [MAX_CHECK_REQUESTS]/[MAX_CHECK_TIME] and the 200 ms gap; an entry with untried pictures left
+//!   after a check is due again at once (`art_more`, [Why::Art]). The listing's `art` is its hash.
 //! - **The listing** ([build_listing]): `{v, entry, version, items}`, the `ok` and `gone` items
 //!   oldest first, at most [MAX_LISTING_BYTES]; served by `GET /api/devices/music/entries/{id}/items`.
 //! - **Storytel** (design `26b-storytel.md` §2.4): a series or standalone book is listed from the
@@ -109,18 +109,10 @@ pub const CHECK_NOW_PER_HOUR: i64 = 12;
 pub const CHECK_NOW_PER_DAY: i64 = 48;
 /// The listing format (`v`).
 pub const LISTING_FORMAT: u32 = 1;
-/// Episode art (design 27 §1.4): image requests per check, and per day server-wide (only requests
-/// count, QA L1 a)...
-pub const ART_PER_CHECK: u32 = 20;
-/// ...a Spotify listing's share: its pictures are Spotify's own CDN, one GET each, so a 100-track
-/// playlist has them after one check, not five. The day's [ART_PER_DAY] is the same, and a Spotify
-/// check takes at most half of what is left of it ([art_gets]).
-pub const ART_PER_CHECK_SPOTIFY: u32 = 100;
-pub const ART_PER_DAY: i64 = 400;
-/// ...of which this many are kept for new items (design 39 §2.4, qa-39-design M6): a backfill of
-/// older items stops when no more than this is left of the day, so one long feed filling over
-/// days never holds other entries' new pictures back. A check's new items may use it all.
-pub const ART_DAY_RESERVE: i64 = 100;
+// Episode art (design 27 §1.4): no per-check or per-day picture budget since 2026-10-19 (the
+// user: "all pictures ASAP"; design 39's addendum). A check fetches an entry's pictures until they
+// are done or the check's [MAX_CHECK_REQUESTS]/[MAX_CHECK_TIME] end it; then it is due again at
+// once ([Why::Art]).
 /// A failed picture is tried again a day later, at most this many times for one URL.
 pub const ART_MAX_FAILS: i64 = 3;
 /// This many fetched pictures in a row that are the series picture, with none of the entry's own,
@@ -171,8 +163,8 @@ pub struct Sweep {
     /// [MAX_CHECK_REQUESTS] and [ENTRY_SPACING] (smaller in the tests).
     request_budget: std::sync::atomic::AtomicU32,
     spacing_ms: std::sync::atomic::AtomicU64,
-    /// The tests' override of [art_per_check_for] (0 in the tests that count other requests);
-    /// `u32::MAX` = none.
+    /// The tests' cap on a check's image requests (0 in the tests that count other requests);
+    /// `u32::MAX` = none (production: no picture budget).
     art_per_check: std::sync::atomic::AtomicU32,
     /// The tests' fake clock; `None` = the real one.
     clock: std::sync::Mutex<Option<DateTime<Utc>>>,
@@ -220,12 +212,9 @@ impl Sweep {
             .store(requests, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The image requests a check of `link` may make: [art_per_check_for], or the tests' override.
-    pub(crate) fn art_per_check(&self, link: &Link) -> u32 {
-        match self.art_per_check.load(std::sync::atomic::Ordering::SeqCst) {
-            u32::MAX => art_per_check_for(link),
-            set => set,
-        }
+    /// The image requests a check may make: `u32::MAX` (no cap), or the tests' override.
+    pub(crate) fn art_per_check(&self) -> u32 {
+        self.art_per_check.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The tests' knob: the next check stops right before its commit (the store locks held, the
@@ -390,6 +379,10 @@ pub enum Why {
     Rework,
     /// Its interval, or its backoff after a failure.
     Interval,
+    /// Its last check left untried episode pictures (`art_more`, cut short by the check's own
+    /// budget or a host's trouble after a picture came): due again at once, after anything else
+    /// due (the user's "all pictures ASAP", 2026-10-19).
+    Art,
 }
 
 /// One NRK/RSS/Storytel entry's place in the schedule.
@@ -431,6 +424,7 @@ struct ScheduleRow {
     /// step 2b): either can cure a Spotify entry's [SPOTIFY_LOGIN_ERRORS].
     spotify_app_saved_at: Option<String>,
     spotify_login_at: Option<String>,
+    art_more: i64,
 }
 
 /// The check errors a saved login can cure: a Storytel entry failing with one of them since before
@@ -447,26 +441,6 @@ const SPOTIFY_LOGIN_ERRORS: [&str; 5] = [
     "key",
     "app_refused",
 ];
-
-/// The requests one check of `link` makes: its share (`per_check`) within what is `left` of the day's
-/// [ART_PER_DAY]. A Spotify check (100 a check) takes at most half of what is left, so a family that
-/// adds several large playlists in a day still leaves pictures for NRK, RSS and Storytel.
-pub fn art_gets(per_check: u32, left: i64, link: &Link) -> u32 {
-    let room = match link {
-        Link::Spotify { .. } => left / 2,
-        _ => left,
-    };
-    (per_check as i64).min(room.max(0)) as u32
-}
-
-/// The image requests one check of `link` may make: [ART_PER_CHECK_SPOTIFY] for a Spotify entry,
-/// else [ART_PER_CHECK].
-pub fn art_per_check_for(link: &Link) -> u32 {
-    match link {
-        Link::Spotify { .. } => ART_PER_CHECK_SPOTIFY,
-        _ => ART_PER_CHECK,
-    }
-}
 
 /// How often a listed entry is checked (§2.2's table; design 26c §3.4: by the link's kind): NRK
 /// every `max(I, min(2I, 12 h))`; a Spotify album, track, episode or artist daily (vibb's daily
@@ -633,6 +607,16 @@ fn schedule_one(
             (row.sort, String::new(), row.entry_id),
         );
     }
+    // Untried pictures left by the last check (2026-10-19, "all pictures ASAP"): due again at once,
+    // unless its regular time is due anyway.
+    if row.failures == 0 && row.art_more > 0 && regular > now {
+        return make(
+            Why::Art,
+            now,
+            false,
+            (row.sort, String::new(), row.entry_id),
+        );
+    }
     make(
         Why::Interval,
         regular,
@@ -669,7 +653,8 @@ pub async fn schedule(
            (SELECT s.saved_at FROM music_storytel s WHERE s.id = 1 AND s.ciphertext IS NOT NULL) \
              AS storytel_saved_at, \
            (SELECT a.saved_at FROM music_spotify_app a WHERE a.id = 1) AS spotify_app_saved_at, \
-           (SELECT MAX(a.authorized_at) FROM music_spotify_accounts a) AS spotify_login_at \
+           (SELECT MAX(a.authorized_at) FROM music_spotify_accounts a) AS spotify_login_at, \
+           COALESCE(l.art_more, 0) AS art_more \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
          WHERE e.source IN ('nrk', 'rss', 'storytel', 'spotify') AND e.target IS NOT NULL",
     )
@@ -735,7 +720,7 @@ pub struct Item {
     /// The picture's coarse colour (`photos::tone_image`), for the twin merge (code QA L4).
     pub art_tone: Option<i64>,
     pub art_at: Option<String>,
-    /// The last attempt that sent a request (the day's budget).
+    /// The last attempt that sent a request.
     pub art_fetched_at: Option<String>,
     pub art_fails: i64,
 }
@@ -845,6 +830,8 @@ pub struct Listing {
     pub art_same_run: i64,
     pub art_backlog_at: Option<String>,
     pub art_refresh: bool,
+    /// Untried episode pictures the last check left (migration 0081): due again at once.
+    pub art_more: i64,
     /// Spotify (design 26c §3.3-§3.4, migration 0074): `list` or `context`.
     pub spotify_mode: Option<String>,
     /// A playlist's `snapshot_id` at the last item read.
@@ -1259,16 +1246,30 @@ pub struct CheckReport {
     /// Episode pictures judged in this check: the item's own, the series picture.
     pub art_own: usize,
     pub art_same: usize,
+    /// Pictures left for the next check (due again at once).
+    pub art_more: usize,
 }
 
 impl CheckReport {
-    /// The log line's art part (design 27 §1.4): ", art 7 (3 own, 4 same)", or nothing.
+    /// The log line's art part (design 27 §1.4): ", art 7 (3 own, 4 same), 205 left", or nothing.
     pub fn art_line(&self) -> String {
         let all = self.art_own + self.art_same;
+        let left = if self.art_more > 0 {
+            format!(", {} left", self.art_more)
+        } else {
+            String::new()
+        };
         if all == 0 {
-            return String::new();
+            return if left.is_empty() {
+                left
+            } else {
+                format!(", art 0{left}")
+            };
         }
-        format!(", art {all} ({} own, {} same)", self.art_own, self.art_same)
+        format!(
+            ", art {all} ({} own, {} same){left}",
+            self.art_own, self.art_same
+        )
     }
 }
 
@@ -1433,6 +1434,8 @@ struct ArtPlan {
     copied: HashSet<String>,
     own: usize,
     same: usize,
+    /// Candidates this check's pass didn't reach ([Why::Art]).
+    more: usize,
 }
 
 impl ArtPlan {
@@ -1691,9 +1694,8 @@ async fn run_check(
             if !mode.recheck_only {
                 // Episode art (design 27 §1.4): after the listing, the manifests and the cover.
                 reference_prints(state, &mut job, &mut plan, old, &found).await?;
-                let room = (ART_PER_DAY - art_requests_today(&state.db, now).await?).max(0);
-                let gets = art_gets(state.music_sweep.art_per_check(link), room, link);
-                art_pass(&state.db, &mut job, &mut plan, link, play_order, gets, room).await?;
+                let gets = state.music_sweep.art_per_check();
+                art_pass(&state.db, &mut job, &mut plan, link, play_order, gets).await?;
             }
             Ok(found)
         }
@@ -3108,33 +3110,6 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
 // Episode art (design 27 §1.3-§1.4, with its QA M2, M3 and L1)
 // ------------------------------------------------------------------------------------------------
 
-/// Image requests the art pass sent in the last 24 h, server-wide, from `music_art_requests` (code
-/// QA M1: every request counts, a picture fetched twice twice; steps 1, 2 and 6 send none). Older
-/// rows are deleted on the way.
-pub async fn art_requests_today(
-    db: &sqlx::SqlitePool,
-    now: DateTime<Utc>,
-) -> Result<i64, sqlx::Error> {
-    let day_ago = stamp(now - hours(24));
-    sqlx::query("DELETE FROM music_art_requests WHERE at <= ?")
-        .bind(&day_ago)
-        .execute(db)
-        .await?;
-    sqlx::query_scalar("SELECT COUNT(*) FROM music_art_requests WHERE at > ?")
-        .bind(&day_ago)
-        .fetch_one(db)
-        .await
-}
-
-/// Counts one image request against the day ([art_requests_today]).
-async fn count_art_request(db: &sqlx::SqlitePool, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO music_art_requests (at) VALUES (?)")
-        .bind(stamp(now))
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
 /// The same picture's URL with another query (a signed or cache-busting URL, `?t=<n>`): the same
 /// scheme, host, port and path (code QA M1).
 fn same_resource(a: &str, b: &str) -> bool {
@@ -3194,8 +3169,7 @@ async fn reference_prints(
         .as_deref()
         .and_then(parse_stamp)
         .is_some_and(|at| at > now - hours(24));
-    // Within the day's requests too ("at most 400 a day"); left for the next check otherwise.
-    if !changed || tried_recently || art_requests_today(&state.db, now).await? >= ART_PER_DAY {
+    if !changed || tried_recently {
         return Ok(());
     }
     plan.art.alt_at = Some(stamp(now));
@@ -3205,9 +3179,6 @@ async fn reference_prints(
     let got = job
         .get(SourceRequest::new(url.clone(), Kind::Image, Reach::Public))
         .await;
-    if !matches!(got, Got::Skipped) {
-        count_art_request(&state.db, now).await?;
-    }
     let answer = match got {
         Got::Answer(answer) if answer.status == 200 && !answer.truncated => answer,
         _ => return Ok(()),
@@ -3447,19 +3418,13 @@ fn rejudge(plan: &mut Plan, refs: &[i64]) {
     }
 }
 
-/// Whether a request for an older (backlog) item may go out with `left` of the day's
-/// [ART_PER_DAY] unspent: only above [ART_DAY_RESERVE] (design 39 §2.4, qa-39-design M6). A new
-/// item of an entry listed before is never held by it; a brand-new entry's first listing counts
-/// as a backfill (qa-39-code L2).
-pub fn art_backfill_allowed(left: i64) -> bool {
-    left > ART_DAY_RESERVE
-}
-
 /// The art pass of a check (§1.3-§1.4, design 39 §2.4): every `ok` item in play order, this
-/// check's new items first; at most `gets` image requests (the check's share of [ART_PER_CHECK]
-/// and [ART_PER_DAY]), an older item's only while [art_backfill_allowed] by `left` (the day's
-/// unspent requests at the start of the pass); a request the budget stops leaves its item
-/// untried (QA L1 b). Never fails the check: a failed picture shows the series cover.
+/// check's new items first, until done - no picture budget since 2026-10-19 (`gets` is the tests'
+/// cap, else `u32::MAX`). The check's own budget or a host's trouble may cut it short: the items
+/// left stay untried (QA L1 b) and are counted in `plan.art.more`, which makes the entry due again
+/// at once ([Why::Art]) - after a host's trouble only when a picture came in this pass, so a dead
+/// host waits for the regular check. Never fails the check: a failed picture shows the series
+/// cover.
 async fn art_pass(
     db: &sqlx::SqlitePool,
     job: &mut Job<'_>,
@@ -3467,8 +3432,8 @@ async fn art_pass(
     link: &Link,
     play_order: &str,
     mut gets: u32,
-    mut left: i64,
 ) -> Result<(), sqlx::Error> {
+    let capped = gets > 0;
     let now = job.now;
     // A Storytel book is judged against nothing (qa-26b-step4a-code M1): its "series cover" is
     // only the shelf's first-seen book's cover, so `same` (show the entry cover) could show
@@ -3547,7 +3512,7 @@ async fn art_pass(
     let this_check = stamp(now);
     let backlog = plan.art.backlog;
     // With the backlog off, an item first seen after it went off is still new: one that missed
-    // its first check (the day's budget, a host outage) isn't left for a month (code QA L2).
+    // its first check (the check's budget, a host outage) isn't left for a month (code QA L2).
     let off_since = if backlog {
         None
     } else {
@@ -3558,23 +3523,16 @@ async fn art_pass(
             || off_since
                 .is_some_and(|off| parse_stamp(&item.first_seen_at).is_some_and(|f| f > off))
     };
-    // Every candidate, the parent's near end first (design 39 §2.4: no window; the budgets bound
-    // the rate), each marked whether it is new.
+    // Every candidate, the parent's near end first (design 39 §2.4: no window; since 2026-10-19
+    // no picture budget either), the new ones first.
     let (new, older): (Vec<usize>, Vec<usize>) = order
         .into_iter()
         .filter(|at| art_candidate(&plan.items[*at], link))
         .partition(|at| is_new(&plan.items[*at]));
-    // A brand-new entry's first listing is all new, but it is a backfill: only an entry listed
-    // before has new items that may spend the day's reserve (qa-39-code L2).
-    let listed_before = plan
-        .items
-        .iter()
-        .any(|item| item.first_seen_at != this_check);
-    let candidates: Vec<(usize, bool)> = new
+    let candidates: Vec<usize> = new
         .into_iter()
-        .map(|at| (at, listed_before))
-        .chain(older.into_iter().filter(|_| backlog).map(|at| (at, false)))
-        .filter(|(at, _)| art_due(&plan.items[*at], now))
+        .chain(older.into_iter().filter(|_| backlog))
+        .filter(|at| art_due(&plan.items[*at], now))
         .collect();
     let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
     let reach = if lan { Reach::Any } else { Reach::Public };
@@ -3584,7 +3542,11 @@ async fn art_pass(
     // playlist repeats its albums' pictures): the next item naming one costs no request. A URL
     // judged in this pass is found again by step 2 (this entry's items first).
     let mut tried: HashMap<String, bool> = HashMap::new();
-    for (index, fresh) in candidates {
+    // Untried candidates the pass leaves: held by the tests' cap, or the rest after a cut.
+    let mut held = 0;
+    let mut cut_at: Option<usize> = None;
+    let mut came = false;
+    for (step, &index) in candidates.iter().enumerate() {
         let Some(url) = plan.items[index].art_url.clone() else {
             continue;
         };
@@ -3633,12 +3595,13 @@ async fn art_pass(
             }
             continue;
         }
-        // 3. One request, within the budgets; an older item's only above the day's reserve for
-        // new items (qa-39-design M6).
-        if gets == 0 || (!fresh && !art_backfill_allowed(left)) {
+        // 3. One request (the tests' cap aside, no picture budget: 2026-10-19).
+        if gets == 0 {
+            held += 1;
             continue;
         }
         if job.spent() {
+            cut_at = Some(step);
             break;
         }
         if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
@@ -3650,11 +3613,10 @@ async fn art_pass(
             .get(SourceRequest::new(url.clone(), Kind::Image, reach))
             .await;
         if matches!(got, Got::Skipped) {
+            cut_at = Some(step);
             break;
         }
         gets -= 1;
-        left -= 1;
-        count_art_request(db, now).await?;
         plan.items[index].art_fetched_at = Some(stamp(now));
         // A network error, a timeout or a 5xx is the host's trouble, not the picture's: it
         // doesn't use up one of the picture's tries (a result it has stays; it waits a day), and
@@ -3673,11 +3635,16 @@ async fn art_pass(
             }
             unreachable += 1;
             if unreachable >= ART_NETWORK_FAILURES {
+                // Back at once only when the host answered in this pass (a blip, not an outage).
+                if came {
+                    cut_at = Some(step + 1);
+                }
                 break;
             }
             continue;
         }
         unreachable = 0;
+        came = true;
         let photo = match got {
             Got::Answer(answer) if answer.status == 200 && !answer.truncated => {
                 crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square)
@@ -3718,6 +3685,15 @@ async fn art_pass(
             );
         }
     }
+    // What is left for the next check: the rest after a cut, and what the tests' cap held
+    // (never with a cap of 0, which means "no art" in the tests).
+    let rest = cut_at.map_or(0, |at| {
+        candidates[at..]
+            .iter()
+            .filter(|&&i| art_due(&plan.items[i], now))
+            .count()
+    });
+    plan.art.more = rest + if capped { held } else { 0 };
     // An entry whose pictures are all the series picture: only new items from now on (§1.4).
     if plan.art.backlog
         && plan.art.same_run >= ART_BACKLOG_SAME
@@ -3728,6 +3704,8 @@ async fn art_pass(
     {
         plan.art.backlog = false;
         plan.art.backlog_at = Some(stamp(now));
+        // The older items it held aren't candidates any more.
+        plan.art.more = 0;
     }
     Ok(())
 }
@@ -3756,6 +3734,7 @@ async fn finish(
         requests,
         art_own: plan.art.own,
         art_same: plan.art.same,
+        art_more: plan.art.more,
         ..Default::default()
     };
     let (cover, failure) = match result {
@@ -3996,7 +3975,7 @@ async fn finish(
            error_at = ?, failing_since = ?, failures = ?, requests = ?, cover_print = ?, \
            cover_alt_url = ?, cover_alt_print = ?, cover_alt_at = ?, old_prints = ?, \
            art_refs = ?, art_backlog = ?, art_same_run = ?, art_backlog_at = ?, art_refresh = ?, \
-           spotify_mode = ?, spotify_snapshot = ?, spotify_items_at = ?, spotify_reader = ?, \
+           art_more = ?, spotify_mode = ?, spotify_snapshot = ?, spotify_items_at = ?, spotify_reader = ?, \
            spotify_skipped = ? \
          WHERE entry_id = ?",
     )
@@ -4067,6 +4046,12 @@ async fn finish(
         old.art_refresh
     } else {
         plan.art.refresh
+    })
+    // A failed check's pass didn't run: nothing to come back for at once (it backs off).
+    .bind(if recheck_only {
+        old.art_more
+    } else {
+        plan.art.more as i64
     })
     // A failed check keeps the last good list's Spotify state (design 26c §3.4).
     .bind(if keep_fields {
@@ -4181,7 +4166,8 @@ pub async fn run_pass(state: &AppState) -> bool {
         last_check = Some(tokio::time::Instant::now());
         let count = checks.entry(next.entry_id).or_default();
         *count += 1;
-        if *count == CHECKS_PER_PASS {
+        // A picture fill comes back at once by design (2026-10-19): no warning for it.
+        if *count == CHECKS_PER_PASS && next.why != Why::Art {
             tracing::warn!(
                 entry_id = next.entry_id,
                 "music sweep: an entry stayed due through {CHECKS_PER_PASS} checks in one pass"

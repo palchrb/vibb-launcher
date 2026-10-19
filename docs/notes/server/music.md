@@ -454,7 +454,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `storytel_check` keeps a known book's whole row (every `art_*` field), so a check never drops a hash or a failure's
   try count. A book is judged against nothing (qa-26b-step4a-code M1: the "series cover" is only the first-seen book's,
   so `same` would show another book's face): no reference prints, no step 1, no twin merge, a `same` row is made
-  untried - every fetched book cover is `own` (the budgets are NRK/RSS's: a 40-book series fills over two checks). No
+  untried - every fetched book cover is `own`. No
   16:9 reference (NRK only). `restamp_versions` covers Storytel listings too.
 - **The pass** (`music_sweep::art_pass`, after the listing, manifests and cover; not on recheck-only checks): every
   `ok` art candidate in play order (`effective_order`'s rule: the parent's near end first), whatever the entry's
@@ -473,21 +473,22 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `low_detail` - a flat field or small text on one background). Known limit: the series line is dHash only, so a flat
   episode picture can count as a flat series cover (the cover shows), and a recoloured series picture is `same`. A
   failure never fails the check: a 4xx, a refused address or an undecodable picture uses one of 3 tries; a network
-  error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row end the pass (code QA M2). Budgets:
-  `ART_PER_CHECK` 20, a Spotify listing `ART_PER_CHECK_SPOTIFY` 100 (`art_per_check_for`: one CDN GET a picture; `art_gets`: a Spotify check takes at most half of what is left of the day's 400; `Sweep::set_art_per_check` overrides both in the tests; 0 in tests that count listing requests),
-  `ART_PER_DAY` 400 counted in `music_art_requests` (one row per image request, the 16:9 reference included; rows
-  older than a day go; code QA M1); a request the budget stops leaves its item untried (QA L1 b). **The reserve**
-  (design 39, qa-39-design M6): an older (backlog) item's request goes out only while more than `ART_DAY_RESERVE`
-  (100) of the day's 400 is left (`art_backfill_allowed`, counted down as the pass spends), so a long feed filling over
-  days stops at 300 used and other entries' new items keep the rest; a check's new items may use it all - only
-  of an entry listed before: a brand-new entry's first listing (every item first seen now) is a backfill too, so adding
-  a big feed or Spotify list never spends the reserve (qa-39-code L2). Fill time:
-  a 1000-item feed with its own pictures takes ~12 days at the default 6 h interval (80 a day), ~3.3 days at 1 h (300
-  a day). A feed with a few own pictures early and hundreds of series-picture episodes after them keeps the backlog on
-  (it turns off only with no `own` at all) and is walked to its end once - ~1000 GETs, judged items aren't retried -
-  where the window capped it at 200 (qa-39-design L12; the reserve keeps it from starving others). Every check of a
-  backfilling entry moves its listing version, so each phone pulls the listing again (gzip, ~100 KB) up to 4 or 24
-  times a day while it fills - negligible (N7). The log line adds `, art N (o own, s same)`.
+  error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row end the pass (code QA M2). **No picture
+  budget** (the user's decision, 2026-10-19: "all pictures ASAP" - the source-politeness budget of design 27/39,
+  `ART_PER_CHECK` 20, `ART_PER_CHECK_SPOTIFY` 100, `ART_PER_DAY` 400 and `ART_DAY_RESERVE` 100 with `art_gets` and
+  `art_backfill_allowed`, was removed at the user's decision; he owns the server): a check fetches an entry's pictures
+  until they are done, 200 ms apart (`music_net::Gated`), bounded only by the check's own `MAX_CHECK_REQUESTS` (250,
+  the listing's requests included) and `MAX_CHECK_TIME` (10 min); the 16:9 reference too is fetched without a
+  day's count (0081 drops design 27's `music_art_requests`). `Sweep::set_art_per_check` caps a check's image
+  requests in the tests only (0 in tests that count listing requests; `u32::MAX` = none, production). **Due again at once** (migration `0081_music_art_more.sql`,
+  `music_listings.art_more`): a pass cut short by the check's budget (or by a host's trouble after a picture came in
+  that pass - a dead host that answered nothing waits for the regular check) leaves the rest untried (QA L1 b) and
+  stores how many; `schedule` makes such an entry due at once (`Why::Art`, after anything else due; no
+  `CHECKS_PER_PASS` warning for it), back to back with the 4 s check spacing, until `art_more` is 0. Cost: a 1000-item
+  feed with its own pictures is ~1000 GETs, ~4 checks of 250 back to back, ~4-5 minutes at the 200 ms gap (plus the
+  fetch time); 212 Acast pictures are done in one check (under a minute). The backlog rule (below) and the retry rules
+  are unchanged. Every check of a filling entry moves its listing version, so each phone pulls the listing again
+  (gzip, ~100 KB) a few times in those minutes. The log line adds `, art N (o own, s same)` and `, M left`.
 - **Reference prints** (QA M2, `music_listings`): `cover_print` (of a newly fetched cover, else read once from the
   stored file), `cover_alt_url`/`cover_alt_print` (NRK's 16:9 `image` when the cover is its `squareImage`,
   `Root::wide_image`, one request when its URL changes, at most daily; the root is read while `cover_alt_at` is NULL
@@ -502,7 +503,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Stored** with the items in `finish` (the `MUSIC_ART` lock from writing the files to the commit; a hash copied
   from another item that is no longer on disk is left untried), pruned after a `finish` that changed an art reference
   and after an entry is deleted. The entry page's episodes line adds "· N with episode art" (not for Storytel: "N books" only).
-- Tests: `src/tests/music_art.rs` (design 39: `every_ok_item_in_play_order_…`, `a_long_feed_is_walked_past_200_over_checks`,
-  `a_backfill_leaves_the_days_reserve_to_new_items`), the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
+- Tests: `src/tests/music_art.rs` (design 39: `every_ok_item_in_play_order_…`; 2026-10-19:
+  `a_check_fetches_every_picture_in_play_order`, `due_again_at_once_until_the_pictures_are_done`,
+  `a_dead_host_is_not_due_again_at_once`, `a_day_of_backfill_fetches_every_picture_once`), the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
   `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
   `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).
