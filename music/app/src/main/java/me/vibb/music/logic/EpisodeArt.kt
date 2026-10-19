@@ -13,17 +13,33 @@ import me.vibb.music.model.PlayItem
  * fetched and resized every picture once; the launcher carries them. Pure; EpisodeArtTest.
  */
 
-/** At most this many pictures wanted at once (the launcher caps the same: bridge_contract.json). */
-const val WANT_ART_MAX = 600
+/**
+ * At most this many hashes in one `wantArt` call (the launcher caps the same: bridge_contract.json). Not a cap on
+ * the pictures (the user, 2026-10-19: "alle bilder lastes ned ASAP så lenge den er på wifi"): only what the phone
+ * lacks goes on the wire, so as the pictures arrive the next send names the next ones. It keeps one oneway Binder
+ * call well under the 1 MB transaction buffer (~136 bytes a hash: ~136 KB; qa-art-asap-code L2: two queued calls
+ * share the async half).
+ */
+const val WANT_ART_MAX = 1000
 
-/** The `now` list: the current item and two each side. */
-const val WANT_ART_NOW_MAX = 5
-const val NOW_REACH = 2
+/**
+ * The `now` list: what is streaming's (the user, 2026-10-19: pictures count as streaming - the launcher fetches them
+ * where streaming is allowed): the current item and five each side ("+/- x episoder", [NOW_REACH]), the next
+ * [NOW_AHEAD] items the queue reaches, then the playing Spotify list-mode entry's next [SPOTIFY_ART_AHEAD] tracks
+ * (qa-art-asap-code M3: never the others'). At most this many (bridge_contract.json `want_art.now_max`).
+ */
+const val WANT_ART_NOW_MAX = 500
+const val NOW_REACH = 5
+const val NOW_AHEAD = 50
+
+/** Repeated item changes (skips) send the want set at most this often; the first goes at once. */
+const val WANT_ART_GAP_MS = 2_000L
 
 /**
  * A Spotify list-mode entry keeps no audio, so without this its track pictures came only as each
  * track neared the now window. Its next this many tracks from where a tap would start it go into
- * `later` (the audio's network gate): ~50 KB a picture, so ~2.5 MB an entry, within [WANT_ART_MAX].
+ * `now` for the playing entry (streaming's gate, the user's rule of 2026-10-19), into `later` (Wi-Fi only) for
+ * every other one (qa-art-asap-code M3): ~50 KB a picture, so ~2.5 MB an entry.
  * A shuffled entry (resume off) gets its first ones in list order: a fresh permutation can't be
  * foreseen, so at worst those ~2.5 MB aren't the tracks that play next.
  */
@@ -38,8 +54,8 @@ private val HASH = Regex("[0-9a-f]{64}")
 fun isArtHash(value: String?): Boolean = value != null && HASH.matches(value)
 
 /**
- * What the phone asks the launcher for ([now]: on any network; [later]: with the audio's network
- * gate), and every picture it keeps ([keep], the held ones too - the prune's universe).
+ * What the phone asks the launcher for ([now]: where streaming is allowed; [later]: on Wi-Fi only), and every
+ * picture it keeps ([keep], the held ones too - the prune's universe).
  */
 data class WantedArt(val now: List<String>, val later: List<String>, val keep: Set<String>)
 
@@ -54,14 +70,16 @@ fun <T> nowWindow(queue: List<T>, index: Int, reach: Int = NOW_REACH): List<T> {
 }
 
 /**
- * The want set. [now]: the own-art hashes of the now-playing window ([nowWindow]); [kept]: those of
+ * The want set. [now]: the own-art hashes of the now-playing window ([nowWindow]), the queue's next items and the
+ * Spotify list-mode entries' next tracks ([nowArt]); [kept]: those of
  * every entry's keep set (the art of the episodes kept offline goes with their audio); [news]: the
- * Nytt tray's; [ahead]: the Spotify list-mode entries' next tracks ([SPOTIFY_ART_AHEAD] each), last.
- * Library covers come their own way, so they are left out. Deduplicated, [now] first, at most
- * [WANT_ART_MAX] in all; the lists leave out what the phone already [held], [keep] includes it,
- * plus the [recent] pictures shown. The episode list's held pictures ([list], design 39 §2.2) go right after
- * [now] on the wire; [keep] is the set computed without them plus them, so the list never pushes a kept picture
- * out of the prune's universe (qa-39-design L2).
+ * Nytt tray's; [ahead]: anything else to fetch with `later`, after them; [all]: every
+ * item's picture of every ticked entry in play order (the addendum of 2026-10-19), in `later` only when
+ * [allLater] (an unmetered network), last. Library covers come their own way, so they are left out.
+ * Deduplicated, [now] first, at most [WANT_ART_MAX] on the wire; the lists leave out what the phone already
+ * [held]. [keep] (the prune's universe) has no cap: everything above - [all] whatever the network, so a
+ * picture fetched on Wi-Fi stays while its entry is ticked - plus the [recent] pictures shown. The episode
+ * list's held pictures ([list], design 39 §2.2) go right after [now] on the wire and are in [keep] too.
  */
 fun wantedArt(
     now: List<String?>,
@@ -72,19 +90,69 @@ fun wantedArt(
     libraryCovers: Set<String>,
     ahead: List<String?> = emptyList(),
     list: List<String> = emptyList(),
+    all: List<String?> = emptyList(),
+    allLater: Boolean = false,
+    /** Pictures the launcher passed over again and again ([skippedArt], qa-art-asap-code L6): off the `later` wire. */
+    skip: Set<String> = emptySet(),
 ): WantedArt {
     fun own(hashes: List<String?>) = hashes.filter { isArtHash(it) && it !in libraryCovers }.map { it!! }.distinct()
     val nowAll = own(now).take(WANT_ART_NOW_MAX).toSet()
     val rest = own(kept + news + ahead)
     val listOwn = own(list)
-    val base = (nowAll + rest).take(WANT_ART_MAX) // a set: deduplicated, in order
-    val ordered = (nowAll + listOwn + rest).take(WANT_ART_MAX)
+    val allOwn = own(all)
+    val laterWire = (rest + (if (allLater) allOwn else emptyList())).filter { it !in skip }
+    val wire = nowAll + listOwn + laterWire // a set: deduplicated, in order
+    val missing = wire.filter { it !in held }.take(WANT_ART_MAX)
     return WantedArt(
-        now = ordered.filter { it in nowAll && it !in held },
-        later = ordered.filter { it !in nowAll && it !in held },
-        keep = base.toSet() + listOwn + recent.filter(::isArtHash),
+        now = missing.filter { it in nowAll },
+        later = missing.filter { it !in nowAll },
+        keep = nowAll + rest + listOwn + allOwn + recent.filter(::isArtHash),
     )
 }
+
+/**
+ * What goes in `now`, in order: the window around [index] of [queue] ([nowWindow], ±[NOW_REACH]), the next
+ * [NOW_AHEAD] items after the current one (no wrap: what auto-advance reaches), then [spotifyAhead]. Hashes, nulls
+ * kept (wantedArt drops them).
+ */
+fun <T> nowArt(queue: List<T>, index: Int, spotifyAhead: List<String?>, art: (T) -> String?): List<String?> {
+    val queueAhead = if (index in queue.indices) queue.drop(index + 1).take(NOW_AHEAD) else emptyList()
+    return (nowWindow(queue, index) + queueAhead).map(art) + spotifyAhead
+}
+
+/** A `later` picture the launcher passed over this many syncs in a row is left off the wire ([artSkipsAfter]). */
+const val ART_SKIPS_MAX = 3
+
+/**
+ * The passed-over counts after a sync's pull (qa-art-asap-code L6): the launcher fetches the last [sent] `later` page
+ * in order, so a hash before the last one that arrived ([held]) that is still missing was passed over (failed, backed
+ * off for good) - it counts once more; a held one leaves the counts. A hash the launcher can never fetch then stops
+ * holding a slot of the page.
+ */
+fun artSkipsAfter(skips: Map<String, Int>, sent: List<String>, held: Set<String>): Map<String, Int> {
+    val out = skips.filterKeys { it !in held }.toMutableMap()
+    val last = sent.indexOfLast { it in held }
+    for (hash in sent.take(last.coerceAtLeast(0))) if (hash !in held) out[hash] = (out[hash] ?: 0) + 1
+    return out
+}
+
+/** The hashes passed over [ART_SKIPS_MAX] times or more. */
+fun skippedArt(skips: Map<String, Int>): Set<String> = skips.filterValues { it >= ART_SKIPS_MAX }.keys
+
+/**
+ * Does a sync on a metered network leave pictures for Wi-Fi ([onWifi]: the same want set computed for an unmetered
+ * network, [now]: the one sent)? Then a sync waits for an unmetered network, so the whole set is sent as soon as there
+ * is one.
+ */
+fun wifiSyncWanted(now: WantedArt, onWifi: WantedArt): Boolean = onWifi.later.any { it !in now.later }
+
+/**
+ * When the player sends its want set after an item change ([lastSentAt]: its last send, null = none yet): at once,
+ * or - a skip within [WANT_ART_GAP_MS] of the last send - at the end of that gap, so a run of skips sends twice,
+ * not once per skip (the user, 2026-10-19: the playing episode's picture must come now, not 2 s later).
+ */
+fun wantArtDelay(lastSentAt: Long?, nowMs: Long, gap: Long = WANT_ART_GAP_MS): Long =
+    if (lastSentAt == null || nowMs - lastSentAt !in 0 until gap) 0L else gap - (nowMs - lastSentAt)
 
 /**
  * Does `LiveBridge` send this want set (design 39 §2.2, qa-39-design H1)? The player's (not [force]d): when its

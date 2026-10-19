@@ -301,7 +301,7 @@ object MusicCourier {
         var changed = false
         // A cover the library no longer names goes, unless the music app wants it as an episode picture.
         val present = MusicStore.coversDir(app).list().orEmpty().toSet()
-        artToDelete(present, head.covers, MusicStore.wantArt(app)).forEach { MusicStore.coverFile(app, it).delete() }
+        artToDelete(present, head.covers, MusicStore.wantArt(app), heldArt(app, present)).forEach { MusicStore.coverFile(app, it).delete() }
         for (hash in head.covers) {
             if (MusicStore.coverFile(app, hash).isFile) continue
             changed = (fetchCover(app, server, hash, MAX_COVER_BYTES) == true) || changed
@@ -315,28 +315,75 @@ object MusicCourier {
 
     /**
      * Episode pictures (design 27 §2.2), after the covers: the music app's want set, through the
-     * cover route (≤ 1 MB, hash-checked), at most [ART_PER_RUN], `now` first. An HTTP error or a wrong
-     * hash counts toward the day's wait; a network error doesn't (it is tried again with the next run).
-     * Art in neither the library's covers nor the want set goes: the launcher holds a picture only
-     * until the music app has copied it (its next want set leaves it out).
+     * cover route (≤ 1 MB, hash-checked), `now` first, in rounds of [ART_PER_RUN] for as long as more are fetchable
+     * on this network ([fetchArtPaced]; the addendum of 2026-10-19: on Wi-Fi every picture of every ticked entry), the
+     * music app nudged after each round so it copies them and names the next; after [ART_ROUNDS_PER_RUN] rounds with
+     * more left the courier runs again (qa-art-asap-code M2: the library, the listings and the own files go first
+     * then). An HTTP error or a wrong hash counts toward the day's wait; a network error doesn't (it is tried again
+     * with the next run). Art in neither the library's covers nor the want set goes ([artHeld] aside): the launcher
+     * holds a picture only until the music app has copied it (its next want set leaves it out).
      */
     private suspend fun syncArt(app: Context, server: MusicServer, music: MusicPolicy): Boolean {
-        val want = MusicStore.wantArt(app)
-        var changed = false
-        for (hash in artFetchable(app, want, music)) {
-            when (fetchCover(app, server, hash, MAX_ART_BYTES)) {
-                true -> {
-                    MusicStore.clearArtFailure(app, hash)
-                    changed = true
-                }
+        val paced = fetchArtPaced(
+            next = { artFetchable(app, MusicStore.wantArt(app), music) },
+            fetch = { fetchArt(app, server, it) },
+            roundDone = { MusicSync.nudge(app) },
+        )
+        if (paced.more) runAgain(music)
+        val head = MusicStore.head(app)
+        val present = MusicStore.coversDir(app).list().orEmpty().toSet()
+        artToDelete(present, head?.covers.orEmpty(), MusicStore.wantArt(app), heldArt(app, present)).forEach { MusicStore.coverFile(app, it).delete() }
+        return paced.stored > 0
+    }
+
+    /** The courier runs once more after this run (a sync's newer policy, if one came, wins). */
+    private fun runAgain(music: MusicPolicy) {
+        synchronized(this) { if (again == null) again = music }
+    }
+
+    /** [artHeld] on the phone's network and the files' times. */
+    private fun heldArt(app: Context, present: Set<String>): Set<String> =
+        artHeld(present, AppDownloads.currentCaps(app)?.notMetered == true, System.currentTimeMillis()) { MusicStore.coverFile(app, it).lastModified() }
+
+    /**
+     * The `now` pictures, fetched as `wantArt` arrives (the user, 2026-10-19), where streaming is allowed ([nowArtToFetch]),
+     * beside any courier run - a long Wi-Fi run of pictures never holds the playing episode's back. The music app is
+     * nudged when one is stored. False without a server set up.
+     */
+    suspend fun fetchNowArt(app: Context, music: MusicPolicy): Boolean {
+        val mdm = LauncherPreferences.mdm()
+        val url = mdm.serverUrl()
+        val token = mdm.deviceToken()
+        if (url.isNullOrBlank() || token.isNullOrBlank()) return false
+        val hashes = nowArtToFetch(MusicStore.wantArt(app), MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, System.currentTimeMillis())
+        if (hashes.isEmpty()) return false
+        val server = createMusicServer(url, token)
+        var stored = false
+        for (hash in hashes) if (fetchArt(app, server, hash) == true) stored = true
+        if (stored) MusicSync.nudge(app)
+        return stored
+    }
+
+    private val inFlight = ArtInFlight()
+
+    /**
+     * One picture, its failures recorded: true = stored, false = refused, null = try later - also when another fetch
+     * has it in flight (qa-art-asap-code L5: the `now` fetch and the courier never GET it twice at once).
+     */
+    private suspend fun fetchArt(app: Context, server: MusicServer, hash: String): Boolean? {
+        if (!inFlight.start(hash)) return null
+        try {
+            if (MusicStore.coverFile(app, hash).isFile) return true
+            val got = fetchCover(app, server, hash, MAX_ART_BYTES)
+            when (got) {
+                true -> MusicStore.clearArtFailure(app, hash)
                 false -> MusicStore.recordArtFailure(app, hash, System.currentTimeMillis())
                 null -> Unit
             }
+            return got
+        } finally {
+            inFlight.done(hash)
         }
-        val head = MusicStore.head(app)
-        val present = MusicStore.coversDir(app).list().orEmpty().toSet()
-        artToDelete(present, head?.covers.orEmpty(), MusicStore.wantArt(app)).forEach { MusicStore.coverFile(app, it).delete() }
-        return changed
     }
 
     /** One cover or picture: true = stored, false = refused (a 4xx, too big, wrong hash), null = try later (a 5xx or a network error). */

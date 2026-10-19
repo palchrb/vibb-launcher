@@ -13,6 +13,7 @@ import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.AppDownloads
 import com.kidslauncher.mdm.server.currentPolicyDecision
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -185,11 +186,12 @@ class MusicBridgeService : Service() {
     }
 
     /**
-     * The music app's want set (design 27 §2.2): stored (both lists at once), then a courier run only
-     * when a picture is fetchable now (QA M6) - not held, not backed off, `later` only on an allowed
-     * network - with the cached policy's music part.
+     * The music app's want set (design 27 §2.2): stored (both lists at once); the `now` pictures fetched at once where
+     * streaming is allowed (the user, 2026-10-19: the playing episode's picture comes now, and pictures count as
+     * streaming - [MusicCourier.fetchNowArt], beside a running courier); then a courier run only when a picture is fetchable now (QA M6) - not held, not backed off,
+     * `later` only on an allowed network - with the cached policy's music part.
      */
-    private fun wantArtChanged(app: Context, want: WantArt) {
+    private suspend fun wantArtChanged(app: Context, want: WantArt) {
         // Pictures of the now window the launcher already holds (fetched for an earlier want set): the
         // music app's sync copies them - nudged once per such set, never in a loop.
         val nudge = synchronized(Companion) {
@@ -197,6 +199,13 @@ class MusicBridgeService : Service() {
         }
         if (nudge != null) MusicSync.nudge(app)
         val music = musicPolicy(currentPolicyDecision().policy?.music) ?: return
+        try {
+            MusicCourier.fetchNowArt(app, music)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Now pictures not fetched (${e.javaClass.simpleName}) - the courier tries again")
+        }
         if (MusicCourier.artFetchable(app, want, music).isNotEmpty()) MusicCourier.request(app, music)
     }
 

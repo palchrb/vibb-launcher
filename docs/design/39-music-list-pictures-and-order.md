@@ -371,6 +371,34 @@ strings nb/en). The fake: `fake-audio.py --feed N --hls K` with selftest 3; emul
 **Not checked here**: the emulator round §6q (all of it); on the Jelly Star the row pictures' decode and scroll, TalkBack,
 the real Spotify SDK through a flip (the coalesced play and the leftover add), a real Sonos room's first `reorder`.
 
+### Addendum (2026-10-19): all pictures ASAP on Wi-Fi
+
+The user: "så lenge den er på wifi så ønsker jeg at den gjør seg klar til best mulig brukeropplevelse og da må alle
+bilder lastes ned ASAP så lenge den er på wifi"; on the first cut that raised the caps: "opptil hundre er ikke å
+fjerne begrensningene"; and "om den ikke har hentet bilde, så bør den starte å hente bilder +/- x episoder fra episoden
+man står på". So, replacing §2.4's budgets and this note's reserve:
+
+- **Server**: no picture budget - `ART_PER_CHECK`, `ART_PER_CHECK_SPOTIFY`, `ART_PER_DAY`, `ART_DAY_RESERVE`,
+  `art_gets` and `art_backfill_allowed` are gone. A check fetches an entry's pictures until done, 200 ms apart, within
+  the check's own 250 requests and 10 minutes; one cut short stores the rest in `music_listings.art_more` (migration
+  0081) and is due again at once (`Why::Art`), so a 1000-item feed is done in ~4 back-to-back checks, a few minutes.
+  The backlog rule, the retry rules, `ART_NETWORK_FAILURES` and the same/own judgement stay; a dead host that
+  answered nothing in the pass waits for the regular check.
+- **Phone**: pictures count as streaming. The `now` list (the playing item ±5 and the items the queue reaches next,
+  the playing Spotify entry's look-ahead included) goes out at once on an item change and is fetched by the launcher
+  at once whenever streaming is allowed on the network (unmetered; metered with `stream_mobile_data`; never roaming).
+  The `later` list (the kept episodes', Nytt's, the other Spotify entries' look-ahead, and on an unmetered network
+  every picture of every ticked entry) is fetched on Wi-Fi only, paced in the background, in pages of at most 1000
+  hashes a call; every picture of a ticked entry is kept while it is ticked. Details: `music/CLAUDE.md`, `launcher/CLAUDE.md`.
+- **Code QA fix round** (`docs/review/qa-art-asap-code.md`): `later` is fetched on Wi-Fi only, whatever the downloads
+  switch (M1); a courier run fetches at most 3 rounds of 100 and runs again, so the library, the listings and the own
+  files never wait behind the pictures (M2); only the playing Spotify entry's look-ahead is `now`, the others' `later`
+  (M3); a `wantArt` call holds at most 1000 hashes (~136 KB, L2); the server stores `art_more` only when the pass sent
+  a picture request (L3); the pictures' bytes are already in the report's `cache_bytes` (the PWA's "stored" line) and
+  never evicted for audio - no contract change (L4); one picture is never fetched twice at once (L5); a picture the
+  launcher passes over three syncs leaves the `later` page, and off Wi-Fi the launcher keeps pictures younger than
+  3 days that the music app hasn't copied yet (L6).
+
 ### Code QA fix round (`docs/review/qa-39-code.md` at `ec6d1bfa`, 2026-10-19)
 
 | Finding | What was done |

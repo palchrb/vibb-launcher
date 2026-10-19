@@ -1601,10 +1601,10 @@ python3 -I scripts/fake-audio.py --feed 250 --hls 4 --port 8732    # or --feed 2
 In the PWA add an RSS entry `http://127.0.0.1:8732/feed.xml` (the loopback feed is judged `lan`; its picture URLs name
 the address the server used, its enclosures `10.0.2.2:8732` for the emulator - they follow `--port`; qa-39-code L3: step 4 runs the fake Spotify on 8731 beside it), tick it for the phone. Every third item
 names the channel picture (`same` by URL, no request); the others are 9x8 block grids the server judges `own`
-(`--selftest` models the print). **Budget**: 20 picture requests a check (`ART_PER_CHECK`), the channel-URL rows cost
-none, 400 a day server-wide, of which a backfill of older items leaves the last 100 to new items (`ART_DAY_RESERVE`,
-qa-39-design M6): `--feed 20` fills in one check (13 GETs), `--feed 250` in about 9 checks (~167 GETs) - Check now once
-per entry per 15 min, so about 2.5 h; the server log's `art N (o own, s same)` counts each. At 320x569 dp, nb and en:
+(`--selftest` models the print). **No picture budget** since 2026-10-19 (the user: all pictures ASAP): a check fetches
+every picture, 200 ms apart, within its own 250 requests; the channel-URL rows cost none. `--feed 20` fills in one
+check (13 GETs), `--feed 250` in one too (~167 GETs, well under a minute); the server log's `art N (o own, s same)`
+counts each, `, M left` when an entry is due again at once. At 320x569 dp, nb and en:
 
 1. `--feed 20`, after one check: the list (Liste) shows a 40 dp picture per row; the channel-picture rows show the
    series cover with their number over it; the playing row on `selected` with a 2 dp peach ring. Download two
@@ -1612,10 +1612,9 @@ per entry per 15 min, so about 2.5 h; the server log's `art N (o own, s same)` c
    bridge log) shows a `wantArt` with an empty `now` and the list's hashes in `later`; after a fling at most 60 extra
    pictures in `files/music/covers/` beyond the want set (`adb shell run-as me.vibb.music.debug ls files/music/covers |
    wc -l` before and after; `files/music/list_art.txt` holds at most 61 lines).
-2. `--feed 250`, the entry's offline choice "Ingen" (none): after the first checks the newest rows have pictures, the
-   rest numbered series covers; flipped to oldest first, the top rows are numbered covers until later checks reach
-   them; after about 9 checks every row's picture is there - every third row (the channel picture, `same`) stays a
-   numbered cover. The entry page's "N with episode art" grows to about 167.
+2. `--feed 250`, the entry's offline choice "Ingen" (none): after the first check every row's picture is there (on
+   Wi-Fi; flipped to oldest first too) - every third row (the channel picture, `same`) stays a numbered cover. The
+   entry page's "N with episode art" is about 167.
 3. A one-picture entry (§6f's plain `fake-audio.py` listing, or an NRK podcast): numbers as before, the button there.
 4. Flip the RSS entry while episode 5 plays: playback goes on, the line says "… · nyeste først" (en "newest first"),
    the playing row stays in view; next goes up the shown list; the player's "N av M" and the carousel cover's hint and
@@ -1633,6 +1632,13 @@ per entry per 15 min, so about 2.5 h; the server log's `art N (o own, s same)` c
 7. The keep set: the downloaded episodes are the same before and after a flip (Device › Music in the PWA, or
    `files/music` on the phone).
 8. Font scale 1.3 in English (§3b): a "40 of 40 downloaded" line drops its order words (the button keeps them).
+9. **All pictures ASAP on Wi-Fi** (2026-10-19, design 39's addendum). Run the fake with `--feed 400` (more than one
+   check's 250 requests), tick the new entry on Wi-Fi. The server log shows the first check with `, N left`, the next
+   check of that entry seconds later (not at its interval), and no `left` once done - within a few checks, a few
+   minutes. On the phone, without opening the list: `adb shell run-as me.vibb.music.debug ls files/music/covers | wc -l`
+   grows within a few syncs to every own picture of the entry (~267 for 400 items) and stays there (not pruned).
+   Mobile data on, Wi-Fi off, "Download on mobile data" off: tick another `--feed 200` entry - nothing beyond today's
+   set (the playing item's window and what streaming allows) is fetched; Wi-Fi back: the rest comes.
 
 ## 6b. Step 7: Play (optional)
 

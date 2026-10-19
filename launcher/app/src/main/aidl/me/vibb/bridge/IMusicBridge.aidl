@@ -42,9 +42,12 @@ interface IMusicBridge {
     /** The entry's listing, read-only, or null when the launcher has none. */
     ParcelFileDescriptor openListing(long entryId);
 
-    /** The pictures the music app wants (design 27): [now] (the now-playing window, fetched on any
-     *  network) and [later] (the kept episodes' and Nytt's, with the audio's network gate), 64-hex
-     *  hashes it doesn't hold. Each call replaces the last; openCover hands them over. */
+    /** The pictures the music app wants (design 27; 2026-10-19): [now] (the playing item and five
+     *  each side, the queue's next items, the playing Spotify entry's look-ahead; fetched at once
+     *  where streaming is allowed, never roaming) and [later] (the kept episodes', Nytt's, the other
+     *  Spotify entries' look-ahead and, on Wi-Fi, every picture of every ticked entry; fetched on an
+     *  unmetered network only), 64-hex hashes it doesn't hold, at most 1000 a call (a page: the next
+     *  call names the next ones). Each call replaces the last; openCover hands them over. */
     oneway void wantArt(in String[] now, in String[] later);
 
     /** A Spotify access token for this phone's account (design 26c §2.6, §6.1), through [callback]; the launcher

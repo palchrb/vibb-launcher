@@ -178,10 +178,10 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// design 35's, and must reach a server before or with 0079, never after. Design 38 added 0080 (the
 /// phone's power switches; was `migrations_73_to_79_in_order`).
 #[test]
-fn migrations_73_to_80_in_order() {
+fn migrations_73_to_81_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=80).contains(&m.version))
+        .filter(|m| (73..=81).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -194,12 +194,13 @@ fn migrations_73_to_80_in_order() {
             (77, "vibb one".to_string()),
             (78, "parent events".to_string()),
             (79, "custom dns".to_string()),
-            (80, "phone power".to_string())
+            (80, "phone power".to_string()),
+            (81, "music art more".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
-         wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server) and 0080 \
-         (design 38) stay in this order: the backup before migrating compares only the highest \
-         version"
+         wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
+         (design 38) and 0081 (episode pictures ASAP) stay in this order: the backup before \
+         migrating compares only the highest version"
     );
 }
 
@@ -2634,39 +2635,14 @@ pub(in crate::tests) mod listing {
         }
     }
 
-    /// A Spotify listing's pictures are one CDN GET each: a check fetches up to 100 of them, an
-    /// NRK, RSS or Storytel check 20; the daily budget is shared.
+    /// No picture budget since 2026-10-19 (the user: all pictures ASAP): a check of any source
+    /// may fetch them all; the tests' knob caps it.
     #[test]
-    fn a_spotify_check_fetches_more_pictures() {
-        let spotify = Link::Spotify {
-            kind: LinkKind::Playlist,
-            id: "x".to_string(),
-        };
-        let rss = Link::Rss {
-            url: "https://example.org/feed.xml".to_string(),
-        };
-        let nrk = Link::NrkPodcast {
-            slug: "x".to_string(),
-        };
-        let storytel = Link::Storytel {
-            kind: crate::storytel::TargetKind::Series,
-            id: "1".to_string(),
-        };
+    fn no_source_has_a_picture_budget() {
         let s = sweep::Sweep::default();
-        assert_eq!(s.art_per_check(&spotify), 100);
-        for other in [&rss, &nrk, &storytel] {
-            assert_eq!(s.art_per_check(other), 20);
-        }
-        // The tests' knob overrides both.
+        assert_eq!(s.art_per_check(), u32::MAX);
         s.set_art_per_check(7);
-        assert_eq!(s.art_per_check(&spotify), 7);
-        assert_eq!(s.art_per_check(&rss), 7);
-        // A Spotify check takes at most half of what is left of the day; the others all of it.
-        assert_eq!(sweep::art_gets(100, 400, &spotify), 100);
-        assert_eq!(sweep::art_gets(100, 120, &spotify), 60);
-        assert_eq!(sweep::art_gets(20, 10, &rss), 10);
-        assert_eq!(sweep::art_gets(20, 0, &spotify), 0);
-        assert_eq!(sweep::art_gets(20, -3, &rss), 0);
+        assert_eq!(s.art_per_check(), 7);
     }
 
     /// Art (§3.5): a playlist's track pictures are each its own (never the playlist's mosaic,

@@ -1,8 +1,9 @@
 //! Episode art (design 27 §1 and §5 step 1, with its design QA M2, M3 and L1): the sweep's art
 //! pass on canned answers with the fake clock - own pictures by hash, the series picture by URL
-//! and by print, a result reused across entries, failures and retries, the budgets and the play
-//! order, the backlog, a new cover's re-judging, the 16:9 picture, the one-time NRK refresh, the
-//! store (lock, prune, no backup, recovery), the cover route's scoping and the card's count.
+//! and by print, a result reused across entries, failures and retries, no picture budget and the
+//! play order (due again at once until done), the backlog, a new cover's re-judging, the 16:9
+//! picture, the one-time NRK refresh, the store (lock, prune, no backup, recovery), the cover
+//! route's scoping and the card's count.
 
 use axum::http::{Method, StatusCode};
 use chrono::TimeDelta;
@@ -624,11 +625,10 @@ async fn a_failed_picture_is_retried_daily_three_times_and_a_new_url_resets() {
 // Budgets and order
 // ------------------------------------------------------------------------------------------------
 
-/// 20 requests a check, in play order (newest first for a feed); 400 a day server-wide, counting
-/// only requests; a request the budget stops leaves its item untried (QA L1 b). The day's last
-/// requests go to new items (design 39's reserve), so the second check brings ten.
+/// No picture budget (the user, 2026-10-19: all pictures ASAP): one check fetches every picture,
+/// in play order (newest first for a feed), and the next check's new items all theirs.
 #[tokio::test]
-async fn twenty_a_check_and_400_a_day_in_play_order() {
+async fn a_check_fetches_every_picture_in_play_order() {
     let app = TestApp::new().await;
     let feed = "https://example.org/many.rss";
     let id = rss_entry(&app, feed).await;
@@ -647,29 +647,22 @@ async fn twenty_a_check_and_400_a_day_in_play_order() {
     }
     check(&app, id, t0()).await;
     let list = items(&app, id).await;
-    let tried: Vec<bool> = list.iter().map(|i| i.art_from.is_some()).collect();
-    assert_eq!(tried.iter().filter(|t| **t).count(), 20);
-    assert!(
-        tried[10..].iter().all(|t| *t) && tried[..10].iter().all(|t| !*t),
-        "the newest 20 first: {tried:?}"
-    );
-    assert_eq!(
-        calls_starting(&app, "https://example.org/1"),
-        10,
-        "10-19, not 1"
-    );
+    assert!(list.iter().all(|i| i.art_from.is_some()), "all 30 tried");
+    let order: Vec<String> = app
+        .fetch
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.ends_with(".jpg"))
+        .cloned()
+        .collect();
+    assert_eq!(order.len(), 30);
+    assert_eq!(order.first(), Some(&urls[29]), "the newest first");
+    assert_eq!(order.last(), Some(&urls[0]));
+    assert_eq!(listing(&app, id).await.art_more, 0, "nothing left");
 
-    // The day counts requests (code QA M1): 20 so far.
-    assert_eq!(sweep::art_requests_today(&app.db, t0()).await.unwrap(), 20);
-    // 375 more elsewhere leave room for 5.
-    sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 375) \
-         INSERT INTO music_art_requests (at) SELECT ? FROM n",
-    )
-    .bind(stamp(t0() + TimeDelta::minutes(30)))
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // Within the day, no count holds anything back: ten new items, ten requests.
     let new_guids: Vec<String> = (30..40).map(|n| format!("i{n:02}")).collect();
     let new_urls: Vec<String> = (30..40)
         .map(|n| format!("https://example.org/n{n}.jpg"))
@@ -687,28 +680,7 @@ async fn twenty_a_check_and_400_a_day_in_play_order() {
     }
     app.fetch.clear_calls();
     check(&app, id, t0() + TimeDelta::hours(1)).await;
-    // 20 at t0 + 375 = 395: 5 left, for the newest of the new items.
-    assert_eq!(calls_starting(&app, "https://example.org/n"), 5);
-    assert_eq!(calls_starting(&app, "https://example.org/") - 1, 5);
-    let untried = items(&app, id)
-        .await
-        .iter()
-        .filter(|i| i.art_url.is_some() && i.art_from.is_none())
-        .count();
-    assert_eq!(untried, 15, "the rest stays untried");
-    assert_eq!(
-        sweep::art_requests_today(&app.db, t0() + TimeDelta::hours(1))
-            .await
-            .unwrap(),
-        400
-    );
-    // A day later the earlier ones no longer count.
-    assert_eq!(
-        sweep::art_requests_today(&app.db, t0() + TimeDelta::minutes(24 * 60 + 30))
-            .await
-            .unwrap(),
-        5
-    );
+    assert_eq!(calls_starting(&app, "https://example.org/n"), 10);
 }
 
 /// Code QA M1: a feed whose picture URLs change at every fetch (`?t=<n>`, a signed or
@@ -748,13 +720,6 @@ async fn churning_picture_urls_are_not_fetched_again() {
     assert_eq!(
         after[0].art_from.as_deref(),
         Some("https://img.example.org/a.jpg?t=5")
-    );
-    assert_eq!(
-        sweep::art_requests_today(&app.db, t0() + TimeDelta::hours(23))
-            .await
-            .unwrap(),
-        2,
-        "the day counts requests"
     );
     // b moves to another path: not within a week of its result, then once.
     answer(&app, 6, "b2.jpg");
@@ -898,121 +863,116 @@ fn answer_long_feed(app: &TestApp, feed: &str, pairs: &[(String, String)]) {
     }
 }
 
-/// Design 39 §2.4: 250 items at the default 20 a check get candidates past item 200 over
-/// successive checks, the near end first (a feed newest first), whatever the entry's offline
-/// choice; a check after the day's 400 makes none.
+/// Design 39 §2.4 with the 2026-10-19 rule: 300 items are more than one check's own budget of
+/// requests ([sweep::MAX_CHECK_REQUESTS]); the check stops with the rest untried and says how many,
+/// the entry is due again at once ([sweep::Why::Art], not at its interval), and the next check
+/// finishes them - the near end first (a feed newest first), whatever the entry's offline choice.
 #[tokio::test]
-async fn a_long_feed_is_walked_past_200_over_checks() {
+async fn due_again_at_once_until_the_pictures_are_done() {
     let app = TestApp::new().await;
-    let feed = "https://example.org/250.rss";
+    let feed = "https://example.org/300.rss";
     let id = rss_entry(&app, feed).await;
     sqlx::query("UPDATE music_entries SET cache = 0 WHERE id = ?")
         .bind(id)
         .execute(&app.db)
         .await
         .unwrap();
-    let mut pairs = long_feed(&app, feed, "l", 250);
+    long_feed(&app, feed, "l", 300);
     check(&app, id, t0()).await;
     let tried =
         |list: &[sweep::Item]| -> Vec<bool> { list.iter().map(|i| i.art_from.is_some()).collect() };
     let first = tried(&items(&app, id).await);
-    assert_eq!(first.iter().filter(|t| **t).count(), 20);
-    assert!(
-        first[230..].iter().all(|t| *t),
-        "the newest 20 first (the feed's near end)"
-    );
-    for n in 1..13 {
-        check(&app, id, t0() + TimeDelta::minutes(20 * n)).await;
-    }
+    let done = first.iter().filter(|t| **t).count();
+    // The feed's GET is one of the check's requests.
+    assert_eq!(done, sweep::MAX_CHECK_REQUESTS as usize - 1);
+    assert!(first[300 - done..].iter().all(|t| *t), "the newest first");
+    let left = 300 - done as i64;
+    assert_eq!(listing(&app, id).await.art_more, left);
+    let soon = t0() + TimeDelta::seconds(5);
+    let due = sweep::due(&app.db, soon).await.unwrap();
+    let again = due
+        .iter()
+        .find(|s| s.entry_id == id)
+        .expect("due again at once");
+    assert_eq!(again.why, sweep::Why::Art);
+
+    check(&app, id, soon).await;
     let all = tried(&items(&app, id).await);
+    assert!(all.iter().all(|t| *t), "all 300 after two checks");
+    assert_eq!(listing(&app, id).await.art_more, 0);
+    let later = soon + TimeDelta::seconds(5);
     assert!(
-        all[..50].iter().all(|t| *t),
-        "past the first 200 in play order"
+        sweep::due(&app.db, later)
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.entry_id != id),
+        "done: back to its interval"
     );
-    assert!(all.iter().all(|t| *t), "all 250 after 13 checks");
-    let later = t0() + TimeDelta::hours(5);
     assert_eq!(
-        sweep::art_requests_today(&app.db, later).await.unwrap(),
-        250
+        calls_starting(&app, "https://img.example.org/"),
+        300,
+        "each once"
     );
-    // The day's 400 hold: with them spent, a check's new items get no request.
-    sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 150) \
-         INSERT INTO music_art_requests (at) SELECT ? FROM n",
-    )
-    .bind(stamp(later))
-    .execute(&app.db)
-    .await
-    .unwrap();
-    pairs.extend((0..5).map(|i| {
-        (
-            format!("m{i}"),
-            format!("https://img.example.org/m/{i}.jpg"),
-        )
-    }));
-    answer_long_feed(&app, feed, &pairs);
-    app.fetch.clear_calls();
-    check(&app, id, t0() + TimeDelta::hours(6)).await;
-    assert_eq!(items(&app, id).await.len(), 255);
-    assert_eq!(calls_starting(&app, "https://img.example.org/"), 0);
 }
 
-/// qa-39-design M6: a backfill of older items stops when no more than [sweep::ART_DAY_RESERVE] of
-/// the day is left (at 300 used); a new item on another entry still gets its request.
+/// A dead image host ends the pass (3 network errors in a row) without bringing the entry back at
+/// once: no picture came, so it waits for its interval (a host that answered and then blipped
+/// does come back at once).
 #[tokio::test]
-async fn a_backfill_leaves_the_days_reserve_to_new_items() {
-    assert!(sweep::art_backfill_allowed(sweep::ART_DAY_RESERVE + 1));
-    assert!(!sweep::art_backfill_allowed(sweep::ART_DAY_RESERVE));
+async fn a_dead_host_is_not_due_again_at_once() {
     let app = TestApp::new().await;
-    let long = "https://example.org/backfill.rss";
-    let id = rss_entry(&app, long).await;
-    long_feed(&app, long, "b", 250);
+    let feed = "https://example.org/dead.rss";
+    let id = rss_entry(&app, feed).await;
+    let pairs = long_feed(&app, feed, "d", 20);
+    for (_, url) in &pairs {
+        app.fetch.fail(
+            url,
+            crate::music_net::FetchError::Network("down".to_string()),
+        );
+    }
     check(&app, id, t0()).await;
-    // another entry, listed once with one item (one request)
-    let other = "https://example.org/fresh.rss";
-    let fresh = rss_entry(&app, other).await;
-    long_feed(&app, other, "f", 1);
-    check(&app, fresh, t0()).await;
-    // 21 at t0 + 269 elsewhere = 290: 110 left, 10 above the reserve.
-    sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 269) \
-         INSERT INTO music_art_requests (at) SELECT ? FROM n",
-    )
-    .bind(stamp(t0() + TimeDelta::minutes(10)))
-    .execute(&app.db)
-    .await
-    .unwrap();
-    app.fetch.clear_calls();
-    check(&app, id, t0() + TimeDelta::minutes(30)).await;
-    assert_eq!(calls_starting(&app, "https://img.example.org/b/"), 10);
-    let at = t0() + TimeDelta::hours(1);
-    assert_eq!(sweep::art_requests_today(&app.db, at).await.unwrap(), 300);
-    app.fetch.clear_calls();
-    check(&app, id, at).await;
-    assert_eq!(
-        calls_starting(&app, "https://img.example.org/b/"),
-        0,
-        "the backfill waits for the next day"
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 3);
+    assert_eq!(listing(&app, id).await.art_more, 0);
+    assert!(
+        sweep::due(&app.db, t0() + TimeDelta::seconds(5))
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.entry_id != id)
     );
-    // The other entry's new items take theirs from the reserve.
-    long_feed(&app, other, "f", 6);
-    check(&app, fresh, at).await;
-    assert_eq!(calls_starting(&app, "https://img.example.org/f/"), 5);
-    assert_eq!(sweep::art_requests_today(&app.db, at).await.unwrap(), 305);
-    // qa-39-code L2: a brand-new entry's first listing is a backfill - all its items are new, none spends the reserve.
-    let brand_new = "https://example.org/brand-new.rss";
-    let added = rss_entry(&app, brand_new).await;
-    long_feed(&app, brand_new, "n", 5);
-    check(&app, added, at).await;
-    assert_eq!(calls_starting(&app, "https://img.example.org/n/"), 0);
-    assert_eq!(items(&app, added).await.len(), 5);
+}
+
+/// qa-art-asap-code L3: a check whose listing spent the whole request budget sent no picture
+/// request, so it doesn't come back at once only to spend it on the listing again.
+#[tokio::test]
+async fn a_check_with_no_picture_request_is_not_due_again_at_once() {
+    let app = TestApp::new().await;
+    app.state
+        .music_sweep
+        .set_limits(1, std::time::Duration::ZERO);
+    let feed = "https://example.org/spent.rss";
+    let id = rss_entry(&app, feed).await;
+    long_feed(&app, feed, "s", 10);
+    check(&app, id, t0()).await;
+    assert_eq!(items(&app, id).await.len(), 10);
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 0);
+    assert_eq!(listing(&app, id).await.art_more, 0);
+    assert!(
+        sweep::due(&app.db, t0() + TimeDelta::seconds(5))
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.entry_id != id)
+    );
 }
 
 /// A simulated day of 30 NRK podcasts with 100 episodes each (every one with its own picture) and
-/// 10 feeds: the first pass fetches at most 20 a check and 300 in all (brand-new entries are a
-/// backfill and leave the reserve, qa-39-code L2), and nothing more until the day is over.
+/// 10 feeds: with no picture budget (2026-10-19), the sweep's first passes fetch every picture,
+/// once each - each check within its own request budget, an unfinished entry due again at once -
+/// and nothing more for the rest of the day.
 #[tokio::test]
-async fn a_day_of_backfill_stays_within_the_budgets() {
+async fn a_day_of_backfill_fetches_every_picture_once() {
     let app = TestApp::new().await;
     app.state
         .music_sweep
@@ -1089,23 +1049,27 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         tick_on(&app, phone, id).await;
     }
     app.state.music_sweep.set_clock(Some(t0()));
-    assert!(sweep::run_pass(&app.state).await);
     let images = |app: &TestApp| {
         calls_starting(app, "https://gfx.nrk.no/ep/")
             + calls_starting(app, "https://img.example.org/")
     };
-    assert_eq!(
-        images(&app),
-        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
-    );
-    let per_entry: Vec<i64> = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM music_items WHERE art_fetched_at IS NOT NULL GROUP BY entry_id",
+    // The first passes: until nothing is due at t0 (a pass checks one entry at most 5 times).
+    for _ in 0..20 {
+        assert!(sweep::run_pass(&app.state).await);
+        if sweep::due(&app.db, t0()).await.unwrap().is_empty() {
+            break;
+        }
+    }
+    assert!(sweep::due(&app.db, t0()).await.unwrap().is_empty());
+    assert_eq!(images(&app), 30 * 100 + 10 * 50, "every picture, once");
+    let untried: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM music_items WHERE art_url IS NOT NULL AND art_fetched_at IS NULL",
     )
-    .fetch_all(&app.db)
+    .fetch_one(&app.db)
     .await
     .unwrap();
-    assert!(per_entry.iter().all(|n| *n <= sweep::ART_PER_CHECK as i64));
-    // The rest of the day: the sweep runs on; no more pictures until the day's budget frees.
+    assert_eq!(untried, 0);
+    // The rest of the day: the sweep runs on; nothing is fetched again.
     let end = t0() + TimeDelta::hours(23);
     loop {
         let now = app.state.music_sweep.now();
@@ -1122,10 +1086,7 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         app.state.music_sweep.set_clock(Some(next.max(now)));
         assert!(sweep::run_pass(&app.state).await);
     }
-    assert_eq!(
-        images(&app),
-        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
-    );
+    assert_eq!(images(&app), 30 * 100 + 10 * 50);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1204,7 +1165,8 @@ async fn the_backlog_stops_after_five_series_pictures_and_comes_back() {
 }
 
 /// Code QA L2: with the backlog off, a new item that wasn't fetched in its own first check (the
-/// day's budget was spent) is still new at the next check; older items still wait.
+/// tests' cap of 0 stands in for a missed pass) is still new at the next check; older items still
+/// wait.
 #[tokio::test]
 async fn with_the_backlog_off_a_new_item_that_missed_its_check_stays_new() {
     let app = TestApp::new().await;
@@ -1217,9 +1179,7 @@ async fn with_the_backlog_off_a_new_item_that_missed_its_check_stays_new() {
     app.fetch.answer(feed, 200, art_feed(None, &old_items));
     app.state.music_sweep.set_art_per_check(0);
     check(&app, id, t0()).await;
-    app.state
-        .music_sweep
-        .set_art_per_check(sweep::ART_PER_CHECK);
+    app.state.music_sweep.set_art_per_check(u32::MAX);
     sqlx::query("UPDATE music_listings SET art_backlog = 0, art_backlog_at = ? WHERE entry_id = ?")
         .bind(stamp(t0() + TimeDelta::minutes(30)))
         .bind(id)
@@ -1236,21 +1196,11 @@ async fn with_the_backlog_off_a_new_item_that_missed_its_check_stays_new() {
     let mut with_new = old_items.to_vec();
     with_new.push(("n1", Some("https://example.org/n1.jpg")));
     app.fetch.answer(feed, 200, art_feed(None, &with_new));
-    // The day's budget is spent when n1 first shows up.
-    sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) \
-         INSERT INTO music_art_requests (at) SELECT ? FROM n",
-    )
-    .bind(stamp(t0() + TimeDelta::minutes(40)))
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // No picture is fetched when n1 first shows up.
+    app.state.music_sweep.set_art_per_check(0);
     check(&app, id, t0() + TimeDelta::hours(1)).await;
     assert_eq!(calls_to(&app, "https://example.org/n1.jpg"), 0);
-    sqlx::query("DELETE FROM music_art_requests")
-        .execute(&app.db)
-        .await
-        .unwrap();
+    app.state.music_sweep.set_art_per_check(u32::MAX);
     check(&app, id, t0() + TimeDelta::hours(2)).await;
     assert_eq!(calls_to(&app, "https://example.org/n1.jpg"), 1, "still new");
     assert_eq!(
@@ -1427,9 +1377,7 @@ async fn an_existing_nrk_entry_reads_its_wide_picture_before_the_refresh() {
     // Listed by an older server: no art columns, the migration's flag.
     app.state.music_sweep.set_art_per_check(0);
     check(&app, id, t0()).await;
-    app.state
-        .music_sweep
-        .set_art_per_check(sweep::ART_PER_CHECK);
+    app.state.music_sweep.set_art_per_check(u32::MAX);
     sqlx::query(
         "UPDATE music_listings SET cover_alt_url = NULL, cover_alt_print = NULL, \
          cover_alt_at = NULL, art_refs = NULL, art_refresh = 1 WHERE entry_id = ?",

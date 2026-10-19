@@ -30,6 +30,6 @@
     "open_player": "player",
     "extra_resume": "me.vibb.music.extra.RESUME"
   },
-  "want_art": {"max": 600, "now_max": 5},
+  "want_art": {"max": 1000, "now_max": 500},
   "spotify_token": {"statuses": ["ok", "off", "reauthorize", "busy", "unreachable", "key", "launcher"], "timeout_ms": 10000}
 }
