@@ -301,6 +301,11 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
   the first retries); one APK works with anyone's server, no Firebase setup, no nudge metadata
   to Google. Device run on the Jelly Star still to do: time a ring in Doze, after a server
   restart and after a Wi-Fi/mobile switch, and battery at keepalive 120 s vs 240 s.
+  **Parked 2026-10-19 (the user: "fcm lar vi ligge pr. nå")**: an FCM opt-in configured from the server (design 40)
+  waits for that measurement - a day's bugreport from the Jelly Star, the launcher's radio-active time and wakelocks
+  in Battery Historian. Under ~3 %/day: no FCM, at most a looser keepalive on Wi-Fi; well above: design 40. A
+  UnifiedPush distributor (ntfy) would hold the same kind of connection in a second app, so for one app it saves
+  nothing over SSE; only the system's own FCM connection does.
   **Plan B if that run is bad (user, 2026-10-09: "Evt ntfy")**: an optional UnifiedPush wake
   channel per phone, next to SSE. The launcher becomes a UnifiedPush client, and the
   family's ntfy (self-hosted with `upstream-base-url: https://ntfy.sh`, or ntfy.sh itself)
