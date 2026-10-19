@@ -3449,7 +3449,8 @@ fn rejudge(plan: &mut Plan, refs: &[i64]) {
 
 /// Whether a request for an older (backlog) item may go out with `left` of the day's
 /// [ART_PER_DAY] unspent: only above [ART_DAY_RESERVE] (design 39 §2.4, qa-39-design M6). A new
-/// item's request is never held by it.
+/// item of an entry listed before is never held by it; a brand-new entry's first listing counts
+/// as a backfill (qa-39-code L2).
 pub fn art_backfill_allowed(left: i64) -> bool {
     left > ART_DAY_RESERVE
 }
@@ -3563,9 +3564,15 @@ async fn art_pass(
         .into_iter()
         .filter(|at| art_candidate(&plan.items[*at], link))
         .partition(|at| is_new(&plan.items[*at]));
+    // A brand-new entry's first listing is all new, but it is a backfill: only an entry listed
+    // before has new items that may spend the day's reserve (qa-39-code L2).
+    let listed_before = plan
+        .items
+        .iter()
+        .any(|item| item.first_seen_at != this_check);
     let candidates: Vec<(usize, bool)> = new
         .into_iter()
-        .map(|at| (at, true))
+        .map(|at| (at, listed_before))
         .chain(older.into_iter().filter(|_| backlog).map(|at| (at, false)))
         .filter(|(at, _)| art_due(&plan.items[*at], now))
         .collect();

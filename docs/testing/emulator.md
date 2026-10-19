@@ -1509,10 +1509,10 @@ Design 39 §6 (`docs/design/39-music-list-pictures-and-order.md`). The whole cha
 the enrolled launcher, the music app, both debug builds of this branch). **The fake**: a feed with a picture per item,
 on the VM next to the server:
 ```
-python3 -I scripts/fake-audio.py --feed 250 --hls 4      # or --feed 20; port 8731
+python3 -I scripts/fake-audio.py --feed 250 --hls 4 --port 8732    # or --feed 20; 8732: fake-spotify.py has 8731
 ```
-In the PWA add an RSS entry `http://127.0.0.1:8731/feed.xml` (the loopback feed is judged `lan`; its picture URLs name
-the address the server used, its enclosures `10.0.2.2:8731` for the emulator), tick it for the phone. Every third item
+In the PWA add an RSS entry `http://127.0.0.1:8732/feed.xml` (the loopback feed is judged `lan`; its picture URLs name
+the address the server used, its enclosures `10.0.2.2:8732` for the emulator - they follow `--port`; qa-39-code L3: step 4 runs the fake Spotify on 8731 beside it), tick it for the phone. Every third item
 names the channel picture (`same` by URL, no request); the others are 9x8 block grids the server judges `own`
 (`--selftest` models the print). **Budget**: 20 picture requests a check (`ART_PER_CHECK`), the channel-URL rows cost
 none, 400 a day server-wide, of which a backfill of older items leaves the last 100 to new items (`ART_DAY_RESERVE`,

@@ -462,6 +462,18 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `qa-39-code M1 - a flip 10 s after the last state restarts where it plays, not at the last state`() = runBlocking {
+        val r = playing(at = 2)
+        post(state(2, 40_000))
+        advance(10_000)
+        r.flip(2, listOf(2, 1, 0, 4, 3))
+        advance(300)
+        val pos = body(api.plays().last())["position_ms"]!!.jsonPrimitive.long
+        assertTrue("about 50 000, was $pos", pos in 49_000..51_000)
+        r.release()
+    }
+
+    @Test
     fun `the natural advance sends nothing, and the window's end adds the next item to Spotify's queue one ahead`() = runBlocking {
         val r = playing(count = 60)
         assertEquals(50, windowOf(api.plays().single()).size)

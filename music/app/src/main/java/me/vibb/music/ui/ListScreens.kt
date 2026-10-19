@@ -140,7 +140,8 @@ fun ListScreen(
         }
         if (pictures) {
             val visible by rememberUpdatedState(onVisible)
-            LaunchedEffect(state, entry.id) {
+            // keyed on the direction too: after a flip the same index range holds other rows (qa-39-code N4)
+            LaunchedEffect(state, entry.id, shownNewest) {
                 snapshotFlow { state.layoutInfo.visibleItemsInfo.let { (it.firstOrNull()?.index ?: 0) to (it.lastOrNull()?.index ?: 0) } }
                     .distinctUntilChanged()
                     .collectLatest { (first, last) ->

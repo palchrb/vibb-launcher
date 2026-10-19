@@ -290,6 +290,16 @@ class EpisodeArtTest {
     }
 
     @Test
+    fun `qa-39-code L1 - LiveBridge sends through wantArtSend, and the list's rows get the picture rule`() {
+        val bridge = moduleFile("src/main/java/me/vibb/music/bridge/Bridge.kt").readText()
+        assertTrue(bridge.contains("if (!wantArtSend(now, later, sentNow, sentLater, force)) return"))
+        assertTrue(bridge.contains("sentLater = later.toSet()"))
+        val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
+        assertTrue(root.contains("val pictures = !isSpotifyContext(n.entry) && rowPictures(shown, n.entry.cover)"))
+        assertTrue(root.contains("pictures = pictures,"))
+    }
+
+    @Test
     fun `d39 - the want set reads the list - every sender carries it, and the prune keeps it`() {
         val plan = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
         assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())"))

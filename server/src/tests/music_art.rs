@@ -968,9 +968,14 @@ async fn a_backfill_leaves_the_days_reserve_to_new_items() {
     let id = rss_entry(&app, long).await;
     long_feed(&app, long, "b", 250);
     check(&app, id, t0()).await;
-    // 20 at t0 + 270 elsewhere = 290: 110 left, 10 above the reserve.
+    // another entry, listed once with one item (one request)
+    let other = "https://example.org/fresh.rss";
+    let fresh = rss_entry(&app, other).await;
+    long_feed(&app, other, "f", 1);
+    check(&app, fresh, t0()).await;
+    // 21 at t0 + 269 elsewhere = 290: 110 left, 10 above the reserve.
     sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 270) \
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 269) \
          INSERT INTO music_art_requests (at) SELECT ? FROM n",
     )
     .bind(stamp(t0() + TimeDelta::minutes(10)))
@@ -989,18 +994,23 @@ async fn a_backfill_leaves_the_days_reserve_to_new_items() {
         0,
         "the backfill waits for the next day"
     );
-    // Another entry's new items take theirs from the reserve.
-    let other = "https://example.org/fresh.rss";
-    let fresh = rss_entry(&app, other).await;
-    long_feed(&app, other, "f", 5);
+    // The other entry's new items take theirs from the reserve.
+    long_feed(&app, other, "f", 6);
     check(&app, fresh, at).await;
     assert_eq!(calls_starting(&app, "https://img.example.org/f/"), 5);
     assert_eq!(sweep::art_requests_today(&app.db, at).await.unwrap(), 305);
+    // qa-39-code L2: a brand-new entry's first listing is a backfill - all its items are new, none spends the reserve.
+    let brand_new = "https://example.org/brand-new.rss";
+    let added = rss_entry(&app, brand_new).await;
+    long_feed(&app, brand_new, "n", 5);
+    check(&app, added, at).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/n/"), 0);
+    assert_eq!(items(&app, added).await.len(), 5);
 }
 
 /// A simulated day of 30 NRK podcasts with 100 episodes each (every one with its own picture) and
-/// 10 feeds: the first pass fetches at most 20 a check and 400 in all, and nothing more until the
-/// day is over.
+/// 10 feeds: the first pass fetches at most 20 a check and 300 in all (brand-new entries are a
+/// backfill and leave the reserve, qa-39-code L2), and nothing more until the day is over.
 #[tokio::test]
 async fn a_day_of_backfill_stays_within_the_budgets() {
     let app = TestApp::new().await;
@@ -1084,7 +1094,10 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         calls_starting(app, "https://gfx.nrk.no/ep/")
             + calls_starting(app, "https://img.example.org/")
     };
-    assert_eq!(images(&app), sweep::ART_PER_DAY as usize);
+    assert_eq!(
+        images(&app),
+        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
+    );
     let per_entry: Vec<i64> = sqlx::query_scalar(
         "SELECT COUNT(*) FROM music_items WHERE art_fetched_at IS NOT NULL GROUP BY entry_id",
     )
@@ -1109,7 +1122,10 @@ async fn a_day_of_backfill_stays_within_the_budgets() {
         app.state.music_sweep.set_clock(Some(next.max(now)));
         assert!(sweep::run_pass(&app.state).await);
     }
-    assert_eq!(images(&app), sweep::ART_PER_DAY as usize);
+    assert_eq!(
+        images(&app),
+        (sweep::ART_PER_DAY - sweep::ART_DAY_RESERVE) as usize
+    );
 }
 
 // ------------------------------------------------------------------------------------------------

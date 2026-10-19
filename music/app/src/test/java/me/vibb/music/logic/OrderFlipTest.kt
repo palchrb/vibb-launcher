@@ -111,6 +111,7 @@ class OrderFlipTest {
         assertEquals(5_000L, plan.startPosMs)
         assertNull("a shuffled queue is left alone", flippedNowPlaying(row.copy(shuffled = true), 1, keys, 2))
         assertNull("another entry's is left alone", flippedNowPlaying(row, 2, keys, 2))
+        assertNull("its current item left the listing: left alone (N2)", flippedNowPlaying(row, 1, keys - "k3", 2))
         val mid = row.copy(index = 2) // k1 current
         assertEquals("k1\nk2\nk3\nk4\nk5", flippedNowPlaying(mid, 1, keys, 2)!!.keys)
     }
@@ -126,6 +127,20 @@ class OrderFlipTest {
         assertEquals(OrderWords.OLDEST_FIRST, order.words)
         assertNull("below two rows: no button", listOrderUi(flipped, now, 1))
         assertNull("shuffled: no button", listOrderUi(flipped, now.copy(shuffled = true), 5))
+    }
+
+    @Test
+    fun `qa-39-code L1 - the service flips the current queue's keys, and setFlipTx rewrites the stored queue`() {
+        val service = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        val flip = service.substringAfter("private fun flipOrder(").substringBefore("\n    }\n")
+        // a room's queue (the HLS item left out) stays that: the queue's own keys, never the order's
+        assertTrue(flip.contains("flippedQueue(a.order.map { it.key }, a.items.map { it.key }, current.key)"))
+        assertTrue(flip.contains("renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })"))
+        val db = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
+        val tx = db.substringAfter("suspend fun setFlipTx(").substringBefore("\n    }\n")
+        assertTrue(tx.contains("val row = nowPlaying() ?: return"))
+        assertTrue(tx.contains("flippedNowPlaying(row, entryId, newOrder, nowMs)?.let { upsertNowPlaying(it) }"))
+        assertTrue(db.contains("@Transaction\n    suspend fun setFlipTx("))
     }
 
     @Test

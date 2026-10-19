@@ -144,7 +144,10 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 val heard = s.positions[n.entry.key].orEmpty().filterValues { it.done }.keys
                 val onPhone = s.onPhone[n.entry.id].orEmpty()
                 val shown = listOrder(s, n)
-                // design 39: a picture per row only where the pictures say something (never a Spotify context)
+                // design 39: a picture per row only where the pictures say something (never a Spotify context). Over
+                // the rows shown, while the carousel reads the queue: the same rule, but on a room's speaker-playable
+                // queue (or a stored queue that lost items) they may differ when the only other picture is on an item
+                // out of the queue - the list shows every row, so it judges every row (qa-39-code N1)
                 val pictures = !isSpotifyContext(n.entry) && rowPictures(shown, n.entry.cover)
                 ListScreen(
                     n.entry,

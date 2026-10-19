@@ -469,8 +469,8 @@ internal class SpotifyRenderer(
 
     /**
      * The kid's order flip in list mode (design 39 §3.3, qa-39-design M2; no shuffle for Spotify, §4.2): the queue is
-     * [keep] then [after] at once, index 0 the current track. Playing (or starting), a fresh start at the measured
-     * place goes out through the start path, coalesced like a step ([SPOTIFY_STEP_COALESCE_MS]: quick repeated flips
+     * [keep] then [after] at once, index 0 the current track. Playing (or starting), a fresh start at the current
+     * place ([positionMs]: the measurement carried on by the time since, qa-39-code M1) goes out through the start path, coalesced like a step ([SPOTIFY_STEP_COALESCE_MS]: quick repeated flips
      * are one play of the last order) - nothing restarts from 0:00. Paused or not started, no call at all: the window
      * is marked stale ([windowStale]), so the next Play is a fresh start in the new order, never an SDK resume inside
      * Spotify's old window. The tracker keeps its adds (L10): the old add, when it surfaces, is list mode's
@@ -484,7 +484,8 @@ internal class SpotifyRenderer(
         val trackOf = mediaItems.indices.associate { mediaItems[it].mediaId to tracks[it] }
         val items = listOf(mediaItems[keep]) + after
         val reordered = items.map { trackOf[it.mediaId] ?: return ports.log("spotify: a reorder named a track not in the queue - ignored") }
-        val at = tracker.measured?.takeIf { it.index == index }?.positionMs ?: startPosition()
+        // where it is now (qa-39-code M1): the place with its extrapolation, not the last state's raw position
+        val at = positionMs()
         mediaItems = items
         tracks = reordered
         index = 0
@@ -874,7 +875,6 @@ internal class SpotifyRenderer(
     private fun begin(r: Request) {
         stepWhilePausedAt = null
         skippedAdd = null
-        windowStale = false
         if (detached) {
             ports.log("spotify: a start refused (detached)")
             return
@@ -891,6 +891,8 @@ internal class SpotifyRenderer(
         cancelFirstState()
         cancelGap()
         cancelIdle()
+        // past the gates: this start really goes out with the new order's window (qa-39-code N3)
+        windowStale = false
         val s = Start(r, ports.now() + SPOTIFY_START_BUDGET_MS)
         start = s
         sdkProblem = null

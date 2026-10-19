@@ -458,7 +458,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
   `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
   the playing one ringed; a row whose `artHash` is null shows the series cover with its number under `Palette.scrim`
-  (by the listing's hash, so it never changes as files land). `decodeDp` decodes with `inSampleSize`
+  (by the listing's hash, so it never changes as files land). The list judges the rows it shows, the carousel the queue: on a room's
+  speaker-playable queue (or a stored queue that lost items) the two may differ (qa-39-code N1). `decodeDp` decodes with `inSampleSize`
   (`thumbSampleSize`) into its own 2 MiB LRU (`thumbs`, `"$hash@$px"`), its own slot; no small session copy. The
   list reports its visible rows (settled 1 s) to `ListArtWants.note`: the held list `filesDir/music/list_art.txt`
   (`listArtAfter`: the window - the visible rows and `LIST_ART_MARGIN` 10 each side - first, own hashes only, at most
@@ -475,7 +476,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `Active.order` (a `var`, with `shownNewestFirst`), the queue becomes `flippedQueue(newOrder, queueKeys, current)` (a
   room's speaker-playable queue stays that, M1) and `renderer.reorder` - the phone's ExoPlayer, the Sonos controller's
   bookkeeping (no SOAP), and Spotify list mode (`SpotifyRenderer.reorder`: tracks replaced at once; playing, a fresh
-  start at the measured place coalesced like a step; paused, no call and `windowStale` so the next Play is a fresh
+  start at the current place (`positionMs()`, the measurement carried on - never the last state's raw position,
+  qa-39-code M1) coalesced like a step; paused, no call and `windowStale` so the next Play is a fresh
   start, never an SDK resume in Spotify's old window; `SpotifyTracker.reorder` keeps the adds, L10). **The one seam**
   is `Snapshot.order` (`shownNewestFirst(newestFirst(entry), flips[key])`: a row whose parent direction no longer
   matches is stale - ignored, pruned at the next sync with a gone entry's, `flipsToDelete`): every play path, the

@@ -479,7 +479,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   older than a day go; code QA M1); a request the budget stops leaves its item untried (QA L1 b). **The reserve**
   (design 39, qa-39-design M6): an older (backlog) item's request goes out only while more than `ART_DAY_RESERVE`
   (100) of the day's 400 is left (`art_backfill_allowed`, counted down as the pass spends), so a long feed filling over
-  days stops at 300 used and other entries' new items keep the rest; a check's new items may use it all. Fill time:
+  days stops at 300 used and other entries' new items keep the rest; a check's new items may use it all - only
+  of an entry listed before: a brand-new entry's first listing (every item first seen now) is a backfill too, so adding
+  a big feed or Spotify list never spends the reserve (qa-39-code L2). Fill time:
   a 1000-item feed with its own pictures takes ~12 days at the default 6 h interval (80 a day), ~3.3 days at 1 h (300
   a day). A feed with a few own pictures early and hundreds of series-picture episodes after them keeps the backlog on
   (it turns off only with no `own` at all) and is walked to its end once - ~1000 GETs, judged items aren't retried -

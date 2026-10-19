@@ -126,6 +126,8 @@ fun flippedNowPlaying(row: NowPlayingRow, entryId: Long, newOrder: List<String>,
     if (row.entryId != entryId || row.shuffled) return null
     val keys = row.keys.split('\n').filter { it.isNotEmpty() }
     val current = keys.getOrNull(row.index) ?: return null
+    // its current item left the listing: rotating would put another item at the old place (qa-39-code N2)
+    if (current !in newOrder) return null
     return row.copy(keys = flippedQueue(newOrder, keys, current).joinToString("\n"), index = 0, updatedAt = nowMs)
 }
 

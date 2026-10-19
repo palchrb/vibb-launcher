@@ -370,3 +370,19 @@ strings nb/en). The fake: `fake-audio.py --feed N --hls K` with selftest 3; emul
 
 **Not checked here**: the emulator round §6q (all of it); on the Jelly Star the row pictures' decode and scroll, TalkBack,
 the real Spotify SDK through a flip (the coalesced play and the leftover add), a real Sonos room's first `reorder`.
+
+### Code QA fix round (`docs/review/qa-39-code.md` at `ec6d1bfa`, 2026-10-19)
+
+| Finding | What was done |
+|---|---|
+| M1 a flip while Spotify plays restarts at the last state | `SpotifyRenderer.reorder` takes `positionMs()` (the place carried on since the last state) before the queue is swapped. Test: a flip 10 s after a state at 40 000 sends `position_ms` within 49 000-51 000. |
+| L1 four surviving mutations | Source checks: `LiveBridge.wantArt` goes through `wantArtSend` and keeps `sentLater` (EpisodeArtTest); `MusicRoot` passes `rowPictures(shown, n.entry.cover)` as `pictures` (EpisodeArtTest); `flipOrder` builds `flippedQueue` from `a.items`' keys and `setFlipTx` is a `@Transaction` that rewrites the stored queue (OrderFlipTest). |
+| L2 a brand-new entry's first check spends the reserve | Fixed, not documented: a new item counts against the reserve as new only when the entry had items before this check (`listed_before`: an item first seen earlier). A brand-new entry's first listing is a backfill and stops at 300 used. `a_backfill_leaves_the_days_reserve_to_new_items` adds the brand-new entry (no request at 305 used); the other entry there is now listed once first; `a_day_of_backfill_stays_within_the_budgets` (40 brand-new entries) now fills 300, not 400. |
+| L3 two fakes on 8731 in §6q | §6q runs `fake-audio.py --port 8732` (the feed `http://127.0.0.1:8732/feed.xml`, enclosures on 8732). |
+| N1 the list's rule vs the carousel's | A comment at the call in `MusicRoot` and a sentence in `music/CLAUDE.md`: the list judges the rows it shows, the carousel the queue; they may differ on a room's filtered queue. |
+| N2 a stored current item gone from the listing | `flippedNowPlaying` returns null then (the stored queue is left alone); tested. |
+| N3 `windowStale` cleared before `begin`'s gates | Cleared after the gates, where the start really goes out. |
+| N4 no report after a flip on the same index range | The visible-range effect is keyed on the shown direction too. |
+
+Runs (local): server 1032 tests, fmt clean, clippy the 13 known warnings; music 916 tests (`testDebugUnitTest
+assembleDebug -PwarningsAsErrors=true`); the fake's selftest OK.
