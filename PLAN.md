@@ -720,8 +720,9 @@ findings, merge to `main`, full suite once.
   for design 35's inbox and push, and an outbound webhook (a parent-set URL + secret, e.g. Home Assistant) for parent
   events in general. Not a lost-contact signal: Wi-Fi off or a pocketed phone looks like "away". Scope open.
 
-- **PWA small things**: (1) a switch in the off state loses its knob and shows as a grey box - the
-  knob should show on the left, light and dark; (2) "add an existing family contact" to a phone
+- **PWA small things**: (1) ~~a switch in the off state loses its knob~~ - fixed 2026-10-19 (d99b3bdc: the knob was
+  painted under the positioned switch; `position: relative` on it); the toggle "jump" on Device › Apps fixed the same
+  day (scroll-name: a row that moved groups keeps the exact position; `window.name` carries the record too); (2) "add an existing family contact" to a phone
   (the server already keeps one address book per number); (3) every `<details>` confirm
   (Remove Contact… and the rest) gets a clear Cancel that closes it.
 - **The child's own photos as wallpaper, from Immich** (the user, 2026-10-15): the child has his own Immich
