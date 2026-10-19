@@ -203,3 +203,132 @@ the numbers, but say it in §3.4 and look at it in §6q 3.
   filled button alone doesn't say which way the list goes).
 - **Q2** - keep today's keep-set rule (the parent's next): the flip changes nothing in what is kept, and offline the
   player already skips to the next downloaded item with "Ikke lastet ned"; revisit only if the kid meets it.
+
+## Revision check (04382327)
+
+I re-read the revised note at `04382327` (merged into `qa-design-39`) against the same code. I also checked these:
+`SpotifyTracker` (`load`, `adds`, `isAdd`, `leftoverAdd`, `notOurs`), `SpotifyRenderer` (`seekTo(index, ms)`'s
+`SPOTIFY_STEP_COALESCE_MS`, `skippedAdd`), `Palette.scrim`, `Cover`'s `content`, `storedPlan`/`restoredQueue`, the
+server's RSS `hls` flag (`music_sweep.rs`: the enclosure's path ends in `.m3u8`), `PlayBodies.speakerDropReason`,
+`photos::print_image`/`low_detail`/`SAME_PICTURE_BITS`, the art pass's budget and backlog (`art_backlog` defaults to
+1), and `CHECK_NOW_PER_HOUR` (12).
+
+### The findings, one line each
+
+- H1 resolved: the pure `wantArtSend` sends when forced with a new `later` hash whatever `now` holds, posts on main,
+  `ArtWants.compute` reads `list_art.txt`, and a test covers the case that matters.
+- M1 resolved: `flippedQueue` builds from the current queue's keys, `a.order` becomes a `var`, there is a
+  filtered-queue test, and a Sonos HLS check.
+- M2 resolved: no call while paused (the next Play is a fresh start), 300 ms coalescing through the step timer, and a
+  renderer test. The leftover-add mechanism is named wrongly (L10).
+- M3 resolved: rows with null art show the number over the cover under `Palette.scrim` (fg, 14 sp, 800). `Cover`
+  takes `content` and the scrim exists. §1.6 now says where the 200-item window shows.
+- M4 resolved: the list scrolls to the playing row after a flip, keyed on the shown direction (a reset that keeps the
+  direction doesn't scroll).
+- L1 partly resolved: structured patterns, image URLs from `Host`, and the budget is counted. The selftest's claim
+  isn't faithful to the server (L11).
+- L2 resolved: `keep` = the 600 without the list, plus the list, with a test.
+- L3 resolved: the reset is described, and §6q 5 checks it.
+- L4 resolved: `inSampleSize`, the fallback in `thumbs`, and their own slot.
+- L5 resolved: the order words drop when the line doesn't fit, with a `Fit.kt` rule and a `FitTest`.
+- L6 resolved: `stateDescription` = the order words.
+- L7 resolved: no compute when the window lacks nothing, and the held list caps at 60.
+- L8 resolved: the hint and progress after a flip are stated and checked.
+- N1, N3, N4 resolved.
+- N2 resolved: the UI side writes the row. This opens M5 and L9.
+
+### The new mechanics
+
+- **`wantArtSend`, `keep`, `flippedQueue`, the scroll, the scrim rows, the fit rule**: sound as written.
+- **Spotify**:
+  - Paused: no call, the place marked stale. Playing: a fresh start through the step timer, which already coalesces
+    taps within 300 ms. Both sound.
+  - The leftover add, see L10.
+- **The art budget**:
+  - `--feed 20`: one check. 7 of the 20 rows point at the channel URL and are judged `same` with no request; 13
+    GETs fit in 20.
+  - `--feed 250`: only the newest 200 count (`ART_WINDOW`), about 133 GETs, so seven checks, not ten. The backlog is
+    on by default, and seven fits the hourly limit of 12. Harmless overcount (N5).
+- **The fake's pictures**: L11.
+
+### The architect's flagged assumption: the Sonos HLS case in §6q 4
+
+It works as written.
+- **The server**: an RSS item whose enclosure path ends in `.m3u8` is listed with `hls: true`
+  (`music_sweep.rs`, the feed merge).
+- **The music app**: `speakerDropReason` returns `"hls"` for a non-NRK-series entry. `activeFor` leaves such an item
+  out of a room's queue from the start, and logs "1 item(s) a speaker can't play left out (hls)".
+- **The address**: the lan entry's `10.0.2.2` enclosures pass on a room, because `publicOnly` is false for `lan`.
+  A loopback feed is judged `lan`, since `is_private` covers 127/8.
+- **What it proves**: the item is absent before the flip and must still be absent after it. That is M1's
+  regression.
+- **Owed**: the `--feed` option must be named (e.g. `--hls K`: item K's enclosure is `/audio/<key>.m3u8`), and its
+  selftest should assert the URL. The check needs no playable playlist behind it: the room never asks for it, and on
+  the phone that item may fail like any bad stream.
+
+### New findings
+
+#### M5. A flip while nothing is live leaves the stored queue in the old direction
+
+**What.** "Not live: nothing more - the next play reads `snap.order`" holds only for a fresh play. The now-playing
+bar's place comes back from `NowPlayingRow`. `RESUME`, Home's card, the bar's play and every `restoreThen` go
+through `storedPlan(stored, …, snap.order(entry).map { it.key }.toSet())`, which keeps the **stored** key order and
+uses the order only as a set. So after a flip with the service down:
+- the list shows the new direction, and "N av M" follows it (`listOrder`);
+- but the restored queue's next and previous go the old way;
+- until the next cover tap or pick.
+
+The kid sees the list flipped while playback isn't.
+
+**Fix.**
+- `Store.setFlip` also rewrites the stored row's keys to `flippedQueue(newOrder, storedKeys, current)`, in the same
+  transaction. This applies when the row is that entry's and not shuffled; the index becomes 0 and the position is
+  kept.
+- Alternatively, the restore re-derives an unshuffled queue through `flippedQueue(snap.order, stored, current)`.
+- An `OrderFlipTest` case covers it.
+
+#### L9. `FLIP_ORDER` must not race the row's write
+
+`Store.setFlip` runs on the writer. If the UI sends `FLIP_ORDER` at once, the service can rebuild `a.order` from a
+snapshot that doesn't have the row yet. The list then flips and the queue doesn't. Fix: send after `setFlip`
+returns, or carry the entry key and the new shown direction in the command and let the service use those.
+
+#### L10. Spotify's leftover add goes through list mode's `isAdd` rule, not `skippedAdd`
+
+`skippedAdd` handles context mode's `Event.LeftoverAdd`. In list mode the tracker's `adds` survive `load`. A
+surfacing add then takes `isAdd` and `notOurs(goOn = true)`: paused, then a `NewWindow` from the current item at its
+place, or from the next one when ours had just run out. That works after a flip, at the cost of one more play call
+and a short hitch. Fix: correct the wording in §3.3, keep `adds` across the reorder, and add a `SpotifyTrackerTest`
+case: "flip, then the old add surfaces: paused, a new window, the new order goes on".
+
+#### L11. The fake's dHash selftest doesn't model the server
+
+The server prints `to_luma8` of the stored JPEG (square crop, at most 512 px, q85), downscaled to 9x8 with
+`FilterType::Triangle`. The `--selftest`'s box average differs from that. Two problems:
+- **Fine stripes alias.** "Stripe count depends on n" gives many stripes per 57 px cell, which average to an even
+  grey. The neighbour compares are then decided by JPEG noise: unstable prints, or `low_detail`.
+- **Vertical-only stripes repeat each row.** Every row of the print is the same, so the set bits come in multiples
+  of 8. A single light/dark edge gives exactly 8 bits, which counts as `low_detail` (at most 8 bits).
+
+Only about 238 row patterns with 2-6 bits exist, too few with margin for 250 items.
+
+**Fix.**
+- Draw each picture as a 9x8 grid of blocks, one block per hashed cell, with two grey levels at least 64 apart,
+  seeded per n, so both directions vary.
+- The selftest computes the print from those block levels and asserts:
+  - 12-52 bits set;
+  - every compared neighbour pair at least 32 levels apart, so the tent filter and JPEG can't flip a bit;
+  - every pair of items, and each item against the channel picture, more than 12 bits apart (well over
+    `SAME_PICTURE_BITS` 5).
+- Colour doesn't matter to `series_picture`, which is grey only.
+
+#### Nits
+
+- N5. The budget: `--feed 250` needs about seven checks, not ten.
+- N6. §6q 2: inside the pictured part, every third row (the channel picture, `same`) is also a numbered cover.
+
+### Verdict
+
+Approve. No new High; one new Medium (M5) and three Lows (L9-L11). M5 and L9 are a few lines in §3.1 and §3.3, and
+belong in the note or the implementation brief before coding. L10 and L11 can be settled in the step: L11 before
+the fake is written, since §6q 1-2 depend on it.
