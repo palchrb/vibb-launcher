@@ -435,7 +435,10 @@ async fn main() {
         push: std::sync::Arc::new(push::Push::new(
             push_key,
             push_subject,
-            std::sync::Arc::new(push::HttpTransport::new()),
+            std::sync::Arc::new(
+                push::HttpTransport::new()
+                    .with_payload(std::env::var("PUSH_PAYLOAD").ok().as_deref()),
+            ),
         )),
     };
     state

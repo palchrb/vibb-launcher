@@ -775,6 +775,11 @@ pub async fn receipt(
         d: i64,
         t: String,
         a: String,
+        /// The worker event behind it and the worker's version (diagnostics, logged only).
+        #[serde(default)]
+        e: Option<String>,
+        #[serde(default)]
+        v: Option<String>,
     }
     let Ok(receipt) = serde_json::from_slice::<Receipt>(&body) else {
         return StatusCode::BAD_REQUEST;
@@ -783,7 +788,9 @@ pub async fn receipt(
     // whether a device's worker reaches this server at all (2026-10-19).
     match push::receipt(&state.db, receipt.d, &receipt.t, receipt.a == "clicked").await {
         Ok(push::Receipt::Matched) => {
-            tracing::info!(delivery = receipt.d, action = %receipt.a, "push receipt");
+            let event = crate::audit::clip(receipt.e.as_deref().unwrap_or("-"), 32);
+            let worker = crate::audit::clip(receipt.v.as_deref().unwrap_or("-"), 32);
+            tracing::info!(delivery = receipt.d, action = %receipt.a, %event, %worker, "push receipt");
             StatusCode::NO_CONTENT
         }
         Ok(push::Receipt::Stale) => {

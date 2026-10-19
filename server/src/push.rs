@@ -141,6 +141,9 @@ pub struct Push {
     jwts: Mutex<HashMap<(String, String), (i64, String)>>,
     /// Subscription id → when its last test push was asked for (Unix seconds).
     tests: Mutex<HashMap<i64, i64>>,
+    /// The payload's shape (`PUSH_PAYLOAD`): Safari's declarative form (`web_push` 8030,
+    /// `mutable`, the default - the user wants to keep it) or the plain one (`classic`).
+    pub declarative: bool,
 }
 
 impl Push {
@@ -156,7 +159,15 @@ impl Push {
             wake: tokio::sync::Notify::new(),
             jwts: Mutex::default(),
             tests: Mutex::default(),
+            declarative: true,
         }
+    }
+
+    /// `PUSH_PAYLOAD=classic` turns the declarative keys off (a plain Web Push payload).
+    pub fn with_payload(mut self, value: Option<&str>) -> Self {
+        self.declarative =
+            !matches!(value.map(str::trim), Some(v) if v.eq_ignore_ascii_case("classic"));
+        self
     }
 
     /// Wakes the sender: something was queued (after the caller's transaction committed).
@@ -210,6 +221,39 @@ impl Push {
 
 /// `VAPID_SUBJECT` when it is a `mailto:` or `https:` URL; anything else is ignored (logged by
 /// the caller).
+/// The push's payload (design 35 §5.3). `declarative`: Safari 18.4+'s form (`web_push` 8030,
+/// `mutable`: Safari shows the notification itself and fires `pushnotification` at the worker,
+/// which posts the receipt; older Safari, Chrome and Firefox read it as plain data for `push`).
+/// `false` (`PUSH_PAYLOAD=classic`): the plain form, `push` everywhere. Switchable since 2026-10-19
+/// so the two can be compared on one iPhone against the receipt log.
+#[allow(clippy::too_many_arguments)]
+pub fn payload_json(
+    declarative: bool,
+    title: &str,
+    body: &str,
+    navigate: String,
+    tag: String,
+    delivery_id: i64,
+    token_b64: String,
+    unread: i64,
+) -> String {
+    let mut payload = serde_json::json!({
+        "notification": {
+            "title": crate::audit::clip(title, crate::parent_events::TITLE_MAX),
+            "body": crate::audit::clip(body, crate::parent_events::SUMMARY_MAX),
+            "lang": "en",
+            "navigate": navigate,
+            "tag": tag,
+            "data": { "d": delivery_id, "t": token_b64, "b": unread },
+        },
+    });
+    if declarative {
+        payload["web_push"] = serde_json::json!(8030);
+        payload["mutable"] = serde_json::json!(true);
+    }
+    payload.to_string()
+}
+
 pub fn subject_of(value: Option<&str>) -> Result<Option<String>, String> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         None => Ok(None),
@@ -634,22 +678,16 @@ async fn send_one(
         What::Summary => format!("s{}", delivery.id),
         What::Test => format!("t{}", delivery.id),
     };
-    // A plain Web Push payload (RFC 8030's data, read by the worker's `push` handler everywhere -
-    // Chrome, Firefox, Safari 16.4+). It was Safari's declarative form (`web_push` 8030, `mutable`)
-    // until 2026-10-19: Safari 18.4+ then showed the notification itself and never ran the worker's
-    // `push` (and its `pushnotification` event brought no receipt on the user's iPhone either), so
-    // nothing confirmed a push. The classic path is the one the tests cover on every browser.
-    let payload = serde_json::json!({
-        "notification": {
-            "title": crate::audit::clip(&delivery.title, crate::parent_events::TITLE_MAX),
-            "body": crate::audit::clip(&delivery.body, crate::parent_events::SUMMARY_MAX),
-            "lang": "en",
-            "navigate": format!("{}{target}", delivery.origin.trim_end_matches('/')),
-            "tag": tag,
-            "data": { "d": delivery.id, "t": B64.encode(token), "b": unread },
-        },
-    })
-    .to_string();
+    let payload = payload_json(
+        state.push.declarative,
+        &delivery.title,
+        &delivery.body,
+        format!("{}{target}", delivery.origin.trim_end_matches('/')),
+        tag,
+        delivery.id,
+        B64.encode(token),
+        unread,
+    );
     let body = match webpush::encrypt(
         &ring::rand::SystemRandom::new(),
         &delivery.p256dh,
@@ -1265,6 +1303,47 @@ mod tests {
         let again = push.jwt(&key, aud, sub, 999_000);
         push.forget_jwt(aud, sub);
         assert_ne!(push.jwt(&key, aud, sub, 999_000), again);
+    }
+
+    #[test]
+    fn the_payload_switch() {
+        let classic: serde_json::Value = serde_json::from_str(&payload_json(
+            false,
+            "t",
+            "b",
+            "https://x/y".into(),
+            "e1".into(),
+            7,
+            "AA".into(),
+            2,
+        ))
+        .unwrap();
+        assert!(classic.get("web_push").is_none() && classic.get("mutable").is_none());
+        assert_eq!(classic["notification"]["data"]["d"], 7);
+        let declarative: serde_json::Value = serde_json::from_str(&payload_json(
+            true,
+            "t",
+            "b",
+            "https://x/y".into(),
+            "e1".into(),
+            7,
+            "AA".into(),
+            2,
+        ))
+        .unwrap();
+        assert_eq!(declarative["web_push"], 8030);
+        assert_eq!(declarative["mutable"], true);
+        assert!(Push::new(None, None, Arc::new(Never)).declarative);
+        assert!(
+            !Push::new(None, None, Arc::new(Never))
+                .with_payload(Some("classic"))
+                .declarative
+        );
+        assert!(
+            Push::new(None, None, Arc::new(Never))
+                .with_payload(Some("declarative"))
+                .declarative
+        );
     }
 
     #[test]

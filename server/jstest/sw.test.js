@@ -87,6 +87,8 @@ function pushOf(message) {
 }
 
 const MESSAGE = {
+    web_push: 8030,
+    mutable: true,
     notification: {
         title: "Anna called an emergency number",
         body: "At 14:02",
@@ -115,7 +117,7 @@ test("a push shows its notification, then the badge, then posts the receipt", as
     assert.strictEqual(url, "/notifications/receipt");
     assert.strictEqual(init.method, "POST");
     assert.strictEqual(init.credentials, "omit");
-    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown" });
+    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "push", v: "v-test" });
 });
 
 // Safari 18.4+ shows a declarative push itself and fires `pushnotification`, not `push`
@@ -129,7 +131,7 @@ test("a declarative push on Safari sets the badge and posts the receipt without 
     assert.deepStrictEqual(w.log[0], ["badge", 3]);
     const [, url, init] = w.log[1];
     assert.strictEqual(url, "/notifications/receipt");
-    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown" });
+    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "pushnotification", v: "v-test" });
     // A declarative notification without our data (an old payload, or none): nothing posted, nothing thrown.
     const bare = fakeWorker({ badge: false });
     await bare.fire("pushnotification", { notification: { title: "x" } });
@@ -161,7 +163,7 @@ test("a tap posts clicked and opens the event's page", async () => {
     await w.fire("notificationclick", event);
     assert.ok(event.notification.closed);
     const fetches = w.log.filter((e) => e[0] === "fetch");
-    assert.deepStrictEqual(JSON.parse(fetches[0][2].body), { d: 7, t: "tok", a: "clicked" });
+    assert.deepStrictEqual(JSON.parse(fetches[0][2].body), { d: 7, t: "tok", a: "clicked", e: "click", v: "v-test" });
     assert.deepStrictEqual(w.log.find((e) => e[0] === "open"), ["open", "/devices/3/calls"]);
 });
 

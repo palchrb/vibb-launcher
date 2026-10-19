@@ -37,13 +37,16 @@ function localPath(url) {
 }
 
 // The receipt (design 35 §7): a failed one is not kept.
-function receipt(data, action) {
+// `event` names the worker event that led here (push, pushnotification, click) and `v` the
+// worker's version: the server logs both, so a device whose pushes aren't confirmed can be read
+// (which event Safari fires, whether the new worker is in use) without a debugger.
+function receipt(data, action, event) {
     if (!data || !data.d || !data.t) return Promise.resolve();
     return fetch("/notifications/receipt", {
         method: "POST",
         credentials: "omit",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ d: data.d, t: data.t, a: action }),
+        body: JSON.stringify({ d: data.d, t: data.t, a: action, e: event || action, v: VERSION }),
     }).catch(() => undefined);
 }
 
@@ -77,7 +80,7 @@ async function show(event) {
             // the badge is a nicety
         }
     }
-    await receipt(data, "shown");
+    await receipt(data, "shown", "push");
 }
 
 // Inside waitUntil, always: Safari shows its declarative fallback only when the
@@ -101,7 +104,7 @@ async function confirmDeclarative(event) {
             // the badge is a nicety
         }
     }
-    await receipt(data, "shown");
+    await receipt(data, "shown", "pushnotification");
 }
 
 self.addEventListener("pushnotification", (event) => {
@@ -126,7 +129,7 @@ self.addEventListener("notificationclick", (event) => {
     event.notification.close();
     const data = event.notification.data || {};
     // The receipt goes first (it marks the event read), the page opens beside it.
-    event.waitUntil(Promise.all([receipt(data, "clicked"), open(localPath(data.navigate))]));
+    event.waitUntil(Promise.all([receipt(data, "clicked", "click"), open(localPath(data.navigate))]));
 });
 
 // No fetch handler at all - every request passes straight through to the
