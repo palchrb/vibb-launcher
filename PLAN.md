@@ -778,6 +778,11 @@ findings, merge to `main`, full suite once.
   opens anything else; `EmergencyCall`'s flow and the `EmergencyDialer` fallback per number. Crosses the API
   (the policy's list, both directories in one commit). A mockup first.
 
+- **A per-phone avatar as the push notification's icon** (the user, 2026-10-19: the phone's avatar with the round
+  Vibb mark as a small tag bottom-right): the worker's `icon` (and the declarative payload's) can be any URL of ours,
+  composited on the server from the phone's picture. Chrome/Edge/Brave/Samsung/Firefox show it; Safari (iPhone, Mac)
+  shows the web app's own icon and is believed to ignore `icon` - step 1 is one test on the iPhone with a distinct
+  icon before anything is built. Goes with the item below.
 - **A photo of the child for each phone in the PWA** (the user, 2026-10-16, low priority): the Devices list,
   the phone's summary header and the Locate switcher show a coloured disc with the first letter; let the
   parent upload a photo per phone instead (`photos::process` with `Shape::Square`, like contact photos - EXIF
