@@ -81,6 +81,8 @@ pub struct DeviceRow {
     /// "Last shown 2 h ago", "Nothing sent yet", "Turned off on that device - …".
     pub sub: String,
     pub active: bool,
+    /// The flash under this device's rows (Send a Test's answer): `(text, error)`.
+    pub notice: Option<(&'static str, bool)>,
 }
 
 /// A Notify Me About switch.
@@ -121,14 +123,11 @@ struct NotificationsTemplate {
     clock_warning: bool,
     /// A flash in This Device or in Getting Notifications: `(text, error)`.
     this_notice: Option<(&'static str, bool)>,
-    devices_notice: Option<(&'static str, bool)>,
 }
 
 /// A notice code's words and group (`#this-device` = true, `#devices` = false).
 fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
     Some(match code? {
-        "push_on" => (true, "Notifications are on for this device.", false),
-        "push_off" => (true, "Notifications are off on this device.", false),
         "push_service" => (true, "This browser's push service isn't supported.", true),
         "push_key" => (
             true,
@@ -157,7 +156,6 @@ fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
             "That device's notifications are turned off - turn them on again there.",
             true,
         ),
-        "removed" => (false, "Removed.", false),
         _ => return None,
     })
 }
@@ -237,12 +235,21 @@ pub async fn page(
                 .zip(settings)
                 .map(|((name, label), on)| Switch { name, label, on })
                 .collect();
-            let notice = notice_of(params.get("notice").map(String::as_str));
             let subscribed = known.join(",");
             let not_showing = subscriptions.iter().filter_map(warning_of).collect();
+            let notice = notice_of(params.get("notice").map(String::as_str));
+            let sub = number(&params, "sub");
             let devices = subscriptions
                 .iter()
-                .map(|s| device_row(s, &zone, now))
+                .map(|s| {
+                    let mut row = device_row(s, &zone, now);
+                    if Some(row.id) == sub {
+                        row.notice = notice
+                            .filter(|n| !n.0)
+                            .map(|(_, text, error)| (text, error));
+                    }
+                    row
+                })
                 .collect();
             Html(
                 NotificationsTemplate {
@@ -265,9 +272,6 @@ pub async fn page(
                     not_showing,
                     clock_warning: push::signature_refused(&state.db, now).await,
                     this_notice: notice.filter(|n| n.0).map(|(_, text, error)| (text, error)),
-                    devices_notice: notice
-                        .filter(|n| !n.0)
-                        .map(|(_, text, error)| (text, error)),
                 }
                 .render()
                 .unwrap(),
@@ -473,6 +477,7 @@ fn device_row(
         badge,
         sub: sub_line.unwrap_or_else(|| "Nothing shown yet".to_string()),
         active: sub.health != Health::Gone,
+        notice: None,
     }
 }
 
@@ -561,6 +566,15 @@ pub async fn warning_row(
 fn back_to(form: &HashMap<String, String>, notice: &str, group: &str) -> Response {
     Redirect::to(&format!(
         "/notifications{}&notice={notice}#{group}",
+        back_query(form)
+    ))
+    .into_response()
+}
+
+/// Back to Getting Notifications with the notice in that subscription's own group.
+fn back_to_sub(form: &HashMap<String, String>, notice: &str, sub: i64) -> Response {
+    Redirect::to(&format!(
+        "/notifications{}&notice={notice}&sub={sub}#devices",
         back_query(form)
     ))
     .into_response()
@@ -712,14 +726,14 @@ pub async fn send_test(
     .await;
     match active {
         Ok(Some(true)) => {}
-        Ok(_) => return back_to(&form, "test_gone", "devices"),
+        Ok(_) => return back_to_sub(&form, "test_gone", id),
         Err(err) => return db_error(err),
     }
     if !state
         .push
         .take_test_slot(id, chrono::Utc::now().timestamp())
     {
-        return back_to(&form, "test_wait", "devices");
+        return back_to_sub(&form, "test_wait", id);
     }
     let queued = sqlx::query(
         "INSERT INTO push_deliveries (subscription_id, kind, token_hash) VALUES (?, 'test', X'')",
@@ -730,7 +744,7 @@ pub async fn send_test(
     match queued {
         Ok(_) => {
             state.push.wake();
-            back_to(&form, "test_sent", "devices")
+            back_to_sub(&form, "test_sent", id)
         }
         Err(err) => db_error(err),
     }

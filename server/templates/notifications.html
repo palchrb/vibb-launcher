@@ -46,16 +46,16 @@
             <p class="row row-note" id="push-blocked" hidden>Allow notifications for Vibb Phone in this device's Settings, then come back here.</p>
             <button type="button" class="row row-button" id="push-on" hidden disabled>Turn On Notifications</button>
             <button type="button" class="row row-button" id="push-off" hidden>Turn Off on This Device</button>
+            {% if let Some((text, error)) = this_notice %}
+            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
+            {% endif %}
         </form>
         <form method="post" action="/notifications/subscriptions/unsubscribe#this-device" id="push-off-form" hidden>
             <input type="hidden" name="from" value="{{ back.0 }}">
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
             <input type="hidden" name="endpoint" value="">
         </form>
-        {% if let Some((text, error)) = this_notice %}
-        <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
-        {% endif %}
-        <p class="group-footer">Each device turns notifications on for itself. They name a phone and what happened, nothing more.<noscript> Notifications need JavaScript.</noscript></p>
+        <p class="group-footer">Each device turns notifications on for itself.<noscript> Notifications need JavaScript.</noscript></p>
         {% else %}
         <div class="group">
             <p class="row row-note">Notifications are off on this server: its key couldn't be read. The server log says which file.</p>
@@ -144,15 +144,15 @@
                     <button type="submit" class="button-destructive">Remove</button>
                 </form>
             </details>
+            {% if let Some((text, error)) = d.notice %}
+            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
+            {% endif %}
         </div>
         {% else %}
         <div class="group">
             <p class="row row-note">No device gets notifications yet. Turn them on under This Device, on each device you want them on.</p>
         </div>
         {% endfor %}
-        {% if let Some((text, error)) = devices_notice %}
-        <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
-        {% endif %}
         <div class="group-footer">Shown: the device confirmed it showed the notification.
             <details class="info">
                 <summary aria-label="If notifications don't show"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
