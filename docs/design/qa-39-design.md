@@ -332,3 +332,84 @@ Only about 238 row patterns with 2-6 bits exist, too few with margin for 250 ite
 Approve. No new High; one new Medium (M5) and three Lows (L9-L11). M5 and L9 are a few lines in §3.1 and §3.3, and
 belong in the note or the implementation brief before coding. L10 and L11 can be settled in the step: L11 before
 the fake is written, since §6q 1-2 depend on it.
+
+## Final check (e002e9b3)
+
+I read `e002e9b3` (merged into `qa-design-39`) against `music_sweep.rs`: `art_pass`, `art_gets`,
+`art_per_check_for`, `interval`, the backlog block after the loop, `art_same`/`art_own` and `same_run`,
+`check_now_blocked_until` (`CHECK_NOW_GAP_MINUTES` 15 per entry, 12 an hour server-wide), `MAX_LISTING_BYTES`. I
+also read `tests/music_art.rs`'s `the_window_is_200_…`, and the launcher's `MAX_LISTING_BYTES` and `artToFetch`.
+
+### (B) The revision check's findings, one line each
+
+- M5 resolved: `Store.setFlip` rewrites the saved `NowPlayingRow` with `flippedQueue` in the same transaction (only
+  this entry's row, unshuffled); there is an `OrderFlipTest` case and an emulator step (swiped away, play from the
+  bar).
+- L9 resolved: `FLIP_ORDER` is sent after `setFlip` returns and carries the entry key and the new direction; a
+  command for another entry is dropped.
+- L10 resolved: the leftover add goes through list mode's `isAdd`/`notOurs(goOn = true)`, with `adds` kept across
+  the reorder and a tracker test.
+- L11 resolved: the pictures are 9x8 block grids. The selftest models the print with margins (12-52 bits,
+  neighbours at least 32 levels apart, more than 12 bits between any two pictures, the channel picture included).
+  `--hls K` comes with its selftest.
+- N5 resolved: `--feed 250` gives about 167 own-URL rows, so about 9 checks, about 2.25 h by Check now (one per entry
+  per 15 min, within 12 an hour).
+- N6 resolved: every third row stays a numbered cover, as §6q 2 now says.
+
+### (A) The art pass without a window
+
+- **Budget arithmetic: right.** `art_gets(per_check, left, link)` = min(20, the day's 400 left); Spotify gets 100,
+  but at most half of what is left. A 1000-item RSS feed with its own art at the default 6 h gets 4 x 20 = 80 a day,
+  about 12.5 days to fill. At 1 h it gets 24 x 20 = 480, capped by the server-wide 400, about 2.5 days. The note's
+  "~12" and "~3" days hold. The launcher fetches `now` on any network (`artToFetch`: only `later` waits), so the
+  ahead-of-play claim holds.
+- **The backlog and `same` on a huge feed: still bounded.**
+  - Where every item's URL is the cover's (or NRK's 16:9 picture), step 1 judges them `same` with no request.
+  - Where every item has its own URL but shows the series picture, each fetch increments `same_run`. After the pass,
+    5 in a row with no `own` in the entry turns the backlog off: at most one check's 20 GETs, then only new items,
+    retried monthly.
+  - Confirmed in the code. Nothing in that rule depended on the window. One case grows: L12.
+- **`restamp_versions`, the prune, "N with episode art": need nothing.** They work over whatever the items hold.
+  - `MUSIC_ART`'s prune deletes only files no row names, and art isn't backed up; about 50 MB per big feed on the
+    server.
+  - The listing grows by about 72 bytes per hash. For 1000 items that is about 70 KB more, under the server's 1 MB
+    cut (`MAX_LISTING_BYTES`) and the launcher's 2 MB read.
+- **The tests: right in substance; two wording fixes.**
+  - The existing test answers 404 for every picture, so "all get art" should read "all 210 are tried" (`art_from`
+    set), as it asserts today.
+  - The new 250-item test should also assert that the first check takes the near end (play order) and that the day
+    cap still holds (a check after 400 requests makes none). The backlog defaults on (`art_backlog` 1), so successive
+    checks do reach past item 200.
+
+### New findings
+
+#### M6. A long backfill can hold every other entry's new pictures for days
+
+**What.** `ART_PER_DAY` (400) is shared server-wide and taken first come. With the window gone, one 1000-item feed at
+a 1 h setting asks for 480 a day, more than the whole budget, for about 2.5 days. Several big feeds take longer: three
+take about a week. Meanwhile a new episode on any other entry finds no budget at its check and shows a numbered
+series cover until budget frees. The note says "true of today's 200-backfill too", but that lasted half a day; this
+lasts days.
+
+**Fix.** Reserve part of the day for new items. `art_pass` may spend on **older** (backlog) candidates only while more
+than `ART_DAY_RESERVE` (e.g. 100) of the day is left; new items may use it all. This is one comparison where
+`candidates` is built, plus one test (a backfill stops at 300 used, and a new item on another entry still gets its
+GET). The fill time at 6 h is unchanged (80 a day); at 1 h it becomes about 3.3 days.
+
+#### L12. A feed with a few own pictures and many `same` ones is walked to its end once
+
+The backlog turns off only when the entry has no `own` at all. A feed with a few own pictures early and hundreds of
+series-picture episodes after them is therefore fetched to its end once: about 1000 GETs, where the window used to
+cap this at 200. It happens once, since judged items aren't retried, and M6's reserve keeps it from starving others.
+Accept, and say it in §2.4.
+
+#### N7. More listing pulls during a backfill
+
+Every check of a backfilling entry moves its listing version, so each phone pulls the listing again (gzip, about
+100 KB) up to 4 or 24 times a day for days. This is negligible, but worth one sentence in §2.4.
+
+### Verdict
+
+Approve for implementation. Everything from the review and the revision check is resolved. One new Medium (M6, the
+day budget's reserve for new items) should go into §2.4 and its test, in the note or the implementation brief. L12
+and N7 are one sentence each.
