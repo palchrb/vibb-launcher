@@ -321,7 +321,7 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 28] = [
+    const NOT_EVENTS: [&str; 30] = [
         // A failed Spotify login's codes (`spotify_login_failed`'s details, design 26c §2.3).
         "access_denied",
         "admin_id",
@@ -336,6 +336,8 @@ mod tests {
         "music_note",
         "new_kid_pin",
         "new_pin",
+        // Install Now's answers next to its queue (design 37: `?install=<word>`).
+        "no_release",
         "not_a_domain_allow",
         "not_a_domain_block",
         "os_check",
@@ -352,6 +354,7 @@ mod tests {
         "show_text",
         "stop_ring",
         "tailscale_update",
+        "unknown_phone",
     ];
 
     /// Every event id the server writes has a label (qa-31-s14-code M2): the `snake_case` literals

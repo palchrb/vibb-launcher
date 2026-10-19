@@ -171,6 +171,66 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Fix round (qa-11-code.md)**: (#1) with **no** record - lost, or corrupt (SharedPreferences swallows the parse error and loads an empty map) - process start and every `apply()` run the orphan sweep: every HOME candidate only a fence can have suspended (pure `orphanFenceTargets` = `fencePlan` without the already-suspended rule) that is suspended now is unsuspended (`last_release` "orphan"); cheap unless a non-controllable HOME is suspended. (#2) the window gate runs again inside `beforeCommit` (after the hash and the session copy); a wake or call there abandons the session and keeps the pending APK, no backoff (`InstallStart.DEFERRED`). (#3) screen-off time counts from the process start only before any screen event in this process (pure `screenOffForMs`). (#4) a commit that can't start and a transient failed result keep the verified APK (`recordFailed(keepPending)`, `deleteOnFailure = false`) and wait out the hour (`pendingCommitAllowed`); deterministic refusals - not ours, older, unparseable, a **wrong signer** (`GET_SIGNING_CERTIFICATES` of the archive vs ours must share a certificate, `signerMatches`), and INVALID/CONFLICT/INCOMPATIBLE/BLOCKED/PENDING_USER_ACTION results (`selfUpdateFailure`) - set `TrackedAppState.refusedTag`: never downloaded, fenced or tried again until the tag changes; PENDING_USER_ACTION abandons its session. (#5) the last fence's reason, refusals, ROLE_HOME and times live in their own prefs file `update_fence_last` (keys pinned) and go out as `update_fence.last_fenced_at_ms`/`last_released_at_ms` + `unsuspendable`/`last_release`/`home_role_held`. (#6) a group summary is cancelled only when every non-ongoing child would be (`groupSummaryCancellable` - NMS cancels the children with it). (#7) essentials also take the system receivers of `android.provider.action.SMS_EMERGENCY_CB_RECEIVED` (OEM alert apps).
 - **Not device-tested**: the A1-A5 and B1-B5 checks in the 11 doc and `docs/testing/emulator.md` §6d - in particular whether suspended quickstep breaks gesture Home/Recents during the tail (both nav modes, Pixel and Jelly Star), the frozen-vs-unknown HOME timing, the lock-task list after an update, session info after commit, ECBM detection, GMS's real channel ids.
 
+## Install Now: the parent's one-time update (design 37, `docs/design/37-install-now.md`, at the monorepo root)
+
+- **What**: the server's launcher page has an Install Now button per phone; it queues the command `install_update`
+  (`INSTALL_NOW_COMMAND`, `PendingCommand.releaseTag` = the release the row showed, `null` for every other command -
+  `PolicyResponseCompatTest`). The phone downloads the launcher row's **newest** release (the list as it is when it
+  acts) on any network, checks it exactly as every self-update (size, SHA-256, package, signer, newer versionCode -
+  nothing relaxed) and installs it **at once**, screen on or off, day or night; only a live call or an emergency holds
+  it. The update fence goes up when its switch is on, as for every self-update.
+- **Pure** (`server/SelfUpdatePlan.kt`, `InstallNowPlanTest`): `InstallNowRecord(commandId, requestedAt, tag,
+  fromVersionCode, failure, callWaitSinceElapsed)`; `installNowDecision(liveCall, emergency)` (call: wait, re-check in
+  `INSTALL_NOW_CALL_RECHECK_MS` 2 min; emergency: `EMERGENCY_RECHECK_MS`; else Commit); `launcherRow` (`LauncherRow`
+  NO_LIST / NOT_OFFERED - no row or another package / RUNNING - `ALREADY_RUNNING` or the installed tag / REFUSED /
+  ON_ITS_WAY); `installNowOutcome(record, running, row)` - a running versionCode above `fromVersionCode` is Installed
+  (beats a failure), then the recorded failure, then NOT_OFFERED "not offered", REFUSED "refused: release", RUNNING
+  AlreadyRunning, else Keep - and `.answer(versionName)` ("installed: X", "already running: X"); `installNowWait`
+  (`update_fence.waiting_for`: `install_now_download` without an APK, `install_now_call`/`_emergency`, else
+  `install_now_ready`; no record = the night gate's word); `installNowRecheckMs`; `callWaitSince`/`callWaitExpired`
+  (`INSTALL_NOW_CALL_LIMIT_MS` 6 h, qa-37-design R-L4); `downloadGate(..., parentOverride)` lifts `WAIT_WIFI` and
+  `WAIT_ROAMING` (network and space still hold); the answer strings are constants (`INSTALL_NOW_*`,
+  `PendingApkCheck.installNowAnswer` = "refused: wrong_signer" etc.), the words the server's `locate::reword` knows.
+- **The record** (`server/InstallNow.kt`): device-protected prefs `install_now`, key `record_v1`, every write
+  `commit()` - DE by the user's choice; nothing reads it before the first unlock today (`SelfUpdate.init` runs from
+  `initRest`, R-N1), it holds ids, a tag and versionCodes only. `active()` = a record without a failure (the override
+  and the gate); `fail(reason)` keeps the first reason and asks for a sync, whose settle answers; `callWait` stamps and
+  ends the call wait; `clearCommand` after the answer; `clear` next to `CommandAnswers.clear` (enrollment in
+  `Provisioning` and the Settings re-enroll).
+- **Dispatch** (`dispatchPendingCommand`, after the receipt): a record of another command is answered first (its own
+  failure, else `superseded`, failed); the new record stores the running versionCode; `SelfUpdate.lastWait` cleared;
+  `AppDownloads.request`; `requestFollowUpSync`. The same sync goes on to the list and, last, the commit.
+- **Settle** (`checkForTrackedAppUpdates`): after `handleLauncherUpdate` (now `LauncherHandled(download, row)`), and in
+  the no-list branch with `NO_LIST` (the new process answers "installed" also before tsnet is up). With a record
+  `launcherUpdateStep` gets `failedBackoffMs = 0` (the tap is the retry; a refusal still holds).
+- **Download** (`AppDownloads.kt`): one helper `gate(app, record, ...)` is the file's only `downloadGate(` call, behind
+  the run, the report, the running download's check and the network callback; `parentOverride = record.isLauncher &&
+  InstallNow.active(app) != null` - read live, never stored in a download record (QA M3), so a cleared or failed record
+  ends it. With a record: the run's give-up after `RETRY_DELAYS_MS` -> `fail("download failed")`, `MAX_HASH_FAILURES`
+  -> `fail("download corrupt")`, the launcher's `WAIT_SPACE` -> `fail("no space")`; `WAIT_NETWORK` waits; a stored
+  APK asks for a sync (`install_now_downloaded`) so the commit comes now. The launcher's package/signer refusals come
+  from the commit's `pendingApkCheck` (R-N2), never `CatalogRefusal`.
+- **Commit** (`commitPendingSelfUpdateIfDue`): with a record `commitDecision` = `installNowDecision` in both checks
+  (`beforeCommit` too), the backoff skipped (not the refusal); a wait arms `SelfUpdate.armAlarm` whatever the screen;
+  a call wait over 6 h -> `fail("call never ended")`; `CORRUPT` -> `fail("download corrupt")`, `MISSING` and
+  `SAME_VERSION` ask for a sync (R-L2: the download restarts, or the settle answers "already running"); a
+  deterministic check -> `fail("refused: <check>")`; `InstallStart.FAILED` -> `fail("install failed: start")`.
+- **The alarm and the call** (`SelfUpdate.kt`): a screen-off's `armIfPending` arms `installNowRecheckMs(lastWait)` with
+  a record, never the night window's delay over the call's 2 minutes (R-L1, one alarm, request code 12); `onScreenOn`
+  keeps the alarm while a record runs; `init` adds an `OngoingCalls` listener - no live call left while the record
+  waits on `CALL` -> `SyncRunner.request("install_now_call_ended")`. A VoIP or Telecom-only call isn't in
+  `OngoingCalls`: the 2-minute alarm re-checks it.
+- **Results**: `AppInstallReceiver` - any failed launcher result with a record -> `fail("install failed: <status>")`
+  (the ordinary path keeps its own backoff and refusal). `PackageReplacedReceiver` - with a record,
+  `SyncRunner.request("install_now_done")` (coalesced with the anchor's start sync); the settle answers `installed:
+  <VERSION_NAME>`. Over tsnet the answer waits for the next unlock, in the outbox.
+- **Status**: `UpdateFence.report`'s `waitingFor = installNowWait(...)`; capability `install_now_v1`
+  (`INSTALL_NOW_CAPABILITY`, `STATUS_CAPABILITIES`).
+- Tests: `InstallNowPlanTest` (the gate, the settle's table, the answers against the server's words, the row, the
+  waiting words, the alarm, the 6 h call, the skipped backoff and its glue line, the override's gate, the one `gate(`
+  helper, the alarm/screen-on/call-end glue, the record's codec, the capability), `PolicyResponseCompatTest`
+  (`release_tag`). Device checks: design 37 "Implementation status", `docs/testing/emulator.md` §6o.
+
 ## Call screens, ongoing-call card, camera while locked (user requests after the emulator run, 2026-10-06)
 
 - **Call screen avatar** (`InCallActivity`, pure `calls/CallCard.kt` `callAvatar`, `CallCardTest`): a known contact gets exactly the Home/phone-book avatar (`KidAvatars.bindContact`: the cached photo, else the initial on the contact's colour); the peach silhouette only for unknown/withheld numbers, emergency numbers and before the first unlock (CE storage).

@@ -1503,6 +1503,51 @@ adb logcat -s SyncRunner BatteryStatus KidInCallService
 The emulator can't show (device checks, design 35 "Step 3 implementation status"): the Jelly Star's BATTERY_LOW
 threshold and whether it sets `EXTRA_BATTERY_LOW`, the receiver in Doze, the emergency sync over mobile data.
 
+## 6o. Install Now: the parent's one-time launcher install (design 37)
+
+Design 37: Install Now on the launcher's page under Apps (`/apps/tracked/<id>`, the row with "This is the launcher
+app") queues a one-time `install_update`; the phone downloads the launcher row's newest release on any network,
+checks it as every self-update and installs it at once - waiting only for a call or an emergency. Setup as §6d's test
+self-update: the debug launcher of this step, enrolled; a manual app with package `me.vibb.launcher.debug` made the
+launcher row ("This is the launcher app" moved to it), and an APK built with a higher `-PversionCode`, uploaded with a
+new release label. A manual label never parses as a launcher tag, so the row offers Install Now unless the phone runs a
+build of exactly that name (the tap then answers "Already on X"). Keep the clock outside 02:00-05:00 and act inside the
+debug build's 2 minutes (after that the ordinary overdue path may install it on its own at a screen-off). Watch:
+```
+adb logcat -s SyncRunner SelfUpdate MdmSyncWorker AppDownloads UpdateFence AppInstallReceiver CommandAnswers InstallNow
+```
+
+1. **Too old**: with the previous launcher (before this step) installed, the phone's row says "1.x is waiting.
+   Install Now works from this update on." and has no button.
+2. **Screen on, on mobile data**: the phone's Apps › "Download apps on Wi-Fi only" on, `adb shell svc wifi disable`
+   (mobile data on). Upload the APK (an upload needs no Check Now) and tap **Install Now** with the screen on and
+   an app open. The row goes "Install Now: waiting for the phone" (with Cancel) -> "Downloading 40 of 80 MB" (the
+   phone's report after its receipt) -> "Installing"; logcat `Install Now <id>` and `Committing launcher ... (Install
+   Now)` without a screen-off. After `MY_PACKAGE_REPLACED` Home (and the lock if LOCKED) are back; the row reads the
+   new version with "Install Now · <time> · Done" behind its ⓘ ("Installed 1.x"), the Locate tab's Recent "Install
+   Now · Done". The page never jumps (the poll swaps the sub-line in place and reloads at the same place when the
+   state changes; with the page hidden it stops - switch tabs and back).
+3. **A call holds it**: a newer APK; `adb emu gsm call 5551234`, answer, tap Install Now: "Waits for the call to end"
+   (status `update_fence.waiting_for` = `install_now_call`). `adb emu gsm cancel 5551234`: the install starts within
+   seconds (logcat `Sync for [install_now_call_ended]`). With the screen off during the call, a screen-off does not
+   push the re-check out to the night (the alarm says `Update window check in 120 s`, not hours).
+4. **Newest found**: tap Install Now, then before the phone acts (airplane mode on, then off after the next step)
+   upload a higher build: the higher one is installed and named in the answer.
+5. **Refused / failed**: an APK signed with another debug key and a higher versionCode -> "Failed · Refused: signed
+   with another key" (the pre-check) or "Android refused the install"; the button is back and nothing is retried.
+   **The download keeps failing**: stop the server's download mid-way (`kill -STOP` the server, as §5b) for > 4 min ->
+   "The download kept failing" (the run's 3 retries, 30/60/120 s). Airplane mode during the download only waits
+   ("Waiting for a network") - a network loss is no failure.
+6. **Reboot mid-download** (`adb reboot` while "Downloading"): after the unlock the download resumes (the record is in
+   device-protected prefs `install_now`) and installs.
+7. **Offline phone**: airplane mode, tap: "Install Now: waiting for the phone" with **Cancel**; Cancel -> the row's
+   flash "Install Now cancelled.", Recent "Cancelled". Tap again, airplane mode off: it installs.
+
+Not reachable from the UI (server tests only): "already running" (the server shows no button for a phone that reports
+the release, so it needs a report that lags - `install_now::tests`); the 25 h "No answer"; a second tap replacing a
+waiting one. Device checks (design 37 "Implementation status"): the call's end over VoIP/Telecom-only calls, the
+download on real mobile data, a daytime install with the update fence on and off on the Jelly Star.
+
 ## 6b. Step 7: Play (optional)
 
 FCM is gone since design 19: every build uses the SSE stream, and About This Phone says "Online
