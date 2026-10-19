@@ -22,4 +22,5 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY,
     DNS_CUSTOM_CAPABILITY,
     BATTERY_CAPABILITY,
+    POWER_CAPABILITY,
 )

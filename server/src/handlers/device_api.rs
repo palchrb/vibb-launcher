@@ -2013,3 +2013,108 @@ pub async fn crash_reports(
     }
     StatusCode::NO_CONTENT
 }
+
+/// `POST /api/devices/power` takes at most this much (design 38 §2): two small objects.
+pub const POWER_BODY_LIMIT: usize = 2 * 1024;
+
+/// `POST /api/devices/power` (design 38, capability `power_v1`): `{off?, on?}` - the phone's
+/// shutdown (sent from `ACTION_SHUTDOWN`, and kept by the phone until a later boot's start is
+/// accepted) and its boot's start. 204, 400 for a body that isn't one or has neither part, 413
+/// above [POWER_BODY_LIMIT], 500 on a DB error (the phone keeps its record). The rows and their
+/// pushes come from the pure `parent_events::power_events` in one transaction: the events by their
+/// dedup keys (a resent body raises nothing new), a restart's held `phone_off` push `dropped` with
+/// reason `restart`. No `device_status` row, no security log line.
+pub async fn power(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    body: axum::body::Bytes,
+) -> StatusCode {
+    let Ok(report) = serde_json::from_slice::<crate::models::PowerReport>(&body) else {
+        return StatusCode::BAD_REQUEST;
+    };
+    if report.off.is_none() && report.on.is_none() {
+        return StatusCode::BAD_REQUEST;
+    }
+    let Some(phone) = crate::parent_events::Phone::load(&state.db, device.id).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+    let result = async {
+        // "Last report" for a start with no shutdown seen: the newest report before the boot.
+        let last = match report
+            .on
+            .as_ref()
+            .and_then(|on| chrono::DateTime::from_timestamp_millis(on.at_ms))
+        {
+            Some(boot) => {
+                let row: Option<(String, Option<i64>, Option<bool>)> = sqlx::query_as(
+                    "SELECT reported_at, battery_level, battery_charging FROM device_status \
+                     WHERE device_id = ? AND reported_at < ? \
+                     ORDER BY reported_at DESC, id DESC LIMIT 1",
+                )
+                .bind(device.id)
+                .bind(crate::push::db_time(boot))
+                .fetch_optional(&state.db)
+                .await?;
+                row.and_then(|(at, level, charging)| {
+                    Some(crate::parent_events::LastReport {
+                        at: crate::display_time::parse_db_utc(&at)?,
+                        level,
+                        charging,
+                    })
+                })
+            }
+            None => None,
+        };
+        let plan = crate::parent_events::power_events(&report, last.as_ref(), &phone);
+        for why in &plan.dropped {
+            tracing::warn!(device_id = device.id, why, "dropped part of a power report");
+        }
+        let mut tx = state.db.begin().await?;
+        let mut changed = false;
+        for event in &plan.events {
+            changed |= crate::parent_events::raise(&mut tx, event).await?.is_some();
+        }
+        // The `off`'s still-queued pushes: dropped by a restart, else sent now - before the
+        // "turned on" (only one never tried: a retry keeps its backoff).
+        let off_deliveries = "event_id = (SELECT id FROM parent_events \
+             WHERE device_id = ? AND kind = 'phone_off' AND dedup_key = ?) AND status = 'queued'";
+        if let Some(key) = &plan.drop_held_off {
+            changed |= sqlx::query(&format!(
+                "UPDATE push_deliveries SET status = 'dropped', reason = 'restart', \
+                 next_try_at = NULL WHERE {off_deliveries}"
+            ))
+            .bind(device.id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                > 0;
+        }
+        if let Some(key) = &plan.release_held_off {
+            changed |= sqlx::query(&format!(
+                "UPDATE push_deliveries SET next_try_at = NULL \
+                 WHERE {off_deliveries} AND attempts = 0 AND next_try_at IS NOT NULL"
+            ))
+            .bind(device.id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                > 0;
+        }
+        tx.commit().await?;
+        Ok::<bool, sqlx::Error>(changed)
+    };
+    match result.await {
+        Ok(changed) => {
+            if changed {
+                state.push.wake();
+            }
+            StatusCode::NO_CONTENT
+        }
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't store a power report");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}

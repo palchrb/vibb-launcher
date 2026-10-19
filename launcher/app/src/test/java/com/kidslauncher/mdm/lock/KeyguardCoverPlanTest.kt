@@ -372,7 +372,8 @@ class KeyguardCoverPlanTest {
         // nit 2: what threw is logged whatever the switch says.
         assertTrue(body(cover, "write").contains("for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)"))
         assertTrue(body(cover, "guardTripped").contains("disableNow(context, \"crash guard\", synchronous = false)"))
-        assertTrue(body(code("$lock/BootCover.kt"), "onReceive").contains("KeyguardCover.onShutdown(app)"))
+        // Design 38: the receiver's cover part (its writes first, then the power record).
+        assertTrue(body(code("$lock/BootCover.kt"), "coverAtShutdown").contains("KeyguardCover.onShutdown(app)"))
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "guardTripped").contains("KeyguardCover.guardTripped(app)"))
         // configure's keyguard is the writer's, after the guard re-arm.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")

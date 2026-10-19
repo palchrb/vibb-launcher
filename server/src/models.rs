@@ -1165,6 +1165,52 @@ fn lenient_battery<'de, D: serde::Deserializer<'de>>(
     }))
 }
 
+/// `POST /api/devices/power` (design 38 §2): the phone's last shutdown and this boot's start, each
+/// optional (the handler wants at least one). Instants, a battery, flags - no address, no text but
+/// the shutdown reason, which only names a known word ([crate::parent_events::OffReason]) and is
+/// never shown or stored. Pinned by `testdata/power_report.json` (the launcher's copy is
+/// byte-identical).
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PowerReport {
+    #[serde(default)]
+    pub off: Option<PowerOff>,
+    #[serde(default)]
+    pub on: Option<PowerOn>,
+}
+
+/// The shutdown the phone saw (`ACTION_SHUTDOWN`).
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PowerOff {
+    pub at_ms: i64,
+    pub boot_count: i64,
+    #[serde(default, deserialize_with = "lenient_battery")]
+    pub battery: Option<BatteryReport>,
+    /// `true` a restart, `false` a power-off, absent unknown (the usual case).
+    #[serde(default)]
+    pub reboot: Option<bool>,
+    /// The text after the digit of `sys.shutdown.requested`, when the phone could read it; anything
+    /// but a string is no reason.
+    #[serde(default, deserialize_with = "lenient_text")]
+    pub reason: Option<String>,
+}
+
+/// The boot the launcher's first process start of it saw.
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PowerOn {
+    pub at_ms: i64,
+    pub boot_count: i64,
+    #[serde(default, deserialize_with = "lenient_battery")]
+    pub battery: Option<BatteryReport>,
+}
+
+/// A string, else `None` (a number or an object is no text, never a refused body).
+fn lenient_text<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| v.as_str().map(str::to_string)))
+}
+
 /// `StatusReportRequest.install_mode`.
 #[derive(Deserialize, Debug, Clone, Copy)]
 pub struct InstallModeReport {

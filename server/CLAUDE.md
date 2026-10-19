@@ -139,7 +139,7 @@ No prior programming experience - build features directly rather than explaining
 - **`launcher_ui`** (always sent): `{language: "system"|"nb"|"en", home_columns: 3|4, clock_format: "system"|"24"|"12", wallpapers: [...]}` (wallpapers since step 8, clock_format since design 34 P12) from `device_policy.launcher_language`/`home_columns`, set on the phone's Home Screen page (`/devices/{id}/home`, design 31 step 5; `POST /devices/{id}/launcher`, one form, 400 on unknown values). The launcher applies the language with the per-app locale API. Server text stays English (PWA i18n is a later step).
 - **Hardening**: ninth switch `disallow_airplane_mode`, **default off** (the family travels).
 - **Status** `notification_listener_enabled` (`device_status` column): `false` shows "Notification access off" on Home Screen (the adb command behind its ⓘ) and an Attention row (no device-owner API grants notification-listener access).
-- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_79_in_order` (the migration order).
+- **Clock format** (design 34 P12, migration `0075_clock_format.sql`): `device_policy.clock_format` `'system'|'24'|'12'` (default `'system'`, CHECK), the "Clock" select (Follow the phone / 24 h / 12 h) in Home Screen's launcher form, sent as `launcher_ui.clock_format` (always; `models::clock_format` maps anything stored that isn't one of `CLOCK_FORMATS` to "system"). The launcher writes Android's `TIME_12_24`, so the status bar and every Vibb clock show the same. `POST /devices/{id}/launcher` without `clock_format` (a page cached before the field) **keeps** the stored value (`COALESCE`); only a present unknown value is a 400 (qa-34-design L10). Status `clock_format_applied` (`device_status` column, true/false/NULL; NULL = "Follow the phone" or an older launcher): `false` while the policy asks for 24 h or 12 h shows "Clock format not applied" above the Language group (`device_pages::clock_format_note`, the adb grant `appops set ... WRITE_SETTINGS allow` and the Settings path behind its ⓘ); no Attention row. Tests: `tests::launcher_ui::clock_format_*`, `the_clock_format_column_takes_only_its_three_values` (the CHECK), `device_pages` (the form, the redirect table), `policy_json_keys_snapshot`'s `ui_keys`, `music_spotify::migrations_73_to_80_in_order` (the migration order).
 - The device page's latest status breaks `reported_at` ties by `id` (two reports in one second).
 
 ## Time rules, screen time, location policy (handy step 6, design `docs/design/06-time-rules.md`, at the monorepo root)
@@ -404,10 +404,11 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_79_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_80_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
-out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both). The next
-free number is 0080.
+out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
+`0080_phone_power.sql` (design 38, the two power switches) follows 0079 (`migrations_73_to_80_in_order`). The next
+free number is 0081.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -424,7 +425,7 @@ free number is 0080.
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows) and `device_policy.lock_glance_text` - see "The lock's glance page"
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days), `notification_settings` (singleton), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too), `notification_settings` (singleton; design 38's `push_phone_off`/`push_phone_on` since 0080), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
@@ -445,6 +446,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
 - `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
 - `POST /api/devices/pin-events` (bearer) - `{events: [{id, kind, entry, at_ms, until_ms, failures, level}]}`, the phone's parent-PIN uses, wrong tries and lockouts (design 24, see "Parent PIN") -> 204; 400 only for a body that isn't JSON or has no `events` array, 413 above 100 events
+- `POST /api/devices/power` (bearer) - `{off?: {at_ms, boot_count, battery?, reboot?, reason?}, on?: {at_ms, boot_count, battery?}}`, the phone's shutdown and start (design 38, see "The phone turned off and on") -> 204; 400 for neither part or not one, 413 above 2 KiB
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, both scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above; the download is resumable (`Range`/`If-Match`, `X-Release-Tag`; "App downloads" below)
 - `GET /api/devices/music/library` (ETag/304, gzip), `/music/entries/{id}/items` (ETag/304, gzip; design 21b), `/music/covers/{hash}`, `/music/files/{id}` (Range, `X-Content-SHA256`), `/music/storytel` (bearer) - the phone's music library, scoped to its ticks (design 21)
 
@@ -1881,7 +1883,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
 - Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer), `tests::custom_dns`
   (save/refusals/Forget/the event, the policy shapes, a pair that isn't valid, the status contract and both copies,
   the footer's lines), `policy_json_keys_snapshot` (`dns_upstream` and its `backup`), the settings redirect table,
-  `migrations_73_to_79_in_order`.
+  `migrations_73_to_80_in_order`.
 
 ## Notifications to the parent, step 1: events and the inbox (design 35 §9 step 1, `docs/design/35-parent-notifications.md`, migration `0078_parent_events.sql`)
 
@@ -1993,6 +1995,58 @@ needed to manage the phone, delete on a schedule, never store notification or me
   allow-list), `push::tests` (the answer table, health, the JWT cache, labels, test spacing), `keys::tests`,
   `handlers::notifications::tests` (the delivery line), `src/tests/web_push.rs`, `jstest/sw.test.js`,
   `jstest/notifications.test.js`, `jstest/register-sw.test.js`.
+
+## The phone turned off and on (design 38, `docs/design/38-phone-off-on.md`, migration `0080_phone_power.sql`)
+
+- **The route** (`device_api::power`, `device_routes.rs`; bearer, its own 2 KiB body limit, `POWER_BODY_LIMIT`):
+  `POST /api/devices/power` `{off?, on?}` (`models::PowerReport`: `PowerOff {at_ms, boot_count, battery, reboot,
+  reason}`, `PowerOn {at_ms, boot_count, battery}`; `battery` through `lenient_battery`, `reason` any non-string =
+  none) -> 204; neither part or not one -> 400; > 2 KiB -> 413; a DB error 500 (the phone keeps its record). No
+  `device_status` row, no security log line. Capability `power_v1` (an old launcher never calls it). Contract
+  `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
+- **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
+  drop_held_off, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
+  changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` older than 30
+  days, an `off` later than its `on`; logged). Paired when `off.boot_count < on.boot_count`: one boot apart and
+  (`reboot: true`, or `reboot` unknown and the phone's two instants <= `RESTART_GAP` = 3 min apart) is a **restart** -
+  "Anna restarted" pushed, the off row (new: `Push::No`, " · told at the next start") and its still-`queued`
+  deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`); otherwise
+  "Anna was turned on · 07:02 · off since 21:14, battery was 3 %" pushed, a new off row late and unpushed, and an
+  already-known off's held push - never tried yet - **released at once** (`next_try_at = NULL`), so the parent gets
+  "turned off" before "turned on", never after (a deviation from the note, which left it untouched; design 38
+  "Implementation status"). Unpaired: an `off` alone is a new row with its push held `OFF_HOLD` = 5 min from its
+  arrival (`Push::Held`; `reboot: true` -> `Push::No`); an `on` alone says "no shutdown seen · last report 21:10,
+  battery 5 %, probably flat" from the newest `device_status` row before the boot instant (one query). A resent body
+  raises nothing (the dedup keys). "Turned off" comes only from a `phone_off` (ShutdownThread's broadcast).
+- **Kinds and words** (`parent_events`): `Kind::PhoneOff` (`phone_off`, switch `push_phone_off` "Phone turned
+  off"), `Kind::PhoneOn` (`phone_on`, `push_phone_on` "Phone turned on"), after `UnseenBoot` in `Kind::ALL`, not
+  urgent, TTL 43200, foldable. `Phone::phone_off(off, at, late)`: "Anna was turned off" / "21:14 · battery 2 %,
+  probably flat" (`battery_words`: probably flat at <= `FLAT_LEVEL` 3 not charging, else charging / not charging),
+  reason `battery` "Anna shut down: battery flat" / `thermal-shutdown`, `thermal` "Anna shut down: too hot" (the level
+  only), `reboot: true` "Anna is restarting" (`off_reason_words`: `userrequested` and anything else say nothing more,
+  never shown); `Phone::phone_on(on, at, &Start)`: `Restart` / `AfterOff` / `NoShutdownSeen(LastReport)` (probably
+  flat at <= `LAST_REPORT_FLAT_LEVEL` 10). Times by `Phone::at`, capitalised at the summary's start ("Yesterday
+  21:14"); a missing battery leaves its clause out. Keys: `phone_off` = the instant (RFC 3339 ms UTC), `phone_on` =
+  `boot:<devices.enrolled_at>:<boot_count>` (`Phone.enrolled_at`; a re-enrollment or a factory reset is another
+  count). Target `/devices/{id}`.
+- **The hold**: `NewEvent.push: Push` (`Now` from `Phone::event`, `Held(until)`, `No`); `raise` passes it to
+  `push::queue(conn, event, kind, not_before)`, which writes `next_try_at` (`send_due` waits for it, `run_sender`
+  wakes at the earliest; the TTL counts from `created_at`). **The sender claims a row** before its request
+  (`push::claim`: `UPDATE ... SET token_hash, attempts + 1 WHERE id = ? AND status = 'queued'`) and skips it when that
+  changed nothing - a restart's drop that commits after a pass read the row as due (qa-38-design N4).
+  `notifications::delivery_line` counts a `restart` drop as no delivery (no line, never "Not sent"); during the hold
+  the row reads "Sending".
+- **PWA**: the two switches on Notify Me About come from `Kind::switch()` (no template change; the form and its
+  `#events` redirect are design 35's). The device page's header (`devices::render_device`, `data-power-off`): "Off
+  since 21:14 · battery was 3 %" while the newest `phone_off` has a later `happened_at` than the newest `phone_on` (one
+  query; the battery read back from the off's stored words, `parent_events::off_since_line`); gone with the next
+  start; a read error is a 500 like the page's other reads.
+- **Migration 0080**: `notification_settings.push_phone_off`/`push_phone_on`, default 1. Nothing else.
+- Tests: `parent_events::tests` (`the_power_words`, `the_power_state_machine`, `the_off_since_line`, the kinds in
+  `the_words_and_targets`), `handlers::notifications::tests::the_delivery_line` (a `restart` drop), `src/tests/power.rs`
+  (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
+  "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
+  the claim), `music_spotify::migrations_73_to_80_in_order`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 

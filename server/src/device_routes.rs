@@ -80,6 +80,12 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             post(handlers::parent_pin::pin_events),
         )
         .route(
+            "/api/devices/power",
+            post(handlers::device_api::power).layer(DefaultBodyLimit::max(
+                handlers::device_api::POWER_BODY_LIMIT,
+            )),
+        )
+        .route(
             "/api/devices/music/library",
             get(handlers::music_api::library),
         )

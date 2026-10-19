@@ -35,6 +35,7 @@ mod music_sweep;
 mod notifications;
 mod parent_pin;
 mod play;
+mod power;
 mod provisioning;
 pub(crate) mod settings_pages;
 mod shell;

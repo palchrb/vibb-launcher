@@ -175,12 +175,13 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// its 0076 (the softer wallpapers) and renamed it again (was `migrations_73_74_75_in_order`), and
 /// step 12 its 0077 (the launcher's catalog row named "Vibb One"; was `migrations_73_to_76_in_order`).
 /// Design 36 added 0079 (the custom DNS server; was `migrations_73_to_77_in_order`): 0078 is
-/// design 35's, and must reach a server before or with 0079, never after.
+/// design 35's, and must reach a server before or with 0079, never after. Design 38 added 0080 (the
+/// phone's power switches; was `migrations_73_to_79_in_order`).
 #[test]
-fn migrations_73_to_79_in_order() {
+fn migrations_73_to_80_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=79).contains(&m.version))
+        .filter(|m| (73..=80).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -192,11 +193,13 @@ fn migrations_73_to_79_in_order() {
             (76, "softer wallpapers".to_string()),
             (77, "vibb one".to_string()),
             (78, "parent events".to_string()),
-            (79, "custom dns".to_string())
+            (79, "custom dns".to_string()),
+            (80, "phone power".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
-         wallpapers), 0077 (Vibb One), 0078 (design 35) and 0079 (the custom DNS server) stay in \
-         this order: the backup before migrating compares only the highest version"
+         wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server) and 0080 \
+         (design 38) stay in this order: the backup before migrating compares only the highest \
+         version"
     );
 }
 

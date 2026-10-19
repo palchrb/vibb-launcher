@@ -28,6 +28,7 @@
         <span class="summary-screen" data-screen-time>{{ st.text() }}</span>
         {% endif %}
         {% if let Some(battery) = battery %}<span class="summary-screen" data-battery>{{ battery }}</span>{% endif %}
+        {% if let Some(off) = power_off %}<span class="summary-screen" data-power-off>{{ off }}</span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}

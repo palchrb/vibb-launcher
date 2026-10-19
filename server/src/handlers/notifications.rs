@@ -517,18 +517,24 @@ async fn delivery_lines(
 /// An inbox row's delivery line (§5.1): "Shown on iPhone · Safari", "Pushed to iPhone · Safari,
 /// not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary" (its summary was
 /// accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
-/// summary's ([delivery_lines]).
+/// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
+/// next start's "restarted" replaced) counts as none - the row says nothing, never "Not sent".
 pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
+    let deliveries: Vec<&DeliveryState> = deliveries
+        .iter()
+        .filter(|d| !(d.0 == "dropped" && d.1.as_deref() == Some("restart")))
+        .collect();
     let folded = |d: &&DeliveryState| d.1.as_deref() == Some("folded");
     let accepted: Vec<&DeliveryState> = deliveries
         .iter()
+        .copied()
         .filter(|d| d.0 == "accepted" && !folded(d))
         .collect();
     let shown = accepted.iter().filter(|d| d.2).count();
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
         [] if deliveries.iter().any(|d| d.0 == "queued") => "Sending".to_string(),
-        [] if deliveries.iter().any(|d| folded(&d) && d.0 == "accepted") => {
+        [] if deliveries.iter().any(|d| folded(d) && d.0 == "accepted") => {
             "In a summary".to_string()
         }
         [] => "Not sent".to_string(),
@@ -837,6 +843,15 @@ mod tests {
                 vec![
                     d("failed", Some("expired"), false, iphone),
                     d("dropped", Some("gone"), false, iphone),
+                ],
+                Some("Not sent"),
+            ),
+            // Design 38: a held `phone_off` push a restart dropped is no push at all.
+            (vec![d("dropped", Some("restart"), false, iphone)], None),
+            (
+                vec![
+                    d("dropped", Some("restart"), false, iphone),
+                    d("dropped", Some("gone"), false, "Mac · Safari"),
                 ],
                 Some("Not sent"),
             ),

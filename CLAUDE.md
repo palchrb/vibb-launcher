@@ -78,20 +78,23 @@ The launcher's status body with `dns_upstream` (design 36 §4.2) is `server/test
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `DnsUpstreamStatusTest` encodes exactly it, the
 server's `custom_dns::dns_upstream_status_contract` posts it, and both compare the copies. The policy's `dns_upstream`
 is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
+`launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
+`power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
 
 ## CI and releases
 
 - `.github/workflows/launcher.yml`, `server-ci.yml` and `music.yml` run on every push/PR, but their build job
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
-  shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json` and
-  `dns_upstream_status.json`, `music/gradle/` and
+  shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
+  `dns_upstream_status.json` and `power_report.json`, `music/gradle/` and
   `music.yml`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
   after the build; `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` copies and the launcher's
-  `time_status_report.json` and `dns_upstream_status.json`;
+  `time_status_report.json`, `dns_upstream_status.json` and `power_report.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

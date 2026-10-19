@@ -266,3 +266,41 @@ Revision check (`qa-38-design.md`, "Revision check (15d356bb)"), all taken: N1 t
 changed base URL, token or tsnet proxy; check 1 with tsnet on (§4.2, §6). N2 `OFF_HOLD` 5 min, apart from the 3-min
 `RESTART_GAP`; the Jelly Star timing check (§3.3, §6). N3 no delivery line for a `restart` drop (§3.3, §5). N4 the
 send claims the row with a conditional UPDATE (§3.3). N5 the receiver's two parts caught separately (§4.2).
+
+## Implementation status (2026-10-19, branch `phone-power`)
+
+**In, as specified**: migration `0080_phone_power.sql` (the two switches; `migrations_73_to_80_in_order`); the
+`Kind`s, `Push`/`not_before`, the words (`battery_words`, `off_reason_words`, `FLAT_LEVEL` 3, `LAST_REPORT_FLAT_LEVEL`
+10, `OFF_HOLD` 5 min, `RESTART_GAP` 3 min) and the pure `power_events` in `parent_events.rs`; `device_api::power`
+(2 KiB limit, 400/413) and its route; the sender's claim (`push::claim`); `delivery_line` without a `restart` drop;
+the device page's "Off since" line; `power_report.json` in both places with both sides' tests and the CI filters; the
+launcher's `PowerEvents.kt` (the shutdown inside `BootCover`'s receiver after its writes, each part caught; the
+record in DE prefs under one lock; the prepared client keyed by base URL, token and tsnet proxy, rebuilt from
+`initRest`, after each sync's `connectFromPreferences` and from `TsnetClient`'s new `proxyListener`; the boot record
+after `BootWitness.record` with `hadLastBoot`; the upload with `pinEventsLeaveQueue`), `power_v1`; the tests of §5;
+§6p; both CLAUDE.md files and the root one.
+
+**Deviations, and why**:
+- **A start after a real shutdown releases the off's held push** (§3.3 said an already-known off is untouched): when a
+  power-off and its start both arrive inside the 5-minute hold without being a restart (a phone off for 3-4 minutes,
+  or `reboot: false` - the power menu's Power off, then on at once), the untouched hold would push "turned on" first
+  and "turned off" a minute later. The handler sets the off's still-queued, never-tried deliveries due now
+  (`release_held_off`, `next_try_at = NULL WHERE ... AND attempts = 0`), so the sender's pass sends "turned off" then
+  "turned on" (by id). Tested by `power::a_quick_start_after_a_power_off_sends_the_off_first`.
+- **The contract test moves the body's instants** (`power::a_launcher_report_raises_both`): the file's `at_ms` are in
+  October 2025, so the 30-day rule would drop the `off`; the test sets the `on` to a minute ago and keeps the gap (the
+  file itself is exactly §2's body).
+- **The late suffix also on a restart's new off row** (" · told at the next start"): that row reaches the server only
+  with the next start, as the late row of §3.2's table; it is unpushed either way.
+- **An unpaired kept shutdown** (§4.4 left it open): a kept shutdown of the start's own boot or later (a start the
+  phone never got through, then a shutdown in the same boot) is not sent with that start - the server would drop it as
+  later than the start. The phone then sends only an unsent shutdown, and the start waits for the next boot's to
+  replace it (the class doc says an unsent start can be lost). On the server an unpaired pair (off's boot not earlier)
+  is told as two alone.
+- **The start's record is compared by its boot count** in `clearSent` (§4.4 says `at_ms`/`boot_count`): the instant
+  sent is recomputed at upload (§4.3), so it can differ from the stored one; a newer start always has another count.
+
+**Owed to device checks** (§6, `docs/testing/emulator.md` §6p for the emulator part): the Jelly Star's power menu
+(Power off, Restart), a real flat battery (is the broadcast sent, at which level), the `sys.shutdown.requested` read
+(expected unreadable), and Restart timed to the start's arrival on Wi-Fi and on mobile data against `OFF_HOLD`
+(raise the hold, not the gap, if it is slower). Not run on the emulator yet: §6p's four checks.

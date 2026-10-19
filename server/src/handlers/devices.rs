@@ -729,6 +729,8 @@ struct DeviceDetailTemplate {
     screen_time: Option<crate::time_state::ScreenTime>,
     /// "Battery 14 %, charging" from the last report (design 35 §2.5).
     battery: Option<String>,
+    /// "Off since 21:14 · battery was 3 %" between a shutdown and the next start (design 38 §3.4).
+    power_off: Option<String>,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -1379,6 +1381,32 @@ async fn render_device(
                     .into_response();
             }
         };
+    // Design 38 §3.4: "Off since 21:14 · battery was 3 %" while the newest `phone_off` is later
+    // than the newest `phone_on`.
+    let off: Result<Option<(String, String)>, sqlx::Error> = sqlx::query_as(
+        "SELECT o.happened_at, o.summary FROM parent_events o \
+         WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
+             COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
+                       WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
+         ORDER BY o.happened_at DESC, o.id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    let power_off = match off {
+        Ok(off) => off.and_then(|(at, summary)| {
+            crate::display_time::parse_db_utc(&at)
+                .map(|at| crate::parent_events::off_since_line(at, &summary, &zone, now))
+        }),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's power events");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response();
+        }
+    };
 
     // The Apps row (design 31 step 6): the switches on under Device › Apps, the launcher not
     // counted - the number the Apps tab shows.
@@ -1596,6 +1624,7 @@ async fn render_device(
                     now,
                 )
             }),
+            power_off,
             attention,
             pause_rules: time_rules
                 .as_deref()
