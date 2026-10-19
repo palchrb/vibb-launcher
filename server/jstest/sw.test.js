@@ -10,7 +10,7 @@ const vm = require("node:vm");
 
 const SOURCE = fs
     .readFileSync(path.join(__dirname, "..", "templates", "sw.js"), "utf8")
-    .replace("{{ app_version }}", "v-test");
+    .replace(/\{\{ app_version \}\}/g, "v-test");
 
 const ORIGIN = "https://kidphone.example.ts.net";
 

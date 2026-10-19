@@ -1307,6 +1307,12 @@ mod tests {
 
     #[test]
     fn the_payload_switch() {
+        struct Never;
+        impl Transport for Never {
+            fn send(&self, _: PushRequest) -> BoxFut<'_, Result<PushAnswer, String>> {
+                unreachable!()
+            }
+        }
         let classic: serde_json::Value = serde_json::from_str(&payload_json(
             false,
             "t",
