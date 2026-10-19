@@ -848,6 +848,19 @@ findings, merge to `main`, full suite once.
   (`e=push-declarative`; `PUSH_PAYLOAD=classic` had confirmed at once, the proof). `jmt17.google.com` on the push
   service list (Chromium without Google's API keys - the user's Pi); a log line per accepted push and the host of a
   refused push service at Turn On.** Owed: the iPhone test on 0.29.1 with `PUSH_PAYLOAD` unset.
+- **Hotfixes server-v0.29.2/3/4 (2026-10-19 night, each on the user's go): the declarative receipt found and fixed by
+  a probe in the worker.** 0.29.2: the worker posts a probe of every push event (`push probe` in the log) - on the
+  user's iPhone (iOS 26) the worker runs and gets `push` with `event.notification` carrying `d`/`t`/`b`, as WebKit's
+  source says, and still no receipt. 0.29.3: the declarative receipt goes before the show; the probe's second step
+  reports `showNotification` failing with a TypeError. 0.29.4: WebKit's declarative path refuses a replacement
+  without `navigate` as an option (ServiceWorkerRegistration::showNotification: "did not include NotificationOptions
+  that specify a valid defaultAction url") - the option added, absolute and same-origin; `shown: ok`, receipt
+  `event=push-declarative`, the replacement shown with the badge. Also `jmt17.google.com` confirmed end to end from
+  the Pi's Chromium (a dead subscription there came back 410 once; Turn On again). **Next server round**: drop the two
+  probes; the "may not be showing" rule exempts Apple endpoints ("Shown on …" stays passive; the user: 201 = delivered
+  for declarative, no repeat-until-opened); SSE `X-Accel-Buffering: no` + a log line per stream open/close (the
+  emulator's "seen" resets every ~5 min = the 300 s read timeout, keepalives not arriving through the proxy at
+  10.73.10.81 - ask which proxy); migration 0082 + the `failures == 0` art rule; the Send-a-Test row poll.
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
