@@ -493,12 +493,13 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
-- **HIGH - no network after a pause ends (launcher 0.29.0, emulator, 2026-10-19):** after "pause all restrictions"
-  on and off again the VPN comes back but every upstream DNS attempt fails (`DnsUpstream: DoH/DoT attempt failed:
-  IOException` for ever), the SSE stream can't connect, apps get `UnknownHostException`, the PWA shows the phone
-  offline; a reboot or Wi-Fi off/on clears it. Suspected: the engine's transports / the launcher's own clients keep
-  sockets protected by the previous `KidVpnService` instance, so their packets enter the new TUN. Reproduction + fix
-  in progress on branch `vpn-restart-fix`. Until it ships: the phone needs a restart after a pause.
+- **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
+  socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,
+  so the VPN answered no query and the launcher's own sync died with it. Reproduced on handy36 with the 0.29.0 APK
+  from the first VPN start (enrolment) and after a reboot; fixed on branch `vpn-restart-fix` (`protectedSocket`: bind,
+  then protect; `ProtectedSocketTest`; emulator.md §6m step 8 - enrolment, pause on/off, all resolve). Code QA
+  `docs/review/qa-vpn-protect-code.md` (0 High / 0 Medium / 3 Low, all fixed: `Attempt.Unprotected` never counts as a
+  DoT block); **merged into `main` 2026-10-19, goes out with launcher-v0.29.1.**
 - **Diagnostics from the same incident:** (1) the music app logs nothing of its own in `onError`; Media3 prints a
   fixed "UnknownHostException (no network)" for any name failure - log the real cause (class + message) and the error
   code; (2) "Kan ikke spilles nå" shows for a name/network failure - say "no network" instead when that is the cause;

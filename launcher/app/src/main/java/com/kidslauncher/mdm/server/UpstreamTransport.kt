@@ -38,7 +38,15 @@ sealed interface Attempt {
 
     /** REFUSED or SERVFAIL ([bytes] the server's answer), or silence after the request was written. */
     class Odd(val kind: OddKind, val bytes: ByteArray?) : Attempt
+
+    /** Our own VPN refused the socket ([NotProtectedException]: the VPN going down or replaced) - the
+     * server was never tried, so nothing is counted against it: the query is dropped and no chooser or
+     * [DotBlockedRule] state changes (qa-vpn-protect-code L3). */
+    data object Unprotected : Attempt
 }
+
+/** [e] or one of its causes is a refused protect (OkHttp may wrap the factory's exception). */
+fun unprotected(e: Throwable): Boolean = generateSequence(e) { it.cause }.any { it is NotProtectedException }
 
 /** Connect timeout and the whole attempt's budget (connect + handshake + answer), in ms. */
 data class Budget(val connectMs: Int, val totalMs: Int)
@@ -108,8 +116,7 @@ fun resolveDoT(
         var connected = false
         var written = false
         try {
-            Socket().use { plain ->
-                if (!protect(plain)) throw IOException("not protected")
+            protectedSocket(protect).use { plain ->
                 plain.connect(InetSocketAddress(address, port), minOf(budget.connectMs, remainingMs()).coerceAtLeast(1))
                 connected = true
                 val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
@@ -141,6 +148,7 @@ fun resolveDoT(
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "DoT attempt failed: ${e.javaClass.simpleName}")
+            if (unprotected(e)) return Attempt.Unprotected
             if (written) return afterWriteOutcome(e)
             outcome = Attempt.Transport(transportReason(e, connected))
         }
@@ -178,19 +186,53 @@ fun dohResponse(code: Int, contentType: String?, body: ByteArray?, query: ByteAr
     return classifyAnswer(restored, BackupReason.HTTP)
 }
 
-/** A plain socket factory whose sockets are [protect]ed before they connect: OkHttp 4.12 takes the
- * no-argument [createSocket] for a direct route and layers TLS on it, so the whole connection is
- * outside the VPN. The connecting overloads create, protect, then connect. */
+/** [VpnService.protect][android.net.VpnService.protect] refused a socket (logged by its class name). */
+class NotProtectedException : IOException("not protected")
+
+/**
+ * A new, unconnected socket that [protect] accepted, bound first to [local] (null: any address, an
+ * ephemeral port). The bind is what gives it a file descriptor: Android's `Socket()` creates none
+ * until a bind or connect, and `VpnService.protect(Socket)` reads the descriptor as it is (-1), so
+ * it returns false for a fresh `Socket()` every time - launcher 0.29.0 refused every upstream
+ * socket and the VPN answered no query (design 36's "protect needs a descriptor" rule,
+ * `ProtectedSocketTest`). Closed when it can't be protected.
+ */
+fun protectedSocket(protect: (Socket) -> Boolean, local: InetSocketAddress? = null): Socket {
+    val socket = Socket()
+    try {
+        socket.bind(local)
+        if (!protect(socket)) throw NotProtectedException()
+    } catch (e: Exception) {
+        socket.close()
+        throw e
+    }
+    return socket
+}
+
+/** A plain socket factory whose sockets are [protect]ed before they connect ([protectedSocket]):
+ * OkHttp 4.12 takes the no-argument [createSocket] for a direct route and layers TLS on it, so the
+ * whole connection is outside the VPN. The connecting overloads create, protect, then connect. */
 class ProtectedSocketFactory(private val protect: (Socket) -> Boolean) : SocketFactory() {
-    override fun createSocket(): Socket = Socket().also { if (!protect(it)) { it.close(); throw IOException("not protected") } }
+    override fun createSocket(): Socket = protectedSocket(protect)
     override fun createSocket(host: String, port: Int): Socket =
-        createSocket().also { it.connect(InetSocketAddress(host, port)) }
+        connected(protectedSocket(protect), InetSocketAddress(host, port))
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        createSocket().also { it.bind(InetSocketAddress(localHost, localPort)); it.connect(InetSocketAddress(host, port)) }
+        connected(protectedSocket(protect, InetSocketAddress(localHost, localPort)), InetSocketAddress(host, port))
     override fun createSocket(host: InetAddress, port: Int): Socket =
-        createSocket().also { it.connect(InetSocketAddress(host, port)) }
+        connected(protectedSocket(protect), InetSocketAddress(host, port))
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
-        createSocket().also { it.bind(InetSocketAddress(localAddress, localPort)); it.connect(InetSocketAddress(address, port)) }
+        connected(protectedSocket(protect, InetSocketAddress(localAddress, localPort)), InetSocketAddress(address, port))
+
+    /** [socket] connected to [to], or closed when the connect throws (qa-vpn-protect-code L2). */
+    private fun connected(socket: Socket, to: InetSocketAddress): Socket {
+        try {
+            socket.connect(to)
+        } catch (e: Exception) {
+            socket.close()
+            throw e
+        }
+        return socket
+    }
 }
 
 /** What one DoH call got to (set by [CallMarks.listener]): the TCP connection up, the request written. */
@@ -267,6 +309,7 @@ fun resolveDoh(client: OkHttpClient, url: String, query: ByteArray, budget: Budg
     } catch (e: Exception) {
         Log.w(LOG_TAG, "DoH attempt failed: ${e.javaClass.simpleName}")
         when {
+            unprotected(e) -> Attempt.Unprotected
             e is java.net.UnknownHostException -> Attempt.Transport(BackupReason.BOOTSTRAP)
             marks.written -> afterWriteOutcome(e)
             else -> Attempt.Transport(transportReason(e, marks.connected))

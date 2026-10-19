@@ -171,7 +171,7 @@ object DnsFilterEngine {
         when (val outcome = PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket))) {
             is Attempt.Answer -> outcome.bytes
             is Attempt.Odd -> outcome.bytes
-            is Attempt.Transport -> null
+            is Attempt.Transport, Attempt.Unprotected -> null
         }
 }
 
