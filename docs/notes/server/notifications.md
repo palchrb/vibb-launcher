@@ -106,14 +106,21 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Shown on …", "Pushed to …, not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary", "Not
   sent"), Getting Notifications (`#devices`: label, badge On / May not be showing / Turned off, "Last shown …", Send a
   Test, Remove…, the ⓘ checks). The Devices list's top orange row (`notifications::warning_row`) to
-  `/notifications?from=devices#devices`. `templates/sw.js`: `push` always shows a notification inside `waitUntil` - from the
-  payload (`event.data`), else from the notification Safari proposed (`event.notification`: Safari 18.4+ reads a
-  mutable declarative payload itself and fires `push` with `data` null and its proposed Notification on the event,
-  WWDC25 session 235 - found on the user's iPhone 2026-10-19, where reading only `data` showed the fallback and
-  confirmed nothing; the receipt's `e` is `push-declarative` then), else a fallback "Vibb Phone" / "Something new -
-  open Notifications" - then the badge, then the receipt (`credentials: "omit"`); `pushnotification` (WebKit's
-  explainer's name, fired by no shipping Safari yet) sets the badge and posts the receipt, shows nothing; `notificationclick` posts `clicked` and opens a same-origin path only (else
-  `/notifications`), steering an open window first; still no `fetch` handler, no CSP change. `static/register-sw.js`
+  `/notifications?from=devices#devices`. `templates/sw.js`: `push` inside `waitUntil` - **legacy** (the payload in `event.data`,
+  every browser but Safari): show (with `navigate` as an option too, absolute and same-origin), then the badge, then
+  the receipt (`credentials: "omit"`); a fallback "Vibb Phone" / "Something new - open Notifications" for an unreadable
+  payload. **Declarative** (`event.data` null, Safari's proposed Notification in `event.notification` with our `data`:
+  Safari 18.4+ reads a mutable payload itself and fires `push` with it - WWDC25 session 235, WebKit's PushEvent.idl):
+  the receipt (`e=push-declarative`) and the badge, and **nothing shown** - Safari shows its proposed notification,
+  the one iOS displays. The road there (2026-10-19, the user's iPhone on iOS 26, a two-step probe in the worker,
+  0.29.2-0.29.4): a receipt after `showNotification` never arrived; `showNotification` threw a TypeError until the
+  replacement carried `navigate` as an option (ServiceWorkerRegistration::showNotification: "did not include
+  NotificationOptions that specify a valid defaultAction url"); and a replacement accepted (`shown: ok`) was never
+  displayed. So the worker leaves the showing to the platform (0.29.5); the payload's top-level `app_badge` sets the
+  badge without the worker too. `pushnotification` (WebKit's explainer's name, fired by no shipping Safari) does the
+  same receipt and badge; `notificationclick` posts `clicked` and opens a same-origin path only (else `/notifications`,
+  the link from `data.navigate`, else the notification's own `navigate`), steering an open window first - on Safari
+  the tap on its own notification opens the link without the worker; still no `fetch` handler, no CSP change. `static/register-sw.js`
   (`?v=2`) also sets the app badge from the bell's `data-unread`.
 - **Device checks owed** (design 35 "Step 2 implementation status"): iPhone 18.4+ and 16.4-18.3, macOS Safari,
   Android Chrome, desktop Firefox, the 410 after removing the app from the Home Screen, Focus on, Safari's declarative

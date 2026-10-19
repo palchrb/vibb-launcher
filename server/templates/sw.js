@@ -50,48 +50,11 @@ function receipt(data, action, event) {
     }).catch(() => undefined);
 }
 
-// A probe of what the browser handed the worker (the iPhone diagnosis of 2026-10-19: every
-// declarative push shown, none confirmed - whether this worker runs at all for one, and what
-// shape the event has). Posted first, before anything that could throw, and needing none of
-// our data: the event's name, which of the candidate properties exist, whether `data` is set,
-// and the proposed notification's shape - the title's type, `data`'s type and keys, never a
-// text. The server logs it as `push probe`. Temporary: goes once the shape is known.
-function probe(event, kind) {
-    try {
-        const n = event && (event.notification || event.proposedNotification);
-        const data = n ? n.data : undefined;
-        const body = {
-            p: 1,
-            e: kind,
-            v: VERSION,
-            keys: ["data", "notification", "proposedNotification", "appBadge"].filter((k) => event && k in event),
-            data: !event || event.data === undefined ? "absent" : event.data === null ? "null" : "set",
-            n: n
-                ? {
-                    title: typeof n.title,
-                    data: data === null ? "null" : typeof data,
-                    dataKeys: data && typeof data === "object" ? Object.keys(data) : [],
-                    navigate: typeof n.navigate,
-                    tag: typeof n.tag,
-                }
-                : null,
-        };
-        return fetch("/notifications/receipt", {
-            method: "POST",
-            credentials: "omit",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-        }).catch(() => undefined);
-    } catch (e) {
-        return Promise.resolve();
-    }
-}
-
 // The push's notification and where it came from: the payload (`event.data`, every browser's
 // legacy path), else the notification Safari proposed (`event.notification`: Safari 18.4+ reads a
-// mutable declarative payload itself, fires `push` with `data` null and its proposed Notification
-// on the event - WWDC25 session 235, the Push API draft; confirmed on the user's iPhone,
-// 2026-10-19, where reading only `data` left every push unconfirmed), else the inbox's fallback.
+// mutable declarative payload itself and fires `push` with `data` null and its proposed
+// Notification on the event - WWDC25 session 235, the Push API draft, WebKit's PushEvent.idl;
+// confirmed on the user's iPhone, 2026-10-19), else the inbox's fallback.
 function notificationOf(event) {
     try {
         const message = event.data.json();
@@ -120,35 +83,32 @@ function notificationOf(event) {
     };
 }
 
-// The probe's second step: whether showNotification settled, and how (the user's iPhone, iOS 26,
-// 2026-10-19: the first probe arrived with the right shape and nothing after showNotification
-// did). Temporary, with `probe`.
-function probeShown(via, outcome) {
+async function badge(data) {
+    if (typeof data.b !== "number" || !self.navigator || !self.navigator.setAppBadge) return;
     try {
-        return fetch("/notifications/receipt", {
-            method: "POST",
-            credentials: "omit",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ p: 2, e: via, shown: outcome, v: VERSION }),
-        }).catch(() => undefined);
+        await (data.b > 0 ? self.navigator.setAppBadge(data.b) : self.navigator.clearAppBadge());
     } catch (e) {
-        return Promise.resolve();
+        // the badge is a nicety
     }
 }
 
-// Shows the notification, the badge and the receipt. A declarative push's receipt goes FIRST:
-// Safari shows the notification whatever happens here - our replacement, or its proposed one when
-// nothing is shown in time, never two - and on the user's iPhone nothing of the worker ran after
-// showNotification in that path (the probe, 2026-10-19), so a receipt after it never came. The
-// legacy path keeps show, then badge, then receipt: a notification we fail to show isn't shown.
-async function show(event) {
-    const { n, via } = notificationOf(event);
+// A declarative push (Safari): the receipt and the badge, and NO notification of ours. Safari
+// shows its proposed notification itself - the same words, link and tag as the payload's - and
+// that is the one iOS displays: a replacement shown from here is accepted (0.29.4's probe:
+// showNotification resolved) and never appears on the user's iPhone (iOS 26, 2026-10-19, six
+// tests), while a receipt posted after showNotification never arrived (0.29.2/0.29.3). So the
+// worker does what only it can do, and leaves the showing to the platform, as the model intends.
+// The payload's top-level `app_badge` sets the badge too, for a worker ITP has removed.
+async function confirmDeclarative(n, via) {
     const data = n.data || {};
-    // `navigate` as an option, absolute and on this origin: WebKit's declarative path refuses a
-    // replacement without a valid navigate URL (ServiceWorkerRegistration::showNotification:
-    // "did not include NotificationOptions that specify a valid defaultAction url" - the probe's
-    // TypeError on the user's iPhone, 2026-10-19), and then shows its proposed notification
-    // itself. Other browsers ignore the option; the click handler reads it from `data` as before.
+    await receipt(data, "shown", via);
+    await badge(data);
+}
+
+// The legacy path: show (a notification we fail to show isn't shown, so the throw stands), then
+// the badge, then the receipt.
+async function showLegacy(n, via) {
+    const data = n.data || {};
     const navigate = new URL(localPath(n.navigate), self.location.origin).href;
     const options = {
         body: n.body || "",
@@ -158,51 +118,29 @@ async function show(event) {
         data: { navigate, d: data.d, t: data.t },
     };
     if (n.tag) options.tag = n.tag;
-    const declarative = via === "push-declarative";
-    if (declarative) await receipt(data, "shown", via);
-    let outcome = "ok";
-    try {
-        await self.registration.showNotification(n.title, options);
-    } catch (e) {
-        outcome = "failed:" + ((e && e.name) || "error");
-        if (!declarative) throw e;
-    }
-    await probeShown(via, outcome);
-    if (typeof data.b === "number" && self.navigator && self.navigator.setAppBadge) {
-        try {
-            await (data.b > 0 ? self.navigator.setAppBadge(data.b) : self.navigator.clearAppBadge());
-        } catch (e) {
-            // the badge is a nicety
-        }
-    }
-    if (!declarative) await receipt(data, "shown", via);
+    await self.registration.showNotification(n.title, options);
+    await badge(data);
+    await receipt(data, "shown", via);
 }
 
-// Inside waitUntil, always: Safari shows its declarative fallback only when the
-// worker shows nothing, so this never doubles a notification.
+async function show(event) {
+    const { n, via } = notificationOf(event);
+    if (via === "push-declarative") return confirmDeclarative(n, via);
+    return showLegacy(n, via);
+}
+
+// Inside waitUntil, always: Safari shows its declarative notification itself; the legacy path
+// shows ours.
 self.addEventListener("push", (event) => {
-    event.waitUntil(Promise.all([probe(event, "push"), show(event)]));
+    event.waitUntil(show(event));
 });
 
 // WebKit's explainer names a `pushnotification` event for a mutable declarative push; shipping
-// Safari (18.4-18.5) fires `push` with the proposed notification instead (above). Kept for a
-// WebKit that moves to the explainer's name: nothing to show here - only the badge and the
-// receipt, from the notification Safari built (its `data` is the payload's).
-async function confirmDeclarative(event) {
-    const n = (event && (event.notification || event.proposedNotification)) || {};
-    const data = n.data || {};
-    if (typeof data.b === "number" && self.navigator && self.navigator.setAppBadge) {
-        try {
-            await (data.b > 0 ? self.navigator.setAppBadge(data.b) : self.navigator.clearAppBadge());
-        } catch (e) {
-            // the badge is a nicety
-        }
-    }
-    await receipt(data, "shown", "pushnotification");
-}
-
+// Safari fires `push` with the proposed notification instead (above). Kept for a WebKit that
+// moves to the explainer's name: the same receipt and badge, nothing shown.
 self.addEventListener("pushnotification", (event) => {
-    event.waitUntil(Promise.all([probe(event, "pushnotification"), confirmDeclarative(event)]));
+    const proposed = (event && (event.notification || event.proposedNotification)) || {};
+    event.waitUntil(confirmDeclarative({ data: proposed.data }, "pushnotification"));
 });
 
 async function open(path) {
@@ -222,8 +160,10 @@ async function open(path) {
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
     const data = event.notification.data || {};
-    // The receipt goes first (it marks the event read), the page opens beside it.
-    event.waitUntil(Promise.all([receipt(data, "clicked", "click"), open(localPath(data.navigate))]));
+    // The receipt goes first (it marks the event read), the page opens beside it. A declarative
+    // notification Safari showed has its link on the notification, not in our `data`.
+    const target = data.navigate || event.notification.navigate;
+    event.waitUntil(Promise.all([receipt(data, "clicked", "click"), open(localPath(target))]));
 });
 
 // No fetch handler at all - every request passes straight through to the

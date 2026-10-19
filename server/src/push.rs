@@ -250,6 +250,9 @@ pub fn payload_json(
     if declarative {
         payload["web_push"] = serde_json::json!(8030);
         payload["mutable"] = serde_json::json!(true);
+        // Safari sets the app's badge from this itself, worker or no worker (the worker sets it
+        // too, from `data.b`; the same number).
+        payload["app_badge"] = serde_json::json!(unread.max(0));
     }
     payload.to_string()
 }
@@ -1350,6 +1353,8 @@ mod tests {
         .unwrap();
         assert_eq!(declarative["web_push"], 8030);
         assert_eq!(declarative["mutable"], true);
+        assert_eq!(declarative["app_badge"], 2);
+        assert!(classic.get("app_badge").is_none());
         assert!(Push::new(None, None, Arc::new(Never)).declarative);
         assert!(
             !Push::new(None, None, Arc::new(Never))
