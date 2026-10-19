@@ -165,3 +165,93 @@ the start's sync fails, the note must name the next trigger (the stream's first 
    unknown. The shutdown row stays in the inbox only.
 2. **"Off since 21:14 · battery was 3 %" on the device page: in this step.** It is one query on `(device_id, kind)`
    and the stored summary; compare `happened_at`.
+
+## Revision check (15d356bb)
+
+I read the revised note (`design-38` at `15d356bb`, §8 "Revision") against the same code, plus `push.rs`'s
+`send_due`/`run_sender`/health, `CommandListenerService.onOpen` with `syncOnSseReopen`, `HomeActivity`'s tsnet start,
+`MdmApi.createMdmApi` and the enrollment `UPDATE` that sets `enrolled_at`.
+
+### The findings, one line each
+
+- **H1 resolved.** The sent `off` is kept (`off_sent`) and resent with the next boot's `on`, then cleared after that
+  2xx or `stale` at 7 days (§1.5, §4.4). The server pairs within one body (`off.boot_count < on.boot_count`), and the
+  H1 sequence is in §5.
+- **M1 resolved**, with the timing caveat in N2: `Push::Held(arrival + 3 min)` goes to `push_deliveries.next_try_at`.
+  `send_due` only takes queued rows whose `next_try_at` has passed, and `run_sender` already wakes at
+  `MIN(next_try_at)`. A restart drops the held row (reason `restart`). `rebootOf` returns `null` for unknown.
+- **M2 resolved.** §6 uses `svc power shutdown`/`reboot`; `adb reboot` and `adb emu kill` are now the "no shutdown
+  seen" cases.
+- **M3 resolved**, with the client caveat in N1: one receiver (`BootCover`'s), the existing synchronous writes first,
+  then the record committed, then `goAsync` and the POST on its own executor with a 3 s `callTimeout`.
+- **M4 resolved.** The key is `boot:<enrolled_at>:<boot_count>`; `enroll` sets `enrolled_at = datetime('now')`.
+  Nothing is recorded at boot count -1.
+- **M5 resolved.** "No shutdown seen" carries the last report's battery, and says "probably flat" at <= 10 % when not
+  charging.
+- **M6 resolved.** The unlock text is fixed, and the retry is real: `onOpen` requests `"sse_open"` on the first open,
+  since `wasDown` starts true and `syncOnSseReopen(null, ..)` is true.
+- **L1-L8 resolved**, each where §8 says: L1 §3.3; L2 §4.3; L3 §4.1; L4 §4.2; L5 §4.4 (`pinEventsLeaveQueue` as is);
+  L6 §3.2; L7 §2; L8 §5.
+
+### What the new mechanics do to the rest (checked)
+
+- **The hold doesn't delay or lose other kinds' pushes.** `not_before` is set only on that event's own rows.
+  Everything else stays `NULL` and is sent at the next wake. The sender's next wake is the earliest `next_try_at`,
+  clamped to 1 s-1 h, so a held row wakes it at +3 min and nothing else waits for it.
+- **Folding.** A held row isn't due, so it isn't counted in a fold until it is due; then it folds like any normal
+  kind, which is correct. The restart `UPDATE ... WHERE status = 'queued'` does nothing to a row that has already been
+  sent or folded.
+- **TTL.** It counts from `created_at`, so the hold costs 3 minutes of 12 hours.
+- **Health.** A `dropped` row is neither `failed` nor `accepted`, so neither `NotGettingThrough` nor the
+  unconfirmed count sees it. The only visible effect of a held row is "Sending" for 3 minutes (see N3).
+- **`goAsync` in `BootCover`'s receiver.** It comes after `KeyguardCover.onShutdown` and the `SYNCHRONOUS` component
+  write, so those are committed before the broadcast is held. Holding it only delays receivers in other apps, by at
+  most ~3 s of the shared 10 s.
+
+### New findings
+
+**N1 (High). The prepared client has no tsnet proxy, so the shutdown POST can never get through.**
+`createMdmApi` reads `TsnetClient.proxy()` once, when the client is built. §4.2 builds it in `PowerEvents.prepare`
+from `initRest`. But tsnet connects later: from `HomeActivity`'s first `onResume` (on purpose, after the boot-lockout
+incidents) or from a sync's `connectFromPreferences`. So the client built at `initRest` has no SOCKS proxy. Its POST
+goes straight to the tailnet address and fails at every shutdown on a phone that reaches the server over tsnet,
+which is every phone today. Each `off` then becomes the late case: inbox-only, told only at the next start. The
+parent never hears "turned off" or "battery flat" while the phone is off, and the "Off since" line never shows. The
+H1/M1 machinery hides this, so nothing would look broken in a test without tsnet.
+**Fix:** keep the prepared client keyed by `(baseUrl, token, proxy address)` and rebuild it off the main thread
+whenever one of them differs: after each sync's `connectFromPreferences`, and from `TsnetClient` when the proxy comes
+up. The receiver takes whatever is current, so it never builds anything inside the window. Add a test that the
+prepared client is rebuilt when the proxy changes. §6 check 1 must run with tsnet on (the emulator loop's normal
+setup), with logcat showing the POST's 204.
+
+**N2 (Medium). The hold runs from the shutdown POST's arrival, but the restart's `on` arrives only after boot, unlock,
+Wi-Fi and tsnet.**
+On a restart, the `off` reaches the server at T. The `on` needs a boot (40-70 s on a MediaTek phone), the automatic CE
+unlock, Wi-Fi or mobile data, tsnet's cold connect from Home's first `onResume`, and then a sync, which is the start
+sync or the `sse_open` retry. That is typically 1.5-2.5 min and can be more on mobile data or a slow tailnet login. So
+3 minutes sits right where the two-push edge (§3.3) stops being rare. (The `RESTART_GAP` between the two phone
+instants is fine; the boot instant is seconds after the shutdown.)
+**Fix:** a hold of 5 min (`OFF_HOLD`, separate from `RESTART_GAP`), and a device check that times Restart on the
+Jelly Star to the `on`'s arrival on Wi-Fi and on mobile data. If that time exceeds the hold, raise the hold, not the
+gap. A power-off push 5 minutes late is still in time for this kind.
+
+**N3 (Low). The inbox's delivery line for a restart's off row.**
+After the drop, `delivery_line` finds deliveries, none accepted and none queued, so it says "Not sent". §6 check 2
+says "shows no delivery". Make `delivery_line` treat reason `restart` like no delivery (return `None`) and pin it in
+`handlers::notifications::tests`. During the hold the row reads "Sending", which is acceptable.
+
+**N4 (Low). The drop can race a sender pass that already read the row.**
+At the hold's end, a `send_due` pass can read the held row as due just before the power handler's drop commits, and
+then send it anyway. This gives the documented two-push edge, in a window of milliseconds. Either `send_one` claims
+the row with `WHERE status = 'queued'` before it sends, or the note says this is part of the edge.
+
+**N5 (Low). One receiver, two jobs.**
+Wrap `KeyguardCover`/`BootCover`'s part and `PowerEvents.onShutdown` in separate `try` blocks, so a throw in either
+can't skip the other. Today `KeyguardCover.onShutdown` isn't caught inside the receiver. `goAsync().finish()` goes in
+a `finally` that also covers an executor that refuses the task.
+
+### Verdict
+
+**Approve with the listed changes:** N1 (High: the prepared client must follow the tsnet proxy) and N2 (Medium: a
+5-minute hold, plus the timing device check). Both are small text changes to §4.2 and §3.3. N3-N5 are for the
+implementation. No new design round is needed.
