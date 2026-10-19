@@ -703,6 +703,14 @@ findings, merge to `main`, full suite once.
 
 ### Asked for, scope not settled yet
 
+- **Music app's episode list: thumbnails and a kid-side order flip** (the user, 2026-10-19, from a Snipp Snapp Snute
+  screenshot): (1) small pictures in place of the number circles, only for an entry whose episodes really have their
+  own art (the carousel's rule, `showsCarousel`: at least two different pictures; a one-picture entry keeps the
+  numbers; rows outside the keep set fetch their picture when shown, under the audio's network gate) - a deviation
+  from vibb, which shows own art only in the highlighted row; (2) a small button top right of the list that lets the
+  kid reverse the order for that entry on that phone (remembered per entry; the parent's order stays the default; the
+  play direction follows the flip). Proposed as design 39 after 37 and 38; the user hasn't said go.
+
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
