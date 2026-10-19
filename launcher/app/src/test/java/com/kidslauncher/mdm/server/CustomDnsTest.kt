@@ -78,6 +78,22 @@ class CustomDnsTest {
     )
 
     @Test
+    fun `a socket our own VPN refused counts against no server`() {
+        // The primary: dropped, the state untouched, the backup never asked.
+        val calls = Calls()
+        val d = dns(calls = calls) { _, _ -> Attempt.Unprotected }
+        val before = d.state()
+        repeat(3) { assertNull(d.resolve(query, request)) }
+        assertEquals(before, d.state())
+        assertEquals(List(3) { primaryDoh }, calls.targets)
+        // The canary: no verdict, so an odd answer's own outcome stands and nothing is counted.
+        val odd = dns { _, m -> if (m.isCanary()) Attempt.Unprotected else Attempt.Odd(OddKind.SERVFAIL, null) }
+        val start = odd.state()
+        assertEquals(Rcode.SERVFAIL, Message(odd.resolve(query, request)!!).rcode)
+        assertEquals(start, odd.state())
+    }
+
+    @Test
     fun `a primary answer is relayed and the backup never asked`() {
         val calls = Calls()
         val relayed = answer(Rcode.NXDOMAIN)

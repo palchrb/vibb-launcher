@@ -62,9 +62,65 @@ class ProtectedSocketTest {
             }
             factory.createSocket("127.0.0.1", server.localPort, loopback, 0).use { assertTrue(it.isConnected) }
             factory.createSocket(loopback, server.localPort).use { assertTrue(it.isConnected) }
-            assertEquals(3, seen.size)
+            factory.createSocket("127.0.0.1", server.localPort).use { assertTrue(it.isConnected) }
+            assertEquals(4, seen.size)
             assertEquals(loopback, seen[0]!!.address)
         }
+    }
+
+    @Test
+    fun `a connecting overload closes its socket when the connect fails`() {
+        // A port nobody listens on: bound, then closed again.
+        val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+        val loopback = InetAddress.getLoopbackAddress()
+        val made = mutableListOf<Socket>()
+        val factory = ProtectedSocketFactory { made += it; true }
+        val connects = listOf<() -> Socket>(
+            { factory.createSocket("127.0.0.1", port) },
+            { factory.createSocket("127.0.0.1", port, loopback, 0) },
+            { factory.createSocket(loopback, port) },
+            { factory.createSocket(loopback, port, loopback, 0) },
+        )
+        for (connect in connects) {
+            try {
+                connect().close()
+                fail("connected to a closed port")
+            } catch (e: IOException) {
+                assertTrue(made.last().isClosed)
+            }
+        }
+        assertEquals(4, made.size)
+    }
+
+    @Test
+    fun `a refused protect is no failure of the server`() {
+        // The outcome: a refusal anywhere in the cause chain (OkHttp may wrap it).
+        assertTrue(unprotected(NotProtectedException()))
+        assertTrue(unprotected(IOException("wrapped", NotProtectedException())))
+        assertFalse(unprotected(java.net.ConnectException()))
+        // DoT and DoH map it to Unprotected before anything else (they log through android.util.Log, so by source).
+        val transport = code(source("UpstreamTransport.kt"))
+        val dotCatch = transport.substringAfter("fun resolveDoT(").substringAfter("} catch (e: Exception) {")
+        assertTrue(dotCatch.indexOf("if (unprotected(e)) return Attempt.Unprotected") in 0 until dotCatch.indexOf("if (written)"))
+        val dohCatch = transport.substringAfter("fun resolveDoh(").substringAfter("when {")
+        assertTrue(dohCatch.trimStart().startsWith("unprotected(e) -> Attempt.Unprotected"))
+        // The public resolvers count nothing: no DoT-blocked period, no DoH tried, a probe given back.
+        val resolver = cloudflareResolver({ 0 }, {})
+        val asked = mutableListOf<UpstreamTarget>()
+        repeat(DotBlockedRule.THRESHOLD + 2) {
+            assertEquals(Attempt.Unprotected, resolver.resolve(byteArrayOf(0, 0), PROVIDER_BUDGET, UPSTREAM_BUDGET) { target, _, _, _ -> asked += target; Attempt.Unprotected })
+        }
+        assertEquals(DotBlocked(), resolver.state())
+        assertTrue(asked.all { it is UpstreamTarget.Dot })
+        // A transport that throws the refusal is the same outcome.
+        assertEquals(Attempt.Unprotected, resolver.resolve(byteArrayOf(0, 0), PROVIDER_BUDGET, UPSTREAM_BUDGET) { _, _, _, _ -> throw NotProtectedException() })
+        assertEquals(DotBlocked(), resolver.state())
+        // The pure rule: a probe that never ran is given back; nothing else changes.
+        val probing = DotBlocked(doh = true, periods = 2, dohUntilMs = 10, probing = true)
+        assertEquals(probing.copy(probing = false), DotBlockedRule.afterUnprotected(probing, probe = true))
+        assertEquals(probing, DotBlockedRule.afterUnprotected(probing, probe = false))
+        val counting = DotBlocked(failures = 2, windowStartMs = 5)
+        assertEquals(counting, DotBlockedRule.afterUnprotected(counting, probe = false))
     }
 
     @Test

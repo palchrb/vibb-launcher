@@ -102,6 +102,8 @@ class CustomDns(
                     settled = true
                     return backup(query, deadline)
                 }
+                // Our own VPN refused the socket: nothing counted, a probe given back (finally), dropped.
+                Attempt.Unprotected -> return null
                 is Attempt.Odd -> {
                     val verdict = canary(addresses, canaryBudget(deadline - elapsed()))
                     if (verdict != null) {
@@ -130,7 +132,7 @@ class CustomDns(
         return when (val outcome = transport(config.backup, addresses, query, backupBudget(deadline - elapsed()))) {
             is Attempt.Answer -> outcome.bytes
             is Attempt.Odd -> outcome.bytes
-            is Attempt.Transport -> null
+            is Attempt.Transport, Attempt.Unprotected -> null
         }
     }
 
@@ -156,15 +158,19 @@ class CustomDns(
             mine.complete(cached)
             return cached
         }
-        var verdict = CanaryVerdict(elapsed(), ok = false, reason = BackupReason.TIMEOUT)
+        var verdict: CanaryVerdict? = CanaryVerdict(elapsed(), ok = false, reason = BackupReason.TIMEOUT)
         try {
             val query = Message.newQuery(Record.newRecord(Name.root, Type.NS, DClass.IN)).toWire()
-            verdict = canaryVerdict(transport(config.primary, addresses, query, budget), elapsed())
-            update { UpstreamChooser.withCanary(it, verdict) }
-            log("Canary: ok=${verdict.ok}, reason=${verdict.reason?.wire}")
+            val outcome = transport(config.primary, addresses, query, budget)
+            // Our own VPN refused the socket: no verdict, for us or a waiter (they give up: nothing changes).
+            verdict = if (outcome == Attempt.Unprotected) null else canaryVerdict(outcome, elapsed())
+            verdict?.let { v ->
+                update { UpstreamChooser.withCanary(it, v) }
+                log("Canary: ok=${v.ok}, reason=${v.reason?.wire}")
+            }
         } finally {
             canaryInFlight.set(null)
-            mine.complete(verdict)
+            verdict?.let(mine::complete) ?: mine.completeExceptionally(NotProtectedException())
         }
         return verdict
     }
@@ -199,7 +205,7 @@ class CustomDns(
                 } catch (e: Exception) {
                     Attempt.Transport(BackupReason.CONNECT)
                 }
-                if (outcome is Attempt.Transport || (outcome is Attempt.Odd && outcome.kind == OddKind.TIMEOUT)) {
+                if (outcome is Attempt.Transport || outcome == Attempt.Unprotected || (outcome is Attempt.Odd && outcome.kind == OddKind.TIMEOUT)) {
                     step++
                     continue
                 }
@@ -335,5 +341,7 @@ fun canaryVerdict(outcome: Attempt, now: Long): CanaryVerdict = when (outcome) {
         CanaryVerdict(now, noError, if (noError) null else BackupReason.TIMEOUT)
     }
     is Attempt.Transport -> CanaryVerdict(now, false, outcome.reason)
+    // Never asked: `canary` drops a refused socket before it gets here.
+    Attempt.Unprotected -> CanaryVerdict(now, false, BackupReason.TIMEOUT)
     is Attempt.Odd -> CanaryVerdict(now, false, if (outcome.kind == OddKind.REFUSED) BackupReason.REFUSED else BackupReason.TIMEOUT)
 }

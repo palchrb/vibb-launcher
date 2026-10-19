@@ -58,6 +58,10 @@ object DotBlockedRule {
     /** DoT reached the server (an answer, or anything above TLS): 853 isn't blocked here. */
     fun afterDotWorked(s: DotBlocked): DotBlocked = if (s == IDLE) s else IDLE
 
+    /** Our own VPN refused the socket ([Attempt.Unprotected]): the server wasn't tried, so nothing counts -
+     * only a probe that never ran is given back, so the next query probes (qa-vpn-protect-code L3). */
+    fun afterUnprotected(s: DotBlocked, probe: Boolean): DotBlocked = if (probe && s.probing) s.copy(probing = false) else s
+
     /** DoT works, nothing counted (shared: no allocation per answered query). */
     val IDLE = DotBlocked()
 
@@ -108,7 +112,7 @@ class PublicResolver(
         fun attempt(target: UpstreamTarget, budget: Budget): Attempt = try {
             transport(target, addresses, query, budget)
         } catch (e: Exception) {
-            Attempt.Transport(BackupReason.CONNECT)
+            if (unprotected(e)) Attempt.Unprotected else Attempt.Transport(BackupReason.CONNECT)
         }
         fun left(cap: Budget): Budget? {
             val left = deadline - elapsed()
@@ -121,10 +125,14 @@ class PublicResolver(
             if (outcome !is Attempt.Transport) return outcome
             val budget = left(dotBudget.atMost(UPSTREAM_BUDGET)) ?: return outcome
             val fallback = attempt(dot, budget)
-            if (fallback !is Attempt.Transport) update(DotBlockedRule::afterDotWorked)
+            if (fallback is Attempt.Answer || fallback is Attempt.Odd) update(DotBlockedRule::afterDotWorked)
             return fallback
         }
         val outcome = attempt(dot, if (route == DotRoute.PROBE) dotBudget.atMost(UPSTREAM_BUDGET) else dotBudget)
+        if (outcome is Attempt.Unprotected) {
+            update { DotBlockedRule.afterUnprotected(it, route == DotRoute.PROBE) }
+            return outcome
+        }
         if (outcome !is Attempt.Transport) {
             update(DotBlockedRule::afterDotWorked)
             return outcome

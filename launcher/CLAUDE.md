@@ -982,7 +982,10 @@ Together: an app store install of something not on the allowlist would still nee
   protect()'s result and worked unprotected. It shows at every VPN start (enrolment, the end of a pause, the Web filter
   switched on, a reboot), not only after a pause; a Wi-Fi toggle doesn't help. **Rule**: every socket the engine protects
   comes from `protectedSocket(protect, local)` (`UpstreamTransport.kt`: `Socket()`, `bind(local)` - an ephemeral port
-  on any address -, then protect, closed when refused; a refusal is `NotProtectedException`, so the log names it).
+  on any address -, then protect, closed when refused; a refusal is `NotProtectedException`, so the log names it). A
+  refusal is `Attempt.Unprotected` (`unprotected(e)` over the cause chain): the query is dropped and **nothing counts**
+  - no chooser period, no canary verdict, no "DoT blocked" (`DotBlockedRule.afterUnprotected` only gives a probe back);
+  the factory's connecting overloads close their socket when the connect throws (qa-vpn-protect-code L1-L3).
   `ProtectedSocketTest` pins the bind before protect, the one plain `Socket()` in the file and that no other engine
   file makes its own; a JVM test can't see the descriptor, so the emulator check (`docs/testing/emulator.md` §6m step 8)
   is the proof.
