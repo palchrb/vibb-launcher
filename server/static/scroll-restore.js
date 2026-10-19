@@ -14,9 +14,16 @@
 //   leaves the browser at that anchor.
 // Another path, or a record older than 20 s, restores nothing. Loaded from the head partial on
 // every page. No framework, no DOM writes. Tested with node (jstest/scroll-restore.test.js).
+//
+// The record travels in sessionStorage and, as a second carrier, in window.name (prefixed): an
+// installed iPhone app has been seen to lose sessionStorage across a form's navigation, which left
+// the browser at the #fragment - the page "jumped" to the group's top (the user, 2026-10-19).
+// The place is put back at DOMContentLoaded, at load, and on the two frames after load, because a
+// browser may still scroll to the fragment late (after fonts or images moved the page).
 (function (root) {
     "use strict";
     var KEY = "handy-scroll";
+    var NAME_PREFIX = "handy-scroll:";
     var MAX_AGE_MS = 20000;
 
     function has(tops, id) {
@@ -66,14 +73,19 @@
         } catch (e) {}
 
         function remember(form) {
-            if (!storage) return;
+            var record = JSON.stringify({
+                path: win.location.pathname,
+                y: win.scrollY,
+                t: now(),
+                tops: screenTops(form)
+            });
+            if (storage) {
+                try {
+                    storage.setItem(KEY, record);
+                } catch (e) {}
+            }
             try {
-                storage.setItem(KEY, JSON.stringify({
-                    path: win.location.pathname,
-                    y: win.scrollY,
-                    t: now(),
-                    tops: screenTops(form)
-                }));
+                win.name = NAME_PREFIX + record;
             } catch (e) {}
         }
 
@@ -95,6 +107,13 @@
                 storage.removeItem(KEY);
             } catch (e) {}
         }
+        try {
+            var named = String(win.name || "");
+            if (named.slice(0, NAME_PREFIX.length) === NAME_PREFIX) {
+                if (!saved) saved = JSON.parse(named.slice(NAME_PREFIX.length));
+                win.name = "";
+            }
+        } catch (e) {}
         if (!saved) return;
 
         function find(id, tops) {
@@ -124,14 +143,29 @@
             restore();
         }
         // Then the entry goes back to the browser: the record is used up, so Back to this page later
-        // must find the place the browser keeps, not the top (qa-browser-fixes-code M1).
+        // must find the place the browser keeps, not the top (qa-browser-fixes-code M1). The place is
+        // put back once more on each of the next two frames: a late scroll to the fragment (iOS) must
+        // not win over it.
         win.addEventListener("load", function () {
             restore();
-            if (win.history && "scrollRestoration" in win.history) win.history.scrollRestoration = "auto";
+            var frames = 2;
+            var tick = function () {
+                restore();
+                if (--frames > 0 && typeof win.requestAnimationFrame === "function") {
+                    win.requestAnimationFrame(tick);
+                    return;
+                }
+                if (win.history && "scrollRestoration" in win.history) win.history.scrollRestoration = "auto";
+            };
+            if (typeof win.requestAnimationFrame === "function") {
+                win.requestAnimationFrame(tick);
+            } else if (win.history && "scrollRestoration" in win.history) {
+                win.history.scrollRestoration = "auto";
+            }
         });
     }
 
-    var api = { install: install, restoreTarget: restoreTarget, KEY: KEY, MAX_AGE_MS: MAX_AGE_MS };
+    var api = { install: install, restoreTarget: restoreTarget, KEY: KEY, NAME_PREFIX: NAME_PREFIX, MAX_AGE_MS: MAX_AGE_MS };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else {
