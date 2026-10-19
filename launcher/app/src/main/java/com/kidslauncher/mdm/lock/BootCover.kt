@@ -84,26 +84,45 @@ object BootCover {
         }
     }
 
+    /**
+     * The process's one `ACTION_SHUTDOWN` receiver (design 38 §4.2, QA M3): the cover's synchronous
+     * writes first, exactly as before, then the phone's shutdown for the parent
+     * ([com.kidslauncher.mdm.server.PowerEvents.onShutdown]: its record committed, then `goAsync`
+     * for the POST). Each part in its own `try`, so a throw in one never skips the other (QA N5).
+     */
     private val shutdownReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_SHUTDOWN) return
             val app = context.applicationContext
-            // Design 32 step 2 (M4): a clean reboot has no keyguard - the cover's goes off now,
-            // synchronously, and is re-armed at the boot's first lock resume with the screen on.
-            KeyguardCover.onShutdown(app)
-            val deviceOwner = try {
-                app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
+            try {
+                coverAtShutdown(app)
             } catch (e: Exception) {
-                false
+                Log.w(LOG_TAG, "Boot cover shutdown writes failed", e)
             }
-            shuttingDown = true
-            val tripped = coverGuardTripped(BootCoverGuard.read(app))
-            val armed = bootCoverEnabled(CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped)
-            // SYNCHRONOUS: written before the receiver returns - an OEM shutdown path may not flush
-            // pending package settings (qa-16b-code #3).
-            setEnabled(app, armed, "shutdown", synchronous = true)
-            if (armed == true) prefs(app).edit().putLong(KEY_ARMED_AT, System.currentTimeMillis()).commit()
+            try {
+                com.kidslauncher.mdm.server.PowerEvents.onShutdown(app, intent, this)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "The shutdown record failed: ${e.javaClass.simpleName}")
+            }
         }
+    }
+
+    private fun coverAtShutdown(app: Context) {
+        // Design 32 step 2 (M4): a clean reboot has no keyguard - the cover's goes off now,
+        // synchronously, and is re-armed at the boot's first lock resume with the screen on.
+        KeyguardCover.onShutdown(app)
+        val deviceOwner = try {
+            app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
+        } catch (e: Exception) {
+            false
+        }
+        shuttingDown = true
+        val tripped = coverGuardTripped(BootCoverGuard.read(app))
+        val armed = bootCoverEnabled(CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped)
+        // SYNCHRONOUS: written before the receiver returns - an OEM shutdown path may not flush
+        // pending package settings (qa-16b-code #3).
+        setEnabled(app, armed, "shutdown", synchronous = true)
+        if (armed == true) prefs(app).edit().putLong(KEY_ARMED_AT, System.currentTimeMillis()).commit()
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

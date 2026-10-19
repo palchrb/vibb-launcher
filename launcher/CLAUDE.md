@@ -528,6 +528,61 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **Not device-tested**: the Jelly Star's BATTERY_LOW threshold and whether `EXTRA_BATTERY_LOW` is set there, the
   receiver in Doze, the emergency sync over mobile data (design 35 "Step 3 implementation status").
 
+## The phone turned off and on (design 38, `docs/design/38-phone-off-on.md`, at the monorepo root)
+
+- **What**: the parent's "Anna was turned off · 21:14 · battery 2 %, probably flat", "Anna restarted" and "Anna was
+  turned on · off since 21:14, battery was 2 %" (the server's words; design 38 §3) from the phone's own signals:
+  Android's shutdown broadcast and the first process start of a boot. Pure rules and the glue in
+  `server/PowerEvents.kt` (`PowerEventsTest`), the body `dto/PowerReport.kt` (`POST /api/devices/power`,
+  `MdmApi.sendPower`), capability `power_v1` (`POWER_CAPABILITY`, in `STATUS_CAPABILITIES`; `SyncScheduleTest`).
+- **The record** (DE prefs `power_events`, so the start is written in direct boot; nothing about the user or the
+  PIN): at most one shutdown (`off_at_ms`, `off_boot_count`, `off_level`/`off_charging`/`off_low`, `off_reboot`,
+  `off_reason` - absent = unknown -, `off_sent`) and one start (`on_*`); a new one replaces the old (an unsent old one
+  is lost). Pure codec `encodePowerRecord`/`decodePowerRecord` (`PowerKeys`). Every read-compare-write under
+  `PowerEvents`' lock with one `commit()` (`update`): the shutdown receiver on the main thread races the sync's thread
+  (qa-38-design L3). A sent shutdown is **kept** (`off_sent`) and sent again with the next start until a later
+  boot's start is accepted, so the server pairs them in one body (QA H1); kept parts older than 7 days go unsent
+  (`stale`, `POWER_STALE_MS`) - an old server's 404 ends there too.
+- **The shutdown**: `BootCover`'s `ACTION_SHUTDOWN` receiver (from `PinLockRuntime.init`, `RECEIVER_NOT_EXPORTED`;
+  ShutdownThread sends it to registered receivers only) is the process's **one** shutdown receiver (QA M3): first
+  the cover's synchronous writes as before (`coverAtShutdown`: `KeyguardCover.onShutdown`, the boot cover's arm),
+  then `PowerEvents.onShutdown` - each in its own `try`/`catch` (QA N5). That reads the battery, the restart flag
+  (pure `rebootOf`: `EXTRA_SHUTDOWN_USERSPACE_ONLY` -> true, `sys.shutdown.requested` "1…"/"0…" -> true/false,
+  anything else - unreadable included - `null`, never `false`; the property read by reflection is a bonus, expected
+  unreadable on the Jelly Star) and its reason (`reasonOf`, the text after the digit), `commit()`s the shutdown
+  (write-ahead, `off_sent = false`), and only then `goAsync()` with the POST on its own thread (`finish()` in a
+  `finally`, also when the executor refuses). Not enrolled (no prepared client): nothing is sent, the record waits.
+- **The prepared client** (QA N1, the design QA's High): `createMdmApi` reads `TsnetClient.proxy()` only when it is
+  built, so the shutdown's client (`createMdmApi(.., callTimeoutMs = 3 s)`, `SHUTDOWN_POST_TIMEOUT_MS`) is built in
+  advance, keyed by `(base URL, token, tsnet proxy address)` (pure `clientKeyOf`/`rebuildNeeded`), and rebuilt off the
+  main thread whenever one differs: `PowerEvents.init` from `initRest` (and it sets `TsnetClient.proxyListener`, which
+  `connect`/`close` call when the proxy address changes), and `PowerEvents.prepare` after each sync's
+  `connectFromPreferences` (a new enrollment's base URL and token too). The receiver takes whatever is current.
+- **The boot**: `BootWitness.record` exposes `hadLastBoot` (what it had before overwriting `last_boot`, QA L2);
+  `Application.onCreate` calls `PowerEvents.recordBoot` right after it - after the `:bootcover` early return (main
+  process only), in direct boot too. Pure `bootRecord(newBoot, hadLastBoot, bootCount, nowMs, elapsedMs, battery)`:
+  a start only for a new boot with a last boot known and a count >= 0 (-1 is "new" at every start, QA M4), at
+  `now - elapsedRealtime`.
+- **The upload**: `PowerEvents.upload` in `performMdmSync` after `ParentPinEvents.upload` - stale parts out, then one
+  POST when an unsent shutdown or a start waits (pure `uploadBody`: the start with any kept shutdown of an earlier
+  boot, sent or not; else an unsent shutdown alone; a shutdown of the start's own boot or later isn't paired - the
+  start then waits for the next boot's to replace it; the start's instant recomputed while it is still its boot). The
+  answer by `pinEventsLeaveQueue` as is (QA L5, `afterAnswer`): 2xx -> `clearSent` (the shutdown marked sent; with a
+  start, the start and any kept shutdown of an earlier boot go; compared by instant and boot - a start by its boot -,
+  so a newer record written meanwhile stays), 401/404/408/429, 5xx and no answer keep, any other 4xx -> `dropSent`.
+  The shutdown's own POST uses the same table. A start whose sync found no network is sent by the stream's first
+  open (`sse_open`), else the 30-min backstop.
+- Tests: `PowerEventsTest` (`rebootOf`/`reasonOf`, `bootRecord`, `uploadBody` - the resend with the start -,
+  the answer table, `clearSent`/`dropSent` keeping a newer record, `stale`, the codec, the prepared client's key,
+  the encoding equals `power_report.json` and both copies match; by source: one `ACTION_SHUTDOWN` receiver in the
+  process, the cover's writes before `PowerEvents.onShutdown`, each caught, the commit before `goAsync`, `finish()` in
+  a `finally`, the record's writes `commit()` never `apply()`, the boot cover's synchronous arm in
+  `coverAtShutdown` - the code QA's L1 -, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`),
+  `KeyguardCoverPlanTest` (the cover's part is `coverAtShutdown`), `SyncScheduleTest` (`power_v1`). Emulator check: `docs/testing/emulator.md` §6p.
+- **Not device-tested**: the Jelly Star's power menu (Power off, Restart), a real flat battery (is the broadcast sent,
+  at which level), the property read, and Restart timed to the start's arrival on Wi-Fi and on mobile data against
+  the server's 5-minute hold (design 38 §6).
+
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
 - **Depth on the view, never in the bitmap** (QA M2): `ui/home/PressFeedback.depth` gives Home's `tile_icon` and the contact avatar (`contact_avatar`, Home's row and the phone book) an oval `ViewOutlineProvider`, `elevation` 2 dp and black shadow colours. The icon cache, its sizes and the glance/time-rule renders are untouched. The parents don't clip the shadow (`tile_frame` `clipChildren=false`; the contact item already had it). Elevation changes the drawing order among siblings, so the badges are lifted to the same 2 dp with no outline of their own (`KidBadge` style: `elevation` + `outlineProvider none`; the call badge in `PressFeedback.contact`). No top light.

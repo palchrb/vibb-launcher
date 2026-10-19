@@ -92,7 +92,8 @@ object TsnetClient {
         stateDir: String,
         timeoutSeconds: Long = 30,
     ): String? {
-        return try {
+        val before = proxyAddress
+        val ip = try {
             val params = Triple(hostname, authKey, stateDir)
             if (params != clientParams) {
                 client?.close()
@@ -114,6 +115,22 @@ object TsnetClient {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to connect to tailnet", e)
             null
+        }
+        proxyChanged(before)
+        return ip
+    }
+
+    /** Called (on the connecting thread, never the main one) whenever [proxyAddress] changes:
+     * design 38's prepared shutdown client is rebuilt then ([PowerEvents.init], QA N1). */
+    @Volatile
+    var proxyListener: (() -> Unit)? = null
+
+    private fun proxyChanged(before: String?) {
+        if (before == proxyAddress) return
+        try {
+            proxyListener?.invoke()
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Proxy listener failed", e)
         }
     }
 
@@ -272,6 +289,7 @@ object TsnetClient {
     }
 
     fun close() {
+        val before = proxyAddress
         try {
             client?.close()
         } catch (e: Exception) {
@@ -282,5 +300,6 @@ object TsnetClient {
             proxyAddress = null
             proxyCredential = null
         }
+        proxyChanged(before)
     }
 }

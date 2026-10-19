@@ -171,10 +171,11 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_79_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_80_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
-out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both). The next
-free number is 0080.
+out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
+`0080_phone_power.sql` (design 38, the two power switches) follows 0079 (`migrations_73_to_80_in_order`). The next
+free number is 0081.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -191,7 +192,7 @@ free number is 0080.
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows) and `device_policy.lock_glance_text` - see "The lock's glance page"
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days), `notification_settings` (singleton), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too), `notification_settings` (singleton; design 38's `push_phone_off`/`push_phone_on` since 0080), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
@@ -212,6 +213,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204
 - `POST /api/devices/dns-events` (bearer) - blocked domains, stored only while the phone's log is on (default off) -> 204
 - `POST /api/devices/pin-events` (bearer) - `{events: [{id, kind, entry, at_ms, until_ms, failures, level}]}`, the phone's parent-PIN uses, wrong tries and lockouts (design 24, see "Parent PIN") -> 204; 400 only for a body that isn't JSON or has no `events` array, 413 above 100 events
+- `POST /api/devices/power` (bearer) - `{off?: {at_ms, boot_count, battery?, reboot?, reason?}, on?: {at_ms, boot_count, battery?}}`, the phone's shutdown and start (design 38, see "The phone turned off and on") -> 204; 400 for neither part or not one, 413 above 2 KiB
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, both scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above; the download is resumable (`Range`/`If-Match`, `X-Release-Tag`; "App downloads" below)
 - `GET /api/devices/music/library` (ETag/304, gzip), `/music/entries/{id}/items` (ETag/304, gzip; design 21b), `/music/covers/{hash}`, `/music/files/{id}` (Range, `X-Content-SHA256`), `/music/storytel` (bearer) - the phone's music library, scoped to its ticks (design 21)
 
@@ -227,7 +229,7 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37)
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
-- `docs/notes/server/notifications.md` - Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push
+- `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push
 - `docs/notes/server/connectivity.md` - Connectivity and exposure
 - `docs/notes/server/pwa.md` - Fix round 2026-10-06; Fix round 1; The PWA's times, connection state and Attention; About This Phone and Advanced; Lock Screen & PINs; Home Screen and Web Filter; Device › Apps; Device › Music; The phone's summary; The Apps tab; The Music tab; The Locate tab; The rest of Settings; Add Phone, sign-in, the tab pages
 - `docs/notes/server/retention-and-crashes.md` - Retention; Crash reports; Removed monitoring

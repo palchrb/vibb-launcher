@@ -175,6 +175,9 @@ class Application : android.app.Application() {
         // Design 24b §3: a boot the launcher didn't see (safe mode, a start cut short) - early, so a
         // crash later in onCreate doesn't make the next start look like one. Never throws.
         com.kidslauncher.mdm.server.BootWitness.record(this)
+        // Design 38 §4.3: this boot's start for the parent ("Anna was turned on"), right after the
+        // witness and in direct boot too (device-protected prefs). Never throws.
+        com.kidslauncher.mdm.server.PowerEvents.recordBoot(this)
         // A call notification a dead process left behind (emulator run 2026-10-06): posted to the
         // main thread so a bind that is already queued (onCallAdded) goes first.
         try {
@@ -377,6 +380,9 @@ class Application : android.app.Application() {
         CommandListenerService.start(this)
         // Design 35 §2.5: a report at once on Android's battery-low/okay edges (everything caught).
         com.kidslauncher.mdm.server.BatteryStatus.watch(this)
+        // Design 38 §4.2: the shutdown's client built in advance (off the main thread), and again
+        // whenever the tsnet proxy comes up. Everything caught.
+        com.kidslauncher.mdm.server.PowerEvents.init(this)
         // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
         // SDK's files and jobs) is deleted once, in the background.
         com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)

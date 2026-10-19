@@ -10,6 +10,7 @@ import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.EnrollResponse
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
+import com.kidslauncher.mdm.server.dto.PowerReport
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
@@ -105,18 +106,25 @@ interface MdmApi {
     /** Parent-PIN uses, wrong tries and lockouts (design 24) - see [ParentPinEvents]. */
     @POST("api/devices/pin-events")
     suspend fun sendPinEvents(@Body batch: ParentPinEventBatch): Response<Unit>
+
+    /** The phone's shutdown and start (design 38) - see [PowerEvents]. */
+    @POST("api/devices/power")
+    suspend fun sendPower(@Body report: PowerReport): Response<Unit>
 }
 
-/** [token] is omitted for the enroll-only call (no token exists yet); pass it for every
+/** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.
+ * [token] is omitted for the enroll-only call (no token exists yet); pass it for every
  * subsequent authenticated call. Routes through [TsnetClient]'s embedded-tailnet SOCKS5 proxy
  * whenever one is running, so calls reach the server over the tailnet without needing the
  * standalone Tailscale app - falls back to the device's normal network path (plain internet
  * routing, whatever that resolves to) if tsnet hasn't connected yet, same as before this existed. */
-fun createMdmApi(baseUrl: String, token: String? = null): MdmApi {
+fun createMdmApi(baseUrl: String, token: String? = null, callTimeoutMs: Long? = null): MdmApi {
     val clientBuilder = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
+    // The whole call within this (design 38: the shutdown's POST holds the broadcast at most 3 s).
+    callTimeoutMs?.let { clientBuilder.callTimeout(it, TimeUnit.MILLISECONDS) }
 
     TsnetClient.proxy()?.let { clientBuilder.proxy(it) }
 

@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::display_time::Zone;
+use crate::models::{BatteryReport, PowerOff, PowerOn, PowerReport};
 use crate::window_relock::ForeignAccess;
 
 /// A title is at most this many characters, a summary at most [SUMMARY_MAX] (design 35 §2.2): they
@@ -38,15 +39,21 @@ pub enum Kind {
     ForeignAccess,
     UnseenBoot,
     LowBattery,
+    /// Design 38: the phone's shutdown broadcast (`ACTION_SHUTDOWN`) and the first process start of
+    /// the next boot.
+    PhoneOff,
+    PhoneOn,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [
+    pub const ALL: [Kind; 8] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
         Kind::ForeignAccess,
         Kind::UnseenBoot,
+        Kind::PhoneOff,
+        Kind::PhoneOn,
         Kind::LowBattery,
     ];
 
@@ -58,6 +65,8 @@ impl Kind {
             Kind::ForeignAccess => "foreign_access",
             Kind::UnseenBoot => "unseen_boot",
             Kind::LowBattery => "low_battery",
+            Kind::PhoneOff => "phone_off",
+            Kind::PhoneOn => "phone_on",
         }
     }
 
@@ -99,6 +108,8 @@ impl Kind {
             Kind::ForeignAccess => Some(("push_foreign_access", "An app may read the PIN")),
             Kind::UnseenBoot => Some(("push_unseen_boot", "Start without Vibb One")),
             Kind::LowBattery => Some(("push_low_battery", "Battery low")),
+            Kind::PhoneOff => Some(("push_phone_off", "Phone turned off")),
+            Kind::PhoneOn => Some(("push_phone_on", "Phone turned on")),
         }
     }
 }
@@ -110,6 +121,9 @@ pub struct Phone {
     pub name: String,
     /// `devices.battery_low_since`: the battery latch (§2.5), `None` = armed.
     pub battery_low_since: Option<String>,
+    /// `devices.enrolled_at`: part of a `phone_on` key (design 38 §3.2, a re-enrollment starts
+    /// another count).
+    pub enrolled_at: Option<String>,
     pub zone: Zone,
     pub now: DateTime<Utc>,
 }
@@ -118,8 +132,8 @@ impl Phone {
     /// The phone's name and battery latch, and the Phone Setup zone. `None` when the phone is gone
     /// (deleted while its request ran) or the read failed (logged).
     pub async fn load(db: &SqlitePool, device_id: i64) -> Option<Phone> {
-        let row: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT name, battery_low_since FROM devices WHERE id = ?")
+        let row: Option<(String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT name, battery_low_since, enrolled_at FROM devices WHERE id = ?")
                 .bind(device_id)
                 .fetch_optional(db)
                 .await
@@ -127,11 +141,12 @@ impl Phone {
                     tracing::error!(device_id, %err, "can't read the phone for its events");
                     None
                 });
-        let (name, battery_low_since) = row?;
+        let (name, battery_low_since, enrolled_at) = row?;
         Some(Phone {
             id: device_id,
             name,
             battery_low_since,
+            enrolled_at,
             zone: Zone::load(db).await,
             now: Utc::now(),
         })
@@ -164,6 +179,7 @@ impl Phone {
             target: format!("/devices/{}", self.id),
             detail: None,
             happened_at,
+            push: Push::Now,
         }
     }
 
@@ -325,6 +341,295 @@ impl Phone {
             ..self.event(Kind::LowBattery, instant(since), since)
         }
     }
+
+    /// A shutdown the phone saw (design 38 §3.2): "Anna was turned off" / "21:14 · battery 2 %,
+    /// probably flat". `late`: it reached the server only with the next boot's start (" · told at
+    /// the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it), never
+    /// for a restart the phone knew of.
+    pub fn phone_off(&self, off: &PowerOff, at: DateTime<Utc>, late: bool) -> NewEvent {
+        let restarting = off.reboot == Some(true);
+        let reason = off_reason_words(off.reason.as_deref());
+        let level = off.battery.map(|b| format!("battery {} %", b.level));
+        let (title, battery): (String, Option<String>) = match (restarting, reason) {
+            (true, _) => (
+                self.named(TITLE_MAX, |name| format!("{name} is restarting")),
+                off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
+            ),
+            (false, Some(OffReason::Battery)) => (
+                self.named(TITLE_MAX, |name| format!("{name} shut down: battery flat")),
+                level,
+            ),
+            (false, Some(OffReason::Thermal)) => (
+                self.named(TITLE_MAX, |name| format!("{name} shut down: too hot")),
+                level,
+            ),
+            (false, None) => (
+                self.named(TITLE_MAX, |name| format!("{name} was turned off")),
+                off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
+            ),
+        };
+        let mut summary = capitalized(&self.at(at));
+        if let Some(battery) = battery {
+            summary.push_str(&format!(" · {battery}"));
+        }
+        if late {
+            summary.push_str(" · told at the next start");
+        }
+        let push = if restarting || late {
+            Push::No
+        } else {
+            Push::Held(self.now + OFF_HOLD)
+        };
+        NewEvent {
+            title,
+            summary,
+            push,
+            ..self.event(Kind::PhoneOff, instant(at), at)
+        }
+    }
+
+    /// The boot's start (design 38 §3.2), always pushed at once: "Anna restarted" / "07:02 ·
+    /// battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with no
+    /// shutdown seen the newest report before the boot.
+    pub fn phone_on(&self, on: &PowerOn, at: DateTime<Utc>, start: &Start) -> NewEvent {
+        let when = capitalized(&self.at(at));
+        let (title, summary) = match start {
+            Start::Restart => (
+                self.named(TITLE_MAX, |name| format!("{name} restarted")),
+                match on.battery {
+                    Some(b) => format!("{when} · battery {} %", b.level),
+                    None => when,
+                },
+            ),
+            Start::AfterOff { off, at: off_at } => {
+                let battery = off
+                    .battery
+                    .map(|b| format!(", battery was {} %", b.level))
+                    .unwrap_or_default();
+                (
+                    self.named(TITLE_MAX, |name| format!("{name} was turned on")),
+                    format!("{when} · off since {}{battery}", self.at(*off_at)),
+                )
+            }
+            Start::NoShutdownSeen(last) => {
+                let last = last
+                    .as_ref()
+                    .map(|last| {
+                        let battery = last
+                            .level
+                            .map(|level| {
+                                let battery = BatteryReport {
+                                    level,
+                                    charging: last.charging == Some(true),
+                                    low: false,
+                                };
+                                format!(", {}", battery_words(&battery, LAST_REPORT_FLAT_LEVEL))
+                            })
+                            .unwrap_or_default();
+                        format!(" · last report {}{battery}", self.at(last.at))
+                    })
+                    .unwrap_or_default();
+                (
+                    self.named(TITLE_MAX, |name| format!("{name} was turned on")),
+                    format!("{when} · no shutdown seen{last}"),
+                )
+            }
+        };
+        NewEvent {
+            title,
+            summary,
+            ..self.event(
+                Kind::PhoneOn,
+                format!(
+                    "boot:{}:{}",
+                    self.enrolled_at.as_deref().unwrap_or(""),
+                    on.boot_count
+                ),
+                at,
+            )
+        }
+    }
+}
+
+/// A `phone_off`'s push waits this long on the server's clock for the next boot's `phone_on`
+/// (design 38 §3.3): a restart's start drops it. Apart from [RESTART_GAP], since the start's
+/// upload comes only after the boot, the unlock, the network and tsnet's connect (qa-38-design N2;
+/// if the Jelly Star's check times it above this, raise this, not the gap).
+pub const OFF_HOLD: chrono::Duration = chrono::Duration::minutes(5);
+/// Between the phone's two instants, a shutdown and the next boot's start this close together
+/// with the restart flag unknown are a restart.
+pub const RESTART_GAP: chrono::Duration = chrono::Duration::minutes(3);
+/// "probably flat" at or below this level, not charging, at the shutdown...
+pub const FLAT_LEVEL: i64 = 3;
+/// ...and in the last report before a start with no shutdown seen (qa-38-design M5).
+pub const LAST_REPORT_FLAT_LEVEL: i64 = 10;
+/// A part's instant this far in the server's future is dropped (that part only).
+const POWER_FUTURE: chrono::Duration = chrono::Duration::minutes(5);
+/// A part (a shutdown or a start) older than this is dropped (qa-38-code nit 2: a start too).
+const POWER_MAX_AGE: chrono::Duration = chrono::Duration::days(30);
+
+/// "battery 2 %, probably flat" (at or below `flat_level`, not charging), "battery 64 %,
+/// charging", "battery 64 %, not charging".
+pub fn battery_words(battery: &BatteryReport, flat_level: i64) -> String {
+    let state = if battery.charging {
+        "charging"
+    } else if battery.level <= flat_level {
+        "probably flat"
+    } else {
+        "not charging"
+    };
+    format!("battery {} %, {state}", battery.level)
+}
+
+/// The shutdown reasons worded (design 38 §3.2), from `sys.shutdown.requested`'s text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OffReason {
+    /// `battery`: Android shut down for a flat battery.
+    Battery,
+    /// `thermal-shutdown`, `thermal`.
+    Thermal,
+}
+
+/// The known reasons; `userrequested` and anything else say nothing more than "turned off".
+pub fn off_reason_words(reason: Option<&str>) -> Option<OffReason> {
+    match reason? {
+        "battery" => Some(OffReason::Battery),
+        "thermal-shutdown" | "thermal" => Some(OffReason::Thermal),
+        _ => None,
+    }
+}
+
+/// The newest status report before a boot: its time and battery, for "no shutdown seen".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LastReport {
+    pub at: DateTime<Utc>,
+    pub level: Option<i64>,
+    pub charging: Option<bool>,
+}
+
+/// How a boot's start is told.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Start {
+    Restart,
+    AfterOff { off: PowerOff, at: DateTime<Utc> },
+    NoShutdownSeen(Option<LastReport>),
+}
+
+/// What one `POST /api/devices/power` does (design 38 §3.3), applied by the handler in one
+/// transaction.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PowerPlan {
+    /// Raised in order (the `off` first).
+    pub events: Vec<NewEvent>,
+    /// A restart: the `phone_off` with this key has its still-queued pushes `dropped`, `restart`.
+    pub drop_held_off: Option<String>,
+    /// A start after a real shutdown: the `phone_off` with this key, if its held push hasn't gone
+    /// yet, goes now - before the "turned on", never after it.
+    pub release_held_off: Option<String>,
+    /// Parts left out, for the log.
+    pub dropped: Vec<&'static str>,
+}
+
+/// The state machine of one shutdown and the start after it (design 38 §3.3), pure over the body,
+/// the newest report before the boot and the phone. An `off` and an `on` pair when the off's boot
+/// is earlier; a pair one boot apart is a restart when the phone said so, or said nothing and the
+/// two instants are at most [RESTART_GAP] apart.
+pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Phone) -> PowerPlan {
+    let mut plan = PowerPlan::default();
+    let in_reach = |at_ms: i64| {
+        DateTime::from_timestamp_millis(at_ms).filter(|at| *at <= phone.now + POWER_FUTURE)
+    };
+    let on = report.on.as_ref().and_then(|on| match in_reach(on.at_ms) {
+        None => {
+            plan.dropped.push("on in the future");
+            None
+        }
+        Some(at) if at < phone.now - POWER_MAX_AGE => {
+            plan.dropped.push("on older than 30 days");
+            None
+        }
+        Some(at) => Some((on, at)),
+    });
+    let off = report
+        .off
+        .as_ref()
+        .and_then(|off| match in_reach(off.at_ms) {
+            None => {
+                plan.dropped.push("off in the future");
+                None
+            }
+            Some(at) if at < phone.now - POWER_MAX_AGE => {
+                plan.dropped.push("off older than 30 days");
+                None
+            }
+            Some(at) if on.is_some_and(|(_, on_at)| at > on_at) => {
+                plan.dropped.push("off after the on");
+                None
+            }
+            Some(at) => Some((off, at)),
+        });
+    match (off, on) {
+        (Some((off, off_at)), Some((on, on_at))) if off.boot_count < on.boot_count => {
+            let restart = off.boot_count + 1 == on.boot_count
+                && match off.reboot {
+                    Some(reboot) => reboot,
+                    None => on_at - off_at <= RESTART_GAP,
+                };
+            let key = instant(off_at);
+            plan.events.push(phone.phone_off(off, off_at, true));
+            if restart {
+                plan.events.push(phone.phone_on(on, on_at, &Start::Restart));
+                plan.drop_held_off = Some(key);
+            } else {
+                let start = Start::AfterOff {
+                    off: off.clone(),
+                    at: off_at,
+                };
+                plan.events.push(phone.phone_on(on, on_at, &start));
+                plan.release_held_off = Some(key);
+            }
+        }
+        (off, on) => {
+            if let Some((off, off_at)) = off {
+                plan.events.push(phone.phone_off(off, off_at, false));
+            }
+            if let Some((on, on_at)) = on {
+                let start = Start::NoShutdownSeen(last.cloned());
+                plan.events.push(phone.phone_on(on, on_at, &start));
+            }
+        }
+    }
+    plan
+}
+
+/// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
+/// since 21:14 · battery was 3 %", the battery read from the off's stored words. Nothing for a
+/// restart the phone announced ("Anna is restarting") or while the off's push is still held
+/// ([OFF_HOLD] from its arrival, `created_at`): a restart's start may still fold it (qa-38-code
+/// nit 1), and the page says no more than the pushes.
+pub fn off_since_line(
+    happened_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+    title: &str,
+    summary: &str,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    if title.ends_with(" is restarting") || now - created_at < OFF_HOLD {
+        return None;
+    }
+    let level = summary.split(" · ").find_map(|part| {
+        let rest = part.strip_prefix("battery ")?;
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        (!digits.is_empty() && rest[digits.len()..].starts_with(" %")).then_some(digits)
+    });
+    Some(match level {
+        Some(level) => format!(
+            "Off since {} · battery was {level} %",
+            zone.at(happened_at, now)
+        ),
+        None => format!("Off since {}", zone.at(happened_at, now)),
+    })
 }
 
 /// An event to store: the words made, the key that makes it one row.
@@ -340,6 +645,18 @@ pub struct NewEvent {
     /// Inbox only, never pushed.
     pub detail: Option<String>,
     pub happened_at: DateTime<Utc>,
+    /// Whether and when a new row's push is queued (design 38 §3.2).
+    pub push: Push,
+}
+
+/// When a new event's push goes (design 38 §3.2): at once, held until an instant (the sender's
+/// `next_try_at`; a `phone_off` waits [OFF_HOLD] for a restart's `phone_on`), or not at all (a
+/// restart's shutdown, an off told only at the next start). The row is stored either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Push {
+    Now,
+    Held(DateTime<Utc>),
+    No,
 }
 
 /// A path on this server: it starts with one `/` (a `//host` would be another site, design 35 §7).
@@ -379,7 +696,11 @@ pub async fn raise(
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = id {
-        crate::push::queue(conn, id, event.kind).await?;
+        match event.push {
+            Push::Now => crate::push::queue(conn, id, event.kind, None).await?,
+            Push::Held(until) => crate::push::queue(conn, id, event.kind, Some(until)).await?,
+            Push::No => {}
+        }
     }
     Ok(id)
 }
@@ -564,6 +885,7 @@ mod tests {
             id: 3,
             name: "Anna".to_string(),
             battery_low_since: None,
+            enrolled_at: Some("2026-10-01 08:00:00".to_string()),
             zone: Zone::from_setting("Europe/Oslo"),
             // 14:30 in Oslo.
             now: utc("2026-10-18 12:30:00"),
@@ -589,6 +911,376 @@ mod tests {
             charging,
             low,
         }
+    }
+
+    fn off(battery: Option<BatteryReport>, reboot: Option<bool>, reason: Option<&str>) -> PowerOff {
+        PowerOff {
+            at_ms: utc("2026-10-18 12:02:00").timestamp_millis(),
+            boot_count: 41,
+            battery,
+            reboot,
+            reason: reason.map(str::to_string),
+        }
+    }
+
+    fn on(battery: Option<BatteryReport>) -> PowerOn {
+        PowerOn {
+            at_ms: utc("2026-10-18 12:20:00").timestamp_millis(),
+            boot_count: 42,
+            battery,
+        }
+    }
+
+    /// Design 38 §3.2's table: the shutdown's and the start's words, and whether they push.
+    #[test]
+    fn the_power_words() {
+        let phone = anna();
+        // 19:14 yesterday, 14:02 and 14:20 today, in Oslo.
+        let yesterday = utc("2026-10-17 17:14:00");
+        let at = utc("2026-10-18 12:02:00");
+        let b = |level, charging| Some(battery(level, charging, false));
+        let held = Push::Held(phone.now + OFF_HOLD);
+        for (event, title, summary, push) in [
+            (
+                phone.phone_off(&off(b(3, false), None, None), at, false),
+                "Anna was turned off",
+                "14:02 · battery 3 %, probably flat",
+                held,
+            ),
+            (
+                phone.phone_off(&off(b(4, false), None, None), yesterday, false),
+                "Anna was turned off",
+                "Yesterday 19:14 · battery 4 %, not charging",
+                held,
+            ),
+            (
+                phone.phone_off(&off(b(1, false), None, Some("battery")), at, false),
+                "Anna shut down: battery flat",
+                "14:02 · battery 1 %",
+                held,
+            ),
+            (
+                phone.phone_off(
+                    &off(b(64, false), None, Some("thermal-shutdown")),
+                    at,
+                    false,
+                ),
+                "Anna shut down: too hot",
+                "14:02 · battery 64 %",
+                held,
+            ),
+            (
+                phone.phone_off(&off(b(64, false), None, Some("thermal")), at, false),
+                "Anna shut down: too hot",
+                "14:02 · battery 64 %",
+                held,
+            ),
+            // `userrequested` and an unknown reason say nothing more.
+            (
+                phone.phone_off(&off(b(64, false), None, Some("userrequested")), at, false),
+                "Anna was turned off",
+                "14:02 · battery 64 %, not charging",
+                held,
+            ),
+            (
+                phone.phone_off(&off(b(2, true), Some(false), Some("<b>x</b>")), at, false),
+                "Anna was turned off",
+                "14:02 · battery 2 %, charging",
+                held,
+            ),
+            (
+                phone.phone_off(&off(b(64, true), Some(true), None), at, false),
+                "Anna is restarting",
+                "14:02 · battery 64 %, charging",
+                Push::No,
+            ),
+            (
+                phone.phone_off(&off(None, None, None), at, true),
+                "Anna was turned off",
+                "14:02 · told at the next start",
+                Push::No,
+            ),
+        ] {
+            assert_eq!(
+                (event.title.as_str(), event.summary.as_str(), event.push),
+                (title, summary, push),
+            );
+            assert_eq!(
+                (event.kind, event.dedup_key.as_str()),
+                (Kind::PhoneOff, instant(event.happened_at).as_str())
+            );
+        }
+        let start = utc("2026-10-18 12:20:00");
+        let last = |level, charging| LastReport {
+            at: utc("2026-10-18 12:10:00"),
+            level,
+            charging,
+        };
+        for (how, summary) in [
+            (Start::Restart, "14:20"),
+            (
+                Start::AfterOff {
+                    off: off(b(3, false), None, None),
+                    at: yesterday,
+                },
+                "14:20 · off since yesterday 19:14, battery was 3 %",
+            ),
+            (
+                Start::AfterOff {
+                    off: off(None, None, None),
+                    at,
+                },
+                "14:20 · off since 14:02",
+            ),
+            (
+                Start::NoShutdownSeen(Some(last(Some(10), Some(false)))),
+                "14:20 · no shutdown seen · last report 14:10, battery 10 %, probably flat",
+            ),
+            (
+                Start::NoShutdownSeen(Some(last(Some(11), None))),
+                "14:20 · no shutdown seen · last report 14:10, battery 11 %, not charging",
+            ),
+            (
+                Start::NoShutdownSeen(Some(last(None, None))),
+                "14:20 · no shutdown seen · last report 14:10",
+            ),
+            (Start::NoShutdownSeen(None), "14:20 · no shutdown seen"),
+        ] {
+            let event = phone.phone_on(&on(None), start, &how);
+            assert_eq!(event.summary, summary);
+            let title = if how == Start::Restart {
+                "Anna restarted"
+            } else {
+                "Anna was turned on"
+            };
+            assert_eq!((event.title.as_str(), event.push), (title, Push::Now));
+            assert_eq!(event.dedup_key, "boot:2026-10-01 08:00:00:42");
+        }
+        // The thresholds: flat at 3 not at 4 at the shutdown, at 10 not 11 in the last report.
+        for (level, flat_level, words) in [
+            (3, FLAT_LEVEL, "battery 3 %, probably flat"),
+            (4, FLAT_LEVEL, "battery 4 %, not charging"),
+            (10, LAST_REPORT_FLAT_LEVEL, "battery 10 %, probably flat"),
+            (11, LAST_REPORT_FLAT_LEVEL, "battery 11 %, not charging"),
+        ] {
+            assert_eq!(
+                battery_words(&battery(level, false, true), flat_level),
+                words
+            );
+        }
+        assert_eq!(off_reason_words(None), None);
+        assert_eq!(off_reason_words(Some("Battery")), None);
+    }
+
+    fn report(off: Option<PowerOff>, on: Option<PowerOn>) -> PowerReport {
+        PowerReport { off, on }
+    }
+
+    /// `(kind, push)` of a plan's events, and its two key effects.
+    fn shape(plan: &PowerPlan) -> (Vec<(Kind, Push)>, bool, bool) {
+        (
+            plan.events.iter().map(|e| (e.kind, e.push)).collect(),
+            plan.drop_held_off.is_some(),
+            plan.release_held_off.is_some(),
+        )
+    }
+
+    /// Design 38 §3.3's state machine.
+    #[test]
+    fn the_power_state_machine() {
+        let phone = anna();
+        let held = Push::Held(phone.now + OFF_HOLD);
+        let ms = |s: &str| utc(s).timestamp_millis();
+        let off_at = |at: &str, boot: i64, reboot: Option<bool>| PowerOff {
+            at_ms: ms(at),
+            boot_count: boot,
+            battery: Some(battery(3, false, true)),
+            reboot,
+            reason: None,
+        };
+        let on_at = |at: &str, boot: i64| PowerOn {
+            at_ms: ms(at),
+            boot_count: boot,
+            battery: None,
+        };
+        let (off_kind, on_kind) = (Kind::PhoneOff, Kind::PhoneOn);
+        // An off alone: held; with the restart flag never pushed. An on alone: no shutdown seen.
+        let alone = power_events(
+            &report(Some(off_at("2026-10-18 12:00:00", 41, None)), None),
+            None,
+            &phone,
+        );
+        assert_eq!(shape(&alone), (vec![(off_kind, held)], false, false));
+        let restarting = power_events(
+            &report(Some(off_at("2026-10-18 12:00:00", 41, Some(true))), None),
+            None,
+            &phone,
+        );
+        assert_eq!(
+            shape(&restarting),
+            (vec![(off_kind, Push::No)], false, false)
+        );
+        let start = power_events(
+            &report(None, Some(on_at("2026-10-18 12:00:00", 42))),
+            None,
+            &phone,
+        );
+        assert_eq!(shape(&start), (vec![(on_kind, Push::Now)], false, false));
+        assert!(start.events[0].summary.contains("no shutdown seen"));
+
+        // Paired one boot apart: a restart within the 3-minute gap (the flag unknown), or with the
+        // flag whatever the gap; not with the flag false, nor past the gap.
+        let pair = |off_s: &str, off_boot, reboot, on_s: &str, on_boot| {
+            power_events(
+                &report(
+                    Some(off_at(off_s, off_boot, reboot)),
+                    Some(on_at(on_s, on_boot)),
+                ),
+                None,
+                &phone,
+            )
+        };
+        let restart = |plan: &PowerPlan| {
+            assert_eq!(
+                shape(plan),
+                (
+                    vec![(off_kind, Push::No), (on_kind, Push::Now)],
+                    true,
+                    false
+                )
+            );
+            assert_eq!(plan.events[1].title, "Anna restarted");
+            assert!(
+                plan.events[0]
+                    .summary
+                    .ends_with(" · told at the next start")
+            );
+        };
+        let after_off = |plan: &PowerPlan| {
+            assert_eq!(
+                shape(plan),
+                (
+                    vec![(off_kind, Push::No), (on_kind, Push::Now)],
+                    false,
+                    true
+                )
+            );
+            assert_eq!(plan.events[1].title, "Anna was turned on");
+            assert!(
+                plan.events[1]
+                    .summary
+                    .contains("off since 14:00, battery was 3 %")
+            );
+        };
+        restart(&pair(
+            "2026-10-18 12:00:00",
+            41,
+            None,
+            "2026-10-18 12:03:00",
+            42,
+        ));
+        restart(&pair(
+            "2026-10-18 12:00:00",
+            41,
+            Some(true),
+            "2026-10-18 12:20:00",
+            42,
+        ));
+        after_off(&pair(
+            "2026-10-18 12:00:00",
+            41,
+            None,
+            "2026-10-18 12:03:01",
+            42,
+        ));
+        after_off(&pair(
+            "2026-10-18 12:00:00",
+            41,
+            Some(false),
+            "2026-10-18 12:01:00",
+            42,
+        ));
+        // A boot between the two is never a restart (unseen_boot tells it).
+        after_off(&pair(
+            "2026-10-18 12:00:00",
+            40,
+            Some(true),
+            "2026-10-18 12:01:00",
+            42,
+        ));
+        // The drop and the release name the off's key.
+        let plan = pair("2026-10-18 12:00:00", 41, None, "2026-10-18 12:01:00", 42);
+        assert_eq!(
+            plan.drop_held_off.as_deref(),
+            Some("2026-10-18T12:00:00.000Z")
+        );
+        // Not paired (the off isn't of an earlier boot): each told alone.
+        let unpaired = pair("2026-10-18 12:00:00", 42, None, "2026-10-18 12:01:00", 42);
+        assert_eq!(
+            shape(&unpaired),
+            (vec![(off_kind, held), (on_kind, Push::Now)], false, false)
+        );
+
+        // Drops: an off after its on (the on alone), an off older than 30 days, a part more than
+        // 5 minutes in the future (that part only).
+        let late = pair("2026-10-18 12:05:00", 41, None, "2026-10-18 12:01:00", 42);
+        assert_eq!(shape(&late), (vec![(on_kind, Push::Now)], false, false));
+        assert_eq!(late.dropped, ["off after the on"]);
+        let old = pair("2026-09-18 12:29:00", 41, None, "2026-10-18 12:01:00", 42);
+        assert_eq!(old.dropped, ["off older than 30 days"]);
+        let kept = pair("2026-09-18 12:31:00", 41, None, "2026-10-18 12:01:00", 42);
+        assert!(kept.dropped.is_empty());
+        let ahead = pair("2026-10-18 12:00:00", 41, None, "2026-10-18 12:35:01", 42);
+        assert_eq!(shape(&ahead), (vec![(off_kind, held)], false, false));
+        assert_eq!(ahead.dropped, ["on in the future"]);
+        let near = pair("2026-10-18 12:00:00", 41, None, "2026-10-18 12:35:00", 42);
+        assert!(near.dropped.is_empty());
+        let both = pair("2026-10-18 12:36:00", 41, None, "2026-10-18 12:37:00", 42);
+        assert!(both.events.is_empty());
+        // A start older than 30 days is dropped too (qa-38-code nit 2), the off then told alone.
+        let ancient = pair("2026-09-18 12:20:00", 41, None, "2026-09-18 12:29:00", 42);
+        assert_eq!(
+            ancient.dropped,
+            ["on older than 30 days", "off older than 30 days"]
+        );
+        let start = power_events(
+            &report(None, Some(on_at("1970-01-01 00:00:00", 42))),
+            None,
+            &phone,
+        );
+        assert!(start.events.is_empty());
+        let recent = pair("2026-09-18 12:31:00", 41, None, "2026-09-18 12:32:00", 42);
+        assert!(recent.dropped.is_empty());
+    }
+
+    #[test]
+    fn the_off_since_line() {
+        let phone = anna();
+        let at = utc("2026-10-17 19:14:00");
+        let line = |created: DateTime<Utc>, title: &str, summary: &str| {
+            off_since_line(at, created, title, summary, &phone.zone, phone.now)
+        };
+        let arrived = phone.now - OFF_HOLD;
+        let off = "Anna was turned off";
+        assert_eq!(
+            line(arrived, off, "21:14 · battery 3 %, probably flat").as_deref(),
+            Some("Off since yesterday 21:14 · battery was 3 %")
+        );
+        assert_eq!(
+            line(arrived, off, "Yesterday 21:14 · told at the next start").as_deref(),
+            Some("Off since yesterday 21:14")
+        );
+        assert_eq!(
+            line(arrived, off, "21:14 · battery x %").as_deref(),
+            Some("Off since yesterday 21:14")
+        );
+        // Not while the push is held (a restart's start may still fold it), not for a restart.
+        let held = phone.now - OFF_HOLD + chrono::Duration::seconds(1);
+        assert_eq!(line(held, off, "21:14 · battery 3 %"), None);
+        assert_eq!(
+            line(arrived, "Anna is restarting", "21:14 · battery 3 %"),
+            None
+        );
     }
 
     /// Design 35 §2.2's table: each kind's title, summary and target.
@@ -648,6 +1340,18 @@ mod tests {
                 "/devices/3/about#diagnostics",
             ),
             (
+                phone.phone_off(&off(Some(battery(2, false, true)), None, None), two, false),
+                "Anna was turned off",
+                "14:02 · battery 2 %, probably flat",
+                "/devices/3",
+            ),
+            (
+                phone.phone_on(&on(Some(battery(64, true, false))), two, &Start::Restart),
+                "Anna restarted",
+                "14:02 · battery 64 %",
+                "/devices/3",
+            ),
+            (
                 phone.low_battery(&battery(14, false, true), two),
                 "Battery low on Anna (14 %)",
                 "Not charging · 14:02",
@@ -678,6 +1382,8 @@ mod tests {
         assert!(rows[3].0.dedup_key.starts_with("7:") && rows[3].0.dedup_key.len() == 18);
         assert_eq!(rows[4].0.dedup_key, format!("2:{}", two.timestamp_millis()));
         assert_eq!(rows[5].0.dedup_key, "2026-10-18T12:02:00.000Z");
+        assert_eq!(rows[6].0.dedup_key, "boot:2026-10-01 08:00:00:42");
+        assert_eq!(rows[7].0.dedup_key, "2026-10-18T12:02:00.000Z");
     }
 
     #[test]

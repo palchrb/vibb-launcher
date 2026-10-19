@@ -56,6 +56,12 @@ object BootWitness {
     var newBoot: Boolean = true
         private set
 
+    /** [record] found a last boot before it overwrote it (design 38, qa-38-design L2): a new boot's
+     * start is then told apart from the first start of this build. */
+    @Volatile
+    var hadLastBoot: Boolean = false
+        private set
+
     /** Process start. Never throws (the call path runs in this process). */
     fun record(context: Context) {
         try {
@@ -63,6 +69,7 @@ object BootWitness {
             val before = load(prefs)
             val bootCount = BootClock.bootCount()
             newBoot = isNewBoot(before.lastBoot, bootCount)
+            hadLastBoot = before.lastBoot != null
             val after = witnessBoot(before, bootCount, System.currentTimeMillis())
             if (after == before) return
             val editor = prefs.edit().putInt(UNSEEN, after.unseen)

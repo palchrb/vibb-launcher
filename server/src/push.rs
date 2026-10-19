@@ -274,11 +274,14 @@ pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
 }
 
 /// Queues `event`'s push to every active subscription when the kind's push is on (the emergency
-/// call always), on `raise`'s connection (§4.6).
+/// call always), on `raise`'s connection (§4.6). `not_before` holds it (design 38's `phone_off`):
+/// written to `next_try_at`, which [send_due] already waits for; the TTL still counts from
+/// `created_at`.
 pub async fn queue(
     conn: &mut sqlx::SqliteConnection,
     event_id: i64,
     kind: Kind,
+    not_before: Option<DateTime<Utc>>,
 ) -> Result<(), sqlx::Error> {
     // The column name is compiled in (`Kind::switch`), never input.
     let on = match kind.switch() {
@@ -288,10 +291,11 @@ pub async fn queue(
         None => "1".to_string(),
     };
     sqlx::query(&format!(
-        "INSERT INTO push_deliveries (subscription_id, event_id, kind, token_hash) \
-         SELECT id, ?, 'event', X'' FROM push_subscriptions WHERE state = 'active' AND {on}"
+        "INSERT INTO push_deliveries (subscription_id, event_id, kind, token_hash, next_try_at) \
+         SELECT id, ?, 'event', X'', ? FROM push_subscriptions WHERE state = 'active' AND {on}"
     ))
     .bind(event_id)
+    .bind(not_before.map(db_time))
     .execute(conn)
     .await?;
     Ok(())
@@ -658,12 +662,12 @@ async fn send_one(
             return finish(state, delivery.id, "failed", None, Some("bad_key")).await;
         }
     };
-    // The token's hash is stored before the push goes: a quick receipt finds it.
-    sqlx::query("UPDATE push_deliveries SET token_hash = ?, attempts = attempts + 1 WHERE id = ?")
-        .bind(Sha256::digest(token).to_vec())
-        .bind(delivery.id)
-        .execute(&state.db)
-        .await?;
+    // The token's hash is stored before the push goes: a quick receipt finds it. The same UPDATE
+    // claims the row: one dropped since this pass read it (a restart's `phone_on` drops the held
+    // `phone_off`, design 38 §3.3, qa-38-design N4) is not sent.
+    if !claim(&state.db, delivery.id, &Sha256::digest(token)).await? {
+        return Ok(());
+    }
     let sub = state.push.subject.clone().or_else(|| {
         delivery
             .origin
@@ -770,6 +774,26 @@ async fn send_one(
         }
     }
     Ok(())
+}
+
+/// Claims a due delivery for its send: stores the receipt token's hash and counts the attempt,
+/// only while the row is still `queued`. `false` = it was dropped (or finished) meanwhile, and
+/// nothing goes.
+pub(crate) async fn claim(
+    db: &sqlx::SqlitePool,
+    id: i64,
+    token_hash: &[u8],
+) -> Result<bool, sqlx::Error> {
+    let claimed = sqlx::query(
+        "UPDATE push_deliveries SET token_hash = ?, attempts = attempts + 1 \
+         WHERE id = ? AND status = 'queued'",
+    )
+    .bind(token_hash)
+    .bind(id)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(claimed == 1)
 }
 
 /// A push service's refusal in the log: the status, its reason, `apns-id` and the endpoint's

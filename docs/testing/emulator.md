@@ -1547,6 +1547,38 @@ Not reachable from the UI (server tests only): "already running" (the server sho
 the release, so it needs a report that lags - `install_now::tests`); the 25 h "No answer"; a second tap replacing a
 waiting one. Device checks (design 37 "Implementation status"): the call's end over VoIP/Telecom-only calls, the
 download on real mobile data, a daytime install with the update fence on and off on the Jelly Star.
+## 6p. The phone turned off and on reaches the parent (design 38)
+
+Design 38 §6: the launcher posts the shutdown from `ACTION_SHUTDOWN` and the start from the next boot's first
+process start (`POST /api/devices/power`); the server holds a shutdown's push 5 minutes for a restart's start.
+**`adb reboot` and `adb shell reboot -p` go through init's `sys.powerctl`, not ShutdownThread: no `ACTION_SHUTDOWN`**
+- use `adb shell svc power shutdown` / `svc power reboot`, or the power menu. Setup as §6n (the debug build of this
+step or later, enrolled, with a push subscription on Notifications - design 35 step 2), **with tsnet on** - the
+emulator loop's normal setup (QA N1: the shutdown's client is the one prepared with the tsnet proxy). Watch:
+```
+adb logcat -s PowerEvents BootCover TsnetClient
+```
+
+1. **Turned off, then on**: `adb emu power ac off`, `adb emu power status discharging`, `adb emu power capacity 2`,
+   `adb shell svc power shutdown`. The server log shows the `POST /api/devices/power` 204 (logcat shows nothing from
+   `PowerEvents` when it got through); the inbox has "<phone> was turned off" at once ("Sending" under it), the push
+   comes 5 minutes later: "<time> · battery 2 %, probably flat". The phone's summary shows "Off since <time> · battery
+   was 2 %" under the battery line. Start the AVD again (`emulator -avd ...`): within seconds of its first sync (or the
+   stream's first open) "<phone> was turned on · <time> · off since <time>, battery was 2 %"; the "Off since" line is
+   gone.
+2. **Restart**: `adb emu power capacity 60`, `adb shell svc power reboot`. No push at the shutdown; after the start
+   one push "<phone> restarted · <time> · battery 60 %"; in the inbox the off row ("<phone> was turned off", or "is
+   restarting" if the property was readable) shows **no** delivery line. Time the start's arrival after the shutdown
+   (the server log's two POSTs): it must be well under 5 minutes.
+3. **The shutdown's POST didn't get through**: stop the server, `adb shell svc power shutdown`, start the server, wait
+   more than 5 minutes, start the AVD: one push "<phone> was turned on · … · off since …"; the inbox's off row ends
+   "· told at the next start", unpushed.
+4. **No shutdown seen**: `adb emu kill` (or `adb reboot`): nothing at once; at the next start "<phone> was turned on ·
+   <time> · no shutdown seen · last report <time>, battery <n> %" (", probably flat" at 10 % or less, not charging).
+
+The emulator can't show (device checks, design 38 §6): the Jelly Star's power menu (Power off and Restart), a real
+flat battery (whether the broadcast comes, at which level), whether `sys.shutdown.requested` is readable there, and
+Restart timed to the start's arrival on Wi-Fi and on mobile data against the 5-minute hold.
 
 ## 6b. Step 7: Play (optional)
 

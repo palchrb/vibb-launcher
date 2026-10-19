@@ -81,6 +81,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // succeeded yet (no auth key configured at startup, transient failure, ...), so createMdmApi
     // below can pick up TsnetClient's SOCKS5 proxy. No-ops if already connected or no key is set.
     TsnetClient.connectFromPreferences(context)
+    // Design 38 (QA N1): the shutdown's prepared client follows the base URL, the token and the proxy.
+    PowerEvents.prepare(context)
 
     val api = createMdmApi(serverUrl, deviceToken)
     val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
@@ -276,6 +278,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     com.kidslauncher.mdm.crash.CrashReports.upload(context, api)
     // Parent-PIN uses, wrong tries and lockouts (design 24): with the sync, never on their own.
     ParentPinEvents.upload(context, api)
+    // The phone turned off and on (design 38): the start and any kept shutdown, until accepted.
+    PowerEvents.upload(context, api)
     // Command receipts and results that didn't get through when they were made (security review L12).
     CommandAnswers.flush(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.

@@ -63,7 +63,7 @@ impl Transport for ScriptedPush {
 }
 
 const ORIGIN: &str = "https://kidphone.example.ts.net";
-const ENDPOINT: &str = "https://web.push.apple.com/QK1-fake-endpoint";
+pub(super) const ENDPOINT: &str = "https://web.push.apple.com/QK1-fake-endpoint";
 const IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
 
 /// A POST as the browser sends This Device's form: same-origin, with `Origin` (unless `None`)
@@ -99,7 +99,7 @@ async fn post_as_browser(
 }
 
 /// Turns notifications on for `endpoint` with the RFC 8291 test browser's keys.
-async fn subscribe(app: &TestApp, cookie: &str, endpoint: &str) -> TestResponse {
+pub(super) async fn subscribe(app: &TestApp, cookie: &str, endpoint: &str) -> TestResponse {
     post_as_browser(
         app,
         "/notifications/subscriptions",
@@ -142,7 +142,7 @@ async fn raise(app: &TestApp, event: &crate::parent_events::NewEvent) -> i64 {
 }
 
 /// The decrypted payload of a recorded push.
-fn payload(request: &PushRequest) -> Value {
+pub(super) fn payload(request: &PushRequest) -> Value {
     let plain = test_browser::decrypt(&request.body).expect("the test browser can't read it");
     serde_json::from_slice(&plain).unwrap()
 }

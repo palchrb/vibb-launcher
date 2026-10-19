@@ -729,6 +729,8 @@ struct DeviceDetailTemplate {
     screen_time: Option<crate::time_state::ScreenTime>,
     /// "Battery 14 %, charging" from the last report (design 35 §2.5).
     battery: Option<String>,
+    /// "Off since 21:14 · battery was 3 %" between a shutdown and the next start (design 38 §3.4).
+    power_off: Option<String>,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -1379,6 +1381,40 @@ async fn render_device(
                     .into_response();
             }
         };
+    // Design 38 §3.4: "Off since 21:14 · battery was 3 %" while the newest `phone_off` is later
+    // than the newest `phone_on` and than every status report (qa-38-code M1: a report after the
+    // shutdown proves the phone is on, whatever start never arrived - a re-enrollment, a boot count
+    // of -1, a dropped start). `happened_at` is RFC 3339 and `reported_at` SQLite's `datetime`
+    // text: compared through `datetime()`, never as raw strings. A minute's slack for the phone's
+    // clock and a report racing the shutdown (no start reports within a minute of its shutdown).
+    let off: Result<Option<(String, String, String, String)>, sqlx::Error> = sqlx::query_as(
+        "SELECT o.happened_at, o.created_at, o.title, o.summary FROM parent_events o \
+         WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
+             COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
+                       WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
+         AND datetime(o.happened_at, '+60 seconds') >= COALESCE((SELECT MAX(s.reported_at) \
+                       FROM device_status s \
+                       WHERE s.device_id = ?1), '') \
+         ORDER BY o.happened_at DESC, o.id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    let power_off = match off {
+        Ok(off) => off.and_then(|(at, created, title, summary)| {
+            let at = crate::display_time::parse_db_utc(&at)?;
+            let created = crate::display_time::parse_db_utc(&created)?;
+            crate::parent_events::off_since_line(at, created, &title, &summary, &zone, now)
+        }),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's power events");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response();
+        }
+    };
 
     // The Apps row (design 31 step 6): the switches on under Device › Apps, the launcher not
     // counted - the number the Apps tab shows.
@@ -1596,6 +1632,7 @@ async fn render_device(
                     now,
                 )
             }),
+            power_off,
             attention,
             pause_rules: time_rules
                 .as_deref()
