@@ -699,6 +699,12 @@ findings, merge to `main`, full suite once.
 
 ### Asked for, scope not settled yet
 
+- **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
+  phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
+  SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
+  for design 35's inbox and push, and an outbound webhook (a parent-set URL + secret, e.g. Home Assistant) for parent
+  events in general. Not a lost-contact signal: Wi-Fi off or a pocketed phone looks like "away". Scope open.
+
 - **PWA small things**: (1) a switch in the off state loses its knob and shows as a grey box - the
   knob should show on the left, light and dark; (2) "add an existing family contact" to a phone
   (the server already keeps one address book per number); (3) every `<details>` confirm
