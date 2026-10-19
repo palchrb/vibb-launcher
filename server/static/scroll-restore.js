@@ -8,8 +8,10 @@
 // - with no #fragment scrolls to the same position;
 // - with a #fragment inside one of those elements (the form's own group, a row of it: a new
 //   contact, the file next to a deleted one) puts the nearest of them back where it was on the
-//   screen - the same position when nothing above it changed, and the row still under the finger
-//   when the save moved it (an app switched to the other group);
+//   screen - the same position when nothing above it changed, a little lower when a warning came
+//   in above it; but a row that left its group (an app switched to the other group) is NOT
+//   followed: the page would scroll to the other group, which reads as a jump (the user,
+//   2026-10-19) - the exact position instead, the row simply gone from where it was;
 // - with a #fragment the form's elements don't hold (another group, a result shown elsewhere)
 //   leaves the browser at that anchor.
 // Another path, or a record older than 20 s, restores nothing. Loaded from the head partial on
@@ -50,7 +52,13 @@
         var found = find(id, tops);
         // The form's group is gone from the page that came back: the same position.
         if (found === undefined) return has(tops, id) ? saved.y : null;
-        return found ? found.top - tops[found.id] : null;
+        if (!found) return null;
+        // The element is no longer inside every recorded ancestor it was in (the row moved to
+        // another group): the same position, never the other group's.
+        for (var key in tops) {
+            if (has(tops, key) && found.chain.indexOf(key) < 0) return saved.y;
+        }
+        return found.top - tops[found.id];
     }
 
     /** The form and its ancestors that have an id, each with its top on the screen now. */
@@ -116,15 +124,23 @@
         } catch (e) {}
         if (!saved) return;
 
+        /**
+         * The nearest of the fragment's element and its ancestors whose id was recorded, with its
+         * top in the document, and `chain`: every recorded id among its ancestors (itself included).
+         */
         function find(id, tops) {
             var el = doc.getElementById(id);
             if (!el) return undefined;
+            var found = null;
+            var chain = [];
             for (; el && el.getBoundingClientRect; el = el.parentNode) {
                 if (el.id && has(tops, el.id)) {
-                    return { id: el.id, top: el.getBoundingClientRect().top + win.scrollY };
+                    chain.push(el.id);
+                    if (!found) found = { id: el.id, top: el.getBoundingClientRect().top + win.scrollY };
                 }
             }
-            return null;
+            if (found) found.chain = chain;
+            return found;
         }
         var path = win.location.pathname;
         var hash = win.location.hash;

@@ -131,13 +131,14 @@ test("a #fragment naming the form's own group keeps that group where it was on t
     install(same.win, () => 100);
     assert.deepStrictEqual(same.scrolls, [[0, 840]]);
     assert.strictEqual(same.win.history.scrollRestoration, "manual");
-    // The save moved it (an app switched to the other group): it stays under the finger.
-    const moved = fakeWindow({ hash: "#music-settings", stored, elements: { "music-settings": 1500 } });
-    install(moved.win, () => 100);
-    assert.deepStrictEqual(moved.scrolls, [[0, 1380]]);
-    moved.winListeners.load();
-    assert.deepStrictEqual(moved.scrolls, [[0, 1380], [0, 1380]]);
-    assert.strictEqual(moved.win.history.scrollRestoration, "auto");
+    // A warning came in above it (still in its place in the page): it is kept where it was on
+    // the screen, the page a little lower.
+    const lower = fakeWindow({ hash: "#music-settings", stored, elements: { "music-settings": 1020 } });
+    install(lower.win, () => 100);
+    assert.deepStrictEqual(lower.scrolls, [[0, 900]]);
+    lower.winListeners.load();
+    assert.deepStrictEqual(lower.scrolls, [[0, 900], [0, 900]]);
+    assert.strictEqual(lower.win.history.scrollRestoration, "auto");
     // Not on the page that came back: the saved position.
     const gone = fakeWindow({ hash: "#music-settings", stored });
     install(gone.win, () => 100);
@@ -148,6 +149,32 @@ test("a #fragment naming the form's own group keeps that group where it was on t
     });
     install(encoded.win, () => 100);
     assert.deepStrictEqual(encoded.scrolls, [[0, 400]]);
+});
+
+// Device › Apps: a switch moves its row to the other group. Following the row would scroll the
+// page to that group - the jump the user saw (2026-10-19) - so the exact position is kept and
+// the row is simply gone from where it was.
+test("a row that moved to another group is not followed: the same position", () => {
+    const stored = { path: "/devices/1/apps", y: 840, t: 0, tops: { "app-x": 180, allowed: 120 } };
+    const w = fakeWindow({
+        path: "/devices/1/apps",
+        hash: "#app-x",
+        stored,
+        elements: { allowed: 960, "not-allowed": 1900, "app-x": [2300, "not-allowed"] },
+    });
+    install(w.win, () => 100);
+    assert.deepStrictEqual(w.scrolls, [[0, 840]]);
+    assert.strictEqual(w.win.history.scrollRestoration, "manual");
+    // Still in its group (switched on again from Not allowed back into Allowed is the same case the
+    // other way; here it just saved in place): followed as before.
+    const inPlace = fakeWindow({
+        path: "/devices/1/apps",
+        hash: "#app-x",
+        stored,
+        elements: { allowed: 960, "app-x": [1060, "allowed"] },
+    });
+    install(inPlace.win, () => 100);
+    assert.deepStrictEqual(inPlace.scrolls, [[0, 880]]);
 });
 
 test("a #fragment inside the form's group (a new row, a deleted row's neighbour) keeps the group", () => {
