@@ -805,6 +805,13 @@ findings, merge to `main`, full suite once.
   `pushnotification` event confirms the push, the receipt route outside the CSRF guard) and launcher-v0.29.1 (the web
   filter answered no DNS at all in 0.28.0/0.29.0: `protect()` on an unbound socket - `docs/review/qa-vpn-protect-code.md`).**
   No live phone ran the broken builds (the user tests on emulators only).
+- **Ready to tag (2026-10-19 evening, awaiting the user's choice): server-v0.29.0 (migration 0081; every episode picture
+  fetched with no source caps - the user's decision -; the iPhone push receipt: `PUSH_PAYLOAD` declarative by default
+  with `classic` as the switch, `pushnotification` handled, the receipt route outside the CSRF guard, a log line per
+  receipt naming the worker event and version, the page asks for a worker update at open), launcher-v0.30.0 (the
+  playing item's pictures at once wherever streaming is allowed, every ticked entry's pictures on Wi-Fi, the courier
+  paced; `docs/review/qa-art-asap-code.md`), music-v0.4.0-rc.4 (the want set, the 1000-hash pages, the Spotify
+  look-ahead for the playing entry only).** Suites on main 92147f08+: server 1067, music 922, launcher 1400.
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
