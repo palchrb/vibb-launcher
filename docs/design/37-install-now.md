@@ -1,142 +1,150 @@
-# 37 - Install the launcher update now (a parent's grant from the PWA)
+# 37 - Install Now: push the launcher's newest release to one phone at once
 
-Architect, 2026-10-19. Branch `design-37` from `main` (`badbc91d`). A buildable spec: one step (§8).
+Architect, 2026-10-19. Branch `design-37` from `main` (`badbc91d`). A buildable spec: one step (§8). Revised the same
+day after the user's decisions and the design QA (`docs/design/qa-37-design.md`, branch `qa-design-37`); §9 lists
+each finding and what was done with it.
 
 Sources: the user, 2026-10-19: "hadde egentlig vært fint om det var mulig å force update for foreldrene, inne på
-launcherens setting i app tabben i server pwa". Server `models.rs` (`EXPIRING_COMMANDS`, `DeviceCommand::status`,
-`CommandStatus`, `command_label`), `handlers/locate.rs` (`queue_command`, `replaced_kinds`, `status_words`, `reword`),
-`handlers/window_relock.rs`, `handlers/device_api.rs` (the pop, `end_expiring_at_start`), `kiosk_escapes.rs`
-(`wait_text`, `EscapeNote::UpdateWaiting`), `handlers/tracked_apps.rs` (`render_detail_full`, `PhoneRow`),
-`templates/tracked_app_detail.html` ("On phones"), `templates/device_advanced.html` ("Updates & notifications",
-`#updates` - what the brief calls the "Play and kiosk" card since design 31 step 3); launcher `SelfUpdatePlan.kt`,
-`SelfUpdate.kt`, `MdmSyncWorker.kt` (`dispatchPendingCommand`, `checkForTrackedAppUpdates`, `handleLauncherUpdate`,
-`commitPendingSelfUpdateIfDue`), `AppDownloadPlan.kt` (`anyNetworkAtMs`), `CommandAnswers.kt`,
-`PackageReplacedReceiver.kt`, `UpdateFence.report`; design 11, 13, 24b.
+launcherens setting i app tabben i server pwa", and after the first proposal: "Push release skal skje uansett
+tilkoblingsstatus, det er et valg forelderen tar. jeg ønsker heller at dette er en one time 'push the button and the
+update happens', ikke noe åpent tilattelsesvindu etc. Det er en overrride knapp inne på launcherens app fane settings
+for bare vibb launcher som lar deg trykke knappen og sette igang ummidelbar install av akkruat den nyeste versjonen man
+har funnet ved å trykke check now. Trenger ikke noe varsel, dette ser jeg jo live fra pwa tenker jeg." Code: server
+`models.rs`, `handlers/locate.rs` (`queue_command`, `replaced_kinds`, `cancel_command`, `status_words`, `reword`),
+`handlers/device_api.rs` (the pop, `payload`), `kiosk_escapes.rs`, `app_downloads.rs`, `handlers/tracked_apps.rs`,
+`templates/tracked_app_detail.html`; launcher `SelfUpdatePlan.kt`, `SelfUpdate.kt`, `MdmSyncWorker.kt`,
+`AppDownloadPlan.kt`/`AppDownloads.kt` (`downloadGate`, `RETRY_DELAYS_MS`, `MAX_HASH_FAILURES`), `CommandAnswers.kt`,
+`AppInstallReceiver.kt`, `PackageReplacedReceiver.kt`, `calls/OngoingCalls.kt`; designs 11, 13, 24b.
 
 ## 0. Goal and non-goals
 
-**Today** Vibb One downloads its own update as soon as the launcher row advertises it, then commits it only at
-02:00-05:00 local with the screen off >= 30 s, no live call and no emergency - or, once it has waited 24 h (2 min on
-debug), at any such quiet screen-off. A parent who wants a fix on the phone today waits for the night.
+**Today** Vibb One downloads its own update when the launcher row advertises it (Wi-Fi only for 3 days when the
+parent's switch is on) and commits it at 02:00-05:00 with the screen off >= 30 s, no call and no emergency - or, after
+24 h (2 min on debug), at any such quiet screen-off.
 
-**Goal**: an **Install Now** per phone, on the launcher's page under Apps and next to the "Update waiting" note on the
-phone's Advanced › Updates & notifications. It grants the phone one install "at the next quiet screen-off": the gate
-keeps screen off >= 30 s, no live call, no emergency, and drops only the night window. The phone downloads first if it
-has nothing yet, then answers Done (from the new process) or Failed with the reason; the PWA shows the progress in the
-row and on the Locate tab's Recent.
+**Goal**: an **Install Now** button per phone on the launcher's page under Apps. One tap queues a one-time command:
+when the phone gets it, it downloads the launcher row's newest release (on any network), verifies it exactly as today,
+and installs it **at once** - screen on or off, day or night. The only wait is a live call or an emergency flow; it
+installs the moment that ends. The parent watches it in the row ("Downloading 40 of 80 MB", "Installing", "Done ·
+1.4.0" or "Failed: ...") and on the Locate tab's Recent.
 
-**Non-goals**: installing while the screen is on or during a call (never, whatever the parent taps); relaxing any APK
-check (size, SHA-256, package, signer, versionCode); other catalog apps (they install as soon as downloaded already);
-the music app; a parent notification when it is done (§7.3); a server-pushed tag ("install exactly 1.4.0").
+**Non-goals**: relaxing any APK check (size, SHA-256, package, signer, newer versionCode); an open permission window;
+a notification or push when done (the user: "Trenger ikke noe varsel"); a button on the phone's own pages (the user:
+"bare vibb launcher", on its app page); other catalog apps (they install when downloaded already); changing the night
+window, the 24 h overdue path or debug's 2 minutes for the ordinary self-update.
 
 ## 1. Decisions
 
-1. **Where** (the user: "inne på launcherens setting i app tabben"): the launcher's page `/apps/tracked/{id}` (only
-   when `is_launcher`), in its "On phones" group, one row per set-up phone; and the phone's Advanced ›
-   Updates & notifications, a group right under the switches form, where the parent reads "Update waiting" (§2.3).
-2. **One tap, no confirm `<details>`.** The PWA confirms only what lowers protection or can't be undone (Unlock for
-   2 h, Erase); Install Now lowers nothing - the phone still decides when it is safe, and the worst case is the ~1 min
-   update with the screen off (design 11's known gap, QA 11 #8, unchanged). Like "Lock again", a quick action.
-3. **Mechanism**: a new `device_commands` kind **`install_update`**, queued by `locate::queue_command` (receipt,
-   redelivery, the stream's nudge); a new one replaces a waiting one of its kind (`replaced_kinds`). No payload: the
-   grant covers whatever launcher release the phone is offered. No migration: `device_commands.command` has no
-   CHECK (`0010_find_my_device.sql`); 0080 stays free.
-4. **It expires** (`EXPIRING_COMMANDS`, 1 h to be fetched): "now" means now - a phone that comes back after a day
-   has had its night window by then. A server start cancels it like the others. The grant on the phone has its own
-   lifetime (5.).
-5. **The grant** lives **24 h from receipt**, in DE prefs, survives the process kill, and is cleared by the answer
-   (installed, already running, refused, not offered, lapsed), a newer `install_update`, or an enrollment. **A newer
-   release during the grant is covered too** (deviation from the brief's "cleared by a newer tag"): the command names
-   no tag, every check runs on the new APK the same way, and clearing would only make the parent tap again (§7.2).
-6. **Answers**: receipt before acting (as every command); **Done** "installed: X" from the new process after
-   `MY_PACKAGE_REPLACED`, or "already running: X" at once; **Failed** for a refusal, no release for this phone, or a
-   lapsed grant (with why it never went in). A transient install failure keeps the grant (the existing 1 h backoff).
-7. **Waiting words**: `update_fence.waiting_for` gets `granted` ("installs at the next screen-off") and
-   `granted_download` (no APK yet). A call or an emergency keeps its own word.
-8. **Capability `install_now_v1`.** Without it the row says the update installs at night and Install Now comes with
-   it - the first update to a launcher with the capability still goes through the night window: the parent's
-   one-time wait. The server refuses to queue for a phone without it.
-9. **Debug builds** keep their 2-minute overdue path; the grant doesn't change it.
-10. **Security**: admin-only like every tracked-app POST (full auth layer); `device_command_queued` with
-    "install_update"; the redirect goes back to the row (`#phone-{id}`, `#install-now`), with and without JS.
+1. **Where**: only `/apps/tracked/{id}` with `is_launcher`, one button per set-up phone in the "On phones" group
+   (`id="phones"`, each row `id="phone-{id}"`). No Advanced route.
+2. **One tap, no confirm `<details>`** - the user's "push the button and the update happens"; the ⓘ next to it says
+   what the kid sees (§2.3; QA M5).
+3. **Mechanism**: a `device_commands` kind **`install_update`** through `locate::queue_command` (receipt, redelivery,
+   the stream's nudge; a waiting one is replaced, `replaced_kinds`). `device_commands.payload` (0068) holds the release
+   tag the row showed; the pop sends it as `pending_command.release_tag` (left out for other commands, like `allow`).
+   No migration (`command` has no CHECK); 0080 stays free.
+4. **No expiry** (not in `EXPIRING_COMMANDS`). The user: "Push release skal skje uansett tilkoblingsstatus, det er et
+   valg forelderen tar" - the parent decided, and the phone acts when it next checks in, however long that takes, as a
+   Lock does. The cost - a tap fetched a day later installs at once in the daytime - is the same daytime install the
+   user chose for a phone that is online; the row says "Waiting for the phone" the whole time and has **Cancel** while
+   it is unfetched (also on Recent), so a parent who changes their mind can stop it. An enrollment cancels it as any
+   undelivered command. The three index-bound sites (`device_api.rs` pop and `end_expiring_at_start`,
+   `locate::cancel_command`'s `NOT IN (?, ?, ?, ?)`) stay untouched.
+5. **Act at once**: the gate for this command is only "no live call, no emergency" (`installNowDecision`, §4.1); no
+   screen-off, no night window, no 1 h retry backoff (the tap is the retry). The fence goes up when its switch is on,
+   as for every self-update.
+6. **The newest found**: the phone installs the release the row advertises when it acts - newer than the command's
+   tag if Check Now found one meanwhile; the answer names the version installed.
+7. **Any network**: the download ignores "Download apps on Wi-Fi only" and roaming for this command (the user: "det er
+   et valg forelderen tar"). It still needs a network and the space.
+8. **Answers**: receipt before acting; **Done** "installed: X" from the new process after `MY_PACKAGE_REPLACED`, or
+   "already running: X"; **Failed** promptly with the reason (§3). "No answer" only for a Received row with no answer
+   after 25 h.
+9. **Capability `install_now_v1`**. A phone without it gets no button ("1.4.0 is waiting. Install Now works from this
+   update on") - the first update to such a launcher still goes in at night: the parent's one-time wait.
+10. **No wall clocks across the command** (QA M1): the phone keeps the command id, `requested_at` (echoed), the tag
+    and the running versionCode at receipt; "Done" is "running versionCode > the stored one". Server times are compared
+    only with server times.
+11. **Security**: admin-only like every tracked-app POST; `device_command_queued` "install_update <tag>, device {id}";
+    Cancel logs `device_command_cancelled`. The redirect returns to the row or the group (§2.1), with and without JS.
 
 ## 2. Server
 
-### 2.1 Routes and handler (`handlers/install_now.rs`, full auth, plain forms)
+### 2.1 Routes (`handlers/install_now.rs`, full auth, plain forms)
 
-- `POST /apps/tracked/{app_id}/install-now/{device_id}` -> `/apps/tracked/{app_id}?install=<word>#phone-{device_id}`.
-  404 when the row isn't the launcher (`is_launcher`) or the phone is unknown.
-- `POST /devices/{id}/install-update` -> `/devices/{id}/advanced?install=<word>#install-now`.
-- Both call `install_now::queue(state, device_id, admin) -> Result<Queued, Response>`: reads the launcher row, the
-  phone and its latest report; decides with the pure `install_now::offer` (§2.2); only `Offer::Button` queues
-  (`queue_command` made `pub(crate)`; `replaced_kinds("install_update") = ["install_update"]`), then
-  `record_security_event("device_command_queued", admin, "install_update, device {id}")`. Words: `sent`, or without
-  queuing `up_to_date`, `too_old` (no capability), `no_release`, `not_set_up`, `in_progress` (a live grant, §2.2). A
-  DB error is a 500 "nothing was queued", as on Locate.
+- `POST /apps/tracked/{app_id}/install-now/{device_id}` -> `?install=<word>#phone-{device_id}`; 404 unless the row
+  is the launcher. Reads the launcher row, the phone, its latest report and its newest `install_update`, decides with
+  the pure `install_now::offer` (§2.2) and queues only when it gives the button (`queue_command` made `pub(crate)`,
+  payload = `latest_release_tag`). Words: `sent`, or nothing queued: `up_to_date`, `too_old`, `no_release`,
+  `in_progress`, `not_set_up`, `unknown_phone`.
+- `POST /apps/tracked/{app_id}/install-now/{device_id}/cancel/{command_id}` -> `?install=cancelled|too_late#phone-…`:
+  the `cancel_command` UPDATE (moved to `locate::cancel_waiting(db, device, command)`, shared), `install_update` only.
+- **Fragments that exist** (QA M4): `#phone-{id}` when that phone has a row (set up), else `#phones`; the group is
+  always rendered with its id - also with no phones - and a word for a phone without a row shows as a `row-note` at
+  the group's top. A DB error on any read is a 500, never a made-up row; a failed queue is a 500 "nothing was queued".
 
-### 2.2 The row's state (`src/install_now.rs`, pure, typed; the template words it)
+### 2.2 The row (`src/install_now.rs`, pure, typed; the template words it)
 
-`launcher_tag_version_code(tag) -> Option<i64>`: the launcher's formula (`launcher-vX.Y.Z` = `X*1_000_000 + Y*1_000
-+ Z`, `-rc.N` minus 1, the part before `@`), mirrored from `launcherTagVersionCode` with the same test cases.
+`launcher_tag_version_code(tag)` mirrors the launcher's `launcherTagVersionCode` (part before `@`, `launcher-vX.Y.Z`
+= `X*1_000_000 + Y*1_000 + Z`, `-rc.N` minus 1), with the Kotlin test's cases.
 
-`offer(release_tag, status: Option<&DeviceStatus>, fence: Option<&UpdateFence>, newest: Option<&DeviceCommand>,
-capable, now) -> InstallRow`:
-
-| State | When | Row (`row-value` / `row-sub`) | Button |
+| State | When | `row-value` / `row-sub` | Action |
 |---|---|---|---|
-| `NotReported` | no report yet | sub "Hasn't reported yet" | - |
-| `UpToDate` | running code >= the tag's code, no `pending_tag` | value "1.4.0" | - |
-| `Behind` | the tag's code > running code, or `pending_tag` set (also when the tag doesn't parse: a manual upload) | value "1.3.2", sub "1.4.0 installs tonight" (`pending_tag`) / "1.4.0 not downloaded yet" | **Install Now** |
-| `TooOld` | `Behind` without `install_now_v1` | sub "1.4.0 installs tonight. Install Now works from this update on." | - |
-| `Asked` | newest `install_update` is `Waiting`/`Sent` | sub "Install Now: " + `status_words` ("Waiting · Expires 14:30 if the phone isn't back.") | - |
-| `Granted` | newest is `Received`, no result, not overdue | sub by `waiting_for`: `granted` "Installs at the next screen-off"; `granted_download` "Downloading, then installs at the next screen-off"; `call` "Installs after the call"; `emergency` "Waits: an emergency call was recent"; none yet "The phone got it (14:02)" | - |
+| `NotReported` | no report | sub "Hasn't reported yet" | - |
+| `NoRelease` | no `latest_release_tag`, or the row is off (`enabled = 0`) | sub "No release to install" | - |
+| `UpToDate` | tag code <= running `app_version_code`, no `pending_tag` | value "1.4.0" | - |
+| `Behind` | tag code > running, or `pending_tag` set; a manual upload's tag never parses: `Behind` unless the report's version equals `version_of(tag)` (it may answer "Already on X" - accepted) | value "1.3.2", sub "1.4.0 is waiting" / "1.4.0 not downloaded yet" | **Install Now** |
+| `TooOld` | `Behind` without `install_now_v1` | sub "1.4.0 is waiting. Install Now works from this update on." | - |
+| `Asked` | newest `install_update` `Waiting`/`Sent` | sub "Install Now: waiting for the phone" (`Sent`: "… sent, not confirmed yet") | **Cancel** while unfetched |
+| `Working` | `Received`, no result, under 25 h | §2.4's words | - |
 
-An answer under 24 h old adds a line to the row's ⓘ (`reword`, §2.4) - "Install Now: Installed 1.4.0 (14:31)" or
-"Install Now failed: Refused: signed with another key" - and a Failed/Expired/Cancelled one gives `Behind` back its
-button. `?install=` shows its flash as a `row-note` under that phone's row only (`sent` shows nothing: the row says it).
+An answer under 24 h old is a `details.info` in the row: "Install Now · 14:31 · Done", the reworded line inside
+(`Installed 1.4.0`); `Failed`, `Cancelled` and "No answer" (Received > 25 h) give `Behind` its button back.
 
-### 2.3 Templates
+### 2.3 Template (`tracked_app_detail.html`, launcher only)
 
-- `tracked_app_detail.html`, launcher only: the "On phones" rows become `<div class="row" id="phone-{id}">` with the
-  avatar, the name as a link to the phone's `/devices/{id}/advanced#updates` (where the night note is) with the
-  `row-sub`, the `row-value`, and the form with `<button class="button-small">Install Now</button>` (a button can't sit
-  inside the row's `<a>`; the Music Library's rows carry Check Now the same way). Other apps' rows are unchanged. The
-  group footer: "Vibb One installs updates at night with the screen off. Install Now: at the next screen-off."
-- `device_advanced.html`: after the `#updates` form (a form can't nest), `<div class="group" id="install-now">` with one
-  row from the same partial `partials/install_now_row.html` (label "Vibb One"), shown for `Behind`, `TooOld`, `Asked`,
-  `Granted` or a fresh answer; nothing when up to date. `view_advanced` reads the launcher row and the newest
-  `install_update` for the phone.
+The rows become `<div class="row" id="phone-{id}">`: avatar, the name as the link to the phone's page (unchanged
+`phone_apps_href`) with the `row-sub`, the `row-value`, the answer's ⓘ, and the form with `<button
+class="button-small">Install Now</button>` (or Cancel) - a button can't sit inside the old `<a class="row">`; the Music
+Library's rows carry Check Now the same way. Other apps' rows are unchanged. The group footer, with an ⓘ:
+"Install Now installs the newest release found by Check Now right away, also on mobile data. It waits only for a call."
+ⓘ: "The phone restarts Vibb One; for about a minute the child sees the phone's own home screen (Update fence, under
+the phone's Advanced, hides it once it is checked on this phone model)." While a row is `Asked`/`Working`,
+`static/install-now.js` (defer) polls `GET /apps/tracked/{id}/install-now.json` every 5 s and replaces those rows'
+sub-lines (`textContent`); without JS a reload shows the same.
 
-### 2.4 Status words, labels, expiry
+### 2.4 Words, labels, the Received limit
 
-- `command_label("install_update") = "Install Now"` (Recent on Locate: "Install Now · 14:02 · Done").
-- `EXPIRING_COMMANDS` gets `install_update` (five). The pop and `end_expiring_at_start` bind the array by index
-  (`[0]`..`[3]`, `device_api.rs`): build the `IN (...)` from the array's length, or bind `[4]` too.
-- `DeviceCommand::status`: `Received` is overdue ("No answer") after `received_overdue_minutes(command)` - 10, and
-  25 h for `install_update` (the grant's 24 h + its answer).
+- `command_label("install_update") = "Install Now"`; Recent shows it with `status_words` as every command.
+- `Working` from the latest report, only when `reported_at` is after `received_at` (both server time), else "The phone
+  got it (14:02)". `update_fence.waiting_for`: `install_now_download` + the launcher's `app_downloads` entry ->
+  "Downloading 40 of 80 MB" / "Waiting for a network" / "Waiting: not enough space"; `install_now_call` -> "Waits for
+  the call to end"; `install_now_emergency` -> "Waits: an emergency call was recent"; `install_now_ready` ->
+  "Installing".
+- `DeviceCommand::status`: `Received` is overdue after `received_overdue_minutes(command)` - 10, and 25 h for
+  `install_update`.
 - `reword`: `installed: X` -> "Installed X"; `already running: X` -> "Already on X"; `not offered` -> "No update for
   this phone"; `refused: wrong_signer` -> "Refused: signed with another key", `not_ours` -> "Refused: not Vibb One",
-  `downgrade` -> "Refused: older than the phone's", `unparseable` -> "Refused: not a readable app", `release` ->
-  "Refused: this release can't be installed"; `expired: screen_on|screen_off_short` -> "Not installed within a day:
-  the screen was never off for 30 seconds", `expired: call` -> "... a call was on each time", `expired: emergency` ->
-  "... an emergency call was recent", `expired: download` -> "... the download didn't finish"; `replaced` -> "Replaced
-  by a newer Install Now". Anything else is shown as sent.
-- `kiosk_escapes::wait_text`: `granted` -> "installs at the next screen-off (Install Now)", `granted_download` ->
-  "downloading for Install Now". `UpdateWaiting`'s detail with `granted`: "Downloaded (tag). Install Now: it goes in at
-  the next screen-off (30 seconds, no call)." instead of the night sentence.
+  `downgrade` -> "Refused: older than the phone's version", `unparseable` -> "Refused: not a readable app", `release`
+  -> "Refused: this release can't be installed"; `download failed` -> "The download kept failing"; `download corrupt`
+  -> "The download didn't match the release"; `no space` -> "Not enough space on the phone"; `install failed: N` ->
+  "Android refused the install"; `superseded` -> "Ended: a newer Install Now took over". Anything else as sent.
+- `kiosk_escapes::wait_text` (Advanced's "Update waiting" note, "Last check: …"): `install_now_call` -> "Install Now
+  waits for the call to end", `install_now_emergency` -> "Install Now waits: an emergency call was recent",
+  `install_now_ready` -> "Install Now is installing it"; `install_now_download` comes with `pending_tag: null`, so it
+  needs none.
 
 ## 3. Wire
 
-- **Command**: `pending_command = {"id", "command": "install_update", "requested_at"}` - no new key, so
-  `policy_json_keys_snapshot` and `PolicyResponseCompatTest` don't change (the step confirms both pass untouched).
-- **Receipt**: `POST /api/devices/command-receipt` before acting, as today. **Result**: `POST
-  /api/devices/command-result` with `succeeded` and the messages of §2.4 (`installed: 1.4.0` carries the new
-  `VERSION_NAME`). Sent through `CommandAnswers` (outbox when it doesn't get through).
-- **Capability**: `install_now_v1` in `STATUS_CAPABILITIES`; server `install_now::CAPABILITY`.
-- **Status**: `update_fence.waiting_for` may be `granted` or `granted_download`; `granted_download` comes with
-  `pending_tag: null` (today `waiting_for` is null without a pending APK). Shape unchanged; the contract files
-  (`time_status_report.json`, `dns_upstream_status.json`) list their own capabilities and have no `update_fence`, so
-  they stay. No new contract file: like `paused for 2 hours`, the words are pinned by a test on each side (§5).
+- **Command**: `pending_command = {"id", "command": "install_update", "requested_at", "release_tag": "launcher-v1.4.0@…"}`.
+  No top-level policy key: `policy_json_keys_snapshot` unchanged. `PolicyResponseCompatTest` gets a case: a
+  `pending_command` with `release_tag` decodes (launcher `PendingCommand.releaseTag: String? = null`), one without it
+  too. Server `PendingCommand.release_tag: Option<String>`, `skip_serializing_if = "Option::is_none"`.
+- **Receipt** and **result** through `CommandAnswers` (`command-receipt`, `command-result`), messages as in §2.4.
+- **Capability** `install_now_v1` (`STATUS_CAPABILITIES`; server `install_now::CAPABILITY`).
+- **Status**: `update_fence.waiting_for` may be `install_now_download` (with `pending_tag: null`), `install_now_call`,
+  `install_now_emergency`, `install_now_ready` (all < `MAX_WORD`). The launcher's `app_downloads` entry reports its
+  real gate (§4.2). Contract files unchanged (neither has `update_fence`); the words are pinned by a test on each side.
 
 ## 4. Launcher
 
@@ -144,115 +152,133 @@ button. `?install=` shows its flash as a `row-note` under that phone's row only 
 
 ```kotlin
 const val INSTALL_NOW_CAPABILITY = "install_now_v1"
-const val INSTALL_GRANT_MS = 24 * 60 * 60_000L
-
-@Serializable data class InstallGrant(val commandId: Long, val requestedAt: String?, val grantedAtMs: Long,
-    val fromVersionCode: Long)
-
-fun grantLive(g: InstallGrant?, nowMs: Long) = g != null && nowMs - g.grantedAtMs in 0 until INSTALL_GRANT_MS
+@Serializable data class InstallNowRecord(val commandId: Long, val requestedAt: String?, val tag: String?,
+    val fromVersionCode: Long, val failure: String? = null)
 ```
-- `UpdateWindowInputs` + `val granted: Boolean = false`; `updateWindowDecision`: `val overdue = i.granted ||
-  i.pendingForMs >= i.overdueMs` - call, emergency, screen on and the 30 s stay ahead of it.
-- `commitCheckDelayMs(now, pendingForMs, overdueMs, granted = false)`: granted -> `UPDATE_SCREEN_OFF_MS`.
-- `enum class GrantRow { NO_LIST, NOT_OFFERED, RUNNING, REFUSED, ON_ITS_WAY }` - from `handleLauncherUpdate`: no
-  launcher row or one naming another package -> `NOT_OFFERED`; advertised == `refusedTag` -> `REFUSED`;
-  `ALREADY_RUNNING` or advertised == `lastInstalledTag` -> `RUNNING`; else `ON_ITS_WAY`; no list -> `NO_LIST`.
-- `sealed interface GrantOutcome { Keep, Installed, AlreadyRunning, NotOffered, Refused(reason), Lapsed(why) }` and
-  `grantOutcome(grant, nowMs, runningVersionCode, row, lastWait, pendingPresent)`, in this order: running code >
-  `fromVersionCode` -> `Installed`; not `grantLive` -> `Lapsed(lastWait?.wire ?: if (pendingPresent) "screen_on"
-  else "download")`; `NOT_OFFERED`/`RUNNING`/`REFUSED("release")` by the row; else `Keep`. `GrantOutcome.answer(
-  versionName): Pair<Boolean, String>?` gives §2.4's message (`Keep` = null).
-- `reportedWait(grantLive, pendingPresent, lastWait): String?`: no grant -> today's (`lastWait?.wire` with a pending
-  APK, else null); a grant without an APK -> `granted_download`; with one, `call`/`emergency` as they are, else
-  `granted`.
-- `AppDownloadPlan.anyNetworkAtMs(isLauncher, firstSeenMs, grantedAtMs: Long? = null)`: the launcher's Wi-Fi grace
-  ends at `min(firstSeenMs + LAUNCHER_WIFI_GRACE_MS, grantedAtMs)` - Install Now downloads on mobile data at once,
-  never roaming (§7.1).
+- `installNowDecision(liveCall, emergency): UpdateWindowDecision` - `Wait(CALL, INSTALL_NOW_CALL_RECHECK_MS = 2 min)`,
+  `Wait(EMERGENCY, EMERGENCY_RECHECK_MS)`, else `Commit`. `updateWindowDecision` stays for the ordinary path.
+- `enum class LauncherRow { NO_LIST, NOT_OFFERED, RUNNING, REFUSED, ON_ITS_WAY }` from `handleLauncherUpdate` (no row
+  or another package; advertised == `refusedTag`; `ALREADY_RUNNING` or == `lastInstalledTag`; else).
+- `installNowOutcome(record, runningVersionCode, row)`: running > `fromVersionCode` -> `Installed`; `failure` set ->
+  `Failed(failure)`; `NOT_OFFERED` -> `Failed("not offered")`; `REFUSED` -> `Failed("refused: release")`; `RUNNING`
+  -> `AlreadyRunning`; else `Keep`. `.answer(versionName): Pair<Boolean, String>?`.
+- `installNowWait(recordPresent, pendingPresent, decision)`: `install_now_download` without an APK, `install_now_call`/
+  `_emergency` from a wait, else `install_now_ready`; no record -> today's word.
+- `launcherUpdateStep(…)` with a record: `failedBackoffMs = 0` (refusals still hold).
+- `downloadGate(…, parentOverride: Boolean = false)`: with it, `WAIT_WIFI` and `WAIT_ROAMING` never apply; network and
+  space still do.
 
-### 4.2 The grant's store (`server/SelfUpdateGrant.kt`)
+### 4.2 Glue
 
-DE prefs (`createDeviceProtectedStorageContext()`), file `self_update_grant`, one key `grant_v1` (the `InstallGrant`
-JSON), every write `commit()` (a commit is followed by the kill). Ids and times only, nothing secret. `load` (an
-unreadable value = none, logged), `store`, `clear`, `live(context)`, `asCommand(grant) = PendingCommand(id,
-"install_update", requestedAt)` for `CommandAnswers.result`. `clear` runs next to `CommandAnswers.clear` (Provisioning,
-the Settings re-enroll).
-
-### 4.3 Dispatch and the sync (`MdmSyncWorker.kt`)
-
-- `dispatchPendingCommand`, after the receipt: `"install_update" ->` store `InstallGrant(id, requestedAt, now,
-  VERSION_CODE)`; a stored grant of another command is answered `replaced` (success) first. No answer here, no
-  follow-up sync (this sync goes on to the list and the commit).
-- `checkForTrackedAppUpdates`: after `handleLauncherUpdate` (which now also returns its `GrantRow`), and in the
-  no-list branch with `NO_LIST`: `settleGrant(context, api, row)` - `grantOutcome`, then for an answer
-  `CommandAnswers.result` + `SelfUpdateGrant.clear`. The grant's `grantedAtMs` goes into the launcher's
-  `WantedDownload`/`DownloadRecord` for `anyNetworkAtMs`; a download already waiting for Wi-Fi is re-gated at
-  `AppDownloads.request`.
-- `commitPendingSelfUpdateIfDue`: `SelfUpdate.windowInputs` passes `granted = SelfUpdateGrant.live(context)`
-  (also in `beforeCommit`'s second check). A `check.deterministic` refusal under a live grant answers
-  `refused: <check.name.lowercase()>` there and clears it. The pending/committed paths are unchanged otherwise.
-- `UpdateFence.report`: `waitingFor = reportedWait(SelfUpdateGrant.live(app), pending != null, SelfUpdate.lastWait)`.
-
-### 4.4 Alarms and receivers
-
-- `SelfUpdate.armIfPending` passes `granted` to `commitCheckDelayMs`, so a screen-off with a grant and an APK arms
-  `SelfUpdateReceiver` for 30 s; `onPendingStored` (the download landed) does the same. Storing a grant while the
-  screen is already off arms it too (`SelfUpdate.onGrant`). Screen-on still cancels.
-- `PackageReplacedReceiver`: with a stored grant, `SyncRunner.request(context, "install_now_done")` - its settle
-  answers `installed: X`. Over tsnet that sync reaches the server after the next unlock (tsnet starts from Home's
-  `onResume`); the answer waits in the outbox until then.
-- `AppInstallReceiver`, a failed self-update with a stored grant: request a sync, so a refusal (`recordRefused`)
-  answers within seconds rather than at the next backstop.
+- **`server/InstallNow.kt`**: DE prefs (`createDeviceProtectedStorageContext()`), file `install_now`, key `record_v1`,
+  every write `commit()`. DE because `SelfUpdate.init` reads it at process start, which a direct-boot-aware call
+  component can trigger before the first unlock after an install-and-reboot; it holds ids, a tag and a versionCode
+  only. `load`/`store`/`fail(reason)` (sets `failure`, then `SyncRunner.request("install_now")`)/`clear`; cleared next
+  to `CommandAnswers.clear` (Provisioning, the Settings re-enroll).
+- **Dispatch** (`dispatchPendingCommand`, after the receipt): `"install_update"` -> a stored record of another command
+  is answered `superseded` (failed); store `InstallNowRecord(id, requestedAt, releaseTag, VERSION_CODE)`; clear
+  `SelfUpdate.lastWait`; `AppDownloads.request` (re-gates a download waiting for Wi-Fi); `requestFollowUpSync` (a
+  command queued behind it, QA L7). This sync goes on to the list and the commit.
+- **Settle** (`checkForTrackedAppUpdates`, after `handleLauncherUpdate`; the no-list branch with `NO_LIST`):
+  `installNowOutcome` -> `CommandAnswers.result` + `InstallNow.clear`. Every failure elsewhere goes through
+  `InstallNow.fail`, so one place answers.
+- **Download** (`AppDownloads.kt`): one helper `gate(record, caps, now, …)` replaces the five `downloadGate(…,
+  anyNetworkAtMs(…))` sites (gate, report, running check, the `waiting` log, the network callback) and passes
+  `parentOverride = record.isLauncher && InstallNow.load(app) != null` - read live, never stored in a record, so
+  reconcile can't drop it and a cleared record ends it (QA M3). With a record: the run giving up on the launcher after
+  `RETRY_DELAYS_MS` (3 retries, 30/60/120 s - about 3.5 min) -> `fail("download failed")`; `MAX_HASH_FAILURES` (2) ->
+  `fail("download corrupt")`; `WAIT_SPACE` -> `fail("no space")`; a refusal (`CatalogRefusal`) -> `fail("refused: …")`.
+  `WAIT_NETWORK` waits (no answer can leave anyway). `storeSelfUpdate` -> with a record, `SyncRunner.request`.
+- **Commit** (`commitPendingSelfUpdateIfDue`): with a record, `installNowDecision(windowInputs.liveCall, .emergency)`
+  instead of `updateWindowDecision`, in both checks (`beforeCommit` too), skipping `pendingCommitAllowed`'s backoff (not
+  its refusal); a deterministic `pendingApkCheck` -> `fail("refused: <check>")`; `InstallStart.FAILED` -> `fail("install
+  failed: start")`. A wait arms `SelfUpdate.armAlarm` with the decision's recheck **whatever the screen** (today only
+  with the screen off), and `SelfUpdate.onScreenOn` keeps the alarm while a record exists.
+- **The call's end** (QA L8): `SelfUpdate.init` adds an `OngoingCalls` listener; when it fires with no live call and a
+  record waiting on `CALL`, `SyncRunner.request("install_now_call_ended")`. A VoIP or Telecom-only call (calls
+  unmanaged) isn't in `OngoingCalls`: the 2-minute alarm re-checks it. Emergency: the 10-minute recheck, as today.
+- **Results after the commit**: `AppInstallReceiver`, a failed self-update with a record -> `fail("install failed:
+  <status>")` (transient or not: the tap was one attempt; the ordinary path keeps its own backoff and record).
+  `PackageReplacedReceiver` -> with a record, `SyncRunner.request("install_now_done")` (coalesced with the service's
+  start sync); the settle answers `installed: <VERSION_NAME>`. Over tsnet it reaches the server after the next unlock;
+  the answer waits in the outbox.
+- **Report**: `UpdateFence.report`'s `waitingFor = installNowWait(...)`.
 
 ## 5. Tests (lean)
 
-- **Launcher** (`SelfUpdatePlanTest`): granted at 14:00 - off 31 s Commit; off 10 s `SCREEN_OFF_SHORT` 20 s; screen on
-  `SCREEN_ON`; call `CALL`; emergency `EMERGENCY`; not granted `OUTSIDE_WINDOW` (exists). `commitCheckDelayMs` granted
-  = 30 s. `grantLive` at 0, 24 h - 1, 24 h, negative. `grantOutcome`: installed beats lapsed, lapsed by `lastWait`/
-  download, each `GrantRow`. `reportedWait`'s table. `AppDownloadPlanTest`: the grant ends the grace, roaming still
-  waits. `SyncScheduleTest`: `install_now_v1` announced. The message strings in one test that lists them.
-- **Server** (`src/tests/install_now.rs`): each route queues one `install_update` (event, nudge, redirect with
-  `#phone-{id}` / `#install-now`); a second POST while waiting replaces (`replaced`); `up_to_date`, `too_old`,
-  `no_release`, `not_set_up`, `in_progress` queue nothing; another app's row and an unknown phone 404; unauthenticated
-  POSTs write nothing; the pop expires it after 1 h; `Received` is not "No answer" at 11 min, is at 25 h.
-  `install_now::tests`: `offer`'s table, `launcher_tag_version_code`'s cases (the Kotlin ones). `reword` and
-  `wait_text` for every word. `every_form_on_the_app_pages_returns_to_its_page` and the Advanced page's form test
-  include the new forms.
-- **Pins**: `policy_json_keys_snapshot`, `PolicyResponseCompatTest`, the contract files - unchanged (§3).
+- **Launcher**: `installNowDecision` (call, emergency, quiet; screen on doesn't matter); `installNowOutcome` per row,
+  installed beats a failure; `installNowWait`'s table; `launcherUpdateStep` with a record ignores the backoff, not the
+  refusal; `downloadGate` with `parentOverride` (metered + Wi-Fi only -> GO, roaming -> GO, no network/space -> wait);
+  a source pin that all `downloadGate` calls in `AppDownloads.kt` go through `gate(`; `PolicyResponseCompatTest`'s
+  `release_tag`; `SyncScheduleTest` announces `install_now_v1`; one test listing the answer strings.
+- **Server** (`src/tests/install_now.rs`): POST queues one `install_update` with the tag as payload (event, nudge,
+  redirect); the pop sends `release_tag`; every refused word redirects to an element the page renders (`assert_lands`:
+  `#phone-{id}` / `#phones`); a second POST while waiting replaces, while Received answers `in_progress`; Cancel
+  before and after the fetch; another app's row 404; unauthenticated POSTs write nothing; a server start does **not**
+  cancel it; `Received` is not "No answer" at 11 min, is at 25 h; the page's reads 500 on a DB error.
+  `install_now::tests`: `offer`'s table (incl. a disabled row, a manual upload, "No answer"), `launcher_tag_version_code`,
+  `Working`'s words from `waiting_for` + `app_downloads`, a report older than the receipt. `reword`, `wait_text` per
+  word. `every_form_on_the_app_pages_returns_to_its_page` covers Install Now and Cancel.
 
 ## 6. Emulator checks (`docs/testing/emulator.md` new §6o)
 
-Debug launcher of this step, enrolled; §6d's setup for a test self-update (manual row with `me.vibb.launcher.debug`,
-"This is the launcher app" moved to it, an APK built with a higher `-PversionCode`). The debug 2-minute overdue path
-still applies, so each check acts inside 2 minutes of the download. Emulator clock outside 02:00-05:00. Watch `adb
-logcat -s SelfUpdate MdmSyncWorker UpdateFence AppInstall CommandAnswers`.
+Debug launcher of this step, enrolled; §6d's test self-update setup (manual row `me.vibb.launcher.debug`, "This is the
+launcher app" moved to it, an APK with a higher `-PversionCode`). Clock outside 02:00-05:00; act inside the debug
+build's 2 minutes. Watch `adb logcat -s SelfUpdate MdmSyncWorker AppDownloads UpdateFence AppInstall CommandAnswers`.
 
-1. **Too old first**: with the previous launcher (no capability) the launcher page's row says "installs tonight.
-   Install Now works from this update on", no button; a crafted POST answers `too_old`, nothing queued.
-2. **Grant before the download**: upload the APK, at once tap Install Now on the launcher page: the row "Install
-   Now: Waiting", then "Downloading, then installs at the next screen-off"; the page stays at `#phone-{id}`.
-3. **Screen on holds it**: the download lands with the screen on - logcat "waits: screen_on", row "Installs at the
-   next screen-off". `adb shell input keyevent 26` (screen off): commit ~30 s later, well under the 2 minutes;
-   `MY_PACKAGE_REPLACED`; after the unlock the row is "1.x · Installed 1.x", Recent on Locate "Install Now · Done".
-4. **A call holds it**: grant again with a newer APK, `adb emu gsm call 5551234` and answer, key 26: logcat "waits:
-   call", row "Installs after the call"; hang up (`adb emu gsm cancel 5551234`) and screen off: it goes in.
-5. **Refused**: an APK signed with another debug key: Failed "Refused: signed with another key", the button is back,
-   nothing fenced.
-6. **Already running / expiry**: Install Now on a phone that already runs the release ("Done · Already on 1.x"); with
-   the emulator offline (`adb emu network speed 0` or airplane mode) past an hour: "Expired · Never sent".
+1. **Too old**: the previous launcher: "Install Now works from this update on", no button.
+2. **Screen on, on mobile data**: the phone's Apps › "Download apps on Wi-Fi only" on, `adb shell svc wifi disable`;
+   upload the APK, tap Install Now with the screen on and an app open: the row goes "Waiting for the phone" ->
+   "Downloading …" -> "Installing"; the commit comes without a screen-off; Home (and the lock if LOCKED) back after
+   `MY_PACKAGE_REPLACED`; the row "Done · Installed 1.x", Recent "Install Now · Done"; the page never jumps.
+3. **A call holds it**: newer APK, `adb emu gsm call 5551234`, answer, tap Install Now: "Waits for the call to end";
+   `adb emu gsm cancel 5551234`: the install starts within seconds (logcat "install_now_call_ended").
+4. **Newest found**: tap Install Now, then before the phone acts upload a higher build and Check Now: the higher one
+   is installed and named.
+5. **Refused / failed**: an APK of another debug key, higher versionCode -> "Failed · Android refused the install" (or
+   "signed with another key" from the pre-check), the button back, no retry; airplane mode during the download for
+   > 4 min, then back -> "The download kept failing".
+6. **Reboot mid-download** (`adb reboot` while "Downloading"): after the unlock the download resumes and installs.
+7. **Offline phone**: airplane mode, tap: "Waiting for the phone" with Cancel; Cancel -> "Cancelled"; tap again, then
+   airplane mode off: it installs.
 
-## 7. Open questions for the user
+## 7. Open question for the user
 
-1. **Mobile data**: with "Download apps on Wi-Fi only" on, may Install Now download the launcher (~tens of MB) on
-   mobile data at once (proposed; never roaming), or should it wait for Wi-Fi like today (up to 3 days)?
-2. **A newer release during the grant**: proposed, the grant covers it (§1.5). Or clear it with "a newer release
-   came: tap again", as in your brief?
-3. **Tell the parent when it is done?** Proposed no (the row and Recent say it). Design 35's inbox/push could carry
-   "Vibb One 1.4.0 installed on Anna" - one event kind more.
+1. **"Install on all phones"** - a group action above the rows that queues Install Now for every phone that shows the
+   button? Proposed: not now (one tap per phone; usually one or two phones).
+
+The fence: with `update_fence` off (default until A3 passes on the Jelly Star) a daytime install shows Android's own
+home screen for about a minute; the ⓘ says so. It is not recommended on until that check has passed.
 
 ## 8. Steps
 
-**One step, server and launcher in one branch and one commit for the wire** (the command kind, its answers, the
-capability and the waiting words are read on both sides; CLAUDE.md "a change to the API goes into both directories
-in the same commit"). A split would only make a server that queues for a phone that can't take it testable, which
-the capability already prevents. Then `docs/testing/emulator.md` §6o, both CLAUDE.md files (server: the Find My Device
-bullet's command list, `EXPIRING_COMMANDS`, the Apps tab bullet; launcher: the Self-update bullet), PLAN.md.
+**One step, server and launcher in one branch, the wire in one commit** (the command, its tag, the answers, the
+capability and the waiting words are read on both sides). Then §6o, both CLAUDE.md files (server: Find My Device's
+command list, the Received limit, the Apps tab; launcher: Self-update and Catalog downloads), PLAN.md.
+
+## 9. Revision (after the user's decisions and `qa-37-design.md`)
+
+The user's model replaces the 24 h grant: a one-time command that acts at once on any network, installs the newest
+release found, no notification, only on the launcher's page. The old open questions are answered (mobile data yes,
+newer release yes, notification no).
+
+- **M1** (clock back lapses the grant): gone with the grant; nothing compares wall clocks across the command (§1.10).
+- **M2** (honest row words): the row reads the real state - `install_now_download` worded from `app_downloads`,
+  `install_now_call`/`_emergency`/`_ready`; no backoff state (the command skips it); failures answer at once (§2.4, §4.2).
+- **M3** (the grace in a record): the override is read live at one `gate(…)` helper behind all five sites (§4.2).
+- **M4** (fragments): `id="phones"` always rendered, `#phone-{id}` only for rows that exist; tests post every word.
+- **M5** (daytime, fence off): the ⓘ sentence (§2.3); the fence is not recommended until A3 passes (§7).
+- **L1**: not expiring, so the array and its three index-bound sites stay; named in §1.4.
+- **L2**: `NoRelease` for a disabled row or no release; "No answer" gives the button back (§2.2).
+- **L3**: no screen-off wording left; "older than the phone's version"; "1.4.0 is waiting"; `granted*` dropped.
+- **L4**: `lastWait` is cleared at the receipt and the command's words come from its own state; no `expired:` answers.
+- **L5**: `superseded` is answered failed, "Ended: a newer Install Now took over".
+- **L6**: no Advanced group; the answer is a `details.info` in the row.
+- **L7**: `requestFollowUpSync` at the dispatch.
+- **L8**: an `OngoingCalls` listener starts the install when the call ends; a 2-minute alarm for calls it can't see.
+- **L9**: "already running" and the offline hour go to the server tests; reboot and failed-install checks added (§6).
+- **L10**: tests for the gate helper, the words, the redirects, the no-expiry restart and the 500s (§5); the clock
+  test is moot.
+- **L11**: a manual upload's tag stated in §2.2.
+- **Nit 1**: DE kept (the user's choice) with the reason in §4.2. **Nit 2**: the extra sync request kept; it is
+  coalesced and says why it is there.
