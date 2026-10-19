@@ -711,8 +711,11 @@ findings, merge to `main`, full suite once.
   kid reverse the order for that entry on that phone (remembered per entry; the parent's order stays the default; the
   play direction follows the flip). Mockup approved by the user 2026-10-19 ("ja det blir bra!",
   https://claude.ai/artifact/HJbqDJz6F6SD5SEz74tYop: three artboards - own pictures oldest first, flipped newest first,
-  a one-picture entry keeping the numbers). **Design 39** (`docs/design/39-music-list-pictures-and-order.md`, in
-  progress 2026-10-19), queued behind 37 and 38.
+  a one-picture entry keeping the numbers). **Design 39** (`docs/design/39-music-list-pictures-and-order.md`, revised e002e9b3 - the user, same day: the
+  server fetches pictures for every episode, not the first 200, and the phone fetches the playing item's ahead
+  whatever the download choice; design QA `docs/design/qa-39-design.md` approved for implementation, with its last
+  Medium - reserve ~100 of the day's 400 picture requests for new items during a backfill - for the implementation
+  brief). Implementation queued behind 37 and 38; server + music in one step.
 
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
