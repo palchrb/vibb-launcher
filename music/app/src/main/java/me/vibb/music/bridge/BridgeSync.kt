@@ -15,6 +15,7 @@ import me.vibb.music.logic.keepOwnCopy
 import me.vibb.music.logic.ownFetchPlan
 import me.vibb.music.model.OwnFile
 import me.vibb.music.model.Source
+import me.vibb.music.sync.ArtSkips
 import me.vibb.music.sync.ArtWants
 import me.vibb.music.sync.Inbox
 
@@ -135,6 +136,7 @@ object BridgeSync {
     suspend fun wantArt(context: Context, want: WantedArt) {
         if (!Bridge.config(context).managed) return
         Bridge.withBridge(context) { it.wantArt(want.now.toTypedArray(), want.later.toTypedArray()) }
+        ArtSkips.sent(want.later)
     }
 
     private fun read(pfd: ParcelFileDescriptor): ByteArray = ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes() }

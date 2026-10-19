@@ -385,10 +385,19 @@ man står på". So, replacing §2.4's budgets and this note's reserve:
   The backlog rule, the retry rules, `ART_NETWORK_FAILURES` and the same/own judgement stay; a dead host that
   answered nothing in the pass waits for the regular check.
 - **Phone**: pictures count as streaming. The `now` list (the playing item ±5 and the items the queue reaches next,
-  Spotify's look-ahead included) goes out at once on an item change and is fetched by the launcher at once whenever
-  streaming is allowed on the network (unmetered; metered with `stream_mobile_data`; never roaming). The `later` list
-  is, on an unmetered network, every picture of every ticked entry, fetched paced in the background and kept while
-  the entry is ticked; on a metered network it stays as before. Details: `music/CLAUDE.md`, `launcher/CLAUDE.md`.
+  the playing Spotify entry's look-ahead included) goes out at once on an item change and is fetched by the launcher
+  at once whenever streaming is allowed on the network (unmetered; metered with `stream_mobile_data`; never roaming).
+  The `later` list (the kept episodes', Nytt's, the other Spotify entries' look-ahead, and on an unmetered network
+  every picture of every ticked entry) is fetched on Wi-Fi only, paced in the background, in pages of at most 1000
+  hashes a call; every picture of a ticked entry is kept while it is ticked. Details: `music/CLAUDE.md`, `launcher/CLAUDE.md`.
+- **Code QA fix round** (`docs/review/qa-art-asap-code.md`): `later` is fetched on Wi-Fi only, whatever the downloads
+  switch (M1); a courier run fetches at most 3 rounds of 100 and runs again, so the library, the listings and the own
+  files never wait behind the pictures (M2); only the playing Spotify entry's look-ahead is `now`, the others' `later`
+  (M3); a `wantArt` call holds at most 1000 hashes (~136 KB, L2); the server stores `art_more` only when the pass sent
+  a picture request (L3); the pictures' bytes are already in the report's `cache_bytes` (the PWA's "stored" line) and
+  never evicted for audio - no contract change (L4); one picture is never fetched twice at once (L5); a picture the
+  launcher passes over three syncs leaves the `later` page, and off Wi-Fi the launcher keeps pictures younger than
+  3 days that the music app hasn't copied yet (L6).
 
 ### Code QA fix round (`docs/review/qa-39-code.md` at `ec6d1bfa`, 2026-10-19)
 

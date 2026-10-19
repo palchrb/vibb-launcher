@@ -445,15 +445,20 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   listing version so the next sync re-applies them) and `PlayItem.artHash`; every `Cover` gets the entry's cover as
   `fallback`. `logic/EpisodeArt.kt` has the want set (`wantedArt`; `now` is streaming's - the user's rule of 2026-10-19, the
   launcher fetches it where streaming is allowed - built by `nowArt`: the now window ±5 (`NOW_REACH`), the next
-  `NOW_AHEAD` (50) items the queue reaches, then each Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50) tracks
-  from where a cover tap starts it - a Spotify entry keeps nothing, and the server fetches all of its pictures, a check
-  after another; at most `WANT_ART_NOW_MAX` 500. `later`: the keep sets' art, Nytt, and **on an unmetered network every
+  `NOW_AHEAD` (50) items the queue reaches, then the playing Spotify list-mode entry's next `SPOTIFY_ART_AHEAD` (50)
+  tracks from where a cover tap starts it - a Spotify entry keeps nothing, and the server fetches all of its pictures,
+  a check after another; every other Spotify entry's look-ahead is `later`'s (qa-art-asap-code M3); at most
+  `WANT_ART_NOW_MAX` 500. `later` (fetched by the launcher on Wi-Fi only): the keep sets' art, Nytt, and **on an unmetered network every
   item's picture of every ticked entry in play order** (`all`, `allLater`; the addendum of 2026-10-19, "alle bilder
   lastes ned ASAP så lenge den er på wifi" - `ArtWants.compute` reads `netCaps`; a sync on a metered network that
   leaves pictures for Wi-Fi enqueues the unique work `music-wifi-art`, a sync with an UNMETERED constraint,
-  `wifiSyncWanted`); only what the phone lacks goes on the wire, at most `WANT_ART_MAX` 2000 hashes a call (one oneway
-  Binder call, ~270 KB) - as pictures arrive the next send names the next ones, so it is no cap on the pictures. A
-  picture is ~40-70 KB: a 1000-item feed costs ~50 MB on the phone, kept while the entry is ticked. Sent as
+  `wifiSyncWanted`); only what the phone lacks goes on the wire, at most `WANT_ART_MAX` 1000 hashes a call (one oneway
+  Binder call, ~136 bytes a hash, ~136 KB) - as pictures arrive the next send names the next ones, so it is no cap on
+  the pictures. A picture the launcher passes over three syncs in a row (`artSkipsAfter`/`skippedArt`, `ArtSkips` in
+  memory: the sync's send records its page, the next sync's pull counts; a restart tries them again) leaves the `later`
+  wire, not `keep` (qa-art-asap-code L6). A picture is ~40-70 KB: a 1000-item feed costs ~50 MB on the phone, kept
+  while the entry is ticked - counted in the report's `cache_bytes` (the covers dir is in it; the PWA's "stored"
+  line), never in the audio limit's `audio_bytes`, never evicted for audio (L4). Sent as
   `wantArt` at each sync's end (after the listings are applied, so a listing that brings the playing entry new
   `artHash`es sends them at once) and from the player at once on an item change (`wantArtDelay`: a run of skips sends
   once more at the end of `WANT_ART_GAP_MS` 2 s); `sync/ArtPlan.kt`'s `artWant` takes a

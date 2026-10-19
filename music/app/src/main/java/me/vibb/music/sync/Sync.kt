@@ -132,6 +132,8 @@ object Sync {
             Log.w("Sync", "The bridge part failed", e)
         }
         val store = Store.get(context)
+        // The pictures the launcher passed over since the last send (qa-art-asap-code L6).
+        ArtSkips.note(store.coverHashes())
         val dao = store.db
         val lib = store.reloadLibrary()
         val entryErrors = readEntryErrors(store).toMutableList()

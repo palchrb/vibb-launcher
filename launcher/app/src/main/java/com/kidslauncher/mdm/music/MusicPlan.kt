@@ -331,10 +331,11 @@ fun musicState(packageName: String?, versionCode: Long?, report: JsonObject?, la
 /**
  * The want set's caps on one call (bridge_contract.json `want_art`, the music app's own): not a cap on the pictures
  * (the user, 2026-10-19: every picture of every ticked entry on Wi-Fi) - the music app names only what it lacks, so
- * the next call names the next ones - but one oneway Binder call's size (~136 bytes a hash). `now` is streaming's:
- * the playing item and five each side, the queue's next items, Spotify's look-ahead.
+ * the next call names the next ones - but one oneway Binder call's size (~136 bytes a hash: ~136 KB, qa-art-asap-code
+ * L2). `now` is streaming's: the playing item and five each side, the queue's next items, the playing Spotify
+ * entry's look-ahead.
  */
-const val WANT_ART_MAX = 2000
+const val WANT_ART_MAX = 1000
 const val WANT_ART_NOW_MAX = 500
 
 /** An episode picture is a 512 px JPEG: at most 1 MB, hash-checked like a cover. */
@@ -342,15 +343,28 @@ const val MAX_ART_BYTES = 1024 * 1024
 
 /**
  * Picture GETs per round of a courier run, `now` first (QA M6); the run goes on round after round while pictures are
- * fetchable and the last round stored one ([fetchArtPaced]), the music app nudged after each.
+ * fetchable and the last round stored one ([fetchArtPaced]), the music app nudged after each...
  */
 const val ART_PER_RUN = 100
+
+/**
+ * ...at most this many rounds a run (qa-art-asap-code M2): then the courier runs again, so a new library, changed
+ * listings and the own files never wait behind thousands of pictures.
+ */
+const val ART_ROUNDS_PER_RUN = 3
+
+/**
+ * On a metered network a picture file younger than this that the want set no longer names stays (qa-art-asap-code
+ * L6): the bulk the launcher fetched on Wi-Fi leaves the music app's want set off Wi-Fi before it was copied, and
+ * the next Wi-Fi sync copies it instead of fetching it again.
+ */
+const val ART_HOLD_MS = 3 * 24 * 3_600_000L
 
 /** A picture that failed (an HTTP error or its hash) this often waits a day (as [OWN_FILE_HASH_BACKOFF_MS]). */
 const val ART_MAX_FAILURES = 2
 const val ART_BACKOFF_MS = 24 * 3_600_000L
 
-/** What the music app wants: [now] (the now-playing window: any network) and [later] (kept episodes and Nytt: the audio's gate). */
+/** What the music app wants: [now] (streaming's: [ArtGates.now]) and [later] (the kept episodes', Nytt's, and on Wi-Fi every ticked entry's: Wi-Fi only). */
 data class WantArt(val now: List<String>, val later: List<String>) {
     val all: Set<String> get() = (now + later).toSet()
 
@@ -377,27 +391,29 @@ fun artBackedOff(failure: ArtFailure?, nowMs: Long): Boolean =
     failure != null && failure.count >= ART_MAX_FAILURES && nowMs - failure.lastAt in 0 until ART_BACKOFF_MS
 
 /**
- * Where the two lists may be fetched (the user's rule of 2026-10-19: pictures count as streaming). [now] (the playing
- * item ±5, the queue's next items, Spotify's look-ahead) where streaming is allowed: online (INTERNET and a physical
- * transport), never roaming, unmetered or with the policy's streaming switch (`stream_mobile_data`, an older policy's
- * `mobile_data`; design 30 §1.1). [later] (the kept episodes', Nytt's, and on Wi-Fi every picture of every ticked
- * entry) with the audio's download gate: online, unmetered or with the downloads switch and not roaming.
+ * Where the two lists may be fetched (the user's rules of 2026-10-19: pictures count as streaming, and the bulk is
+ * Wi-Fi only). [now] (the playing item ±5, the queue's next items, the playing Spotify entry's look-ahead) where
+ * streaming is allowed: online (INTERNET and a physical transport), never roaming, unmetered or with the policy's
+ * streaming switch (`stream_mobile_data`, an older policy's `mobile_data`; design 30 §1.1). [later] (the kept
+ * episodes', Nytt's, the other Spotify entries' look-ahead, and on Wi-Fi every picture of every ticked entry) only
+ * online and unmetered, whatever the downloads switch (qa-art-asap-code M1: a want set stored on Wi-Fi fetches
+ * nothing of its bulk after a switch to mobile data).
  */
 data class ArtGates(val now: Boolean, val later: Boolean)
 
-fun artGates(caps: NetCaps?, streamMobileData: Boolean, downloadMobileData: Boolean): ArtGates {
+fun artGates(caps: NetCaps?, streamMobileData: Boolean): ArtGates {
     val online = caps != null && caps.internet && caps.physical
     val unmetered = caps?.notMetered == true
     val notRoaming = caps?.notRoaming == true
     return ArtGates(
         now = online && notRoaming && (unmetered || streamMobileData),
-        later = online && (unmetered || (downloadMobileData && notRoaming)),
+        later = online && unmetered,
     )
 }
 
-/** [artGates] with the policy's switches; no readable music object = neither switch. */
+/** [artGates] with the policy's streaming switch; no readable music object = off. */
 fun artGatesOn(caps: NetCaps?, music: MusicPolicy?): ArtGates =
-    artGates(caps, music?.streamMobileData == true, music?.downloadMobileData == true)
+    artGates(caps, music?.streamMobileData == true)
 
 /**
  * The pictures to fetch now, at most [max], `now` first, each list only where its gate ([ArtGates]) allows it. Never
@@ -435,27 +451,49 @@ fun artToFetchOn(
 fun nowArtToFetch(want: WantArt, has: Set<String>, failures: Map<String, ArtFailure>, caps: NetCaps?, music: MusicPolicy?, nowMs: Long): List<String> =
     artToFetch(WantArt(want.now, emptyList()), has, failures, artGatesOn(caps, music), ART_PER_RUN, nowMs)
 
+/** A paced run's outcome: the pictures [stored], and whether [more] were fetchable when it stopped at its rounds. */
+data class PacedArt(val stored: Int, val more: Boolean)
+
 /**
  * The courier's paced picture fetch: rounds of at most [ART_PER_RUN] ([next] reads the want set, the files and the
- * network again each round, so a metered network ends it and a new `now` goes first), [fetch] each (true = stored,
- * false = refused, null = try later), [roundDone] after a round that stored something (the music app's nudge). It
- * ends when nothing is fetchable or a round stored nothing (a server or network in trouble: the next sync tries
- * again). Every stored picture leaves [next], so it always ends. The pictures stored in all.
+ * network again each round, so a metered network ends the bulk and a new `now` goes first), [fetch] each (true =
+ * stored, false = refused, null = try later), [roundDone] after a round that stored something (the music app's
+ * nudge). It ends when nothing is fetchable, a round stored nothing (a server or network in trouble: the next sync
+ * tries again), or after [maxRounds] rounds with more left ([PacedArt.more]: the courier runs again, M2). Every
+ * stored picture leaves [next], so it always ends.
  */
 suspend fun fetchArtPaced(
     next: () -> List<String>,
     fetch: suspend (String) -> Boolean?,
     roundDone: suspend () -> Unit = {},
-): Int {
+    maxRounds: Int = ART_ROUNDS_PER_RUN,
+): PacedArt {
     var stored = 0
+    var rounds = 0
     while (true) {
         val round = next()
-        if (round.isEmpty()) return stored
+        if (round.isEmpty()) return PacedArt(stored, more = false)
+        if (rounds >= maxRounds) return PacedArt(stored, more = true)
+        rounds++
         var got = 0
         for (hash in round) if (fetch(hash) == true) got++
-        if (got == 0) return stored
+        if (got == 0) return PacedArt(stored, more = false)
         stored += got
         roundDone()
+    }
+}
+
+/**
+ * The pictures being fetched now (qa-art-asap-code L5): the `now` fetch on `wantArt`'s arrival and the courier run
+ * side by side never GET the same picture twice at once. [start] false = another fetch has it.
+ */
+class ArtInFlight {
+    private val hashes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun start(hash: String): Boolean = hashes.add(hash)
+
+    fun done(hash: String) {
+        hashes.remove(hash)
     }
 }
 
@@ -467,11 +505,19 @@ suspend fun fetchArtPaced(
 fun ownFileGate(caps: NetCaps?, music: MusicPolicy?, nowMs: Long, haveBytes: Long, totalBytes: Long, allocatableBytes: Long?): DownloadGate =
     downloadGate(caps, wifiOnly = music?.downloadMobileData != true, anyNetworkAt = null, nowMs = nowMs, haveBytes = haveBytes, totalBytes = totalBytes, allocatableBytes = allocatableBytes)
 
-/** Cover files to delete: every one that is neither a library cover nor wanted (held until the music app copied it). */
-fun artToDelete(present: Set<String>, libraryCovers: Set<String>, want: WantArt): Set<String> {
+/**
+ * Cover files to delete: every one that is neither a library cover nor wanted (held until the music app copied it),
+ * nor [held] - on a metered network the files younger than [ART_HOLD_MS] ([artHeld]), so the bulk fetched on Wi-Fi
+ * isn't lost before the music app copies it (qa-art-asap-code L6).
+ */
+fun artToDelete(present: Set<String>, libraryCovers: Set<String>, want: WantArt, held: Set<String> = emptySet()): Set<String> {
     val wanted = want.all
-    return present.filterTo(sortedSetOf()) { it !in libraryCovers && it !in wanted }
+    return present.filterTo(sortedSetOf()) { it !in libraryCovers && it !in wanted && it !in held }
 }
+
+/** The files [artToDelete] keeps besides the want set: none on an [unmetered] network, else those younger than [ART_HOLD_MS] ([modifiedAt]: a file's time). */
+fun artHeld(present: Set<String>, unmetered: Boolean, nowMs: Long, modifiedAt: (String) -> Long): Set<String> =
+    if (unmetered) emptySet() else present.filterTo(mutableSetOf()) { nowMs - modifiedAt(it) in 0 until ART_HOLD_MS }
 
 /**
  * The `now` pictures the launcher already holds, when they call for a nudge to the music app: some

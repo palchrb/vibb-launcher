@@ -256,12 +256,13 @@ class MusicPlanTest {
     private fun pic(n: Int) = "%064x".format(n)
 
     @Test
-    fun `wantArt - only 64-hex hashes, each once, at most 500 now and 2000 in all`() {
+    fun `wantArt - only 64-hex hashes, each once, at most 500 now and 1000 in all`() {
         val w = wantArtLists(listOf(pic(1), "nope", null, pic(1), pic(2)), listOf(pic(2), pic(3), "A".repeat(64)))
         assertEquals(listOf(pic(1), pic(2)), w.now)
         assertEquals("now wins", listOf(pic(3)), w.later)
-        val thousands = wantArtLists(listOf(pic(1)), (2..1999).map { pic(it) })
-        assertEquals("a feed of 1998 pictures goes whole", 1998, thousands.later.size)
+        val page = wantArtLists(listOf(pic(1)), (2..1000).map { pic(it) })
+        assertEquals("a page of 999 pictures goes whole", 999, page.later.size)
+        assertEquals(1000, WANT_ART_MAX)
         val big = wantArtLists((1..600).map { pic(it) }, (601..3000).map { pic(it) })
         assertEquals(WANT_ART_NOW_MAX, big.now.size)
         assertEquals(WANT_ART_MAX, big.now.size + big.later.size)
@@ -269,20 +270,24 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `art gates - now is streaming's, later the downloads', never roaming for now (2026-10-19)`() {
+    fun `art gates - now is streaming's, later Wi-Fi only, never roaming (2026-10-19, qa-art-asap-code M1)`() {
         val wifi = com.kidslauncher.mdm.server.NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
         val mobile = wifi.copy(notMetered = false)
         val roaming = mobile.copy(notRoaming = false)
-        // (network, stream switch, downloads switch) -> (now, later)
-        assertEquals("unmetered: both", ArtGates(now = true, later = true), artGates(wifi, false, false))
-        assertEquals("metered, streaming on: now", ArtGates(now = true, later = false), artGates(mobile, true, false))
-        assertEquals("metered, streaming off: nothing now", ArtGates(now = false, later = false), artGates(mobile, false, false))
-        assertEquals("metered, downloads on: later", ArtGates(now = false, later = true), artGates(mobile, false, true))
-        assertEquals("roaming: nothing, whatever the switches", ArtGates(now = false, later = false), artGates(roaming, true, true))
-        assertEquals("no network", ArtGates(now = false, later = false), artGates(null, true, true))
-        assertEquals("no physical transport", ArtGates(now = false, later = false), artGates(wifi.copy(physical = false), true, true))
-        assertEquals("no internet", ArtGates(now = false, later = false), artGates(wifi.copy(internet = false), true, true))
+        // (network, stream switch) -> (now, later)
+        assertEquals("unmetered: both", ArtGates(now = true, later = true), artGates(wifi, false))
+        assertEquals("metered, streaming on: now only", ArtGates(now = true, later = false), artGates(mobile, true))
+        assertEquals("metered, streaming off: nothing", ArtGates(now = false, later = false), artGates(mobile, false))
+        assertEquals("roaming: nothing, whatever the switch", ArtGates(now = false, later = false), artGates(roaming, true))
+        assertEquals("no network", ArtGates(now = false, later = false), artGates(null, true))
+        assertEquals("no physical transport", ArtGates(now = false, later = false), artGates(wifi.copy(physical = false), true))
+        assertEquals("no internet", ArtGates(now = false, later = false), artGates(wifi.copy(internet = false), true))
         assertEquals("no readable music object: Wi-Fi only", ArtGates(now = false, later = false), artGatesOn(mobile, null))
+        // The downloads switch opens nothing on mobile data: a want set stored on Wi-Fi fetches none of its bulk there.
+        val both = musicPolicy(policy30(stream = JsonPrimitive(true), download = JsonPrimitive(true)))!!
+        assertEquals("metered, both switches on: now only", ArtGates(now = true, later = false), artGatesOn(mobile, both))
+        assertEquals("roaming, both switches on: nothing", ArtGates(now = false, later = false), artGatesOn(roaming, both))
+        assertEquals(ArtGates(now = true, later = true), artGatesOn(wifi, musicPolicy(policy30())!!))
     }
 
     @Test
@@ -302,7 +307,7 @@ class MusicPlanTest {
     }
 
     @Test
-    fun `art to fetch follows the policy's two switches`() {
+    fun `art to fetch follows the streaming switch, the rest only on Wi-Fi`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         val now = 1_800_000_000_000L
         // artToFetchOn: the phone's network and the policy, as artFetchable passes them (qa-30-s2-code L2).
@@ -312,7 +317,7 @@ class MusicPlanTest {
         val downloadOnly = musicPolicy(policy30(download = JsonPrimitive(true)))!!
         val neither = musicPolicy(policy30())!!
         assertEquals("streaming alone: now only", listOf(pic(1)), fetch(streamOnly))
-        assertEquals("downloads alone: later only", listOf(pic(2)), fetch(downloadOnly))
+        assertEquals("downloads alone: nothing on mobile data (M1)", emptyList<String>(), fetch(downloadOnly))
         assertEquals("neither switch on mobile data: nothing", emptyList<String>(), fetch(neither))
         assertEquals("roaming: nothing", emptyList<String>(), fetch(downloadOnly, metered.copy(notRoaming = false)))
         assertEquals("Wi-Fi: both without either switch", listOf(pic(1), pic(2)), fetch(neither, metered.copy(notMetered = true)))
@@ -359,18 +364,18 @@ class MusicPlanTest {
         val stored = kotlinx.coroutines.runBlocking {
             fetchArtPaced(::next, { has += it; true }, { nudges++; rounds += has.size })
         }
-        assertEquals(250, stored)
+        assertEquals(PacedArt(250, more = false), stored)
         assertEquals("three rounds: 100, 100, 50", listOf(100, 200, 250), rounds)
         assertEquals(3, nudges)
         // A metered network ends it between rounds.
         has.clear()
         val ended = kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { has += it; if (has.size == 100) unmetered = false; true }) }
-        assertEquals(100, ended)
+        assertEquals(PacedArt(100, more = false), ended)
         // A round that stores nothing (the server down) ends it, never a loop.
         unmetered = true
         var tries = 0
         val none = kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { tries++; null }) }
-        assertEquals(0, none)
+        assertEquals(PacedArt(0, more = false), none)
         assertEquals("one round tried", ART_PER_RUN, tries)
         // The glue: syncArt is the paced fetch over artFetchable.
         val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
@@ -379,20 +384,63 @@ class MusicPlanTest {
         assertEquals(100, ART_PER_RUN)
     }
 
+    /** qa-art-asap-code M2: a run stops after its rounds with more left, and the courier runs again. */
+    @Test
+    fun `asap - a run fetches at most three rounds, then the courier runs again`() {
+        val wanted = (1..1000).map { pic(it) }
+        val has = mutableSetOf<String>()
+        fun next(): List<String> = wanted.filter { it !in has }.take(ART_PER_RUN)
+        val first = kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { has += it; true }) }
+        assertEquals(PacedArt(ART_PER_RUN * ART_ROUNDS_PER_RUN, more = true), first)
+        val runs = mutableListOf(first)
+        while (runs.last().more) runs += kotlinx.coroutines.runBlocking { fetchArtPaced(::next, { has += it; true }) }
+        assertEquals("1000 pictures over 4 runs: 300, 300, 300, 100", listOf(300, 300, 300, 100), runs.map { it.stored })
+        assertEquals(1000, has.size)
+        // The glue: more left re-queues the courier, which fetches the library and the listings first, then the art.
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        val art = sync.substringAfter("private suspend fun syncArt(").substringBefore("\n    }\n")
+        assertTrue(art, art.contains("if (paced.more) runAgain(music)"))
+        assertTrue(sync.contains("synchronized(this) { if (again == null) again = music }"))
+        val fetchAll = sync.substringAfter("private suspend fun fetchAll(").substringBefore("\n    }\n")
+        assertTrue(fetchAll.indexOf("fetchLibrary(") in 0 until fetchAll.indexOf("syncArt(app, server, music)"))
+    }
+
+    /** qa-art-asap-code L5: the now fetch and the courier never GET one picture twice at once. */
+    @Test
+    fun `asap - a picture in flight isn't fetched again beside it`() {
+        val flight = ArtInFlight()
+        assertTrue(flight.start(pic(1)))
+        assertFalse("the second fetch leaves it", flight.start(pic(1)))
+        assertTrue("another picture goes", flight.start(pic(2)))
+        flight.done(pic(1))
+        assertTrue("done: it may go again", flight.start(pic(1)))
+        val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
+        val fetch = sync.substringAfter("private suspend fun fetchArt(").substringBefore("\n    }\n")
+        assertTrue(fetch, fetch.contains("if (!inFlight.start(hash)) return null"))
+        assertTrue(fetch, fetch.contains("inFlight.done(hash)"))
+    }
+
     @Test
     fun `art to delete - keeps library covers and the want set`() {
         val want = WantArt(listOf(pic(1)), listOf(pic(2)))
         assertEquals(sortedSetOf(pic(4), "junk"), artToDelete(setOf(pic(1), pic(2), pic(3), pic(4), "junk"), setOf(pic(3)), want))
         assertEquals("nothing wanted: only covers stay", sortedSetOf(pic(1), pic(2)), artToDelete(setOf(pic(1), pic(2), pic(3)), setOf(pic(3)), WantArt.NONE))
-        val many = wantArtLists((1..500).map { pic(it) }, (501..2000).map { pic(it) })
-        assertEquals("every wanted picture of a 2000-hash set is kept", emptySet<String>(), artToDelete(many.all, emptySet(), many))
+        val many = wantArtLists((1..500).map { pic(it) }, (501..1000).map { pic(it) })
+        assertEquals("every wanted picture of a 1000-hash set is kept", emptySet<String>(), artToDelete(many.all, emptySet(), many))
+        // qa-art-asap-code L6: off Wi-Fi the bulk fetched on Wi-Fi stays until the music app copies it.
+        val now = 1_800_000_000_000L
+        val times = mapOf(pic(5) to now - 60_000, pic(6) to now - ART_HOLD_MS - 1)
+        val held = artHeld(setOf(pic(5), pic(6)), unmetered = false, nowMs = now) { times.getValue(it) }
+        assertEquals("young ones only", setOf(pic(5)), held)
+        assertEquals(sortedSetOf(pic(6)), artToDelete(setOf(pic(5), pic(6)), emptySet(), WantArt.NONE, held))
+        assertEquals("on Wi-Fi nothing is held", emptySet<String>(), artHeld(setOf(pic(5)), unmetered = true, nowMs = now) { times.getValue(it) })
     }
 
     @Test
     fun `syncCovers no longer deletes wanted art, and the want set goes with the library`() {
         val sync = module("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt").readText()
         val covers = sync.substringAfter("private suspend fun syncCovers(").substringBefore("\n    }\n")
-        assertTrue(covers, covers.contains("artToDelete(present, head.covers, MusicStore.wantArt(app))"))
+        assertTrue(covers, covers.contains("artToDelete(present, head.covers, MusicStore.wantArt(app), heldArt(app, present))"))
         assertFalse(covers, covers.contains("!in head.covers }.forEach { it.delete() }"))
         assertTrue("syncArt runs after syncCovers", sync.indexOf("syncArt(app, server, music)") > sync.indexOf("syncCovers(app, server, head) ||"))
         val noLibrary = sync.substringAfter("if (head == null) {").substringBefore("return changed")

@@ -12,6 +12,7 @@ import me.vibb.music.data.MusicDb
 import me.vibb.music.data.NewsRow
 import me.vibb.music.data.REAPPLY_LISTINGS_SQL
 import me.vibb.music.model.Source
+import me.vibb.music.sync.ArtSkips
 import me.vibb.music.sync.artWant
 import me.vibb.music.sync.downloadPlan
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -62,7 +63,8 @@ class EpisodeArtTest {
     }
 
     @Test
-    fun `at most 2000 on the wire, the now list first, the missing ones only - keep has no cap`() {
+    fun `at most 1000 on the wire, the now list first, the missing ones only - keep has no cap`() {
+        assertEquals("one call ~136 KB (qa-art-asap-code L2)", 1000, WANT_ART_MAX)
         val many = (0 until 2100).map { art("k$it") }
         val w = wantedArt(listOf(a), many, emptyList(), emptyList(), emptySet(), emptySet())
         assertEquals(listOf(a), w.now)
@@ -142,16 +144,17 @@ class EpisodeArtTest {
         val base = snapshot(lib, rows)
         val withContextArt = base.copy(listed = base.listed + (9L to base.listed.getValue(9L).map { it.copy(artHash = a) }))
         val fresh = artWant(withContextArt, emptyList(), -1, held = emptySet(), recent = emptyList())
-        assertEquals("streaming's: in now (2026-10-19)", tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.now)
+        assertEquals("not playing: in later, Wi-Fi only (qa-art-asap-code M3)", tracks.take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) }, fresh.later)
+        assertEquals(emptyList<String>(), fresh.now)
         assertFalse("a context entry and an RSS entry at depth 0 fetch nothing off Wi-Fi", a in fresh.later + fresh.now || b in fresh.later + fresh.now)
         assertFalse("a context entry's one item has no picture of its own", a in fresh.keep)
         // Bookmarked on t60: t60..t80, then round to t1..t29, as the rotated queue plays.
         val started = artWant(snapshot(lib, rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, held = emptySet(), recent = emptyList())
         val expected = (tracks.drop(59) + tracks.take(59)).take(SPOTIFY_ART_AHEAD)
-        assertEquals(expected.map { pics.getValue(it) }, started.now)
+        assertEquals(expected.map { pics.getValue(it) }, started.later)
         // Resume off: always from the first.
         val noResume = artWant(snapshot(library(listOf(list.copy(resume = false))), rows, bookmarks = mapOf(list.key to ("t60" to 5_000L))), emptyList(), -1, emptySet(), emptyList())
-        assertEquals(fresh.now, noResume.now)
+        assertEquals(fresh.later, noResume.later)
     }
 
     /** Design 30 §1.11 (L3): a kept episode's picture stays as long as its audio - a played extra's too. */
@@ -172,7 +175,7 @@ class EpisodeArtTest {
         // The glue: the want set over the plan's extras, as the sync and the player compute it.
         val glue = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
         assertTrue(glue.contains("val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras"))
-        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered)"))
+        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered, ArtSkips.skipped())"))
     }
 
     @Test
@@ -310,12 +313,59 @@ class EpisodeArtTest {
     @Test
     fun `d39 - the want set reads the list - every sender carries it, and the prune keeps it`() {
         val plan = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
-        assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered)"))
+        assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty(), unmetered, ArtSkips.skipped())"))
         val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
         assertTrue("the prune's keep is the want set's", sync.contains("val want = ArtWants.compute(context)\n        if (lib != null) store.pruneCovers(lib.covers, want.keep)"))
     }
 
     // The addendum of 2026-10-19: all pictures ASAP on Wi-Fi; the playing episode's picture at once.
+
+    /** qa-art-asap-code M3: on mobile data only the playing Spotify entry's look-ahead is streaming's. */
+    @Test
+    fun `asap - eight playlists on mobile data - only the playing one's 50 in now`() {
+        val lists = (1..8).map { n ->
+            entry(10L + n, Source.SPOTIFY, target = "spotify:playlist:FAKEid$n", order = "oldest_first", cache = 0).copy(spotifyMode = "list")
+        }
+        val tracks = (1..8).associateWith { n -> (1..80).map { "p$n-t$it" } }
+        val pics = tracks.values.flatten().associateWith { art(it) }
+        val rows = lists.flatMapIndexed { i, en -> items(en.id, tracks.getValue(i + 1), art = pics) }
+        val snap = snapshot(library(lists), rows)
+        // Playing playlist 3 from its 10th track.
+        val playing = lists[2]
+        val queue = tracks.getValue(3).mapNotNull { snap.item(playing.id, it) }
+        val w = artWant(snap, queue, 9, held = emptySet(), recent = emptyList(), unmetered = false)
+        val playingPics = tracks.getValue(3).map { pics.getValue(it) }.toSet()
+        assertTrue("every now picture is the playing playlist's", w.now.all { it in playingPics })
+        // The window (4..14), the queue's next 50 (10..59) and its own look-ahead from the top (0..49).
+        assertEquals(tracks.getValue(3).take(60).map { pics.getValue(it) }.toSet(), w.now.toSet())
+        val othersAhead = (1..8).filter { it != 3 }.flatMap { n -> tracks.getValue(n).take(SPOTIFY_ART_AHEAD).map { pics.getValue(it) } }
+        assertTrue("the others' look-ahead is later's (Wi-Fi only)", w.later.containsAll(othersAhead))
+        assertTrue(othersAhead.none { it in w.now })
+    }
+
+    /** qa-art-asap-code L6: a picture the launcher keeps passing over stops holding a slot of the page. */
+    @Test
+    fun `asap - a picture passed over three syncs leaves the later wire, not keep`() {
+        val sent = listOf(a, b, c, d)
+        // c arrived, a and b before it didn't: passed over; d after it isn't judged.
+        val once = artSkipsAfter(emptyMap(), sent, held = setOf(c))
+        assertEquals(mapOf(a to 1, b to 1), once)
+        val twice = artSkipsAfter(once, listOf(a, b, d, e), held = setOf(c, d))
+        assertEquals(mapOf(a to 2, b to 2), twice)
+        // b arrives at last: it leaves the counts.
+        val thrice = artSkipsAfter(twice, listOf(a, b, e, f), held = setOf(c, d, b, e))
+        assertEquals(mapOf(a to 3), thrice)
+        assertEquals(setOf(a), skippedArt(thrice))
+        assertEquals("nothing arrived: nothing judged", thrice, artSkipsAfter(thrice, listOf(a, f), held = setOf(c, d, b, e)))
+        val w = wantedArt(emptyList(), listOf(a, f), emptyList(), emptyList(), emptySet(), emptySet(), skip = skippedArt(thrice))
+        assertEquals(listOf(f), w.later)
+        assertTrue("still kept", a in w.keep)
+        // The glue: the sync's send records its page, the next sync's pull counts.
+        val bridge = moduleFile("src/main/java/me/vibb/music/bridge/BridgeSync.kt").readText()
+        assertTrue(bridge.contains("ArtSkips.sent(want.later)"))
+        val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
+        assertTrue(sync.indexOf("BridgeSync.pull(context)") in 0 until sync.indexOf("ArtSkips.note(store.coverHashes())"))
+    }
 
     @Test
     fun `asap - on Wi-Fi every picture of every ticked entry is wanted in play order, now and the keep sets first`() {

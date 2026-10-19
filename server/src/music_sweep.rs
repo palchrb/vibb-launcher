@@ -3422,8 +3422,8 @@ fn rejudge(plan: &mut Plan, refs: &[i64]) {
 /// check's new items first, until done - no picture budget since 2026-10-19 (`gets` is the tests'
 /// cap, else `u32::MAX`). The check's own budget or a host's trouble may cut it short: the items
 /// left stay untried (QA L1 b) and are counted in `plan.art.more`, which makes the entry due again
-/// at once ([Why::Art]) - after a host's trouble only when a picture came in this pass, so a dead
-/// host waits for the regular check. Never fails the check: a failed picture shows the series
+/// at once ([Why::Art]) - only when the pass sent a picture request, and after a host's trouble
+/// only when a picture came in this pass, so a dead host waits for the regular check. Never fails the check: a failed picture shows the series
 /// cover.
 async fn art_pass(
     db: &sqlx::SqlitePool,
@@ -3546,6 +3546,9 @@ async fn art_pass(
     let mut held = 0;
     let mut cut_at: Option<usize> = None;
     let mut came = false;
+    // Whether the pass sent a picture request at all (qa-art-asap-code L3): a check whose listing
+    // spent its whole budget doesn't come back at once only to spend it again.
+    let mut requested = false;
     for (step, &index) in candidates.iter().enumerate() {
         let Some(url) = plan.items[index].art_url.clone() else {
             continue;
@@ -3617,6 +3620,7 @@ async fn art_pass(
             break;
         }
         gets -= 1;
+        requested = true;
         plan.items[index].art_fetched_at = Some(stamp(now));
         // A network error, a timeout or a 5xx is the host's trouble, not the picture's: it
         // doesn't use up one of the picture's tries (a result it has stays; it waits a day), and
@@ -3687,7 +3691,7 @@ async fn art_pass(
     }
     // What is left for the next check: the rest after a cut, and what the tests' cap held
     // (never with a cap of 0, which means "no art" in the tests).
-    let rest = cut_at.map_or(0, |at| {
+    let rest = cut_at.filter(|_| requested).map_or(0, |at| {
         candidates[at..]
             .iter()
             .filter(|&&i| art_due(&plan.items[i], now))

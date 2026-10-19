@@ -943,6 +943,30 @@ async fn a_dead_host_is_not_due_again_at_once() {
     );
 }
 
+/// qa-art-asap-code L3: a check whose listing spent the whole request budget sent no picture
+/// request, so it doesn't come back at once only to spend it on the listing again.
+#[tokio::test]
+async fn a_check_with_no_picture_request_is_not_due_again_at_once() {
+    let app = TestApp::new().await;
+    app.state
+        .music_sweep
+        .set_limits(1, std::time::Duration::ZERO);
+    let feed = "https://example.org/spent.rss";
+    let id = rss_entry(&app, feed).await;
+    long_feed(&app, feed, "s", 10);
+    check(&app, id, t0()).await;
+    assert_eq!(items(&app, id).await.len(), 10);
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 0);
+    assert_eq!(listing(&app, id).await.art_more, 0);
+    assert!(
+        sweep::due(&app.db, t0() + TimeDelta::seconds(5))
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.entry_id != id)
+    );
+}
+
 /// A simulated day of 30 NRK podcasts with 100 episodes each (every one with its own picture) and
 /// 10 feeds: with no picture budget (2026-10-19), the sweep's first passes fetch every picture,
 /// once each - each check within its own request budget, an unfinished entry due again at once -

@@ -483,7 +483,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   requests in the tests only (0 in tests that count listing requests; `u32::MAX` = none, production). **Due again at once** (migration `0081_music_art_more.sql`,
   `music_listings.art_more`): a pass cut short by the check's budget (or by a host's trouble after a picture came in
   that pass - a dead host that answered nothing waits for the regular check) leaves the rest untried (QA L1 b) and
-  stores how many; `schedule` makes such an entry due at once (`Why::Art`, after anything else due; no
+  stores how many - only when the pass sent a picture request (qa-art-asap-code L3: a listing that spent the whole
+  budget doesn't bring the entry back at once to spend it again); `schedule` makes such an entry due at once (`Why::Art`, after anything else due; no
   `CHECKS_PER_PASS` warning for it), back to back with the 4 s check spacing, until `art_more` is 0. Cost: a 1000-item
   feed with its own pictures is ~1000 GETs, ~4 checks of 250 back to back, ~4-5 minutes at the 200 ms gap (plus the
   fetch time); 212 Acast pictures are done in one check (under a minute). The backlog rule (below) and the retry rules
@@ -505,6 +506,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   and after an entry is deleted. The entry page's episodes line adds "· N with episode art" (not for Storytel: "N books" only).
 - Tests: `src/tests/music_art.rs` (design 39: `every_ok_item_in_play_order_…`; 2026-10-19:
   `a_check_fetches_every_picture_in_play_order`, `due_again_at_once_until_the_pictures_are_done`,
-  `a_dead_host_is_not_due_again_at_once`, `a_day_of_backfill_fetches_every_picture_once`), the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
+  `a_dead_host_is_not_due_again_at_once`, `a_check_with_no_picture_request_is_not_due_again_at_once`,
+  `a_day_of_backfill_fetches_every_picture_once`), the Storytel cases at the end of `src/tests/music_storytel.rs`, `photos::tests` (the print, the tone), `music_sources::tests` (the 512 pick,
   `wide_image`, `null`/`[]`). `CannedFetch::hold`/`release` (a gate every request waits at) and
   `Sweep::pause_before_commit` (cfg(test)) let a test act inside a check without a clock (code QA L3).
