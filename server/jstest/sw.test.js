@@ -122,6 +122,8 @@ test("a push shows its notification, then the badge, then posts the receipt", as
         d: 4411,
         t: "AAAAAAAAAAAAAAAAAAAAAA",
     });
+    // The option WebKit's declarative path needs (absolute, this origin), the same everywhere.
+    assert.strictEqual(options.navigate, ORIGIN + "/devices/3/calls");
     assert.deepStrictEqual(w.log[2], ["badge", 3]);
     const [, url, init] = w.log[3];
     assert.strictEqual(url, "/notifications/receipt");
@@ -159,6 +161,7 @@ test("a declarative push on Safari is shown from the proposed notification and c
         body: "At 14:02",
         lang: "en",
         icon: "/static/icons/icon-192.png",
+        navigate: ORIGIN + "/devices/3/calls",
         tag: "e812",
         data: { navigate: ORIGIN + "/devices/3/calls", d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA" },
     });
@@ -175,7 +178,12 @@ test("a declarative push on Safari is shown from the proposed notification and c
     assert.strictEqual(JSON.parse(bare.log[0][2].body).p, 1);
     assert.strictEqual(JSON.parse(bare.log[3][2].body).p, 2);
     assert.strictEqual(bare.log[1][1], "x");
-    assert.strictEqual(bare.log[1][2].data.navigate, "/notifications");
+    assert.strictEqual(bare.log[1][2].navigate, ORIGIN + "/notifications");
+    assert.strictEqual(bare.log[1][2].data.navigate, ORIGIN + "/notifications");
+    // A navigate off this origin never becomes the option either (the inbox instead).
+    const away = fakeWorker({ badge: false });
+    await away.fire("push", { data: null, notification: { title: "x", navigate: "https://evil.example/x" } });
+    assert.strictEqual(away.log[1][2].navigate, ORIGIN + "/notifications");
     // A declarative show that fails still leaves the receipt sent, and the probe says so.
     const failing = fakeWorker({ badge: false, showFails: true });
     await failing.fire("push", { data: null, notification: proposed });
@@ -217,7 +225,8 @@ test("a push that can't be read still shows a notification, and posts nothing", 
         assert.strictEqual(w.log[1][0], "show");
         assert.strictEqual(w.log[1][1], "Vibb Phone");
         assert.strictEqual(w.log[1][2].body, "Something new - open Notifications");
-        assert.strictEqual(w.log[1][2].data.navigate, "/notifications");
+        assert.strictEqual(w.log[1][2].navigate, ORIGIN + "/notifications");
+        assert.strictEqual(w.log[1][2].data.navigate, ORIGIN + "/notifications");
         // No receipt: nothing but the probe's two steps is posted.
         assert.ok(!w.log.some((e) => e[0] === "fetch" && JSON.parse(e[2].body).p === undefined));
     }

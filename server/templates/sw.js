@@ -144,11 +144,18 @@ function probeShown(via, outcome) {
 async function show(event) {
     const { n, via } = notificationOf(event);
     const data = n.data || {};
+    // `navigate` as an option, absolute and on this origin: WebKit's declarative path refuses a
+    // replacement without a valid navigate URL (ServiceWorkerRegistration::showNotification:
+    // "did not include NotificationOptions that specify a valid defaultAction url" - the probe's
+    // TypeError on the user's iPhone, 2026-10-19), and then shows its proposed notification
+    // itself. Other browsers ignore the option; the click handler reads it from `data` as before.
+    const navigate = new URL(localPath(n.navigate), self.location.origin).href;
     const options = {
         body: n.body || "",
         lang: n.lang || "en",
         icon: "/static/icons/icon-192.png",
-        data: { navigate: n.navigate || "/notifications", d: data.d, t: data.t },
+        navigate,
+        data: { navigate, d: data.d, t: data.t },
     };
     if (n.tag) options.tag = n.tag;
     const declarative = via === "push-declarative";
