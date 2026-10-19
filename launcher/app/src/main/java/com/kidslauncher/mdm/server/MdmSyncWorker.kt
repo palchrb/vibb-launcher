@@ -422,12 +422,62 @@ private suspend fun dispatchPendingCommand(
         // Answered after the status report that carries the fresh fix (performMdmSync).
         "locate" -> {}
 
+        // Design 37: the parent's Install Now - this sync goes on to the list (download, settle)
+        // and, last, the commit; the answer comes from the settle or a failure.
+        INSTALL_NOW_COMMAND -> {
+            startInstallNow(context, api, pending)
+            // A command queued behind it follows within seconds (QA L7).
+            requestFollowUpSync(context)
+        }
+
         else -> {
             Log.w(LOG_TAG, "Unknown pending command: ${pending.command}")
             reportCommandResult(context, api, pending, success = false, message = "unknown command - update the launcher")
         }
     }
     return pending
+}
+
+/**
+ * Install Now received (design 37 §4.2): a record of another command is answered first - with its
+ * own failure, else "superseded" (failed, QA L5) -, then this one is stored with the running
+ * versionCode; the ordinary gate's last wait is forgotten (QA L4) and a download waiting for
+ * Wi-Fi is gated again (the override is read live, [AppDownloads]' `gate`).
+ */
+private suspend fun startInstallNow(context: Context, api: MdmApi, pending: PendingCommand) {
+    InstallNow.load(context)
+        ?.takeIf { it.commandId != pending.id || it.requestedAt != pending.requestedAt }
+        ?.let { old ->
+            CommandAnswers.result(
+                context, api, PendingCommand(old.commandId, INSTALL_NOW_COMMAND, old.requestedAt),
+                success = false, message = old.failure ?: INSTALL_NOW_SUPERSEDED,
+            )
+        }
+    Log.i(LOG_TAG, "Install Now ${pending.id} (row showed ${pending.releaseTag})")
+    InstallNow.store(
+        context,
+        InstallNowRecord(pending.id, pending.requestedAt, pending.releaseTag, BuildConfig.VERSION_CODE.toLong()),
+    )
+    SelfUpdate.lastWait = null
+    try {
+        AppDownloads.request(context, "install_now")
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't start the downloads for Install Now", e)
+    }
+}
+
+/**
+ * Install Now's answer when there is one ([installNowOutcome]): from the new process after the
+ * update ("installed"), a failure recorded anywhere ([InstallNow.fail]), or what the list says.
+ * The answer waits in the outbox when the server can't be reached.
+ */
+private suspend fun settleInstallNow(context: Context, api: MdmApi, row: LauncherRow) {
+    val record = InstallNow.load(context) ?: return
+    val (ok, message) = installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row)
+        .answer(BuildConfig.VERSION_NAME) ?: return
+    Log.i(LOG_TAG, "Install Now ${record.commandId}: $message")
+    CommandAnswers.result(context, api, PendingCommand(record.commandId, INSTALL_NOW_COMMAND, record.requestedAt), ok, message)
+    InstallNow.clearCommand(context, record.commandId)
 }
 
 private fun requestFollowUpSync(context: Context) {
@@ -521,6 +571,9 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Download sweep failed", e)
         }
+        // Install Now: the new process answers "installed" also without a list (tsnet before the
+        // unlock); nothing else is known.
+        settleInstallNow(context, api, LauncherRow.NO_LIST)
         return
     }
 
@@ -580,14 +633,20 @@ private suspend fun checkForTrackedAppUpdates(context: Context, api: MdmApi) {
     }
     // The launcher's own update: downloaded by the runner too, committed only in the update
     // window (step 11).
-    handleLauncherUpdate(context, launcherUpdates.firstOrNull())?.let { wanted += it.wanted() }
+    val launcher = handleLauncherUpdate(context, launcherUpdates.firstOrNull())
+    launcher.download?.let { wanted += it.wanted() }
     try {
         AppDownloads.reconcile(context, wanted, otherUpdates.associate { it.id to it.releaseTag }, unpinned)
         AppDownloads.request(context, "sync")
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Queueing the downloads failed", e)
     }
+    settleInstallNow(context, api, launcher.row)
 }
+
+/** [handleLauncherUpdate]'s answer: the release to download, and what the row says for Install
+ * Now's settle (design 37). */
+private class LauncherHandled(val download: TrackedAppUpdate?, val row: LauncherRow)
 
 private fun TrackedAppUpdate.wanted() = WantedDownload(
     appId = id,
@@ -609,10 +668,10 @@ private fun TrackedAppUpdate.wanted() = WantedDownload(
  * installed. [update] `null` = the list arrived without the launcher. Returns the release to
  * download, if any.
  */
-private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): TrackedAppUpdate? {
+private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): LauncherHandled {
     val state = TrackedAppUpdateState.load()
     val pendingEntry = TrackedAppUpdateState.pendingEntry()
-    val key = update?.id?.toString() ?: pendingEntry?.first ?: return null
+    val key = update?.id?.toString() ?: pendingEntry?.first ?: return LauncherHandled(null, LauncherRow.NOT_OFFERED)
     val known = state[key]
     // A pending APK on another row (the server's launcher row changed) is stale.
     val pending = pendingEntry?.second?.takeIf { pendingEntry.first == key }
@@ -625,8 +684,10 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): T
     if (rowPackage != null && rowPackage != context.packageName) {
         Log.i(LOG_TAG, "The launcher row is $rowPackage, this build is ${context.packageName} - not installing it")
         if (pending != null) SelfUpdate.dropPending(context)
-        return null
+        return LauncherHandled(null, LauncherRow.NOT_OFFERED)
     }
+    // Install Now skips the hour after a failure (the tap is the retry); a refusal still holds.
+    val installNow = InstallNow.active(context) != null
     val step = launcherUpdateStep(
         refusedTag = known?.refusedTag,
         advertisedTag = update?.releaseTag,
@@ -637,10 +698,11 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): T
         pending = pending,
         pendingFileOk = SelfUpdate.fileOk(context, pending),
         nowMs = now,
-        failedBackoffMs = FAILED_RETRY_BACKOFF_MS,
+        failedBackoffMs = if (installNow) 0 else FAILED_RETRY_BACKOFF_MS,
         runningVersionCode = BuildConfig.VERSION_CODE.toLong(),
     )
-    return when (step) {
+    val row = launcherRow(true, update?.releaseTag, known?.lastInstalledTag, known?.refusedTag, step)
+    val download = when (step) {
         LauncherUpdateStep.NOTHING, LauncherUpdateStep.KEEP_PENDING -> null
         LauncherUpdateStep.ALREADY_RUNNING -> {
             // update is non-null here: a withdrawn row never reaches this step.
@@ -661,6 +723,7 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): T
         }
         LauncherUpdateStep.DOWNLOAD -> update
     }
+    return LauncherHandled(download, row)
 }
 
 /**
@@ -675,15 +738,28 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
     val now = System.currentTimeMillis()
     val attemptStartedAt = known?.attemptStartedAtMs
     if (attemptStartedAt != null && now - attemptStartedAt < INSTALL_ATTEMPT_TIMEOUT_MS) return
+    // Install Now (design 37): no backoff (the tap is the retry), no night window, no screen-off -
+    // only a call or an emergency holds it. A refused release is still never committed.
+    val installNow = InstallNow.active(context) != null
     // A transient failure of this release keeps its APK and waits out the backoff; a refused one
     // is never committed (qa-11-code #4).
-    if (!pendingCommitAllowed(pending.releaseTag, known?.lastFailedTag, known?.lastFailedAtMs, known?.refusedTag, now, FAILED_RETRY_BACKOFF_MS)) {
+    val allowed = if (installNow) {
+        known?.refusedTag != pending.releaseTag
+    } else {
+        pendingCommitAllowed(pending.releaseTag, known?.lastFailedTag, known?.lastFailedAtMs, known?.refusedTag, now, FAILED_RETRY_BACKOFF_MS)
+    }
+    if (!allowed) {
         if (known?.refusedTag == pending.releaseTag) SelfUpdate.dropPending(context)
         return
     }
-    val decision = updateWindowDecision(SelfUpdate.windowInputs(context, pending))
+    val decision = commitDecision(context, pending, installNow)
+    if (installNow) {
+        // A call that never ends fails the command after 6 h (qa-37-design R-L4).
+        val onCall = decision is UpdateWindowDecision.Wait && decision.reason == UpdateWaitReason.CALL
+        if (InstallNow.callWait(context, onCall, android.os.SystemClock.elapsedRealtime())) return
+    }
     if (decision is UpdateWindowDecision.Wait) {
-        waitForWindow(context, pending, decision)
+        waitForWindow(context, pending, decision, installNow)
         return
     }
     SelfUpdate.lastWait = null
@@ -716,12 +792,20 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         check == PendingApkCheck.MISSING || check == PendingApkCheck.CORRUPT -> {
             Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag}: ${check.name} - downloading again at the next sync")
             SelfUpdate.dropPending(context)
+            // Install Now (qa-37-design R-L2): a file that changed after its own hash check is
+            // answered; a missing one is downloaded again at once.
+            if (installNow) {
+                if (check == PendingApkCheck.CORRUPT) InstallNow.fail(context, INSTALL_NOW_DOWNLOAD_CORRUPT)
+                else requestInstallNowSync(context, "install_now_redownload")
+            }
             return
         }
         check == PendingApkCheck.SAME_VERSION -> {
             Log.i(LOG_TAG, "Pending launcher ${pending.releaseTag} is the running version - nothing to install")
             TrackedAppUpdateState.recordInstalled(context, key, pending.releaseTag)
             SelfUpdate.dropPending(context)
+            // The settle answers "already running" (R-L2).
+            if (installNow) requestInstallNowSync(context, "install_now_running")
             return
         }
         check.deterministic -> {
@@ -730,6 +814,7 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
             Log.w(LOG_TAG, "Pending launcher ${pending.releaseTag} refused before installing: ${check.name}")
             SelfUpdate.dropPending(context)
             TrackedAppUpdateState.recordRefused(context, key, pending.releaseTag)
+            if (installNow) InstallNow.fail(context, check.installNowAnswer)
             appId?.let {
                 notifyAppInstallResult(context, it, pending.name, success = false)
                 reportInstallFailure(api, it)
@@ -737,7 +822,7 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
             return
         }
     }
-    Log.i(LOG_TAG, "Committing launcher ${pending.releaseTag} (update window)")
+    Log.i(LOG_TAG, "Committing launcher ${pending.releaseTag} (${if (installNow) "Install Now" else "update window"})")
     TrackedAppUpdateState.recordAttemptStarted(context, key)
     appId?.let { notifyAppInstalling(context, it, pending.name) }
     // Waits for a catalog install's session copy in progress; from here on the download runner
@@ -749,9 +834,9 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         beforeCommit = { sessionId ->
             // The archive parse, the hash and the copy into the session took seconds: a wake or a
             // call in between cancels the commit (qa-11-code #2) - only then the fence goes up.
-            val again = updateWindowDecision(SelfUpdate.windowInputs(context, pending))
+            val again = commitDecision(context, pending, installNow)
             if (again is UpdateWindowDecision.Wait) {
-                waitForWindow(context, pending, again)
+                waitForWindow(context, pending, again, installNow)
                 false
             } else {
                 UpdateFence.fenceBeforeCommit(context, sessionId, pending.releaseTag)
@@ -778,17 +863,32 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
             SelfUpdate.committedInThisProcess = false
             TrackedAppUpdateState.recordFailed(context, key, pending.releaseTag, keepPending = true)
             appId?.let { notifyAppInstallResult(context, it, pending.name, success = false) }
+            if (installNow) InstallNow.fail(context, INSTALL_NOW_INSTALL_FAILED_START)
         }
     }
 }
 
-/** The gate said wait: remember why (status report) and, with the screen off, look again when it
- * could pass. */
-private fun waitForWindow(context: Context, pending: PendingSelfUpdate, decision: UpdateWindowDecision.Wait) {
+/** The commit gate: Install Now's ([installNowDecision]) or the night window's. */
+private fun commitDecision(context: Context, pending: PendingSelfUpdate, installNow: Boolean): UpdateWindowDecision {
+    val inputs = SelfUpdate.windowInputs(context, pending)
+    return if (installNow) installNowDecision(inputs.liveCall, inputs.emergency) else updateWindowDecision(inputs)
+}
+
+private fun requestInstallNowSync(context: Context, reason: String) {
+    try {
+        com.kidslauncher.mdm.push.SyncRunner.request(context, reason)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't ask for Install Now's sync", e)
+    }
+}
+
+/** The gate said wait: remember why (status report) and, with the screen off - or for Install
+ * Now, whatever the screen (design 37 §4.2) -, look again when it could pass. */
+private fun waitForWindow(context: Context, pending: PendingSelfUpdate, decision: UpdateWindowDecision.Wait, installNow: Boolean) {
     SelfUpdate.lastWait = decision.reason
     Log.i(LOG_TAG, "Launcher ${pending.releaseTag} waits: ${decision.reason.wire}")
     val recheck = decision.recheckInMs
-    if (recheck != null && SelfUpdate.screenOffForMs(context) != null) SelfUpdate.armAlarm(context, recheck)
+    if (recheck != null && (installNow || SelfUpdate.screenOffForMs(context) != null)) SelfUpdate.armAlarm(context, recheck)
 }
 
 /** Best-effort visibility for the admin site - a download-level failure here doesn't mark

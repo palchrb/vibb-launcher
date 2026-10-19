@@ -21,6 +21,7 @@ mod docker;
 mod edge;
 mod enrollment;
 mod hardening;
+mod install_now;
 mod intake_limits;
 mod launcher_ui;
 mod listeners;

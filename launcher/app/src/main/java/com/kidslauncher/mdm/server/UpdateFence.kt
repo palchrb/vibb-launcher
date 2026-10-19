@@ -564,7 +564,8 @@ object UpdateFence {
             homeRoleHeld = summary?.homeRoleHeld ?: homeRoleHeld(app),
             pendingTag = pending?.releaseTag,
             pendingSinceMs = pending?.downloadedAtMs,
-            waitingFor = if (pending != null) SelfUpdate.lastWait?.wire else null,
+            // Install Now's own words while it runs (design 37 §3), else the night gate's.
+            waitingFor = installNowWait(InstallNow.active(app) != null, pending != null, SelfUpdate.lastWait),
             lastFencedAtMs = summary?.fencedAtMs,
             lastReleasedAtMs = summary?.releasedAtMs,
         )

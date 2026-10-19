@@ -1154,6 +1154,8 @@ struct PhoneRow {
     /// "14 allowed", "Not set up"; empty on an app's page.
     value: String,
     href: String,
+    /// The launcher's page: the phone's Install Now part (design 37).
+    install: Option<crate::handlers::install_now::InstallRow>,
 }
 
 impl PhoneRow {
@@ -1165,6 +1167,7 @@ impl PhoneRow {
             avatar: crate::handlers::devices::avatar_class(device),
             value,
             href,
+            install: None,
         }
     }
 }
@@ -1619,6 +1622,10 @@ struct TrackedAppDetailTemplate {
     signer_short: Option<String>,
     /// Source & signing starts open when a refused save or upload is in it.
     source_open: bool,
+    /// `?install=<word>` for a phone without a row (design 37): shown at the group's top.
+    install_flash: Option<(&'static str, bool)>,
+    /// A launcher row is waiting for its phone: `static/install-now.js` polls.
+    install_polling: bool,
 }
 
 /// A local time on a page: "2 h ago" and the exact time for `title=` and ⓘ panels.
@@ -1722,6 +1729,13 @@ pub async fn view_tracked_app(
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let note = note_of(query.get("notice").map(String::as_str));
+    // Install Now's answer (design 37): `?install=<word>&phone=<id>`.
+    let install = query.get("install").map(|word| {
+        (
+            word.as_str(),
+            query.get("phone").and_then(|p| p.parse::<i64>().ok()),
+        )
+    });
     render_detail_full(
         &state,
         id,
@@ -1729,20 +1743,22 @@ pub async fn view_tracked_app(
         None,
         None,
         query.get("open").map(String::as_str),
+        install,
     )
     .await
 }
 
 async fn render_detail(state: &AppState, id: i64, refused: Option<Note>) -> Response {
-    render_detail_full(state, id, refused, None, None, None).await
+    render_detail_full(state, id, refused, None, None, None, None).await
 }
 
 async fn render_detail_page(state: &AppState, id: i64, details: Option<DetailsForm>) -> Response {
-    render_detail_full(state, id, None, details, None, None).await
+    render_detail_full(state, id, None, details, None, None, None).await
 }
 
 /// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14),
-/// `open` = the `<details>` a save returns to ("display", "source").
+/// `open` = the `<details>` a save returns to ("display", "source"), `install` = Install Now's
+/// answer (design 37: the word and the phone it names).
 async fn render_detail_full(
     state: &AppState,
     id: i64,
@@ -1750,13 +1766,16 @@ async fn render_detail_full(
     details: Option<DetailsForm>,
     display: Option<crate::app_display::Entered>,
     open: Option<&str>,
+    install: Option<(&str, Option<i64>)>,
 ) -> Response {
-    let app = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
+    let app = match sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        .ok()
-        .flatten();
+    {
+        Ok(app) => app,
+        Err(err) => return page_read_failed(id, err),
+    };
 
     let Some(app) = app else {
         return (StatusCode::NOT_FOUND, "App not found").into_response();
@@ -1792,12 +1811,12 @@ async fn render_detail_full(
         display.as_ref(),
     );
     form.open |= open == Some("display");
-    // The phones with the app ticked; the launcher is on every phone that is set up.
-    let devices: Vec<crate::models::Device> = if app.is_launcher {
+    // The phones with the app ticked; the launcher is on every phone that is set up. A DB error
+    // is a 500, never an empty list (design 37 §2.1).
+    let devices: Result<Vec<crate::models::Device>, sqlx::Error> = if app.is_launcher {
         sqlx::query_as("SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name")
             .fetch_all(&state.db)
             .await
-            .unwrap_or_default()
     } else {
         sqlx::query_as(
             "SELECT d.* FROM devices d JOIN device_tracked_apps dta ON dta.device_id = d.id \
@@ -1806,20 +1825,47 @@ async fn render_detail_full(
         .bind(id)
         .fetch_all(&state.db)
         .await
-        .unwrap_or_default()
+    };
+    let devices = match devices {
+        Ok(devices) => devices,
+        Err(err) => return page_read_failed(id, err),
     };
     let row_package =
         (!app.is_launcher && !app.package_name.is_empty()).then_some(app.package_name.as_str());
-    let phones = devices
-        .iter()
-        .map(|device| {
-            PhoneRow::new(
-                device,
-                String::new(),
-                phone_apps_href(device.id, row_package),
+    let mut phones: Vec<PhoneRow> = Vec::with_capacity(devices.len());
+    // Install Now's word for a phone that has no row here goes to the group's top.
+    let mut install_flash = None;
+    let mut install_polling = false;
+    for device in &devices {
+        let mut row = PhoneRow::new(
+            device,
+            String::new(),
+            phone_apps_href(device.id, row_package),
+        );
+        if app.is_launcher {
+            let flash = install
+                .filter(|(_, phone)| *phone == Some(device.id))
+                .map(|(word, _)| word);
+            match crate::handlers::install_now::install_row(
+                state, &app, device.id, &zone, now, flash,
             )
-        })
-        .collect();
+            .await
+            {
+                Ok(install_row) => {
+                    install_polling |= install_row.state != "idle";
+                    row.install = Some(install_row);
+                }
+                Err(err) => return page_read_failed(id, err),
+            }
+        }
+        phones.push(row);
+    }
+    if app.is_launcher
+        && let Some((word, phone)) = install
+        && !phone.is_some_and(|p| devices.iter().any(|d| d.id == p))
+    {
+        install_flash = crate::install_now::flash(word);
+    }
     let (upload_note, package_note) = match refused {
         Some(Note::Upload(flash)) => (Some(flash), None),
         Some(Note::Package(flash)) => (None, Some(flash)),
@@ -1864,11 +1910,23 @@ async fn render_detail_full(
             package_candidates,
             phones,
             source_open,
+            install_flash,
+            install_polling,
         }
         .render()
         .unwrap(),
     )
     .into_response()
+}
+
+/// The app's page can't be read: a 500, never a page with a made-up part.
+fn page_read_failed(id: i64, err: sqlx::Error) -> Response {
+    tracing::error!(app_id = id, %err, "can't read the app's page");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Couldn't read this app - check the server log.",
+    )
+        .into_response()
 }
 
 /// How long "Check now" waits for its sync before answering: a quick check shows its result at
@@ -2054,7 +2112,7 @@ pub async fn save_display(
                     error,
                 };
                 let mut page =
-                    render_detail_full(&state, id, None, None, Some(entered), None).await;
+                    render_detail_full(&state, id, None, None, Some(entered), None, None).await;
                 if page.status() == StatusCode::OK {
                     *page.status_mut() = StatusCode::BAD_REQUEST;
                 }

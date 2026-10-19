@@ -127,6 +127,15 @@ class AppInstallReceiver : BroadcastReceiver() {
                     Handler(Looper.getMainLooper()).post { SelfUpdate.bringHomeToFront(app, "a failed self-update") }
                 }
                 if (failed) appId?.let { reportInstallFailureToServer(app, it) }
+                // Install Now (design 37): the tap was one attempt - any failed result is its
+                // answer (the ordinary path keeps its own backoff and record).
+                if (isLauncher && failed) {
+                    try {
+                        InstallNow.fail(app, installNowInstallFailed(status))
+                    } catch (e: Exception) {
+                        Log.w(LOG_TAG, "Couldn't record Install Now's failure", e)
+                    }
+                }
                 // A finished self-update's file (kept on success, see above) or a failed one's.
                 if (isLauncher) SelfUpdate.cleanup(app)
             } finally {

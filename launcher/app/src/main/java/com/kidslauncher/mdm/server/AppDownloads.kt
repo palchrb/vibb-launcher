@@ -314,7 +314,7 @@ object AppDownloads {
             val state = if (running != null && running.record.appId == record.appId && running.record.tag == record.tag) {
                 if (running.installing) "installing" else "downloading"
             } else {
-                downloadGate(caps, wifiOnly, anyNetworkAtMs(record.isLauncher, record.firstSeenMs), now, have, record.total, allocatable).wire
+                gate(app, record, caps, wifiOnly, now, have, record.total, allocatable).wire
             }
             AppDownloadEntry(
                 trackedAppId = record.appId,
@@ -337,6 +337,27 @@ object AppDownloads {
         val entries = (downloads + refused).take(20)
         return AppDownloadsReport(wifiOnly = wifiOnly, network = networkLabel(caps), entries = entries)
     }
+
+    /**
+     * The gate for one record (design 13's [downloadGate]) - the one call site, so Install Now's
+     * override reaches every place a gate is read: the run, the report, the running download's
+     * check, the network callback. The override is read live from the record (design 37 QA M3,
+     * never stored in a download record): our own update while Install Now runs ignores "Wi-Fi
+     * only" and roaming; a cleared or failed record ends it.
+     */
+    private fun gate(
+        app: Context,
+        record: DownloadRecord,
+        caps: NetCaps?,
+        wifiOnly: Boolean,
+        now: Long,
+        have: Long,
+        total: Long?,
+        allocatable: Long?,
+    ): DownloadGate = downloadGate(
+        caps, wifiOnly, anyNetworkAtMs(record.isLauncher, record.firstSeenMs), now, have, total, allocatable,
+        parentOverride = record.isLauncher && InstallNow.active(app) != null,
+    )
 
     // ---- the network ---------------------------------------------------------------------------
 
@@ -406,16 +427,16 @@ object AppDownloads {
             val now = System.currentTimeMillis()
             val running = active
             if (running != null) {
-                val gate = downloadGate(caps, wifiOnly, anyNetworkAtMs(running.record.isLauncher, running.record.firstSeenMs), now, 0, null, null)
-                if (gate != DownloadGate.GO && !running.installing && running.pausedFor == null) {
-                    Log.i(LOG_TAG, "Pausing ${running.record.name}: ${gate.wire}")
-                    running.pausedFor = gate
+                val runningGate = gate(app, running.record, caps, wifiOnly, now, 0, null, null)
+                if (runningGate != DownloadGate.GO && !running.installing && running.pausedFor == null) {
+                    Log.i(LOG_TAG, "Pausing ${running.record.name}: ${runningGate.wire}")
+                    running.pausedFor = runningGate
                     running.call?.cancel()
                 }
                 return
             }
             val anyGo = AppDownloadStore.load(app).any {
-                downloadGate(caps, wifiOnly, anyNetworkAtMs(it.isLauncher, it.firstSeenMs), now, 0, null, null) == DownloadGate.GO
+                gate(app, it, caps, wifiOnly, now, 0, null, null) == DownloadGate.GO
             }
             val edge = anyGo && !anyGoLast
             anyGoLast = anyGo
@@ -451,7 +472,11 @@ object AppDownloads {
                 val gates = records.associate { record ->
                     val file = partial(app, record)
                     val have = if (file.isFile) file.length() else 0L
-                    record.appId to downloadGate(caps, wifiOnly, anyNetworkAtMs(record.isLauncher, record.firstSeenMs), now, have, record.total, allocatable)
+                    record.appId to gate(app, record, caps, wifiOnly, now, have, record.total, allocatable)
+                }
+                // Install Now (design 37): the parent's download can't wait for space - answered.
+                if (records.any { it.isLauncher && gates[it.appId] == DownloadGate.WAIT_SPACE } && InstallNow.active(app) != null) {
+                    InstallNow.fail(app, INSTALL_NOW_NO_SPACE)
                 }
                 val next = nextDownload(records, gates, deferred)
                 anyGoLast = next != null
@@ -460,7 +485,7 @@ object AppDownloads {
                     // edge (qa-13-code #6): look once more now that anyGoLast says "none".
                     val again = currentCaps(app)
                     if (again != caps && rechecks++ < 3 && records.any {
-                            downloadGate(again, wifiOnly, anyNetworkAtMs(it.isLauncher, it.firstSeenMs), now, 0, null, null) == DownloadGate.GO
+                            gate(app, it, again, wifiOnly, now, 0, null, null) == DownloadGate.GO
                         }
                     ) {
                         continue
@@ -486,6 +511,8 @@ object AppDownloads {
                     Outcome.FAILED -> {
                         if (failures >= RETRY_DELAYS_MS.size) {
                             Log.w(LOG_TAG, "Download keeps failing - waiting for the next trigger")
+                            // Install Now: the run's give-up is its answer (design 37 §4.2).
+                            if (next.isLauncher && InstallNow.active(app) != null) InstallNow.fail(app, INSTALL_NOW_DOWNLOAD_FAILED)
                             break
                         }
                         releaseWakeLock()
@@ -725,6 +752,7 @@ object AppDownloads {
                 TrackedAppUpdateState.recordFailed(app, rec.appId.toString(), rec.tag)
                 notifyAppInstallResult(app, rec.appId, rec.name, success = false)
                 reportFailure(api, rec.appId)
+                if (rec.isLauncher && InstallNow.active(app) != null) InstallNow.fail(app, INSTALL_NOW_DOWNLOAD_CORRUPT)
             } else {
                 // Not installed, no backoff: downloaded again at once (design 13 QA #2) - with the
                 // list asked again first, so a re-upload under the same label brings its own hash
@@ -849,6 +877,14 @@ object AppDownloads {
         notifyAppInstallResult(app, rec.appId, rec.name, success = true)
         Log.i(LOG_TAG, "Downloaded launcher ${rec.tag} - waiting for the update window")
         SelfUpdate.onPendingStored(app)
+        // Install Now: the sync commits it now, not at the night window (design 37 §4.2).
+        if (InstallNow.active(app) != null) {
+            try {
+                SyncRunner.request(app, "install_now_downloaded")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't ask for Install Now's commit", e)
+            }
+        }
         return Outcome.PROGRESS
     }
 

@@ -51,6 +51,8 @@ fun anyNetworkAtMs(isLauncher: Boolean, firstSeenMs: Long): Long? =
  * The gate (design 13 §3, QA #1, decisions): a network with INTERNET and a physical transport;
  * never roaming, switch on or off; with [wifiOnly] also NOT_METERED - unless [anyNetworkAt] (the
  * launcher's grace end) has passed (a clock set back before the start of the wait doesn't count);
+ * [parentOverride] (Install Now's launcher download, design 37) lifts both the roaming and the
+ * Wi-Fi rule;
  * room for the rest of the download, a session copy of the whole file and [DOWNLOAD_SPACE_MARGIN_BYTES]
  * ([allocatableBytes] `null` = unknown: not checked; [totalBytes] `null` = not known before the
  * first response: checked once it is).
@@ -63,11 +65,14 @@ fun downloadGate(
     haveBytes: Long,
     totalBytes: Long?,
     allocatableBytes: Long?,
+    parentOverride: Boolean = false,
 ): DownloadGate {
     if (caps == null || !caps.internet || !caps.physical) return DownloadGate.WAIT_NETWORK
-    if (!caps.notRoaming) return DownloadGate.WAIT_ROAMING
+    // Install Now (design 37 §4.1): the parent chose this download - neither "Wi-Fi only" nor
+    // roaming holds it; a network and the space still do.
+    if (!caps.notRoaming && !parentOverride) return DownloadGate.WAIT_ROAMING
     val graceOver = anyNetworkAt != null && nowMs >= anyNetworkAt
-    if (wifiOnly && !caps.notMetered && !graceOver) return DownloadGate.WAIT_WIFI
+    if (wifiOnly && !caps.notMetered && !graceOver && !parentOverride) return DownloadGate.WAIT_WIFI
     if (allocatableBytes != null && totalBytes != null && !enoughSpace(haveBytes, totalBytes, allocatableBytes)) {
         return DownloadGate.WAIT_SPACE
     }

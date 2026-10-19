@@ -197,6 +197,11 @@ fn wait_text(reason: &str) -> Option<&'static str> {
         "screen_on" => "the screen was on",
         "screen_off_short" => "the screen had only just gone off",
         "outside_window" => "waiting for the night window",
+        // Install Now (design 37 §2.4); `install_now_download` comes without a pending tag, so
+        // the "Update waiting" note never shows it.
+        crate::install_now::WAIT_CALL => "Install Now waits for the call to end",
+        crate::install_now::WAIT_EMERGENCY => "Install Now waits: an emergency call was recent",
+        crate::install_now::WAIT_READY => "Install Now is installing it",
         _ => return None,
     })
 }
@@ -1001,5 +1006,32 @@ mod tests {
             (note.title.as_str(), note.value.as_deref()),
             ("Last update", Some("Installed"))
         );
+    }
+
+    /// Design 37: the "Update waiting" note's "Last check: ..." for Install Now's waits; the four
+    /// words fit the stored cap.
+    #[test]
+    fn install_now_waits_have_words() {
+        assert_eq!(
+            wait_text("install_now_call"),
+            Some("Install Now waits for the call to end")
+        );
+        assert_eq!(
+            wait_text("install_now_emergency"),
+            Some("Install Now waits: an emergency call was recent")
+        );
+        assert_eq!(
+            wait_text("install_now_ready"),
+            Some("Install Now is installing it")
+        );
+        assert_eq!(wait_text("install_now_download"), None);
+        for word in [
+            crate::install_now::WAIT_DOWNLOAD,
+            crate::install_now::WAIT_CALL,
+            crate::install_now::WAIT_EMERGENCY,
+            crate::install_now::WAIT_READY,
+        ] {
+            assert!(word.len() <= MAX_WORD, "{word}");
+        }
     }
 }

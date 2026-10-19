@@ -15,6 +15,7 @@ mod dns_server;
 mod enrollment;
 mod gate;
 mod handlers;
+mod install_now;
 mod keys;
 mod kid_lock;
 mod kiosk_escapes;
@@ -991,6 +992,19 @@ pub fn build_admin_router(
         .route(
             "/apps/tracked/{id}/check",
             post(handlers::tracked_apps::check_now),
+        )
+        // Install Now (design 37): the launcher's page only.
+        .route(
+            "/apps/tracked/{id}/install-now/{device_id}",
+            post(handlers::install_now::install),
+        )
+        .route(
+            "/apps/tracked/{id}/install-now/{device_id}/cancel/{command_id}",
+            post(handlers::install_now::cancel),
+        )
+        .route(
+            "/apps/tracked/{id}/install-now.json",
+            get(handlers::install_now::poll),
         )
         .route(
             "/apps/tracked/{id}/enabled",

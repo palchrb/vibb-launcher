@@ -77,6 +77,8 @@ object SelfUpdate {
             // Off since before this process: counted from the process start (conservative).
             screenOffSinceElapsed = Process.getStartElapsedRealtime()
         }
+        // Install Now (design 37, QA L8): a call that held it ends - the install starts at once.
+        OngoingCalls.addListener { onCallsChanged(app) }
         scope.launch {
             try {
                 cleanup(app)
@@ -101,11 +103,24 @@ object SelfUpdate {
         }
     }
 
-    /** PinLockRuntime's screen receiver (main thread): nothing goes in while someone uses the phone. */
+    /** PinLockRuntime's screen receiver (main thread): nothing goes in while someone uses the
+     * phone - except Install Now, which doesn't wait for a screen-off and keeps its alarm. */
     fun onScreenOn(context: Context) {
         screenEventSeen = true
         screenOffSinceElapsed = null
-        cancelAlarm(context.applicationContext)
+        val app = context.applicationContext
+        if (InstallNow.active(app) == null) cancelAlarm(app)
+    }
+
+    /** Our calls changed: with Install Now waiting for a call and none left, a sync now. */
+    private fun onCallsChanged(app: Context) {
+        try {
+            if (lastWait != UpdateWaitReason.CALL || OngoingCalls.hasLiveCall) return
+            if (InstallNow.active(app) == null) return
+            SyncRunner.request(app, "install_now_call_ended")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Install Now's call check failed", e)
+        }
     }
 
     /** A download just became the pending update: with the screen off, look again when the
@@ -264,7 +279,14 @@ object SelfUpdate {
     private fun armIfPending(app: Context) {
         val pending = TrackedAppUpdateState.pendingEntry()?.second ?: return
         if (screenOffSinceElapsed == null) return
-        armAlarm(app, commitCheckDelayMs(ZonedDateTime.now(), System.currentTimeMillis() - pending.downloadedAtMs, overdueMs))
+        // Install Now keeps its own re-check (a call's 2 minutes) - never the night window's
+        // delay, which would replace it on the one alarm (qa-37-design R-L1).
+        val delay = if (InstallNow.active(app) != null) {
+            installNowRecheckMs(lastWait)
+        } else {
+            commitCheckDelayMs(ZonedDateTime.now(), System.currentTimeMillis() - pending.downloadedAtMs, overdueMs)
+        }
+        armAlarm(app, delay)
     }
 
     /** A sync in [inMs] (the screen is off and the gate could pass then). */
