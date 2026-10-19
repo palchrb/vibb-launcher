@@ -325,7 +325,8 @@ async fn the_route_refuses_what_isnt_a_power_report() {
     let odd = off(
         now,
         3,
-        json!({ "battery": { "level": 140 }, "reason": "<b>flat</b>" }),
+        // A whole battery object, so only its level range refuses it (qa-38-code L1 b).
+        json!({ "battery": { "level": 140, "charging": false, "low": false }, "reason": "<b>flat</b>" }),
     );
     assert_eq!(
         post(&app, &token, json!({ "off": odd })).await,
@@ -355,9 +356,19 @@ async fn the_device_page_says_off_since_until_the_start() {
             .await
             .text()
     };
+    // The off's push held no more: it arrived longer than OFF_HOLD ago.
+    let held_over = || async {
+        sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes')")
+            .execute(&app.db)
+            .await
+            .unwrap();
+    };
     assert!(!page().await.contains("data-power-off"));
     let shutdown = Utc::now() - Duration::minutes(30);
     post(&app, &token, json!({ "off": off(shutdown, 41, json!({})) })).await;
+    // Not while its push is held (a restart's start may still fold it, qa-38-code nit 1).
+    assert!(!page().await.contains("data-power-off"));
+    held_over().await;
     let html = page().await;
     let when = crate::display_time::Zone::load(&app.db).await.at(
         DateTime::from_timestamp_millis(ms(shutdown)).unwrap(),
@@ -371,6 +382,109 @@ async fn the_device_page_says_off_since_until_the_start() {
     );
     post(&app, &token, json!({ "on": on(Utc::now(), 42) })).await;
     assert!(!page().await.contains("data-power-off"));
+
+    // A known restart never says "Off since".
+    let restarting = Utc::now() + Duration::seconds(5);
+    post(
+        &app,
+        &token,
+        json!({ "off": off(restarting, 42, json!({ "reboot": true })) }),
+    )
+    .await;
+    held_over().await;
+    assert!(!page().await.contains("data-power-off"));
+}
+
+/// qa-38-code M1: a status report after the shutdown ends the line, whatever start never arrived
+/// (a re-enrollment after a factory reset, a boot count of -1, a dropped start) - compared as
+/// times (`datetime()`), not as the two columns' different texts.
+#[tokio::test]
+async fn a_report_after_the_shutdown_ends_off_since() {
+    let (app, id, token) = setup().await;
+    let cookie = app.admin_cookie().await;
+    let page = || async {
+        app.get_page(&device_page(id, Section::Summary), &cookie)
+            .await
+            .text()
+    };
+    let report = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
+    let status = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(report.clone()),
+        )
+        .await;
+    assert_eq!(status.status, StatusCode::NO_CONTENT);
+    // A report hours before the shutdown (within the same day): the line shows.
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-3 hours')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let shutdown = Utc::now() - Duration::minutes(30);
+    post(&app, &token, json!({ "off": off(shutdown, 41, json!({})) })).await;
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(page().await.contains("data-power-off"));
+    // The phone reports again, with no start: it is on.
+    let status = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(report),
+        )
+        .await;
+    assert_eq!(status.status, StatusCode::NO_CONTENT);
+    assert!(!page().await.contains("data-power-off"));
+}
+
+/// qa-38-code nit 3: two shutdowns before a start got through - the newest off is kept and told,
+/// the older's held push dropped (no line in the inbox), so only one "turned off" goes.
+#[tokio::test]
+async fn a_newer_shutdown_supersedes_an_older_held_push() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    post(
+        &app,
+        &token,
+        json!({ "off": off(now - Duration::minutes(3), 41, json!({})) }),
+    )
+    .await;
+    post(
+        &app,
+        &token,
+        json!({ "off": off(now - Duration::seconds(10), 42, json!({})) }),
+    )
+    .await;
+    assert_eq!(events(&app, id).await.len(), 2);
+    let held = deliveries(&app, "phone_off").await;
+    assert_eq!(
+        (held[0].0.as_str(), held[0].1.as_deref()),
+        ("dropped", Some("superseded"))
+    );
+    assert_eq!(held[1].0, "queued");
+    assert_eq!(
+        send_at(&app, now + Duration::minutes(6)).await,
+        ["Anna was turned off"]
+    );
+    // The older off arriving again (resent) supersedes nothing.
+    post(
+        &app,
+        &token,
+        json!({ "off": off(now - Duration::minutes(3), 41, json!({})) }),
+    )
+    .await;
+    assert_eq!(deliveries(&app, "phone_off").await[1].0, "accepted");
+    let cookie = app.admin_cookie().await;
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert_eq!(
+        delivery_lines(&inbox),
+        ["Pushed to iPhone · Safari, not confirmed"]
+    );
 }
 
 /// qa-38-design N4: the sender claims a row before its request - one dropped since the pass read

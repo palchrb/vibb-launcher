@@ -465,8 +465,8 @@ pub const FLAT_LEVEL: i64 = 3;
 pub const LAST_REPORT_FLAT_LEVEL: i64 = 10;
 /// A part's instant this far in the server's future is dropped (that part only).
 const POWER_FUTURE: chrono::Duration = chrono::Duration::minutes(5);
-/// A shutdown older than this is dropped.
-const OFF_MAX_AGE: chrono::Duration = chrono::Duration::days(30);
+/// A part (a shutdown or a start) older than this is dropped (qa-38-code nit 2: a start too).
+const POWER_MAX_AGE: chrono::Duration = chrono::Duration::days(30);
 
 /// "battery 2 %, probably flat" (at or below `flat_level`, not charging), "battery 64 %,
 /// charging", "battery 64 %, not charging".
@@ -540,11 +540,15 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
         DateTime::from_timestamp_millis(at_ms).filter(|at| *at <= phone.now + POWER_FUTURE)
     };
     let on = report.on.as_ref().and_then(|on| match in_reach(on.at_ms) {
-        Some(at) => Some((on, at)),
         None => {
             plan.dropped.push("on in the future");
             None
         }
+        Some(at) if at < phone.now - POWER_MAX_AGE => {
+            plan.dropped.push("on older than 30 days");
+            None
+        }
+        Some(at) => Some((on, at)),
     });
     let off = report
         .off
@@ -554,7 +558,7 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
                 plan.dropped.push("off in the future");
                 None
             }
-            Some(at) if at < phone.now - OFF_MAX_AGE => {
+            Some(at) if at < phone.now - POWER_MAX_AGE => {
                 plan.dropped.push("off older than 30 days");
                 None
             }
@@ -599,25 +603,33 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
 }
 
 /// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
-/// since 21:14 · battery was 3 %", the battery read from the off's stored words.
+/// since 21:14 · battery was 3 %", the battery read from the off's stored words. Nothing for a
+/// restart the phone announced ("Anna is restarting") or while the off's push is still held
+/// ([OFF_HOLD] from its arrival, `created_at`): a restart's start may still fold it (qa-38-code
+/// nit 1), and the page says no more than the pushes.
 pub fn off_since_line(
     happened_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+    title: &str,
     summary: &str,
     zone: &Zone,
     now: DateTime<Utc>,
-) -> String {
+) -> Option<String> {
+    if title.ends_with(" is restarting") || now - created_at < OFF_HOLD {
+        return None;
+    }
     let level = summary.split(" · ").find_map(|part| {
         let rest = part.strip_prefix("battery ")?;
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
         (!digits.is_empty() && rest[digits.len()..].starts_with(" %")).then_some(digits)
     });
-    match level {
+    Some(match level {
         Some(level) => format!(
             "Off since {} · battery was {level} %",
             zone.at(happened_at, now)
         ),
         None => format!("Off since {}", zone.at(happened_at, now)),
-    }
+    })
 }
 
 /// An event to store: the words made, the key that makes it one row.
@@ -1225,33 +1237,49 @@ mod tests {
         assert!(near.dropped.is_empty());
         let both = pair("2026-10-18 12:36:00", 41, None, "2026-10-18 12:37:00", 42);
         assert!(both.events.is_empty());
+        // A start older than 30 days is dropped too (qa-38-code nit 2), the off then told alone.
+        let ancient = pair("2026-09-18 12:20:00", 41, None, "2026-09-18 12:29:00", 42);
+        assert_eq!(
+            ancient.dropped,
+            ["on older than 30 days", "off older than 30 days"]
+        );
+        let start = power_events(
+            &report(None, Some(on_at("1970-01-01 00:00:00", 42))),
+            None,
+            &phone,
+        );
+        assert!(start.events.is_empty());
+        let recent = pair("2026-09-18 12:31:00", 41, None, "2026-09-18 12:32:00", 42);
+        assert!(recent.dropped.is_empty());
     }
 
     #[test]
     fn the_off_since_line() {
         let phone = anna();
         let at = utc("2026-10-17 19:14:00");
+        let line = |created: DateTime<Utc>, title: &str, summary: &str| {
+            off_since_line(at, created, title, summary, &phone.zone, phone.now)
+        };
+        let arrived = phone.now - OFF_HOLD;
+        let off = "Anna was turned off";
         assert_eq!(
-            off_since_line(
-                at,
-                "21:14 · battery 3 %, probably flat",
-                &phone.zone,
-                phone.now
-            ),
-            "Off since yesterday 21:14 · battery was 3 %"
+            line(arrived, off, "21:14 · battery 3 %, probably flat").as_deref(),
+            Some("Off since yesterday 21:14 · battery was 3 %")
         );
         assert_eq!(
-            off_since_line(
-                at,
-                "Yesterday 21:14 · told at the next start",
-                &phone.zone,
-                phone.now
-            ),
-            "Off since yesterday 21:14"
+            line(arrived, off, "Yesterday 21:14 · told at the next start").as_deref(),
+            Some("Off since yesterday 21:14")
         );
         assert_eq!(
-            off_since_line(at, "21:14 · battery x %", &phone.zone, phone.now),
-            "Off since yesterday 21:14"
+            line(arrived, off, "21:14 · battery x %").as_deref(),
+            Some("Off since yesterday 21:14")
+        );
+        // Not while the push is held (a restart's start may still fold it), not for a restart.
+        let held = phone.now - OFF_HOLD + chrono::Duration::seconds(1);
+        assert_eq!(line(held, off, "21:14 · battery 3 %"), None);
+        assert_eq!(
+            line(arrived, "Anna is restarting", "21:14 · battery 3 %"),
+            None
         );
     }
 

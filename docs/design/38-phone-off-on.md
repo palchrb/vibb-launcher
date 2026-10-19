@@ -304,3 +304,26 @@ after `BootWitness.record` with `hadLastBoot`; the upload with `pinEventsLeaveQu
 (Power off, Restart), a real flat battery (is the broadcast sent, at which level), the `sys.shutdown.requested` read
 (expected unreadable), and Restart timed to the start's arrival on Wi-Fi and on mobile data against `OFF_HOLD`
 (raise the hold, not the gap, if it is slower). Not run on the emulator yet: §6p's four checks.
+
+### Code QA fix round (`docs/review/qa-38-code.md`, 2026-10-19)
+
+Every finding taken, on top of `ad8f4821`:
+- **M1** the device page's "Off since" line also needs no `device_status` report newer than the off
+  (`datetime(o.happened_at, '+60 seconds') >= MAX(reported_at)` - RFC 3339 against SQLite's `datetime` text, never a
+  raw string compare; the minute is slack for the phone's clock and a report racing the shutdown). A re-enrollment, a
+  boot count of -1 or a dropped start no longer leaves it up while the phone reports.
+  `power::a_report_after_the_shutdown_ends_off_since`.
+- **L1** (a) `PowerEvents.update`'s `editor.commit()` pinned, and no `.apply()` in the file; (b) the route test's
+  out-of-range level is a whole battery object (`level` 140 with `charging`/`low`), so it reaches the range check;
+  (c) the boot cover's synchronous arm and its `KEY_ARMED_AT` commit pinned in `coverAtShutdown` (`PowerEventsTest`).
+- **L2** left to the coordinator at the merge, as asked (StatusCapabilities keeps both capabilities, emulator.md keeps
+  §6o and §6p, the server section moves to `docs/notes/server/notifications.md`); nothing rebased.
+- **Nit 1** no "Off since" for a restart the phone announced (the off's title "… is restarting") nor while the off's
+  push is still held (`created_at` within `OFF_HOLD`: a restart's start may still fold it), so the page says no more
+  than the pushes (`off_since_line` returns `Option`; `the_off_since_line`, the page test).
+- **Nit 2** an `on` older than 30 days is dropped like an `off` (`POWER_MAX_AGE`; the off is then told alone, a body
+  with `on.at_ms` 0 raises nothing; `the_power_state_machine`).
+- **Nit 3** two shutdowns before a start got through: the newest off is kept and told, and a new `phone_off` row drops
+  every older off's still-queued push (`dropped`, reason `superseded`, no delivery line in the inbox) - one "turned off",
+  never a stray one for a boot long over (`power::a_newer_shutdown_supersedes_an_older_held_push`, the delivery-line
+  table).

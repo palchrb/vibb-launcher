@@ -192,6 +192,15 @@ class PowerEventsTest {
         assertTrue(shutdown.indexOf("update(app) { withShutdown(it, off) }") in 0 until shutdown.indexOf("receiver.goAsync()"))
         assertTrue(Regex("""\} finally \{\s+pending\.finish\(\)""").containsMatchIn(shutdown))
         assertEquals(2, Regex("""pending\.finish\(\)""").findAll(shutdown).count())
+        // Every write of the record is a synchronous commit(), never apply(): at the shutdown an
+        // apply() queued in a runtime receiver isn't waited for (qa-38-code L1 a).
+        val update = body(code("PowerEvents.kt"), "private fun update(")
+        assertTrue("if (!editor.commit())" in update)
+        assertFalse(".apply()" in code("PowerEvents.kt"))
+        // The boot cover's arm in the shared receiver stays synchronous (qa-38-code L1 c).
+        val coverPart = body(code("BootCover.kt"), "private fun coverAtShutdown(")
+        assertTrue("setEnabled(app, armed, \"shutdown\", synchronous = true)" in coverPart)
+        assertTrue("prefs(app).edit().putLong(KEY_ARMED_AT, System.currentTimeMillis()).commit()" in coverPart)
         assertTrue("SHUTDOWN_POST_TIMEOUT_MS" in body(code("PowerEvents.kt"), "fun prepare("))
         assertEquals(3_000L, SHUTDOWN_POST_TIMEOUT_MS)
         assertTrue("callTimeout(it, TimeUnit.MILLISECONDS)" in code("MdmApi.kt"))

@@ -508,8 +508,9 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   the answer table, `clearSent`/`dropSent` keeping a newer record, `stale`, the codec, the prepared client's key,
   the encoding equals `power_report.json` and both copies match; by source: one `ACTION_SHUTDOWN` receiver in the
   process, the cover's writes before `PowerEvents.onShutdown`, each caught, the commit before `goAsync`, `finish()` in
-  a `finally`, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`), `KeyguardCoverPlanTest` (the cover's
-  part is `coverAtShutdown`), `SyncScheduleTest` (`power_v1`). Emulator check: `docs/testing/emulator.md` §6p.
+  a `finally`, the record's writes `commit()` never `apply()`, the boot cover's synchronous arm in
+  `coverAtShutdown` - the code QA's L1 -, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`),
+  `KeyguardCoverPlanTest` (the cover's part is `coverAtShutdown`), `SyncScheduleTest` (`power_v1`). Emulator check: `docs/testing/emulator.md` §6p.
 - **Not device-tested**: the Jelly Star's power menu (Power off, Restart), a real flat battery (is the broadcast sent,
   at which level), the property read, and Restart timed to the start's arrival on Wi-Fi and on mobile data against
   the server's 5-minute hold (design 38 §6).

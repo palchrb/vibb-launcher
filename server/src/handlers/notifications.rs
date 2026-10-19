@@ -518,11 +518,12 @@ async fn delivery_lines(
 /// not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary" (its summary was
 /// accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
 /// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
-/// next start's "restarted" replaced) counts as none - the row says nothing, never "Not sent".
+/// next start's "restarted" replaced) or a newer shutdown superseded counts as none - the row says
+/// nothing, never "Not sent".
 pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
     let deliveries: Vec<&DeliveryState> = deliveries
         .iter()
-        .filter(|d| !(d.0 == "dropped" && d.1.as_deref() == Some("restart")))
+        .filter(|d| !(d.0 == "dropped" && matches!(d.1.as_deref(), Some("restart" | "superseded"))))
         .collect();
     let folded = |d: &&DeliveryState| d.1.as_deref() == Some("folded");
     let accepted: Vec<&DeliveryState> = deliveries
@@ -848,6 +849,7 @@ mod tests {
             ),
             // Design 38: a held `phone_off` push a restart dropped is no push at all.
             (vec![d("dropped", Some("restart"), false, iphone)], None),
+            (vec![d("dropped", Some("superseded"), false, iphone)], None),
             (
                 vec![
                     d("dropped", Some("restart"), false, iphone),

@@ -2072,7 +2072,26 @@ pub async fn power(
         let mut tx = state.db.begin().await?;
         let mut changed = false;
         for event in &plan.events {
-            changed |= crate::parent_events::raise(&mut tx, event).await?.is_some();
+            let raised = crate::parent_events::raise(&mut tx, event).await?;
+            changed |= raised.is_some();
+            // A newer shutdown supersedes an older one whose push still waits (two shutdowns
+            // before a start got through, qa-38-code nit 3): the newest off is kept and told, the
+            // older's push dropped - never a stray "turned off" for a boot long over.
+            if let (Some(new_id), crate::parent_events::Kind::PhoneOff) = (raised, event.kind) {
+                changed |= sqlx::query(
+                    "UPDATE push_deliveries SET status = 'dropped', reason = 'superseded', \
+                     next_try_at = NULL WHERE status = 'queued' AND event_id IN \
+                     (SELECT o.id FROM parent_events o WHERE o.device_id = ?1 \
+                      AND o.kind = 'phone_off' AND o.id != ?2 AND o.happened_at < \
+                      (SELECT n.happened_at FROM parent_events n WHERE n.id = ?2))",
+                )
+                .bind(device.id)
+                .bind(new_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                    > 0;
+            }
         }
         // The `off`'s still-queued pushes: dropped by a restart, else sent now - before the
         // "turned on" (only one never tried: a retry keeps its backoff).

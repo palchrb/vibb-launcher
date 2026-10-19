@@ -2006,8 +2006,8 @@ needed to manage the phone, delete on a schedule, never store notification or me
   `testdata/power_report.json`, byte-identical in the launcher's test resources (root `CLAUDE.md`).
 - **The state machine** (pure `parent_events::power_events(&report, last_report, &phone) -> PowerPlan {events,
   drop_held_off, release_held_off, dropped}`, applied in one transaction, then `push.wake()` if a row or a delivery
-  changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` older than 30
-  days, an `off` later than its `on`; logged). Paired when `off.boot_count < on.boot_count`: one boot apart and
+  changed): parts dropped first (an instant > 5 min in the server's future - that part only -, an `off` or an `on`
+  older than 30 days - `POWER_MAX_AGE`, the `on` since the code QA's nit 2 -, an `off` later than its `on`; logged). Paired when `off.boot_count < on.boot_count`: one boot apart and
   (`reboot: true`, or `reboot` unknown and the phone's two instants <= `RESTART_GAP` = 3 min apart) is a **restart** -
   "Anna restarted" pushed, the off row (new: `Push::No`, " · told at the next start") and its still-`queued`
   deliveries `dropped` with reason `restart` (`UPDATE ... WHERE event_id = <off> AND status = 'queued'`); otherwise
@@ -2017,7 +2017,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   "Implementation status"). Unpaired: an `off` alone is a new row with its push held `OFF_HOLD` = 5 min from its
   arrival (`Push::Held`; `reboot: true` -> `Push::No`); an `on` alone says "no shutdown seen · last report 21:10,
   battery 5 %, probably flat" from the newest `device_status` row before the boot instant (one query). A resent body
-  raises nothing (the dedup keys). "Turned off" comes only from a `phone_off` (ShutdownThread's broadcast).
+  raises nothing (the dedup keys). A **new** `phone_off` row supersedes every older off of the phone whose push still
+  waits (`dropped`, reason `superseded`; qa-38-code nit 3: two shutdowns before a start got through - the newest off is
+  kept and told, never a stray "turned off" for a boot long over). "Turned off" comes only from a `phone_off`
+  (ShutdownThread's broadcast).
 - **Kinds and words** (`parent_events`): `Kind::PhoneOff` (`phone_off`, switch `push_phone_off` "Phone turned
   off"), `Kind::PhoneOn` (`phone_on`, `push_phone_on` "Phone turned on"), after `UnseenBoot` in `Kind::ALL`, not
   urgent, TTL 43200, foldable. `Phone::phone_off(off, at, late)`: "Anna was turned off" / "21:14 · battery 2 %,
@@ -2034,19 +2037,25 @@ needed to manage the phone, delete on a schedule, never store notification or me
   wakes at the earliest; the TTL counts from `created_at`). **The sender claims a row** before its request
   (`push::claim`: `UPDATE ... SET token_hash, attempts + 1 WHERE id = ? AND status = 'queued'`) and skips it when that
   changed nothing - a restart's drop that commits after a pass read the row as due (qa-38-design N4).
-  `notifications::delivery_line` counts a `restart` drop as no delivery (no line, never "Not sent"); during the hold
-  the row reads "Sending".
+  `notifications::delivery_line` counts a `restart` or `superseded` drop as no delivery (no line, never "Not sent");
+  during the hold the row reads "Sending".
 - **PWA**: the two switches on Notify Me About come from `Kind::switch()` (no template change; the form and its
   `#events` redirect are design 35's). The device page's header (`devices::render_device`, `data-power-off`): "Off
-  since 21:14 · battery was 3 %" while the newest `phone_off` has a later `happened_at` than the newest `phone_on` (one
-  query; the battery read back from the off's stored words, `parent_events::off_since_line`); gone with the next
-  start; a read error is a 500 like the page's other reads.
+  since 21:14 · battery was 3 %" while the newest `phone_off` has a later `happened_at` than the newest `phone_on` and
+  no `device_status` report is newer than it (qa-38-code M1: a report proves the phone is on, whatever start never
+  came - a re-enrollment, a boot count of -1, a dropped start; compared as `datetime(happened_at, '+60 seconds') >=
+  MAX(reported_at)` - RFC 3339 against SQLite's `datetime` text never as raw strings -, the minute for the phone's
+  clock); one query; the battery read back from the off's stored words (`parent_events::off_since_line`, which also
+  says nothing while the off's push is held - `created_at` within `OFF_HOLD`, a restart may still fold it - or for a
+  restart the phone announced, "is restarting"; qa-38-code nit 1); gone with the next start or report; a read error is
+  a 500 like the page's other reads.
 - **Migration 0080**: `notification_settings.push_phone_off`/`push_phone_on`, default 1. Nothing else.
 - Tests: `parent_events::tests` (`the_power_words`, `the_power_state_machine`, `the_off_since_line`, the kinds in
   `the_words_and_targets`), `handlers::notifications::tests::the_delivery_line` (a `restart` drop), `src/tests/power.rs`
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
-  the claim), `music_spotify::migrations_73_to_80_in_order`.
+  the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
+  the route's own test), `music_spotify::migrations_73_to_80_in_order`.
 
 ## Current status (2026-08-08, `v0.13.0`)
 
