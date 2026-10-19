@@ -812,6 +812,12 @@ findings, merge to `main`, full suite once.
   playing item's pictures at once wherever streaming is allowed, every ticked entry's pictures on Wi-Fi, the courier
   paced; `docs/review/qa-art-asap-code.md`), music-v0.4.0-rc.4 (the want set, the 1000-hash pages, the Spotify
   look-ahead for the playing entry only).** Suites on main 92147f08+: server 1067, music 922, launcher 1400.
+- **Hotfix server-v0.29.1 (2026-10-19 night, the user's go "tag når du er klar"): the iPhone receipt found - shipping
+  Safari fires `push` with `data` null and its proposed notification on the event for a mutable declarative payload
+  (WWDC25 session 235), never the explainer's `pushnotification`; the worker shows and confirms from it
+  (`e=push-declarative`; `PUSH_PAYLOAD=classic` had confirmed at once, the proof). `jmt17.google.com` on the push
+  service list (Chromium without Google's API keys - the user's Pi); a log line per accepted push and the host of a
+  refused push service at Turn On.** Owed: the iPhone test on 0.29.1 with `PUSH_PAYLOAD` unset.
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
