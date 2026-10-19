@@ -95,20 +95,20 @@ struct AnswerView {
 }
 
 /// A Recent row: "Lock · 10:58 · Done", what happened under the label, Cancel while it waits.
-struct CommandRow {
+pub(crate) struct CommandRow {
     /// The stored command (`ring`, ...): a `data-` hook for tests, never shown.
-    kind: String,
-    label: &'static str,
-    asked: String,
-    asked_exact: String,
-    word: &'static str,
+    pub(crate) kind: String,
+    pub(crate) label: &'static str,
+    pub(crate) asked: String,
+    pub(crate) asked_exact: String,
+    pub(crate) word: &'static str,
     /// The word's colour: `green`, `orange`, `red`, `grey`.
-    tone: &'static str,
-    detail: Option<String>,
+    pub(crate) tone: &'static str,
+    pub(crate) detail: Option<String>,
     /// The phone's own words, when [detail] rewords them (for `title`).
-    detail_title: Option<String>,
+    pub(crate) detail_title: Option<String>,
     /// The row's id while it can still be cancelled ([DeviceCommand::cancellable]).
-    cancel_id: Option<i64>,
+    pub(crate) cancel_id: Option<i64>,
 }
 
 /// A fix as the parent reads it (design 31 step 13, M5): its age from the server's clock and
@@ -170,6 +170,18 @@ fn reword(raw: &str) -> Option<String> {
         "location is off for this device" => "Location is off on the phone",
         "no location fix" => "The phone couldn't find its location",
         "unknown command - update the launcher" => "Vibb One on the phone is too old for this",
+        // Install Now (design 37 §2.4).
+        "not offered" => "No update for this phone",
+        "refused: wrong_signer" => "Refused: signed with another key",
+        "refused: not_ours" => "Refused: not Vibb One",
+        "refused: downgrade" => "Refused: older than the phone's version",
+        "refused: unparseable" => "Refused: not a readable app",
+        "refused: release" => "Refused: this release can't be installed",
+        "download failed" => "The download kept failing",
+        "download corrupt" => "The download didn't match the release",
+        "no space" => "Not enough space on the phone",
+        "superseded" => "Ended: a newer Install Now took over",
+        "call never ended" => "Not installed: a call stayed on",
         _ => "",
     };
     if !known.is_empty() {
@@ -187,6 +199,15 @@ fn reword(raw: &str) -> Option<String> {
     }
     if raw.starts_with("ended: ") {
         return Some("Locked again".to_string());
+    }
+    if let Some(version) = raw.strip_prefix("installed: ") {
+        return Some(format!("Installed {version}"));
+    }
+    if let Some(version) = raw.strip_prefix("already running: ") {
+        return Some(format!("Already on {version}"));
+    }
+    if raw.starts_with("install failed: ") {
+        return Some("Android refused the install".to_string());
     }
     // "fix ±12 m, 3 s old" / "fix, 3 s old".
     if let Some(rest) = raw.strip_prefix("fix")
@@ -327,7 +348,7 @@ fn status_words(
     }
 }
 
-fn command_row(
+pub(crate) fn command_row(
     command: &DeviceCommand,
     zone: &Zone,
     now: DateTime<Utc>,
@@ -662,39 +683,9 @@ pub async fn cancel_command(
     Path((id, command_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
-    let cancelled: Result<Option<(String, String)>, sqlx::Error> = sqlx::query_as(
-        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'parent' \
-         WHERE id = ? AND device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL \
-           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
-         RETURNING command, requested_at",
-    )
-    .bind(command_id)
-    .bind(id)
-    .bind(crate::models::EXPIRING_COMMANDS[0])
-    .bind(crate::models::EXPIRING_COMMANDS[1])
-    .bind(crate::models::EXPIRING_COMMANDS[2])
-    .bind(crate::models::EXPIRING_COMMANDS[3])
-    .bind(format!(
-        "-{} minutes",
-        crate::models::COMMAND_EXPIRY_MINUTES
-    ))
-    .fetch_optional(&state.db)
-    .await;
-    let outcome = match cancelled {
-        Ok(Some((command, requested_at))) => {
-            security::record_security_event(
-                &state.db,
-                "device_command_cancelled",
-                Some(&admin.username),
-                None,
-                Some(&format!(
-                    "{command} (asked {requested_at} UTC), device {id}"
-                )),
-            )
-            .await;
-            "done"
-        }
-        Ok(None) => "too_late",
+    let outcome = match cancel_waiting(&state, id, command_id, None, &admin.username).await {
+        Ok(true) => "done",
+        Ok(false) => "too_late",
         Err(err) => {
             tracing::error!(device_id = id, command_id, %err, "can't cancel the command");
             return (
@@ -708,6 +699,54 @@ pub async fn cancel_command(
         "/devices/locate?device={id}&cancel={outcome}#recent"
     ))
     .into_response()
+}
+
+/// Cancels a command the phone hasn't fetched (the Locate page's Cancel, Install Now's - design
+/// 37 -, which passes `only` = its kind): one statement, so it races the policy's pop cleanly -
+/// whichever comes first wins. `Ok(false)` = too late (fetched, expired, cancelled, another
+/// phone's, another kind). Logged `device_command_cancelled`.
+pub(crate) async fn cancel_waiting(
+    state: &AppState,
+    device_id: i64,
+    command_id: i64,
+    only: Option<&str>,
+    admin: &str,
+) -> Result<bool, sqlx::Error> {
+    let cancelled: Option<(String, String)> = sqlx::query_as(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'parent' \
+         WHERE id = ? AND device_id = ? AND delivered_at IS NULL AND cancelled_at IS NULL \
+           AND (? IS NULL OR command = ?) \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
+         RETURNING command, requested_at",
+    )
+    .bind(command_id)
+    .bind(device_id)
+    .bind(only)
+    .bind(only)
+    .bind(crate::models::EXPIRING_COMMANDS[0])
+    .bind(crate::models::EXPIRING_COMMANDS[1])
+    .bind(crate::models::EXPIRING_COMMANDS[2])
+    .bind(crate::models::EXPIRING_COMMANDS[3])
+    .bind(format!(
+        "-{} minutes",
+        crate::models::COMMAND_EXPIRY_MINUTES
+    ))
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((command, requested_at)) = cancelled else {
+        return Ok(false);
+    };
+    security::record_security_event(
+        &state.db,
+        "device_command_cancelled",
+        Some(admin),
+        None,
+        Some(&format!(
+            "{command} (asked {requested_at} UTC), device {device_id}"
+        )),
+    )
+    .await;
+    Ok(true)
 }
 
 pub async fn locations_json(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
@@ -1118,6 +1157,28 @@ mod tests {
                 "unknown command - update the launcher",
                 "Vibb One on the phone is too old for this",
             ),
+            // Install Now (design 37 §2.4).
+            ("installed: 1.4.0", "Installed 1.4.0"),
+            ("already running: 1.4.0", "Already on 1.4.0"),
+            ("not offered", "No update for this phone"),
+            ("refused: wrong_signer", "Refused: signed with another key"),
+            ("refused: not_ours", "Refused: not Vibb One"),
+            (
+                "refused: downgrade",
+                "Refused: older than the phone's version",
+            ),
+            ("refused: unparseable", "Refused: not a readable app"),
+            (
+                "refused: release",
+                "Refused: this release can't be installed",
+            ),
+            ("download failed", "The download kept failing"),
+            ("download corrupt", "The download didn't match the release"),
+            ("no space", "Not enough space on the phone"),
+            ("install failed: 4", "Android refused the install"),
+            ("install failed: start", "Android refused the install"),
+            ("superseded", "Ended: a newer Install Now took over"),
+            ("call never ended", "Not installed: a call stayed on"),
         ] {
             assert_eq!(
                 answer(raw),
@@ -1208,6 +1269,7 @@ mod tests {
             ("end_windows", "Lock again"),
             ("start_pause", "Unlock for 2 h"),
             ("allow_blocked", "Allow these apps"),
+            ("install_update", "Install Now"),
             ("made_up", "Other request"),
         ] {
             assert_eq!(command_label(command), label);

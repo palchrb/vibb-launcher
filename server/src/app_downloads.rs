@@ -95,7 +95,7 @@ fn time(ms: i64) -> Option<DateTime<Utc>> {
 }
 
 /// "120 of 326 MB", "120 MB so far", or nothing before the first byte.
-fn progress(entry: &AppDownloadEntry) -> Option<String> {
+pub(crate) fn progress(entry: &AppDownloadEntry) -> Option<String> {
     let mb = |b: i64| (b + 500_000) / 1_000_000;
     match entry.total.filter(|t| *t > 0) {
         Some(total) if entry.bytes > 0 || entry.state == "downloading" => {

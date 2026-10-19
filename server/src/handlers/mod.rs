@@ -6,6 +6,7 @@ pub mod device_api;
 pub mod device_pages;
 pub mod devices;
 pub mod dns_filter;
+pub mod install_now;
 pub mod lifts;
 pub mod locate;
 pub mod lock_glance;

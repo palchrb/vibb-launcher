@@ -195,7 +195,7 @@ free number is 0080.
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
-- `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list), see the Find My Device architecture bullet above
+- `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list, `install_update`'s release tag), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
 
@@ -224,7 +224,7 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/hardening-and-pins.md` - Hardening; Handy's own PIN lock; Parent PIN; Windows that lock again, unseen boots; The lock's glance page
 - `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time
 - `docs/notes/server/launcher-ui.md` - Launcher UI, contact photos, airplane mode; Wallpapers; App names and icons; The launcher is "Vibb One"
-- `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable
+- `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37)
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
 - `docs/notes/server/notifications.md` - Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push

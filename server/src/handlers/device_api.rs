@@ -404,11 +404,14 @@ pub(crate) async fn build_policy(
         }
     }
     // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
-    // before 0068 has none, and the phone then lets out every block, as it did.
+    // before 0068 has none, and the phone then lets out every block, as it did. Install Now's
+    // payload is the release tag the row showed (design 37 §3) - a plain tag, only for it.
     let pending_command = popped.map(|(id, command, requested_at, payload)| PendingCommand {
         allow: payload
+            .as_deref()
             .filter(|_| command == crate::window_relock::ALLOW_BLOCKED)
-            .and_then(|p| serde_json::from_str(&p).ok()),
+            .and_then(|p| serde_json::from_str(p).ok()),
+        release_tag: payload.filter(|_| command == crate::install_now::COMMAND),
         id,
         command,
         requested_at,
@@ -1784,7 +1787,7 @@ pub(crate) async fn nudge_phones_with_app(state: &AppState, app_id: i64) {
 /// `release_tag` as the device sees it: composited with the asset id when one's cached
 /// (GitHub-sourced apps) - see `handlers::tracked_apps::sync_one_app`'s doc comment for why a
 /// rolling tag alone can't be trusted to signal "this is a new build" client-side.
-fn device_release_tag(app: &TrackedApp) -> Option<String> {
+pub(crate) fn device_release_tag(app: &TrackedApp) -> Option<String> {
     let tag = app.latest_release_tag.as_ref()?;
     Some(match app.latest_release_asset_id {
         Some(asset_id) => format!("{tag}@{asset_id}"),

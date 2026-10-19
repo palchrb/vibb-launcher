@@ -47,6 +47,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
             ParentPin.clearEvents(context)
             // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).
             CommandAnswers.clear(context)
+            // And a running Install Now (design 37): its command was the old enrollment's.
+            InstallNow.clear(context)
             Result.success(Unit)
         } else {
             Result.failure(Exception("HTTP ${response.code()}"))

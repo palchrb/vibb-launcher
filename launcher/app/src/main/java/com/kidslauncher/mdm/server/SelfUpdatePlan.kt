@@ -335,3 +335,164 @@ fun screenOffForMs(offSinceElapsed: Long?, screenEventSeen: Boolean, processStar
     val since = offSinceElapsed ?: if (!screenEventSeen) processStartElapsed else return 0
     return (nowElapsed - since).coerceAtLeast(0)
 }
+
+// ---- Install Now (design 37) --------------------------------------------------------------------
+
+/** Status-report capability of a launcher that runs Install Now. */
+const val INSTALL_NOW_CAPABILITY = "install_now_v1"
+
+/** The command's kind (`pending_command.command`). */
+const val INSTALL_NOW_COMMAND = "install_update"
+
+/** A call the phone can't see the end of (VoIP, Telecom-only) is checked again this often. */
+const val INSTALL_NOW_CALL_RECHECK_MS = 2 * 60_000L
+
+/** A call that stays on this long ends the command (qa-37-design R-L4: a voice app holding the
+ * audio mode for hours must not keep the override and the install waiting for good). */
+const val INSTALL_NOW_CALL_LIMIT_MS = 6 * 60 * 60_000L
+
+/** The answers (`command-result` messages; the server's `locate::reword` words them). */
+const val INSTALL_NOW_NOT_OFFERED = "not offered"
+const val INSTALL_NOW_REFUSED_RELEASE = "refused: release"
+const val INSTALL_NOW_DOWNLOAD_FAILED = "download failed"
+const val INSTALL_NOW_DOWNLOAD_CORRUPT = "download corrupt"
+const val INSTALL_NOW_NO_SPACE = "no space"
+const val INSTALL_NOW_SUPERSEDED = "superseded"
+const val INSTALL_NOW_CALL_NEVER_ENDED = "call never ended"
+const val INSTALL_NOW_INSTALL_FAILED_START = "install failed: start"
+
+fun installNowInstalled(versionName: String) = "installed: $versionName"
+fun installNowAlreadyRunning(versionName: String) = "already running: $versionName"
+fun installNowInstallFailed(status: Int) = "install failed: $status"
+
+/** A deterministic pre-commit refusal as Install Now's answer: "refused: wrong_signer", ... */
+val PendingApkCheck.installNowAnswer: String
+    get() = "refused: " + name.lowercase()
+
+/**
+ * The parent's Install Now while it runs (DE prefs `install_now`, `InstallNow.kt`): the command
+ * ([commandId] + [requestedAt] name it for the answer), the tag the row showed, and the running
+ * versionCode at the receipt - "Done" is a running build above it (no wall clock across the
+ * command, design 37 §1.10). [failure] is set by every failure and answered by the next sync's
+ * settle; [callWaitSinceElapsed] is when the commit began waiting for a call (elapsed realtime).
+ */
+@Serializable
+data class InstallNowRecord(
+    val commandId: Long,
+    val requestedAt: String?,
+    val tag: String?,
+    val fromVersionCode: Long,
+    val failure: String? = null,
+    val callWaitSinceElapsed: Long? = null,
+)
+
+/** What the receipt of Install Now does: [answerOld] = a record of another command and its
+ * answer (its own failure, else "superseded", failed - QA L5), [store] = the record to keep (the
+ * same command delivered again keeps its record, failure and call wait included). */
+data class InstallNowReceipt(val answerOld: Pair<InstallNowRecord, String>?, val store: InstallNowRecord)
+
+fun installNowOnReceipt(
+    old: InstallNowRecord?,
+    commandId: Long,
+    requestedAt: String?,
+    tag: String?,
+    runningVersionCode: Long,
+): InstallNowReceipt {
+    if (old != null && old.commandId == commandId && old.requestedAt == requestedAt) return InstallNowReceipt(null, old)
+    val fresh = InstallNowRecord(commandId, requestedAt, tag, runningVersionCode)
+    return InstallNowReceipt(old?.let { it to (it.failure ?: INSTALL_NOW_SUPERSEDED) }, fresh)
+}
+
+/** The commit gate for Install Now: only a live call or an emergency holds it - no night window,
+ * no screen-off, whatever the screen. */
+fun installNowDecision(liveCall: Boolean, emergency: Boolean): UpdateWindowDecision = when {
+    liveCall -> UpdateWindowDecision.Wait(UpdateWaitReason.CALL, INSTALL_NOW_CALL_RECHECK_MS)
+    emergency -> UpdateWindowDecision.Wait(UpdateWaitReason.EMERGENCY, EMERGENCY_RECHECK_MS)
+    else -> UpdateWindowDecision.Commit
+}
+
+/** What the server's list says about our own row, for the settle. */
+enum class LauncherRow {
+    /** No list this sync (a failed fetch, tsnet not up yet). */
+    NO_LIST,
+    /** The list has no launcher row, or it names another package (debug vs release). */
+    NOT_OFFERED,
+    /** The advertised release is running already (or recorded installed). */
+    RUNNING,
+    /** The advertised release was refused for good on this phone. */
+    REFUSED,
+    /** Downloading, pending or committing. */
+    ON_ITS_WAY,
+}
+
+/** [LauncherRow] from what `handleLauncherUpdate` saw: [rowOurs] = a launcher row for our
+ * package, [step] = the step it took (null when it took none). */
+fun launcherRow(
+    rowOurs: Boolean,
+    advertisedTag: String?,
+    lastInstalledTag: String?,
+    refusedTag: String?,
+    step: LauncherUpdateStep?,
+): LauncherRow = when {
+    !rowOurs || advertisedTag == null -> LauncherRow.NOT_OFFERED
+    step == LauncherUpdateStep.ALREADY_RUNNING || advertisedTag == lastInstalledTag -> LauncherRow.RUNNING
+    advertisedTag == refusedTag -> LauncherRow.REFUSED
+    else -> LauncherRow.ON_ITS_WAY
+}
+
+sealed interface InstallNowOutcome {
+    data object Installed : InstallNowOutcome
+    data object AlreadyRunning : InstallNowOutcome
+    data class Failed(val reason: String) : InstallNowOutcome
+    /** Still on its way: no answer yet. */
+    data object Keep : InstallNowOutcome
+}
+
+/** The settle: a running build above the one at the receipt is "installed" (beats a failure
+ * recorded before the kill); then a recorded failure; then what the list says. */
+fun installNowOutcome(record: InstallNowRecord, runningVersionCode: Long, row: LauncherRow): InstallNowOutcome = when {
+    runningVersionCode > record.fromVersionCode -> InstallNowOutcome.Installed
+    record.failure != null -> InstallNowOutcome.Failed(record.failure)
+    row == LauncherRow.NOT_OFFERED -> InstallNowOutcome.Failed(INSTALL_NOW_NOT_OFFERED)
+    row == LauncherRow.REFUSED -> InstallNowOutcome.Failed(INSTALL_NOW_REFUSED_RELEASE)
+    row == LauncherRow.RUNNING -> InstallNowOutcome.AlreadyRunning
+    else -> InstallNowOutcome.Keep
+}
+
+/** The command-result for an outcome: (succeeded, message), `null` = no answer yet. */
+fun InstallNowOutcome.answer(versionName: String): Pair<Boolean, String>? = when (this) {
+    InstallNowOutcome.Installed -> true to installNowInstalled(versionName)
+    InstallNowOutcome.AlreadyRunning -> true to installNowAlreadyRunning(versionName)
+    is InstallNowOutcome.Failed -> false to reason
+    InstallNowOutcome.Keep -> null
+}
+
+/** `update_fence.waiting_for` while Install Now runs: no APK yet -> downloading; a wait for a
+ * call or an emergency; else installing. Without a record the ordinary gate's word. */
+fun installNowWait(recordPresent: Boolean, pendingPresent: Boolean, lastWait: UpdateWaitReason?): String? = when {
+    !recordPresent -> if (pendingPresent) lastWait?.wire else null
+    !pendingPresent -> "install_now_download"
+    lastWait == UpdateWaitReason.CALL -> "install_now_call"
+    lastWait == UpdateWaitReason.EMERGENCY -> "install_now_emergency"
+    else -> "install_now_ready"
+}
+
+/** The alarm while Install Now waits (qa-37-design R-L1: a screen-off must not replace it with
+ * the night window's delay). */
+fun installNowRecheckMs(lastWait: UpdateWaitReason?): Long = when (lastWait) {
+    UpdateWaitReason.CALL -> INSTALL_NOW_CALL_RECHECK_MS
+    UpdateWaitReason.EMERGENCY -> EMERGENCY_RECHECK_MS
+    else -> UPDATE_SCREEN_OFF_MS
+}
+
+/** When the wait for a call began: kept while it waits on a call (a reboot - elapsed time behind
+ * the stored start - starts it again), cleared otherwise. */
+fun callWaitSince(previous: Long?, waitingOnCall: Boolean, nowElapsed: Long): Long? = when {
+    !waitingOnCall -> null
+    previous == null || previous > nowElapsed -> nowElapsed
+    else -> previous
+}
+
+/** The call has held Install Now for [INSTALL_NOW_CALL_LIMIT_MS]. */
+fun callWaitExpired(sinceElapsed: Long?, nowElapsed: Long): Boolean =
+    sinceElapsed != null && nowElapsed >= sinceElapsed && nowElapsed - sinceElapsed >= INSTALL_NOW_CALL_LIMIT_MS

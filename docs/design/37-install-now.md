@@ -282,3 +282,87 @@ newer release yes, notification no).
 - **L11**: a manual upload's tag stated in §2.2.
 - **Nit 1**: DE kept (the user's choice) with the reason in §4.2. **Nit 2**: the extra sync request kept; it is
   coalesced and says why it is there.
+
+## Implementation status
+
+Implementer, 2026-10-19, branch `install-now` from `main` (`c6232081`): the one step of §8, server and launcher in one
+commit (the command, its tag, the answers, the capability and the waiting words), then the docs. The design QA's
+revision check (`qa-37-design.md`, "Revision check (ae03013d)") is done in the step: R-M1 (the ⓘ also says calls aren't
+filtered for that minute), R-L1, R-L2, R-L3, R-L4, R-N1, R-N2 - below. Built and tested in CI (the VM was short of
+memory for a local build): server `cargo test` (all new tests in `src/tests/install_now.rs`, `install_now::tests`,
+`locate::tests`, `kiosk_escapes::tests`), `cargo fmt --check`, clippy, `node --test jstest/`; launcher `./gradlew build
+-PwarningsAsErrors=true` (`InstallNowPlanTest`, `PolicyResponseCompatTest`).
+
+**In** (server, `server/CLAUDE.md` "Install Now"): the `install_update` command through `queue_install` (one
+transaction with the refusal check since the code QA's fix round) with the row's `tag@asset_id` as payload, replaced
+while waiting; `pending_command.release_tag` for it only; no expiry;
+"Install Now" in Recent; Received is "No answer" after 25 h for it only; the pure row (`src/install_now.rs`:
+`launcher_tag_version_code`, `release`, `offer`, `refusal`, `working_words`, `answer_fresh`, `flash`); the two POST
+routes and the poll JSON (`handlers::install_now`); the launcher page's rows `id="phone-{id}"` in an always-rendered
+`id="phones"`, Install Now / Cancel, the answer's ⓘ for a day, the footer and its ⓘ; `static/install-now.js`; the
+reworded answers; the three `wait_text` words. (launcher, `launcher/CLAUDE.md` "Install Now"): the record in DE prefs,
+the dispatch and the settle, the commit gate, the download override through one `gate(` helper, every failure through
+`InstallNow.fail`, "Done" from the new process, the call-end listener and the 2-minute alarm that a screen-off keeps,
+`install_now_v1`.
+
+**Deviations, with the reason**:
+- **One more refusal word, `not_reported`** (a set-up phone that never reported): §2.1's list had no word for §2.2's
+  `NotReported`; it lands on the phone's row like the others ("This phone hasn't reported yet.").
+- **`in_progress` also for a fetched, unconfirmed command** (Sent), not only Received: the phone has it, so a second
+  tap must not queue a second one; a waiting one is still replaced. A Sent command whose deliveries ran out ("Not
+  confirmed") gives the button back, as an answer does.
+- **The poll (R-L3)**: 5 s while the page is visible, stopped while hidden (restarted on `visibilitychange`), given up
+  after 360 polls (30 min; a reload starts it again) - so never 25 h of polling. A changed state word reloads the page
+  as `auto-reload.js` does (its keep-place record), never during a save or with a `<details>` open; the reload logic is
+  copied into `install-now.js` (16 lines) rather than shared, because `auto-reload.js` installs itself on load.
+- **A call that never ends (R-L4)**: the record keeps when the commit began waiting on a call (elapsed realtime - local
+  to the phone, never compared with a server time; a reboot starts it again); after 6 h the command fails, "call never
+  ended" -> "Not installed: a call stayed on".
+- **The commit's other outcomes (R-L2)**: `CORRUPT` (the file changed after its own hash check) answers "download
+  corrupt"; `MISSING` and `SAME_VERSION` ask for a sync at once (the download restarts, or the settle answers "Already
+  on X").
+- **The screen-off (R-L1)**: with a record `armIfPending` arms `installNowRecheckMs(lastWait)` (2 min on a call, 10 min
+  after an emergency, else 30 s), never the night window's delay; the screen-on keeps the alarm.
+- **R-N1/R-N2**: §4.2's DE reason is stated as R-N1 says (nothing reads it before the first unlock today; DE is the
+  user's choice); the `CatalogRefusal` bullet is dropped - the launcher's refusals come from the commit's
+  `pendingApkCheck` ("refused: <check>").
+- **A superseded record with its own failure** is answered with that failure, not "superseded" (it failed first).
+- **The redirect table**: the launcher page's forms are posted from the rendered page in `src/tests/install_now.rs`
+  (`settings_pages::check_forms` plus `assert_lands` for every word) rather than in
+  `tracked_apps::every_form_on_the_app_pages_returns_to_its_page`, which posts every form of a non-launcher page
+  (adding the launcher there would post its "This is the launcher app" switch off mid-table).
+- **`render_detail_full` fails closed now**: a failed read of the app or its phones was an empty list or a 404; it is a
+  500 on every app's page (§2.1's rule, applied to the whole page rather than only the new reads).
+- **Working words** also say "Waiting: the phone is roaming" for an `app_downloads` entry in that state (never reached
+  while the override runs; a report from before the receipt could carry it).
+
+**Owed to device checks** (`docs/testing/emulator.md` §6o for the emulator part): the whole §6 list on the emulator
+(too old, screen on and mobile data, the call holding it, the newest found, refused / failed, a reboot mid-download,
+the offline phone and Cancel); on the Jelly Star: a daytime install with the update fence off (the stock home screen
+and the unfiltered calls for about a minute - the ⓘ's two sentences) and on (A3 not passed yet: not recommended),
+the download on real mobile data with "Wi-Fi only" on, the 2-minute alarm catching the end of a VoIP or Telecom-only
+call, the alarm with the screen on in Doze, "Done" arriving over tsnet only after the next unlock (the answer in the
+outbox); in the PWA on the iPhone: the poll stopping in the background and reloading at the same place.
+
+**Code QA fix round** (`docs/review/qa-37-code.md`, branch `qa-install-now`; run locally: server `cargo test` 1047
+passed, fmt clean, clippy the 13 known warnings, `node --test jstest/` 56; launcher `testDebugUnitTest assembleDebug
+-PwarningsAsErrors=true` 1375 tests, 0 failed):
+- **M1** fixed: `install_now::awaiting_report` - while the newest answer is `installed: X` and the latest report is
+  older than it (at most an hour), the row is Working "Installed - waiting for the phone's report" (the poll goes on
+  and reloads when the report lands) and a POST answers `in_progress`. `the_answer_shows_in_the_row` now renders before
+  the new report (L3) and after it; `install_now::tests::a_done_answer_waits_for_its_report`.
+- **M2** fixed: while a record runs the launcher's download goes first (`downloadOrder`/`nextDownload(launcherFirst)`),
+  and a run counts failures per record (`retryAfterFailure`): a record that gives up waits for the next trigger while
+  the others go on, so a failing catalog app neither uses Install Now's retries nor ends the run before its turn.
+- **L1** fixed: a commit wait whose reason changed requests one more (coalesced) sync, so the report says
+  `install_now_call`/`_emergency` instead of "Installing".
+- **L2** fixed, a test for each surviving mutation: S1 `release_tag_goes_only_with_install_now` (an `allow_blocked`
+  with its payload); S9/S13 `an_app_page_is_a_500_when_the_app_or_its_phones_cant_be_read` (the app read, the
+  launcher's phones, a catalog app's phones); L1m `the forced path still runs every APK check` (the one unconditional
+  `pendingApkCheck` with every input, before `recordAttemptStarted`, every non-OK outcome returning, no `installNow` in
+  it); L4m/L8m the pure `installNowOnReceipt` and its glue; L6m/L7m source pins on `AppInstallReceiver`'s and the
+  CORRUPT branch's answers.
+- **Nits**: an anonymous Cancel cancels nothing (tested); the call listener reads the record on `SelfUpdate`'s scope;
+  the refusal check and the queue are one transaction (`queue_install`, replacing `locate::queue_command_with`, which
+  is gone; `replaced_kinds` no longer lists `install_update`). `command_result` stays last-writer-wins (an outbox retry
+  carries the same text). The event-label scan lists `not_set_up` as an answer word too.

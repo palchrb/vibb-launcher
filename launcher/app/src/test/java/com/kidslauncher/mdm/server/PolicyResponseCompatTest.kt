@@ -251,6 +251,14 @@ class PolicyResponseCompatTest {
             allow.pendingCommand?.allow,
         )
         assertEquals(null, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "ring"}}""").pendingCommand?.allow)
+        // Install Now (design 37): the release tag the row showed; left out for other commands.
+        val install = ServerJson.decodeFromString(
+            PolicyResponse.serializer(),
+            """{"pending_command": {"id": 9, "command": "install_update", "requested_at": "2026-10-19 12:00:00", "release_tag": "launcher-v1.4.0@77"}}""",
+        ).pendingCommand
+        assertEquals("install_update", install?.command)
+        assertEquals("launcher-v1.4.0@77", install?.releaseTag)
+        assertEquals(null, ServerJson.decodeFromString(PolicyResponse.serializer(), """{"pending_command": {"id": 7, "command": "install_update"}}""").pendingCommand?.releaseTag)
         assertEquals("ended: pause, install mode", endWindowsResult(setOf(WindowKind.PAUSE), installMode = true))
         assertEquals("ended: override, pause", endWindowsResult(setOf(WindowKind.PAUSE, WindowKind.OVERRIDE), installMode = false))
         assertEquals("nothing was open", endWindowsResult(emptySet(), installMode = false))

@@ -123,3 +123,74 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `app_downloads::tests`, `src/tests/tracked_apps.rs` (`downloads_resume_with_range_and_if_match`,
   `only_this_devices_apps_download`, `the_list_carries_each_files_hash`, `the_app_update_switch_saves_and_reaches_the_phone`,
   `app_downloads_are_stored_and_shown`, `a_refused_release_says_why_on_the_device_page`).
+
+## Install Now (design 37, `docs/design/37-install-now.md`, no migration)
+
+- **What**: the launcher's page under Apps (`/apps/tracked/{id}` with `is_launcher`) has an **Install Now** button per
+  set-up phone that is behind. One tap queues a one-time `device_commands` row `install_update`
+  (`install_now::COMMAND`) through `handlers::install_now::queue_install` - **one transaction** for the refusal check
+  and the insert: its first statement cancels a waiting Install Now as `replaced` (a write, so the policy's pop can't
+  run between the check and the insert), a refusal rolls it back; the receipt, the redelivery and the stream's nudge as
+  every command -, `payload` = the row's
+  release as the phone sees it (`device_api::device_release_tag`, `tag@asset_id`). The pop sends it as
+  `pending_command.release_tag` **for `install_update` only** (`allow_blocked`'s JSON payload stays `allow`); both are
+  `skip_serializing_if`, so the policy's keys are unchanged (`policy_json_keys_snapshot` untouched; the launcher's
+  `PolicyResponseCompatTest` decodes it with and without). Not an expiring command (not in `EXPIRING_COMMANDS`): a
+  server start leaves it waiting, an enrollment cancels it like any undelivered row. `models::command_label` "Install
+  Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
+  (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
+- **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
+  the Kotlin test's cases), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
+  / UpToDate / Behind (tag code above the report's `app_version_code`, or a `pending_tag`; a manual upload's label is
+  behind unless the phone runs a build of that name) / TooOld (behind without capability `install_now_v1`); `offer`
+  adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
+  answer, under 25 h) - and Working "Installed - waiting for the phone's report" while the newest answer is
+  `installed: X` and the latest report is older than it (`awaiting_report`, at most an hour; qa-37-code M1: in one sync
+  the launcher answers before it reports, so the row would read "behind" with Install Now; the poll goes on, a POST
+  answers `in_progress`). `working_words` reads the phone's report only when it came after the receipt (both server
+  times; else "The phone got it (14:02)"): `update_fence.waiting_for` `install_now_download` + the launcher's
+  `app_downloads` entry ("Downloading 40 of 80 MB", "Waiting for a network", "Waiting: not enough space", "Waiting: the
+  phone is roaming"), `install_now_call` "Waits for the call to end", `install_now_emergency` "Waits: an emergency call
+  was recent", `install_now_ready` "Installing". An answer, a Cancel, "No answer" and a lost delivery give the button
+  back; the newest answer shows for 24 h as a `details.info` under the row ("Install Now · 14:31 · Done", the reworded
+  line inside - `locate::command_row`, now `pub(crate)`). `refusal` is the POST's rule.
+- **Routes** (`handlers::install_now`, full auth, plain forms, 404 unless the app is the launcher):
+  `POST /apps/tracked/{id}/install-now/{device_id}` queues only when the row offers it (`device_command_queued`
+  "install_update <tag>, device N"), else answers `up_to_date`, `too_old`, `no_release`, `not_reported`, `in_progress`
+  (fetched or confirmed - a waiting one is replaced), `not_set_up`, `unknown_phone`; `POST
+  .../install-now/{device_id}/cancel/{command_id}` - `locate::cancel_waiting` (the Locate tab's `cancel_command` moved
+  into it, `only` = the kind) -> `cancelled` / `too_late` (`device_command_cancelled`); `GET
+  /apps/tracked/{id}/install-now.json` `{phones: [{id, state, sub}]}` (state `waiting|sent|working|idle`). Every answer
+  is `?install=<word>&phone={id}#phone-{id}` for a set-up phone (its row), else `?install=<word>#phones` - the group is
+  always rendered with that id, also with no phones; a word for a phone without a row shows as a `row-note` at the
+  group's top (`install_now::flash`). Every read is a 500 on a DB error, never a made-up row; a failed queue is a 500
+  "nothing was queued". `render_detail_full` now 500s on a failed read of the app or its phones (it showed an empty list).
+- **The page** (`tracked_app_detail.html`, launcher only): the rows are `<div class="row" id="phone-{id}">` - avatar,
+  the name as a link (`.phone-link`, the old `phone_apps_href`) with its `row-sub` (`data-install-sub`), the running
+  version as `row-value`, the form with Install Now (`button-small`) or Cancel (`button-secondary`), then the flash and
+  the answer's ⓘ. Other apps' rows are unchanged. The group footer: "Install Now installs the newest release found by
+  Check Now right away, also on mobile data. It waits only for a call." with an ⓘ: the restart, about a minute of the
+  phone's own home screen and **calls not filtered for that minute** (QA R-M1), Update fence hides the home screen once
+  checked on the phone model. CSS `?v=34`: `.phone-link`, `.row-form`.
+- **The poll** (`static/install-now.js`, loaded only while a row is waiting/sent/working, `data-install-poll` on the
+  group; `jstest/install-now.test.js`): every 5 s while the page is visible (a hidden page stops, `visibilitychange`
+  starts it again), at most 360 polls (30 min - a reload starts again); each row's sub-line swapped with `textContent`;
+  a changed state word reloads the page as `auto-reload.js` does (scroll-restore's record, `scrollRestoration` "auto"),
+  never once a save has started and never while a `<details>` is open (the next poll does it); `?install=` dropped from
+  the address once shown. Without JS a reload shows the same.
+- **Words** (`locate::reword`): `installed: X` "Installed X", `already running: X` "Already on X", `not offered` "No
+  update for this phone", `refused: wrong_signer|not_ours|downgrade|unparseable|release` "Refused: signed with another
+  key / not Vibb One / older than the phone's version / not a readable app / this release can't be installed",
+  `download failed` "The download kept failing", `download corrupt` "The download didn't match the release", `no
+  space` "Not enough space on the phone", `install failed: N` "Android refused the install", `superseded` "Ended: a
+  newer Install Now took over", `call never ended` "Not installed: a call stayed on". `kiosk_escapes::wait_text` (Advanced's
+  "Update waiting ... Last check: ...") gets `install_now_call`/`_emergency`/`_ready`; `install_now_download` comes with
+  `pending_tag: null`, so it needs none. All four words fit `MAX_WORD`. Contract files unchanged.
+- Tests: `install_now::tests` (the tag codes, the release and offer tables incl. a disabled row, a manual upload, the
+  25 h edge and 11 minutes, `refusal`, the working words and a report older than the receipt, the answer's day),
+  `src/tests/install_now.rs` (the queue with its tag, event and nudge, the page's rows, the pop's `release_tag` - and
+  none for a ring -, the replace, `in_progress`, every refusal landing on a rendered element (`assert_lands`, the
+  flash), Cancel before and after the fetch and only for its kind, another app's 404s, the anonymous POST, a server
+  start, the working words through a real report, the poll JSON, Recent's label and "No answer" at 25 h, the answer's
+  ⓘ, the 500s), `locate::tests` (reword, label), `kiosk_escapes::tests::install_now_waits_have_words`,
+  `jstest/install-now.test.js`.

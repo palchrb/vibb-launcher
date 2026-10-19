@@ -596,6 +596,20 @@ pub fn command_expires(command: &str) -> bool {
 /// How long a delivered command may go unconfirmed before the page says it may be lost.
 const UNCONFIRMED_AFTER_MINUTES: i64 = 10;
 
+/// Design 37: Install Now's answer comes after a download and an install, and may wait for a call
+/// to end - a confirmed one is "No answer" only after this long.
+pub const INSTALL_UPDATE_RECEIVED_MINUTES: i64 = 25 * 60;
+
+/// How long a confirmed command may go without an answer before the page says "No answer": 10
+/// minutes, 25 h for Install Now ([INSTALL_UPDATE_RECEIVED_MINUTES]).
+pub fn received_overdue_minutes(command: &str) -> i64 {
+    if command == crate::install_now::COMMAND {
+        INSTALL_UPDATE_RECEIVED_MINUTES
+    } else {
+        UNCONFIRMED_AFTER_MINUTES
+    }
+}
+
 /// A phone that confirms commands (capability [COMMAND_RECEIPT_CAPABILITY]) gets a command it
 /// didn't confirm again, at most this many deliveries in all.
 pub const MAX_COMMAND_DELIVERIES: i64 = 3;
@@ -697,7 +711,7 @@ impl DeviceCommand {
             return CommandStatus::Received {
                 at: at(received),
                 overdue: minutes_since(received, now)
-                    .is_some_and(|m| m >= UNCONFIRMED_AFTER_MINUTES),
+                    .is_some_and(|m| m >= received_overdue_minutes(&self.command)),
             };
         }
         let Some(delivered) = &self.delivered_at else {
@@ -757,7 +771,8 @@ pub enum CommandStatus {
     Erasing {
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// The phone confirmed it, no answer yet; `overdue` after 10 minutes without one.
+    /// The phone confirmed it, no answer yet; `overdue` after 10 minutes without one (25 h for
+    /// Install Now, [received_overdue_minutes]).
     Received {
         at: Option<chrono::DateTime<chrono::Utc>>,
         overdue: bool,
@@ -810,6 +825,7 @@ pub fn command_label(command: &str) -> &'static str {
         "end_windows" => "Lock again",
         "start_pause" => "Unlock for 2 h",
         "allow_blocked" => "Allow these apps",
+        "install_update" => "Install Now",
         _ => "Other request",
     }
 }
@@ -1004,6 +1020,12 @@ pub struct PendingCommand {
     /// Left out for every other command.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow: Option<Vec<crate::window_relock::AllowedBlock>>,
+    /// `install_update` only (design 37): the launcher release the parent's row showed
+    /// (`tag@asset_id`, as `GET /api/devices/apps` names it). The phone installs the newest
+    /// release the list advertises when it acts; this is for its log and answer. Left out for
+    /// every other command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_tag: Option<String>,
 }
 
 #[derive(Deserialize)]

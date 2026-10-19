@@ -51,6 +51,8 @@ fun anyNetworkAtMs(isLauncher: Boolean, firstSeenMs: Long): Long? =
  * The gate (design 13 §3, QA #1, decisions): a network with INTERNET and a physical transport;
  * never roaming, switch on or off; with [wifiOnly] also NOT_METERED - unless [anyNetworkAt] (the
  * launcher's grace end) has passed (a clock set back before the start of the wait doesn't count);
+ * [parentOverride] (Install Now's launcher download, design 37) lifts both the roaming and the
+ * Wi-Fi rule;
  * room for the rest of the download, a session copy of the whole file and [DOWNLOAD_SPACE_MARGIN_BYTES]
  * ([allocatableBytes] `null` = unknown: not checked; [totalBytes] `null` = not known before the
  * first response: checked once it is).
@@ -63,11 +65,14 @@ fun downloadGate(
     haveBytes: Long,
     totalBytes: Long?,
     allocatableBytes: Long?,
+    parentOverride: Boolean = false,
 ): DownloadGate {
     if (caps == null || !caps.internet || !caps.physical) return DownloadGate.WAIT_NETWORK
-    if (!caps.notRoaming) return DownloadGate.WAIT_ROAMING
+    // Install Now (design 37 §4.1): the parent chose this download - neither "Wi-Fi only" nor
+    // roaming holds it; a network and the space still do.
+    if (!caps.notRoaming && !parentOverride) return DownloadGate.WAIT_ROAMING
     val graceOver = anyNetworkAt != null && nowMs >= anyNetworkAt
-    if (wifiOnly && !caps.notMetered && !graceOver) return DownloadGate.WAIT_WIFI
+    if (wifiOnly && !caps.notMetered && !graceOver && !parentOverride) return DownloadGate.WAIT_WIFI
     if (allocatableBytes != null && totalBytes != null && !enoughSpace(haveBytes, totalBytes, allocatableBytes)) {
         return DownloadGate.WAIT_SPACE
     }
@@ -249,13 +254,38 @@ fun legacyCacheFilesToDelete(files: List<Pair<String, Long>>, nowMs: Long): List
         name.startsWith("tracked_app_") && name.endsWith(".apk") && nowMs - modifiedMs >= LEGACY_FILE_AGE_MS
     }.map { it.first }
 
-/** The order the runner takes GO downloads in: catalog apps first, our own update last. */
-fun downloadOrder(records: List<DownloadRecord>): List<DownloadRecord> = records.sortedBy { it.isLauncher }
+/** The order the runner takes GO downloads in: catalog apps first, our own update last - first
+ * while the parent's Install Now runs ([launcherFirst], qa-37-code M2: "at once" doesn't wait
+ * behind a 300 MB catalog app). */
+fun downloadOrder(records: List<DownloadRecord>, launcherFirst: Boolean = false): List<DownloadRecord> =
+    records.sortedBy { it.isLauncher != launcherFirst }
 
 /** The next download of a run: the first GO one in [downloadOrder], skipping the ones [deferred] in
- * this run (a music app update waiting for the pause, design 21 §3 - the others go on). */
-fun nextDownload(records: List<DownloadRecord>, gates: Map<Long, DownloadGate>, deferred: Set<Long>): DownloadRecord? =
-    downloadOrder(records).firstOrNull { gates[it.appId] == DownloadGate.GO && it.appId !in deferred }
+ * this run (a music app update waiting for the pause, design 21 §3; one that gave up after its
+ * retries - the others go on). */
+fun nextDownload(
+    records: List<DownloadRecord>,
+    gates: Map<Long, DownloadGate>,
+    deferred: Set<Long>,
+    launcherFirst: Boolean = false,
+): DownloadRecord? =
+    downloadOrder(records, launcherFirst).firstOrNull { gates[it.appId] == DownloadGate.GO && it.appId !in deferred }
+
+/** A stall or server error is retried after these delays within a run, then that download waits
+ * for the next trigger. */
+val RETRY_DELAYS_MS = listOf(30_000L, 60_000L, 120_000L)
+
+/**
+ * A failed attempt of [appId] in a run: the delay before its next try, or `null` = it gives up
+ * for this run (the others go on). Counted per record (qa-37-code M2: a catalog app that keeps
+ * failing must not use up Install Now's retries, or end the run before the launcher's turn).
+ */
+fun retryAfterFailure(failures: MutableMap<Long, Int>, appId: Long): Long? {
+    val done = failures[appId] ?: 0
+    if (done >= RETRY_DELAYS_MS.size) return null
+    failures[appId] = done + 1
+    return RETRY_DELAYS_MS[done]
+}
 
 /** A finished file that failed its hash this often waits out the failed-release backoff instead
  * of being downloaded again at once (design 13 §5 allows one immediate restart). Counted per

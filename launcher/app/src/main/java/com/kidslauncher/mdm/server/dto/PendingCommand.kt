@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /** The oldest undelivered remote command for this device, if any - see
  * [PolicyResponse.pendingCommand]. [command] is one of "ring" | "stop_ring" | "lock" | "wipe" |
- * "locate" | "end_windows" | "allow_blocked" | "start_pause" (design 24b). */
+ * "locate" | "end_windows" | "allow_blocked" | "start_pause" (design 24b) | "install_update" (design 37). */
 @Serializable
 data class PendingCommand(
     val id: Long,
@@ -17,6 +17,10 @@ data class PendingCommand(
      * showed - only those are let out, each while its key is still that one (QA of cmd-expiry,
      * Low 1). `null` from an older server: every block goes, as before. */
     val allow: List<AllowedBlock>? = null,
+    /** `install_update` only (design 37): the launcher release the parent's row showed
+     * (`tag@asset_id`). The phone installs the newest release the list advertises when it acts;
+     * this one is kept in the record for the log. `null` for every other command. */
+    val releaseTag: String? = null,
 )
 
 /** One app of [PendingCommand.allow]: [signer] the key shown (SHA-256, lower-case hex), `null` =

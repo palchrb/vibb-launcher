@@ -47,6 +47,15 @@ class PackageReplacedReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             android.util.Log.w("PackageReplaced", "Couldn't bring Home back", e)
         }
+        // Install Now (design 37): the new process answers "installed" at once (the sync's settle;
+        // coalesced with the anchor's start sync, Nit 2 - kept, it says why it is there).
+        try {
+            if (InstallNow.load(context) != null) {
+                com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "install_now_done")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("PackageReplaced", "Couldn't ask for Install Now's answer", e)
+        }
         val pending = goAsync()
         UpdateFence.checkAsync(context.applicationContext, "package_replaced") { pending.finish() }
     }
