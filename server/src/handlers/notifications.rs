@@ -779,10 +779,25 @@ pub async fn receipt(
     let Ok(receipt) = serde_json::from_slice::<Receipt>(&body) else {
         return StatusCode::BAD_REQUEST;
     };
+    // One line per receipt (delivery id and outcome, never the token): the one trace that says
+    // whether a device's worker reaches this server at all (2026-10-19).
     match push::receipt(&state.db, receipt.d, &receipt.t, receipt.a == "clicked").await {
-        Ok(push::Receipt::Matched) => StatusCode::NO_CONTENT,
-        Ok(push::Receipt::Stale) => StatusCode::NOT_FOUND,
+        Ok(push::Receipt::Matched) => {
+            tracing::info!(delivery = receipt.d, action = %receipt.a, "push receipt");
+            StatusCode::NO_CONTENT
+        }
+        Ok(push::Receipt::Stale) => {
+            tracing::info!(
+                delivery = receipt.d,
+                "push receipt with an older token - ignored"
+            );
+            StatusCode::NOT_FOUND
+        }
         Ok(push::Receipt::Unknown) => {
+            tracing::warn!(
+                delivery = receipt.d,
+                "push receipt for no delivery - refused"
+            );
             state.limits.ip_failed(&key);
             StatusCode::NOT_FOUND
         }

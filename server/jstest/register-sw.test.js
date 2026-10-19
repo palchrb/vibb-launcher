@@ -10,7 +10,12 @@ function fakeWindow({ unread, badge = true } = {}) {
     const log = [];
     const listeners = {};
     const navigator = {
-        serviceWorker: { register: (url) => log.push(["register", url]) },
+        serviceWorker: {
+            register: (url) => {
+                log.push(["register", url]);
+                return Promise.resolve({ update: () => { log.push(["update"]); return Promise.resolve(); } });
+            },
+        },
     };
     if (badge) {
         navigator.setAppBadge = (n) => {
@@ -33,12 +38,20 @@ function fakeWindow({ unread, badge = true } = {}) {
     return { win, log, load: () => listeners.load() };
 }
 
-test("registers the worker at load", () => {
+test("registers the worker at load and asks for an update check at once", async () => {
     const w = fakeWindow();
     install(w.win);
     assert.deepStrictEqual(w.log, []);
     w.load();
     assert.deepStrictEqual(w.log, [["register", "/sw.js"]]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepStrictEqual(w.log, [["register", "/sw.js"], ["update"]]);
+    // A browser whose register() returns nothing (an old WebView stub): no throw.
+    const bare = fakeWindow();
+    bare.win.navigator.serviceWorker.register = (url) => { bare.log.push(["register", url]); };
+    install(bare.win);
+    bare.load();
+    assert.deepStrictEqual(bare.log, [["register", "/sw.js"]]);
 });
 
 test("the badge follows the bell, and stays untouched without one", () => {

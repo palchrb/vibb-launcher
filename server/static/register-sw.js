@@ -9,7 +9,17 @@
         var nav = win.navigator;
         if ("serviceWorker" in nav) {
             win.addEventListener("load", function () {
-                nav.serviceWorker.register("/sw.js");
+                // Register, then ask for an update check at once: an installed app (iOS) can keep
+                // an old worker for a day otherwise, and a worker fix must reach it at the next open.
+                var registered = nav.serviceWorker.register("/sw.js");
+                if (registered && registered.then) {
+                    registered.then(function (reg) {
+                        if (reg && reg.update) {
+                            var updating = reg.update();
+                            if (updating && updating.catch) updating.catch(function () {});
+                        }
+                    }).catch(function () {});
+                }
             });
         }
         var bell = win.document.querySelector("[data-unread]");

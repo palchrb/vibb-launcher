@@ -63,7 +63,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   pushes of the normal kinds for one subscription (an urgent kind is never folded, L2) -> the newest 2 + one `summary` delivery ("New
   notifications", tag `s<id>`), the rest `dropped`/`folded`; sent one at a time, the emergency call first, then
   `Urgency: high`. Each send: TTL expired -> `failed`/`expired`; endpoint re-checked with `allowed`; a fresh 16-byte
-  receipt token (its SHA-256 stored before the request); the payload of design 35 §5.3 (`navigate` = the
+  receipt token (its SHA-256 stored before the request); the payload of design 35 §5.3 - **plain Web Push since 2026-10-19, no `web_push`/`mutable` keys: Safari 18.4+ took
+  the declarative form over, showed the notification itself and ran neither `push` nor a receipt-bearing
+  `pushnotification` on the user's iPhone; the classic `push` path is the tested one on every browser** - (`navigate` = the
   subscription's origin + target, `tag` `e<event>`/`s<id>`/`t<id>`, `data {d, t, b}`); `TTL`/`Urgency` from
   `Kind::ttl()/urgency()` (`emergency_call` 86400/high; `pin_lockout`, `foreign_access` 43200/high; `pin_used`,
   `unseen_boot`, summary 43200/normal; `low_battery` 3600/normal; test 600/high), no `Topic`. The JWT is cached per
