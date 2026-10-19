@@ -445,19 +445,17 @@ private suspend fun dispatchPendingCommand(
  * Wi-Fi is gated again (the override is read live, [AppDownloads]' `gate`).
  */
 private suspend fun startInstallNow(context: Context, api: MdmApi, pending: PendingCommand) {
-    InstallNow.load(context)
-        ?.takeIf { it.commandId != pending.id || it.requestedAt != pending.requestedAt }
-        ?.let { old ->
-            CommandAnswers.result(
-                context, api, PendingCommand(old.commandId, INSTALL_NOW_COMMAND, old.requestedAt),
-                success = false, message = old.failure ?: INSTALL_NOW_SUPERSEDED,
-            )
-        }
-    Log.i(LOG_TAG, "Install Now ${pending.id} (row showed ${pending.releaseTag})")
-    InstallNow.store(
-        context,
-        InstallNowRecord(pending.id, pending.requestedAt, pending.releaseTag, BuildConfig.VERSION_CODE.toLong()),
+    val receipt = installNowOnReceipt(
+        InstallNow.load(context), pending.id, pending.requestedAt, pending.releaseTag, BuildConfig.VERSION_CODE.toLong(),
     )
+    receipt.answerOld?.let { (old, message) ->
+        CommandAnswers.result(
+            context, api, PendingCommand(old.commandId, INSTALL_NOW_COMMAND, old.requestedAt),
+            success = false, message = message,
+        )
+    }
+    Log.i(LOG_TAG, "Install Now ${pending.id} (row showed ${pending.releaseTag})")
+    InstallNow.store(context, receipt.store)
     SelfUpdate.lastWait = null
     try {
         AppDownloads.request(context, "install_now")
@@ -885,7 +883,11 @@ private fun requestInstallNowSync(context: Context, reason: String) {
 /** The gate said wait: remember why (status report) and, with the screen off - or for Install
  * Now, whatever the screen (design 37 §4.2) -, look again when it could pass. */
 private fun waitForWindow(context: Context, pending: PendingSelfUpdate, decision: UpdateWindowDecision.Wait, installNow: Boolean) {
+    val changed = SelfUpdate.lastWait != decision.reason
     SelfUpdate.lastWait = decision.reason
+    // Install Now (qa-37-code L1): this sync's report went out before the commit step, saying
+    // "installing" - one more (coalesced) sync carries the wait's own word to the row.
+    if (installNow && changed) requestInstallNowSync(context, "install_now_wait")
     Log.i(LOG_TAG, "Launcher ${pending.releaseTag} waits: ${decision.reason.wire}")
     val recheck = decision.recheckInMs
     if (recheck != null && (installNow || SelfUpdate.screenOffForMs(context) != null)) SelfUpdate.armAlarm(context, recheck)

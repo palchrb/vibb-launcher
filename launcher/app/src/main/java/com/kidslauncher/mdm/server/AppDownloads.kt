@@ -42,9 +42,6 @@ private const val WAKE_LOCK_MS = 5 * 60_000L
 private const val WAKE_LOCK_RENEW_MS = 60_000L
 /** How often a running download checks that its record is still the one wanted. */
 private const val RECORD_CHECK_MS = 2_000L
-/** After a failed attempt (stall, server error) the runner tries again after these delays, then
- * waits for the next trigger (a sync, a network change, process start). */
-private val RETRY_DELAYS_MS = listOf(30_000L, 60_000L, 120_000L)
 /** At most this many attempts per run - a guard against a restart loop. */
 private const val MAX_STEPS_PER_RUN = 20
 /** A release that changed on the server under a download asks for the list again at most this
@@ -450,7 +447,8 @@ object AppDownloads {
 
     private suspend fun runLoop(app: Context, reason: String) {
         Log.i(LOG_TAG, "Downloads ($reason)")
-        var failures = 0
+        // Per record (qa-37-code M2).
+        val failures = mutableMapOf<Long, Int>()
         var steps = 0
         var rechecks = 0
         // Music app updates waiting for the pause in this run: skipped, the others go on.
@@ -478,7 +476,8 @@ object AppDownloads {
                 if (records.any { it.isLauncher && gates[it.appId] == DownloadGate.WAIT_SPACE } && InstallNow.active(app) != null) {
                     InstallNow.fail(app, INSTALL_NOW_NO_SPACE)
                 }
-                val next = nextDownload(records, gates, deferred)
+                // Install Now's download goes first (qa-37-code M2).
+                val next = nextDownload(records, gates, deferred, launcherFirst = InstallNow.active(app) != null)
                 anyGoLast = next != null
                 if (next == null) {
                     // A network that began to qualify after the caps were read left the callback no
@@ -504,19 +503,21 @@ object AppDownloads {
                 }
                 acquireWakeLock(app)
                 when (attempt(app, next)) {
-                    Outcome.PROGRESS -> failures = 0
+                    Outcome.PROGRESS -> failures.remove(next.appId)
                     Outcome.PAUSED -> {}
                     Outcome.STOP -> break
                     Outcome.DEFER -> deferred += next.appId
                     Outcome.FAILED -> {
-                        if (failures >= RETRY_DELAYS_MS.size) {
-                            Log.w(LOG_TAG, "Download keeps failing - waiting for the next trigger")
-                            // Install Now: the run's give-up is its answer (design 37 §4.2).
+                        val wait = retryAfterFailure(failures, next.appId)
+                        if (wait == null) {
+                            Log.w(LOG_TAG, "${next.name} keeps failing - it waits for the next trigger")
+                            // Install Now: its give-up is its answer (design 37 §4.2).
                             if (next.isLauncher && InstallNow.active(app) != null) InstallNow.fail(app, INSTALL_NOW_DOWNLOAD_FAILED)
-                            break
+                            deferred += next.appId
+                        } else {
+                            releaseWakeLock()
+                            delay(wait)
                         }
-                        releaseWakeLock()
-                        delay(RETRY_DELAYS_MS[failures++])
                     }
                 }
             }

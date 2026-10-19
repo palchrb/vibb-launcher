@@ -166,7 +166,7 @@ class InstallNowPlanTest {
         assertTrue("installNowRecheckMs(lastWait)" in arm)
         val screenOn = selfUpdate.substringAfter("fun onScreenOn(").substringBefore("\n    }\n")
         assertTrue("if (InstallNow.active(app) == null) cancelAlarm(app)" in screenOn)
-        assertTrue("OngoingCalls.addListener { onCallsChanged(app) }" in selfUpdate)
+        assertTrue("OngoingCalls.addListener { scope.launch { onCallsChanged(app) } }" in selfUpdate)
         val wait = source("MdmSyncWorker.kt").substringAfter("private fun waitForWindow(").substringBefore("\n}\n")
         assertTrue("(installNow || SelfUpdate.screenOffForMs(context) != null)" in wait)
     }
@@ -186,6 +186,91 @@ class InstallNowPlanTest {
         assertTrue(INSTALL_NOW_CAPABILITY in STATUS_CAPABILITIES)
         assertEquals("install_now_v1", INSTALL_NOW_CAPABILITY)
         assertEquals("install_update", INSTALL_NOW_COMMAND)
+    }
+
+    /** qa-37-code L2 (L4m, L8m): the receipt stores the record, a record of another command is
+     * answered, the same command delivered again keeps its record. */
+    @Test
+    fun `the receipt stores the record and answers an older one`() {
+        val first = installNowOnReceipt(null, 9, "t9", "launcher-v1.4.0@77", 1_003_002)
+        assertNull(first.answerOld)
+        assertEquals(InstallNowRecord(9, "t9", "launcher-v1.4.0@77", 1_003_002), first.store)
+        val newer = installNowOnReceipt(first.store, 10, "t10", "launcher-v1.4.1@78", 1_003_002)
+        assertEquals(first.store to INSTALL_NOW_SUPERSEDED, newer.answerOld)
+        assertEquals(10L, newer.store.commandId)
+        val failed = first.store.copy(failure = "no space")
+        assertEquals(failed to "no space", installNowOnReceipt(failed, 10, "t10", null, 1).answerOld)
+        // The same id with another requested_at is another command (a restored server backup).
+        assertEquals(first.store to INSTALL_NOW_SUPERSEDED, installNowOnReceipt(first.store, 9, "other", null, 1).answerOld)
+        val again = installNowOnReceipt(failed, 9, "t9", "x", 5)
+        assertNull(again.answerOld)
+        assertEquals(failed, again.store)
+        val start = source("MdmSyncWorker.kt").substringAfter("private suspend fun startInstallNow(").substringBefore("\n}\n")
+        assertTrue("InstallNow.store(context, receipt.store)" in start)
+        assertTrue("receipt.answerOld?.let" in start && "CommandAnswers.result(" in start)
+        val dispatch = source("MdmSyncWorker.kt").substringAfter("INSTALL_NOW_COMMAND -> {").substringBefore("}")
+        assertTrue("startInstallNow(context, api, pending)" in dispatch)
+    }
+
+    /** qa-37-code M2: Install Now's download goes first, and failures count per record. */
+    @Test
+    fun `the launcher downloads first while Install Now runs, retries per record`() {
+        fun rec(id: Long, launcher: Boolean) = DownloadRecord(appId = id, tag = "t$id", isLauncher = launcher)
+        val records = listOf(rec(1, true), rec(2, false), rec(3, false))
+        assertEquals(listOf(2L, 3L, 1L), downloadOrder(records).map { it.appId })
+        assertEquals(listOf(1L, 2L, 3L), downloadOrder(records, launcherFirst = true).map { it.appId })
+        val go = records.associate { it.appId to DownloadGate.GO }
+        assertEquals(2L, nextDownload(records, go, emptySet())?.appId)
+        assertEquals(1L, nextDownload(records, go, emptySet(), launcherFirst = true)?.appId)
+        val failures = mutableMapOf<Long, Int>()
+        assertEquals(listOf(30_000L, 60_000L, 120_000L, null), List(4) { retryAfterFailure(failures, 2) })
+        // Another record still has its own three.
+        assertEquals(30_000L, retryAfterFailure(failures, 1))
+        val run = source("AppDownloads.kt").substringAfter("private suspend fun runLoop(").substringBefore("\n    private ")
+        assertTrue("launcherFirst = InstallNow.active(app) != null" in run)
+        assertTrue("retryAfterFailure(failures, next.appId)" in run)
+        assertTrue("deferred += next.appId" in run.substringAfter("if (wait == null) {"))
+    }
+
+    /** qa-37-code L2 (L1m) - the safety property: the forced path runs every APK check. The
+     * check is one unconditional statement before the commit, with every input, and nothing but
+     * OK passes on to `recordAttemptStarted`. */
+    @Test
+    fun `the forced path still runs every APK check`() {
+        val commit = source("MdmSyncWorker.kt").substringAfter("private suspend fun commitPendingSelfUpdateIfDue(").substringBefore("\n}\n")
+        val call = commit.substringAfter("    val check = pendingApkCheck(\n").substringBefore("\n    )\n")
+        for (arg in listOf("pending = pending,", "fileSize =", "fileSha256 =", "archivePackage = archive?.packageName", "archiveVersionCode = archive?.longVersionCode", "ownPackage = context.packageName", "ownVersionCode = BuildConfig.VERSION_CODE.toLong()", "ourSigners = SelfUpdate.ourSigners(context)", "archiveSigners = SelfUpdate.signers(archive?.signingInfo)")) {
+            assertTrue(arg, arg in call)
+        }
+        assertFalse("installNow" in call)
+        assertEquals(1, Regex("""pendingApkCheck\(""").findAll(commit).count())
+        // At the method's top level (four spaces), not under an `if`.
+        assertTrue("\n    val check = pendingApkCheck(\n" in commit)
+        val checkAt = commit.indexOf("val check = pendingApkCheck(")
+        val outcomes = commit.substring(checkAt).substringAfter("when {").substringBefore("\n    }\n")
+        assertTrue("check == PendingApkCheck.OK -> {}" in outcomes)
+        assertEquals("every other outcome returns", 3, Regex("""\n            return\n""").findAll(outcomes).count())
+        assertTrue(checkAt < commit.indexOf("TrackedAppUpdateState.recordAttemptStarted(context, key)"))
+        assertTrue(checkAt > commit.indexOf("val decision = commitDecision(context, pending, installNow)"))
+        // And the pure check refuses each of them (SelfUpdatePlanTest has the table).
+        val p = PendingSelfUpdate("t", "f", 10, "ab", 0)
+        assertEquals(PendingApkCheck.WRONG_SIGNER, pendingApkCheck(p, 10, "AB", "me.vibb.launcher", 2, "me.vibb.launcher", 1, setOf("a"), setOf("b")))
+        assertEquals(PendingApkCheck.CORRUPT, pendingApkCheck(p, 10, "cd", "me.vibb.launcher", 2, "me.vibb.launcher", 1))
+    }
+
+    /** qa-37-code L2 (L6m, L7m) and L1: the answers the glue gives. */
+    @Test
+    fun `a failed install, a corrupt file and a wait are answered`() {
+        val receiver = source("AppInstallReceiver.kt")
+        assertTrue("if (isLauncher && failed) {" in receiver)
+        assertTrue("InstallNow.fail(app, installNowInstallFailed(status))" in receiver.substringAfter("if (isLauncher && failed) {"))
+        val sync = source("MdmSyncWorker.kt")
+        val missing = sync.substringAfter("check == PendingApkCheck.MISSING || check == PendingApkCheck.CORRUPT -> {").substringBefore("return")
+        assertTrue("if (check == PendingApkCheck.CORRUPT) InstallNow.fail(context, INSTALL_NOW_DOWNLOAD_CORRUPT)" in missing)
+        assertTrue("if (installNow) InstallNow.fail(context, check.installNowAnswer)" in sync)
+        assertTrue("if (installNow) InstallNow.fail(context, INSTALL_NOW_INSTALL_FAILED_START)" in sync)
+        val wait = sync.substringAfter("private fun waitForWindow(").substringBefore("\n}\n")
+        assertTrue("if (installNow && changed) requestInstallNowSync(context, \"install_now_wait\")" in wait)
     }
 
     private fun repoRoot(): File? = listOf("..", "../..", ".").map(::File).firstOrNull { File(it, "server").isDirectory && File(it, "launcher").isDirectory }

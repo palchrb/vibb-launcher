@@ -197,8 +197,9 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   and the gate); `fail(reason)` keeps the first reason and asks for a sync, whose settle answers; `callWait` stamps and
   ends the call wait; `clearCommand` after the answer; `clear` next to `CommandAnswers.clear` (enrollment in
   `Provisioning` and the Settings re-enroll).
-- **Dispatch** (`dispatchPendingCommand`, after the receipt): a record of another command is answered first (its own
-  failure, else `superseded`, failed); the new record stores the running versionCode; `SelfUpdate.lastWait` cleared;
+- **Dispatch** (`dispatchPendingCommand`, after the receipt; pure `installNowOnReceipt`): a record of another command
+  is answered first (its own failure, else `superseded`, failed); the new record stores the running versionCode (the
+  same command delivered again keeps its record); `SelfUpdate.lastWait` cleared;
   `AppDownloads.request`; `requestFollowUpSync`. The same sync goes on to the list and, last, the commit.
 - **Settle** (`checkForTrackedAppUpdates`): after `handleLauncherUpdate` (now `LauncherHandled(download, row)`), and in
   the no-list branch with `NO_LIST` (the new process answers "installed" also before tsnet is up). With a record
@@ -206,18 +207,25 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Download** (`AppDownloads.kt`): one helper `gate(app, record, ...)` is the file's only `downloadGate(` call, behind
   the run, the report, the running download's check and the network callback; `parentOverride = record.isLauncher &&
   InstallNow.active(app) != null` - read live, never stored in a download record (QA M3), so a cleared or failed record
-  ends it. With a record: the run's give-up after `RETRY_DELAYS_MS` -> `fail("download failed")`, `MAX_HASH_FAILURES`
+  ends it. With a record the launcher downloads **first** (`downloadOrder`/`nextDownload(launcherFirst)`, qa-37-code
+  M2), and every record has its own retries in a run (`retryAfterFailure`: 30/60/120 s, then that record waits for the
+  next trigger while the others go on - a failing catalog app no longer ends the run). With a record: the launcher's
+  give-up after `RETRY_DELAYS_MS` -> `fail("download failed")`, `MAX_HASH_FAILURES`
   -> `fail("download corrupt")`, the launcher's `WAIT_SPACE` -> `fail("no space")`; `WAIT_NETWORK` waits; a stored
   APK asks for a sync (`install_now_downloaded`) so the commit comes now. The launcher's package/signer refusals come
   from the commit's `pendingApkCheck` (R-N2), never `CatalogRefusal`.
 - **Commit** (`commitPendingSelfUpdateIfDue`): with a record `commitDecision` = `installNowDecision` in both checks
-  (`beforeCommit` too), the backoff skipped (not the refusal); a wait arms `SelfUpdate.armAlarm` whatever the screen;
+  (`beforeCommit` too), the backoff skipped (not the refusal) - and the same unconditional `pendingApkCheck` as every
+  self-update (size, SHA-256, package, signer, newer versionCode; pinned by `InstallNowPlanTest`); a wait arms
+  `SelfUpdate.armAlarm` whatever the screen, and a wait whose reason changed asks for one more sync so the row reads
+  `install_now_call`/`_emergency`, not "Installing" (qa-37-code L1);
   a call wait over 6 h -> `fail("call never ended")`; `CORRUPT` -> `fail("download corrupt")`, `MISSING` and
   `SAME_VERSION` ask for a sync (R-L2: the download restarts, or the settle answers "already running"); a
   deterministic check -> `fail("refused: <check>")`; `InstallStart.FAILED` -> `fail("install failed: start")`.
 - **The alarm and the call** (`SelfUpdate.kt`): a screen-off's `armIfPending` arms `installNowRecheckMs(lastWait)` with
   a record, never the night window's delay over the call's 2 minutes (R-L1, one alarm, request code 12); `onScreenOn`
-  keeps the alarm while a record runs; `init` adds an `OngoingCalls` listener - no live call left while the record
+  keeps the alarm while a record runs; `init` adds an `OngoingCalls` listener (it reads the record on `SelfUpdate`'s
+  scope, not the main thread) - no live call left while the record
   waits on `CALL` -> `SyncRunner.request("install_now_call_ended")`. A VoIP or Telecom-only call isn't in
   `OngoingCalls`: the 2-minute alarm re-checks it.
 - **Results**: `AppInstallReceiver` - any failed launcher result with a record -> `fail("install failed: <status>")`

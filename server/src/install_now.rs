@@ -228,6 +228,13 @@ pub fn offer(
     now: DateTime<Utc>,
 ) -> Offer {
     if let Some(command) = newest
+        && awaiting_report(command, report, now.naive_utc())
+    {
+        return Offer::Working {
+            words: "Installed - waiting for the phone's report".to_string(),
+        };
+    }
+    if let Some(command) = newest
         && let Some(status) = open_status(command, now.naive_utc())
     {
         return match status {
@@ -247,6 +254,41 @@ pub fn offer(
     Offer::Standing(release(tag, report))
 }
 
+/// How long a "Done" answer may wait for the report that shows the new version.
+const AWAIT_REPORT_MINUTES: i64 = 60;
+
+/// The phone answered "installed: X" and its latest report is from before that answer
+/// (qa-37-code M1: in one sync the launcher answers before it reports): the row is still
+/// working - not "behind" with an Install Now button - until a report lands, at most an hour.
+pub fn awaiting_report(
+    command: &DeviceCommand,
+    report: Option<&Report>,
+    now: NaiveDateTime,
+) -> bool {
+    if command.succeeded == Some(false)
+        || !command
+            .result
+            .as_deref()
+            .is_some_and(|r| r.starts_with("installed: "))
+    {
+        return false;
+    }
+    let Some(answered) = command
+        .acknowledged_at
+        .as_deref()
+        .and_then(|at| NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S").ok())
+    else {
+        return false;
+    };
+    if (now - answered).num_minutes() >= AWAIT_REPORT_MINUTES {
+        return false;
+    }
+    match report.and_then(|r| r.reported_at) {
+        Some(reported) => reported.naive_utc() < answered,
+        None => true,
+    }
+}
+
 /// What a POST does: `None` = queue it (a waiting one is replaced), else the word it answers with.
 pub fn refusal(
     tag: Option<&str>,
@@ -257,6 +299,12 @@ pub fn refusal(
     if let Some(command) = newest
         && let Some(status) = open_status(command, now)
         && !matches!(status, CommandStatus::Waiting { .. })
+    {
+        return Some("in_progress");
+    }
+    // Just installed, the report not in yet (M1): nothing to install.
+    if let Some(command) = newest
+        && awaiting_report(command, report, now)
     {
         return Some("in_progress");
     }
@@ -661,6 +709,67 @@ mod tests {
         assert_eq!(
             working_words(received, Some(&stale), &zone, now),
             "The phone got it (14:00)"
+        );
+    }
+
+    /// qa-37-code M1: "installed: X" with a report from before it is still working.
+    #[test]
+    fn a_done_answer_waits_for_its_report() {
+        let done = command("done"); // answered 12:05:00
+        let at = |t: &str| utc(t).naive_utc();
+        let old = Report {
+            reported_at: Some(utc("2026-10-19 12:02:00")),
+            ..report()
+        };
+        let fresh = Report {
+            reported_at: Some(utc("2026-10-19 12:05:00")),
+            ..report()
+        };
+        assert!(awaiting_report(
+            &done,
+            Some(&old),
+            at("2026-10-19 12:06:00")
+        ));
+        assert!(awaiting_report(&done, None, at("2026-10-19 12:06:00")));
+        assert!(!awaiting_report(
+            &done,
+            Some(&fresh),
+            at("2026-10-19 12:06:00")
+        ));
+        assert!(
+            !awaiting_report(&done, Some(&old), at("2026-10-19 13:05:00")),
+            "an hour at most"
+        );
+        let mut running = command("done");
+        running.result = Some("already running: 1.4.0".into());
+        assert!(!awaiting_report(
+            &running,
+            Some(&old),
+            at("2026-10-19 12:06:00")
+        ));
+        assert!(!awaiting_report(
+            &command("failed"),
+            Some(&old),
+            at("2026-10-19 12:06:00")
+        ));
+        let zone = oslo();
+        let offered = offer(
+            Some(TAG),
+            Some(&old),
+            Some(&done),
+            &zone,
+            utc("2026-10-19 12:06:00"),
+        );
+        assert_eq!(offered.state(), "working");
+        assert!(!offered.install());
+        assert_eq!(
+            refusal(
+                Some(TAG),
+                Some(&old),
+                Some(&done),
+                at("2026-10-19 12:06:00")
+            ),
+            Some("in_progress")
         );
     }
 

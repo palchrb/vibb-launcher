@@ -388,6 +388,19 @@ async fn only_the_launchers_page_and_only_an_admin() {
         .await;
     assert!(!anonymous.status.is_success());
     assert!(commands(&app, phone).await.is_empty(), "nothing written");
+    // An anonymous Cancel cancels nothing either (qa-37-code nit 1).
+    post(&app, &cookie, &install_uri(launcher, phone)).await;
+    let id = commands(&app, phone).await[0].0;
+    let anonymous = app
+        .request_form(
+            Method::POST,
+            &format!("/apps/tracked/{launcher}/install-now/{phone}/cancel/{id}"),
+            None,
+            &[],
+        )
+        .await;
+    assert!(!anonymous.status.is_success());
+    assert_eq!(commands(&app, phone).await[0].3, None, "still waiting");
 }
 
 #[tokio::test]
@@ -497,6 +510,31 @@ async fn the_answer_shows_in_the_row() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
+    // qa-37-code M1/L3: in one sync the launcher answers before it reports. Before the new report
+    // lands the row is still working - no Install Now over the old version - and the poll goes on.
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-5 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app
+        .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
+        .await
+        .text();
+    let html = row(&page, phone);
+    assert!(!html.contains(">Install Now</button>"), "{html}");
+    assert!(html.contains("waiting for the phone"), "{html}");
+    assert!(page.contains("data-install-poll="), "the poll goes on");
+    let polled = app
+        .get_page(
+            &format!("/apps/tracked/{launcher}/install-now.json"),
+            &cookie,
+        )
+        .await
+        .json();
+    assert_eq!(polled["phones"][0]["state"], "working");
+    let tap = post(&app, &cookie, &install_uri(launcher, phone)).await;
+    assert!(tap.location().unwrap().contains("install=in_progress"));
+    // The report with the new version: the row reads it.
     report(&app, &token, 1_004_000, true, json!({})).await;
     let page = app
         .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
@@ -510,6 +548,66 @@ async fn the_answer_shows_in_the_row() {
     assert!(!html.contains(">Install Now</button>"));
     assert!(html.contains("Installed 1.4.0"), "{html}");
     assert!(html.contains(">Done<"), "{html}");
+}
+
+/// The pop sends `release_tag` for Install Now only - not for `allow_blocked`, whose payload is
+/// JSON (qa-37-code S1).
+#[tokio::test]
+async fn release_tag_goes_only_with_install_now() {
+    let app = TestApp::new().await;
+    let (phone, token) = behind_phone(&app, "Anna").await;
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, payload) VALUES (?, 'allow_blocked', ?)",
+    )
+    .bind(phone)
+    .bind(r#"[{"package_name":"org.example.game","signer":null}]"#)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let pending = policy(&app, &token).await["pending_command"].clone();
+    assert_eq!(pending["command"], "allow_blocked");
+    assert!(pending["allow"].is_array(), "{pending}");
+    assert!(pending.get("release_tag").is_none(), "{pending}");
+}
+
+/// The app page fails closed on a failed read of the app or its phones (qa-37-code S9/S13).
+#[tokio::test]
+async fn an_app_page_is_a_500_when_the_app_or_its_phones_cant_be_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let launcher = launcher(&app).await;
+    behind_phone(&app, "Anna").await;
+    let other: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag) \
+         VALUES ('Element X', 'io.element.android.x', 'element-hq/element-x-android', 'v1') \
+         RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    for (table, pages) in [
+        ("tracked_apps", vec![launcher, other]),
+        ("devices", vec![launcher]),
+        ("device_tracked_apps", vec![other]),
+    ] {
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+        for id in pages {
+            let res = app.get_page(&format!("/apps/tracked/{id}"), &cookie).await;
+            assert_eq!(
+                res.status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{table}, app {id}: {}",
+                res.text()
+            );
+        }
+        sqlx::query(&format!("ALTER TABLE {table}_gone RENAME TO {table}"))
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]

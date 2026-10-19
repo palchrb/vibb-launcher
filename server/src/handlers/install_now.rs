@@ -1,6 +1,6 @@
 //! Install Now (design 37, `docs/design/37-install-now.md` at the monorepo root): the launcher's
 //! page under Apps (`/apps/tracked/{id}` with `is_launcher`) has an Install Now button per phone
-//! that is behind. It queues a one-time `install_update` command (`locate::queue_command_with`,
+//! that is behind. It queues a one-time `install_update` command ([queue_install], one transaction,
 //! the release tag the row showed as its payload); the phone downloads the newest release on any
 //! network, checks it as every self-update and installs it at once, waiting only for a call or an
 //! emergency. Cancel stops it while the phone hasn't fetched it. Plain forms, full auth; every
@@ -194,15 +194,74 @@ pub async fn install(
     if device.enrolled_at.is_none() {
         return back(app_id, "not_set_up", Some(&device));
     }
-    let latest = match crate::handlers::device_pages::load_latest(&state, device_id).await {
-        Ok(latest) => latest,
-        Err(err) => return db_error(app_id, err),
-    };
-    let newest = match newest_command(&state, device_id).await {
-        Ok(newest) => newest,
-        Err(err) => return db_error(app_id, err),
-    };
-    let tag = release_tag(&app);
+    match queue_install(&state, &app, device_id, &admin.username).await {
+        Ok(Queued::Sent(tag)) => {
+            security::record_security_event(
+                &state.db,
+                "device_command_queued",
+                Some(&admin.username),
+                None,
+                Some(&format!("install_update {tag}, device {device_id}")),
+            )
+            .await;
+            back(app_id, "sent", Some(&device))
+        }
+        Ok(Queued::Refused(word)) => back(app_id, word, Some(&device)),
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't queue Install Now");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't send it - nothing was queued. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// What [queue_install] did.
+enum Queued {
+    /// Queued, with the release tag as its payload.
+    Sent(String),
+    /// Nothing queued: [install_now::refusal]'s word.
+    Refused(&'static str),
+}
+
+/// The refusal check and the queue in one transaction (qa-37-code nit 3): its first statement
+/// cancels a waiting Install Now of the phone as "replaced" - a write, so SQLite holds the write
+/// lock from there and the policy's pop (an UPDATE) can't hand out a command between the check
+/// and the insert. A refusal rolls the replace back. The phone's nudge and the replace's event
+/// follow the commit, as `locate::queue_command`'s do.
+async fn queue_install(
+    state: &AppState,
+    app: &TrackedApp,
+    device_id: i64,
+    admin: &str,
+) -> Result<Queued, sqlx::Error> {
+    let mut tx = state.db.begin().await?;
+    let replaced = sqlx::query(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = 'replaced' \
+         WHERE device_id = ? AND command = ? AND delivered_at IS NULL AND cancelled_at IS NULL",
+    )
+    .bind(device_id)
+    .bind(install_now::COMMAND)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let latest: Option<DeviceStatus> = sqlx::query_as(
+        "SELECT * FROM device_status WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    // The newest one that wasn't just replaced (a replaced one is no longer open either way).
+    let newest: Option<DeviceCommand> = sqlx::query_as(
+        "SELECT * FROM device_commands WHERE device_id = ? AND command = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(device_id)
+    .bind(install_now::COMMAND)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let tag = release_tag(app);
     let now = Utc::now().naive_utc();
     let refused = match &latest {
         Some(status) => {
@@ -214,43 +273,35 @@ pub async fn install(
         }
         None => install_now::refusal(tag.as_deref(), None, newest.as_ref(), now),
     };
-    if let Some(word) = refused {
-        return back(app_id, word, Some(&device));
-    }
     // `refusal` gives the button only with a release.
-    let Some(tag) = tag else {
-        return back(app_id, "no_release", Some(&device));
+    let tag = match (refused, tag) {
+        (None, Some(tag)) => tag,
+        (word, _) => {
+            tx.rollback().await?;
+            return Ok(Queued::Refused(word.unwrap_or("no_release")));
+        }
     };
-    match crate::handlers::locate::queue_command_with(
-        &state,
-        device_id,
-        install_now::COMMAND,
-        Some(&tag),
-        &admin.username,
-    )
-    .await
-    {
-        Ok(true) => {
-            security::record_security_event(
-                &state.db,
-                "device_command_queued",
-                Some(&admin.username),
-                None,
-                Some(&format!("install_update {tag}, device {device_id}")),
-            )
-            .await;
-            back(app_id, "sent", Some(&device))
-        }
-        Ok(false) => back(app_id, "unknown_phone", None),
-        Err(err) => {
-            tracing::error!(device_id, %err, "can't queue Install Now");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't send it - nothing was queued. Check the server log.",
-            )
-                .into_response()
-        }
+    sqlx::query("INSERT INTO device_commands (device_id, command, payload) VALUES (?, ?, ?)")
+        .bind(device_id)
+        .bind(install_now::COMMAND)
+        .bind(&tag)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    if replaced > 0 {
+        security::record_security_event(
+            &state.db,
+            "device_command_replaced",
+            Some(admin),
+            None,
+            Some(&format!(
+                "{replaced} waiting install_update replaced by a new install_update, device {device_id}"
+            )),
+        )
+        .await;
     }
+    let _ = state.command_notify.send(device_id);
+    Ok(Queued::Sent(tag))
 }
 
 /// `POST /apps/tracked/{app_id}/install-now/{device_id}/cancel/{command_id}`: Install Now's

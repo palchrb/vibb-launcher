@@ -293,8 +293,9 @@ memory for a local build): server `cargo test` (all new tests in `src/tests/inst
 `locate::tests`, `kiosk_escapes::tests`), `cargo fmt --check`, clippy, `node --test jstest/`; launcher `./gradlew build
 -PwarningsAsErrors=true` (`InstallNowPlanTest`, `PolicyResponseCompatTest`).
 
-**In** (server, `server/CLAUDE.md` "Install Now"): the `install_update` command through `locate::queue_command_with`
-with the row's `tag@asset_id` as payload, replaced while waiting; `pending_command.release_tag` for it only; no expiry;
+**In** (server, `server/CLAUDE.md` "Install Now"): the `install_update` command through `queue_install` (one
+transaction with the refusal check since the code QA's fix round) with the row's `tag@asset_id` as payload, replaced
+while waiting; `pending_command.release_tag` for it only; no expiry;
 "Install Now" in Recent; Received is "No answer" after 25 h for it only; the pure row (`src/install_now.rs`:
 `launcher_tag_version_code`, `release`, `offer`, `refusal`, `working_words`, `answer_fresh`, `flash`); the two POST
 routes and the poll JSON (`handlers::install_now`); the launcher page's rows `id="phone-{id}"` in an always-rendered
@@ -342,3 +343,26 @@ and the unfiltered calls for about a minute - the ⓘ's two sentences) and on (A
 the download on real mobile data with "Wi-Fi only" on, the 2-minute alarm catching the end of a VoIP or Telecom-only
 call, the alarm with the screen on in Doze, "Done" arriving over tsnet only after the next unlock (the answer in the
 outbox); in the PWA on the iPhone: the poll stopping in the background and reloading at the same place.
+
+**Code QA fix round** (`docs/review/qa-37-code.md`, branch `qa-install-now`; run locally: server `cargo test` 1047
+passed, fmt clean, clippy the 13 known warnings, `node --test jstest/` 56; launcher `testDebugUnitTest assembleDebug
+-PwarningsAsErrors=true` 1375 tests, 0 failed):
+- **M1** fixed: `install_now::awaiting_report` - while the newest answer is `installed: X` and the latest report is
+  older than it (at most an hour), the row is Working "Installed - waiting for the phone's report" (the poll goes on
+  and reloads when the report lands) and a POST answers `in_progress`. `the_answer_shows_in_the_row` now renders before
+  the new report (L3) and after it; `install_now::tests::a_done_answer_waits_for_its_report`.
+- **M2** fixed: while a record runs the launcher's download goes first (`downloadOrder`/`nextDownload(launcherFirst)`),
+  and a run counts failures per record (`retryAfterFailure`): a record that gives up waits for the next trigger while
+  the others go on, so a failing catalog app neither uses Install Now's retries nor ends the run before its turn.
+- **L1** fixed: a commit wait whose reason changed requests one more (coalesced) sync, so the report says
+  `install_now_call`/`_emergency` instead of "Installing".
+- **L2** fixed, a test for each surviving mutation: S1 `release_tag_goes_only_with_install_now` (an `allow_blocked`
+  with its payload); S9/S13 `an_app_page_is_a_500_when_the_app_or_its_phones_cant_be_read` (the app read, the
+  launcher's phones, a catalog app's phones); L1m `the forced path still runs every APK check` (the one unconditional
+  `pendingApkCheck` with every input, before `recordAttemptStarted`, every non-OK outcome returning, no `installNow` in
+  it); L4m/L8m the pure `installNowOnReceipt` and its glue; L6m/L7m source pins on `AppInstallReceiver`'s and the
+  CORRUPT branch's answers.
+- **Nits**: an anonymous Cancel cancels nothing (tested); the call listener reads the record on `SelfUpdate`'s scope;
+  the refusal check and the queue are one transaction (`queue_install`, replacing `locate::queue_command_with`, which
+  is gone; `replaced_kinds` no longer lists `install_update`). `command_result` stays last-writer-wins (an outbox retry
+  carries the same text). The event-label scan lists `not_set_up` as an answer word too.

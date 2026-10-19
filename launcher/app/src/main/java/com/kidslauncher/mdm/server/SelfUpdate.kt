@@ -78,7 +78,8 @@ object SelfUpdate {
             screenOffSinceElapsed = Process.getStartElapsedRealtime()
         }
         // Install Now (design 37, QA L8): a call that held it ends - the install starts at once.
-        OngoingCalls.addListener { onCallsChanged(app) }
+        // The listener runs on the caller's thread (main): the record is read on our scope.
+        OngoingCalls.addListener { scope.launch { onCallsChanged(app) } }
         scope.launch {
             try {
                 cleanup(app)

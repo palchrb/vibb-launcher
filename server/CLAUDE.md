@@ -1994,8 +1994,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
 
 - **What**: the launcher's page under Apps (`/apps/tracked/{id}` with `is_launcher`) has an **Install Now** button per
   set-up phone that is behind. One tap queues a one-time `device_commands` row `install_update`
-  (`install_now::COMMAND`) through `locate::queue_command_with` (`queue_command` with a payload; the receipt, the
-  redelivery and the stream's nudge as every command; `replaced_kinds` replaces a waiting one), `payload` = the row's
+  (`install_now::COMMAND`) through `handlers::install_now::queue_install` - **one transaction** for the refusal check
+  and the insert: its first statement cancels a waiting Install Now as `replaced` (a write, so the policy's pop can't
+  run between the check and the insert), a refusal rolls it back; the receipt, the redelivery and the stream's nudge as
+  every command -, `payload` = the row's
   release as the phone sees it (`device_api::device_release_tag`, `tag@asset_id`). The pop sends it as
   `pending_command.release_tag` **for `install_update` only** (`allow_blocked`'s JSON payload stays `allow`); both are
   `skip_serializing_if`, so the policy's keys are unchanged (`policy_json_keys_snapshot` untouched; the launcher's
@@ -2008,7 +2010,10 @@ needed to manage the phone, delete on a schedule, never store notification or me
   / UpToDate / Behind (tag code above the report's `app_version_code`, or a `pending_tag`; a manual upload's label is
   behind unless the phone runs a build of that name) / TooOld (behind without capability `install_now_v1`); `offer`
   adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
-  answer, under 25 h). `working_words` reads the phone's report only when it came after the receipt (both server
+  answer, under 25 h) - and Working "Installed - waiting for the phone's report" while the newest answer is
+  `installed: X` and the latest report is older than it (`awaiting_report`, at most an hour; qa-37-code M1: in one sync
+  the launcher answers before it reports, so the row would read "behind" with Install Now; the poll goes on, a POST
+  answers `in_progress`). `working_words` reads the phone's report only when it came after the receipt (both server
   times; else "The phone got it (14:02)"): `update_fence.waiting_for` `install_now_download` + the launcher's
   `app_downloads` entry ("Downloading 40 of 80 MB", "Waiting for a network", "Waiting: not enough space", "Waiting: the
   phone is roaming"), `install_now_call` "Waits for the call to end", `install_now_emergency` "Waits: an emergency call

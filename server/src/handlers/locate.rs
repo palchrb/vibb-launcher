@@ -770,8 +770,6 @@ fn replaced_kinds(command: &str) -> &'static [&'static str] {
     match command {
         "ring" | "stop_ring" => &["ring", "stop_ring"],
         "locate" => &["locate"],
-        // Design 37: a second tap before the phone fetched the first.
-        crate::install_now::COMMAND => &[crate::install_now::COMMAND],
         _ => &[],
     }
 }
@@ -786,17 +784,6 @@ async fn queue_command(
     state: &AppState,
     device_id: i64,
     command: &str,
-    admin: &str,
-) -> Result<bool, sqlx::Error> {
-    queue_command_with(state, device_id, command, None, admin).await
-}
-
-/// [queue_command] with `device_commands.payload` (0068): Install Now's release tag (design 37).
-pub(crate) async fn queue_command_with(
-    state: &AppState,
-    device_id: i64,
-    command: &str,
-    payload: Option<&str>,
     admin: &str,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = state.db.begin().await?;
@@ -833,10 +820,9 @@ pub(crate) async fn queue_command_with(
         }
         used_up.execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO device_commands (device_id, command, payload) VALUES (?, ?, ?)")
+    sqlx::query("INSERT INTO device_commands (device_id, command) VALUES (?, ?)")
         .bind(device_id)
         .bind(command)
-        .bind(payload)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;

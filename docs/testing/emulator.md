@@ -1523,8 +1523,8 @@ adb logcat -s SyncRunner SelfUpdate MdmSyncWorker AppDownloads UpdateFence AppIn
    (mobile data on). Upload the APK (an upload needs no Check Now) and tap **Install Now** with the screen on and
    an app open. The row goes "Install Now: waiting for the phone" (with Cancel) -> "Downloading 40 of 80 MB" (the
    phone's report after its receipt) -> "Installing"; logcat `Install Now <id>` and `Committing launcher ... (Install
-   Now)` without a screen-off. After `MY_PACKAGE_REPLACED` Home (and the lock if LOCKED) are back; the row reads the
-   new version with "Install Now · <time> · Done" behind its ⓘ ("Installed 1.x"), the Locate tab's Recent "Install
+   Now)` without a screen-off. After `MY_PACKAGE_REPLACED` Home (and the lock if LOCKED) are back; the row says "Installed - waiting for the phone's report"
+   (never Install Now over the old version) until the report, then reads the new version with "Install Now · <time> · Done" behind its ⓘ ("Installed 1.x"), the Locate tab's Recent "Install
    Now · Done". The page never jumps (the poll swaps the sub-line in place and reloads at the same place when the
    state changes; with the page hidden it stops - switch tabs and back).
 3. **A call holds it**: a newer APK; `adb emu gsm call 5551234`, answer, tap Install Now: "Waits for the call to end"

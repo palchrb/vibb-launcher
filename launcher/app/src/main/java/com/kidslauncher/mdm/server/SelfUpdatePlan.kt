@@ -386,6 +386,23 @@ data class InstallNowRecord(
     val callWaitSinceElapsed: Long? = null,
 )
 
+/** What the receipt of Install Now does: [answerOld] = a record of another command and its
+ * answer (its own failure, else "superseded", failed - QA L5), [store] = the record to keep (the
+ * same command delivered again keeps its record, failure and call wait included). */
+data class InstallNowReceipt(val answerOld: Pair<InstallNowRecord, String>?, val store: InstallNowRecord)
+
+fun installNowOnReceipt(
+    old: InstallNowRecord?,
+    commandId: Long,
+    requestedAt: String?,
+    tag: String?,
+    runningVersionCode: Long,
+): InstallNowReceipt {
+    if (old != null && old.commandId == commandId && old.requestedAt == requestedAt) return InstallNowReceipt(null, old)
+    val fresh = InstallNowRecord(commandId, requestedAt, tag, runningVersionCode)
+    return InstallNowReceipt(old?.let { it to (it.failure ?: INSTALL_NOW_SUPERSEDED) }, fresh)
+}
+
 /** The commit gate for Install Now: only a live call or an emergency holds it - no night window,
  * no screen-off, whatever the screen. */
 fun installNowDecision(liveCall: Boolean, emergency: Boolean): UpdateWindowDecision = when {
