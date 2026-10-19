@@ -86,6 +86,28 @@ self.addEventListener("push", (event) => {
     event.waitUntil(show(event));
 });
 
+// Safari 18.4+ reads the payload as a declarative push (web_push 8030): it shows the
+// notification itself and, because the message is mutable, fires `pushnotification` at
+// this worker instead of `push` (WebKit bug 261805; confirmed on the user's iPhone,
+// 2026-10-19: every push shown, no receipt). Nothing to show here - only the badge and
+// the receipt, from the notification Safari built (its `data` is the payload's).
+async function confirmDeclarative(event) {
+    const n = (event && (event.notification || event.proposedNotification)) || {};
+    const data = n.data || {};
+    if (typeof data.b === "number" && self.navigator && self.navigator.setAppBadge) {
+        try {
+            await (data.b > 0 ? self.navigator.setAppBadge(data.b) : self.navigator.clearAppBadge());
+        } catch (e) {
+            // the badge is a nicety
+        }
+    }
+    await receipt(data, "shown");
+}
+
+self.addEventListener("pushnotification", (event) => {
+    event.waitUntil(confirmDeclarative(event));
+});
+
 async function open(path) {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of windows) {

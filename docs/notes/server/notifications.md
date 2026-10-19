@@ -102,7 +102,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Shown on …", "Pushed to …, not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary", "Not
   sent"), Getting Notifications (`#devices`: label, badge On / May not be showing / Turned off, "Last shown …", Send a
   Test, Remove…, the ⓘ checks). The Devices list's top orange row (`notifications::warning_row`) to
-  `/notifications?from=devices#devices`. `templates/sw.js`: `push` always shows a notification inside `waitUntil`
+  `/notifications?from=devices#devices`. `templates/sw.js`: `pushnotification` (Safari 18.4+'s declarative path: Safari shows the notification itself and fires
+  this event instead of `push` for a mutable message - found on the user's iPhone 2026-10-19, which showed every push
+  and confirmed none) sets the badge and posts the receipt from the notification Safari built, shows nothing; `push` always shows a notification inside `waitUntil`
   (a fallback "Vibb Phone" / "Something new - open Notifications" for an unreadable payload), then the badge, then the
   receipt (`credentials: "omit"`); `notificationclick` posts `clicked` and opens a same-origin path only (else
   `/notifications`), steering an open window first; still no `fetch` handler, no CSP change. `static/register-sw.js`
