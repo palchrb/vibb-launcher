@@ -202,9 +202,18 @@ async fn the_workers_probe_is_taken() {
         post_receipt(&app, r#"{"p":1}"#, "none").await,
         StatusCode::NO_CONTENT
     );
-    // `p` other than 1 is no probe: an ordinary (bad) receipt.
     assert_eq!(
-        post_receipt(&app, r#"{"p":2}"#, "none").await,
+        post_receipt(
+            &app,
+            r#"{"p":2,"e":"push-declarative","shown":"ok","v":"0.29.3"}"#,
+            "none"
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    // `p` that isn't a number is no probe: an ordinary (bad) receipt.
+    assert_eq!(
+        post_receipt(&app, r#"{"p":"x"}"#, "none").await,
         StatusCode::BAD_REQUEST
     );
 }

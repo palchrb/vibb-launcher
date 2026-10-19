@@ -120,9 +120,27 @@ function notificationOf(event) {
     };
 }
 
-// Shows the notification (a declarative push's replacement: Safari then drops its proposed one,
-// and shows it itself only when nothing is shown in time - never two), then the badge and the
-// receipt.
+// The probe's second step: whether showNotification settled, and how (the user's iPhone, iOS 26,
+// 2026-10-19: the first probe arrived with the right shape and nothing after showNotification
+// did). Temporary, with `probe`.
+function probeShown(via, outcome) {
+    try {
+        return fetch("/notifications/receipt", {
+            method: "POST",
+            credentials: "omit",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ p: 2, e: via, shown: outcome, v: VERSION }),
+        }).catch(() => undefined);
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
+// Shows the notification, the badge and the receipt. A declarative push's receipt goes FIRST:
+// Safari shows the notification whatever happens here - our replacement, or its proposed one when
+// nothing is shown in time, never two - and on the user's iPhone nothing of the worker ran after
+// showNotification in that path (the probe, 2026-10-19), so a receipt after it never came. The
+// legacy path keeps show, then badge, then receipt: a notification we fail to show isn't shown.
 async function show(event) {
     const { n, via } = notificationOf(event);
     const data = n.data || {};
@@ -133,7 +151,16 @@ async function show(event) {
         data: { navigate: n.navigate || "/notifications", d: data.d, t: data.t },
     };
     if (n.tag) options.tag = n.tag;
-    await self.registration.showNotification(n.title, options);
+    const declarative = via === "push-declarative";
+    if (declarative) await receipt(data, "shown", via);
+    let outcome = "ok";
+    try {
+        await self.registration.showNotification(n.title, options);
+    } catch (e) {
+        outcome = "failed:" + ((e && e.name) || "error");
+        if (!declarative) throw e;
+    }
+    await probeShown(via, outcome);
     if (typeof data.b === "number" && self.navigator && self.navigator.setAppBadge) {
         try {
             await (data.b > 0 ? self.navigator.setAppBadge(data.b) : self.navigator.clearAppBadge());
@@ -141,7 +168,7 @@ async function show(event) {
             // the badge is a nicety
         }
     }
-    await receipt(data, "shown", via);
+    if (!declarative) await receipt(data, "shown", via);
 }
 
 // Inside waitUntil, always: Safari shows its declarative fallback only when the

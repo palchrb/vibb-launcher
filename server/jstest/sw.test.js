@@ -15,7 +15,7 @@ const SOURCE = fs
 const ORIGIN = "https://kidphone.example.ts.net";
 
 // A fake worker global: listeners, notifications, fetches, windows and the badge, all recorded.
-function fakeWorker({ windows = [], badge = true } = {}) {
+function fakeWorker({ windows = [], badge = true, showFails = false } = {}) {
     const listeners = {};
     const log = [];
     const self = {
@@ -27,6 +27,11 @@ function fakeWorker({ windows = [], badge = true } = {}) {
         registration: {
             showNotification: (title, options) => {
                 log.push(["show", title, options]);
+                if (showFails) {
+                    const e = new Error("quota");
+                    e.name = "QuotaExceededError";
+                    return Promise.reject(e);
+                }
                 return new Promise((resolve) => setTimeout(() => {
                     log.push(["shown"]);
                     resolve();
@@ -102,10 +107,12 @@ const MESSAGE = {
 test("a push shows its notification, then the badge, then posts the receipt", async () => {
     const w = fakeWorker();
     await w.fire("push", pushOf(MESSAGE));
-    assert.deepStrictEqual(w.log.map((e) => e[0]), ["fetch", "show", "shown", "badge", "fetch"]);
-    // The probe first: the event's shape, nothing of ours and no text.
+    assert.deepStrictEqual(w.log.map((e) => e[0]), ["fetch", "show", "shown", "fetch", "badge", "fetch"]);
+    // The probe first: the event's shape, nothing of ours and no text; its second step after the show.
     assert.deepStrictEqual(JSON.parse(w.log[0][2].body), { p: 1, e: "push", v: "v-test", keys: ["data"], data: "set", n: null });
+    assert.deepStrictEqual(JSON.parse(w.log[3][2].body), { p: 2, e: "push", shown: "ok", v: "v-test" });
     w.log.shift();
+    w.log.splice(2, 1);
     const [, title, options] = w.log[0];
     assert.strictEqual(title, "Anna called an emergency number");
     assert.strictEqual(options.body, "At 14:02");
@@ -132,12 +139,20 @@ test("a declarative push on Safari is shown from the proposed notification and c
     const w = fakeWorker();
     const proposed = Object.assign({ silent: false, dir: "auto" }, MESSAGE.notification);
     await w.fire("push", { data: null, notification: proposed });
-    assert.deepStrictEqual(w.log.map((e) => e[0]), ["fetch", "show", "shown", "badge", "fetch"]);
+    // The receipt BEFORE the show (Safari shows the notification either way; the worker didn't live
+    // past showNotification on the user's iPhone), then the probe's second step, then the badge.
+    assert.deepStrictEqual(w.log.map((e) => e[0]), ["fetch", "fetch", "show", "shown", "fetch", "badge"]);
     assert.deepStrictEqual(JSON.parse(w.log[0][2].body), {
         p: 1, e: "push", v: "v-test", keys: ["data", "notification"], data: "null",
         n: { title: "string", data: "object", dataKeys: ["d", "t", "b"], navigate: "string", tag: "string" },
     });
+    assert.deepStrictEqual(JSON.parse(w.log[4][2].body), { p: 2, e: "push-declarative", shown: "ok", v: "v-test" });
     w.log.shift();
+    const [, url, init] = w.log[0];
+    assert.strictEqual(url, "/notifications/receipt");
+    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "push-declarative", v: "v-test" });
+    w.log.shift();
+    w.log.splice(2, 1);
     assert.strictEqual(w.log[0][1], MESSAGE.notification.title);
     // (JSON round trip: the worker's objects come from the vm context's own prototypes.)
     assert.deepStrictEqual(JSON.parse(JSON.stringify(w.log[0][2])), {
@@ -148,21 +163,29 @@ test("a declarative push on Safari is shown from the proposed notification and c
         data: { navigate: ORIGIN + "/devices/3/calls", d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA" },
     });
     assert.deepStrictEqual(w.log[2], ["badge", 3]);
-    const [, url, init] = w.log[3];
-    assert.strictEqual(url, "/notifications/receipt");
-    assert.deepStrictEqual(JSON.parse(init.body), { d: 4411, t: "AAAAAAAAAAAAAAAAAAAAAA", a: "shown", e: "push-declarative", v: "v-test" });
     // The payload wins over a proposed notification when both are there (a browser that gives both).
     const both = fakeWorker({ badge: false });
     await both.fire("push", Object.assign(pushOf(MESSAGE), { notification: { title: "proposed" } }));
     assert.strictEqual(both.log[1][1], MESSAGE.notification.title);
-    assert.strictEqual(JSON.parse(both.log[3][2].body).e, "push");
-    // A proposed notification without our data (an old payload, or none): shown, nothing posted.
+    assert.strictEqual(JSON.parse(both.log[4][2].body).e, "push");
+    // A proposed notification without our data (an old payload, or none): shown, no receipt posted.
     const bare = fakeWorker({ badge: false });
     await bare.fire("push", { data: null, notification: { title: "x" } });
-    assert.deepStrictEqual(bare.log.map((e) => e[0]), ["fetch", "show", "shown"]);
+    assert.deepStrictEqual(bare.log.map((e) => e[0]), ["fetch", "show", "shown", "fetch"]);
     assert.strictEqual(JSON.parse(bare.log[0][2].body).p, 1);
+    assert.strictEqual(JSON.parse(bare.log[3][2].body).p, 2);
     assert.strictEqual(bare.log[1][1], "x");
     assert.strictEqual(bare.log[1][2].data.navigate, "/notifications");
+    // A declarative show that fails still leaves the receipt sent, and the probe says so.
+    const failing = fakeWorker({ badge: false, showFails: true });
+    await failing.fire("push", { data: null, notification: proposed });
+    assert.deepStrictEqual(failing.log.map((e) => e[0]), ["fetch", "fetch", "show", "fetch"]);
+    assert.strictEqual(JSON.parse(failing.log[1][2].body).a, "shown");
+    assert.deepStrictEqual(JSON.parse(failing.log[3][2].body), { p: 2, e: "push-declarative", shown: "failed:QuotaExceededError", v: "v-test" });
+    // A legacy show that fails still throws (nothing shown, no receipt), after the probe's step.
+    const failingLegacy = fakeWorker({ badge: false, showFails: true });
+    await assert.rejects(failingLegacy.fire("push", pushOf(MESSAGE)));
+    assert.deepStrictEqual(failingLegacy.log.map((e) => e[0]), ["fetch", "show"]);
 });
 
 // The explainer's `pushnotification` event (no shipping Safari fires it yet): the worker shows
@@ -195,8 +218,8 @@ test("a push that can't be read still shows a notification, and posts nothing", 
         assert.strictEqual(w.log[1][1], "Vibb Phone");
         assert.strictEqual(w.log[1][2].body, "Something new - open Notifications");
         assert.strictEqual(w.log[1][2].data.navigate, "/notifications");
-        // No receipt: nothing but the probe is posted.
-        assert.ok(!w.log.some((e) => e[0] === "fetch" && JSON.parse(e[2].body).p !== 1));
+        // No receipt: nothing but the probe's two steps is posted.
+        assert.ok(!w.log.some((e) => e[0] === "fetch" && JSON.parse(e[2].body).p === undefined));
     }
 });
 
