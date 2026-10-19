@@ -518,8 +518,8 @@ findings, merge to `main`, full suite once.
   the phone connects directly over its own network, never through tsnet. Step 1 (server + wire) merged 2026-10-18
   after code QA (`docs/review/qa-36-s1-code.md`); step 2 (launcher) merged 2026-10-18 after code QA
   (`docs/review/qa-36-s2-code.md`); step 3 (DoH on 443 when 853 is blocked, the bootstrap's disk cache, the backup prefilled as
-  `https://1.1.1.3/dns-query`) merged 2026-10-18 after code QA (`docs/review/qa-36-s3-code.md`). **All three steps
-  are on `main`, not released yet.** Device checks owed: a real
+  `https://1.1.1.3/dns-query`) merged 2026-10-18 after code QA (`docs/review/qa-36-s3-code.md`). All three steps go
+  out with server-v0.27.0 and launcher-v0.28.0 (tagged 2026-10-19). Device checks owed: a real
   DoH/DoT server by name and IP, a home-network server on and off the home Wi-Fi, a network blocking 853, AdGuard
   Home's REFUSED (the design note's step 2 status).
 
@@ -585,8 +585,8 @@ findings, merge to `main`, full suite once.
     (`docs/review/qa-35-s1-code.md`); step 2 (Web Push) merged 2026-10-18 after code QA (`docs/review/qa-35-s2-code.md`;
     device checks owed: iPhone 18.4+ and older, macOS Safari, Android Chrome, Firefox, a 410 after removing the app, a Pi
     with a wrong clock); step 3 (launcher: the battery reading and receiver, a sync right after an emergency call) merged
-    2026-10-18 after code QA (`docs/review/qa-35-s3-code.md`). **All three steps are on `main`, not released yet**;
-    device checks owed: the Jelly Star's BATTERY_LOW threshold and `EXTRA_BATTERY_LOW`, the receiver in Doze, the
+    2026-10-18 after code QA (`docs/review/qa-35-s3-code.md`). All three steps go out with server-v0.27.0 and
+    launcher-v0.28.0 (tagged 2026-10-19); device checks owed: the Jelly Star's BATTERY_LOW threshold and `EXTRA_BATTERY_LOW`, the receiver in Doze, the
     emergency sync over mobile data, and the Web Push checks above.
   - **Phase 2, later**: on no receipt for an important event within ~2 minutes, a second channel - ntfy
     (top priority, "time-sensitive" on iOS) or Matrix through a webhook - and an emergency call to both at
