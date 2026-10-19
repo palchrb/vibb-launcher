@@ -726,6 +726,15 @@ findings, merge to `main`, full suite once.
 
 ### Asked for, scope not settled yet
 
+- **Design 41: a flashlight on Home and on the lock** (the user, 2026-10-19: "lommelykt ... kanskje tilogmed på låst
+  skjerm, som for iphone"; placement decided: "Home og lås", not Kid Settings). Android has no torch app - the Quick
+  Settings tile is out of reach in the kiosk - so the launcher owns it: `CameraManager.setTorchMode` on the camera with
+  `FLASH_INFO_AVAILABLE` (no camera permission needed; the Jelly Star has a flash). A Home tile beside Settings (lit
+  while on) and a round button on the lock's glance page beside Emergency call. Rules: off by itself after 10 min, off
+  when a call comes in (the camera), never off at screen-off (as iPhone). Device check first: whether `setTorchMode`
+  works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
+  camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
+  picture migration (0082) and the receipt rule.
 - **Music app's episode list: thumbnails and a kid-side order flip** (the user, 2026-10-19, from a Snipp Snapp Snute
   screenshot): (1) small pictures in place of the number circles, only for an entry whose episodes really have their
   own art (the carousel's rule, `showsCarousel`: at least two different pictures; a one-picture entry keeps the
