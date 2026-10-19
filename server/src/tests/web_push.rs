@@ -188,6 +188,27 @@ async fn post_receipt_with(app: &TestApp, body: &str, headers: &[(&str, &str)]) 
 /// with no Sec-Fetch-Site, and behind a proxy its Origin needn't match Host - the CSRF guard must
 /// let it through to the handler (the user's iPhone, 2026-10-19: every push shown, every receipt
 /// refused, "Nothing shown yet"). A forged one still gets a 404: it has no token.
+/// The worker's probe is logged and answered 204 whatever else it carries; it never counts as a
+/// failed receipt.
+#[tokio::test]
+async fn the_workers_probe_is_taken() {
+    let app = TestApp::new().await;
+    let body = r#"{"p":1,"e":"push","v":"0.29.2","keys":["data","notification"],"data":"null","n":{"title":"string","data":"object","dataKeys":["d","t","b"]}}"#;
+    assert_eq!(
+        post_receipt(&app, body, "cross-site").await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        post_receipt(&app, r#"{"p":1}"#, "none").await,
+        StatusCode::NO_CONTENT
+    );
+    // `p` other than 1 is no probe: an ordinary (bad) receipt.
+    assert_eq!(
+        post_receipt(&app, r#"{"p":2}"#, "none").await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
 #[tokio::test]
 async fn a_receipt_needs_no_fetch_metadata_or_matching_origin() {
     let app = TestApp::new().await;

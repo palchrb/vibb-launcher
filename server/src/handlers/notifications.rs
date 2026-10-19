@@ -787,6 +787,15 @@ pub async fn receipt(
         #[serde(default)]
         v: Option<String>,
     }
+    // The worker's probe (`{"p": 1, ...}`, templates/sw.js `probe`): what the browser handed the
+    // worker for a push - logged, nothing stored, 204. The iPhone diagnosis of 2026-10-19.
+    if let Ok(probe) = serde_json::from_slice::<serde_json::Value>(&body)
+        && probe.get("p").and_then(|p| p.as_i64()) == Some(1)
+    {
+        let text = probe.to_string();
+        tracing::info!(probe = crate::audit::clip(&text, 600), "push probe");
+        return StatusCode::NO_CONTENT;
+    }
     let Ok(receipt) = serde_json::from_slice::<Receipt>(&body) else {
         return StatusCode::BAD_REQUEST;
     };

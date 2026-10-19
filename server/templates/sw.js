@@ -50,6 +50,43 @@ function receipt(data, action, event) {
     }).catch(() => undefined);
 }
 
+// A probe of what the browser handed the worker (the iPhone diagnosis of 2026-10-19: every
+// declarative push shown, none confirmed - whether this worker runs at all for one, and what
+// shape the event has). Posted first, before anything that could throw, and needing none of
+// our data: the event's name, which of the candidate properties exist, whether `data` is set,
+// and the proposed notification's shape - the title's type, `data`'s type and keys, never a
+// text. The server logs it as `push probe`. Temporary: goes once the shape is known.
+function probe(event, kind) {
+    try {
+        const n = event && (event.notification || event.proposedNotification);
+        const data = n ? n.data : undefined;
+        const body = {
+            p: 1,
+            e: kind,
+            v: VERSION,
+            keys: ["data", "notification", "proposedNotification", "appBadge"].filter((k) => event && k in event),
+            data: !event || event.data === undefined ? "absent" : event.data === null ? "null" : "set",
+            n: n
+                ? {
+                    title: typeof n.title,
+                    data: data === null ? "null" : typeof data,
+                    dataKeys: data && typeof data === "object" ? Object.keys(data) : [],
+                    navigate: typeof n.navigate,
+                    tag: typeof n.tag,
+                }
+                : null,
+        };
+        return fetch("/notifications/receipt", {
+            method: "POST",
+            credentials: "omit",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        }).catch(() => undefined);
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
 // The push's notification and where it came from: the payload (`event.data`, every browser's
 // legacy path), else the notification Safari proposed (`event.notification`: Safari 18.4+ reads a
 // mutable declarative payload itself, fires `push` with `data` null and its proposed Notification
@@ -110,7 +147,7 @@ async function show(event) {
 // Inside waitUntil, always: Safari shows its declarative fallback only when the
 // worker shows nothing, so this never doubles a notification.
 self.addEventListener("push", (event) => {
-    event.waitUntil(show(event));
+    event.waitUntil(Promise.all([probe(event, "push"), show(event)]));
 });
 
 // WebKit's explainer names a `pushnotification` event for a mutable declarative push; shipping
@@ -131,7 +168,7 @@ async function confirmDeclarative(event) {
 }
 
 self.addEventListener("pushnotification", (event) => {
-    event.waitUntil(confirmDeclarative(event));
+    event.waitUntil(Promise.all([probe(event, "pushnotification"), confirmDeclarative(event)]));
 });
 
 async function open(path) {
