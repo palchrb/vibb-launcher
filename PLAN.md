@@ -493,6 +493,13 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
+- **"Install now" for the launcher's own update** (the user, 2026-10-19: "hadde egentlig vært fint om det var
+  mulig å force update for foreldrene, inne på launcherens setting i app tabben i server pwa"): the launcher's page
+  under Apps (and the phone's "Play and kiosk" card) gets a per-phone "Install now" that queues a `device_commands`
+  kind `install_update`; the phone then installs at the next quiet screen-off (>= 30 s, no call, no emergency)
+  instead of waiting for 02:00-05:00, never while the kid uses it. **Design 37** (`docs/design/37-install-now.md`,
+  in progress 2026-10-19).
+
 - **Our own DNS server in the Web Filter** (the user, 2026-10-15: "det må vi fikse"): Settings ›
   Web Filter › DNS Server offers only Cloudflare and Quad9 (`set_upstream` refuses anything else;
   the launcher's `DnsFilterEngine` knows only those two, `1.1.1.1`/`cloudflare-dns.com` and
