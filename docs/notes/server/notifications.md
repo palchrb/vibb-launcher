@@ -87,7 +87,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `auth` 16 bytes, `Origin` required, at most 10 active per admin, upsert on `endpoint`, label from the User-Agent
   "iPhone · Safari", `push_subscribed`; refusals flash in `#this-device`), `.../subscriptions/unsubscribe`,
   `.../subscriptions/{id}/test` (one per 30 s, in memory), `.../subscriptions/{id}/delete` (both `#devices`).
-  `POST /notifications/receipt` is in `public_routes` with a 1 KiB limit: `{d, t, a}`, the token's hash compared in
+  `POST /notifications/receipt` is in `public_routes` with a 1 KiB limit and **outside the CSRF guard** (2026-10-19: a
+  WebKit service worker's fetch carries no `Sec-Fetch-Site` and a proxy may rewrite `Host`, so the user's iPhone
+  showed every push and confirmed none; the token is the receipt's proof, a cookie lends it nothing): `{d, t, a}`, the token's hash compared in
   constant time, 204 (repeats too) / 404 counted in `limits::ip_failed` (429 while blocked) - except an older token of
   a delivery sent more than once (`push::Receipt::Stale`, not counted); `clicked` marks the event read. A `queued`
   delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere and `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions;

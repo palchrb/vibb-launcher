@@ -382,7 +382,15 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
     let method = request.method();
     let safe = matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS);
     let path = request.uri().path();
-    if safe || path.starts_with("/api/devices/") || path == "/healthz" {
+    // The push receipt (design 35 §7) is posted by the service worker with no cookie: the
+    // per-delivery token is its proof, so a forged cross-site POST gains nothing - and a WebKit
+    // service worker's fetch carries no Sec-Fetch-Site while a proxy may rewrite Host, which made
+    // every iPhone receipt a `csrf_refused` (the user, 2026-10-19: pushes shown, "Nothing shown yet").
+    if safe
+        || path.starts_with("/api/devices/")
+        || path == "/healthz"
+        || path == "/notifications/receipt"
+    {
         return next.run(request).await;
     }
     let peer_trusted =
