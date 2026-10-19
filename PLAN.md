@@ -502,8 +502,10 @@ findings, merge to `main`, full suite once.
   forelderen tar"); the button lives only on the launcher's own page under Apps; no notification when it is done
   ("dette ser jeg jo live fra pwa"). **Design 37** (`docs/design/37-install-now.md`, revised ae03013d; design QA
   `docs/design/qa-37-design.md` approved with the listed changes, all folded into the one implementation step).
-  Implemented on branch `install-now` (85bc339e, 2026-10-19: server 1044 tests, launcher green in CI); code QA in
-  progress.
+  **Merged into `main` 2026-10-19 (e3060383)** after code QA (`docs/review/qa-37-code.md`, 0 High / 2 Medium / 3
+  Low, all fixed) - server 1047, launcher 1375 green on main. Not released; device checks owed (the design note's
+  Implementation status: the daytime install with the fence off, the download on real mobile data, the 2-minute call
+  re-check, "Done" over tsnet after the next unlock, the iPhone's poll).
 - **Phone off / phone on notifications** (the user, 2026-10-19: "notification når tlf slås av/på ... Av og på varsel
   basert på oppstart/omstart og action_shutdown høres bra ut!"): `parent_events` kinds `phone_off` (from
   `ACTION_SHUTDOWN`, write-ahead in DE prefs, a best-effort POST, else reported at the next boot) and `phone_on`
