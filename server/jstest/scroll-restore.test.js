@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, restoreTarget, KEY, MAX_AGE_MS } = require("../static/scroll-restore.js");
+const { install, restoreTarget, KEY, NAME_PREFIX, MAX_AGE_MS } = require("../static/scroll-restore.js");
 
 test("a record counts for 20 s (server/CLAUDE.md, design 31 §5.1)", () => {
     assert.strictEqual(MAX_AGE_MS, 20000);
@@ -32,6 +32,7 @@ function fakeWindow({ path = "/devices/1", hash = "", scrollY = 0, stored = null
     function HTMLFormElement() {}
     HTMLFormElement.prototype.submit = function () { nativeSubmits.push(this); };
     const win = {
+        name: "",
         location: { pathname: path, hash },
         scrollY,
         history: { scrollRestoration: "auto" },
@@ -130,13 +131,14 @@ test("a #fragment naming the form's own group keeps that group where it was on t
     install(same.win, () => 100);
     assert.deepStrictEqual(same.scrolls, [[0, 840]]);
     assert.strictEqual(same.win.history.scrollRestoration, "manual");
-    // The save moved it (an app switched to the other group): it stays under the finger.
-    const moved = fakeWindow({ hash: "#music-settings", stored, elements: { "music-settings": 1500 } });
-    install(moved.win, () => 100);
-    assert.deepStrictEqual(moved.scrolls, [[0, 1380]]);
-    moved.winListeners.load();
-    assert.deepStrictEqual(moved.scrolls, [[0, 1380], [0, 1380]]);
-    assert.strictEqual(moved.win.history.scrollRestoration, "auto");
+    // A warning came in above it (still in its place in the page): it is kept where it was on
+    // the screen, the page a little lower.
+    const lower = fakeWindow({ hash: "#music-settings", stored, elements: { "music-settings": 1020 } });
+    install(lower.win, () => 100);
+    assert.deepStrictEqual(lower.scrolls, [[0, 900]]);
+    lower.winListeners.load();
+    assert.deepStrictEqual(lower.scrolls, [[0, 900], [0, 900]]);
+    assert.strictEqual(lower.win.history.scrollRestoration, "auto");
     // Not on the page that came back: the saved position.
     const gone = fakeWindow({ hash: "#music-settings", stored });
     install(gone.win, () => 100);
@@ -147,6 +149,32 @@ test("a #fragment naming the form's own group keeps that group where it was on t
     });
     install(encoded.win, () => 100);
     assert.deepStrictEqual(encoded.scrolls, [[0, 400]]);
+});
+
+// Device › Apps: a switch moves its row to the other group. Following the row would scroll the
+// page to that group - the jump the user saw (2026-10-19) - so the exact position is kept and
+// the row is simply gone from where it was.
+test("a row that moved to another group is not followed: the same position", () => {
+    const stored = { path: "/devices/1/apps", y: 840, t: 0, tops: { "app-x": 180, allowed: 120 } };
+    const w = fakeWindow({
+        path: "/devices/1/apps",
+        hash: "#app-x",
+        stored,
+        elements: { allowed: 960, "not-allowed": 1900, "app-x": [2300, "not-allowed"] },
+    });
+    install(w.win, () => 100);
+    assert.deepStrictEqual(w.scrolls, [[0, 840]]);
+    assert.strictEqual(w.win.history.scrollRestoration, "manual");
+    // Still in its group (switched on again from Not allowed back into Allowed is the same case the
+    // other way; here it just saved in place): followed as before.
+    const inPlace = fakeWindow({
+        path: "/devices/1/apps",
+        hash: "#app-x",
+        stored,
+        elements: { allowed: 960, "app-x": [1060, "allowed"] },
+    });
+    install(inPlace.win, () => 100);
+    assert.deepStrictEqual(inPlace.scrolls, [[0, 880]]);
 });
 
 test("a #fragment inside the form's group (a new row, a deleted row's neighbour) keeps the group", () => {
@@ -212,10 +240,55 @@ test("restoreTarget rejects garbage and clock jumps", () => {
     assert.strictEqual(restoreTarget({ path: "/", y: 7, t: 0 }, "/", "#", 0), 7, "an empty # is none");
 });
 
-test("no sessionStorage (private mode): nothing breaks", () => {
+test("no sessionStorage (private mode): nothing breaks, and window.name still carries the record", () => {
     const w = fakeWindow();
     Object.defineProperty(w.win, "sessionStorage", { get() { throw new Error("denied"); } });
     install(w.win, () => 0);
     w.listeners.submit({ target: formInGroup() });
     assert.deepStrictEqual(w.scrolls, []);
+    assert.deepStrictEqual(JSON.parse(w.win.name.slice(NAME_PREFIX.length)), {
+        path: "/devices/1", y: 0, t: 0, tops: { "music-settings": 120 },
+    });
+});
+
+// An installed iPhone app lost sessionStorage across the save's navigation (the user,
+// 2026-10-19): window.name is the second carrier, read when the storage has nothing, and
+// cleared either way so a later page never reads a stale record from it.
+test("a record in window.name restores when sessionStorage has none, and is cleared", () => {
+    const w = fakeWindow({ hash: "#music-settings", elements: { "music-settings": 960 } });
+    w.win.name = NAME_PREFIX + JSON.stringify({ path: "/devices/1", y: 840, t: 0, tops: { "music-settings": 120 } });
+    install(w.win, () => 100);
+    assert.deepStrictEqual(w.scrolls, [[0, 840]]);
+    assert.strictEqual(w.win.name, "");
+    // sessionStorage wins when both exist; the name is cleared too.
+    const both = fakeWindow({ stored: { path: "/devices/1", y: 300, t: 0 } });
+    both.win.name = NAME_PREFIX + JSON.stringify({ path: "/devices/1", y: 840, t: 0 });
+    install(both.win, () => 100);
+    assert.deepStrictEqual(both.scrolls, [[0, 300]]);
+    assert.strictEqual(both.win.name, "");
+    // Someone else's window.name is left alone.
+    const other = fakeWindow();
+    other.win.name = "their-frame";
+    install(other.win, () => 100);
+    assert.strictEqual(other.win.name, "their-frame");
+    assert.deepStrictEqual(other.scrolls, []);
+});
+
+// A browser that scrolls to the #fragment after load (iOS) must not win: the place is put back
+// on the two frames after load, and only then is the entry the browser's again.
+test("after load the place is put back on two more frames before the entry goes back to the browser", () => {
+    const w = fakeWindow({ stored: { path: "/devices/1", y: 840, t: 1000 } });
+    const frames = [];
+    w.win.requestAnimationFrame = (fn) => frames.push(fn);
+    install(w.win, () => 3000);
+    w.winListeners.load();
+    assert.deepStrictEqual(w.scrolls, [[0, 840], [0, 840]]);
+    assert.strictEqual(w.win.history.scrollRestoration, "manual", "still ours during the frames");
+    frames.shift()();
+    assert.deepStrictEqual(w.scrolls, [[0, 840], [0, 840], [0, 840]]);
+    assert.strictEqual(w.win.history.scrollRestoration, "manual");
+    frames.shift()();
+    assert.strictEqual(w.scrolls.length, 4);
+    assert.strictEqual(w.win.history.scrollRestoration, "auto");
+    assert.strictEqual(frames.length, 0, "no more frames");
 });

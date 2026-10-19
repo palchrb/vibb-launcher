@@ -246,8 +246,12 @@ Part A (SMS allowlist) is **postponed (user, 2026-10-05)**: `sms_enabled` stays 
   posts to and redirects to its own group's `#fragment`** (its row in a long list): without JS the answer lands on
   the form; with JS the script keeps the place over it - no fragment: the exact position; a fragment inside the
   form's elements (its group, a new row in it, a deleted file's neighbour): that element back where it was on the
-  screen (an app switched to the other group stays under the finger); a fragment elsewhere (another group): the
-  browser's anchor. At `load` the script gives the history entry back to the browser (`scrollRestoration` "auto"),
+  screen - unless it left one of its recorded ancestors (an app switched to the other group on Device › Apps): then
+  the exact position, the row simply gone from where it was (following it scrolled the page to the other group, the
+  jump the user saw on 2026-10-19); a fragment elsewhere (another group): the browser's anchor. The record travels in
+  sessionStorage and in `window.name` (prefixed `handy-scroll:`), and the place is put back at DOMContentLoaded, at
+  load and on the two frames after load (an installed iPhone app that loses sessionStorage, or a late scroll to the
+  fragment, must not leave the browser at the anchor). At `load` the script gives the history entry back to the browser (`scrollRestoration` "auto"),
   so Back to that page later finds the browser's place, not the top (qa-browser-fixes-code M1). A fragment must name
   an element the answer still has (a group that is always rendered; a row that goes with the save lands on its
   group - `#notifications`, the always-rendered `#orphans`): the redirect tables follow each redirect with
