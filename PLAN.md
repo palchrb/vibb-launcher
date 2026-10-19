@@ -801,6 +801,10 @@ findings, merge to `main`, full suite once.
 - **Round 3 (2026-10-19, tagged on the user's standing go "push og tag når du er der"): server-v0.28.0 (migration 0080;
   designs 37, 38, 39's art pass; the PWA fixes: the switch knob, the Device › Apps toggle jump, the Notifications
   flashes), launcher-v0.29.0 (designs 37 and 38), music-v0.4.0-rc.3 (design 39).** Device checks owed per design.
+- **Hotfix round (2026-10-19 evening, the user's go): server-v0.28.1 (the iPhone push receipt: Safari's declarative
+  `pushnotification` event confirms the push, the receipt route outside the CSRF guard) and launcher-v0.29.1 (the web
+  filter answered no DNS at all in 0.28.0/0.29.0: `protect()` on an unbound socket - `docs/review/qa-vpn-protect-code.md`).**
+  No live phone ran the broken builds (the user tests on emulators only).
 
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
