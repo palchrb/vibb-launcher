@@ -805,7 +805,7 @@ findings, merge to `main`, full suite once.
   `pushnotification` event confirms the push, the receipt route outside the CSRF guard) and launcher-v0.29.1 (the web
   filter answered no DNS at all in 0.28.0/0.29.0: `protect()` on an unbound socket - `docs/review/qa-vpn-protect-code.md`).**
   No live phone ran the broken builds (the user tests on emulators only).
-- **Ready to tag (2026-10-19 evening, awaiting the user's choice): server-v0.29.0 (migration 0081; every episode picture
+- **Round 4 (2026-10-19 evening, tagged on the user's go "Er vi klare for 0.29.0 nå da?"): server-v0.29.0 (migration 0081; every episode picture
   fetched with no source caps - the user's decision -; the iPhone push receipt: `PUSH_PAYLOAD` declarative by default
   with `classic` as the switch, `pushnotification` handled, the receipt route outside the CSRF guard, a log line per
   receipt naming the worker event and version, the page asks for a worker update at open), launcher-v0.30.0 (the
