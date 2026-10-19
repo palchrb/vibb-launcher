@@ -678,7 +678,8 @@ the PWA's address, e.g. its tailnet host name, never a path), so the parent's br
 The bell and the inbox (`/notifications`) need nothing. Notifications on the parents' devices (Web Push) need:
 
 - **Outbound HTTPS (443)** from the server to the browsers' push services: `*.push.apple.com` (iPhone, iPad, Mac
-  Safari), `fcm.googleapis.com` (Chrome, Edge on Android, Samsung Internet, Brave, Opera),
+  Safari), `fcm.googleapis.com` (Chrome, Edge on Android, Samsung Internet, Brave, Opera), `jmt17.google.com`
+  (a Chromium built without Google's API keys: Debian's, Raspberry Pi OS's),
   `*.notify.windows.com` (Edge on Windows) and `updates.push.services.mozilla.com` (Firefox) - through the Pi's
   firewall and, in Docker, the container's network. The server sends to no other host.
 - **The right time.** Each push is signed with the time in it; a wrong clock makes the push services refuse every one

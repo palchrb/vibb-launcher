@@ -618,6 +618,12 @@ pub async fn subscribe(
     };
     let endpoint = form.get("endpoint").map(|e| e.trim()).unwrap_or("");
     if endpoint.len() > 1024 || !crate::webpush::allowed(endpoint) {
+        // The host only (§4.4): the path is the subscription's secret. A browser whose push
+        // service isn't on the list (Chromium on a Pi, 2026-10-19) is found here, not guessed.
+        tracing::warn!(
+            host = crate::webpush::host_of(endpoint),
+            "a browser's push service is not on the list - notifications stay off there"
+        );
         return back_to(&form, "push_service", "this-device");
     }
     let (Some(p256dh), Some(auth)) = (b64url(form.get("p256dh")), b64url(form.get("auth"))) else {

@@ -47,7 +47,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   base64url, `fingerprint` 16 hex), `vapid_jwt` (ES256, `aud` = "https://host", `exp` = `iat` + 12 h, `sub` - `VAPID_SUBJECT`, else an `https://` origin, else none),
   `authorization` ("vapid t=…, k=…"), `encrypt` (RFC 8291 + RFC 8188 `aes128gcm`, one record, a fresh ephemeral key
   then a fresh salt per message, plaintext cap 3072), `allowed` (https, port 443, no userinfo, no IP literal;
-  `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`),
+  `fcm.googleapis.com`, `jmt17.google.com` (a Chromium without Google's API keys, 2026-10-19),
+  `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`),
   `valid_browser_key`; `test_browser` (`#[cfg(test)]`, the only `#[allow(deprecated)]`: `ring::test::rand::
   FixedSliceSequenceRandom` over RFC 8291 Appendix A's user agent, `decrypt`), `src/push.rs` (the rest).
 - **The key**: `push::load_key(data/keys/vapid-p256.pk8)` in `main`; a damaged file -> `AppState.push.key` `None`

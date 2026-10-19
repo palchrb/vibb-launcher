@@ -754,6 +754,17 @@ async fn send_one(
     }
     match result {
         Outcome::Accepted => {
+            tracing::info!(
+                host,
+                delivery = delivery.id,
+                status = status.unwrap_or(0),
+                apns_id = answer
+                    .as_ref()
+                    .ok()
+                    .and_then(|a| a.apns_id.as_deref())
+                    .unwrap_or(""),
+                "a push service accepted a push"
+            );
             sqlx::query(
                 "UPDATE push_deliveries SET status = 'accepted', accepted_at = ?, \
                  http_status = ?, reason = NULL, next_try_at = NULL WHERE id = ?",

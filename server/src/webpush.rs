@@ -86,8 +86,10 @@ pub fn authorization(jwt: &str, key: &VapidKey) -> String {
 }
 
 /// A push service the server may send to (§4.5): `https`, no userinfo, port 443, a host name
-/// (no IP literal) that is FCM's, Mozilla's, or under Apple's or Windows' push domains (a label
-/// boundary: `push.apple.com.example.net` is not). Checked at subscribe and before every send.
+/// (no IP literal) that is FCM's (`fcm.googleapis.com`, and `jmt17.google.com` from a Chromium
+/// built without Google's API keys - Debian's, Raspberry Pi OS's; 2026-10-19), Mozilla's, or under
+/// Apple's or Windows' push domains (a label boundary: `push.apple.com.example.net` is not).
+/// Checked at subscribe and before every send.
 pub fn allowed(endpoint: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
@@ -101,6 +103,7 @@ pub fn allowed(endpoint: &str) -> bool {
         && url.password().is_none()
         && url.port().is_none()
         && (host == "fcm.googleapis.com"
+            || host == "jmt17.google.com"
             || host == "updates.push.services.mozilla.com"
             || host.ends_with(".push.apple.com")
             || host.ends_with(".notify.windows.com"))
@@ -434,6 +437,7 @@ mod tests {
     fn only_the_four_push_services() {
         for good in [
             "https://fcm.googleapis.com/fcm/send/abc",
+            "https://jmt17.google.com/fcm/send/abc",
             "https://updates.push.services.mozilla.com/wpush/v2/abc",
             "https://web.push.apple.com/QK1",
             "https://wns2-db5p.notify.windows.com/w/?token=abc",
@@ -458,6 +462,8 @@ mod tests {
             "https://fcm.googleapis.com:8443/x",
             "https://user:pw@fcm.googleapis.com/x",
             "https://evilfcm.googleapis.com/x",
+            "https://jmt17.google.com.example.net/x",
+            "https://jmt18.google.com/x",
             "not a url",
         ] {
             assert!(!allowed(bad), "{bad}");
