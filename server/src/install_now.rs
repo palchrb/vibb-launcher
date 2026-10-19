@@ -75,7 +75,7 @@ pub struct Report<'a> {
 
 /// The launcher row and the phone, without the command: what a tap would do.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Release {
+pub enum Standing {
     /// The phone never reported.
     NotReported,
     /// No release, or the launcher row is off (`enabled = 0`): the phone would get nothing.
@@ -92,10 +92,10 @@ pub enum Release {
     TooOld { waiting: String },
 }
 
-/// [Release] with the newest Install Now: the row's state.
+/// [Standing] with the newest Install Now: the row's state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Offer {
-    Release(Release),
+    Standing(Standing),
     /// Not fetched (`Waiting`, with Cancel) or fetched and not confirmed yet (`sent`).
     Asked {
         command_id: i64,
@@ -108,9 +108,9 @@ pub enum Offer {
 }
 
 impl Offer {
-    /// The button: Install Now only for [Release::Behind].
+    /// The button: Install Now only for [Standing::Behind].
     pub fn install(&self) -> bool {
-        matches!(self, Offer::Release(Release::Behind { .. }))
+        matches!(self, Offer::Standing(Standing::Behind { .. }))
     }
 
     /// The command Cancel may stop: one the phone hasn't fetched.
@@ -130,14 +130,14 @@ impl Offer {
             Offer::Asked { sent: false, .. } => "waiting",
             Offer::Asked { sent: true, .. } => "sent",
             Offer::Working { .. } => "working",
-            Offer::Release(_) => "idle",
+            Offer::Standing(_) => "idle",
         }
     }
 
     /// The running version, the row's value.
     pub fn value(&self) -> Option<&str> {
         match self {
-            Offer::Release(Release::UpToDate { running } | Release::Behind { running, .. }) => {
+            Offer::Standing(Standing::UpToDate { running } | Standing::Behind { running, .. }) => {
                 Some(running.as_str())
             }
             _ => None,
@@ -147,18 +147,18 @@ impl Offer {
     /// The row's sub-line.
     pub fn sub(&self) -> Option<String> {
         Some(match self {
-            Offer::Release(Release::NotReported) => "Hasn't reported yet".to_string(),
-            Offer::Release(Release::NoRelease) => "No release to install".to_string(),
-            Offer::Release(Release::UpToDate { .. }) => return None,
-            Offer::Release(Release::Behind {
+            Offer::Standing(Standing::NotReported) => "Hasn't reported yet".to_string(),
+            Offer::Standing(Standing::NoRelease) => "No release to install".to_string(),
+            Offer::Standing(Standing::UpToDate { .. }) => return None,
+            Offer::Standing(Standing::Behind {
                 waiting,
                 downloaded: true,
                 ..
             }) => format!("{waiting} is waiting"),
-            Offer::Release(Release::Behind { waiting, .. }) => {
+            Offer::Standing(Standing::Behind { waiting, .. }) => {
                 format!("{waiting} not downloaded yet")
             }
-            Offer::Release(Release::TooOld { waiting }) => {
+            Offer::Standing(Standing::TooOld { waiting }) => {
                 format!("{waiting} is waiting. Install Now works from this update on.")
             }
             Offer::Asked { sent: false, .. } => "Install Now: waiting for the phone".to_string(),
@@ -173,15 +173,15 @@ fn release_name(tag: &str) -> String {
     crate::app_downloads::release_name(tag).to_string()
 }
 
-/// What a tap would do now ([Release]): `tag` is the launcher row's release, `None` when it has
+/// What a tap would do now ([Standing]): `tag` is the launcher row's release, `None` when it has
 /// none or is off. A tag that doesn't parse (a manual upload) is behind unless the phone runs a
 /// build of that name - the phone may then answer "Already on X" (design 37 §2.2, accepted).
-pub fn release(tag: Option<&str>, report: Option<&Report>) -> Release {
+pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     let Some(report) = report else {
-        return Release::NotReported;
+        return Standing::NotReported;
     };
     let Some(tag) = tag else {
-        return Release::NoRelease;
+        return Standing::NoRelease;
     };
     let waiting = release_name(tag);
     let running = report.app_version.unwrap_or("Unknown version").to_string();
@@ -191,11 +191,11 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Release {
             None => report.app_version != Some(waiting.as_str()),
         };
     if !behind {
-        Release::UpToDate { running }
+        Standing::UpToDate { running }
     } else if !report.capable {
-        Release::TooOld { waiting }
+        Standing::TooOld { waiting }
     } else {
-        Release::Behind {
+        Standing::Behind {
             running,
             waiting,
             downloaded: report.pending_tag.is_some(),
@@ -244,7 +244,7 @@ pub fn offer(
             },
         };
     }
-    Offer::Release(release(tag, report))
+    Offer::Standing(release(tag, report))
 }
 
 /// What a POST does: `None` = queue it (a waiting one is replaced), else the word it answers with.
@@ -261,11 +261,11 @@ pub fn refusal(
         return Some("in_progress");
     }
     match release(tag, report) {
-        Release::Behind { .. } => None,
-        Release::NotReported => Some("not_reported"),
-        Release::NoRelease => Some("no_release"),
-        Release::UpToDate { .. } => Some("up_to_date"),
-        Release::TooOld { .. } => Some("too_old"),
+        Standing::Behind { .. } => None,
+        Standing::NotReported => Some("not_reported"),
+        Standing::NoRelease => Some("no_release"),
+        Standing::UpToDate { .. } => Some("up_to_date"),
+        Standing::TooOld { .. } => Some("too_old"),
     }
 }
 
@@ -455,11 +455,11 @@ mod tests {
     #[test]
     fn the_release_table() {
         let r = report();
-        assert_eq!(release(Some(TAG), None), Release::NotReported);
-        assert_eq!(release(None, Some(&r)), Release::NoRelease);
+        assert_eq!(release(Some(TAG), None), Standing::NotReported);
+        assert_eq!(release(None, Some(&r)), Standing::NoRelease);
         assert_eq!(
             release(Some(TAG), Some(&r)),
-            Release::Behind {
+            Standing::Behind {
                 running: "1.3.2".into(),
                 waiting: "1.4.0".into(),
                 downloaded: false
@@ -470,11 +470,11 @@ mod tests {
             ..report()
         };
         assert_eq!(
-            Offer::Release(release(Some(TAG), Some(&pending))).sub(),
+            Offer::Standing(release(Some(TAG), Some(&pending))).sub(),
             Some("1.4.0 is waiting".into())
         );
         assert_eq!(
-            Offer::Release(release(Some(TAG), Some(&r))).sub(),
+            Offer::Standing(release(Some(TAG), Some(&r))).sub(),
             Some("1.4.0 not downloaded yet".into())
         );
         let running = Report {
@@ -484,7 +484,7 @@ mod tests {
         };
         assert_eq!(
             release(Some(TAG), Some(&running)),
-            Release::UpToDate {
+            Standing::UpToDate {
                 running: "1.4.0".into()
             }
         );
@@ -492,7 +492,7 @@ mod tests {
             capable: false,
             ..report()
         };
-        let too_old = Offer::Release(release(Some(TAG), Some(&old)));
+        let too_old = Offer::Standing(release(Some(TAG), Some(&old)));
         assert!(!too_old.install());
         assert_eq!(
             too_old.sub(),
@@ -502,7 +502,7 @@ mod tests {
         let manual = "1.4.0 test";
         assert!(matches!(
             release(Some(manual), Some(&r)),
-            Release::Behind { .. }
+            Standing::Behind { .. }
         ));
         let on_it = Report {
             app_version: Some("1.4.0 test"),
@@ -510,7 +510,7 @@ mod tests {
         };
         assert!(matches!(
             release(Some(manual), Some(&on_it)),
-            Release::UpToDate { .. }
+            Standing::UpToDate { .. }
         ));
     }
 

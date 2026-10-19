@@ -141,15 +141,17 @@ fn db_error(app_id: i64, err: sqlx::Error) -> Response {
 }
 
 /// The launcher's row, or the 404 every other app (or none) gets.
-async fn launcher_app(state: &AppState, app_id: i64) -> Result<TrackedApp, Response> {
+async fn launcher_app(state: &AppState, app_id: i64) -> Result<TrackedApp, Box<Response>> {
     match sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(app_id)
         .fetch_optional(&state.db)
         .await
     {
         Ok(Some(app)) if app.is_launcher => Ok(app),
-        Ok(_) => Err((StatusCode::NOT_FOUND, "Not the launcher's page").into_response()),
-        Err(err) => Err(db_error(app_id, err)),
+        Ok(_) => Err(Box::new(
+            (StatusCode::NOT_FOUND, "Not the launcher's page").into_response(),
+        )),
+        Err(err) => Err(Box::new(db_error(app_id, err))),
     }
 }
 
@@ -182,7 +184,7 @@ pub async fn install(
 ) -> Response {
     let app = match launcher_app(&state, app_id).await {
         Ok(app) => app,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let device = match load_device(&state, device_id).await {
         Ok(Some(device)) => device,
@@ -259,7 +261,7 @@ pub async fn cancel(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     if let Err(response) = launcher_app(&state, app_id).await {
-        return response;
+        return *response;
     }
     let device = match load_device(&state, device_id).await {
         Ok(device) => device,
@@ -301,7 +303,7 @@ struct PolledPhone {
 pub async fn poll(State(state): State<AppState>, Path(app_id): Path<i64>) -> Response {
     let app = match launcher_app(&state, app_id).await {
         Ok(app) => app,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let devices: Vec<Device> =
         match sqlx::query_as("SELECT * FROM devices WHERE enrolled_at IS NOT NULL ORDER BY name")

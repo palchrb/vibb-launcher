@@ -2004,7 +2004,7 @@ needed to manage the phone, delete on a schedule, never store notification or me
   Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
-  the Kotlin test's cases), `release(tag, report)` -> `Release` NotReported / NoRelease (no release, or the row is off)
+  the Kotlin test's cases), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
   / UpToDate / Behind (tag code above the report's `app_version_code`, or a `pending_tag`; a manual upload's label is
   behind unless the phone runs a build of that name) / TooOld (behind without capability `install_now_v1`); `offer`
   adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
