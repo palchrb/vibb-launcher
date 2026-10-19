@@ -522,6 +522,10 @@ summary.row:active {
 
 .knob {
     display: inline-block;
+    /* Painted after the switch, which is positioned: an unpositioned knob would be drawn under it
+       while off (its checked transform used to lift it into the positioned layer, so only the "on"
+       knob showed - the user's iPhone screenshot, 2026-10-19). */
+    position: relative;
     flex: none;
     width: 27px;
     height: 27px;
