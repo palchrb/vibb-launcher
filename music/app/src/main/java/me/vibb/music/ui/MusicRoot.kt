@@ -34,8 +34,11 @@ import me.vibb.music.logic.categoryTiles
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.holdEndsAt
 import me.vibb.music.logic.isSpotify
+import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.kindOf
+import me.vibb.music.logic.listArtWindow
 import me.vibb.music.logic.listRows
+import me.vibb.music.logic.rowPictures
 import me.vibb.music.logic.offlineSummary
 import me.vibb.music.logic.requestStands
 import me.vibb.music.logic.search
@@ -140,11 +143,19 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             Screen.LIST -> now?.let { n ->
                 val heard = s.positions[n.entry.key].orEmpty().filterValues { it.done }.keys
                 val onPhone = s.onPhone[n.entry.id].orEmpty()
+                val shown = listOrder(s, n)
+                // design 39: a picture per row only where the pictures say something (never a Spotify context)
+                val pictures = !isSpotifyContext(n.entry) && rowPictures(shown, n.entry.cover)
                 ListScreen(
                     n.entry,
-                    listRows(listOrder(s, n), n.item.key, heard, onPhone),
+                    n.category,
+                    listRows(shown, n.item.key, heard, onPhone),
                     // Spotify streams only: no "N av M lastet ned", no offline marks (design 26c §4.2)
                     if (isSpotify(n.entry)) null else offlineSummary(s.visible(n.entry).map { it.key }, onPhone),
+                    order = listOrderUi(s, n, shown.size),
+                    pictures = pictures,
+                    onFlip = { vm.flip(n.entry, s.listed[n.entry.id].orEmpty().map { it.key }, actions::flipOrder) },
+                    onVisible = { first, last -> vm.listShown(n.entry.id, listArtWindow(shown.map { it.artHash }, first, last)) },
                     onBack = { vm.screen = Screen.PLAYER },
                     onPick = { playItem(n.entry.id, it.key) },
                 )

@@ -164,7 +164,7 @@ class EpisodeArtTest {
         // The glue: the want set over the plan's extras, as the sync and the player compute it.
         val glue = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
         assertTrue(glue.contains("val extras = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal).extras"))
-        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras)"))
+        assertTrue(glue.contains("return artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())"))
     }
 
     @Test
@@ -221,6 +221,80 @@ class EpisodeArtTest {
         // Design 26c's getSpotifyToken was appended after it (design 26c §8 item 2).
         assertEquals(listOf("wantArt", "getSpotifyToken"), methods.takeLast(2))
         assertTrue(aidl.contains("oneway void wantArt(in String[] now, in String[] later);"))
+    }
+
+    // Design 39 §2: the list's pictures.
+
+    private fun pi(key: String, art: String?) = me.vibb.music.model.PlayItem(1, key, key, "https://cdn.example.org/$key.mp3", false, 1000, artHash = art)
+
+    @Test
+    fun `d39 - rows show pictures only where the pictures say something - the carousel's rule`() {
+        val cover = art("cover")
+        assertFalse("one item", rowPictures(listOf(pi("x", a)), cover))
+        assertFalse("all the series cover", rowPictures(listOf(pi("x", null), pi("y", null), pi("z", cover)), cover))
+        assertTrue("one own picture and the cover", rowPictures(listOf(pi("x", a), pi("y", null)), cover))
+        assertFalse("one own picture for all (an album's one cover)", rowPictures(listOf(pi("x", a), pi("y", a), pi("z", a)), null))
+        assertTrue("two own pictures", rowPictures(listOf(pi("x", a), pi("y", b)), null))
+    }
+
+    @Test
+    fun `d39 - the list's window is the visible rows and 10 each side, clamped`() {
+        val shown = (0 until 100).map { art("r$it") }
+        assertEquals(shown.subList(30, 61), listArtWindow(shown, 40, 50))
+        assertEquals("clamped at the top", shown.subList(0, 16), listArtWindow(shown, 0, 5))
+        assertEquals("clamped at the end", shown.subList(85, 100), listArtWindow(shown, 95, 99))
+        assertEquals(emptyList<String?>(), listArtWindow(emptyList(), 0, 0))
+        assertEquals(listOf(null, a), listArtWindow(listOf(null, a), 0, 1, margin = 0))
+    }
+
+    @Test
+    fun `d39 - the held list - the window first, own hashes only, at most 60, another entry starts empty`() {
+        val first = listArtAfter(null, 7, listOf(a, null, b, "nope", c), libraryCovers = setOf(c))
+        assertEquals(ListArt(7, listOf(a, b)), first)
+        assertEquals("the window first, then what was held", listOf(d, a, b), listArtAfter(first, 7, listOf(d, a)).hashes)
+        assertEquals("another entry's list starts empty", listOf(d), listArtAfter(first, 8, listOf(d)).hashes)
+        val many = (0 until 80).map { art("w$it") }
+        val capped = listArtAfter(listArtAfter(null, 7, many.take(40)), 7, many.drop(40))
+        assertEquals(LIST_ART_MAX, capped.hashes.size)
+        assertEquals("the newest window first", many.drop(40) + many.take(20), capped.hashes)
+        assertEquals(capped, ListArt.decode(capped.encode()))
+        assertEquals(null, ListArt.decode("junk\n$a"))
+        assertEquals(null, ListArt.decode(null))
+        assertTrue(listArtMissing(listOf(null, a), held = setOf(b), libraryCovers = emptySet()))
+        assertFalse("nothing lacking: no want set per scroll", listArtMissing(listOf(null, a, c), held = setOf(a), libraryCovers = setOf(c)))
+    }
+
+    @Test
+    fun `d39 - the list goes after now and before the kept, and never pushes a kept picture out of keep (QA L2)`() {
+        val w = wantedArt(listOf(a), kept = listOf(b, c), news = emptyList(), recent = emptyList(), held = emptySet(), libraryCovers = emptySet(), list = listOf(d, b))
+        assertEquals(listOf(a), w.now)
+        assertEquals("the wire: the list, then the keep sets", listOf(d, b, c), w.later)
+        val kept = (0 until 700).map { art("k$it") }
+        val list = (0 until 60).map { art("l$it") }
+        val full = wantedArt(emptyList(), kept, emptyList(), emptyList(), emptySet(), emptySet(), list = list)
+        assertEquals(WANT_ART_MAX, full.later.size)
+        assertEquals("the list first on the wire", list, full.later.take(60))
+        assertTrue("all 600 kept still in keep", full.keep.containsAll(kept.take(WANT_ART_MAX)))
+        assertTrue("and the list", full.keep.containsAll(list))
+        assertEquals(WANT_ART_MAX + 60, full.keep.size)
+    }
+
+    @Test
+    fun `d39 - the send rule - a downloaded episode plays, the list scrolls, the list's pictures are sent`() {
+        assertTrue("forced, an empty now, a new later hash", wantArtSend(emptyList(), listOf(a, b), sentNow = listOf(c), sentLater = setOf(a), force = true))
+        assertFalse("forced with nothing new", wantArtSend(listOf(c), listOf(a), sentNow = null, sentLater = setOf(a, b), force = true))
+        assertTrue("forced, never sent before", wantArtSend(emptyList(), listOf(a), null, null, force = true))
+        assertFalse("not forced: an empty now sends nothing (today's rule)", wantArtSend(emptyList(), listOf(a), null, null, force = false))
+        assertFalse("not forced: the same now", wantArtSend(listOf(a), listOf(b), listOf(a), emptySet(), force = false))
+        assertTrue("not forced: a new now", wantArtSend(listOf(c), emptyList(), listOf(a), setOf(b), force = false))
+    }
+
+    @Test
+    fun `d39 - the want set reads the list - every sender carries it, and the prune keeps it`() {
+        val plan = moduleFile("src/main/java/me/vibb/music/sync/ArtPlan.kt").readText()
+        assertTrue(plan.contains("artWant(snap, queue, index, store.coverHashes(), store.recentArt(), extras, store.listArt()?.hashes.orEmpty())"))
+        val sync = moduleFile("src/main/java/me/vibb/music/sync/Sync.kt").readText()
+        assertTrue("the prune's keep is the want set's", sync.contains("val want = ArtWants.compute(context)\n        if (lib != null) store.pruneCovers(lib.covers, want.keep)"))
     }
 
     @Test

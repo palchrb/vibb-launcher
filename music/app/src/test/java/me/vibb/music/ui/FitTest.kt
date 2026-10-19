@@ -447,6 +447,44 @@ class FitTest {
         assertTrue("no fixed cover sizes left", !library.contains("180.dp") && !library.contains("184.dp"))
     }
 
+    /**
+     * Design 39 §4: the list's line - the summary and the order words - Nunito ExtraBold 12 sp from the font's advances
+     * (as above), the glyph and its gap (22 dp) before it. The longest pair at 320 dp: whole at font scale 1.0 in both
+     * languages; at 1.3 (text grows linearly here, an upper bound) the English line drops its words.
+     */
+    @Test
+    fun `d39 - the list's line keeps the order words where they fit, else drops them`() {
+        val longest = mapOf("40 av 40 lastet ned · fra siste bok" to 189.5f, "40 of 40 downloaded · from the last book" to 236.6f)
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            val text = moduleFile(path).readText()
+            fun s(name: String) = Regex("""<string name="$name">([^<]*)</string>""").find(text)!!.groupValues[1]
+            val line = s("summary_with_order").replace("%1\$s", s("some_downloaded").replace("%1\$d", "40").replace("%2\$d", "40"))
+                .replace("%2\$s", s("order_from_last_book"))
+            assertTrue("$path: $line is measured", line in longest)
+        }
+        val jelly = available(320f)
+        for ((line, width) in longest) assertTrue("$line at 1.0", orderWordsFit(width, glyph = true, availableDp = jelly))
+        assertFalse("the English line at 1.3 drops its words", orderWordsFit(236.6f * 1.3f, glyph = true, availableDp = jelly))
+        assertTrue("the Norwegian line at 1.3 keeps them", orderWordsFit(189.5f * 1.3f, glyph = true, availableDp = jelly))
+        assertFalse("the glyph counts", orderWordsFit(280f, glyph = true, availableDp = jelly))
+        assertTrue(orderWordsFit(280f, glyph = false, availableDp = jelly))
+        val list = flat("src/main/java/me/vibb/music/ui/ListScreens.kt")
+        assertTrue("the screen measures the line at the font scale", list.contains("if (orderWordsFit(px / density.density, glyph, room)) full else summary"))
+    }
+
+    @Test
+    fun `d39 - a row's picture decodes small - inSampleSize keeps at least the slot`() {
+        assertEquals(8, thumbSampleSize(512, 60))
+        assertEquals(4, thumbSampleSize(512, 120))
+        assertEquals(8, thumbSampleSize(512, 64))
+        assertEquals(4, thumbSampleSize(512, 65))
+        assertEquals("never above the file", 1, thumbSampleSize(100, 120))
+        assertEquals(1, thumbSampleSize(512, 0))
+        val widgets = flat("src/main/java/me/vibb/music/ui/Widgets.kt")
+        assertTrue("inSampleSize, not inScaled", widgets.contains("inSampleSize = thumbSampleSize(minOf(bounds.outWidth, bounds.outHeight), px)"))
+        assertTrue("its own slot, keyed on hash and size", widgets.contains("val key = hash?.let { if (decodePx == null) it else \"\$it@\$decodePx\" }"))
+    }
+
     @Test
     fun `soft shadows - 12 dp under the centred cover, P2's 2 dp under a neighbour and the bar (P10 c)`() {
         assertTrue("centred 12, neighbour 2", library.contains("lerp(COVER_ELEVATION_DP, NEIGHBOUR_ELEVATION_DP, f)"))

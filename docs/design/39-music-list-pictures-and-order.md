@@ -327,3 +327,46 @@ Addendum and revision check (2026-10-19; the user's two widening requests, `qa-3
 - L11: the fake draws 9x8 block grids; the selftest models the print (12-52 bits, 32-level neighbours, > 12 bits
   apart, the channel picture included); `--hls K` with its selftest (§6).
 - N5: the budget recounted (`--feed 250`: ~9 checks for all 250). N6: every third row stays a numbered cover (§6q 2).
+
+## Implementation status (2026-10-19, branch `music-list-39`)
+
+Built as the note says, server and music app in one branch; no API or contract file changed.
+
+**Server** (`music_sweep.rs`): `ART_WINDOW` and its `.take` removed, the doc comments updated; the art pass walks
+every `ok` candidate in play order, new items first. The final check's M6 is in: `ART_DAY_RESERVE` (100) and
+`art_backfill_allowed(left)` - an older item's request goes out only while more than 100 of the day's 400 is left
+(counted down as the pass spends), so a backfill stops at 300 used; a check's new items may use it all. L12 (a feed with
+a few own pictures and many `same` ones is walked to its end once, ~1000 GETs where the window capped it at 200; the
+reserve keeps it from starving others) and N7 (each check of a backfilling entry moves its listing version, so phones
+pull it again, ~100 KB gzip, up to 4 or 24 times a day while it fills) are stated in `docs/notes/server/music.md`'s art
+section. Tests: `every_ok_item_in_play_order_and_gone_items_get_nothing_new` (all 210 tried),
+`a_long_feed_is_walked_past_200_over_checks` (250 items, cache 0, the newest 20 first, all 250 after 13 checks, no
+request with the day spent), `a_backfill_leaves_the_days_reserve_to_new_items`; `twenty_a_check_and_400_a_day_…`
+now brings 10 new items to its second check (the day's last 5 go to new items, not the backlog).
+
+**Music app**: §2 (`rowPictures`, `listArtWindow`, `ListArt`/`listArtAfter`/`list_art.txt`, `listArtMissing`,
+`ArtWants.compute` reads the list, `wantedArt(list)` with `keep` = the 600 without it plus it, `wantArtSend` +
+`LiveBridge.sentLater`, `ListArtWants.note`, `Cover(decodeDp)` with `thumbSampleSize`/`thumbs`), §3 (Room 5
+`order_flips` + `schemas/.../5.json`, `Snapshot.flips`/`shownNewestFirst`/`flipped`/`order`, `Store.setFlip` ->
+`MusicDao.setFlipTx` with `flippedNowPlaying`, `flipsToDelete` at the sync, `Commands.FLIP_ORDER` ->
+`PlaybackService.flipOrder`, `flippedQueue`, `SpotifyRenderer.reorder` + `SpotifyTracker.reorder`), §4 (the header
+button, the line with `orderWords` and `orderWordsFit`, the rows, the scroll to the playing row, `Icons.flipOrder`,
+strings nb/en). The fake: `fake-audio.py --feed N --hls K` with selftest 3; emulator.md §6q.
+
+**Choices where the note left room (no feature beyond it)**
+- `FLIP_ORDER` carries a new `ARG_ENTRY_KEY` (the existing `ARG_ENTRY` is the id) and `ARG_NEWEST_FIRST`; `Active`
+  keeps `shownNewestFirst`, so a command to the direction the queue already has does nothing.
+- `setFlip`'s new order is the entry's *listed* keys in the new direction (a superset of any stored queue, a room's
+  Storytel books not on the phone included); `flippedQueue` keeps only the stored queue's own keys.
+- The VM toggles under a mutex reading the row itself, so two quick taps flip twice (not twice the same snapshot).
+- The sync deletes a gone entry's row only when every entry the library names was read (an unreadable entry keeps its
+  state, as everything else does).
+- `SpotifyTracker.reorder` sets `known` to the queue's end: no queue add goes out between the flip and the next play.
+- The fake's selftest checks the block levels (neighbours 64 apart, so >= 32) and also models the 512 -> 9x8 triangle
+  filter (3/4 a block, 1/8 each neighbour per axis): the filtered print must equal the blocks' with every pair 16 apart.
+  Checked once against the real server path (`photos::process` Square -> q85 JPEG -> `print`, a throwaway test, not
+  committed): all 251 pictures of `--feed 250` print exactly as modelled.
+- The `playerNumber`/Storytel cases the note put in `UiModelTest` are in `OrderFlipTest`.
+
+**Not checked here**: the emulator round §6q (all of it); on the Jelly Star the row pictures' decode and scroll, TalkBack,
+the real Spotify SDK through a flip (the coalesced play and the leftover add), a real Sonos room's first `reorder`.

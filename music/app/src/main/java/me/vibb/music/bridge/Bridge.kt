@@ -18,6 +18,7 @@ import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.bridge.IMusicBridge
+import me.vibb.music.logic.wantArtSend
 import java.security.MessageDigest
 
 private const val LOG_TAG = "MusicBridge"
@@ -153,16 +154,19 @@ object LiveBridge {
     }
 
     private var sentNow: List<String>? = null
+    private var sentLater: Set<String>? = null
 
     /**
-     * The player's want set (design 27 §2.2), on a queue start or an item change: sent only when its
-     * `now` list has something missing and differs from the last one sent. Both lists go (QA L4: a
-     * `now`-only call would let the launcher drop `later` pictures still in flight).
+     * The want set (design 27 §2.2): the player's, on a queue start or an item change, sent only when its
+     * `now` list has something missing and differs from the last one sent; the episode list's ([force],
+     * design 39 §2.2), when `later` has a picture the last send didn't, whatever `now` is ([wantArtSend]).
+     * Both lists go (QA L4: a `now`-only call would let the launcher drop `later` pictures still in flight).
      */
-    fun wantArt(now: List<String>, later: List<String>) {
-        if (now.isEmpty() || now == sentNow) return
+    fun wantArt(now: List<String>, later: List<String>, force: Boolean = false) {
+        if (!wantArtSend(now, later, sentNow, sentLater, force)) return
         if (bridge == null) return
         sentNow = now
+        sentLater = later.toSet()
         call { it.wantArt(now.toTypedArray(), later.toTypedArray()) }
     }
 

@@ -16,10 +16,18 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
 import me.vibb.music.logic.effectiveCategory
+import me.vibb.music.logic.flipInEffect
+import me.vibb.music.logic.newestFirst
+import me.vibb.music.logic.shownNewestFirst
+import me.vibb.music.model.Entry
+import me.vibb.music.sync.ListArtWants
 import me.vibb.music.logic.shownEntries
 import me.vibb.music.logic.tapCategory
 import me.vibb.music.playback.OutputKind
@@ -90,6 +98,35 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     fun openSearch() {
         query = ""
         screen = Screen.SEARCH
+    }
+
+    /** Taps of the flip button, one at a time: each reads the row it flips (two quick taps flip twice). */
+    private val flipLock = Mutex()
+
+    /**
+     * The list's flip button (design 39 §3): the row toggled on the store's side (so it always works, nothing need be
+     * live), the stored queue with it; then [sent] (on the main thread) with the new shown direction - the screens
+     * pass it to a live player as `FLIP_ORDER` only after the write (qa-39-design L9). [listed]: the entry's keys,
+     * oldest first.
+     */
+    fun flip(entry: Entry, listed: List<String>, sent: (entryKey: String, newestFirst: Boolean) -> Unit) {
+        viewModelScope.launch {
+            val newest = flipLock.withLock {
+                withContext(Dispatchers.IO) {
+                    val parent = newestFirst(entry)
+                    val flipped = !flipInEffect(parent, store.db.flip(entry.key)?.parentNewestFirst)
+                    val newest = shownNewestFirst(parent, if (flipped) parent else null)
+                    store.setFlip(entry, flipped, if (newest) listed.asReversed() else listed)
+                    newest
+                }
+            }
+            sent(entry.key, newest)
+        }
+    }
+
+    /** The list's visible rows' pictures, [window] (`listArtWindow`), of [entryId] (design 39 §2.2). */
+    fun listShown(entryId: Long, window: List<String?>) {
+        viewModelScope.launch { ListArtWants.note(getApplication(), entryId, window) }
     }
 
     /** "Fjern alle". */

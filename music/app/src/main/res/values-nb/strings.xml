@@ -81,6 +81,15 @@
     <string name="downloaded">Lastet ned</string>
     <string name="row_playing">Spilles nå · %1$s</string>
     <string name="row_heard">Hørt · %1$s</string>
+    <!-- Design 39: rekkefølgeknappen og ordene under overskriften -->
+    <string name="flip_order">Snu rekkefølgen</string>
+    <string name="summary_with_order">%1$s · %2$s</string>
+    <string name="order_oldest_first">eldste først</string>
+    <string name="order_newest_first">nyeste først</string>
+    <string name="order_from_book_1">fra bok 1</string>
+    <string name="order_from_last_book">fra siste bok</string>
+    <string name="order_in_order">i rekkefølge</string>
+    <string name="order_reversed">baklengs</string>
 
     <!-- Nytt -->
     <string name="news_title">Nytt</string>

@@ -24,6 +24,7 @@ import me.vibb.music.data.ItemRow
 import me.vibb.music.data.ListingRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.EntryError
+import me.vibb.music.logic.flipsToDelete
 import me.vibb.music.logic.ItemError
 import me.vibb.music.logic.Listed
 import me.vibb.music.logic.NewsItem
@@ -177,6 +178,10 @@ object Sync {
             dao.listings().filter { it.entryId !in ids }.forEach { dao.deleteItems(it.entryId); dao.deleteListing(it.entryId) }
             dao.seenEntries().filter { it !in ids }.forEach { dao.deleteSeen(it) }
             dao.pruneNews(ids)
+            // Design 39 §3.1: the kid's order flips - a stale one (the parent changed the direction since) and,
+            // when every entry named was read, a gone entry's.
+            val flips = dao.allFlips().associate { it.entryKey to it.parentNewestFirst }
+            flipsToDelete(flips, lib.entries, lib.entries.map { it.id }.toSet() == ids).forEach { dao.deleteFlip(it) }
             dao.itemErrors().map { it.entryId }.distinct().filter { it !in ids }.forEach { dao.deleteItemErrors(it) }
             entryErrors.removeAll { it.entry !in ids }
             // Own files' copies of files the library no longer names (a `missing` one is still named, QA #3).

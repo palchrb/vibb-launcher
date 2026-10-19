@@ -84,6 +84,15 @@
     <string name="downloaded">Downloaded</string>
     <string name="row_playing">Playing · %1$s</string>
     <string name="row_heard">Heard · %1$s</string>
+    <!-- Design 39: the order flip and the order words under the header -->
+    <string name="flip_order">Flip the order</string>
+    <string name="summary_with_order">%1$s · %2$s</string>
+    <string name="order_oldest_first">oldest first</string>
+    <string name="order_newest_first">newest first</string>
+    <string name="order_from_book_1">from book 1</string>
+    <string name="order_from_last_book">from the last book</string>
+    <string name="order_in_order">in order</string>
+    <string name="order_reversed">reversed</string>
 
     <!-- Nytt -->
     <string name="news_title">New</string>

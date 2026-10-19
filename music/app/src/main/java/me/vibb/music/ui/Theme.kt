@@ -96,4 +96,7 @@ object Icons {
     val check = stroked("check", 3f, "M5 12l5 5 9-10")
     val downloadAll = stroked("downloadAll", 2.4f, "M12 4v11M7 10l5 5 5-5M5 20h14")
     val downloaded = stroked("downloaded", 3f, "M12 5v10M7 11l5 5 5-5")
+
+    /** The list's order flip (design 39 §4): two stroked arrows, up on the left, down on the right. */
+    val flipOrder = stroked("flipOrder", 2f, "M8 19V5M4 9l4-4 4 4", "M16 5v14M12 15l4 4 4-4")
 }

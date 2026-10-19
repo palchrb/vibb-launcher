@@ -450,6 +450,7 @@ internal class SpotifyRenderer(
         supersede()
         cancelStep()
         cancelFirstState()
+        windowStale = false
         index = startIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
         lastIndex = -1 // a new queue: the service hears its current item (as ExoPlayer's playlist change)
         if (ctx != null) tracker.loadContext(ctx, stored?.uri) else tracker.load(tracks, index)
@@ -466,10 +467,45 @@ internal class SpotifyRenderer(
         if (playNow) play() else changed()
     }
 
-    /** No shuffle for Spotify (§4.2: `canShuffle` is own files without resume), so the service never reorders it. */
+    /**
+     * The kid's order flip in list mode (design 39 §3.3, qa-39-design M2; no shuffle for Spotify, §4.2): the queue is
+     * [keep] then [after] at once, index 0 the current track. Playing (or starting), a fresh start at the measured
+     * place goes out through the start path, coalesced like a step ([SPOTIFY_STEP_COALESCE_MS]: quick repeated flips
+     * are one play of the last order) - nothing restarts from 0:00. Paused or not started, no call at all: the window
+     * is marked stale ([windowStale]), so the next Play is a fresh start in the new order, never an SDK resume inside
+     * Spotify's old window. The tracker keeps its adds (L10): the old add, when it surfaces, is list mode's
+     * `isAdd`/`notOurs(goOn = true)` - a pause, then a new window from the current item. A context has no list.
+     */
     override fun reorder(keep: Int, after: List<MediaItem>) {
-        ports.log("spotify: a reorder was asked for and ignored")
+        if (released || contextUri != null || keep !in mediaItems.indices || mediaItems.size != tracks.size) {
+            ports.log("spotify: a reorder was asked for and ignored")
+            return
+        }
+        val trackOf = mediaItems.indices.associate { mediaItems[it].mediaId to tracks[it] }
+        val items = listOf(mediaItems[keep]) + after
+        val reordered = items.map { trackOf[it.mediaId] ?: return ports.log("spotify: a reorder named a track not in the queue - ignored") }
+        val at = tracker.measured?.takeIf { it.index == index }?.positionMs ?: startPosition()
+        mediaItems = items
+        tracks = reordered
+        index = 0
+        lastIndex = 0 // the same item plays on: the service moved its own index (as ExoPlayer's playlist change)
+        place = Place(0, at, ports.now(), moving = false)
+        tracker.reorder(reordered, 0)
+        windowStale = true
+        cancelStep()
+        if (start != null) supersede()
+        if (pwr && !ended) {
+            stepTimer = ports.after(SPOTIFY_STEP_COALESCE_MS) {
+                stepTimer = null
+                if (pwr && !released) request(Request(this.index, startPosition(), fresh = true, settings = needSettings))
+                changed()
+            }
+        }
+        changed()
     }
+
+    /** The order changed since Spotify got its window (a flip): the next play is a fresh start, never an SDK resume. */
+    private var windowStale = false
 
     override fun positionMs(): Long {
         val p = place
@@ -795,7 +831,7 @@ internal class SpotifyRenderer(
      * either is on while paused: the tracker reads nothing until the next play call, H1).
      */
     private fun resumable(): Boolean =
-        host.alive && deviceId != null && tracker.mode == Mode.OURS && tracker.index == index && !ended && !stopped && !needSettings
+        host.alive && deviceId != null && tracker.mode == Mode.OURS && tracker.index == index && !ended && !stopped && !needSettings && !windowStale
 
     /** Where a fresh start of the current item begins: its last measurement, seek or load position. */
     private fun startPosition(): Long = place.takeIf { it.index == index }?.posMs ?: 0
@@ -838,6 +874,7 @@ internal class SpotifyRenderer(
     private fun begin(r: Request) {
         stepWhilePausedAt = null
         skippedAdd = null
+        windowStale = false
         if (detached) {
             ports.log("spotify: a start refused (detached)")
             return

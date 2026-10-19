@@ -101,6 +101,7 @@ import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.streamAllowed
 import me.vibb.music.logic.swipeTarget
 import me.vibb.music.logic.toggledQueue
+import me.vibb.music.logic.flippedQueue
 import me.vibb.music.logic.withItemArt
 import me.vibb.music.media.ItemTag
 import me.vibb.music.media.MediaCache
@@ -139,8 +140,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /** The queue the player holds, in play order (or shuffled); the service's, read by [LocalRenderer.saveNow]. */
 internal class Active(
     val entry: Entry,
-    /** The entry's playable items in play order (for shuffle off and the list). */
-    val order: List<PlayItem>,
+    /** The entry's playable items in the shown order (for shuffle off and the list); a flip reverses it (design 39 §3.3). */
+    var order: List<PlayItem>,
     var items: List<PlayItem>,
     val positions: MutableMap<String, ItemPosition>,
     val copies: MutableSet<String>,
@@ -153,6 +154,8 @@ internal class Active(
     val durations: MutableMap<String, Long> = mutableMapOf(),
     /** Items whose cached bytes are stale (design 30 §1.6): they play plain http, no cache (`ItemTag.uncached`). */
     val uncached: MutableSet<String> = mutableSetOf(),
+    /** [order]'s direction (`Snapshot.shownNewestFirst`, design 39): a `FLIP_ORDER` to it already is nothing to do. */
+    var shownNewestFirst: Boolean = false,
 )
 
 /**
@@ -523,6 +526,7 @@ class PlaybackService : MediaSessionService() {
                         Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
                         Commands.SKIP_TO -> skipTo(args)
                         Commands.SHUFFLE -> toggleShuffle()
+                        Commands.FLIP_ORDER -> flipOrder(args.getString(Commands.ARG_ENTRY_KEY), args.getBoolean(Commands.ARG_NEWEST_FIRST))
                         Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
                         Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
@@ -645,6 +649,7 @@ class PlaybackService : MediaSessionService() {
                 shuffled,
                 art,
                 uncached = stale.toMutableSet(),
+                shownNewestFirst = snap.shownNewestFirst(entry),
             )
         } catch (e: Throwable) {
             // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
@@ -1123,6 +1128,28 @@ class PlaybackService : MediaSessionService() {
         lastIndex = 0
         val entryKey = a.entry.key
         scope.launch(writer) { store.db.upsertShuffle(ShuffleRow(entryKey, on)) }
+        renderer.saveNow()
+        publish()
+    }
+
+    /**
+     * The kid's order flip (design 39 §3.3), after the list wrote its row (`Store.setFlip`, which also flipped the
+     * stored queue): for the loaded entry only, never while shuffled, the order goes the [newestFirst] way and the
+     * queue becomes its own keys in it from the current item ([flippedQueue]: a room's speaker-playable queue stays
+     * that, qa-39-design M1), which plays on. The renderer reorders (the phone, a Sonos room, Spotify's list mode).
+     */
+    private fun flipOrder(entryKey: String?, newestFirst: Boolean) {
+        val a = active ?: return
+        if (a.entry.key != entryKey || a.shuffled || a.shownNewestFirst == newestFirst || renderer.itemCount() == 0) return
+        val index = renderer.currentIndex().coerceIn(a.items.indices)
+        val current = a.items[index]
+        a.order = a.order.asReversed().toList()
+        a.shownNewestFirst = newestFirst
+        val byKey = a.order.associateBy { it.key }
+        val items = flippedQueue(a.order.map { it.key }, a.items.map { it.key }, current.key).mapNotNull { byKey[it] }
+        renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
+        a.items = items
+        lastIndex = 0
         renderer.saveNow()
         publish()
     }

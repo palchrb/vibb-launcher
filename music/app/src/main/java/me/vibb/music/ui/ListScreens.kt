@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,22 +21,35 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import me.vibb.music.R
 import me.vibb.music.logic.Kind
 import me.vibb.music.logic.ListRow
 import me.vibb.music.logic.OfflineSummary
+import me.vibb.music.logic.OrderWords
 import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.formatDuration
 import me.vibb.music.logic.isSpotifyContext
@@ -53,38 +67,125 @@ private fun Header(backLabel: String, onBack: () -> Unit, title: String?, traili
     }
 }
 
+/** The words of the shown order (design 39 §4). */
+fun orderWordsText(words: OrderWords): Int = when (words) {
+    OrderWords.OLDEST_FIRST -> R.string.order_oldest_first
+    OrderWords.NEWEST_FIRST -> R.string.order_newest_first
+    OrderWords.FROM_BOOK_1 -> R.string.order_from_book_1
+    OrderWords.FROM_LAST_BOOK -> R.string.order_from_last_book
+    OrderWords.IN_ORDER -> R.string.order_in_order
+    OrderWords.REVERSED -> R.string.order_reversed
+}
+
 /**
  * "Liste" (`onList`): the offline summary (none for Spotify, which streams only: [summary] null - no line, or for a
  * context the hint that the order is picked, design 26c §5.9; no source named, step 8) and the rows in the order they play.
+ * Design 39: [order] the header's flip button (null: no button, the slot keeps the title centred) and its words on the
+ * line; [pictures] a picture per row ([rowPictures]); while it does, [onVisible] hears the visible rows, settled 1 s.
  */
 @Composable
-fun ListScreen(entry: Entry, rows: List<ListRow>, summary: OfflineSummary?, onBack: () -> Unit, onPick: (PlayItem) -> Unit) {
+fun ListScreen(
+    entry: Entry,
+    category: Category?,
+    rows: List<ListRow>,
+    summary: OfflineSummary?,
+    order: OrderUi?,
+    pictures: Boolean,
+    onFlip: () -> Unit,
+    onVisible: (first: Int, last: Int) -> Unit,
+    onBack: () -> Unit,
+    onPick: (PlayItem) -> Unit,
+) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Header(stringResource(R.string.back_player), onBack, entry.name)
-        if (summary != null) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                Glyph(Icons.downloadAll, 16.dp, Palette.peach)
-                Line(
-                    when (summary) {
-                        OfflineSummary.All -> stringResource(R.string.all_downloaded)
-                        is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
+        val words = order?.let { stringResource(orderWordsText(it.words)) }
+        if (order != null) {
+            Header(stringResource(R.string.back_player), onBack, entry.name) {
+                // the shuffle idiom: peach when flipped; TalkBack says "Snu rekkefølgen, nyeste først"
+                RoundButton(
+                    Icons.flipOrder, stringResource(R.string.flip_order), onFlip, 44.dp, 20.dp,
+                    bg = if (order.flipped) Palette.peach else Palette.card,
+                    fg = if (order.flipped) Palette.bg else Palette.fg,
+                    modifier = Modifier.semantics {
+                        selected = order.flipped
+                        stateDescription = words.orEmpty()
                     },
-                    12, 800, Palette.sub,
                 )
             }
+        } else {
+            Header(stringResource(R.string.back_player), onBack, entry.name)
+        }
+        if (summary != null) {
+            val summaryText = when (summary) {
+                OfflineSummary.All -> stringResource(R.string.all_downloaded)
+                is OfflineSummary.Some -> stringResource(R.string.some_downloaded, summary.have, summary.of)
+            }
+            val full = words?.let { stringResource(R.string.summary_with_order, summaryText, it) } ?: summaryText
+            ListLine(summaryText, full, glyph = true)
         } else if (isSpotifyContext(entry)) {
             // a context (design 26c §5.9): the order is picked for the kid, its one row is the track playing now
             Line(stringResource(R.string.hint_spotify_picks, kindText(kindOf(entry))), 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
+        } else if (words != null) {
+            // Spotify's list mode: no summary, the order words alone
+            Line(words, 12, 800, Palette.sub, Modifier.fillMaxWidth(), center = true)
         }
         val state = rememberLazyListState(initialFirstVisibleItemIndex = (rows.indexOfFirst { it.playing }).coerceAtLeast(0))
+        // After a flip the keyed list would hold its first item: it goes to the playing row (the top when none plays).
+        val shownNewest = order?.shownNewestFirst
+        val currentRows by rememberUpdatedState(rows)
+        var shownBefore by remember { mutableStateOf(shownNewest) }
+        LaunchedEffect(shownNewest) {
+            if (shownNewest == shownBefore) return@LaunchedEffect
+            shownBefore = shownNewest
+            state.scrollToItem(currentRows.indexOfFirst { it.playing }.coerceAtLeast(0))
+        }
+        if (pictures) {
+            val visible by rememberUpdatedState(onVisible)
+            LaunchedEffect(state, entry.id) {
+                snapshotFlow { state.layoutInfo.visibleItemsInfo.let { (it.firstOrNull()?.index ?: 0) to (it.lastOrNull()?.index ?: 0) } }
+                    .distinctUntilChanged()
+                    .collectLatest { (first, last) ->
+                        delay(LIST_SETTLE_MS)
+                        visible(first, last)
+                    }
+            }
+        }
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(rows, key = { it.item.key }) { row -> ListRowView(row, onPick) }
+            items(rows, key = { it.item.key }) { row -> ListRowView(row, entry, category, pictures, onPick) }
+        }
+    }
+}
+
+/** The list's visible rows count once they stayed this long (a fling asks once, design 39 §2.2). */
+const val LIST_SETTLE_MS = 1_000L
+
+/**
+ * The line under the list's header: [full] (the summary and the order words) when it fits at the font scale
+ * ([orderWordsFit]), else [summary] alone - the button's look and state carry the order (design 39 §4).
+ */
+@Composable
+private fun ListLine(summary: String, full: String, glyph: Boolean) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val style = text(12.sp, 800, Palette.sub)
+        val room = maxWidth.value
+        val shown = remember(full, summary, room, density.density, density.fontScale) {
+            if (full == summary) {
+                full
+            } else {
+                val px = measurer.measure(full, style, maxLines = 1, softWrap = false).size.width
+                if (orderWordsFit(px / density.density, glyph, room)) full else summary
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            if (glyph) Glyph(Icons.downloadAll, 16.dp, Palette.peach)
+            Line(shown, 12, 800, Palette.sub)
         }
     }
 }
 
 @Composable
-private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
+private fun ListRowView(row: ListRow, entry: Entry, category: Category?, pictures: Boolean, onPick: (PlayItem) -> Unit) {
     val duration = formatDuration(row.item.durationMs)
     // a Spotify context's one row has no duration (design 26c §5.9): "Spilles nå" alone, no trailing dot
     val playing = stringResource(R.string.row_playing, duration).removeSuffix(" · ")
@@ -95,8 +196,21 @@ private fun ListRowView(row: ListRow, onPick: (PlayItem) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.size(30.dp).clip(CircleShape).background(if (row.playing) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
-            Line(if (row.heard) "✓" else row.number.toString(), 13, 800, if (row.playing) Palette.bg else Palette.fg)
+        val number = if (row.heard) "✓" else row.number.toString()
+        if (pictures) {
+            // design 39 §4: the row's own picture (decorative), the playing one ringed; a row without its own yet shows
+            // the series cover with its number over it - decided by the listing's hash, so it never changes as files land
+            val own = row.item.artHash
+            val ring = if (row.playing) Modifier.border(2.dp, Palette.peach, RoundedCornerShape(10.dp)) else Modifier
+            Cover(own ?: entry.cover, category, 10.dp, 0.dp, ring.size(40.dp), fallback = entry.cover, decodeDp = 40.dp) {
+                if (own == null) {
+                    Box(Modifier.fillMaxSize().background(Palette.scrim), contentAlignment = Alignment.Center) { Line(number, 14, 800, Palette.fg) }
+                }
+            }
+        } else {
+            Box(Modifier.size(30.dp).clip(CircleShape).background(if (row.playing) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
+                Line(number, 13, 800, if (row.playing) Palette.bg else Palette.fg)
+            }
         }
         Column(Modifier.weight(1f)) {
             Line(row.item.title, 15, 800, Palette.white)

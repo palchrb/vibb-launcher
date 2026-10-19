@@ -305,6 +305,22 @@ class SpotifyTracker {
         return emptyList()
     }
 
+    /**
+     * The kid's order flip (design 39 §3.3): the same tracks in another order, the current one at [index]. The mode,
+     * the measurement (moved to [index]) and the adds stay (qa-39-design L10: an add still in Spotify's queue is
+     * recognised when it surfaces); nothing more is added to Spotify's queue until the renderer's next play, whose
+     * window is the new order. Nothing is sent.
+     */
+    fun reorder(queue: List<SpotifyTrack>, index: Int) {
+        if (context != null || queue.isEmpty()) return
+        this.queue = queue
+        this.index = index.coerceIn(0, queue.size - 1)
+        measured = measured?.copy(index = this.index)
+        known = queue.size - 1
+        addAsked = -1
+        reported.clear() // indexes of the old order
+    }
+
     /** Queue item [index] was added to Spotify's queue (the add's 204). */
     fun queued(index: Int): List<Event> {
         if (index !in queue.indices) return emptyList()

@@ -5,6 +5,8 @@ import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.Hint
 import me.vibb.music.logic.ItemRef
 import me.vibb.music.logic.Kind
+import me.vibb.music.logic.OrderWords
+import me.vibb.music.logic.orderWords
 import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.contextResumes
@@ -224,6 +226,16 @@ private fun category(snap: Snapshot, entry: Entry) = snap.library?.categories?.f
 
 /** The list's rows come in the queue's order when shuffled, else in the entry's play order. */
 fun listOrder(snap: Snapshot, now: NowView): List<PlayItem> = if (now.shuffled) now.queue else snap.order(now.entry)
+
+/** The list's order button and words (design 39 §4): [flipped] the button peach; [words] the shown order's. */
+data class OrderUi(val flipped: Boolean, val shownNewestFirst: Boolean, val words: OrderWords)
+
+/** The list's order button, or null: never for a Spotify context (no list), while shuffled, or below two [rows]. */
+fun listOrderUi(snap: Snapshot, now: NowView, rows: Int): OrderUi? {
+    if (isSpotifyContext(now.entry) || now.shuffled || rows < 2) return null
+    val newest = snap.shownNewestFirst(now.entry)
+    return OrderUi(snap.flipped(now.entry), newest, orderWords(now.entry, newest))
+}
 
 /**
  * The player's "N av M" (1-based N, M): the item in the list's order, or for Storytel in the series'

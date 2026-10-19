@@ -16,6 +16,9 @@ import me.vibb.music.bridge.RestrictionKeys
 import me.vibb.music.bridge.mobileSwitch
 import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.ListArt
+import me.vibb.music.logic.listArtAfter
+import me.vibb.music.logic.newestFirst
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyContexts
 import me.vibb.music.logic.SpotifyOutcome
@@ -272,17 +275,46 @@ class Store private constructor(context: Context) {
     fun snapshots(): Flow<Snapshot> = combine(
         libraries(),
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
-        combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow()) { p, b, n, s -> Rows(p, b, n, s) },
+        combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow(), db.flipsFlow()) { p, b, n, s, f -> Rows(p, b, n, s, f) },
         spotifyContextFlow(),
     ) { lib, (items, downloads, listings), rows, contexts -> snapshot(lib, items, downloads, listings, rows, contexts) }.flowOn(Dispatchers.Default)
 
     /** The same, once. */
     suspend fun snapshot(): Snapshot = snapshot(
-        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle()),
+        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle(), db.allFlips()),
         spotifyContexts(),
     )
 
-    private data class Rows(val positions: List<PositionRow>, val bookmarks: List<BookmarkRow>, val news: List<NewsRow>, val shuffle: List<ShuffleRow>)
+    private data class Rows(
+        val positions: List<PositionRow>,
+        val bookmarks: List<BookmarkRow>,
+        val news: List<NewsRow>,
+        val shuffle: List<ShuffleRow>,
+        val flips: List<FlipRow>,
+    )
+
+    /**
+     * The kid's order flip of [entry] (design 39 §3.1), written by the UI side so the button always works: on
+     * ([flipped]) the row with the parent's direction now, off no row; the stored queue goes the new way in the same
+     * transaction ([MusicDao.setFlipTx]). [newOrder]: the entry's listed keys in the new shown direction. Off the main
+     * thread; the screens send `FLIP_ORDER` to a live player after it returns (qa-39-design L9).
+     */
+    suspend fun setFlip(entry: me.vibb.music.model.Entry, flipped: Boolean, newOrder: List<String>) =
+        db.setFlipTx(entry.key, if (flipped) newestFirst(entry) else null, entry.id, newOrder, System.currentTimeMillis())
+
+    /** The episode list's held pictures (design 39 §2.2): read by the want set (`ArtWants.compute`) and the prune. */
+    private val listArtFile = File(dir, "list_art.txt")
+
+    @Synchronized
+    fun listArt(): ListArt? = ListArt.decode(runCatching { listArtFile.readText() }.getOrNull())
+
+    /** [entryId]'s list showed [window] (`listArtAfter`); written atomically only when it changed. */
+    @Synchronized
+    fun noteListArt(entryId: Long, window: List<String?>, libraryCovers: Set<String>) {
+        val before = listArt()
+        val after = listArtAfter(before, entryId, window, libraryCovers)
+        if (after != before) runCatching { writeAtomic(listArtFile, after.encode().toByteArray()) }
+    }
 
     private fun snapshot(
         lib: Library?,
@@ -294,7 +326,8 @@ class Store private constructor(context: Context) {
     ): Snapshot {
         val positions = rows.positions.groupBy { it.entryKey }.mapValues { (_, ps) -> ps.associate { it.itemKey to ItemPosition(it.posMs, it.done) } }
         val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
-        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts)
+        val flips = rows.flips.associate { it.entryKey to it.parentNewestFirst }
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips)
     }
 
     companion object {

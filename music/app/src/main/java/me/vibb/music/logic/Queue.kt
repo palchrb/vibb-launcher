@@ -73,6 +73,15 @@ fun toggledQueue(order: List<String>, current: String, shuffleOn: Boolean, rando
     if (shuffleOn) shuffledWithFirst(order, current, random) else rotatedTo(order, current)
 
 /**
+ * The queue after the kid's order flip (design 39 §3.3, qa-39-design M1): the queue's own [queueKeys] in [newOrder]'s
+ * direction, [current] first - a room's speaker-playable queue stays that (nothing it left out comes back).
+ */
+fun flippedQueue(newOrder: List<String>, queueKeys: List<String>, current: String): List<String> {
+    val keys = queueKeys.toSet()
+    return rotatedTo(newOrder.filter { it in keys }, current)
+}
+
+/**
  * A stored queue brought back after a restart: the keys still playable, the index of [currentKey]
  * (or of the first stored key after it that is still there), or null when none is left.
  */

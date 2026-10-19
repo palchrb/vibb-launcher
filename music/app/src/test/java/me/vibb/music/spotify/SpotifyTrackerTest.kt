@@ -446,6 +446,25 @@ class SpotifyTrackerTest {
     }
 
     @Test
+    fun `d39 L10 - a flip keeps the adds - the old add surfacing after the new play is paused, the new order goes on`() {
+        val t = SpotifyTracker().apply { load((0..4).map { track(it) }, 0) }
+        t.played(0, 0) // a window of one
+        assertEquals(listOf("Started 0", "QueueAdd 1"), t.onState(state(0, 0), 0).map(::word))
+        t.queued(1) // Spotify's queue holds item 1, the old order's next
+        t.onState(state(0, 5_000), 5_000)
+        // the kid flips: 0 4 3 2 1, item 0 plays on; mode and the measurement stay, at the current item's new place
+        t.reorder(listOf(0, 4, 3, 2, 1).map { track(it) }, 0)
+        assertEquals(Mode.OURS, t.mode)
+        assertEquals(SpotifyTracker.Measured(0, 5_000, 5_000, true), t.measured)
+        // the renderer's fresh start of the new order from the measured place
+        t.played(0, 4, positionMs = 5_000)
+        assertEquals(listOf("Started 0"), t.onState(state(0, 5_100), 5_400).map(::word))
+        // track 0 ends and Spotify plays its own queue first: the old add - never a skip or an unplayable
+        val events = t.onState(state(1, 0, prev = listOf(0)), 20_100).map(::word)
+        assertEquals("paused, and our list goes on in the new order (item 1 is track 4)", listOf("NotOurs playing", "NewWindow 1"), events)
+    }
+
+    @Test
     fun `a new device forgets the adds - its queue is empty`() {
         fun session(newDevice: Boolean): List<String> {
             val t = SpotifyTracker().apply { load((0..4).map { track(it) }, 0) }

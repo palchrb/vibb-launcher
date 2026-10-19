@@ -63,8 +63,9 @@ object Fixtures {
         news: List<NewsRow> = emptyList(),
         shuffle: Set<String> = emptySet(),
         spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
+        flips: Map<String, Boolean> = emptyMap(),
     ): Snapshot = buildSnapshot(
         lib, items, downloads, listings.map { (id, v) -> ListingRow(id, v) }, ownCopies, positions,
-        bookmarks.map { (k, b) -> BookmarkRow(k, b.first, b.second, 0) }, news, shuffle, spotifyContexts,
+        bookmarks.map { (k, b) -> BookmarkRow(k, b.first, b.second, 0) }, news, shuffle, spotifyContexts, flips,
     )
 }
