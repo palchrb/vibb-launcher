@@ -709,7 +709,10 @@ findings, merge to `main`, full suite once.
   numbers; rows outside the keep set fetch their picture when shown, under the audio's network gate) - a deviation
   from vibb, which shows own art only in the highlighted row; (2) a small button top right of the list that lets the
   kid reverse the order for that entry on that phone (remembered per entry; the parent's order stays the default; the
-  play direction follows the flip). Proposed as design 39 after 37 and 38; the user hasn't said go.
+  play direction follows the flip). Mockup approved by the user 2026-10-19 ("ja det blir bra!",
+  https://claude.ai/artifact/HJbqDJz6F6SD5SEz74tYop: three artboards - own pictures oldest first, flipped newest first,
+  a one-picture entry keeping the numbers). **Design 39** (`docs/design/39-music-list-pictures-and-order.md`, in
+  progress 2026-10-19), queued behind 37 and 38.
 
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
