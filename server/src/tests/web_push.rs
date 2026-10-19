@@ -503,9 +503,9 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
         &format!("SELECT id FROM push_deliveries WHERE event_id = {foreign}"),
     )
     .await;
-    // A plain payload: no declarative keys (2026-10-19, the iPhone confirmed nothing with them).
-    assert!(message.get("web_push").is_none(), "{message}");
-    assert!(message.get("mutable").is_none(), "{message}");
+    // Declarative by default (`PUSH_PAYLOAD` switches it; `push::tests::the_payload_switch`).
+    assert_eq!(message["web_push"], 8030);
+    assert_eq!(message["mutable"], true);
     let n = &message["notification"];
     assert_eq!(n["title"], "An app may read the PIN on Anna");
     assert_eq!(n["body"], "1 app with device admin");
