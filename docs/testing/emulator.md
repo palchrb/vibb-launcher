@@ -1467,6 +1467,17 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
    (the disk cache). A parent's own DoT server (`9.9.9.9`) is never moved to DoH: its queries go to the backup.
    Without root anywhere this stays a device check (a router rule dropping 853, or a school Wi-Fi).
 
+8. **Every VPN start resolves, a pause on and off keeps the network** (the 0.29.0 bug: `protect()` on a socket without
+   a descriptor, launcher/CLAUDE.md "protect needs a descriptor"). With Cloudflare picked (no custom server), on a
+   freshly enrolled phone (the VPN's first start comes with the enrolment's always-on consent) and again after a reboot:
+   `adb shell ping -c1 example.com` resolves and `adb logcat -d -s DnsUpstream` has no `attempt failed` line. Then the
+   phone's summary in the PWA: "Unlock for 2 h…" (`start_pause`) - the VPN goes (`dumpsys connectivity` has no `VPN
+   CONNECTED`), ping still resolves (the network's own DNS) - and "Lock again" (`end_windows`): `Vpn: Established by
+   me.vibb.launcher.debug on tun0` on a new network id, and a name not asked before (`ping -c1 wikipedia.org`) resolves at
+   once, still no `attempt failed`. On 0.29.0 every query logged `DoT attempt failed: IOException` / `DoH attempt failed:
+   IOException` in pairs, then `DoT blocked: cloudflare over DoH`, and ping said `unknown host` from the first start on;
+   a Wi-Fi toggle didn't help. A refused protect now logs `NotProtectedException`.
+
 What the emulator can't show (device checks, design 36 "Step 2 implementation status"): a home-network server on the
 home Wi-Fi and away from it, AdGuard Home's REFUSED for a client id it doesn't allow; and, without root, step 7.
 

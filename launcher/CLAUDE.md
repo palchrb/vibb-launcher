@@ -972,6 +972,20 @@ Together: an app store install of something not on the allowlist would still nee
   VPN was off is forgotten at the next start; reading it drops another config's names (rewritten, or deleted when
   nothing usable is left). The parent's prefilled backup is `https://1.1.1.3/dns-query` (DoH, so it answers where 853
   is blocked; a stored `tls://1.1.1.3` stays as the parent saved it).
+- **protect needs a descriptor** (the 0.29.0 bug, fixed 2026-10-19 on branch `vpn-restart-fix`): Android's `Socket()`
+  creates no file descriptor until a bind or connect (`Socket.getFileDescriptor$()` returns the impl's fresh
+  `FileDescriptor`, -1; libcore creates the socket only in `getImpl()`), so `VpnService.protect(Socket())` returned
+  false every time and design 36's `resolveDoT`/`ProtectedSocketFactory` threw "not protected" for **every** upstream
+  socket - DoT and the step-3 DoH alike, `DnsUpstream: DoT/DoH attempt failed: IOException` in pairs, then a bogus
+  "DoT blocked" period. The VPN answered no query, so every name failed device-wide, and the launcher's own sync and
+  SSE stream died with it (the server's name resolves through the VPN too). Before design 36 the old DoT code ignored
+  protect()'s result and worked unprotected. It shows at every VPN start (enrolment, the end of a pause, the Web filter
+  switched on, a reboot), not only after a pause; a Wi-Fi toggle doesn't help. **Rule**: every socket the engine protects
+  comes from `protectedSocket(protect, local)` (`UpstreamTransport.kt`: `Socket()`, `bind(local)` - an ephemeral port
+  on any address -, then protect, closed when refused; a refusal is `NotProtectedException`, so the log names it).
+  `ProtectedSocketTest` pins the bind before protect, the one plain `Socket()` in the file and that no other engine
+  file makes its own; a JVM test can't see the descriptor, so the emulator check (`docs/testing/emulator.md` §6m step 8)
+  is the proof.
 - **Network reset**: `KidVpnService` registers `registerBestMatchingNetworkCallback` (INTERNET + NOT_VPN; the VPN is
   its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
   a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks

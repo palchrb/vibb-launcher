@@ -108,8 +108,7 @@ fun resolveDoT(
         var connected = false
         var written = false
         try {
-            Socket().use { plain ->
-                if (!protect(plain)) throw IOException("not protected")
+            protectedSocket(protect).use { plain ->
                 plain.connect(InetSocketAddress(address, port), minOf(budget.connectMs, remainingMs()).coerceAtLeast(1))
                 connected = true
                 val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
@@ -178,19 +177,42 @@ fun dohResponse(code: Int, contentType: String?, body: ByteArray?, query: ByteAr
     return classifyAnswer(restored, BackupReason.HTTP)
 }
 
-/** A plain socket factory whose sockets are [protect]ed before they connect: OkHttp 4.12 takes the
- * no-argument [createSocket] for a direct route and layers TLS on it, so the whole connection is
- * outside the VPN. The connecting overloads create, protect, then connect. */
+/** [VpnService.protect][android.net.VpnService.protect] refused a socket (logged by its class name). */
+class NotProtectedException : IOException("not protected")
+
+/**
+ * A new, unconnected socket that [protect] accepted, bound first to [local] (null: any address, an
+ * ephemeral port). The bind is what gives it a file descriptor: Android's `Socket()` creates none
+ * until a bind or connect, and `VpnService.protect(Socket)` reads the descriptor as it is (-1), so
+ * it returns false for a fresh `Socket()` every time - launcher 0.29.0 refused every upstream
+ * socket and the VPN answered no query (design 36's "protect needs a descriptor" rule,
+ * `ProtectedSocketTest`). Closed when it can't be protected.
+ */
+fun protectedSocket(protect: (Socket) -> Boolean, local: InetSocketAddress? = null): Socket {
+    val socket = Socket()
+    try {
+        socket.bind(local)
+        if (!protect(socket)) throw NotProtectedException()
+    } catch (e: Exception) {
+        socket.close()
+        throw e
+    }
+    return socket
+}
+
+/** A plain socket factory whose sockets are [protect]ed before they connect ([protectedSocket]):
+ * OkHttp 4.12 takes the no-argument [createSocket] for a direct route and layers TLS on it, so the
+ * whole connection is outside the VPN. The connecting overloads create, protect, then connect. */
 class ProtectedSocketFactory(private val protect: (Socket) -> Boolean) : SocketFactory() {
-    override fun createSocket(): Socket = Socket().also { if (!protect(it)) { it.close(); throw IOException("not protected") } }
+    override fun createSocket(): Socket = protectedSocket(protect)
     override fun createSocket(host: String, port: Int): Socket =
         createSocket().also { it.connect(InetSocketAddress(host, port)) }
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
-        createSocket().also { it.bind(InetSocketAddress(localHost, localPort)); it.connect(InetSocketAddress(host, port)) }
+        protectedSocket(protect, InetSocketAddress(localHost, localPort)).also { it.connect(InetSocketAddress(host, port)) }
     override fun createSocket(host: InetAddress, port: Int): Socket =
         createSocket().also { it.connect(InetSocketAddress(host, port)) }
     override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
-        createSocket().also { it.bind(InetSocketAddress(localAddress, localPort)); it.connect(InetSocketAddress(address, port)) }
+        protectedSocket(protect, InetSocketAddress(localAddress, localPort)).also { it.connect(InetSocketAddress(address, port)) }
 }
 
 /** What one DoH call got to (set by [CallMarks.listener]): the TCP connection up, the request written. */

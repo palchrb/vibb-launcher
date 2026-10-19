@@ -493,6 +493,12 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
+- **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
+  socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,
+  so the VPN answered no query and the launcher's own sync died with it. Reproduced on handy36 with the 0.29.0 APK
+  from the first VPN start (enrolment) and after a reboot; fixed on branch `vpn-restart-fix` (`protectedSocket`: bind,
+  then protect; `ProtectedSocketTest`; emulator.md §6m step 8 - enrolment, pause on/off, all resolve). Waiting for code
+  QA and merge; then a `launcher-v0.29.1`.
 - **"Install now" for the launcher's own update** (the user, 2026-10-19: "hadde egentlig vært fint om det var
   mulig å force update for foreldrene, inne på launcherens setting i app tabben i server pwa"): the launcher's page
   under Apps (and the phone's "Play and kiosk" card) gets a per-phone "Install now" that queues a `device_commands`
