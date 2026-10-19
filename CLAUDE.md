@@ -13,6 +13,7 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
 - `server/` - admin server + device API (Rust/Axum/SQLite). Was the `kid-phone-server` fork.
   Details: `server/CLAUDE.md`, deployment `server/DEPLOY.md` (Pi + systemd, and the Docker image
   from `server/Dockerfile`).
+- `docs/notes/server/` - the server's area notes, moved out of `server/CLAUDE.md` (which keeps the core and an index)
 - `music/` - the Vibb music app (Kotlin, Compose, Media3; applicationId `me.vibb.music`, debug
   `me.vibb.music.debug`), designs 20/21/21b, Sonos 26a, Storytel 26b, Spotify 26c. Details: `music/CLAUDE.md`.
 - `docs/design/`, `docs/review/` - design notes and reviews, one per step. Historical: `S` =
