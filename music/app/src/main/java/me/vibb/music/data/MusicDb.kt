@@ -27,8 +27,8 @@ import me.vibb.music.logic.pruneTray
 /*
  * The app's own state (design 21 §4.3-§4.5): listings (filled from the bridge; step 2 from the
  * debug feed), positions and bookmarks, the Nytt tray and the keys already seen, downloads, item
- * errors, shuffle and the last now-playing queue. The library itself is a file (Store).
- * Keyed by entry id, except positions, bookmarks and shuffle, which follow vibb's `state_key`
+ * errors, shuffle, repeat, favourites and the last now-playing queue. The library itself is a file (Store).
+ * Keyed by entry id, except positions, bookmarks, shuffle, repeat and favourites, which follow vibb's `state_key`
  * (the library's entry `key`), and design 29's known entries (keys, with the id each last had).
  */
 
@@ -116,6 +116,20 @@ data class ShuffleRow(@PrimaryKey val entryKey: String, val on: Boolean)
  */
 @Entity(tableName = "order_flips")
 data class FlipRow(@PrimaryKey val entryKey: String, val parentNewestFirst: Boolean)
+
+/**
+ * The kid's repeat for an entry (design 49 §1.2, Room 6): [mode] is `off`, `all` or `one`; no row = off, an unknown
+ * word reads as off. Phone-only, never synced or reported.
+ */
+@Entity(tableName = "repeat")
+data class RepeatRow(@PrimaryKey val entryKey: String, val mode: String)
+
+/**
+ * A kid's favourite track or episode (design 50 §1.5, Room 6, created with design 49's `repeat`): keyed by the entry
+ * KEY and the item key like every per-entry state. Phone-only, never synced or reported.
+ */
+@Entity(tableName = "favourites", primaryKeys = ["entryKey", "itemKey"])
+data class FavouriteRow(val entryKey: String, val itemKey: String)
 
 /**
  * The stored queue after a flip of [entryId] (design 39 §3.1, qa-39-design M5): [row]'s keys in [newOrder]'s direction
@@ -413,6 +427,33 @@ interface MusicDao {
         flippedNowPlaying(row, entryId, newOrder, nowMs)?.let { upsertNowPlaying(it) }
     }
 
+    @Query("SELECT * FROM repeat")
+    fun repeatFlow(): Flow<List<RepeatRow>>
+
+    @Query("SELECT * FROM repeat")
+    suspend fun allRepeat(): List<RepeatRow>
+
+    @Query("SELECT * FROM repeat WHERE entryKey = :entryKey")
+    suspend fun repeat(entryKey: String): RepeatRow?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRepeat(row: RepeatRow)
+
+    @Query("SELECT * FROM favourites")
+    fun favouritesFlow(): Flow<List<FavouriteRow>>
+
+    @Query("SELECT * FROM favourites")
+    suspend fun allFavourites(): List<FavouriteRow>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertFavourite(row: FavouriteRow)
+
+    @Query("DELETE FROM favourites WHERE entryKey = :entryKey AND itemKey = :itemKey")
+    suspend fun deleteFavourite(entryKey: String, itemKey: String)
+
+    @Query("DELETE FROM favourites WHERE entryKey = :entryKey AND itemKey IN (:itemKeys)")
+    suspend fun deleteFavourites(entryKey: String, itemKeys: List<String>)
+
     @Query("SELECT * FROM now_playing WHERE id = 0")
     suspend fun nowPlaying(): NowPlayingRow?
 
@@ -437,9 +478,9 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
     entities = [
         ListingRow::class, ItemRow::class, SeenRow::class, NewsRow::class, PositionRow::class, BookmarkRow::class,
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
-        NewsBaselineRow::class, FlipRow::class,
+        NewsBaselineRow::class, FlipRow::class, RepeatRow::class, FavouriteRow::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
@@ -451,6 +492,8 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         AutoMigration(from = 3, to = 4),
         // Design 39: order_flips, a new table only. Empty: no entry is flipped.
         AutoMigration(from = 4, to = 5),
+        // Designs 49 and 50 (one round): repeat and favourites, new tables only. Empty: nothing repeats, no favourite.
+        AutoMigration(from = 5, to = 6),
     ],
 )
 abstract class MusicDb : RoomDatabase() {
