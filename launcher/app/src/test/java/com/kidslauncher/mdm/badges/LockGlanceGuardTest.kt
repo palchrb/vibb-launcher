@@ -69,7 +69,7 @@ class LockGlanceGuardTest {
         "guarded", "source", "work", "entry", "entries", "active", "rankingMap", "ranking", "ranked", "candidate",
         "secret", "extras", "messages", "fromOthers", "level", "newest", "group", "sender", "title", "text", "notice",
         "message", "messaging", "policy", "n", "sbn", "w", "Log",
-        "GlanceStore", "clearNotices", "remove", "put", "updateSuspended", "replaceAll", "apps", "showText",
+        "GlanceStore", "clearNotices", "remove", "put", "updateSuspended", "replaceAll", "apps", "showText", "showsText",
         "GlanceCandidateFacts", "glanceCandidate", "groupSummary", "ongoing", "clearable", "media", "importance",
         "category", "glanceLevel", "ticked", "GlanceLevel", "TEXT", "glanceTitle", "conversationTitle", "newestSender",
         "cleanGlanceText", "GLANCE_TITLE_MAX", "GLANCE_TEXT_MAX", "glanceGroupText", "glanceCount", "isMediaNotification",
@@ -171,7 +171,7 @@ class LockGlanceGuardTest {
     /** A log line in a glance file names a package, a count or an exception class - never a title,
      * name, text, key or shortcut id. */
     private val allowedInterpolations = setOf(
-        "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\${if (next.showText) \"on\" else \"off\"}",
+        "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\$withText",
         "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}",
     )
 

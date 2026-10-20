@@ -1,11 +1,12 @@
 //! The lock's glance page (design 25, `docs/design/25-lock-glance.md` at the monorepo root,
 //! migrations/0066_lock_glance.sql). The PIN lock's first page on the phone shows the clock, what's
 //! playing and the newest notifications: missed calls always, and messages from the apps the parent
-//! ticks here (Element X by default), with only the sender unless the parent switches the text on.
-//! The server only stores the ticks and the switch and sends them as `PolicyResponse.lock_glance`;
-//! the phone never sends back a row, a count or a name (only the capability `lock_glance_v1`).
+//! ticks here (Element X by default), with only the sender unless the parent switches that app's
+//! text on (design 51). The server only stores the ticks and their text flags and sends them as
+//! `PolicyResponse.lock_glance`; the phone never sends back a row, a count or a name (only the
+//! capability `lock_glance_v1`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -18,12 +19,19 @@ pub const ELEMENT_X: &str = "io.element.android.x";
 /// A launcher that has the glance page reports this capability.
 pub const LOCK_GLANCE_CAPABILITY: &str = "lock_glance_v1";
 
-/// `PolicyResponse.lock_glance` - always sent: the ticked apps (sorted, valid package names only)
-/// and whether the message text shows too. An older launcher ignores the key; an older server's
-/// missing key reads as `{apps: [Element X], show_text: false}` on the phone (the same default).
+/// `PolicyResponse.lock_glance` - always sent: the ticked apps (sorted, valid package names only),
+/// each with whether its message text shows too (design 51; before it `apps` were strings and one
+/// `show_text` was the phone's). An older launcher drops the objects and shows missed calls only
+/// until it updates; an older server's strings read as sender only on a new launcher.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 pub struct LockGlancePolicy {
-    pub apps: Vec<String>,
+    pub apps: Vec<LockGlanceApp>,
+}
+
+/// One ticked app of [LockGlancePolicy].
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct LockGlanceApp {
+    pub package: String,
     pub show_text: bool,
 }
 
@@ -35,33 +43,33 @@ pub fn valid_package(package: &str) -> bool {
 
 /// The policy's `apps`: the stored ticks that are valid package names, sorted, once each. A row
 /// written by hand that isn't one is left out (the launcher would drop it anyway).
-pub fn policy_apps(rows: impl IntoIterator<Item = String>) -> Vec<String> {
+pub fn policy_apps(rows: impl IntoIterator<Item = (String, bool)>) -> Vec<LockGlanceApp> {
     rows.into_iter()
-        .filter(|p| crate::app_display::valid_package_name(p))
-        .collect::<BTreeSet<_>>()
+        .filter(|(p, _)| crate::app_display::valid_package_name(p))
+        .collect::<BTreeMap<_, _>>()
         .into_iter()
+        .map(|(package, show_text)| LockGlanceApp { package, show_text })
         .collect()
 }
 
-/// Every ticked package of a phone, as stored.
-pub async fn ticked(db: &SqlitePool, device_id: i64) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ? ORDER BY package_name",
+/// Every ticked package of a phone, as stored, with its text flag.
+pub async fn ticked(db: &SqlitePool, device_id: i64) -> Result<Vec<(String, bool)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT package_name, show_text FROM device_lock_glance_apps WHERE device_id = ? \
+         ORDER BY package_name",
     )
     .bind(device_id)
     .fetch_all(db)
     .await
 }
 
-/// `PolicyResponse.lock_glance` for a phone ([policy_apps] of its ticks, and its switch).
+/// `PolicyResponse.lock_glance` for a phone ([policy_apps] of its ticks).
 pub async fn policy_lock_glance(
     db: &SqlitePool,
     device_id: i64,
-    show_text: bool,
 ) -> Result<LockGlancePolicy, sqlx::Error> {
     Ok(LockGlancePolicy {
         apps: policy_apps(ticked(db, device_id).await?),
-        show_text,
     })
 }
 
@@ -129,10 +137,11 @@ pub fn log_line(device_id: i64, package: &str, on: bool) -> String {
     )
 }
 
-/// The security log's detail for the text switch: "device 3: message text on the lock screen: on".
-pub fn text_log_line(device_id: i64, on: bool) -> String {
+/// The security log's detail for an app's text switch (design 51): "device 3:
+/// io.element.android.x's message text on the lock screen: on".
+pub fn text_log_line(device_id: i64, package: &str, on: bool) -> String {
     format!(
-        "device {device_id}: message text on the lock screen: {}",
+        "device {device_id}: {package}'s message text on the lock screen: {}",
         on_off(on)
     )
 }
@@ -143,11 +152,10 @@ fn on_off(on: bool) -> &'static str {
 
 // ---- the device page ----------------------------------------------------------------------------
 
-/// Lock Screen & PINs' message-text switch and Notifications group (the device page's Apps card's
-/// "On the lock screen" before design 31 step 4).
+/// Lock Screen & PINs' Notifications group (the device page's Apps card's "On the lock screen"
+/// before design 31 step 4).
 #[derive(Default)]
 pub struct LockScreenCard {
-    pub show_text: bool,
     pub notes: Vec<Note>,
     pub apps: Vec<LockScreenApp>,
     /// The ticks couldn't be read: the subsection says so instead of showing every box unticked.
@@ -162,6 +170,8 @@ pub struct LockScreenApp {
     pub package_name: String,
     pub label: String,
     pub on: bool,
+    /// Ticked with its message text shown (design 51; the switch shows on ticked rows only).
+    pub show_text: bool,
     /// Ticked but not in the listed apps ("Not allowed", under its switch that is on), so any tick
     /// can be removed.
     pub note: Option<&'static str>,
@@ -170,10 +180,10 @@ pub struct LockScreenApp {
 /// The subsection's apps: the [listed] ones in their order (the allowed apps, or with no allowlist
 /// every app the phone reports - QA Low 7) with their ticks, then every ticked package that isn't
 /// listed (sorted) with [unlisted_note] - so a tick never becomes invisible. Invalid or Play-core
-/// packages are never listed.
+/// packages are never listed. [ticked] maps each tick to its text flag.
 pub fn card_apps(
     listed: impl IntoIterator<Item = (String, String)>,
-    ticked: &BTreeSet<String>,
+    ticked: &BTreeMap<String, bool>,
     allowlist: Option<&BTreeSet<String>>,
 ) -> Vec<LockScreenApp> {
     let mut seen = BTreeSet::new();
@@ -181,7 +191,8 @@ pub fn card_apps(
         .into_iter()
         .filter(|(package, _)| valid_package(package) && seen.insert(package.clone()))
         .map(|(package_name, label)| LockScreenApp {
-            on: ticked.contains(&package_name),
+            on: ticked.contains_key(&package_name),
+            show_text: ticked.get(&package_name) == Some(&true),
             package_name,
             label,
             note: None,
@@ -190,11 +201,12 @@ pub fn card_apps(
     apps.extend(
         ticked
             .iter()
-            .filter(|p| valid_package(p) && !seen.contains(*p))
-            .map(|package| LockScreenApp {
+            .filter(|(p, _)| valid_package(p) && !seen.contains(*p))
+            .map(|(package, show_text)| LockScreenApp {
                 package_name: package.clone(),
                 label: package.clone(),
                 on: true,
+                show_text: *show_text,
                 note: Some(unlisted_note(allowlist, package)),
             }),
     );
@@ -260,14 +272,25 @@ mod tests {
     #[test]
     fn the_policy_apps_are_sorted_valid_and_unique() {
         let rows = [
-            "org.b.app",
-            "not a package",
-            ELEMENT_X,
-            "org.b.app",
-            "com.a.app",
+            ("org.b.app", true),
+            ("not a package", true),
+            (ELEMENT_X, false),
+            ("org.b.app", true),
+            ("com.a.app", false),
         ]
-        .map(str::to_string);
-        assert_eq!(policy_apps(rows), ["com.a.app", ELEMENT_X, "org.b.app"]);
+        .map(|(p, text)| (p.to_string(), text));
+        let app = |package: &str, show_text| LockGlanceApp {
+            package: package.to_string(),
+            show_text,
+        };
+        assert_eq!(
+            policy_apps(rows),
+            [
+                app("com.a.app", false),
+                app(ELEMENT_X, false),
+                app("org.b.app", true)
+            ]
+        );
         assert!(policy_apps(Vec::new()).is_empty());
     }
 
@@ -313,12 +336,12 @@ mod tests {
             "device 3: io.element.android.x on the lock screen: off"
         );
         assert_eq!(
-            text_log_line(7, true),
-            "device 7: message text on the lock screen: on"
+            text_log_line(7, ELEMENT_X, true),
+            "device 7: io.element.android.x's message text on the lock screen: on"
         );
         assert_eq!(
-            text_log_line(7, false),
-            "device 7: message text on the lock screen: off"
+            text_log_line(7, ELEMENT_X, false),
+            "device 7: io.element.android.x's message text on the lock screen: off"
         );
     }
 
@@ -331,16 +354,17 @@ mod tests {
             ("bad".to_string(), "Bad".to_string()),
             (ELEMENT_X.to_string(), "Twice".to_string()),
         ];
-        let ticked: BTreeSet<String> = [ELEMENT_X, "com.old.chat", "com.google.android.gms"]
-            .map(str::to_string)
-            .into();
+        let ticked: BTreeMap<String, bool> = [
+            (ELEMENT_X, true),
+            ("com.old.chat", false),
+            ("com.google.android.gms", true),
+            ("com.allowed.later", false),
+        ]
+        .map(|(p, text)| (p.to_string(), text))
+        .into();
         let allowed: BTreeSet<String> = ["org.signal", ELEMENT_X, "com.allowed.later"]
             .map(str::to_string)
             .into();
-        let ticked: BTreeSet<String> = ticked
-            .into_iter()
-            .chain(["com.allowed.later".to_string()])
-            .collect();
         let apps = card_apps(listed.clone(), &ticked, Some(&allowed));
         assert_eq!(
             apps,
@@ -349,24 +373,28 @@ mod tests {
                     package_name: "org.signal".to_string(),
                     label: "Signal".to_string(),
                     on: false,
+                    show_text: false,
                     note: None,
                 },
                 LockScreenApp {
                     package_name: ELEMENT_X.to_string(),
                     label: "Element X".to_string(),
                     on: true,
+                    show_text: true,
                     note: None,
                 },
                 LockScreenApp {
                     package_name: "com.allowed.later".to_string(),
                     label: "com.allowed.later".to_string(),
                     on: true,
+                    show_text: false,
                     note: Some(NOT_ON_PHONE_TICKED),
                 },
                 LockScreenApp {
                     package_name: "com.old.chat".to_string(),
                     label: "com.old.chat".to_string(),
                     on: true,
+                    show_text: false,
                     note: Some(NOT_ALLOWED_TICKED),
                 },
             ]

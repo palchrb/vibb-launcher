@@ -1049,14 +1049,14 @@ pub fn build_admin_router(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
         )
-        // The lock's glance page (design 25): the text switch and the apps it shows.
-        .route(
-            "/devices/{id}/lock-screen",
-            post(handlers::lock_glance::save_text),
-        )
+        // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51).
         .route(
             "/devices/{id}/lock-screen/apps",
             post(handlers::lock_glance::save_app),
+        )
+        .route(
+            "/devices/{id}/lock-screen/apps/text",
+            post(handlers::lock_glance::save_app_text),
         )
         .route(
             "/apps/tracked/{id}/display",

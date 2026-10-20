@@ -118,8 +118,9 @@ data class PolicyResponse(
      * Spotify, so the DNS filter exempts Spotify's hosts; absent from an older server = false).
      * Not in [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val music: kotlinx.serialization.json.JsonElement? = null,
-    /** The lock's glance page (design 25): `{apps: [package, ...], show_text: bool}` - the apps whose
-     * messages show on the PIN lock's first page, and whether with their text. Raw JSON read field
+    /** The lock's glance page (design 25): `{apps: [{package, show_text}, ...]}` - the apps whose
+     * messages show on the PIN lock's first page, each with whether its text shows too (design 51;
+     * an older server's `apps` of strings reads as sender only). Raw JSON read field
      * by field by [com.kidslauncher.mdm.badges.lockGlancePolicy], so nothing in it can fail the
      * policy (like [music] and `app_display`). Missing from a fresh response (an older server) =
      * the server's own default (Element X, sender only); missing from the cache (written by a

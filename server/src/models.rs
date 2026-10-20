@@ -124,9 +124,6 @@ pub struct DevicePolicy {
     /// When the parent PIN was last saved or removed here (ms; `None` = before this existed): the
     /// Status card's parent-PIN notices start after it (qa-24-code Low 4).
     pub override_pin_set_at_ms: Option<i64>,
-    /// The lock's glance page (design 25, migrations/0066): the message text shows too, not only
-    /// the sender (default off). The ticked apps are `device_lock_glance_apps`.
-    pub lock_glance_text: bool,
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.
@@ -957,9 +954,9 @@ pub struct PolicyResponse {
     /// the Storytel generation (`music::MusicPolicy`). `null` when it couldn't be read - never a
     /// made-up empty library (QA #3); the library itself is `GET /api/devices/music/library`.
     pub music: Option<crate::music::MusicPolicy>,
-    /// The lock's glance page (design 25), always sent: `{apps, show_text}` - the apps whose
-    /// message notifications the PIN lock's first page shows (missed calls always show) and whether
-    /// their text shows too. A failing query sends `apps: []` (fewer rows, never a 500). An older
+    /// The lock's glance page (design 25), always sent: `{apps: [{package, show_text}]}` - the apps
+    /// whose message notifications the PIN lock's first page shows (missed calls always show), each
+    /// with whether its text shows too (design 51). A failing query sends `apps: []` (fewer rows, never a 500). An older
     /// launcher ignores it; an older server's missing key means Element X, sender only.
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
 }

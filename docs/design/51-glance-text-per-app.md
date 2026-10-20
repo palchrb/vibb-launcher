@@ -72,3 +72,24 @@ neither the tick nor the text switch jumps the page.
 - 51-6: false Fossify sentence replaced (listed if allowed, harmless, design 42 unaffected).
 - 51-7: contract pins named (`tests/device_api.rs:446-451`, `PolicyResponseCompatTest:495-515`); migrations test extended
   and renamed.
+
+## Implementation status (2026-10-20, branch `r7-b`)
+
+Server and launcher in one commit; migration `0083_lock_glance_text_per_app.sql`.
+
+- **Route**: `POST /devices/{id}/lock-screen/apps/text` (`package_name` + checkbox `show_text`), as §1.4 and the brief
+  say - the Revision's `/lock/glance/{package}/text` was superseded by the route-convention fix (7f6c4645). The
+  handler is `handlers::lock_glance::save_app_text`, next to `save_app` (both of the Lock page's glance routes live
+  there, not in `device_pages.rs`). 400 for a package that isn't one (so the redirect's fragment is always a package
+  name), 404 for no row, 500 on a DB error - nothing written.
+- **The row**: each app is one `div.cell#lock-screen-app-<pkg>` holding the tick's form and, once ticked, the text
+  switch's form (forms can't nest, and `check_forms` wants every fragment to enclose its form), so both saves land on
+  the app's cell; the text row has no hairline of its own and reads as part of the app.
+- **Log**: `lock_screen_text_changed` keeps its event type; the detail is per app, "device 3: io.element.android.x's
+  message text on the lock screen: on".
+- **Launcher**: `GlancePolicy(apps: Map<String, Boolean>)` with `showsText(pkg)`, read in `GlanceReader`; the store's
+  log line counts the apps with text. Duplicate entries: the last wins (the server never sends one twice).
+- **Release note** (both releases): a launcher from before design 51 given the new shape shows missed calls only on
+  its lock until it updates; a new launcher on an older server shows the sender only for every ticked app.
+- **Device check owed**: §3 on the emulator (two ticked apps, text on for one; a message from each; the lock shows the
+  sender for both and the text for one; neither the tick nor the text switch jumps the page).

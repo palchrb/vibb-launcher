@@ -128,7 +128,7 @@
     </section>
 
     {#- The pickers and switches save on change (autosave.js) and return to their group or row
-        (#screen, #lock-wallpaper, #lock-screen-text, #lock-screen-app-<package>): without JS the
+        (#screen, #lock-wallpaper, #lock-screen-app-<package>): without JS the
         answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4);
         <noscript> Save without JS. -#}
     <section id="screen" aria-labelledby="screen-title">
@@ -168,20 +168,13 @@
                 </label>
                 <noscript><button type="submit" class="row row-button">Save Background</button></noscript>
             </form>
-            <form method="post" action="/devices/{{ device.id }}/lock-screen#lock-screen-text" class="cell" id="lock-screen-text">
-                <label class="row">
-                    <span class="row-label">Show message text</span>
-                    <input type="checkbox" role="switch" class="sw" name="show_text" value="on"{% if lock_screen.show_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-                </label>
-                <noscript><button type="submit" class="row row-button">Save</button></noscript>
-            </form>
         </div>
-        <div class="group-footer">Anyone holding the phone can read the message text.
+        <div class="group-footer">
             <details class="info">
                 <summary aria-label="About the lock screen"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>The lock's first page shows the clock, what's playing and the newest notifications. Tapping one asks for the Child PIN, then opens it. Nothing can be answered or dismissed there, and it can't be screenshotted.</p>
-                    <p>Who wrote always shows, missed calls by their name in the contacts. With the text on, a ticked SMS app's login codes show too.</p>
+                    <p>Who wrote always shows, missed calls by their name in the contacts. With an SMS app's text on, its login codes show too.</p>
                     <p>The background picks from the wallpapers this phone has. A photo shows to anyone holding it.</p>
                 </div>
             </details>
@@ -198,9 +191,11 @@
             <p class="row text-alarm" data-row="lock-screen-unreadable">The apps couldn't be read. Check the server log.</p>
             {% else %}
             {% for app in lock_screen.apps %}
-            {#- A row listed only because it is ticked goes with its tick: its save lands on the group
-                (qa-browser-fixes-code L1). -#}
-            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps#{% if app.note.is_some() %}notifications{% else %}lock-screen-app-{{ app.package_name }}{% endif %}" class="cell" id="lock-screen-app-{{ app.package_name }}">
+            {#- One cell per app: its tick and, once ticked, its text switch (design 51) - two small
+                forms, both back to the cell. A row listed only because it is ticked goes with its
+                tick: its untick lands on the group (qa-browser-fixes-code L1). -#}
+            <div class="cell" id="lock-screen-app-{{ app.package_name }}">
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps#{% if app.note.is_some() %}notifications{% else %}lock-screen-app-{{ app.package_name }}{% endif %}">
                 <input type="hidden" name="package_name" value="{{ app.package_name }}">
                 {% if app.note.is_some() %}<input type="hidden" name="unlisted" value="1">{% endif %}
                 <label class="row">
@@ -209,12 +204,23 @@
                 </label>
                 <noscript><button type="submit" class="row row-button">Save</button></noscript>
             </form>
+            {% if app.on %}
+            <form method="post" action="/devices/{{ device.id }}/lock-screen/apps/text#lock-screen-app-{{ app.package_name }}">
+                <input type="hidden" name="package_name" value="{{ app.package_name }}">
+                <label class="row">
+                    <span class="row-label">Show message text<span class="row-sub">{% if app.show_text %}Text shown on the lock{% else %}Sender's name only{% endif %}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="show_text" value="on" aria-label="Show {{ app.label }}'s message text"{% if app.show_text %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
+            {% endif %}
+            </div>
             {% else %}
             <p class="row row-note" data-row="lock-screen-empty">{{ lock_screen.empty_text }}</p>
             {% endfor %}
             {% endif %}
         </div>
-        <p class="group-footer">Missed calls always show.</p>
+        <p class="group-footer">Missed calls always show. Anyone holding the phone can read the message text.</p>
     </section>
 </main>
 </body>

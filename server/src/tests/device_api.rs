@@ -444,10 +444,11 @@ async fn policy_json_keys_snapshot() {
     );
 
     // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
-    // the sender only. The launcher's `lockGlancePolicy` decodes exactly this shape.
+    // the sender only (per app since design 51). The launcher's `lockGlancePolicy` decodes exactly
+    // this shape (`PolicyResponseCompatTest`).
     assert_eq!(
         object["lock_glance"],
-        serde_json::json!({ "apps": ["io.element.android.x"], "show_text": false })
+        serde_json::json!({ "apps": [{ "package": "io.element.android.x", "show_text": false }] })
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
