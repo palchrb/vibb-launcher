@@ -1056,6 +1056,18 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **Launcher round 7 (2026-10-20, merges 5248fa4e l7-a and e1569747 l7-b; design QA `docs/design/qa-r7-launcher-design.md`
+  + one revision check; code QA `docs/review/qa-l7-a-code.md` (0 / 0 / 2, fixed) and `qa-l7-b-code.md` (1 High - the
+  force-stop protection, dropped - / 1 Medium / 4 Low, fixed); server 1102, launcher 1464, music 970 green)**: any
+  allowed app rings over the lock (no budget; `lock_state.voip_rang` -> "rang over the lock" on the Lock page); the
+  per-phone "Wake the screen for a notification" switch (migration 0084; a notice wakes the lock's glance page, off
+  again after 15 s untouched via `lockNow()`, never with a lock dialog open or TalkBack on); catalog apps'
+  `battery_exempt` and the Apps page's "Background:" line (the force-stop protection NOT built: a protected package
+  can't be restricted by the device owner either); the Fossify items (icon eviction on update, Home press to the top,
+  one-tile grid updates, coalesced `loadApps()`, the inherited Settings escape closed). Server 0.32.0 also carries the
+  0.31.1 content (Now gone, one clock per Activity row, Install Now's value on one line). **Device checks owed**: the
+  design note's §1.3/§1.4, §2.3/§2.4, §3.3/§3.4 and PLAN's §4 lines. Goes out with launcher-v0.32.0 + server-v0.32.0
+  (with music-v0.4.0).
 - **The music round (2026-10-20, merge 9a7017a0 of `music-r-b`, which holds `music-r-a`; design QA
   `docs/design/qa-music-round-design.md` + one revision check; code QA `docs/review/qa-music-a-code.md` (1 High / 2
   Medium / 5 Low, all fixed) and `qa-music-b-code.md` (0 / 3 / 5, all fixed); music suite 970, launcher 1431, server
@@ -1079,7 +1091,7 @@ findings, merge to `main`, full suite once.
 - **Server 0.31.1 content (2026-10-20, merge daff2443 of `r7-c`)**: the summary's Now section is gone (the user: "kan
   vi ikke bare ta vekk hele den now biten?"), End now for a running pause sits under Quick Actions, ended lifts show
   on Device › Time only, each Activity event row shows its clock once; the running version beside Install Now never
-  wraps. Not tagged yet (the user decides when).
+  wraps. Goes out with server-v0.32.0 (0.31.1 skipped).
 - **Server round 6 (2026-10-20, merges d2b6563b r7-a and 5b382da5 r7-b; design QA `docs/review/qa-r6-server-design.md`
   + one revision check; code QA `docs/review/qa-r7-a-code.md` (0 High / 0 Medium / 4 Low, all fixed) and
   `qa-r7-b-code.md` (0 / 1 / 3, all fixed))**: **design 48** the summary's Today and Recent become **Now** (the lifts
