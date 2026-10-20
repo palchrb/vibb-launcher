@@ -804,20 +804,21 @@ findings, merge to `main`, full suite once.
   disabled with the reason. Every POST keeps its own group's `#fragment` and comes back to the page that holds it (the
   no-jump rule). Server only, small; the Music tab's "Add from Spotify" row keeps its link. Could ride in round 5's B
   implementer or the next server round - the user decides.
-- **Design 46: a context-mode playlist shows its tracks, and the kid picks one** (the user, 2026-10-20: "se hele
-  playlisten slik den er, og så velge en konkret sang"; not the queue). Today a context entry's list screen shows one
-  row (design 26c §5.9, the live track, "rekkefølgen velges for deg"). Decided: for a playlist context the server reads
-  the playlist's tracks with the kid's token (as it does for list mode; the same `music_items` listing shape, pictures
-  through the sweep) and the phone shows the whole list as in list mode, the playing track marked; a tap on a row plays
-  the context from that track - the same play call with `offset.uri` = the row's uri (what resume does today) - so
-  Spotify still owns the playback and the order (shuffle off, so it is the playlist's order - confirmed by the user
-  2026-10-20: "rekkefølgen følger min playlist helt perfekt"; the hint "rekkefølgen velges for deg" is wrong for a
-  playlist and becomes "spillelistens rekkefølge", staying only for an artist context). An artist context keeps its
-  one row (Spotify picks there). Also noted: a context's first play after an idle pause takes a few seconds (the web
-  player is released after a pause and reloads: SDK page, token, `ready`, transfer, play) - expected; holding the web
-  player longer on Wi-Fi + charger is a battery trade-off to weigh, not a bug. What the kid sees may lag an edit made in Spotify until the next listing sync;
-  a tapped track Spotify refuses (left the playlist) falls back to the context from the top, as resume does. Music
-  app + server (listing for context entries); design note, the usual process; the behaviour reference stays vibb's
+- **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
+  playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
+  NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
+  collaborator (design 26c decision 4, verified 2026-10-13), and a playlist the kid's account owns or collaborates on is
+  already list mode with every track. So for a context-mode playlist the phone can show only what Spotify reveals
+  without reading the playlist: `GET /me/player/queue` - the playing track and the next up to 20 in the playlist's
+  order (shuffle off, so it is the list's order; confirmed by the user: "rekkefølgen følger min playlist helt perfekt").
+  Decided: the list screen of a context entry shows the playing track and the next ~20 from the queue, refreshed on each
+  track change; a tap on a row plays the context from that track (the same play call with `offset.uri` = the row's uri,
+  which needs no playlist read); the hint becomes "spillelistens rekkefølge · de neste 20" for a playlist and stays
+  "rekkefølgen velges for deg" for an artist. The full list with free choice exists only in list mode (the kid owns the
+  playlist or collaborates on it - the parent can make the child a collaborator to get it). Also noted: a context's
+  first play after an idle pause takes a few seconds (the web player is released after a pause and reloads: SDK page,
+  token, `ready`, transfer, play) - expected; holding the web player longer on Wi-Fi + charger is a battery trade-off to
+  weigh, not a bug. Music app (+ the queue call); design note, the usual process; the behaviour reference stays vibb's
   list. Music round after stable 0.4.0's blockers.
 - **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
   reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
