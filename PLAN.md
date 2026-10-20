@@ -919,16 +919,11 @@ findings, merge to `main`, full suite once.
   at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). Two parts: (1) the device
   owner sets `setUserControlDisabledPackages` for every catalog-installed app (the kid can't force-stop or clear it;
   from Android 12 it is kept out of app hibernation) - plain code at install/allow time, removed when the app leaves
-  the catalog; (2) the battery optimisation exemption has no device-owner API, so right after a catalog install the
-  launcher opens the system dialog for that package (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `package:<pkg>`;
-  the app must declare the permission - Fossify Clock does) and someone taps Allow once (the user, 2026-10-20: "da må forelderen først låse opp telefonen": yes - so the dialog
-  is shown to the kid on Home right after the install, with one plain line ("La <app> jobbe i bakgrunnen?"), since it
-  only lets the app work in the background - the user's call, 2026-10-20: "La barnet trykke ... Så slipper man en
-  pin-inntasting på noe ufarlig"; a Deny asks again at the next install or a day later, never nags; no PIN session
-  involved; alarms need none of
-  this: `setAlarmClock` rings through Doze), the way design 19b does for the launcher itself; the app's page in the PWA shows the state ("exempt" / "not yet", from the status report's
-  app list) and a row to ask again. Verify on the emulator first: the dialog for another package accepted from our
-  app on Android 16, and what `setUserControlDisabledPackages` exempts there. Launcher round 7 (+ the status contract
+  the catalog; (2) the battery optimisation exemption: NO flow (the user, 2026-10-20, on the proposal of a
+  time-boxed Settings window for Android's dialog: "Nei vil ikke auto åpne settings, da er det bedre at vi ikke legger
+  inn noe spesielt rundt batteriunntaket. Da får folk styre det selv") - the parent grants it by hand during a pause as
+  design 19b says, and the app's row in the PWA only shows the state ("exempt" / "restricted", from the status
+  report's app list). Design: `docs/design/r7-launcher-small-items.md` §2. Launcher round 7 (+ the status contract
   field in both directories).
 - **Wake the screen for a notification - a global switch** (the user, 2026-10-20, on the lock screen never waking for a
   notification, design 32b's exclusion: "la det være en global bryter i pwa? Under feks lock screen kategorien i phone
