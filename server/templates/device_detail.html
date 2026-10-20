@@ -92,7 +92,7 @@
                     </details>
                 </div>
                 <ol class="attention-steps">
-                    <li>{% if f.paused %}The phone is unlocked now (restrictions paused).{% else %}Open the phone with Unlock for 2 h below: no Parent PIN needed.{% endif %}</li>
+                    <li>{% if f.paused %}The phone is unlocked now (restrictions paused).{% else %}Open the phone with Unlock 2 h below: no Parent PIN needed.{% endif %}</li>
                     <li>On the phone, turn off {% if !f.admins.is_empty() %}{{ f.admins }} under Settings › Security › Device admin apps{% endif %}{% if !f.admins.is_empty() && !f.accessibility.is_empty() %}, and {% endif %}{% if !f.accessibility.is_empty() %}{{ f.accessibility }} under Settings › Accessibility{% endif %}. Then uninstall {% if f.many %}them{% else %}it{% endif %}.</li>
                     <li>Tap Lock again below. Then <a href="/devices/{{ device.id }}/lock#parent-pin">change the Parent PIN</a>: {% if f.many %}they{% else %}it{% endif %} may have read it.</li>
                 </ol>
@@ -157,7 +157,7 @@
             {% endif %}
             {% if relock.pause_button %}
             <details class="act-sheet confirm" id="unlock">
-                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Unlock for 2 h&hellip;</summary>
+                <summary class="act"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="10.5" width="14" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 6.8-1.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Unlock 2 h&hellip;</summary>
                 <form method="post" action="/devices/{{ device.id }}/start-pause#quick" class="confirm-body act-sheet-body">
                     <p>Unlock {{ device.name }}'s phone for 2 hours? Apps, Settings and the Play Store open. It locks again by itself, or with Lock again.</p>
                     <button type="submit" class="button-destructive">Unlock</button>

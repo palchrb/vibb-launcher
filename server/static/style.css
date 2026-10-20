@@ -1726,7 +1726,9 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 /* Ring, Stop Ringing, Lock: three tiles, as the mockup draws them. */
 .act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
 .act-grid form { margin: 0; }
-.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; }
+.act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* One line per tile (white-space above), so every tile is its 68px and every row the same (the user, 2026-10-20:
+   "Hurtigknappene ... burde vel være samme dimensjon?"); a label longer than the tile ends in "…". */
 .act:hover { background: var(--row-active); color: var(--tint); }
 .act svg { width: 24px; height: 24px; margin-bottom: 5px; }
 .tone-green { color: var(--green); font-weight: 600; }
