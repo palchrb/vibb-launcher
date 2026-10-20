@@ -87,3 +87,40 @@ recording.
 - r6-5: the time line under the bar on both tiles, fixed width with tabular figures, pinned numbers re-pinned, the 320 dp bar assertion (§2).
 - r6-6: no measure-only copies; live views measured at a refit as today (§2).
 - r6-7: the player-screen recording as a device-check step, no code (§2).
+
+## Implementation status (2026-10-20)
+
+### §2 - the music tile rendered alone, the time line (implementer B, branch `r6-b`)
+
+- **Render alone**: `MusicLockPanel`'s session and listening-window callbacks only call the panel's
+  `GlanceCoalescer` (pure, `lock/LockGlance.kt`): one `Choreographer.postFrameCallback` per frame, so the two or three
+  session messages of a tap draw once. The frame's `GlancePanel.tileChanged` looks the session up and renders the tile
+  alone - no row rebind, no clock measure. It refits (`fitNow`, the live views as before, no measure-only copies) only
+  when the pure `glanceRefitDue(tileWasUp, tileUp, fittedPx, measuredPx)` says so: the tile came or went, or the shown
+  tile, measured with its margins at the page width, differs from the height the last fit was made with
+  (`fitTilePx`, kept by `fitNow`). The rows are rebound only by `GlanceStore`/`MissedCallNotifier` callbacks and the
+  start/resume/stage paths, as before.
+- **The time line**: `lock_media_time` / `lock_media_compact_time` under each bar (the compact one under its bar, never
+  beside it), "4:48 · 25:36" (pure `glanceTimeLine`; a live stream or an unknown length the position alone), 12 sp
+  Nunito 700 in `kid_core_dim`, `fontFeatureSettings="tnum"`, one line, ellipsized, `importantForAccessibility="no"`
+  (the bar's content description still says "4:48 av 25:36"). The once-a-second tick (`MusicLockPanel.tick`) sets only
+  the bars, their descriptions and the two lines - the play icon, art and texts only on a callback.
+- **Deviation - the line's width**: `match_parent`, not a width measured in code for "88:88 · 88:88". A TextView whose
+  width isn't `wrap_content` swaps a same-height text with an invalidate and no `requestLayout`
+  (`TextView.checkForRelayout`), which is what the measured width was for; `match_parent` needs no measuring, follows a
+  font-scale change by itself, and can't outgrow the compact column at 320 dp and font scale 2.0 (a measured
+  "88:88 · 88:88" at 12 sp x 2.0 is wider than its 144 dp). `LockGlanceLayoutTest` pins the attributes.
+- **Re-pinned numbers** (`LockGlanceTest`, the 1.4 x line model from the XML): `tileFull` 211 -> 233.8 (the line,
+  16.8, and its 6 dp margin), `tileCompact` 90 -> 107 (the text column is 69 dp, 17 more than the 52 dp art row),
+  `fixed` 106 unchanged. Expected fits at 473 dp (both bars): full tile alone 1 (467.8); no music, 4 rows 1 (464);
+  music + 1 row 3 (411); **music + 2 rows 4** (452.6 - the small clock; was 3, mockup A's big clock now needs 475);
+  **music + 3 rows 5 with one row** and "+ 2" (412.6; was two rows). At 497 dp (gesture navigation): **music + 1 row 3**,
+  the compact tile (411; the full one needs 515.4, was 2), music + 2 rows 3 (475). The line costs the Jelly Star's
+  3-button layout one row with music and three notifications.
+- Tests: `LockGlanceTest` (the time line, the refit rule, the coalescer - three requests in a frame, one render - the
+  re-pinned model and candidates), `LockGlanceLayoutTest` (the tiles' heights, the expected fits, the line under each
+  bar), `LockGlanceGuardTest` unchanged for §2.
+- **Device checks owed**: the tile recording of 2026-10-20 again (`ffmpeg` scene changes on the tile's region): one
+  change per play/pause tap, no full-card redraw ~0.8 s later; a track change from a one-line to a two-line title
+  refits once (the "Lås opp"/"Nødsamtale" row stays on screen); the line ticking with no page movement. The same
+  recording on the music app's player screen (no code this round).

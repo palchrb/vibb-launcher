@@ -89,3 +89,32 @@ other round-6 changes), and the 320/360/411 dp width checks with the button in t
 - 41-5: `Flashlight(val lit)`, `homeGrid(..., torch)`, the adapter's `when`s, `renderGrid()`, `stateDescription` (§1.2).
 - 41-6: `setExactAndAllowWhileIdle`, cancelled on every off path; the restart is the platform's (§1.4).
 - Tests: `LockGlanceTest.kt`, not `GlanceFitTest` (§3).
+
+## Implementation status (2026-10-20)
+
+### The lock's button (implementer B, branch `r6-b`)
+
+- **Layout** (`view_lock_glance.xml`): the bottom row `lock_glance_bottom`, a `FrameLayout` after "Lås opp" with the
+  row's 2 dp top margin, holds `lock_glance_emergency` (centred, `minHeight` 48 dp, 52 dp margins on both sides so a
+  long label at a large font wraps before it reaches the button and stays centred) and `lock_glance_torch` (48 dp
+  round `ImageButton` at the end, `gone` until the panel knows there is a flash unit). `glanceFit`'s `fixed` is
+  `withMargins(lock_glance_bottom)` - 106 dp with or without the button.
+- **The seam**: `GlancePanel(..., torch: TorchPort? = null, onEmergency)`; `TorchPort` (in `lock/LockGlance.kt`):
+  `hasFlash`, `lit`, `refusedWhileLocked` (`CAMERA_DISABLED` while LOCKED, §1.5), `toggle()`, `addListener`/
+  `removeListener`. Until `Torch` lands the lock passes nothing and the button stays gone; **at the merge**
+  `PinLockActivity` passes an adapter over `Torch` (`toggle()` = `Torch.toggle(this)`, the state and the listener).
+  The panel listens between onStart and onStop (posted to the main thread) and `bindTorch` follows the pure
+  `glanceTorchButton`: HIDDEN (no flash unit, or refused on the lock), OFF (`bg_music_control`, `kid_core` glyph) or
+  LIT (the peach `bg_music_play` disc with the `kid_ground` glyph); no animation. TalkBack: "Lommelykt"/"Flashlight"
+  with the state description "på"/"av" (`lock_torch*`, nb + en).
+- **Glyphs**: `torch_glyph_on`/`torch_glyph_off.xml`, Material Symbols `flashlight_on`/`flashlight_off` (Rounded,
+  filled, the script's pinned commit, SHA-256 `6ea0d1a3...`/`a5de8d4a...`), converted exactly as
+  `scripts/material-symbols.sh` writes `lock_glyph_*` - added by hand on this branch; the merge keeps one copy and
+  the script's entry (implementer A's).
+- **Guards**: `LockGlanceGuardTest` - the button's click is exactly `torch?.toggle()`, the panel has no other toggle,
+  no `CameraManager`/`setTorchMode`/`setCameraDisabled`/`CameraLock`/`DevicePolicyManager`, and `TorchPort` has only
+  the state, the toggle and the listener; `LockMediaGuardTest` - the page's touchables include `lock_glance_torch`, wired.
+  `LockGlanceLayoutTest` - the row's children and gravities, the button no taller than "Nødsamtale", the label's room
+  at 320/360/411 dp, the button a fixed round size, the child order ending in the row.
+- **Device checks owed**: §4 on the Jelly Star once `Torch` is wired (the emulator has no flash unit, so the button
+  never shows there).
