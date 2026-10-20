@@ -58,38 +58,30 @@ async fn a_status_report_is_stored_within_limits() {
     assert_eq!(app_version.chars().count(), 64);
 }
 
-/// Round 7 §2.1.2: the launcher's body with `installed_apps[].battery_exempt`
-/// (`InstalledAppReportTest` encodes exactly this; byte-identical in its test resources).
-const INSTALLED_APPS_BATTERY: &str = include_str!("../../testdata/installed_apps_battery.json");
-
-#[test]
-fn the_battery_contract_matches_the_launchers_copy() {
-    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../launcher/app/src/test/resources/installed_apps_battery.json");
-    let copy = std::fs::read_to_string(&copy_path)
-        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
-    assert_eq!(
-        copy,
-        INSTALLED_APPS_BATTERY,
-        "{} differs",
-        copy_path.display()
-    );
-}
-
-/// `cap_installed_apps` keeps the battery state of a catalog app the launcher installed (and leaves it out for
-/// the rest), and the Apps page says it quietly under the app's status - no button.
+/// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
+/// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
+/// Apps page says nothing about the background.
 #[tokio::test]
-async fn the_battery_state_of_a_catalog_app_is_kept() {
+async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let body: serde_json::Value = serde_json::from_str(INSTALLED_APPS_BATTERY).unwrap();
     let res = app
         .request(
             Method::POST,
             "/api/devices/status",
             Some(&token),
-            Some(body),
+            Some(serde_json::json!({
+                "lock_reason": "NONE",
+                "kiosk_engaged": true,
+                "installed_apps": [
+                    { "package_name": "org.fossify.clock", "label": "Clock", "preinstalled": false,
+                      "installer": "me.vibb.launcher", "battery_exempt": false },
+                    { "package_name": "io.element.android.x", "label": "Element X", "preinstalled": false,
+                      "installer": "me.vibb.launcher", "battery_exempt": true },
+                    { "package_name": "com.android.chrome", "label": "Chrome", "preinstalled": true },
+                ],
+            })),
         )
         .await;
     assert!(res.status.is_success(), "{}", res.text());
@@ -101,44 +93,23 @@ async fn the_battery_state_of_a_catalog_app_is_kept() {
     .await
     .unwrap();
     let apps: Vec<crate::models::InstalledApp> = serde_json::from_str(&apps_json).unwrap();
-    let exempt: Vec<(&str, Option<bool>)> = apps
-        .iter()
-        .map(|a| (a.package_name.as_str(), a.battery_exempt))
-        .collect();
+    let packages: Vec<&str> = apps.iter().map(|a| a.package_name.as_str()).collect();
     assert_eq!(
-        exempt,
+        packages,
         [
-            ("org.fossify.clock", Some(false)),
-            ("io.element.android.x", Some(true)),
-            ("org.example.game", None),
-            ("com.android.chrome", None),
+            "org.fossify.clock",
+            "io.element.android.x",
+            "com.android.chrome"
         ]
     );
-    assert!(
-        !apps_json.contains("\"battery_exempt\":null"),
-        "{apps_json}"
-    );
+    assert!(!apps_json.contains("battery_exempt"), "{apps_json}");
 
     let html = app
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
         .text();
-    let lines: Vec<&str> = html
-        .match_indices("<span class=\"row-sub\" data-background>")
-        .map(|(at, open)| {
-            let rest = &html[at + open.len()..];
-            &rest[..rest.find("</span>").unwrap()]
-        })
-        .collect();
-    assert_eq!(
-        lines,
-        [
-            "Background: optimized (Android&#39;s default) - change it during a pause (Settings › \
-             Apps › Clock › Battery)",
-            "Background: unrestricted",
-        ],
-        "{html}"
-    );
+    assert!(html.contains("Clock"), "{html}");
+    assert!(!html.contains("Background:"), "{html}");
 }
 
 #[tokio::test]

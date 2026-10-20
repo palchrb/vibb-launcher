@@ -239,6 +239,25 @@ line; uncheck the app in the catalog - the line goes with it.
   the two lines).
 - Device checks owed: §2.3.
 
+### 2.5 Removed (2026-10-20)
+
+The user, seeing the phone's Apps page in the PWA, 2026-10-20: "dette ble ikke noe bra; en stor info tekst på alle
+apper om å unndra de fra battery optimizations? , uansett om de trenger det eller ikke? Det burde vi ikke ha og det gir
+heller ikke mening! ... La oss ikke blande oss i det! Kom med et bedre forslag eller bare ta det vekk."
+
+Decided: taken away completely, in one commit over both directories. **Gone**: the launcher's
+`server/CatalogBattery.kt` (`catalogAppsInstalledByUs`, `withBatteryExempt`) and its use in
+`collectInstalledApps`, `InstalledApp.batteryExempt`, `CatalogBatteryTest`, `InstalledAppReportTest` and
+`installed_apps_battery.json` (both copies, the root `CLAUDE.md` entry and the paths in `launcher.yml` and
+`server-ci.yml`); the server's `InstalledApp.battery_exempt`, `devices::background_line`, `UnifiedAppRow.background`
+and the Apps page's "Background:" sub-line; the server test `the_battery_state_of_a_catalog_app_is_kept`. **Kept**:
+the source scan that no production source calls `setUserControlDisabledPackages` (§2.1.1; now in
+`BackupServiceInvariantsTest`), and design 19b's own `battery_optimization_exempt` report and the PIN-gated Settings
+row, which this section never touched. **Compatibility**: launcher 0.32.0 still sends `installed_apps[].battery_exempt`;
+the server's `InstalledApp` has no `deny_unknown_fields`, so the field is ignored and never stored
+(`intake_limits::an_older_launchers_battery_exempt_is_accepted_and_dropped`). Nothing else in round 7 changes; §2.1-§2.4
+above are history.
+
 ## 3. Wake the screen for a notification - one switch per phone
 
 The user, 2026-10-20: "er det en emulator ting at våre varsler ikke slår på skjermen? Eller er det by design?" ... "la
