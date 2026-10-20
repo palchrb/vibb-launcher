@@ -21,7 +21,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
+import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.model.Entry
@@ -257,9 +259,10 @@ class SpotifyRendererTest {
         prev: List<Int> = emptyList(),
         duration: Long = DURATION,
         shuffle: Boolean = false,
+        repeat: Int = 0,
     ): SdkSnapshot = SdkState(
         paused, pos, duration, uri(n), null, listOf(n + 1, n + 2).map { uri(it) }, prev.map { uri(it) },
-        "track", "Fake track $n", listOf("Fake Artist"), null, shuffle = shuffle,
+        "track", "Fake track $n", listOf("Fake Artist"), null, shuffle = shuffle, repeat = repeat,
     )
 
     private suspend fun post(s: SdkSnapshot) {
@@ -964,6 +967,96 @@ class SpotifyRendererTest {
         advance(0)
         assertEquals(3, api.paths().count { it.contains("/shuffle") })
         r.release()
+    }
+
+    @Test
+    fun `d49 - the start sends the wanted shuffle and repeat when they aren't known, a change or a differing state sets them again`() = runBlocking {
+        val r = renderer()
+        r.setModes(false, Repeat.ONE)
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(
+            "repeat one is Spotify's repeat track; list mode's shuffle is ours, Spotify's stays off",
+            listOf(
+                "PUT /v1/me/player/shuffle?state=false&device_id=$DEVICE",
+                "PUT /v1/me/player/repeat?state=track&device_id=$DEVICE",
+                "PUT /v1/me/player/play?device_id=$DEVICE",
+            ),
+            api.paths(),
+        )
+        post(state(0, 0, repeat = 2))
+        r.pause()
+        post(state(0, 1_000, paused = true, repeat = 2))
+        r.play()
+        advance(0)
+        assertEquals("known and unchanged: the SDK's resume, nothing more", 1, api.paths().count { it.contains("/repeat") })
+        post(state(0, 2_000, repeat = 2))
+        // the kid's repeat off while it plays: set at once, a fresh start at the current place (never from 0:00)
+        r.setModes(false, Repeat.OFF)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(
+            listOf("PUT /v1/me/player/shuffle?state=false&device_id=$DEVICE", "PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", "PUT /v1/me/player/play?device_id=$DEVICE"),
+            api.paths().takeLast(3),
+        )
+        assertTrue(body(api.plays().last())["position_ms"]!!.jsonPrimitive.long >= 2_000L)
+        post(state(0, 3_000))
+        val calls = api.paths().size
+        // off -> all in list mode is ours (the list again at its end): Spotify's side unchanged, nothing sent
+        r.setModes(false, Repeat.ALL)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(calls, api.paths().size)
+        // the account changed elsewhere (another app turned repeat on): corrected
+        post(state(0, 4_000, repeat = 1))
+        advance(0)
+        assertEquals("PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", api.paths().takeLast(2).first())
+        r.release()
+    }
+
+    @Test
+    fun `d49 - a playlist context sets Spotify's own shuffle and repeat context`() = runBlocking {
+        val r = contextRenderer()
+        r.setModes(true, Repeat.ALL)
+        r.load(contextItems(), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(
+            listOf("PUT /v1/me/player/shuffle?state=true&device_id=$DEVICE", "PUT /v1/me/player/repeat?state=context&device_id=$DEVICE"),
+            api.paths().take(2),
+        )
+        r.release()
+    }
+
+    @Test
+    fun `d49 - list mode's repeat all plays the list again from the first at its end - before Ended, as the natural advance`() = runBlocking {
+        val r = renderer(count = 2)
+        r.setModes(false, Repeat.ALL)
+        r.load(mediaItems(2), 1, 0, playNow = true)
+        advance(0)
+        post(state(1, 0, duration = 20_000))
+        post(state(1, 18_000, duration = 20_000))
+        advance(3_000)
+        events.clear()
+        post(state(1, 0, paused = true, duration = 20_000))
+        advance(0)
+        assertFalse("no clear_state", events.contains(RendererEvent.Ended))
+        assertTrue("the first item, as an automatic change", events.contains(RendererEvent.ItemChanged(0, auto = true)))
+        assertEquals(0, r.currentIndex())
+        assertEquals(listOf(uri(0), uri(1)), windowOf(api.plays().last()))
+        assertEquals(0L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+        // after the kid's pause nothing starts by itself: the same end, paused, sends no play
+        val calls = api.plays().size
+        val p = renderer(count = 2)
+        p.setModes(false, Repeat.ALL)
+        p.load(mediaItems(2), 1, 0, playNow = true)
+        advance(0)
+        post(state(1, 0, duration = 20_000))
+        post(state(1, 18_000, duration = 20_000))
+        p.pause()
+        advance(3_000)
+        post(state(1, 0, paused = true, duration = 20_000))
+        advance(0)
+        assertEquals("one play: the start", calls + 1, api.plays().size)
+        p.release()
     }
 
     @Test

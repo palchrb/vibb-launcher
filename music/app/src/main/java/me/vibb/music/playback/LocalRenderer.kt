@@ -22,6 +22,7 @@ import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.HLS_MAX_BITRATE
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.save
@@ -30,6 +31,13 @@ import me.vibb.music.logic.sleepVolume
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.MediaCache
 import me.vibb.music.media.SourceChangedPolicy
+
+/** The phone's ExoPlayer repeat mode for the entry's [repeat] (design 49 §1.4). */
+internal fun exoRepeatMode(repeat: Repeat): Int = when (repeat) {
+    Repeat.OFF -> Player.REPEAT_MODE_OFF
+    Repeat.ALL -> Player.REPEAT_MODE_ALL
+    Repeat.ONE -> Player.REPEAT_MODE_ONE
+}
 
 /** Speech (podcasts, stories: a notification pauses rather than ducks) or music. */
 internal fun audioAttributes(speech: Boolean): AudioAttributes = AudioAttributes.Builder()
@@ -129,6 +137,15 @@ internal class LocalRenderer(
         exo.removeMediaItems(keep + 1, exo.mediaItemCount)
         exo.removeMediaItems(0, keep)
         exo.addMediaItems(1, after)
+    }
+
+    /**
+     * Design 49 §1.4: repeat is ExoPlayer's own ([exoRepeatMode]) - all wraps the queue, one repeats the item - so the
+     * natural end (`STATE_ENDED`, the service's `clear_state`) comes only with repeat off. Shuffle stays ours (the
+     * queue's order, `shuffledWithFirst`): ExoPlayer's shuffle mode is never on.
+     */
+    override fun setModes(shuffled: Boolean, repeat: Repeat) {
+        exo.repeatMode = exoRepeatMode(repeat)
     }
 
     override fun positionMs(): Long = exo.currentPosition

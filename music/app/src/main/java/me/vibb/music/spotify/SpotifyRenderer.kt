@@ -40,6 +40,7 @@ import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.SpotifyBridgeToken
 import me.vibb.music.bridge.TokenResult
 import me.vibb.music.data.Store
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.SPOTIFY_CALL_MS
 import me.vibb.music.logic.SPOTIFY_FIRST_STATE_MS
@@ -90,8 +91,10 @@ import kotlin.coroutines.resume
  * unchanged. Main thread only; Web API calls and the token wait run on IO and post back.
  *
  * - A start (a tap, a pick, a step, a resume after the device was dropped): the network gate, then in
- *   parallel the page's `ready` (at most 20 s) and a token with 5 minutes left; then shuffle and repeat off
- *   on a device's first play and after the tracker saw either on (qa-26c-step4-code M1), the play call
+ *   parallel the page's `ready` (at most 20 s) and a token with 5 minutes left; then the account's shuffle and
+ *   repeat set to the entry's wanted ones (design 49 §1.5, [spotifyModes]: off and off unless the kid asked) on a
+ *   device's first play, after the wanted ones changed and after the tracker saw them differ (qa-26c-step4-code M1),
+ *   the play call
  *   with its retries, and our first uri playing - all within 25 s. Meanwhile the player shows the intent:
  *   play-when-ready, BUFFERING, `showsPlaying` (QA M1). A second tap during a start sends nothing; a pause
  *   cancels it (no call after it; one already sent is followed by `vibb.pause()`); steps within 300 ms
@@ -330,8 +333,18 @@ internal class SpotifyRenderer(
     /** The account the page's cookies and storage belong to (the token's `"<id>:<generation>"`). */
     private var hostAccount: String? = null
 
-    /** Shuffle and repeat go off before the next play: a new device's first play, or the tracker saw either on. */
-    private var needSettings = true
+    /**
+     * The account's shuffle and repeat as our last start set them (design 49 §1.5); null = not known (a new device, or
+     * the tracker saw them differ from the wanted ones).
+     */
+    private var lastSet: SpotifyModes? = null
+
+    /** Shuffle and repeat are set before the next play: they aren't known to be the entry's wanted ones. */
+    private val needSettings: Boolean get() = lastSet != tracker.wanted
+
+    /** The entry's own shuffle and repeat (the service's [setModes]); Spotify's side is [spotifyModes] of them. */
+    private var shuffledMode = false
+    private var repeatMode = Repeat.OFF
     private var noisyWatched = false
     private var locksHeld = false
 
@@ -352,8 +365,8 @@ internal class SpotifyRenderer(
         /** Inside the Web API calls: never cancelled (a call already on its way isn't taken back). */
         var calling = false
 
-        /** Shuffle and repeat went off first: asked for, or the device is new since the play was asked for. */
-        var settings = false
+        /** The shuffle and repeat set first (asked for, or not known since the play was asked for), else null. */
+        var settings: SpotifyModes? = null
 
         /** Context mode: the offset the play call carried (a playlist's live track), or null. */
         var offset: String? = null
@@ -454,6 +467,7 @@ internal class SpotifyRenderer(
         index = startIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
         lastIndex = -1 // a new queue: the service hears its current item (as ExoPlayer's playlist change)
         if (ctx != null) tracker.loadContext(ctx, stored?.uri) else tracker.load(tracks, index)
+        applyModes(replay = false) // a context's or a list's wanted ones (design 49 §1.5)
         // an artist context has no resume (§12: no offset for an artist): it starts where Spotify starts it
         place = Place(index, if (ctx != null && !contextOffsets) 0 else startMs.coerceAtLeast(0), ports.now(), moving = false)
         stateDuration = null
@@ -468,7 +482,8 @@ internal class SpotifyRenderer(
     }
 
     /**
-     * The kid's order flip in list mode (design 39 §3.3, qa-39-design M2; no shuffle for Spotify, §4.2): the queue is
+     * The kid's order flip or shuffle in list mode (design 39 §3.3, qa-39-design M2; design 49 §1.6: shuffle is our
+     * order, Spotify's own shuffle stays off - "ours" is not widened, only our window's current and next): the queue is
      * [keep] then [after] at once, index 0 the current track. Playing (or starting), a fresh start at the current
      * place ([positionMs]: the measurement carried on by the time since, qa-39-code M1) goes out through the start path, coalesced like a step ([SPOTIFY_STEP_COALESCE_MS]: quick repeated flips
      * are one play of the last order) - nothing restarts from 0:00. Paused or not started, no call at all: the window
@@ -507,6 +522,32 @@ internal class SpotifyRenderer(
 
     /** The order changed since Spotify got its window (a flip): the next play is a fresh start, never an SDK resume. */
     private var windowStale = false
+
+    override fun setModes(shuffled: Boolean, repeat: Repeat) {
+        shuffledMode = shuffled
+        repeatMode = repeat
+        applyModes(replay = true)
+    }
+
+    /**
+     * The entry's modes on Spotify's side (design 49 §1.5-§1.7): [spotifyModes] to the tracker (a state that differs is
+     * corrected) and list mode's repeat all as its wrap. With [replay] and our track playing, a changed Spotify setting
+     * goes out at once - a fresh start at the current place ([positionMs], as the flip's) with the settings first,
+     * coalesced like a step, so nothing restarts from 0:00; paused, the next play is a fresh start ([needSettings]).
+     */
+    private fun applyModes(replay: Boolean) {
+        val wanted = spotifyModes(contextUri != null, shuffledMode, repeatMode)
+        val changed = wanted != tracker.wanted
+        tracker.setModes(wanted, wrap = contextUri == null && repeatMode == Repeat.ALL)
+        if (!replay || !changed || !needSettings || released || !pwr || ended || tracks.isEmpty() || tracker.mode != Mode.OURS) return
+        place = Place(index, positionMs(), ports.now(), moving = false)
+        cancelStep()
+        stepTimer = ports.after(SPOTIFY_STEP_COALESCE_MS) {
+            stepTimer = null
+            if (pwr && !released) request(Request(this.index, startPosition(), fresh = true, settings = true))
+            changed()
+        }
+    }
 
     override fun positionMs(): Long {
         val p = place
@@ -828,8 +869,9 @@ internal class SpotifyRenderer(
     // --- starts ---
 
     /**
-     * Our paused track plays again through the SDK - unless shuffle or repeat must go off first (a state said
-     * either is on while paused: the tracker reads nothing until the next play call, H1).
+     * Our paused track plays again through the SDK - unless shuffle or repeat must be set first (a state said they
+     * differ from the wanted ones while paused, or the kid changed them: the tracker reads nothing until the next play
+     * call, H1).
      */
     private fun resumable(): Boolean =
         host.alive && deviceId != null && tracker.mode == Mode.OURS && tracker.index == index && !ended && !stopped && !needSettings && !windowStale
@@ -979,9 +1021,9 @@ internal class SpotifyRenderer(
         s.offset = if (ctx != null && contextOffsets) tracker.liveUri else null
         val body = if (ctx != null) PlayBody.Context(ctx, s.offset, s.posMs) else PlayBody.Uris(window, s.posMs)
         // decided now, not when the play was asked for: a `ready` with a new device may have come since
-        s.settings = r.settings || needSettings
+        s.settings = if (r.settings || needSettings) tracker.wanted else null
         s.calling = true
-        suspend fun call(b: PlayBody, settings: Boolean) = api.start(
+        suspend fun call(b: PlayBody, settings: SpotifyModes?) = api.start(
             device,
             b,
             s.deadline,
@@ -1005,7 +1047,7 @@ internal class SpotifyRenderer(
                 s.offset = null
                 s.posMs = 0
                 playSentAt = Long.MAX_VALUE
-                result = call(PlayBody.Context(ctx, null, 0), settings = false)
+                result = call(PlayBody.Context(ctx, null, 0), settings = null)
             }
             // without an offset: Spotify won't play this context for the account (§5.9: "spør en voksen", its tile only)
             if (refusesContext(result) && playSentAt != Long.MAX_VALUE) {
@@ -1046,7 +1088,7 @@ internal class SpotifyRenderer(
             }
             s.superseded -> ports.log("spotify: a start replaced by a newer play")
             end is StartEnd.Called && end.result == StartResult.Sent -> {
-                if (s.settings) needSettings = false
+                s.settings?.let { lastSet = it }
                 if (contextUri != null) {
                     ports.record(if (s.offset != null) "play context from the live track at ${s.posMs} ms" else "play context")
                     apply(tracker.playedContext(s.offset, s.posMs, r.fresh))
@@ -1203,7 +1245,7 @@ internal class SpotifyRenderer(
                 if (e.deviceId != deviceId) {
                     // a new Connect device: its Spotify queue is empty, its settings are the account's again
                     tracker.newDevice()
-                    needSettings = true
+                    lastSet = null
                     deviceId = e.deviceId
                     ports.log("spotify: the web player is ready")
                 }
@@ -1377,16 +1419,17 @@ internal class SpotifyRenderer(
                     explicit += Pending(RendererEvent.Ended, null)
                 }
                 is Event.NewWindow -> {
-                    if (e.index != index) moveIndex(e.index, auto = !e.resume && e.index == index + 1)
+                    // the list's end with repeat all (design 49 §1.6, `wrap`) is the natural advance to the first item
+                    if (e.index != index) moveIndex(e.index, auto = !e.resume && (e.index == index + 1 || e.wrap))
                     val pos = if (e.resume) measuredAt(e.index) else 0
                     place = Place(e.index, pos, ports.now(), moving = false)
                     if (wanted && ports.mayPlay()) request(Request(e.index, pos, fresh = false, settings = needSettings))
                 }
                 is Event.QueueAdd -> queueAdd(e.index)
                 is Event.ShuffleOrRepeat -> {
-                    // paused, the next play of the kid's turns them off (`needSettings`)
-                    ports.log("spotify: shuffle or repeat is on - turned off at the next play")
-                    needSettings = true
+                    // paused, the next play of the kid's sets them (`needSettings`)
+                    ports.log("spotify: shuffle or repeat isn't the entry's - set at the next play")
+                    lastSet = null
                     val pos = measuredAt(e.index)
                     place = Place(e.index, pos, ports.now(), moving = false)
                     if (wanted && ports.mayPlay()) request(Request(e.index, pos, fresh = false, settings = true))

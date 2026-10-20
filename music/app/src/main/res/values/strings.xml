@@ -40,6 +40,12 @@
     <string name="back_library">Back to the library</string>
     <string name="seek">Seek in the track</string>
     <string name="shuffle">Shuffle</string>
+    <string name="shuffle_on">On</string>
+    <string name="shuffle_off">Off</string>
+    <string name="repeat">Repeat</string>
+    <string name="repeat_off">Off</string>
+    <string name="repeat_all">All</string>
+    <string name="repeat_one">One track</string>
     <string name="previous">Previous</string>
     <string name="next">Next</string>
     <string name="episode_of">Episode %1$d of %2$d</string>

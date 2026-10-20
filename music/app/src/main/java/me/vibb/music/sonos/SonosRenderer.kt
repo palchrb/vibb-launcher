@@ -25,6 +25,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
 import me.vibb.music.logic.NO_AUDIO
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.playback.Active
@@ -172,6 +173,11 @@ internal class SonosRenderer(
         val byKey = a.order.associateBy { it.key }
         controller.reorder(keep, after.mapNotNull { byKey[it.mediaId.substringAfter('/')] })
         mediaItems = listOfNotNull(mediaItems.getOrNull(keep)) + after
+    }
+
+    /** Design 49 §1.9: shuffle is the service's order ([reorder]); repeat is the controller's advance (wrap, or the item again). */
+    override fun setModes(shuffled: Boolean, repeat: Repeat) {
+        controller.repeat = repeat
     }
 
     override fun positionMs(): Long {

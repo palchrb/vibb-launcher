@@ -52,8 +52,11 @@ The Web API (the server's SPOTIFY_API_BASE, and the phone's with the debug switc
                                                      next and previous step
                                                      through it (previous after 3 s restarts the track)
     PUT  /v1/me/player                               transfer; POST /v1/me/player/queue?uri=&device_id=;
-    PUT  /v1/me/player/shuffle?state=&device_id=,    shuffle and repeat (the phone turns both off;
-         /v1/me/player/repeat?state=&device_id=      qa-26c-step4-code M1)
+    PUT  /v1/me/player/shuffle?state=&device_id=,    shuffle and repeat, the states play_request.json's
+         /v1/me/player/repeat?state=&device_id=      shapes name (the phone sets the entry's wanted ones:
+                                                     off and off unless the kid asked - shuffle true in a
+                                                     playlist context, repeat context or track; design 49
+                                                     §1.5, qa-26c-step4-code M1)
     --rate-limit N: every Nth Web API request 429 with Retry-After: 2; --quota: 429 QUOTA_EXCEEDED
 The stub SDK (the phone's web player reaches it as https://fake-spotify.invalid/ through the debug
 build's interceptor, design 26c §9.3; every URL is relative to the script's own origin, and every
@@ -71,8 +74,8 @@ Player options: --elsewhere S (a null state S s after the first play), --autopla
 track that isn't ours), --transfer-in S (a foreign track starts S s after the first play), --unplayable
 <id,...> (a playback_error and a skip), --relink <id>:<other> (the track plays as <other>, linked_from
 <id>), --no-eme, --not-premium, --slow-ready S, --token-ttl S, --shuffle and --repeat context|track (the
-account's settings until the phone turns them off: PUT /v1/me/player/shuffle?state=false and
-/repeat?state=off). Spotify's queue (the phone's add-to-queue) survives a new play, as Spotify's does.
+account's settings until the phone sets the entry's wanted ones: PUT /v1/me/player/shuffle?state= and
+/repeat?state=; repeat track replays the track, repeat context wraps the context). Spotify's queue (the phone's add-to-queue) survives a new play, as Spotify's does.
 """
 
 import argparse
@@ -314,6 +317,13 @@ class Spotify:
         return {"v": 1, "entry": entry, "version": version,
                 "items": [{"key": r["key"], "title": r["title"], "url": None, "hls": False,
                            "duration_ms": r["duration_ms"], "art": None} for r in rows]}
+
+
+def setting_states(shapes, name):
+    """The states play_request.json's shapes name for the shuffle or repeat endpoint (design 49 §1.5)."""
+    path = shapes[name]["path"]
+    return {urllib.parse.parse_qs(s["query"])["state"][0] for s in shapes.values()
+            if isinstance(s, dict) and s.get("path") == path and s.get("query")}
 
 
 def play_body_ok(body, shapes):
@@ -635,14 +645,15 @@ def handler_for(sp):
             self.answer("ok")
 
         def setting(self, name, q, user):
-            """Toggle Playback Shuffle / Set Repeat Mode (qa-26c-step4-code M1): play_request.json's query keys."""
+            """Toggle Playback Shuffle / Set Repeat Mode (qa-26c-step4-code M1, design 49 §1.5): play_request.json's
+            query keys, and only the states its shapes for the endpoint name."""
             want = set(urllib.parse.parse_qs(sp.shapes[name]["query"]))
             d = self.device_for(q.get("device_id"), user)
             if d is None:
                 log(f"{name}: 404 (device unknown)")
                 return self.answer("device_unknown")
             values = {"shuffle": {"true": True, "false": False}, "repeat": REPEAT}[name]
-            if set(q) != want or q.get("state") not in values:
+            if set(q) != want or q.get("state") not in values or q.get("state") not in setting_states(sp.shapes, name):
                 return self.send(400, {"error": {"status": 400, "message": "Illegal state"}})
             d.push({"type": name, "state": values[q["state"]]})
             log(f"{name}: {q['state']} on {d.id}")
@@ -1063,7 +1074,7 @@ def selftest():
     assert server_fixture("token_invalid_grant.json")["error"] == "invalid_grant"
     assert server_fixture("token_invalid_client.json")["error"] == "invalid_client"
     shapes, answers, tokens = music_fixture("play_request.json"), music_fixture("play_answers.json"), music_fixture("token_answers.json")
-    for key in ("play", "play_context", "transfer", "queue", "shuffle", "repeat"):
+    for key in ("play", "play_context", "transfer", "queue", "shuffle", "repeat", "shuffle_on", "repeat_context", "repeat_track"):
         r = shapes[key]
         assert r["method"] in ("PUT", "POST") and r["path"].startswith("/v1/me/player"), key
     assert play_body_ok(json.loads(shapes["play"]["body"]), shapes)
@@ -1249,9 +1260,18 @@ def selftest():
         assert headers.get("Access-Control-Allow-Origin") == "*"
         status, _, me = call(sp, "GET", "/v1/me", headers={"Authorization": "Bearer " + t["access_token"]})
         assert me["id"] == "fakekid", "the phone's token is the kid's"
+        # design 49 §1.5: the wanted states - shuffle on (a playlist context), repeat context and track - as the shapes say
+        assert setting_states(shapes, "shuffle") == {"true", "false"} and setting_states(shapes, "repeat") == {"off", "context", "track"}
+        last = call(sp, "GET", f"/fake/device/{device}/commands?after=0&wait=1")[2]["seq"]
+        for shape, sent in (("shuffle_on", True), ("repeat_context", 1), ("repeat_track", 2)):
+            query = shapes[shape]["query"].replace("fakedevice0000000000000000000000000000001", device)
+            assert call(sp, "PUT", f"{shapes[shape]['path']}?{query}", None, bare)[0] == 204, shape
+        status, _, cmds = call(sp, "GET", f"/fake/device/{device}/commands?after={last}&wait=1")
+        assert [(c["type"], c["state"]) for c in cmds["commands"]] == [("shuffle", True), ("repeat", 1), ("repeat", 2)], cmds
         print("4. the stub device: connect, the play body of play_request.json (and its context form: the context's tracks "
               "from the offset - the fixture artist's, the fixture playlist's, generated ones; --offset-404), the long-poll "
-              "(play, transfer, queue, shuffle off, repeat off), 404/400 for a stranger, the phone's token route OK")
+              "(play, transfer, queue, shuffle and repeat as wanted: off, on, context, track), 404/400 for a stranger, the "
+              "phone's token route OK")
 
         # 5. the tone: a WAV of the track's length; Range 206 and 416
         status, headers, wav = call(sp, "GET", "/fake/audio/FAKEtrack0000000000001.wav")

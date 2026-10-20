@@ -49,6 +49,18 @@ class FitTest {
         assertTrue(widgets.contains("modifier.requiredSize(size).clip(CircleShape)"))
     }
 
+    @Test
+    fun `d49 - the row with both side buttons (shuffle and repeat) fits 320 dp at the side slots' size`() {
+        val row = controlRow(available(320f))
+        assertEquals("the Jelly Star: exactly its 288 dp", 288, row.width)
+        assertEquals("both side slots are buttons of the same size", row.sizes.first(), row.sizes.last())
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        val controls = player.substringAfter("val row = controlRow(maxWidth.value)").substringBefore("FlexBar(")
+        assertTrue(controls.contains("Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,"))
+        assertTrue(controls.contains("row.side.dp, 20.dp, if (on) Palette.peach else Palette.card"))
+        assertTrue("repeat on the right, after next", controls.indexOf("onRepeat") > controls.indexOf("onNext"))
+    }
+
     // The bottom bar: Liste and Sov never cut, the output's name gives way (the mockup's flex).
 
     private val icon = 2 * 2 + 20 + 6 // the bar button's padding, glyph and gap (dp)

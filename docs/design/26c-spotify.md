@@ -711,8 +711,13 @@ with another value, is hidden with its id kept, phase 1's lenient rule). An olde
   last-added song first when the parent appends. Context mode ignores the order.
 - **Never fetchable, never kept**: `KeepItem.fetchable` false for Spotify, so the download plan, the keep set, the prune
   and "N av M lastet ned" never see a Spotify item; the list shows no offline marks for Spotify (no "Ikke lastet ned").
-  **No shuffle** (decided): `canShuffle` is own files without resume (`logic/Queue.kt:18`) and every Spotify entry is
-  resume on; vibb's `shuffle_context` is a §12 deviation, not a question.
+  **Shuffle and repeat** (design 49, the user's call of 2026-10-20, overriding this section's earlier "No shuffle"):
+  a Spotify music entry (`Kind.MUSIC`) gets the player's shuffle and repeat buttons (`controlSlots`, `logic/Queue.kt`),
+  remembered per entry on the phone; an artist context repeat only (Spotify picks). In list mode shuffle is our order
+  (`shuffledWithFirst`, the resumed item first - design 49 §1.8) and Spotify's own shuffle stays off; repeat one is
+  Spotify's `repeat=track`, repeat all ours (a new window from the first item at the list's end). A playlist context
+  uses Spotify's own shuffle and `repeat=context|track`. A Spotify show (a podcast) gets the skip pair, never shuffle.
+  vibb's `shuffle_context` is still not ported (design 49 §1.2's deviation).
 - `publicOnly` is moot (the SDK's traffic isn't ours; the play call goes through the guarded client, §5.4).
 
 ### 4.3 NY, Nytt, words
@@ -900,10 +905,12 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
      - 5xx/IO -> `unreachable`.
   4. `position_ms` carries phase 1's resume position, so the track starts there - no audible second from 0:00 [device
      check] (Sonos needed its hush; Spotify starts at the position).
-  5. **Shuffle and repeat off** (qa-26c-step4-code M1): they are the account's player state, set from any of the kid's
-     Spotify apps, and our list plays in our order only with both off. Before a device session's first play, and again
-     whenever a state says either is on (the tracker's `ShuffleOrRepeat`; such a state is read for nothing), the start
-     first sends `PUT /v1/me/player/shuffle?state=false&device_id=<id>` and `PUT /v1/me/player/repeat?state=off&device_id=<id>`,
+  5. **Shuffle and repeat as the entry wants** (qa-26c-step4-code M1; design 49 §1.5 changed "off" to "wanted": off
+     and off unless the kid asked - list mode's repeat one is `track`, a context's own shuffle and `context`/`track`,
+     `spotifyModes`): they are the account's player state, set from any of the kid's Spotify apps. Before a device
+     session's first play, after the wanted ones changed, and again whenever a state says they differ from the wanted
+     ones (the tracker's `ShuffleOrRepeat`; such a state is read for nothing), the start first sends
+     `PUT /v1/me/player/shuffle?state=<wanted>&device_id=<id>` and `PUT /v1/me/player/repeat?state=<wanted>&device_id=<id>`,
      each 204 awaited before the next call (the Player API doesn't order calls), with the play's retries; a failed one
      ends the start like a failed play (nothing plays shuffled). Two Web API requests per device session, from the
      developer account's shared quota (§1.1).

@@ -4,6 +4,7 @@ import android.media.AudioDeviceInfo
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import me.vibb.music.logic.Repeat
 
 /**
  * Who makes the sound (design 26a §0, 26c §5.1): the phone's own player, a Sonos room, or Spotify's web
@@ -36,6 +37,14 @@ interface Renderer {
 
     /** Shuffle on or off: item [keep] plays on as the queue's first, [after] follows it. */
     fun reorder(keep: Int, after: List<MediaItem>)
+
+    /**
+     * The loaded entry's shuffle and repeat (design 49 §1.4-§1.9), from the service before every [load] and at each
+     * toggle: the phone's ExoPlayer repeats by its own repeat mode, a Sonos room wraps or plays the item again in its
+     * advance, Spotify's web player sets the account's shuffle and repeat to what the entry wants. The order itself is
+     * the service's ([reorder]); no renderer shuffles on its own, except Spotify in context mode (Spotify's order).
+     */
+    fun setModes(shuffled: Boolean, repeat: Repeat)
 
     /** For display and the controls only; persisting goes through [saveNow] (design 26a QA H3). */
     fun positionMs(): Long

@@ -38,6 +38,12 @@
     <string name="back_library">Tilbake til biblioteket</string>
     <string name="seek">Spol i sporet</string>
     <string name="shuffle">Tilfeldig rekkefølge</string>
+    <string name="shuffle_on">På</string>
+    <string name="shuffle_off">Av</string>
+    <string name="repeat">Gjenta</string>
+    <string name="repeat_off">Av</string>
+    <string name="repeat_all">Alle</string>
+    <string name="repeat_one">Én sang</string>
     <string name="previous">Forrige</string>
     <string name="next">Neste</string>
     <string name="episode_of">Episode %1$d av %2$d</string>

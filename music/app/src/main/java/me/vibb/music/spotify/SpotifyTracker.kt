@@ -30,8 +30,13 @@ import kotlin.math.abs
  *   go there while the call is on its way) and our adds still in Spotify's queue are stale in a start,
  *   unless it is the sent track near the sent position (a restart of the same track from 0 isn't its old
  *   tick).
- * - **Shuffle or repeat on** (M1): a state that says so is read for nothing - no start, skip, end or
- *   foreign track; one [Event.ShuffleOrRepeat] asks the renderer to turn both off and play again.
+ * - **Shuffle or repeat not as wanted** (M1; design 49 §1.5: "differs from wanted", not "on"): a state whose
+ *   shuffle or repeat isn't the entry's [wanted] is read for nothing - no start, skip, end or foreign track; one
+ *   [Event.ShuffleOrRepeat] asks the renderer to set both and play again.
+ * - **Repeat** (design 49 §1.6-§1.7): with Spotify's repeat on (list mode's repeat one = `track`; a context's
+ *   `context`/`track`) a track that ran out is never the end - Spotify plays it again or goes on in its context;
+ *   only Autoplay evidence (another context) ends a context. List mode's repeat all is ours ([wrap]): the end of the
+ *   list's last track is a new window from the first ([Event.NewWindow] with `wrap`), decided before [Event.Ended].
  * - **A state naming no track** (no uri, no name; L2) is evidence of nothing: passed over.
  * - **The end of a track** is read from the state: our current track paused at position 0 after its
  *   last playing position, carried on by the time since (the page posts every 5 s), came within 3 s of
@@ -98,14 +103,14 @@ class SpotifyTracker {
          * came late) - from 0 - or Spotify played something of ours out of our order while ours was
          * playing ([resume]: the current item, from its [measured] position).
          */
-        data class NewWindow(val index: Int, val resume: Boolean = false) : Event
+        data class NewWindow(val index: Int, val resume: Boolean = false, val wrap: Boolean = false) : Event
 
         /** Add queue item [index] to Spotify's queue now: one track ahead (§5.4, "Past the window"). */
         data class QueueAdd(val index: Int) : Event
 
         /**
-         * The account's shuffle or repeat is on (qa-26c-step4-code M1): turn both off, then play from
-         * [index] (at its [measured] position). States are read for nothing until that play.
+         * The account's shuffle or repeat isn't the entry's wanted ones (qa-26c-step4-code M1, design 49 §1.5): set
+         * both, then play from [index] (at its [measured] position). States are read for nothing until that play.
          */
         data class ShuffleOrRepeat(val index: Int) : Event
 
@@ -199,6 +204,20 @@ class SpotifyTracker {
 
     /** A [Event.ShuffleOrRepeat] was asked for: nothing is read until the next play (M1). */
     private var correcting = false
+
+    /** The account's shuffle and repeat the entry wants (design 49 §1.5, `spotifyModes`): a state that differs is corrected. */
+    var wanted = SpotifyModes()
+        private set
+
+    /** List mode's repeat all (design 49 §1.6): the list's end starts it again from the first item. */
+    var wrap = false
+        private set
+
+    /** The entry's modes (the renderer's `setModes`): read from the next state on; nothing is sent. */
+    fun setModes(wanted: SpotifyModes, wrap: Boolean) {
+        this.wanted = wanted
+        this.wrap = wrap
+    }
 
     /** The current item's first and furthest playing positions, and its last one (the end rule). */
     private var firstPlaying: Long? = null
@@ -386,7 +405,7 @@ class SpotifyTracker {
             if (mode == Mode.OURS) nullAt = null
             if (s.trackless) return emptyList() // L2: evidence of nothing
             if (correcting) return emptyList()
-            if (s.reordered) {
+            if (s.differs(wanted)) {
                 correcting = true
                 return listOf(Event.ShuffleOrRepeat(index))
             }
@@ -468,8 +487,10 @@ class SpotifyTracker {
         }
         // the end, on evidence only (M1): our live track paused at 0 after it ran out, or Spotify back at another of the
         // context's tracks, paused, then - one our last state didn't name next (the next track posted paused while it
-        // loads is not the end)
-        if (s.paused && !pausePending && s.positionMs < END_RESET_MS && ranOut(nowMs) && (live || !named)) return contextEnd()
+        // loads is not the end); with Spotify's repeat on never (design 49 §1.7: it plays on, [repeatHeld])
+        if (s.paused && !pausePending && s.positionMs < END_RESET_MS && ranOut(nowMs) && (live || !named)) {
+            return if (wanted.repeat != 0) repeatHeld(nowMs) else contextEnd()
+        }
         if (live) return ourState(s, nowMs)
         // another track of the context: Spotify moved on (its own advance, a step through the SDK, the other controls)
         val wasPaused = lastPaused
@@ -595,6 +616,8 @@ class SpotifyTracker {
     private fun ourState(s: SdkState, nowMs: Long): List<Event> {
         if (s.paused) {
             if (!pausePending && ranOut(nowMs)) {
+                // Spotify's repeat on (design 49 §1.6-§1.7): a repeating track is no end
+                if (wanted.repeat != 0 && (s.positionMs < END_RESET_MS || atDuration(s))) return repeatHeld(nowMs)
                 if (s.positionMs < END_RESET_MS) return end()
                 // N1: paused at its duration - the track ended (the element's `pause` before `ended`), never a pause
                 if (atDuration(s)) return playedOut(nowMs)
@@ -644,6 +667,27 @@ class SpotifyTracker {
     /** When our current track's paused-at-its-end state was first seen while Spotify should go on ([playedOut]). */
     private var endHeldAt: Long? = null
 
+    /**
+     * Design 49 §1.6-§1.7: with Spotify's repeat on, our track ran out and sits paused at its start or its end - Spotify
+     * repeating (the next state plays it again, or the context's next), never the end. The page is asked again
+     * ([Event.Look]); the same paused state [LOOK_MS] later means Spotify stopped under its repeat: list mode plays the
+     * track again itself (a new window from it, gated as every one), a context shows paused - no end, since only
+     * Autoplay evidence ends a context with repeat on.
+     */
+    private fun repeatHeld(nowMs: Long): List<Event> {
+        val first = endHeldAt
+        if (first == null) {
+            endHeldAt = nowMs
+            return listOf(Event.Look)
+        }
+        if (nowMs - first < LOOK_MS) return emptyList()
+        endHeldAt = null
+        lastPaused = true
+        if (context != null) return listOf(Event.Paused(ours = false))
+        mode = Mode.LOST
+        return listOf(Event.NewWindow(index))
+    }
+
     /** Spotify moved on to [to] (the expected next, or a later uri of ours past [skipped] ones it proved it skipped). */
     private fun advance(to: Int, skipped: List<Int>, s: SdkState, nowMs: Long): List<Event> {
         val events = mutableListOf<Event>()
@@ -667,11 +711,17 @@ class SpotifyTracker {
         return events
     }
 
-    /** Our current item played out with nothing of ours after it on the player. */
+    /**
+     * Our current item played out with nothing of ours after it on the player. The list's last one: with repeat all
+     * ([wrap], design 49 §1.6) a new window from the first item - checked before the end, so `clear_state` never runs.
+     */
     private fun end(): List<Event> {
         val next = index + 1
         lastPaused = true
-        return if (next >= queue.size) {
+        return if (next >= queue.size && wrap && queue.isNotEmpty()) {
+            mode = Mode.LOST
+            listOf(Event.NewWindow(0, wrap = true))
+        } else if (next >= queue.size) {
             mode = Mode.ENDED
             listOf(Event.Ended)
         } else {

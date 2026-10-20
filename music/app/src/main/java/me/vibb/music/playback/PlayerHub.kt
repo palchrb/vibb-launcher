@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import me.vibb.music.logic.ItemRef
+import me.vibb.music.logic.Repeat
 import me.vibb.music.sonos.RoomsView
 
 /** The app's own session commands (only our own controller may send them). */
@@ -17,6 +18,12 @@ object Commands {
     const val RESUME = "me.vibb.music.RESUME"
     const val RESTORE = "me.vibb.music.RESTORE"
     const val SHUFFLE = "me.vibb.music.SHUFFLE"
+
+    /**
+     * The repeat button (design 49 §1.3): off -> all -> one for the loaded entry, remembered per entry (Room's `repeat`).
+     * Only our own commands change shuffle and repeat: `KidPlayer` refuses the Player's set-mode commands. Not a play.
+     */
+    const val REPEAT = "me.vibb.music.REPEAT"
     const val SLEEP = "me.vibb.music.SLEEP"
     const val OUTPUT = "me.vibb.music.OUTPUT"
 
@@ -57,12 +64,13 @@ object Commands {
     const val THEN_PREVIOUS = "previous"
     const val THEN_SEEK = "seek"
     const val THEN_SHUFFLE = "shuffle"
+    const val THEN_REPEAT = "repeat"
 
     /** [RESTORE] then [SKIP_TO] (with its [ARG_ENTRY], [ARG_KEY], [ARG_FORWARD]): a swipe on the restored queue stays paused. */
     const val THEN_SKIP_TO = "skip_to"
 
     val ALL: List<SessionCommand> =
-        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER).map { SessionCommand(it, Bundle.EMPTY) }
+        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, REPEAT, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER).map { SessionCommand(it, Bundle.EMPTY) }
 
     /**
      * The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): a call that rings or is up
@@ -105,6 +113,8 @@ object PlayerHub {
         val keys: List<String> = emptyList(),
         val index: Int = 0,
         val shuffled: Boolean = false,
+        /** The loaded entry's repeat (design 49 §1.2). */
+        val repeat: Repeat = Repeat.OFF,
         /** The intent: "playing" shows at once on a tap. */
         val playing: Boolean = false,
         val durationMs: Long? = null,

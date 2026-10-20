@@ -1,6 +1,8 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.CancellationException
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.advanceIndex
 import me.vibb.music.logic.durationByConsumableId
 import me.vibb.music.logic.sonosMintCode
 import me.vibb.music.model.Entry
@@ -270,6 +272,9 @@ class SonosController(
     /** The last playWhenReady the player showed: held through a transient (§3.2). */
     private var heldPwr = false
     private var autoFlag = false
+
+    /** The loaded entry's repeat (design 49 §1.9, the service's through `SonosRenderer.setModes`): [advance] wraps or replays. */
+    var repeat: Repeat = Repeat.OFF
 
     /** The queue played to its end on the speaker (the player shows ENDED until a new load). */
     var ended: Boolean = false
@@ -1096,22 +1101,27 @@ class SonosController(
     /**
      * The episode ran off its end (STOPPED right after the tail): the next item at 0 (the service
      * marks the finished one done on the automatic change), or at the queue's end a Stop and the
-     * service's `queueEnded`. A stop far from the end is a human and stays stopped.
+     * service's `queueEnded`. A stop far from the end is a human and stays stopped. With the entry's
+     * repeat (design 49 §1.9, [advanceIndex]) all wraps to the first item and one plays the same item
+     * again, both through the same gated path (a new URI set + Play behind [mayPlay]); such a start
+     * at 0 is deliberate, so the bookmark's regression guard takes it.
      */
     private fun advance() {
         val cur = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
-        val next = cur.index + 1
-        if (next < items.size) {
-            host.log("sonos: episode ended - next")
-            autoFlag = true
+        val next = advanceIndex(cur.index, items.size, repeat)
+        if (next != null) {
+            val again = next <= cur.index
+            host.log(if (again) "sonos: episode ended - repeat" else "sonos: episode ended - next")
+            // the same item again is no item change (as the phone's REASON_REPEAT: no done mark)
+            if (next != cur.index) autoFlag = true
             if (mayPlay()) {
-                playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
+                playIndex(next, 0.0, deliberate = again, PlayWhy.ADVANCE)
             } else {
                 // nothing may play now: the next item waits for a play, at 0
                 gen++
                 index = next
                 startPosMs = 0
-                deliberateStart = false
+                deliberateStart = again
                 startPending = true
             }
         } else {

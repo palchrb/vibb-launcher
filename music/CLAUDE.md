@@ -275,8 +275,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   android.jar for every JVM test of the module (the jar is last on the test classpath): a new one there needs its reason
   in its header, and must keep the mockable jar's answers except where a test needs the platform's. **List mode plays our list**: `PUT /me/player/play` with
   the track uris of a window of at most 50 from the current item and `position_ms` (the resume place, so nothing
-  sounds from 0:00), past the window the next item added with `POST /me/player/queue` one track ahead, shuffle and
-  repeat turned off first (a device session's first play, and whenever a state says either is on). Pause, resume and
+  sounds from 0:00), past the window the next item added with `POST /me/player/queue` one track ahead, the account's
+  shuffle and repeat set to the entry's wanted ones first (`spotifyModes`: a device session's first play, after the
+  kid changed them, and whenever a state says they differ - design 49 §1.5). Pause, resume and
   seek are the SDK's (no Web API call); steps within 300 ms coalesce into one play; Spotify's own advance sends
   nothing (the natural-advance seek is the phone's own player's only, `resumesOnAdvance`).
 - **Only our tracks are ours** (`SpotifyTracker`, 26c §5.4): a state counts only when it names the uri we sent for the
@@ -317,8 +318,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   through, a played extra or a claim: `KeepItem.fetchable` false, `downloadPlan` prunes any Spotify row,
   `markPlayed`/`updateHeld` only on the phone's own player, and a queue's claim follows **its** kind -
   `queueKind(renderer.kind, entry)` in `playEntry`, `playItem` and `restore`, then `claimsQueue` (never the attached
-  renderer's kind, which is still the web player right after a Spotify play: qa-26c-merge-code M1). No shuffle
-  (every Spotify entry resumes).
+  renderer's kind, which is still the web player right after a Spotify play: qa-26c-merge-code M1).
 - **The lines and the word**: the renderer's `RendererState` (`SPOTIFY_*`, `remote` false - `callStep` reads
   `remote != true`) is the player's quiet line and the loaded tile's; the account word (`ok`, `reauthorize`,
   `refused`, `not_premium`, `no_widevine`, `unreachable`, `quota`; `none` from the token's `off` and from `forget()`)
@@ -507,6 +507,20 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   at the font scale). After a flip the list scrolls to the playing row. Tests: `OrderFlipTest`, `EpisodeArtTest`'s
   `d39`, `QueueTest`, `FitTest`, `SpotifyRendererTest`/`SpotifyTrackerTest`'s `d39`, `SonosControllerTest`'s `d39`;
   the emulator round is `docs/testing/emulator.md` §6q.
+- **Shuffle and repeat** (design 49; **the user's decisions, not vibb's**: vibb has no repeat and its Spotify shuffle is
+  Spotify's own): one predicate, `controlSlots(entry)` (`logic/Queue.kt`, shared with design 50) - music (Spotify's
+  `Kind.MUSIC`, own files that don't resume) gets shuffle (left) and repeat (right: off -> all -> one), what resumes
+  design 50's skip pair; a Spotify artist context repeat only. Both remembered per entry on the phone (`shuffle`, Room
+  6's `repeat` - `Snapshot.repeatOf`; never synced or reported), changed only by `Commands.SHUFFLE`/`REPEAT` (and
+  `THEN_*` on a restored queue): `KidPlayer` refuses the Player's set-mode commands. Every queue hands its modes to the
+  renderer (`Renderer.setModes`, after each `active = a`). **The phone**: ExoPlayer's repeat mode (`exoRepeatMode`), so
+  `clear_state` runs only with repeat off; the move-on past an unplayable item wraps only with repeat all, one lap at
+  most (`moveOnIndex`). **A room**: the controller's `advance()` wraps (all) or plays the item again (one) through
+  `advanceIndex`, gated, a deliberate start. **Spotify**: list mode's shuffle is our order (`reorder`), Spotify's off;
+  repeat one is Spotify's `repeat=track`, repeat all a gated `NewWindow(0, wrap)` at the list's end, before `Ended`; a
+  context uses Spotify's own shuffle and `repeat=context|track`, and its end rules never read a repeating track as the
+  end (`repeatHeld`; only Autoplay evidence ends it). Shuffle with resume changes the order only: the resumed item first
+  at its place (`coverTapPlan`). The flip stays hidden while shuffled; repeat applies after either.
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item
   (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; until that first
   play every listing is only acknowledged (the baseline is open: no news at all); known keys only grow;

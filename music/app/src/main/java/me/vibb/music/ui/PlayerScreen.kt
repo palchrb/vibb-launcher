@@ -45,11 +45,13 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.vibb.music.R
 import me.vibb.music.logic.Kind
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.kindOf
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.Output
@@ -78,6 +80,8 @@ fun PlayerScreen(
     onBack: () -> Unit,
     onSeek: (Long) -> Unit,
     onShuffle: () -> Unit,
+    /** The repeat button (design 49 §1.2): off -> all -> one. */
+    onRepeat: () -> Unit,
     onPrevious: () -> Unit,
     onTogglePlay: () -> Unit,
     onNext: () -> Unit,
@@ -122,11 +126,17 @@ fun PlayerScreen(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                // design 49 §1.1-§1.2 (controlSlots): music gets shuffle (left) and repeat (right), peach when on; a Spotify
+                // artist context repeat only (Spotify picks). The SKIP pair is design 50's.
                 if (now.canShuffle) {
+                    val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
                     RoundButton(
                         Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,
                         if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
-                        Modifier.semantics { selected = now.shuffled },
+                        Modifier.semantics {
+                            selected = now.shuffled
+                            stateDescription = state
+                        },
                     )
                 } else {
                     Spacer(Modifier.requiredSize(row.side.dp))
@@ -137,7 +147,20 @@ fun PlayerScreen(
                     onTogglePlay, row.play.dp, 32.dp, Palette.peach, Palette.bg,
                 )
                 RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
-                Spacer(Modifier.requiredSize(row.side.dp))
+                if (now.canRepeat) {
+                    val on = now.repeat != Repeat.OFF
+                    val state = stringResource(repeatState(now.repeat))
+                    RoundButton(
+                        if (now.repeat == Repeat.ONE) Icons.repeatOne else Icons.repeat, stringResource(R.string.repeat), onRepeat,
+                        row.side.dp, 20.dp, if (on) Palette.peach else Palette.card, if (on) Palette.bg else Palette.fg,
+                        Modifier.semantics {
+                            selected = on
+                            stateDescription = state
+                        },
+                    )
+                } else {
+                    Spacer(Modifier.requiredSize(row.side.dp))
+                }
             }
         }
         // Liste and Sov are never cut ("Sov · 30 min"); the output's name gives way (the mockup's flex).
@@ -201,6 +224,13 @@ fun outputIcon(output: Output): ImageVector = when (output.kind) {
     OutputKind.PHONE -> Icons.speaker
     OutputKind.SONOS -> Icons.roomSpeaker
     OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+}
+
+/** The repeat button's state for TalkBack (design 49 §1.2). */
+fun repeatState(repeat: Repeat): Int = when (repeat) {
+    Repeat.OFF -> R.string.repeat_off
+    Repeat.ALL -> R.string.repeat_all
+    Repeat.ONE -> R.string.repeat_one
 }
 
 /** The player's one line for a renderer that isn't playing what we sent it (design 26a §5.2; Spotify's, 26c §5.8). */

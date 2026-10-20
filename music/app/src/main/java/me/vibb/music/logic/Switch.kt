@@ -64,7 +64,8 @@ fun requestStands(request: PlayRequest?, current: ItemRef?, nowMs: Long, waiting
  */
 fun coverTapStart(order: List<String>, resume: Boolean, bookmark: Bookmark?, shuffle: Boolean): Pair<String?, Long>? {
     if (order.isEmpty()) return null
-    if (shuffle && !resume) return null to 0L
+    // shuffled, only a bookmarked item resuming is known first (design 49 §1.8); else the permutation picks it
+    if (shuffle && (!resume || bookmark?.itemKey !in order)) return null to 0L
     val plan = coverTapPlan(order, resume, bookmark, shuffle = false) ?: return null
     return plan.keys[plan.startIndex] to plan.startPosMs
 }
