@@ -396,6 +396,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   (the fake's stub answered it, §5.6), the protected-media origin, episodes in a `uris` list - no switch is built: if the SDK refuses them, the server's parser
   must refuse shows and episodes -, the `context` field around track changes,
   Autoplay after a list and after a context, the leftover queue add, shuffle and repeat).
+- **The DIDL is vibb's, field for field, and is never extended** (the user, 2026-10-20: "Ikke endre noe i didl!!" ...
+  "å sende med mer enn vi gjør i vibb pi gjør at det blir rejected"): a speaker refuses a `SetAVTransportURI` whose
+  metadata carries more than vibb's (`Didl`) - no `duration` on the `res`, no `albumArtURI`, nothing added. The native
+  Sonos app shows no length or picture for our streams; the music app covers that for the kid.
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key

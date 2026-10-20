@@ -1012,7 +1012,8 @@ findings, merge to `main`, full suite once.
   WebSocket subscription on top of polling (polling stays the fallback). Sources: home-assistant/core
   `homeassistant/components/sonos/{__init__,media_player}.py`, jjlawren/sonos-websocket. **The DIDL is never changed**
   (the user, 2026-10-20: "Ikke endre noe i didl!!" - no duration, no art, nothing added to what the room is sent; the
-  music app covers the gap for the kid).
+  music app covers the gap for the kid; and the reason - "å sende med mer enn vi gjør i vibb pi gjør at det blir
+  rejected": the speaker refuses metadata beyond vibb's; `music/CLAUDE.md` carries the rule).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
