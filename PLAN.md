@@ -763,11 +763,13 @@ findings, merge to `main`, full suite once.
   phone's last 10 commands of every kind. Decided: (1) Recent on Locate keeps only the page's own actions (Update
   Location, Ring, Stop Ringing, Lock, Erase); the other commands get a Recent of their own where they belong - Unlock
   and Lock again on the Lock page, Install Now on Home (the Time page has its own already) - one shared partial and
-  one query taking a kind list, the same cancel. (2) A "Locations" list under the map: each stored fix with its time
-  (the zone words the page uses) and accuracy ("± 25 m"), newest first, a tap pans the map to it (no navigation, no
-  jump; JS-only enhancement, the list reads without it); the trail also gets a small dot per point so a short history
-  shows. (3) A span pick above the map, "Show: 12 hours (default) · 24 hours · 7 days · everything kept", applied to
-  the trail and the list alike, remembered per browser (localStorage, a view preference - no POST, so nothing to
+  one query taking a kind list, the same cancel. (2) The history list behind a row, not on the page (the user: "en
+  detaljer man må trykke seg inn på ... så de ikke blir masse støy på locate siden"): under the map one row
+  "Locations" with a count in its value ("14 in the last 12 hours ›") opening `/devices/{id}/locations` - the same
+  map at the top with the trail, then every stored fix with its time (the zone words the page uses) and accuracy
+  ("± 25 m"), newest first, a tap pans that page's map to it (JS-only enhancement, the list reads without it); the
+  trail gets a small dot per point on both pages so a short history shows. (3) A span pick above the map on both pages, "Show: 12 hours (default) · 24 hours · 7 days · everything
+  kept", applied to the trail, the row's count and the list alike, remembered per browser (localStorage, a view preference - no POST, so nothing to
   save and nothing that can jump) and sent as `?since=` to `locations.json`, which filters by `captured_at`; the
   newest fix is always shown whatever the span, so the marker never disappears. Server tests: the filtered JSON, the
   kind-filtered Recent on each page, the cancel still right; jstest for the pick's storage and the list's pan. A PWA
