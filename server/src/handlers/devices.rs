@@ -676,7 +676,7 @@ pub(crate) struct UnifiedAppRow {
     /// synced, or a manual-upload app nobody's uploaded a build to yet). Selecting it used to
     /// silently do nothing until a release showed up, with no indication why.
     pub(crate) show_no_release_hint: bool,
-    /// Round 7 §2.1.2: a catalog app the launcher protects from force-stop reports its battery
+    /// Round 7 §2: a catalog app the launcher installed itself reports its battery
     /// state; its row says so quietly (`background_line`). `None` for every other row.
     pub(crate) background: Option<String>,
 }

@@ -214,7 +214,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps ticked below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
   (`lock_glance::save_wake`: `device_policy.lock_wake_on_notification`, migration 0084, off by default; 404 for an
-  unknown phone), back to `#lock-wake` (`check_forms`), the phone nudged, a `lock_wake_changed` security-log line
+  unknown phone), back to `#lock-wake` (`check_forms`), the phone nudged, a `lock_wake_changed` security-log line when the value changed
   (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's ⓘ says what it does and
   that what the lock then shows is seen by anyone near the phone. Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
@@ -283,8 +283,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   unreadable" for a corrupt allowlist): **Allowed** (Vibb first, "Always on", no switch; then every app switched on)
   and **Not allowed**, one row per app from `devices::app_rows` - a tile (the icon the phone shows: its own Name and
   icon, else the catalog's, else the first letter), the name, the state as a sub-line ("Installing 40%", "Not
-  installed · No release yet", a refusal red) and a switch, its own form; a catalog app the launcher protects from
-  force-stop (launcher round 7 §2, the report's `battery_exempt`) has a second quiet sub-line, "Background:
+  installed · No release yet", a refusal red) and a switch, its own form; a catalog app the launcher installed
+  itself (launcher round 7 §2, the report's `battery_exempt`) has a second quiet sub-line, "Background:
   unrestricted" or "Background: optimized (Android's default) - change it during a pause (Settings › Apps › <app> ›
   Battery)" (`devices::background_line`, `data-background`) - no button, no command; an allowed app with a package has its
   `app_display_form` in a `<details>` under the row ("Name and icon: …"). The footer's ⓘ holds the keyboard and

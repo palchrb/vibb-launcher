@@ -82,11 +82,21 @@ fun wakesInHour(wakes: List<Long>, now: Long): List<Long> = wakes.filter { now -
 /** A proximity [value] (cm) from a sensor whose range is [maxRange]: near (the phone in a pocket). */
 fun proximityNear(value: Float, maxRange: Float): Boolean = value < minOf(maxRange, PROXIMITY_NEAR_CM)
 
+/** A screen-on this long after a notice wake is not the wake's own: the kid pressed power ([noticeWakeEndsAtScreenOn]). */
+const val NOTICE_WAKE_SCREEN_ON_GRACE_MS = 2_000L
+
+/** A screen-on at [nowMs] ends the notice wake of [wokeAtMs]: it came well after the wake's own screen-on, so the
+ * screen is the kid's now (qa-l7-b-code 3). */
+fun noticeWakeEndsAtScreenOn(wokeAtMs: Long?, nowMs: Long): Boolean =
+    wokeAtMs != null && nowMs - wokeAtMs > NOTICE_WAKE_SCREEN_ON_GRACE_MS
+
 /**
  * A notice-woken screen goes off now: the wake at [wokeAtMs] (elapsed) is [NOTICE_WAKE_ON_MS] old,
  * nothing [touched] the lock since, the screen is still on ([interactive]), the lock still LOCKED
- * and in front ([lockResumed]) and nothing [busy] came meanwhile (a call's screen is never turned
- * off). A touch hands the screen back to the phone's own timeout.
+ * and in front ([lockResumed]), nothing [busy] came meanwhile (a call's screen is never turned
+ * off), none of the lock's own dialogs is open ([dialogOpen]: Foreldrekode, the emergency confirm - their touches
+ * never reach the activity's onUserInteraction) and touch exploration is off ([touchExploration]: TalkBack's hovers
+ * and clicks don't either) - qa-l7-b-code 2. A touch hands the screen back to the phone's own timeout.
  */
 fun noticeWakeOffDue(
     wokeAtMs: Long?,
@@ -95,6 +105,9 @@ fun noticeWakeOffDue(
     locked: Boolean,
     lockResumed: Boolean,
     busy: Boolean,
+    dialogOpen: Boolean,
+    touchExploration: Boolean,
     nowMs: Long,
 ): Boolean =
-    wokeAtMs != null && !touched && interactive && locked && lockResumed && !busy && nowMs - wokeAtMs >= NOTICE_WAKE_ON_MS
+    wokeAtMs != null && !touched && interactive && locked && lockResumed && !busy && !dialogOpen && !touchExploration &&
+        nowMs - wokeAtMs >= NOTICE_WAKE_ON_MS

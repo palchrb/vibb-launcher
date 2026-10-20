@@ -56,8 +56,8 @@ No prior programming experience - build features directly rather than explaining
   names only (`is_package_name`), no duplicates, labels clipped to 100 chars, an installer that isn't a package name
   dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob already
   goes through its own `sanitize_*`. An entry's `battery_exempt` (launcher round 7 §2: `Option<bool>`, only for the
-  catalog apps the launcher protects from force-stop, absent otherwise) is kept as sent; the shared contract is
-  `testdata/installed_apps_battery.json` (`intake_limits::the_battery_state_of_a_protected_app_is_kept` posts it), and
+  catalog apps the launcher installed itself, absent otherwise) is kept as sent; the shared contract is
+  `testdata/installed_apps_battery.json` (`intake_limits::the_battery_state_of_a_catalog_app_is_kept` posts it), and
   the phone's Apps page shows it as the row's "Background: …" line (`devices::background_line`). `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
   hide a sign-in attempt.
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads

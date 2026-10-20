@@ -1,8 +1,8 @@
 # Launcher round 7 - small items (proposal, revised after `qa-r7-launcher-design.md`)
 
 Asked 2026-10-20. Each item is its own section with its own tests; they ship in one launcher round after 0.31.0.
-§1 any allowed app may ring over the lock (the residual accepted by the user 2026-10-20, no ring budget); §2 catalog apps protected from force-stop and hibernation (no battery-exemption flow,
-the user's call); §3 the global wake-on-notification switch.
+§1 any allowed app may ring over the lock (the residual accepted by the user 2026-10-20, no ring budget); §2 the catalog apps' battery state in the report (no battery-exemption flow, the user's call;
+the force-stop protection dropped after code QA); §3 the global wake-on-notification switch.
 
 ## 1. Any allowed app may ring over the lock
 
@@ -127,100 +127,85 @@ during a ring that began unlocked and then locked (the QA's open point). With th
 unmanaged, a cellular ring is not a VoIP ring. Jelly Star with Signal: a Signal call rings over the lock and the
 device page shows "Calls from Signal rang over the lock · today 14:02".
 
-## 2. Catalog apps protected from force-stop
+## 2. Catalog apps' battery state in the report
 
 The user, 2026-10-20: "er det ikke noe vi kan fikse på for å sikre at vi kan installere apper direkte på telefonen, og
 samtidig live gi de batteriunntak?" - and, on the proposal to open Android's battery dialog for the kid through a
 time-boxed Settings window: "Nei vil ikke auto åpne settings, da er det bedre at vi ikke legger inn noe spesielt rundt
 batteriunntaket. Da får folk styre det selv." So: **no battery-exemption flow at all** - no sheet on the kid's screen,
 no Settings window, no `battery_ask` command. The exemption stays what design 19b made it: the parent grants it by
-hand during a pause (Settings › Apps › the app › Battery). Builds on the enforcement pass (`AppEnforcer.apply`) and
-`WindowRelock`'s catalog pins.
+hand during a pause (Settings › Apps › the app › Battery). The parent only sees the state.
 
 ### 2.0 Today
 
 A catalog app the launcher installs is an ordinary user-installed app: it can be force-stopped where a Settings
 surface is reachable (a pause; an OEM battery manager), and Android may hibernate it after months unused and reset
 its permissions. Fossify Clock's alarms survive all of it (`setAlarmClock`); its running timers and a messenger's
-background work don't survive a force-stop.
+background work don't survive a force-stop. The parent can't see whether an app is battery-exempt.
 
 ### 2.1 Decisions
 
-1. **Force-stop protection, plain code, lifted like every restriction.** Every `apply()` sets
-   `setUserControlDisabledPackages(admin, pkgs)` to the **package set** = the stored catalog pins (`WindowRelock`'s
-   catalog pins, package + signer, `rememberCatalogPins`: the current checked list) ∩ installed for this user
-   (the `getApplicationInfo(MATCH_UNINSTALLED_PACKAGES)` + `FLAG_INSTALLED` check `phonePackage` does in
-   `MdmSyncWorker.kt` - that helper is private, so it moves to a shared place or the check is repeated in `apply()`)
-   ∩ installed by us (the installing package, `InstallSourceInfo.installingPackageName`, is in
-   `OWN_PACKAGES`; the same test as the server's `installed_by_launcher`) minus the packages enforcement hides
-   (`plan.hide`) minus `OWN_PACKAGES`. `TrackedAppUpdateState` is **not** used (it is keyed by the catalog id, holds no
-   package, and is never pruned when an app is unchecked). A Play-installed app the catalog also names is out by the
-   installer test; an unchecked app is out by leaving the pins. Pure `userControlDisabledPackages(catalog, installed,
-   installer, hidden, own, overrideActive)` in a new `server/UserControlPlan.kt`; applied **after `applyHardening`,
-   next to `NotificationRuleRuntime.refresh`, in its own try/catch** (logged, never thrown out of `apply()`: a throw
-   or an OEM `SecurityException` must never skip the PIN lock, the VPN or the hardening); only while `hardeningManaged`.
-   **Lifted by the override and the pause like every other restriction** (the standing rule, no exception: the set is
-   empty while `overrideActive`, and the parent can force-stop or clear data during a pause as before - Force stop and
-   Clear storage are the first fixes for a stuck app); re-applied when the window ends; cleared (an empty list) when
-   unmanaged. Logged once per change. `LastEnforcedPlan` doesn't carry it (recomputed). Whether this also keeps the app
-   out of app hibernation and the unused-app permission reset is **not claimed**; it is a device check (§2.3).
+1. **Not built: force-stop protection.** The first version of this section had every `apply()` set
+   `setUserControlDisabledPackages(admin, pkgs)` for the catalog apps we installed (lifted by the override and the
+   pause). Code QA (`docs/review/qa-l7-b-code.md`, finding 1, High) found: "a protected package can't be suspended,
+   hidden or uninstalled by us either: §2 breaks the time rules, the camera lock, the update fence and
+   uncheck/uninstall for every catalog app it protects." DPMS hands the list to
+   `ProtectedPackages.setOwnerProtectedPackages`, and `isPackageStateProtected` is then checked by the platform
+   (AOSP `android14-release`, the launcher's minSdk; `SuspendPackageHelper` also on `android15-release`,
+   `android16-release` and `main`):
+   - `SuspendPackageHelper.canSuspendPackageForUser`: `"Cannot suspend package …: protected package"` - with no
+     exception for the device owner (`isCallerOwner` only skips the block-uninstall check);
+   - `PackageManagerService.setApplicationHiddenSettingAsUser`: `"Not hiding protected package"`, returns `false`;
+   - `DeletePackageHelper.deletePackageVersionedInternal` (`isPackageDataProtected`): `"Attempted to delete protected
+     package"`, `DELETE_FAILED_INTERNAL_ERROR`.
+
+   So a protected catalog app would stay usable through a bedtime rule or a used-up budget (fail-open on a core
+   restriction), the camera lock and the update fence couldn't hold it, and an uncheck couldn't hide or uninstall it.
+   Decided (the architect, 2026-10-20; the user is told): **dropped**. Nothing in the launcher calls
+   `setUserControlDisabledPackages` (`CatalogBatteryTest` pins that); a narrowed, ordered protection would need its own
+   design and device checks first.
 2. **The parent sees the battery state, nothing more.** `installed_apps[]` gets `battery_exempt: true|false` for the
-   same package set (`isIgnoringBatteryOptimizations(pkg)` works for any package; the field is left out for the others
-   and when it can't be read, as 19b does), `Option<bool>` with `serde(default, skip_serializing_if)` on
+   catalog apps we installed - the stored catalog pins (`WindowRelock`'s `rememberCatalogPins`: the current checked
+   list) ∩ installed for this user (`phonePackage`) ∩ installed by us (the installing package in `OWN_PACKAGES`, the
+   server's `installed_by_launcher` test), never our own packages; pure `catalogAppsInstalledByUs` in
+   `server/CatalogBattery.kt`. `isIgnoringBatteryOptimizations(pkg)` works for any package; the field is left out for
+   the others and when it can't be read, as 19b does. `Option<bool>` with `serde(default, skip_serializing_if)` on
    `models.rs::InstalledApp`, kept by `cap_installed_apps` like `installer`. The app's row on the phone's Apps page
    shows a quiet "Background: unrestricted" or "Background: optimized (Android's default) - change it during a pause
-   (Settings › Apps › <app> › Battery)". No button, no command. Status contract in both directories in one commit: the launcher's `InstalledAppReportTest`
-   (new) encodes `server/testdata/installed_apps_battery.json` (a byte-identical copy in
-   `launcher/app/src/test/resources/`, the `power_report.json` pattern), the server's `cap_installed_apps` test posts
-   it and both compare the copies; the root `CLAUDE.md`'s shared-file list and the CI path lists (`launcher.yml`,
-   `server-ci.yml`) gain the fixture.
+   (Settings › Apps › <app> › Battery)". No button, no command. Status contract in both directories in one commit: the
+   launcher's `InstalledAppReportTest` encodes `server/testdata/installed_apps_battery.json` (a byte-identical copy in
+   `launcher/app/src/test/resources/`, the `power_report.json` pattern), the server's
+   `intake_limits::the_battery_state_of_a_catalog_app_is_kept` posts it and both compare the copies; the root
+   `CLAUDE.md`'s shared-file list and the CI path lists (`launcher.yml`, `server-ci.yml`) carry the fixture.
 3. **Not in this round**: any battery-exemption prompt, on the kid's screen or elsewhere (the user's call); 19b phase
-   2 for the launcher itself; anything for Play-installed apps.
+   2 for the launcher itself; anything for Play-installed apps; force-stop protection (1).
 
 ### 2.2 Tests (required)
 
-`UserControlPlanTest`: the set from the catalog pins (installed only, installed by us only, never ours, never hidden,
-never a Play-installed twin, an unchecked app out), empty while `overrideActive` and in a pause, cleared when
-unmanaged; a source check that `setUserControlDisabledPackages` is called in `apply()` only, after `applyHardening`,
-inside its own try/catch. The report: `battery_exempt` for the package set only, left out for the rest and when
-unreadable; `InstalledAppReportTest` against the shared fixture. Server: `cap_installed_apps` keeps the field and
-posts the fixture, the Apps page's two lines.
+`CatalogBatteryTest`: the set from the catalog pins (installed only, installed by us only, never ours, never a
+Play-installed twin, an unchecked app out); `battery_exempt` for the set only, left out for the rest and when
+unreadable; a source check that no main source calls `setUserControlDisabledPackages` and that the report computes the
+set. `InstalledAppReportTest` against the shared fixture. Server: `cap_installed_apps` keeps the field and posts the
+fixture, the Apps page's two lines.
 
 ### 2.3 Device checks
 
-Emulator: install Fossify Clock from the catalog; outside a pause `adb shell am force-stop` on it is refused and
-Settings › Apps › Fossify Clock shows "Force stop" greyed out; during a pause (or the override) Force stop works again
-and is greyed out again when the window ends; the PWA's row says "Background: optimized" and, after the exemption is
-granted during a pause, "unrestricted" at the next report; uncheck the app in the catalog - the protection is gone with
-it. Whether the app is also kept out of hibernation / the permission reset (`adb shell dumpsys app_hibernation`, or
-the "Pause app activity if unused" row in a pause).
+Emulator: install Fossify Clock from the catalog; the PWA's row says "Background: optimized" and, after the exemption
+is granted during a pause, "unrestricted" at the next report; a Play-installed app and a preinstalled one have no
+line; uncheck the app in the catalog - the line goes with it.
 
 ### 2.4 Implementation status (implementer B, branch `l7-b`)
 
-Built as §2.1 says, launcher and server in one commit:
-
-- **Launcher**: pure `server/UserControlPlan.kt` - `protectedCatalogPackages(pins, installed, installers, hidden,
-  own)` (the stored catalog pins ∩ installed for this user ∩ installer in `AppFilter.OWN_PACKAGES`, minus `plan.hide`
-  and our own packages), `userControlDisabledPackages(managed, overrideActive, protected)` (empty while the override
-  or the pause is open and when unmanaged) and `withBatteryExempt` for the report. `apply()` sets it right after
-  `applyHardening`, in its own try/catch, only when `getUserControlDisabledPackages` differs (logged then); the
-  installed check is `phonePackage` (made `internal` in `MdmSyncWorker.kt`, not copied), the installer `installerOf`
-  (`internal` too). `AppEnforcer.protectedCatalogApps` keeps the set computed without the override, so the report
-  carries `battery_exempt` during a pause too - the one place the parent can change it. The design's six-argument
-  signature became the two functions above (the override is applied in the second); same rule.
-- **Status**: `InstalledApp.batteryExempt: Boolean?` (left out when `null`), `isIgnoringBatteryOptimizations(pkg)`
-  per protected app in `collectInstalledApps`. Contract `server/testdata/installed_apps_battery.json` (copy in the
-  launcher's test resources; `InstalledAppReportTest` encodes it, `intake_limits::the_battery_state_of_a_protected_app_is_kept`
-  posts it, both compare the copies); the root `CLAUDE.md`'s list and both CI path lists name it.
-- **Server**: `models::InstalledApp.battery_exempt: Option<bool>` (`serde(default, skip_serializing_if)`), kept by
-  `cap_installed_apps` (the `..app` spread); Device › Apps' row gets a second `row-sub`
-  (`devices::background_line`, `data-background`) for a reported value only.
-- Tests: `UserControlPlanTest` (the set: installed only, by us only, never ours, never hidden, never a Play twin, an
-  unchecked app out; the lift and the clear; the report for the set only and unreadable left out; the source check that
-  `setUserControlDisabledPackages` is called once, in `apply()`, after the hardening, in its own catch),
-  `InstalledAppReportTest`; server `intake_limits` (the contract's copies, the kept field, the two lines).
-- **Device checks owed**: all of §2.3 (emulator: `am force-stop` refused and Force stop greyed out outside a window,
-  back during a pause/override and greyed again after it, the two "Background:" lines, the uncheck; hibernation).
+- Launcher: `server/CatalogBattery.kt` (`catalogAppsInstalledByUs`, `withBatteryExempt`), computed in
+  `MdmSyncWorker.collectInstalledApps` from `WindowRelock.store(..).catalogPins()`, `phonePackage` and the apps'
+  reported installers. `InstalledApp.batteryExempt: Boolean?` (left out when `null`).
+- Server: `models::InstalledApp.battery_exempt: Option<bool>`, kept by `cap_installed_apps` (the `..app` spread); Device
+  › Apps' row gets a second `row-sub` (`devices::background_line`, `data-background`) for a reported value only.
+- The force-stop protection was built first (commit `8ea5b8f0`) and removed in the code-QA fix commit (finding 1);
+  `AppEnforcer.apply()` is back to what it was.
+- Tests: `CatalogBatteryTest`, `InstalledAppReportTest`; server `intake_limits` (the contract's copies, the kept field,
+  the two lines).
+- Device checks owed: §2.3.
 
 ## 3. Wake the screen for a notification - one switch per phone
 
@@ -333,7 +318,10 @@ Built as §3.1 says, server and launcher in one commit:
   turn-screen-on start wakes stays on for the phone's own timeout anyway (the wake counts as user activity), so the
   15 s is a main-thread timer that turns the screen off with the device owner's `DevicePolicyManager.lockNow()`
   (`force-lock` is declared) when `noticeWakeOffDue` - untouched (`PinLockActivity.onUserInteraction`), the screen
-  on, LOCKED, the lock resumed, no call; a touch or a screen-off ends the timer and the phone's timeout applies. The
+  on, LOCKED, the lock resumed, no call, none of the lock's own dialogs open (Foreldrekode, the emergency confirm:
+  their touches never reach the activity) and TalkBack's touch exploration off (qa-l7-b-code 2); the timer is armed
+  only when `show` started the lock (qa-l7-b-code 3); a touch, a screen-off or a screen-on more than 2 s after the
+  wake (`noticeWakeEndsAtScreenOn`: the kid's own power press) ends it and the phone's timeout applies. The
   proximity read holds a 1 s partial wake lock instead. (2) The glance trigger's tests are a new `GlanceWakeTest`
   (beside `GlanceRowsTest`, so the round's other branch can't conflict); the missed-call cases are in `LockWakeTest`.
   (3) `NoticeBusy` makes the design's `busy` a value of its own, so each case is tested.
@@ -341,11 +329,14 @@ Built as §3.1 says, server and launcher in one commit:
   interactive, proximity near/far/none; the 15 s rule and the touch; the missed-call steps and the notifier's hook;
   the glue by source), `GlanceWakeTest` (each §3.1.5 condition alone, a new row, an update of a shown row, the opened
   mark, only `posted` triggers, nothing passed), `PinLockManifestTest` (the turn-screen-on set is exactly
-  `InCallActivity` and `VoipWakeActivity`; NOTICE never `voipWakePaused`), `LockGlanceGuardTest` (the reader's new
+  `InCallActivity` and `VoipWakeActivity`; NOTICE never `voipWakePaused`); the code QA's rows (a dialog open, touch
+  exploration, the screen-on rule, the timer only after a start, `glanceWakes`' suspended check alone), `LockGlanceGuardTest` (the reader's new
   identifiers reviewed), `PolicyResponseCompatTest` (the key, missing = off); server `lock_glance`, `device_pages`,
   `device_api`, `music_spotify`.
 - **Device checks owed**: all of §3.3 - in particular whether `lockNow()` turns the screen off at 15 s on the
-  emulator and the Jelly Star (and leaves our lock on top: the screen-off's lock-up is NONE), the first frame after a
+  emulator and the Jelly Star - that screen-off's lock-up is HOME_THEN_LOCK (LOCK under the keyguard cover): `show`
+  cleared `lockOnTop`, so Home is brought under the lock while dark, as design 32 accepts, and the lock-up stamp's
+  2 s gate follows (qa-l7-b-code 4); never with Foreldrekode open or TalkBack on -, the first frame after a
   notice wake (lock or black, both kiosk modes, from inside an app), DND/muted/suspended, a VoIP ring and music,
   `dumpsys power` after the 15 s, and the pocket on the Jelly Star.
 
@@ -371,3 +362,9 @@ Built as §3.1 says, server and launcher in one commit:
 - 2026-10-20, after the QA (the user): the ring budget is dropped - "jeg liker ikke tanken på at man ikke kan ringe noen 7
   ganger på en time"; the residual is accepted with the reasoning in §1.1.2 (the lock is the kid's own PIN). `limited`
   is gone from `voip_rang`.
+- 2026-10-20, after `qa-l7-b-code.md`: §2.1.1 (force-stop protection with `setUserControlDisabledPackages`) dropped -
+  finding 1: a protected package can't be suspended, hidden or uninstalled by the device owner either; §2 is now the
+  battery state in the report only (`catalogAppsInstalledByUs`). §3: the 15 s never under a lock dialog or with touch
+  exploration on (2), armed only after a start and ended by a later screen-on (3), §3.4's device check expects
+  HOME_THEN_LOCK (4), a test for `glanceWakes`' suspended check (5), the switch logs only a change and the proximity
+  read cancels its timeout (6).

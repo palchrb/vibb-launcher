@@ -76,10 +76,10 @@ fn the_battery_contract_matches_the_launchers_copy() {
     );
 }
 
-/// `cap_installed_apps` keeps the battery state of a protected catalog app (and leaves it out for
+/// `cap_installed_apps` keeps the battery state of a catalog app the launcher installed (and leaves it out for
 /// the rest), and the Apps page says it quietly under the app's status - no button.
 #[tokio::test]
-async fn the_battery_state_of_a_protected_app_is_kept() {
+async fn the_battery_state_of_a_catalog_app_is_kept() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;

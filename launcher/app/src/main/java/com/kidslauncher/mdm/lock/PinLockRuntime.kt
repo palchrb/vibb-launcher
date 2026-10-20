@@ -758,6 +758,8 @@ object PinLockRuntime {
                 handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
+                    // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
+                    if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
@@ -1023,6 +1025,18 @@ object PinLockRuntime {
 
     private val noticeWakeOff = Runnable { noticeWakeOffCheck() }
 
+    /** The lock's own dialogs open now (`PinLockActivity`: Foreldrekode, the emergency confirm): a notice wake
+     * never turns the screen off under one (qa-l7-b-code 2). Main thread. */
+    @Volatile
+    var lockDialogsOpen = 0
+
+    /** TalkBack's touch exploration is on: its hovers and clicks never reach `onUserInteraction` (qa-l7-b-code 2). */
+    private fun touchExploration(context: Context): Boolean = try {
+        context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
+    } catch (e: Exception) {
+        true
+    }
+
     /** After every accepted sync (`MdmSyncWorker`): the switch as the parent set it now. */
     fun noticeWakeSwitch(ui: com.kidslauncher.mdm.server.dto.LauncherUi?) {
         noticeWakeFresh = true
@@ -1088,12 +1102,14 @@ object PinLockRuntime {
                     return@read
                 }
                 noticeWakes = wakesAfter(noticeWakes, now)
-                noticeWokeAt = now
-                noticeTouched = false
-                handler.removeCallbacks(noticeWakeOff)
-                handler.postDelayed(noticeWakeOff, NOTICE_WAKE_ON_MS)
                 Log.i(LOG_TAG, "Notice wake (proximity=${near ?: "unknown"})")
-                show(app, wake = WakeKind.NOTICE)
+                // The 15 s only for a start that went (qa-l7-b-code 3): a refused one lit nothing.
+                if (show(app, wake = WakeKind.NOTICE)) {
+                    noticeWokeAt = now
+                    noticeTouched = false
+                    handler.removeCallbacks(noticeWakeOff)
+                    handler.postDelayed(noticeWakeOff, NOTICE_WAKE_ON_MS)
+                }
             }
         } catch (e: Exception) {
             proximityReading = false
@@ -1127,6 +1143,8 @@ object PinLockRuntime {
             locked = mode == LockMode.LOCKED,
             lockResumed = lockResumed,
             busy = busy.ourCall || busy.systemCall || busy.voip || busy.emergencyFlow || busy.alarm,
+            dialogOpen = lockDialogsOpen > 0,
+            touchExploration = touchExploration(app),
             nowMs = now,
         )
         endNoticeWake()

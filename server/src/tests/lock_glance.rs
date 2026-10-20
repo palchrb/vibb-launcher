@@ -868,7 +868,8 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     assert!(group.contains("shows to anyone near the phone"), "{group}");
 
     let mut nudges = app.state.command_notify.subscribe();
-    for on in [true, false, true] {
+    // The second "off" changes nothing: no log line (qa-l7-b-code 6).
+    for on in [true, false, false, true] {
         let fields: &[(&str, &str)] = if on { &[("on", "on")] } else { &[] };
         let res = app
             .request_form(

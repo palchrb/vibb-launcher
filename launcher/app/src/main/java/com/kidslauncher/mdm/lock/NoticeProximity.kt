@@ -38,10 +38,12 @@ object NoticeProximity {
             null
         }
         var done = false
+        var timeout: Runnable? = null
         lateinit var listener: SensorEventListener
         fun finish(near: Boolean?) {
             if (done) return
             done = true
+            timeout?.let(handler::removeCallbacks)
             try {
                 sensors.unregisterListener(listener)
             } catch (e: Exception) {
@@ -71,6 +73,6 @@ object NoticeProximity {
             finish(null)
             return
         }
-        handler.postDelayed({ finish(null) }, PROXIMITY_BUDGET_MS)
+        timeout = Runnable { finish(null) }.also { handler.postDelayed(it, PROXIMITY_BUDGET_MS) }
     }
 }

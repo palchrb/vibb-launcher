@@ -854,8 +854,8 @@ pub struct InstalledApp {
     /// from Play. Absent from older launchers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer: Option<String>,
-    /// Round 7 §2.1.2: `isIgnoringBatteryOptimizations` for a catalog app the launcher protects
-    /// from force-stop (its own installs); absent for every other app, when unreadable and from
+    /// Round 7 §2: `isIgnoringBatteryOptimizations` for a catalog app the launcher installed
+    /// itself; absent for every other app, when unreadable and from
     /// older launchers. Pinned by `testdata/installed_apps_battery.json` (the launcher's
     /// `InstalledAppReportTest` encodes it).
     #[serde(default, skip_serializing_if = "Option::is_none")]

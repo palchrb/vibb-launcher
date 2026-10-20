@@ -10,7 +10,7 @@ import java.io.File
 /**
  * Round 7 §2.1.2: the status report's `installed_apps[].battery_exempt` against the shared contract
  * `installed_apps_battery.json` (byte-identical with `server/testdata/`, which the server's
- * `intake_limits::the_battery_state_of_a_protected_app_is_kept` posts). `ServerJson` leaves the
+ * `intake_limits::the_battery_state_of_a_catalog_app_is_kept` posts). `ServerJson` leaves the
  * unknowns out, so an app outside the protected set has no field at all.
  */
 class InstalledAppReportTest {

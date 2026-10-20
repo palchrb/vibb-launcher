@@ -52,6 +52,8 @@ class GlanceWakeTest {
         val suspended = notice("k4", "room-c", 500, suspended = true)
         assertFalse(glanceWakes(true, true, before, rows(first, suspended)))
         assertEquals(before, rows(first, suspended))
+        // The suspended flag on its own (qa-l7-b-code 5): even with a new row in `after`, a suspended post never wakes.
+        assertFalse(glanceWakes(true, true, before, rows(first, notice("k2", "room-b", 200))))
         // Not alerting: never.
         assertFalse(glanceWakes(false, false, before, rows(first, notice("k2", "room-b", 200))))
         // A conversation opened through the glance comes back as a row with a newer post: a wake.

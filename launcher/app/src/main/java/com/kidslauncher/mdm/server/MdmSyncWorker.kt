@@ -940,10 +940,17 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
             }
         }
         .distinctBy { it.packageName }
-        // Round 7 §2.1.2: the battery state of the catalog apps we protect, nothing else.
+        // Round 7 §2: the battery state of the catalog apps we installed here, nothing else.
         .let { apps ->
+            val pins = WindowRelock.store(context).catalogPins().keys
+            val catalogApps = catalogAppsInstalledByUs(
+                pins = pins,
+                installed = pins.filterTo(mutableSetOf()) { phonePackage(pm, it) is PhonePackage.Installed },
+                installers = apps.associate { it.packageName to it.installer },
+                own = com.kidslauncher.mdm.apps.AppFilter.OWN_PACKAGES,
+            )
             val power = context.getSystemService(android.os.PowerManager::class.java)
-            withBatteryExempt(apps, AppEnforcer.protectedCatalogApps) { pkg ->
+            withBatteryExempt(apps, catalogApps) { pkg ->
                 runCatching { power?.isIgnoringBatteryOptimizations(pkg) }.getOrNull()
             }
         }
@@ -952,7 +959,7 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
 /** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
 /** [PhonePackage] for [packageName]: `MATCH_UNINSTALLED_PACKAGES` so a hidden app counts, then
  * `FLAG_INSTALLED` for this user; only `NameNotFoundException` says "missing". */
-internal fun phonePackage(pm: PackageManager, packageName: String): PhonePackage = try {
+private fun phonePackage(pm: PackageManager, packageName: String): PhonePackage = try {
     val info = pm.getPackageInfo(
         packageName,
         PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()),
@@ -969,7 +976,7 @@ internal fun phonePackage(pm: PackageManager, packageName: String): PhonePackage
     PhonePackage.Unknown
 }
 
-internal fun installerOf(pm: PackageManager, packageName: String): String? = try {
+private fun installerOf(pm: PackageManager, packageName: String): String? = try {
     pm.getInstallSourceInfo(packageName).installingPackageName
 } catch (e: Exception) {
     null

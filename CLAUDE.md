@@ -86,7 +86,7 @@ The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdat
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
 The launcher's status body with `installed_apps[].battery_exempt` (launcher round 7 §2) is
 `server/testdata/installed_apps_battery.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
-`InstalledAppReportTest` encodes exactly it, the server's `intake_limits::the_battery_state_of_a_protected_app_is_kept`
+`InstalledAppReportTest` encodes exactly it, the server's `intake_limits::the_battery_state_of_a_catalog_app_is_kept`
 posts it, and both compare the copies.
 
 ## CI and releases

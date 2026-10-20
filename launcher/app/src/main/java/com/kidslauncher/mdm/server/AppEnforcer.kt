@@ -258,13 +258,6 @@ object AppEnforcer {
     var lastPlanSuspend: Set<String>? = null
         private set
 
-    /** Round 7 §2: the catalog apps the last [apply] protects from force-stop while no window is
-     * open ([protectedCatalogPackages]; empty when unmanaged) - also the set the status report
-     * gives `battery_exempt`, so a pause doesn't drop the field the parent changes in it. */
-    @Volatile
-    var protectedCatalogApps: Set<String> = emptySet()
-        private set
-
     /** The last [apply] set its permitted accessibility and keyboard lists (design 24b §1.5): AOSP
      * refuses a list that leaves out an enabled non-system service, and the last list stays. */
     @Volatile
@@ -514,27 +507,6 @@ object AppEnforcer {
         // Last, after the always-on VPN is in place (DISALLOW_CONFIG_VPN). Not lifted by the
         // override or pause - see hardeningPlan.
         applyHardening(context, dpm, admin, hardening, policy?.locationPolicy)
-
-        // Round 7 §2: the catalog apps we installed can't be force-stopped or cleared - lifted by
-        // the override and the pause like every restriction, cleared when unmanaged. Its own catch:
-        // an OEM's refusal never skips anything else in this pass.
-        try {
-            val pins = WindowRelock.store(context).catalogPins().keys
-            val installed = pins.filterTo(mutableSetOf()) { phonePackage(pm, it) is PhonePackage.Installed }
-            val protected = if (managedForHardening) {
-                protectedCatalogPackages(pins, installed, installed.associateWith { installerOf(pm, it) }, plan.hide, com.kidslauncher.mdm.apps.AppFilter.OWN_PACKAGES)
-            } else {
-                emptySet()
-            }
-            protectedCatalogApps = protected
-            val wanted = userControlDisabledPackages(managedForHardening, overrideActive, protected)
-            if (dpm.getUserControlDisabledPackages(admin).toSet() != wanted) {
-                dpm.setUserControlDisabledPackages(admin, wanted.toList())
-                Log.i(LOG_TAG, "Force-stop protection: ${wanted.size} catalog apps (override=$overrideActive, managed=$managedForHardening)")
-            }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Force-stop protection failed", e)
-        }
 
         // Notification auto-cancel (step 11): the rule's inputs, resolved here off the main thread.
         try {
