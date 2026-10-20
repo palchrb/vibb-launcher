@@ -478,6 +478,7 @@ object PinLockRuntime {
             } catch (e: Exception) {
                 null
             }
+            ClockApp.refresh(app)
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
             sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
@@ -1309,10 +1310,14 @@ object PinLockRuntime {
         appContext?.let { syncVoipRinger(it) }
     }
 
-    /** The system clock app (resolved off the main thread at init) - only its alarms open the
-     * alarm exemption (qa-10-code #4). */
+    /** The system clock app (resolved off the main thread at init) - its alarms open the alarm
+     * exemption (qa-10-code #4), as do the pinned clock app's ([clockPackages]). */
     @Volatile
     private var systemClockPackage: String? = null
+
+    /** The clock apps whose alarms show over the lock and under the glance page's date (design 42
+     * §1.2): the system clock app and Fossify Clock while its signer is verified. Read-only. */
+    fun clockPackages(): Set<String> = lockClockPackages(systemClockPackage, ClockApp.verified)
 
     private fun rememberAlarm(context: Context) {
         val next = try {
@@ -1321,7 +1326,7 @@ object PinLockRuntime {
             null
         }
         rememberedAlarmMs = rememberAlarm(
-            rememberedAlarmMs, next?.triggerTime, next?.showIntent?.creatorPackage, systemClockPackage, System.currentTimeMillis(),
+            rememberedAlarmMs, next?.triggerTime, next?.showIntent?.creatorPackage, clockPackages(), System.currentTimeMillis(),
         )
     }
 

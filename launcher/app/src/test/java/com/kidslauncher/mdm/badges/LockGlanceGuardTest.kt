@@ -259,6 +259,44 @@ class LockGlanceGuardTest {
     }
 
     @Test
+    fun `the clock reader reads only the pinned clock app's timer title and text (design 42 §2)`() {
+        val clockReader = code("ClockReader.kt")
+        // Only after the package, the signer and the ongoing flag (clockCandidate) are the extras read.
+        assertTrue(clockReader.contains("clockCandidate(sbn.packageName, ClockApp.verified, "))
+        assertEquals(setOf("EXTRA_TITLE", "EXTRA_TEXT"), Regex("""Notification\.(EXTRA_\w+)""").findAll(clockReader).map { it.groupValues[1] }.toSet())
+        assertEquals(2, Regex("""\.getCharSequence\(""").findAll(clockReader).count())
+        for (forbidden in listOf(
+            "actions", "contentIntent", "fullScreenIntent", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
+            ".send(", "startActivity", "Intent(", "getString(", "getPrefs", "SharedPreferences", "cancelNotification",
+        )) {
+            assertFalse("ClockReader uses $forbidden", clockReader.contains(forbidden))
+        }
+        // It logs the exception class only.
+        for (line in Regex("""\bLog\.\w\(.*""").findAll(clockReader).map { it.value }) {
+            val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
+            assertEquals(line, setOf("\${e.javaClass.simpleName}"), interpolations)
+        }
+        val listener = code("BadgeListenerService.kt")
+        for (call in listOf("ClockReader.connected(active)", "ClockReader.disconnected()", "ClockReader.posted(it)", "ClockReader.removed(it)")) {
+            assertTrue(call, listener.contains(call))
+        }
+    }
+
+    @Test
+    fun `the timer tile opens nothing without the keypad (design 42 §2)`() {
+        assertTrue(panel.contains("glance.lockTimerTile.setOnClickListener { tapClock() }"))
+        val tap = body(panel, "tapClock")
+        assertTrue(tap.contains("captured = null"))
+        assertTrue(tap.contains("step(GlanceStageEvent.Row(target.takeIf { taken }))"))
+        val tile = code("ClockLockPanel.kt")
+        for (forbidden in listOf("startActivity", ".send(", "PendingIntent", "Intent(", "setOnClickListener", "LaunchIntent")) {
+            assertFalse("ClockLockPanel uses $forbidden", tile.contains(forbidden))
+        }
+        // The clock app opens only through the opener's existing launch, after the code.
+        assertEquals(2, Regex("""\bstartActivity\(""").findAll(code("GlanceOpener.kt")).count())
+    }
+
+    @Test
     fun `FLAG_SECURE is on the lock's window before its content`() {
         val activity = code("PinLockActivity.kt")
         val onCreate = body(activity, "onCreate")

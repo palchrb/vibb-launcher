@@ -45,14 +45,23 @@ class Application : android.app.Application() {
         }
     }
 
+    /** Design 42: the catalog's clock app installed, updated or removed - its signer is checked again
+     * off the main thread (`ClockApp.verified`: its timer on the lock, its alarm over the lock). */
+    private fun clockAppChanged(packageName: String?) {
+        if (packageName != com.kidslauncher.mdm.lock.ClockApp.PACKAGE) return
+        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.lock.ClockApp.refresh(this@Application) }
+    }
+
     // TODO: only update specific apps
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
             loadApps()
+            clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
             loadApps()
+            clockAppChanged(p0)
             // Reacts to this specific install immediately (no network round-trip, no waiting on
             // the next sync) - see AppEnforcer.enforceOnNewPackage's own doc comment. Called back
             // on the main thread by default; AppEnforcer.enforceOnNewPackage does DevicePolicyManager
@@ -79,6 +88,7 @@ class Application : android.app.Application() {
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
             loadApps()
+            clockAppChanged(p0)
             // An update (a replaced package) lands here: design 24b's install check (fix round QA
             // Low 3), and a re-apply when it set or cleared a block.
             p0?.let { packageName ->

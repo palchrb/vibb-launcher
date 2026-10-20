@@ -65,7 +65,7 @@ class LockGlanceTest {
     /** §1.2's model at 320x569 dp (LockGlanceLayoutTest pins it from the XML; the tiles with r6 §2's
      * time line). */
     private val model = GlanceHeights(
-        fixed = 106f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 233.8f, tileCompact = 107f,
+        fixed = 106f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 233.8f, tileCompact = 107f, clockFull = 114f,
         rowsTop = 14f, rowsTopNoTile = 22f, row = 56f, rowGap = 8f, more = 24f,
     )
     private val bothBars = 569f - 48f - 48f - 24f
@@ -122,6 +122,45 @@ class LockGlanceTest {
         // Without rows 1-2 always fit (nothing is counted).
         val alone = glanceFit(bothBars, model, tile = false, rowCount = 0)
         assertEquals(listOf(1, 0, 0), listOf(alone.candidate, alone.rows, alone.more))
+    }
+
+    @Test
+    fun `a running timer - both tiles, then the music tile compact, then the rows fold, then the timer goes (design 42 §1_6)`() {
+        // Room for everything: both full tiles and the rows.
+        glanceFit(1000f, model, tile = true, rowCount = 2, clock = true).let {
+            assertEquals(listOf(1, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.FULL, it.tile)
+        }
+        // 600: the full music tile and the timer do not fit with two rows (691.8 / 669.4); compact does (565).
+        glanceFit(600f, model, tile = true, rowCount = 2, clock = true).let {
+            assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.COMPACT, it.tile)
+        }
+        // At 473 dp (both bars): the timer stays, the rows fold to the "more" line (5, 0 rows, 2 more).
+        glanceFit(bothBars, model, tile = true, rowCount = 2, clock = true).let {
+            assertEquals(listOf(5, 0, 2), listOf(it.candidate, it.rows, it.more)); assertTrue(it.clock)
+            assertEquals(GlanceTileSize.COMPACT, it.tile)
+        }
+        // Too little for the timer with the compact music tile: it goes, then today's order.
+        glanceFit(400f, model, tile = true, rowCount = 2, clock = true).let { assertFalse(it.clock) }
+        // The timer alone (no music): the rows fold before it goes.
+        glanceFit(bothBars, model, tile = false, rowCount = 3, clock = true).let {
+            assertTrue(it.clock); assertEquals(GlanceTileSize.NONE, it.tile); assertEquals(1, it.rows)
+        }
+        // No timer: today's fit, unchanged.
+        assertEquals(glanceFit(bothBars, model, tile = true, rowCount = 2), glanceFit(bothBars, model, tile = true, rowCount = 2, clock = false))
+    }
+
+    @Test
+    fun `the timer tile's tap - the keypad with the clock app, its hint, and a time rule's usable apps (design 42)`() {
+        assertEquals(GlanceStageState(LockStage.KEYPAD, GlanceTarget.ClockApp), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(GlanceTarget.ClockApp)))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, GlanceTarget.ClockApp))
+        assertEquals("org.fossify.clock", GlanceTarget.ClockApp.appPackage)
+        val rule = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.BEDTIME, callsAllowed = true, usableApps = setOf("org.fossify.clock"))
+        assertTrue(glanceUsableUnderLock(rule, GlanceTarget.ClockApp, callsManaged = true))
+        val school = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = true)
+        assertFalse(glanceUsableUnderLock(school, GlanceTarget.ClockApp, callsManaged = true))
+        // The clock app opens by its launch intent after the code - no content intent, no send.
+        val facts = app.copy(hasIntent = false, intentIsActivity = false, intentFromApp = false)
+        assertEquals(GlanceOpen.LAUNCH, glanceOpenStep(facts).open)
     }
 
     @Test
@@ -348,7 +387,7 @@ class LockMediaGuardTest {
         assertEquals(
             setOf(
                 "lock_glance_root", "lock_media_previous", "lock_media_play", "lock_media_next", "lock_media_compact_play",
-                "lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch",
+                "lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile",
             ),
             touchable,
         )
@@ -363,7 +402,7 @@ class LockMediaGuardTest {
             assertTrue("${binding(id)} is wired", panel.contains("glance.${binding(id)}.setOnClickListener"))
         }
         val glance = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        for (id in listOf("lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch")) {
+        for (id in listOf("lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile")) {
             assertTrue("${binding(id)} is wired", glance.contains("glance.${binding(id)}.setOnClickListener"))
         }
         assertFalse(glance.contains("glance.root.setOnClickListener"))
@@ -424,6 +463,7 @@ class LockGlanceLayoutTest {
             date = withMargins("lock_glance_date"),
             tileFull = withMargins("lock_media_tile"),
             tileCompact = withMargins("lock_media_compact"),
+            clockFull = withMargins("lock_timer_tile"),
             rowsTop = root.byId("lock_glance_list").dim("layout_marginTop"),
             rowsTopNoTile = 22f,
             row = height(row),
@@ -445,6 +485,8 @@ class LockGlanceLayoutTest {
         assertEquals(233.8f, heights.tileFull, 0.01f)
         assertEquals(107f, heights.tileCompact, 0.01f)
         assertEquals(106f, heights.fixed, 0.01f)
+        // Design 42: the timer tile - 12 dp padding, the label row, the 24 sp time, the text - and its margin.
+        assertEquals(114f, heights.clockFull, 0.01f)
         assertEquals(14f, heights.rowsTop)
         // The "more" line: at least 24 dp, nothing above it (QA Low 4) - it grows with the font.
         val more = root.byId("lock_glance_more")
@@ -555,6 +597,9 @@ class LockGlanceLayoutTest {
             assertTrue("$screen: tile controls", fixedWidth(controls) <= content - 2 * tile.dim("padding"))
             // The compact tile's column - its bar, with the time line under it, never beside it.
             assertTrue("$screen: compact tile", content - fixedWidth(compact) >= 120f)
+            // Design 42: the timer's "8:88:88" at 24 sp and font scale 2.0 in the tile's full width.
+            val timer = root.byId("lock_timer_tile")
+            assertTrue("$screen: the timer's time", content - 2 * timer.dim("padding") >= "8:88:88".length * 24f * 2f * 0.6f)
             // Nødsamtale between the flashlight's room on both sides: "Emergency call" at 15 sp.
             val link = root.byId("lock_glance_emergency")
             val label = "Emergency call".length * 15f * 0.6f + link.dim("paddingStart") + link.dim("paddingEnd")
@@ -589,8 +634,8 @@ class LockGlanceLayoutTest {
     fun `the order - clock, date, tiles, rows, more, Lås opp, the bottom row last`() {
         val ids = root.all().map { it.id() }.filter { it.isNotEmpty() }
         val order = listOf(
-            "lock_glance_clock", "lock_glance_date", "lock_media_tile", "lock_media_compact", "lock_glance_rows",
-            "lock_glance_more", "lock_glance_unlock", "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
+            "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_media_tile", "lock_media_compact", "lock_timer_tile",
+            "lock_glance_rows", "lock_glance_more", "lock_glance_unlock", "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
         )
         assertEquals(order, ids.filter { it in order })
         assertEquals(listOf("lock_glance_unlock", "lock_glance_bottom"), root.kids().takeLast(2).map { it.id() })

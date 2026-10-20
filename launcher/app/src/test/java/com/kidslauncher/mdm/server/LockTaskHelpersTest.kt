@@ -335,5 +335,7 @@ class PinLockTaskTest {
         val clock = pinLockHelpers(null, null, null, ResolvedHelper("com.google.android.deskclock", system = true), emptySet())
         assertEquals(setOf("com.google.android.deskclock"), clock)
         assertEquals(emptySet<String>(), pinLockHelpers(ResolvedHelper("com.android.settings", true), null, null, null, setOf("com.android.settings")))
+        // Design 42 §1.2: the catalog's clock app with its pinned signer, though not a system app.
+        assertEquals(setOf("org.fossify.clock"), pinLockHelpers(null, null, null, null, emptySet(), clockApp = "org.fossify.clock"))
     }
 }

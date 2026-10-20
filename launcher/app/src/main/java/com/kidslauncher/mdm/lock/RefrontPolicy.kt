@@ -123,13 +123,13 @@ fun alarmLikelyRinging(alarmTriggerMs: Long?, nowMs: Long): Boolean =
     alarmTriggerMs != null && nowMs >= alarmTriggerMs && nowMs < alarmTriggerMs + ALARM_RING_MS
 
 /**
- * The alarm to remember: only one set by [clockPackage] (the system clock app - an allowlisted
- * app's `setAlarmClock` never opens the exemption, qa-10-code #4). A newly scheduled future one
- * replaces an old one only once the old one is past its ring time (a snooze doesn't hide the
- * ringing one).
+ * The alarm to remember: only one set by one of [clockPackages] (the system clock app, and since
+ * design 42 Fossify Clock with its pinned signer - [lockClockPackages]; an allowlisted app's
+ * `setAlarmClock` never opens the exemption, qa-10-code #4). A newly scheduled future one replaces
+ * an old one only once the old one is past its ring time (a snooze doesn't hide the ringing one).
  */
-fun rememberAlarm(remembered: Long?, next: Long?, nextCreator: String?, clockPackage: String?, nowMs: Long): Long? {
-    val usable = next?.takeIf { clockPackage != null && nextCreator == clockPackage }
+fun rememberAlarm(remembered: Long?, next: Long?, nextCreator: String?, clockPackages: Set<String>, nowMs: Long): Long? {
+    val usable = next?.takeIf { nextCreator != null && nextCreator in clockPackages }
     return when {
         remembered != null && alarmLikelyRinging(remembered, nowMs) -> remembered
         usable != null && usable > nowMs -> usable

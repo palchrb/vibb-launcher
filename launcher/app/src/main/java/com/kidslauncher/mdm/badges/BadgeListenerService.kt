@@ -17,7 +17,8 @@ import android.util.Log
  * the call intents, never text) for VoIP calls over the PIN lock. Since design 25 [GlanceReader] -
  * the one reader of names and texts, only of the apps the parent ticked for the lock's glance page,
  * kept in memory only ([GlanceStore]) - gets every post with its ranking, every removal, ranking
- * update, connect and disconnect; this class itself still reads none of it.
+ * update, connect and disconnect; this class itself still reads none of it. Since design 42
+ * [ClockReader] reads the title and text of the pinned clock app's ongoing notification (its timer).
  * Here: never titles, names or message bodies, and no key, tag or MXID is ever logged or reported
  * ([NotificationRuleRuntime] keeps package + channel counts only). Needs notification-listener
  * access, granted with adb at provisioning (see [BadgeStore.accessGranted]); without it Android
@@ -36,6 +37,7 @@ class BadgeListenerService : NotificationListenerService() {
         BadgeStore.update(emptyMap())
         VoipCallReader.disconnected(this)
         GlanceReader.disconnected()
+        ClockReader.disconnected()
     }
 
     override fun onDestroy() {
@@ -47,6 +49,7 @@ class BadgeListenerService : NotificationListenerService() {
         sbn?.let {
             ElementDmReader.learn(this, it)
             VoipCallReader.posted(this, it)
+            ClockReader.posted(it)
             applyRule(it, null)
         }
         recount()
@@ -69,6 +72,7 @@ class BadgeListenerService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn?.let {
             VoipCallReader.removed(this, it)
+            ClockReader.removed(it)
             GlanceReader.removed(it)
             // Our missed-call notification left the shade (snoozed, cancelled by the system): the
             // glance page shows what it shows (design 25 QA Low 9).
@@ -90,6 +94,7 @@ class BadgeListenerService : NotificationListenerService() {
         val active = activeOrNull() ?: return
         active.forEach { ElementDmReader.learn(this, it) }
         VoipCallReader.connected(this, active)
+        ClockReader.connected(active)
         if (NotificationRuleRuntime.policy != null) active.forEach { applyRule(it, active) }
         recount()
     }

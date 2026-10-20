@@ -98,7 +98,7 @@ object GlanceOpener {
     private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         val target = pending.target
         val conversation = target as? GlanceTarget.Conversation
-        val what = conversation?.packageName ?: "the missed calls"
+        val what = target.appPackage ?: "the missed calls"
         // The conversation's newest content intent, else the one captured at the tap (the row's
         // notification may be gone by now - the room still opens).
         val intent = conversation?.let { GlanceStore.contentIntent(it.conversation) ?: pending.captured }
@@ -120,19 +120,20 @@ object GlanceOpener {
                 Log.i(LOG_TAG, "Glance: opened $what")
             }
             GlanceOpen.SEND -> Log.i(LOG_TAG, "Glance: sent the intent of $what")
-            GlanceOpen.LAUNCH -> conversation?.let { launch(activity, it) }
+            GlanceOpen.LAUNCH -> launch(activity, what, conversation)
         }
     }
 
-    /** The app's launch intent, from our visible [activity]; the row is marked opened. */
-    private fun launch(activity: Activity, conversation: GlanceTarget.Conversation) {
-        val launch = activity.packageManager.getLaunchIntentForPackage(conversation.packageName)
+    /** The app's ([what], a package) launch intent, from our visible [activity]; a conversation's
+     * row is marked opened. The timer tile's clock app (design 42) has no row. */
+    private fun launch(activity: Activity, what: String, conversation: GlanceTarget.Conversation?) {
+        val launch = activity.packageManager.getLaunchIntentForPackage(what)
         if (launch == null) {
             Log.i(LOG_TAG, "Glance: nothing opened (no launch intent)")
             return
         }
         activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        openedThroughGlance(conversation, "app")
+        if (conversation == null) Log.i(LOG_TAG, "Glance: opened $what") else openedThroughGlance(conversation, "app")
     }
 
     /**
@@ -163,7 +164,7 @@ object GlanceOpener {
                 if (front == null || PinLockRuntime.mode == LockMode.LOCKED) return
                 val step = glanceOpenStep(facts(front, sent.pending, sent.from, null).copy(sendFailed = true))
                 Log.i(LOG_TAG, "Glance: the intent of ${conversation.packageName} didn't open (${step.reason})")
-                if (step.open == GlanceOpen.LAUNCH) launch(front, conversation)
+                if (step.open == GlanceOpen.LAUNCH) launch(front, conversation.packageName, conversation)
             }
         }
     }
@@ -207,8 +208,7 @@ object GlanceOpener {
     }
 
     /** Opened through the glance: the row stays hidden until the conversation's next message. */
-    private fun openedThroughGlance(conversation: GlanceTarget.Conversation?, how: String) {
-        conversation ?: return
+    private fun openedThroughGlance(conversation: GlanceTarget.Conversation, how: String) {
         GlanceStore.markOpened(conversation.conversation, conversation.postTimeMs)
         Log.i(LOG_TAG, "Glance: opened ${conversation.packageName} ($how)")
     }
@@ -225,7 +225,7 @@ object GlanceOpener {
 
     private fun facts(context: Context, pending: PendingOpen, from: GlanceOpenFrom, intent: PendingIntent?): GlanceOpenFacts {
         val target = pending.target
-        val pkg = (target as? GlanceTarget.Conversation)?.packageName
+        val pkg = target.appPackage
         val pm = context.packageManager
         val installed = pkg != null && try {
             pm.getApplicationInfo(pkg, 0)
