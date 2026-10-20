@@ -505,6 +505,14 @@ findings, merge to `main`, full suite once.
   then protect; `ProtectedSocketTest`; emulator.md §6m step 8 - enrolment, pause on/off, all resolve). Code QA
   `docs/review/qa-vpn-protect-code.md` (0 High / 0 Medium / 3 Low, all fixed: `Attempt.Unprotected` never counts as a
   DoT block); **merged into `main` 2026-10-19, goes out with launcher-v0.29.1.**
+- **Play/pause flicker in the music card and the player** (the user, 2026-10-20, a screen recording: "widget (og
+  inne i appen) hopper litt frem og tilbake ofte når jeg toggler play/pause"): the launcher's Home music card
+  (`MusicHomeCard`/`MusicCard`) and the music app's own player flip back and forth for a moment after a play/pause
+  tap - most likely the tap's optimistic state and the session's state (bridge/`MusicStore`, Media3's
+  `onIsPlayingChanged`) arriving in the other order, each repainting. Find: log both sides' state changes with
+  timestamps on the emulator around one tap; fix: the optimistic state holds until the session confirms or 1 s
+  passes, never repainted by an older state (vibb's player is the reference). Launcher or music app, decided by the
+  log. Next launcher/music round.
 - **Diagnostics from the same incident:** (1) the music app logs nothing of its own in `onError`; Media3 prints a
   fixed "UnknownHostException (no network)" for any name failure - log the real cause (class + message) and the error
   code; (2) "Kan ikke spilles nå" shows for a name/network failure - say "no network" instead when that is the cause;
