@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=34">
+<link rel="stylesheet" href="/static/style.css?v=35">
 
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
@@ -16,7 +16,7 @@
 <script src="/static/register-sw.js?v=3" defer></script>
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
      deferred, so form.submit() is hooked before any control can call it. -->
-<script src="/static/scroll-restore.js?v=4"></script>
+<script src="/static/scroll-restore.js?v=5"></script>
 <!-- Controls marked data-autosave save their form on change (design 31 §5.2), through the hooked
      form.submit(). Not deferred either: it only listens on the document, so a switch tapped while a
      long page is still loading saves too (qa-31-s1-code L1). -->

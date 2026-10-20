@@ -37,6 +37,17 @@
         return null;
     }
 
+    // In the app shell (design 43) <main> scrolls, not the window.
+    function scrollBy(dy) {
+        var main = document.querySelector("main");
+        var overflow = main ? getComputedStyle(main).overflowY : "";
+        if (overflow === "auto" || overflow === "scroll") {
+            main.scrollTop += dy;
+        } else {
+            window.scrollBy(0, dy);
+        }
+    }
+
     function swap(cards) {
         var anchor = firstVisible();
         var before = anchor ? anchor.getBoundingClientRect().top : 0;
@@ -52,7 +63,7 @@
         }
         if (anchor) {
             var after = anchor.getBoundingClientRect().top;
-            if (after !== before) window.scrollBy(0, after - before);
+            if (after !== before) scrollBy(after - before);
         }
     }
 

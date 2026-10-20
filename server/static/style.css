@@ -144,13 +144,14 @@
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
-    /* A classic scrollbar (a desktop window) is always there, so the fixed tab bar and every tab
-       in it have the same width on a short page as on a long one. Not scrollbar-gutter: stable -
-       Chromium keeps that room for the page's flow but not for fixed boxes. Overlay scrollbars
-       (phones, macOS) take no room either way. */
-    overflow-y: scroll;
+    height: 100%;
 }
 
+/* The app shell (design 43): the document doesn't scroll. The body is exactly the visible
+   height - never taller, or a fragment, scrollIntoView or the iOS keyboard could pan it and the bar
+   would sit off again - and <main class="container"> scrolls inside it, the tab bar a plain flex
+   child under it. Nothing is positioned against the viewport (an iOS standalone app keeps a stale
+   one after a long background). The auth pages opt out (.auth-page). */
 body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
@@ -158,6 +159,11 @@ body {
     background: var(--bg);
     color: var(--label);
     line-height: 1.5;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 a {
@@ -204,21 +210,35 @@ input[type="radio"] {
 
 /* ---- Shell: brand bar, page, tab bar -------------------------------------------------------- */
 
+/* The scroller: the full width (the scrollbar at the window's edge, the wheel working over the
+   margins, the same width on every page), the 720 px column (480 px narrow) from its padding.
+   viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar or notch
+   above, the notch's sides in landscape; the tab bar under it clears the home indicator.
+   touch-action here, not on body: a scroller resets an inherited one, so the rows inside would
+   keep double-tap zoom; pinch zoom stays, and Leaflet's own rules win on the map. */
 .container {
-    max-width: 720px;
-    margin: 0 auto;
-    /* viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar or
-       notch above, the notch's sides in landscape, and below the tab bar (about 60px plus the
-       home indicator's inset). */
-    padding: 8px 16px 96px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    touch-action: manipulation;
+    padding: 8px 16px 16px;
     padding-top: calc(8px + env(safe-area-inset-top, 0px));
-    padding-right: max(16px, env(safe-area-inset-right, 0px));
-    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 720px) / 2 + 16px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 720px) / 2 + 16px));
 }
 
 .container-narrow {
-    max-width: 480px;
+    padding-right: max(16px, env(safe-area-inset-right, 0px), calc((100% - 480px) / 2 + 16px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px), calc((100% - 480px) / 2 + 16px));
+}
+
+/* A classic scrollbar (a desktop window) is always there, so the column has the same width on a
+   short page as on a long one. Overlay scrollbars (phones, macOS) take no room either way. */
+@media (hover: hover) and (pointer: fine) {
+    .container {
+        overflow-y: scroll;
+    }
 }
 
 .page-title {
@@ -246,12 +266,11 @@ input[type="radio"] {
     margin-right: 4px;
 }
 
+/* Under <main> (order: 1; it comes first in the page's source), never fixed. */
 .tab-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 20;
+    flex: none;
+    order: 1;
+    touch-action: manipulation;
     display: flex;
     background: var(--bar);
     border-top: 1px solid var(--bar-line);
@@ -888,10 +907,15 @@ details.confirm > summary.row {
 
 .auth-page {
     /* The visible height (iOS: the toolbars and a standalone app's resume change it), 100vh
-       where dvh is unknown (iOS 14). */
+       where dvh is unknown (iOS 14). The body itself (<body class="auth-page">): out of the app
+       shell, the document scrolls, so a card taller than the screen (the keyboard up) stays
+       reachable (design 43 §1.4). */
+    height: auto;
+    overflow: visible;
     min-height: 100vh;
     min-height: 100dvh;
     display: flex;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
     padding: 24px 16px;
@@ -1920,7 +1944,10 @@ input.row-num { width: 6.5em; text-align: right; }
 
 /* The rule editor's top bar stays in view while the form scrolls (qa-31-s9-code L1): Save in
    reach after editing a lower field, and a save's flash or a refusal's reason under it. */
-.editor-bar { position: -webkit-sticky; position: sticky; top: 0; top: env(safe-area-inset-top, 0px); z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
+/* It sticks inside <main> (design 43), and a sticky offset counts from inside the scroller's
+   padding (8px + the status bar's inset): -8px puts it right under the status bar, as before. Its
+   side margins reach the 720 px column's edge (main's wider padding outside it is page background). */
+.editor-bar { position: -webkit-sticky; position: sticky; top: -8px; z-index: 5; margin: -8px -16px 0; padding: 8px 16px 0; background: var(--bg); }
 /* The container's sides take the notch's inset in landscape: the bar's background reaches its edge too. */
 .editor-bar { margin-left: calc(-1 * max(16px, env(safe-area-inset-left, 0px))); margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px))); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .editor-bar > .bar-flash { margin: 0 0 8px; border-radius: 10px; }
