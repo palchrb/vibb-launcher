@@ -108,14 +108,48 @@ pub struct LockState {
     /// full-screen intent - Android dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't
     /// ring over the lock. Valid package names only, at most [MAX_FSI_DENIED].
     pub voip_fsi_denied: Vec<String>,
+    /// Design r7 §1.1.3: the apps whose ring the lock accepted while LOCKED (or that rang while the
+    /// phone locked) in the last 7 days, newest first. Parsed leniently (r7-4): an entry that isn't
+    /// `{package, last_at_ms}` is dropped, never the whole `lock_state`; a missing field is empty.
+    #[serde(deserialize_with = "lenient_voip_rang")]
+    pub voip_rang: Vec<VoipRang>,
 }
 
-/// How many `voip_fsi_denied` packages are kept.
+/// One `lock_state.voip_rang` entry: a package name and the wall time (ms) of its last ring over
+/// the lock.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct VoipRang {
+    pub package: String,
+    pub last_at_ms: i64,
+}
+
+/// `voip_rang` entry by entry: anything that isn't a list is empty, an entry that doesn't parse is
+/// dropped (r7-4).
+fn lenient_voip_rang<'de, D>(deserializer: D) -> Result<Vec<VoipRang>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Array(entries) => entries
+            .into_iter()
+            .filter_map(|entry| serde_json::from_value(entry).ok())
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+/// How many `voip_fsi_denied` packages (and `voip_rang` entries) are kept.
 const MAX_FSI_DENIED: usize = 8;
 
+/// A `voip_rang` time this far ahead of the server's clock is still taken (the phone's clock may
+/// run a little ahead); later ones are dropped.
+const RANG_CLOCK_SKEW_MS: i64 = 5 * 60_000;
+
 /// `StatusReportRequest.lock_state` as stored: only the [LockState] fields, `inactive` capped at
-/// 64 characters; `None` for anything that isn't such an object.
-pub fn sanitize_lock_state(value: &serde_json::Value) -> Option<String> {
+/// 64 characters, `voip_rang` checked entry by entry against `now_ms`; `None` for anything that
+/// isn't such an object.
+pub fn sanitize_lock_state(value: &serde_json::Value, now_ms: i64) -> Option<String> {
     if !value.is_object() {
         return None;
     }
@@ -129,6 +163,23 @@ pub fn sanitize_lock_state(value: &serde_json::Value) -> Option<String> {
         .filter(|p| crate::time_rules::valid_package_name(p))
         .take(MAX_FSI_DENIED)
         .collect();
+    // Real package names (shown on the Lock page) and plausible times only, one per package (the
+    // newest), newest first.
+    let mut rang: Vec<VoipRang> = state
+        .voip_rang
+        .into_iter()
+        .filter(|r| crate::time_rules::valid_package_name(&r.package))
+        .filter(|r| r.last_at_ms > 0 && r.last_at_ms <= now_ms.saturating_add(RANG_CLOCK_SKEW_MS))
+        .collect();
+    rang.sort_by(|a, b| {
+        b.last_at_ms
+            .cmp(&a.last_at_ms)
+            .then_with(|| a.package.cmp(&b.package))
+    });
+    let mut seen = std::collections::HashSet::new();
+    rang.retain(|r| seen.insert(r.package.clone()));
+    rang.truncate(MAX_FSI_DENIED);
+    state.voip_rang = rang;
     serde_json::to_string(&state).ok()
 }
 
@@ -199,6 +250,10 @@ pub enum LockNote {
     /// Times the lock stepped aside for a call, the emergency dialer or an alarm since the last
     /// report.
     SteppedAside(i64),
+    /// Design r7 §1.1.3: an allowed app's call rang over the lock - a quiet line, never a
+    /// warning. `label` is the app's name on this server (else its package), `when` the time as
+    /// the device page shows times.
+    RangOverLock { label: String, when: String },
 }
 
 impl LockNote {
@@ -306,8 +361,49 @@ impl LockNote {
                 },
                 Some("For a call, the emergency dialer or an alarm, since the last report."),
             ),
+            LockNote::RangOverLock { label, when } => row(
+                &format!("Calls from {label}"),
+                format!("Rang over the lock · {when}"),
+                Some(
+                    "An allowed app rang while the phone was locked. Answering opens that app \
+                     without the Child PIN, for the call.",
+                ),
+            ),
         }
     }
+}
+
+/// The Child PIN group's "rang over the lock" lines (design r7 §1.1.3): one per package in the
+/// phone's `voip_rang`, newest first, named by `labels` (package -> the name the Apps page shows)
+/// or else by the package, the time in the device page's zone. None without a Child PIN.
+pub fn rang_notes(
+    card: &LockCard,
+    state: Option<&LockState>,
+    labels: &std::collections::HashMap<String, String>,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<LockNote> {
+    if !card.pin_set {
+        return Vec::new();
+    }
+    state
+        .map(|s| s.voip_rang.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            let at = chrono::DateTime::from_timestamp_millis(r.last_at_ms)?;
+            let label = labels
+                .get(&r.package)
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .unwrap_or(r.package.as_str())
+                .to_string();
+            Some(LockNote::RangOverLock {
+                label,
+                when: zone.when(at, now),
+            })
+        })
+        .collect()
 }
 
 /// The Child PIN group from the policy and the phone's report (`state`, `None` = no report from a
@@ -664,7 +760,8 @@ mod tests {
     #[test]
     fn voip_fsi_denied_keeps_only_package_names_and_is_capped() {
         let many: Vec<String> = (0..20).map(|i| format!("org.example.app{i}")).collect();
-        let stored = sanitize_lock_state(&serde_json::json!({ "voip_fsi_denied": many })).unwrap();
+        let stored =
+            sanitize_lock_state(&serde_json::json!({ "voip_fsi_denied": many }), 0).unwrap();
         let state: LockState = serde_json::from_str(&stored).unwrap();
         assert_eq!(state.voip_fsi_denied.len(), MAX_FSI_DENIED);
         // Nothing that could reach the parent's shell through the adb command.
@@ -672,16 +769,138 @@ mod tests {
         let hostile = serde_json::json!({ "voip_fsi_denied": [
             "io.element.android.x; rm -rf ~", "$(reboot)", "a.b`id`", "nodots", "1x.y", "io.element.android.x", long,
         ]});
-        let stored = sanitize_lock_state(&hostile).unwrap();
+        let stored = sanitize_lock_state(&hostile, 0).unwrap();
         let state: LockState = serde_json::from_str(&stored).unwrap();
         assert_eq!(
             state.voip_fsi_denied,
             vec!["io.element.android.x".to_string()]
         );
         // An older launcher sends none.
-        let old = sanitize_lock_state(&serde_json::json!({ "active": true })).unwrap();
+        let old = sanitize_lock_state(&serde_json::json!({ "active": true }), 0).unwrap();
         let state: LockState = serde_json::from_str(&old).unwrap();
         assert!(state.voip_fsi_denied.is_empty());
+        assert!(state.voip_rang.is_empty());
+    }
+
+    #[test]
+    fn voip_rang_is_checked_entry_by_entry() {
+        let now = 1_800_000_000_000_i64;
+        let mut entries: Vec<serde_json::Value> = (0..12)
+            .map(|i| serde_json::json!({ "package": format!("org.example.app{i}"), "last_at_ms": now - 60_000 * i }))
+            .collect();
+        entries.extend([
+            // Not a package name, a float time, no time, a string, a future time, a duplicate.
+            serde_json::json!({ "package": "$(reboot)", "last_at_ms": now }),
+            serde_json::json!({ "package": "org.example.float", "last_at_ms": 1.5 }),
+            serde_json::json!({ "package": "org.example.none" }),
+            serde_json::json!("org.example.string"),
+            serde_json::json!({ "package": "org.example.future", "last_at_ms": now + 3_600_000 }),
+            serde_json::json!({ "package": "org.example.app3", "last_at_ms": now - 3_600_000 }),
+        ]);
+        let stored = sanitize_lock_state(
+            &serde_json::json!({ "active": true, "failures": 3, "voip_rang": entries }),
+            now,
+        )
+        .unwrap();
+        let state: LockState = serde_json::from_str(&stored).unwrap();
+        // The rest of lock_state stays.
+        assert!(state.active);
+        assert_eq!(state.failures, 3);
+        let packages: Vec<&str> = state.voip_rang.iter().map(|r| r.package.as_str()).collect();
+        assert_eq!(
+            packages,
+            (0..8)
+                .map(|i| format!("org.example.app{i}"))
+                .collect::<Vec<_>>(),
+            "newest first, capped, one per package (its newest), bad entries dropped"
+        );
+        assert_eq!(state.voip_rang[3].last_at_ms, now - 180_000);
+        // A little clock skew is taken.
+        let stored = sanitize_lock_state(
+            &serde_json::json!({ "voip_rang": [{ "package": "org.example.a", "last_at_ms": now + 60_000 }] }),
+            now,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<LockState>(&stored)
+                .unwrap()
+                .voip_rang
+                .len(),
+            1
+        );
+        // Not a list: empty, never the whole lock_state.
+        let stored = sanitize_lock_state(
+            &serde_json::json!({ "locked": true, "voip_rang": "x" }),
+            now,
+        )
+        .unwrap();
+        let state: LockState = serde_json::from_str(&stored).unwrap();
+        assert!(state.locked);
+        assert!(state.voip_rang.is_empty());
+    }
+
+    #[test]
+    fn rang_notes_name_the_app_and_its_time() {
+        let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:30:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let at = |rfc: &str| {
+            chrono::DateTime::parse_from_rfc3339(rfc)
+                .unwrap()
+                .timestamp_millis()
+        };
+        let state = LockState {
+            active: true,
+            voip_rang: vec![
+                VoipRang {
+                    package: "org.thoughtcrime.securesms".to_string(),
+                    last_at_ms: at("2026-10-20T12:02:00Z"),
+                },
+                VoipRang {
+                    package: "com.whatsapp".to_string(),
+                    last_at_ms: at("2026-10-19T19:40:00Z"),
+                },
+            ],
+            ..Default::default()
+        };
+        let labels = std::collections::HashMap::from([(
+            "org.thoughtcrime.securesms".to_string(),
+            "Signal".to_string(),
+        )]);
+        let p = policy_with_pins(Some("1234"), Some("999999"));
+        let card = lock_card(&p, Some(&state), true, true, 0);
+        // Not in lock_card's own notes (the page adds them with the names).
+        assert!(
+            !card
+                .notes
+                .iter()
+                .any(|n| matches!(n, LockNote::RangOverLock { .. }))
+        );
+        let notes = rang_notes(&card, Some(&state), &labels, &zone, now);
+        let words: Vec<(String, Option<String>, bool)> = notes
+            .iter()
+            .map(|n| n.note(None))
+            .map(|n| (n.title, n.value, n.warning))
+            .collect();
+        assert_eq!(
+            words,
+            [
+                (
+                    "Calls from Signal".to_string(),
+                    Some("Rang over the lock · 14:02".to_string()),
+                    false
+                ),
+                (
+                    "Calls from com.whatsapp".to_string(),
+                    Some("Rang over the lock · yesterday 21:40".to_string()),
+                    false
+                ),
+            ]
+        );
+        // No Child PIN: nothing.
+        let card = lock_card(&DevicePolicy::default(), Some(&state), true, true, 0);
+        assert!(rang_notes(&card, Some(&state), &labels, &zone, now).is_empty());
     }
 
     #[test]

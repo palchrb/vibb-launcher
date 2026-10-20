@@ -338,6 +338,74 @@ async fn lock_state_is_stored_sanitized_and_capped() {
     .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
     assert_eq!(json["inactive"].as_str().unwrap().len(), 64);
+
+    // Design r7 §1.1.3: `voip_rang` kept, a malformed entry dropped - never the rest of lock_state.
+    let now = chrono::Utc::now().timestamp_millis();
+    post_status(
+        &app,
+        &token,
+        json!({ "lock_state": {
+            "active": true, "locked": true, "failures": 1,
+            "voip_rang": [
+                { "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 },
+                { "package": "rm -rf", "last_at_ms": now },
+                { "package": "com.whatsapp", "last_at_ms": "yesterday" },
+                { "package": "com.example.future", "last_at_ms": now + 86_400_000 },
+            ],
+        }}),
+    )
+    .await;
+    let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
+    assert_eq!(json["failures"], 1);
+    assert_eq!(json["locked"], true);
+    assert_eq!(
+        json["voip_rang"],
+        json!([{ "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 }])
+    );
+    // An older launcher sends none: an empty list.
+    post_status(&app, &token, json!({ "lock_state": { "active": true } })).await;
+    let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
+    assert_eq!(json["voip_rang"], json!([]));
+}
+
+#[tokio::test]
+async fn lock_page_says_which_apps_rang_over_the_lock() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
+    set_kid_pin(&app, &cookie, id, "1357").await;
+    let now = chrono::Utc::now().timestamp_millis();
+    post_status(
+        &app,
+        &token,
+        json!({ "capabilities": ["pin_lock_v1"],
+                "installed_apps": [{ "package_name": "org.thoughtcrime.securesms", "label": "Signal" }],
+                "lock_state": { "active": true, "locked": true,
+                    "voip_rang": [
+                        { "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 },
+                        { "package": "com.example.school", "last_at_ms": now - 120_000 },
+                    ] } }),
+    )
+    .await;
+    let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    // Quiet rows, the app's name (else its package), never a warning.
+    assert!(!group.contains("data-warning"), "{group}");
+    assert!(
+        group.contains("<span class=\"row-label\">Calls from Signal</span>"),
+        "{group}"
+    );
+    assert!(
+        group.contains("<span class=\"row-label\">Calls from com.example.school</span>"),
+        "{group}"
+    );
+    assert!(group.contains("Rang over the lock · "), "{group}");
+    let signal = group.find("Calls from Signal").unwrap();
+    assert!(
+        signal < group.find("Calls from com.example.school").unwrap(),
+        "newest first"
+    );
 }
 
 async fn lock_page(app: &TestApp, cookie: &str, id: i64) -> String {

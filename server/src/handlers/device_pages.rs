@@ -820,12 +820,12 @@ pub async fn view_lock(
     let now = Utc::now();
     let notice = query.get("notice").map(String::as_str);
 
+    let lock_state = crate::kid_lock::parse_lock_state(
+        latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
+    );
     let child = crate::kid_lock::lock_card(
         &policy,
-        crate::kid_lock::parse_lock_state(
-            latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
-        )
-        .as_ref(),
+        lock_state.as_ref(),
         has_capability(latest.as_ref(), crate::kid_lock::PIN_LOCK_CAPABILITY),
         latest.is_some(),
         now.timestamp_millis(),
@@ -835,7 +835,7 @@ pub async fn view_lock(
         .as_ref()
         .and_then(|s| crate::display_time::parse_db_utc(&s.reported_at))
         .map(|t| zone.when(t, now));
-    let (child_warnings, child_rows): (Vec<Note>, Vec<Note>) = child
+    let (child_warnings, mut child_rows): (Vec<Note>, Vec<Note>) = child
         .notes
         .iter()
         .map(|n| n.note(reported.as_deref()))
@@ -867,6 +867,17 @@ pub async fn view_lock(
     };
     let lock_screen =
         crate::handlers::devices::lock_screen_card(&state, &policy, latest.as_ref(), &rows).await;
+    // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
+    let labels: std::collections::HashMap<String, String> = rows
+        .apps
+        .iter()
+        .map(|app| (app.package_name.clone(), app.label.clone()))
+        .collect();
+    child_rows.extend(
+        crate::kid_lock::rang_notes(&child, lock_state.as_ref(), &labels, &zone, now)
+            .iter()
+            .map(|n| n.note(None)),
+    );
     let screen_timeout_seconds =
         crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
     let child_flash = notice.and_then(crate::kid_lock::flash_text);

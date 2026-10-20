@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.kidslauncher.mdm.badges.NotificationRuleRuntime
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.WindowStart
@@ -57,6 +58,9 @@ object VoipCalls {
     private const val KEY_RING_ENDED = "ring_ended_elapsed"
     private const val KEY_RING_STARTED = "ring_started_elapsed"
     private const val KEY_FSI_DENIED = "fsi_denied"
+
+    /** Design r7 §1.1.3: package -> wall ms of its last ring over the lock ([encodeVoipRang]). */
+    private const val KEY_RANG = "rang_v1"
 
     /** While a call rings or lives, the grace, the cap and the audio mode are looked at this often. */
     private const val POLL_MS = 2_000L
@@ -216,10 +220,16 @@ object VoipCalls {
         listeners.toList().forEach { it() }
     }
 
-    /** [voipCandidates] of the call path's answer now, unsuspended (not allowlisted = suspended). */
+    /** [voipCandidates] of the call path's answer now and the last enforcement pass's allowed apps
+     * (`NotificationRuleRuntime.voipAllowed`, design r7: read, never computed here - no binder
+     * call, no raw allowlist), unsuspended (not allowlisted = suspended). */
     private fun eligible(context: Context): Set<String> {
         val candidates = try {
-            voipCandidates(CallPolicyStore.effectiveState())
+            voipCandidates(
+                CallPolicyStore.effectiveState(),
+                NotificationRuleRuntime.voipAllowed,
+                policyKnown = NotificationRuleRuntime.policy != null,
+            )
         } catch (e: Exception) {
             emptySet()
         }
@@ -230,6 +240,45 @@ object VoipCalls {
                 false
             }
         }
+    }
+
+    /** The ring already in `voip_rang` (memory: a new process may stamp the same ring again, which
+     * only moves its package's time). */
+    private var rangRingId: Long? = null
+
+    /**
+     * Design r7 §1.1.3: records the current ring in `lock_state.voip_rang` when [voipRangDue] - a
+     * ring seen while LOCKED ([locked]), once per ring. From [PinLockRuntime.syncVoipRinger], which
+     * runs on every VoIP pass (the 2 s poll while ringing included) and every lock-mode change, so a
+     * ring during which the phone locks is recorded too. Main thread. Package names and times only.
+     */
+    fun noteRingWhileLocked(context: Context, locked: Boolean) {
+        val ring = ringId
+        val pkg = ringingPackage
+        if (pkg == null || !voipRangDue(ring, locked, rangRingId)) return
+        rangRingId = ring
+        try {
+            val prefs = prefs(context)
+            val stored = decodeVoipRang(prefs.getStringSet(KEY_RANG, emptySet()).orEmpty())
+            val next = voipRangAfter(stored, pkg, System.currentTimeMillis())
+            prefs.edit().putStringSet(KEY_RANG, encodeVoipRang(next)).apply()
+            Log.i(LOG_TAG, "$pkg rang over the lock")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't record the ring: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** `lock_state.voip_rang` for the status report: the last 7 days, newest first, at most 8;
+     * pruned at each report. */
+    fun rangReport(context: Context): List<VoipRangEntry> = try {
+        val prefs = prefs(context)
+        val raw = prefs.getStringSet(KEY_RANG, emptySet()).orEmpty()
+        val entries = voipRangEntries(decodeVoipRang(raw), System.currentTimeMillis())
+        val encoded = encodeVoipRang(entries)
+        if (encoded != raw) prefs.edit().putStringSet(KEY_RANG, encoded).apply()
+        entries
+    } catch (e: Exception) {
+        emptyList()
     }
 
     /** A ring with its full-screen intent clears a package; one without it (denied) adds it. */

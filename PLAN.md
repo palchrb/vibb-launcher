@@ -948,7 +948,7 @@ findings, merge to `main`, full suite once.
   Element X today); strangers can ring through apps whose contacts Vibb doesn't manage. The status report lists the apps that rang (`lock_state.voip_rang`, package + `last_at_ms`, no text) so the PWA can show "rang over the lock". The in-call phase stays
   "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
   the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
-  directories). Launcher round 7.
+  directories). Launcher round 7. **Built 2026-10-20 on `l7-a`** (design r7 §1.4: status, deviations, device checks owed).
 - **Launcher round 7 §4 - small things from the Fossify Launcher comparison** (the user, 2026-10-20: "kunne du kikket
   på kildekoden til fossify launcher og se om den gjør noe på et kløktigere vis"; the note
   `docs/review/fossify-launcher-comparison.md`): Fossify is simpler, not cleverer - our icons, wallpaper ink, threading

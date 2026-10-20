@@ -6,7 +6,8 @@ the user's call); §3 the global wake-on-notification switch.
 
 ## 1. Any allowed app may ring over the lock
 
-**Pending the user's yes to the residual (QA question 1, §1.1.2 below).** Nothing in §1 is built before it.
+The residual (§1.1.2) was accepted by the user on 2026-10-20, without a ring budget; built on branch `l7-a` (see
+"Implementation status" at the end of §1).
 
 The user, 2026-10-20: "det er ikke sånn at vi bare automatisk kan sense om en app har call funksjon med den call
 style biten? Isåfall kan den få automatisk tilgang" and "La oss legge inn at en tillatt app kan vise calls skjerm over
@@ -121,11 +122,42 @@ lock_state uses the server's keys` gains `voip_rang` (default `[]`); no policy c
 
 Emulator (§6 of `docs/testing/emulator.md`, the Element X flow of design 17 as the regression): Element still rings
 over the lock in both kiosk modes; with Element removed from the contacts' message apps but kept on the allowlist it
-still rings (the new rule); with Element off the allowlist it doesn't. A seventh ring inside an hour from the same app
-does nothing and the card says the limit stopped it. With the kiosk off: whether Recents reaches other unsuspended apps
+still rings (the new rule); with Element off the allowlist it doesn't. Seven rings inside an hour from the same app all
+ring (no budget). With the kiosk off: whether Recents reaches other unsuspended apps
 during a ring that began unlocked and then locked (the QA's open point). With the system dialer allowlisted and calls
 unmanaged, a cellular ring is not a VoIP ring. Jelly Star with Signal: a Signal call rings over the lock and the
 device page shows "Calls from Signal rang over the lock · today 14:02".
+
+### 1.4 Implementation status (branch `l7-a`, 2026-10-20)
+
+Built as designed; launcher and server in one commit.
+- **Launcher**: `voipCandidates(effective, voipAllowed, policyKnown)`, `voipAllowedApps` and the `voip_rang` rules
+  (`voipRangDue`, `voipRangAfter`/`voipRangEntries`, the `rang_v1` codec) in `lock/VoipCallPlan.kt`;
+  `voipExcluded` and `NotificationRuleRuntime.voipAllowed` (computed in `refresh` from the effective allowlist, no
+  change to `refresh`'s signature or its call in `AppEnforcer.apply()`); `VoipCalls.eligible` reads it with
+  `policyKnown = NotificationRuleRuntime.policy != null`; `VoipCalls.noteRingWhileLocked` from
+  `PinLockRuntime.syncVoipRinger` (every VoIP pass, the 2 s poll included, and every lock-mode change) and
+  `VoipCalls.rangReport` in `PinLockRuntime.report`; `LockStateReport.voipRang` (`VoipRang`, `@SerialName("package")`,
+  required so the empty list is always encoded - `ServerJson` doesn't encode defaults).
+- **Server**: `kid_lock::LockState.voip_rang: Vec<VoipRang>` with a lenient per-entry `deserialize_with` (a non-list
+  is empty, a bad entry dropped) under the struct's `#[serde(default)]`; `sanitize_lock_state(value, now_ms)`;
+  `kid_lock::rang_notes` -> `LockNote::RangOverLock { label, when }` rows, appended to the Child PIN group's rows by
+  `view_lock` (`handlers/device_pages.rs`) with the names from `app_rows` - `device_lock.html` is unchanged (the
+  rows render through `partials/note_row.html`).
+- **Tests**: `VoipCallPlanTest` (the candidate table and fallbacks, the allowed set and the exclusions, no per-hour
+  constant, `voip_rang`'s rules and codec, the glue by source), `PolicyResponseCompatTest` (`voip_rang` in the key set,
+  `[]` and an entry's keys); server `kid_lock::voip_rang_is_checked_entry_by_entry`,
+  `kid_lock::rang_notes_name_the_app_and_its_time`, `step10::lock_state_is_stored_sanitized_and_capped` (a malformed
+  entry, the rest kept, missing = `[]`) and `step10::lock_page_says_which_apps_rang_over_the_lock`.
+- **Deviations**: (1) `LockState.voip_rang` is typed (`Vec<VoipRang>`) with the lenient deserializer rather than
+  `Vec<serde_json::Value>` - the same "a bad entry is dropped, never the `lock_state`", and the stored JSON is
+  always the clean shape; (2) a `last_at_ms` up to 5 minutes ahead of the server's clock is kept (clock skew), later
+  ones are dropped; (3) the time is shown in the device page's zone (`Zone::load`, Phone Setup's - the zone every other
+  time on that page uses), not the report's `time_state.zone`; (4) the launcher's `VoipCalls` tests are pure-rule
+  and source tests (`voipRangDue` covers "unlocked never", "locked during the ring" and "a non-candidate never rings";
+  a non-candidate never reaches RINGING).
+- **Device checks owed**: §1.3 as written (the budget line now reads "all ring"), plus the PWA's row on Lock Screen &
+  PINs after a ring over the lock, and that a ring answered on an unlocked phone adds no row.
 
 ## 2. Catalog apps protected from force-stop
 
