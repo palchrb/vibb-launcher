@@ -222,6 +222,21 @@ class BluetoothAudioTest {
     }
 
     @Test
+    fun `receivers of Bluetooth broadcasts are exported, the Wi-Fi scan one is not`() {
+        // The Bluetooth app (uid 1002) sends them; BroadcastSkipPolicy skips a NOT_EXPORTED receiver for any sender
+        // but root, system or the app itself ("Exported Denial"). They are protected broadcasts: EXPORTED widens nothing.
+        val scan = code(quick).substringAfter("addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)").substringBefore("fun ")
+        assertTrue(scan.contains("appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)"))
+        val wifi = code(quick).substringAfter("IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION),").substringBefore(")")
+        assertTrue(wifi.contains("Context.RECEIVER_NOT_EXPORTED"))
+        val page = code(activity).substringAfter("private fun registerStateReceiver(").substringBefore("private fun ")
+        assertTrue(page.contains("registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)"))
+        assertFalse(page.contains("RECEIVER_NOT_EXPORTED"))
+        // Every registration in the Bluetooth page is one of these: no other receiver with Bluetooth actions.
+        assertEquals(1, Regex("(?<!un)registerReceiver\\(").findAll(code(activity)).count())
+    }
+
+    @Test
     fun `nothing blocks a thread for the proxy`() {
         for (text in listOf(audio, quick, activity, adapter)) {
             val code = code(text)

@@ -300,6 +300,14 @@ Where it differs from or adds to the note:
   open `NonCancellable` (M2), no A2DP = a failed open (L3), `cancelDiscovery` before a connect (L4), the test gaps
   (L5), the nits; L6 (the grant rewritten each sync until the music app declares `BLUETOOTH_CONNECT`) is settled by
   merging the music half with this one.
+- From the music half's QA (AOSP 14-16, `BroadcastSkipPolicy` 14 :567, 15 :604, 16 :582 and
+  `ActivityManager.checkComponentPermission`): Bluetooth's broadcasts come from the Bluetooth app (uid 1002), which a
+  `RECEIVER_NOT_EXPORTED` receiver never gets ("Exported Denial": only root, system 1000 or the same app pass). The
+  page's receiver (bond, A2DP, ACL) and the scan's (`ACTION_FOUND`, `ACTION_DISCOVERY_FINISHED`) are now
+  `RECEIVER_EXPORTED`; the actions are `<protected-broadcast>`s, so no other app can send them. This likely means Kid
+  Settings' scan has found nothing (and the bond receiver never fired) since the NOT_EXPORTED flag went in - a device
+  check: scan, pair and the live rows on the Jelly Star. The Wi-Fi scan's receiver (system_server, uid 1000) stays
+  NOT_EXPORTED.
 - The failure line stays until the next Connect, a read that shows the device connected (a late success), or Forget.
 
 Device checks owed (launcher part of §4): `dumpsys package me.vibb.music | grep BLUETOOTH_CONNECT` granted and fixed

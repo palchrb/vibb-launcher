@@ -302,7 +302,8 @@ class BluetoothDevicesActivity : UIObjectActivity() {
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
         }
         try {
-            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            // EXPORTED: the Bluetooth app (uid 1002) sends these; AOSP's BroadcastSkipPolicy skips a NOT_EXPORTED receiver for any sender but root/system/us ("Exported Denial"), and they are <protected-broadcast>s, so no other app can send them.
+            registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
             stateReceiver = receiver
         } catch (e: Exception) {
             // Non-fatal - pairing and connecting still work, the list just won't live-update.

@@ -990,7 +990,8 @@ findings, merge to `main`, full suite once.
   (the launcher's part: the grant in `dumpsys package me.vibb.music` and its withdrawal, the "unsupported, reflection,
   allowed" line for `BluetoothA2dp;->connect`, a made-up bonded address answering `false`; on the Jelly Star Connect
   with the mark following live, "Fikk ikke kontakt" for a switched-off headset, Disconnect stopping a call's ring in
-  it, a watch/keyboard still reading connected).
+  it, a watch/keyboard still reading connected, and the scan finding devices again - its receivers were
+  NOT_EXPORTED, which the Bluetooth app's broadcasts never reach; now EXPORTED).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`

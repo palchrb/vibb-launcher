@@ -634,7 +634,8 @@ object QuickControls {
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
         }
         try {
-            appContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            // EXPORTED: the Bluetooth app (uid 1002) sends these; AOSP's BroadcastSkipPolicy skips a NOT_EXPORTED receiver for any sender but root/system/us ("Exported Denial"), and they are <protected-broadcast>s, so no other app can send them.
+            appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to register Bluetooth discovery receiver", e)
             return null

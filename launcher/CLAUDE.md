@@ -702,7 +702,12 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   a tap pairs; an audio device Connect (OFF) or Disconnect (CONNECTED) + Forget; a watch, keyboard or LE-only headset
   Forget only with the ACL mark. One receiver refreshes the row on `ACTION_BOND_STATE_CHANGED`, A2DP's
   `ACTION_CONNECTION_STATE_CHANGED` and `ACTION_ACL_CONNECTED`/`_DISCONNECTED` (a newer re-read of a row cancels the
-  older). After Connect the row reads "Kobler til …" until the attempt ends, then "Fikk ikke kontakt med <name> – er
+  older). **Every receiver of Bluetooth broadcasts is registered `RECEIVER_EXPORTED`** (this one and the scan's
+  `ACTION_FOUND`/`ACTION_DISCOVERY_FINISHED` in `QuickControls.scanBluetoothDevices`): the Bluetooth app (uid 1002)
+  sends them, and AOSP's `BroadcastSkipPolicy` (14 :567, 15 :604, 16 :582) skips a NOT_EXPORTED receiver for any
+  sender but root, system (1000) or the app itself ("Exported Denial"); they are `<protected-broadcast>`s, so EXPORTED
+  lets no other app in. Broadcasts system_server sends (Wi-Fi's `SCAN_RESULTS_AVAILABLE_ACTION`, the battery's) stay
+  NOT_EXPORTED (`BluetoothAudioTest` pins both). After Connect the row reads "Kobler til …" until the attempt ends, then "Fikk ikke kontakt med <name> – er
   den på?" (`bluetooth_devices_connecting`/`_no_contact`, nb + en). Not gated on the parent's Bluetooth switch; no
   Settings intent.
 - **Names and addresses never leave memory**: no log line in `BluetoothAudio` or `QuickControls`' Bluetooth functions
