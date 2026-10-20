@@ -982,6 +982,15 @@ findings, merge to `main`, full suite once.
   the wrong method**: `QuickControls.connectBluetoothDevice` reflects `BluetoothDevice.connect()`, which since Android 13
   is `@SystemApi` needing `BLUETOOTH_PRIVILEGED` + `MODIFY_PHONE_STATE` and returns an `int` (read as `Boolean` ->
   always false) - so "Connect" there has most likely never worked on the Jelly Star. Design: `docs/design/52-bluetooth-headphones.md` (QA'd and revised 2026-10-20): Kid Settings connects/disconnects through the A2DP proxy (HFP disconnect too), the music app's 'Spill av på' gets 'Koble til'/'Bytt til' rows for paired audio devices, the launcher grants the music app `BLUETOOTH_CONNECT`; LE-only devices get no Connect.
+  **Launcher half built 2026-10-20 on `bt-a`**: `server/BluetoothAudio.kt` (the rules, the A2DP + HEADSET proxies
+  awaited by suspending, connect/setActiveDevice/disconnect by reflection on IO), Kid Settings' Bluetooth page through
+  it (grant first, live rows on the A2DP/ACL broadcasts, "Kobler til …" then "Fikk ikke kontakt med <name> – er den
+  på?", Disconnect also HFP), the address log lines gone, `MUSIC_RUNTIME_GRANTS` (`BLUETOOTH_CONNECT` DENIED without a
+  policy); tests `BluetoothAudioTest`, `MusicMediaPlanTest`, `KidScreensEscapeTest`. Device checks owed: design 52 §4
+  (the launcher's part: the grant in `dumpsys package me.vibb.music` and its withdrawal, the "unsupported, reflection,
+  allowed" line for `BluetoothA2dp;->connect`, a made-up bonded address answering `false`; on the Jelly Star Connect
+  with the mark following live, "Fikk ikke kontakt" for a switched-off headset, Disconnect stopping a call's ring in
+  it, a watch/keyboard still reading connected).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`

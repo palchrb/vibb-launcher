@@ -16,6 +16,8 @@ import android.os.Build
 import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "QuickControls"
 
@@ -106,7 +108,8 @@ object QuickControls {
         return bluetoothAdapter(context)?.isEnabled == true
     }
 
-    private fun grantBluetoothConnectIfNeeded(
+    /** `internal`: the Bluetooth page grants it before its first list read (design 52). */
+    internal fun grantBluetoothConnectIfNeeded(
         context: Context,
         dpm: DevicePolicyManager,
         admin: ComponentName,
@@ -486,16 +489,27 @@ object QuickControls {
         }
     }
 
+    /**
+     * One row of the Bluetooth page. [audio] = an A2DP sink (Connect/Disconnect through the A2DP
+     * proxy); [state] for an audio device is the proxy's, for anything else the ACL link (design 52).
+     * The name and address stay in memory: never logged.
+     */
     data class BluetoothDeviceInfo(
         val name: String,
         val address: String,
         val bonded: Boolean,
-        val connected: Boolean,
-    )
+        val audio: Boolean,
+        val state: BtLink,
+    ) {
+        val connected: Boolean get() = state == BtLink.CONNECTED
+
+        override fun toString() = "BluetoothDeviceInfo(bonded=$bonded, audio=$audio, state=$state)"
+    }
 
     /**
-     * [BluetoothDevice.isConnected] has no public equivalent, same as [connectBluetoothDevice]
-     * below - reflects into the hidden method, fails soft to `false` on any error.
+     * [BluetoothDevice.isConnected] (`@SystemApi`, on the sdk list, needs only `BLUETOOTH_CONNECT`):
+     * the ACL link, any profile - the mark of a non-audio device (a watch, a keyboard). Fails soft to
+     * `false`.
      */
     private fun BluetoothDevice.isConnectedReflective(): Boolean {
         return try {
@@ -505,43 +519,62 @@ object QuickControls {
         }
     }
 
+    /** A device's row; [proxies] null (a device found by the scan, no proxy) = the ACL mark. */
     @Suppress("MissingPermission")
-    private fun BluetoothDevice.toInfo(): BluetoothDeviceInfo {
+    private fun BluetoothDevice.toInfo(proxies: BluetoothAudio.Proxies?): BluetoothDeviceInfo {
         val deviceName = try {
             name
         } catch (e: Exception) {
             null
         } ?: address
-        val isCurrentlyConnected = isConnectedReflective()
+        val uuidList = try {
+            uuids?.map { it.uuid.toString() }.orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val kind = btKind(uuidList)
+        val a2dpState = if (kind == BtKind.A2DP) BluetoothAudio.a2dpState(proxies, this) else null
+        val leAudio = hasLeAudio(uuidList)
+        // The ACL link only where btLink reads it (not for a plain A2DP device the proxy answers for).
+        val acl = (kind != BtKind.A2DP || a2dpState == null || leAudio) && isConnectedReflective()
         return BluetoothDeviceInfo(
             name = deviceName,
             address = address,
             bonded = bondState == BluetoothDevice.BOND_BONDED,
-            connected = isCurrentlyConnected,
+            audio = kind == BtKind.A2DP,
+            state = btLink(kind, leAudio, a2dpState, acl),
         )
     }
 
+    /** The bonded devices with their states, read on IO through the screen's proxies. */
     @Suppress("MissingPermission")
-    fun bondedBluetoothDevices(context: Context): List<BluetoothDeviceInfo> {
-        val adapter = bluetoothAdapter(context) ?: return emptyList()
-        return try {
-            adapter.bondedDevices.map { it.toInfo() }
-        } catch (e: Exception) {
-            emptyList()
+    suspend fun bondedBluetoothDevices(context: Context, session: BluetoothAudio.Session?): List<BluetoothDeviceInfo> {
+        val proxies = session?.proxies()
+        return withContext(Dispatchers.IO) {
+            val adapter = bluetoothAdapter(context) ?: return@withContext emptyList()
+            try {
+                adapter.bondedDevices.map { it.toInfo(proxies) }
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Reading the bonded devices failed: ${BluetoothAudio.failure(e)}")
+                emptyList()
+            }
         }
     }
 
     /**
-     * Re-reads a single already-known device's bonded/connected state (e.g. after
-     * `ACTION_BOND_STATE_CHANGED`) without needing a full rescan.
+     * Re-reads a single already-known device's state (after `ACTION_BOND_STATE_CHANGED`, the A2DP
+     * or ACL broadcasts, a tap) without a rescan. On IO.
      */
     @Suppress("MissingPermission")
-    fun bluetoothDeviceInfo(context: Context, address: String): BluetoothDeviceInfo? {
-        val adapter = bluetoothAdapter(context) ?: return null
-        return try {
-            adapter.getRemoteDevice(address).toInfo()
-        } catch (e: Exception) {
-            null
+    suspend fun bluetoothDeviceInfo(context: Context, session: BluetoothAudio.Session?, address: String): BluetoothDeviceInfo? {
+        val proxies = session?.proxies()
+        return withContext(Dispatchers.IO) {
+            val adapter = bluetoothAdapter(context) ?: return@withContext null
+            try {
+                adapter.getRemoteDevice(address).toInfo(proxies)
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 
@@ -585,7 +618,7 @@ object QuickControls {
                             BluetoothDevice.EXTRA_DEVICE,
                             BluetoothDevice::class.java,
                         )
-                        device?.let { onDeviceFound(it.toInfo()) }
+                        device?.let { onDeviceFound(it.toInfo(null)) }
                     }
 
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> onFinished()
@@ -634,7 +667,7 @@ object QuickControls {
         return try {
             adapter.getRemoteDevice(address).createBond()
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to pair with $address", e)
+            Log.w(LOG_TAG, "Pairing failed: ${BluetoothAudio.failure(e)}")
             false
         }
     }
@@ -653,42 +686,21 @@ object QuickControls {
             val method = device.javaClass.getMethod("removeBond")
             method.invoke(device) as? Boolean ?: false
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to forget Bluetooth device $address (hidden removeBond API)", e)
+            Log.w(LOG_TAG, "Forget failed (hidden removeBond API): ${BluetoothAudio.failure(e)}")
             false
         }
     }
 
     /**
-     * [BluetoothDevice.connect]/[disconnect] are hidden methods with no public replacement -
-     * Android's own Settings app calls these same methods internally (via reflection/internal
-     * access) to drive a paired device's "Connect"/"Disconnect" action generically across
-     * whichever profiles it supports, rather than wiring up every [android.bluetooth.BluetoothProfile]
-     * (A2DP, headset, ...) individually. Same fail-soft handling as [forgetBluetoothDevice] - if
-     * this breaks on some OS build, pairing/scanning/forgetting are unaffected.
+     * Connect = A2DP's hidden `connect(device)` through the proxy ([BluetoothAudio.connect]; a
+     * connected device that isn't routed is made active instead). Not `BluetoothDevice.connect()`:
+     * reachable, but the service asks `BLUETOOTH_PRIVILEGED` + `MODIFY_PHONE_STATE` (design 52 §0).
+     * `true` = asked; the A2DP broadcast is the truth.
      */
-    @Suppress("MissingPermission")
-    fun connectBluetoothDevice(context: Context, address: String): Boolean {
-        val adapter = bluetoothAdapter(context) ?: return false
-        return try {
-            val device = adapter.getRemoteDevice(address)
-            val method = device.javaClass.getMethod("connect")
-            method.invoke(device) as? Boolean ?: false
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to connect Bluetooth device $address (hidden connect API)", e)
-            false
-        }
-    }
+    suspend fun connectBluetoothDevice(context: Context, session: BluetoothAudio.Session, address: String): Boolean =
+        BluetoothAudio.connect(context, session, address)
 
-    @Suppress("MissingPermission")
-    fun disconnectBluetoothDevice(context: Context, address: String): Boolean {
-        val adapter = bluetoothAdapter(context) ?: return false
-        return try {
-            val device = adapter.getRemoteDevice(address)
-            val method = device.javaClass.getMethod("disconnect")
-            method.invoke(device) as? Boolean ?: false
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Failed to disconnect Bluetooth device $address (hidden disconnect API)", e)
-            false
-        }
-    }
+    /** Disconnect the whole headset: A2DP and HFP ([BluetoothAudio.disconnect]). */
+    suspend fun disconnectBluetoothDevice(context: Context, session: BluetoothAudio.Session, address: String): Boolean =
+        BluetoothAudio.disconnect(context, session, address)
 }

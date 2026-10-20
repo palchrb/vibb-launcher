@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.music
 
+import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.media.session.PlaybackState
 import com.kidslauncher.mdm.lock.VoipPhase
@@ -130,6 +131,19 @@ fun pauseBeforeSuspend(pkg: String, shouldBeSuspended: Boolean, currentlySuspend
  * else back to the phone's own choice (the default state keeps the current grant). */
 fun notificationGrantState(managed: Boolean): Int =
     if (managed) DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
+
+/** `BLUETOOTH_CONNECT` for the music app (design 52 decision 4: the paired headphones in "Spill av
+ * på"): granted while managed; without a policy denied and fixed - the default state would keep
+ * the grant, so the withdrawal would be none. */
+fun bluetoothGrantState(managed: Boolean): Int =
+    if (managed) DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED else DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED
+
+/** The runtime permissions the device owner sets for the music app, each with its state by
+ * `managed` (a policy exists). No dialog for the kid. */
+val MUSIC_RUNTIME_GRANTS: List<Pair<String, (Boolean) -> Int>> = listOf(
+    Manifest.permission.POST_NOTIFICATIONS to ::notificationGrantState,
+    Manifest.permission.BLUETOOTH_CONNECT to ::bluetoothGrantState,
+)
 
 /**
  * A call the music session pauses for (design 26a §6.7; user 2026-10-11: Element X voice and video

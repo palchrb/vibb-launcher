@@ -185,6 +185,8 @@
     <string name="bluetooth_devices_forget">Forget</string>
     <string name="bluetooth_devices_connect">Connect</string>
     <string name="bluetooth_devices_disconnect">Disconnect</string>
+    <string name="bluetooth_devices_connecting">Connecting…</string>
+    <string name="bluetooth_devices_no_contact">Couldn\'t reach %1$s – is it switched on?</string>
 
     <!--
       -

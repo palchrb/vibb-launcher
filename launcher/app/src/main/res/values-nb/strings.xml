@@ -150,6 +150,8 @@
     <string name="bluetooth_devices_forget">Glem</string>
     <string name="bluetooth_devices_connect">Koble til</string>
     <string name="bluetooth_devices_disconnect">Koble fra</string>
+    <string name="bluetooth_devices_connecting">Kobler til …</string>
+    <string name="bluetooth_devices_no_contact">Fikk ikke kontakt med %1$s – er den på?</string>
 
     <!-- Settings -->
     <string name="settings_title">Innstillinger</string>

@@ -262,3 +262,43 @@ audio devices.
   byte-identical, no contract file; the implementer updates design 26a §5.1's row order and `music/CLAUDE.md`'s output-axis
   line (phone, routed outputs, paired-not-routed "Koble til", rooms, "Se etter høyttalere"); long names ellipsize; the
   Tasker remark dropped.
+
+## Implementation status (launcher)
+
+Built 2026-10-20 on branch `bt-a` (the music app's half is a separate branch).
+
+- **`launcher/.../server/BluetoothAudio.kt`**, beside `QuickControls.kt` and named in `KidScreensEscapeTest`'s
+  `guarded` list: the pure rules (`btKind`, `hasLeAudio`, `btLink`, `isRouted`, `btTap`, `btAttemptStep`,
+  `BT_ATTEMPT_TIMEOUT_MS`) and the glue (`Session` - the A2DP and HEADSET proxies opened on the page's start through
+  `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)` on IO, closed on stop, a proxy that lands late or after the
+  close is closed, a repeated `onServiceConnected` ignored; `connect` = `BluetoothA2dp.connect` or, for a CONNECTED
+  device that isn't the routed A2DP output, `setActiveDevice`; `disconnect` = `BluetoothHeadset.disconnect` then
+  `BluetoothA2dp.disconnect`; `failure(e)` = the exception's class and its cause's class).
+- **Kid Settings › Bluetooth**: decision 2 as written - the grant in `onCreate`, the first list read in `onStart`;
+  `bluetoothRowActions(info, busy)` and `bluetoothRowStatus` (in `BluetoothDeviceAdapter.kt`) drive the row; one
+  receiver for bond, A2DP connection-state and ACL broadcasts; "Kobler til …" / "Fikk ikke kontakt med %1$s – er den
+  på?" (en "Connecting…" / "Couldn't reach %1$s – is it switched on?"). `QuickControls`' address log lines are gone
+  (pairing and forget log `failure(e)` only).
+- **`MusicSync`**: `grantRuntimePermissions` loops `MUSIC_RUNTIME_GRANTS` (`MusicMediaPlan.kt`); `bluetoothGrantState`
+  is GRANTED while managed, DENIED without a policy.
+- Tests: `BluetoothAudioTest` (the filter, the states, routed-address matching, the tap, the attempt, the rows, and by
+  source the reflected methods, no blocking waits, the log lines, the grant order and the broadcasts),
+  `MusicMediaPlanTest` (the grant list), `KidScreensEscapeTest` (`BluetoothAudio.kt` scanned).
+
+Where it differs from or adds to the note:
+- The launcher's copy has no `pairedAudioDevices` list: Kid Settings lists every bonded device, so the routed-address
+  match is used only by the tap (`btTap`). Kid Settings shows Connect only for an OFF device, so `setActiveDevice` is
+  reached there only when the device connected between the render and the tap (the tap then makes it the output).
+- A device A2DP reports CONNECTING by itself reads "Kobler til …" with Forget only (no Connect/Disconnect until it
+  settles). Disconnect has no in-between text; the row follows the broadcast.
+- No proxy within 2 s (or Bluetooth off): the rows fall back to the ACL mark and Connect answers `false` (the failure
+  line at once). A device found by the scan (not paired) carries the ACL mark only; such a row only pairs.
+- The failure line stays until the next Connect, a read that shows the device connected (a late success), or Forget.
+
+Device checks owed (launcher part of §4): `dumpsys package me.vibb.music | grep BLUETOOTH_CONNECT` granted and fixed
+after a sync, `granted=false` with the policy gone; logcat's `Accessing hidden method
+Landroid/bluetooth/BluetoothA2dp;->connect(...) (unsupported, reflection, allowed)` from Kid Settings' Connect on API
+34/35/36; a made-up bonded address answering `false`, not a crash; on the Jelly Star (record the Android version and
+`persist.bluetooth.maxconnectedaudiodevices`) a headset last connected elsewhere connecting from Kid Settings with the
+mark following live, a switched-off one ending in "Fikk ikke kontakt med <name> – er den på?", Disconnect stopping a
+call's ring in it, a connected watch or keyboard still reading connected, and no non-SDK block in logcat.
