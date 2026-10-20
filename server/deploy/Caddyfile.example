@@ -13,7 +13,7 @@
 			read_header 10s
 			# Caddy 2.11+ aborts a response that writes nothing for 1 minute (its write_idle default);
 			# the phones' event stream writes a keepalive every 4 minutes. Keep this above that.
-			write_idle 10m
+			write_idle 5m
 		}
 	}
 }

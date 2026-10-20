@@ -925,7 +925,7 @@ findings, merge to `main`, full suite once.
   2026-10-20: "en stillere notis på at det er x meldinger siden det er mottatt en receipt"); ("Shown on …" stays passive; the user: 201 = delivered
   for declarative, no repeat-until-opened); a log line per stream open/close (the emulator's "seen" resetting every
   ~5 min is SOLVED 2026-10-20: Caddy 2.11's new `write_idle` default of 1 minute reset every stream 60 s after each
-  240 s keepalive - `StreamResetException INTERNAL_ERROR` in logcat; the user's Caddyfile gets `write_idle 10m`, and
+  240 s keepalive - `StreamResetException INTERNAL_ERROR` in logcat; the user's Caddyfile gets `write_idle 5m` (60 s above the 240 s keepalive), and
   DEPLOY.md + Caddyfile.example carry it; no `X-Accel-Buffering` needed for Caddy, nginx users get it in the same
   note if ever asked); migration 0082 + the `failures == 0` art rule; the Send-a-Test row poll.
 
