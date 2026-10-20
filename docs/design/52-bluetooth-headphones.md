@@ -317,3 +317,75 @@ Landroid/bluetooth/BluetoothA2dp;->connect(...) (unsupported, reflection, allowe
 `persist.bluetooth.maxconnectedaudiodevices`) a headset last connected elsewhere connecting from Kid Settings with the
 mark following live, a switched-off one ending in "Fikk ikke kontakt med <name> – er den på?", Disconnect stopping a
 call's ring in it, a connected watch or keyboard still reading connected, and no non-SDK block in logcat.
+
+## Implementation status (music app)
+
+Built on branch `bt-b` (2026-10-20, from `main` 41cb9440); music suite 994 tests green with `-PwarningsAsErrors=true`,
+`assembleDebug` built. No device check run yet.
+
+- **Manifest**: `BLUETOOTH_CONNECT` only (no `usesPermissionFlags`); the launcher's `MusicSync` grant is implementer A's.
+- **`bluetooth/BluetoothAudio.kt`** (pure): the UUIDs, `pairedAudioDevices(bonded, a2dpStates, routedAddresses)` (A2DP
+  sink only - an LE-only device has no sink UUID and so no row; addresses compared upper case; sorted by name, nameless
+  last), `actionFor` (CONNECTED -> `setActiveDevice`, else `connect`), `headsetRows`, the reducer `connectStep`
+  (`HeadsetConnect` = `attempts: address -> Attempt(startedAt, fromKey, makeActive, connected)` + `failed`; events `Tapped`,
+  `Answered`, `StateChanged`, `Routed`, `Tick`), `headsetTapPlan(fromKey, currentKey, routedNow)` and `failureWords` (the thrown
+  class and its cause's class, `InvocationTargetException` unwrapped). Every holder of an address has a redacted
+  `toString`; the events are plain classes.
+- **`bluetooth/BluetoothLink.kt`** (Android): the A2DP proxy through `suspendCancellableCoroutine` +
+  `withTimeoutOrNull(2 s)` on IO (Bluetooth off: no wait), a late proxy closed; `routed()` (address -> `AudioDeviceInfo.id`
+  of the routed Bluetooth outputs), `pairedAudio`, `connect`/`makeActive` by reflection on `BluetoothA2dp`, all on IO;
+  `closeLater` on a process scope (so `onCleared` can close).
+- **The view model**: `headsets`, `headsetConnect`, the proxy held while the sheet is open or a call runs
+  (`outputSheetOpened`/`outputSheetClosed` from a `DisposableEffect` in `OutputSheet`), the A2DP
+  `ACTION_CONNECTION_STATE_CHANGED` receiver and an `AudioDeviceCallback` (registered at the first granted sheet,
+  until `onCleared`), one 10 s tick per tap. A routed attempt made on a room sends its `dev:` key through
+  `outputRequests` (collected in `MusicRoot` -> `actions.output`) and closes the sheet; a failure with the sheet closed
+  emits `PlayerHub.Message.HEADSET_NO_CONTACT` (nameless, 3 s, its branch in `MusicRoot`). Without the grant nothing
+  runs and the sheet is today's.
+- **The sheet**: `outputSheetRows` (phone, routed, headsets, rooms, rescan); headset rows show the name (one line,
+  ellipsized) over "Koble til" / "Bytt til" / "Kobler til…" / "Fikk ikke kontakt med <name> - er den på?" (two lines);
+  the rows scroll above 70 % of the screen's height (more rows now). 26a §5.1 and `music/CLAUDE.md` updated.
+- **Tests**: `BluetoothAudioTest` (filter, routed matching, LE-only, rows, the reducer's four ends - immediate `false`,
+  CONNECTING -> DISCONNECTED, the window, late success - and `headsetTapPlan`), `OutputRowsTest` (order, no-grant rows,
+  the view model's wiring), `SourceScanTest` `d52` (manifest, the Never list, no blocking wait, reflection on
+  `BluetoothA2dp` with the two names only, no interpolating log line, nothing outside the sheet's files names the
+  package, no address in `Output`/`PlayerHub`/`PlaybackService`, nb + en words), `FitTest` (the row's ellipsis, the scroll).
+
+Deviations and choices:
+- **No HEADSET proxy in the music app.** Decision 1 opens one with the A2DP proxy, but it serves only Kid Settings'
+  Disconnect (the HFP disconnect); the sheet has no "Koble fra" and connecting needs no HFP step, so the music app
+  would hold an unused proxy (and maybe its 2 s wait). Pinned by `SourceScanTest` (no `BluetoothProfile.HEADSET`).
+- **On a room = a Sonos room is the output at the tap** (the attempt keeps its key, `fromKey`), playing or paused (decision 3 says "a room played"). A paused
+  room's `OUTPUT` to the headset comes home paused (`toPhone` resumes only a playing speaker), so the headset the kid
+  picked becomes the output without anything starting.
+- **The receiver is `RECEIVER_EXPORTED`**: the broadcast is protected and comes from the Bluetooth stack's uid, which a
+  not-exported dynamic receiver does not admit (only root/system/same-app); the routed-output callback and the 10 s
+  window work without it.
+- A failure line from an earlier sheet is cleared when the sheet opens again (a closed sheet's failure was the hint).
+- A message from the headset (`HEADSET_NO_CONTACT`) ends a tap's instant-switch hold like every message (`GuardsTest`
+  pins "every message ends the hold"); harmless.
+
+### Fix round after QA's code review (qa-52-b-code, 2026-10-20)
+
+- **1 (Medium)**: the attempt keeps the tapped room's output key (`fromKey`), and `headsetTapPlan(fromKey, currentKey,
+  routedNow)` sends `OUTPUT` only while that room is still the output (`PlayerHub.state.value.output.key` at the
+  routed moment): a room, the phone or wired headphones picked meanwhile keep their pick (two new cases, plus two more).
+- **2**: `openA2dp` closes a stray proxy in a `finally` - after the timeout and after a cancellation (a view model
+  cleared mid-wait), the wait marked abandoned so a later callback closes its own.
+- **3**: a "Bytt til" (make-active) attempt's window ends quietly back to "Bytt til" (the device is connected); only
+  its immediate `false` shows the failure line. The rows test changed with it, and a test for the immediate `false`.
+- **4**: `SourceScanTest` pins the `RECEIVER_EXPORTED` registration (BroadcastSkipPolicy's "Exported Denial" for uid
+  1002, the protected action), both unregister lines and the proxy's close in `onCleared`;
+  `assertEquals(10_000L, CONNECT_WINDOW_MS)`; a new tap clears the old failure (its own test).
+- **5**: `SourceScanTest` pins `getRemoteDevice` and `getMethod(...).invoke(` inside `callA2dp`'s `try`.
+- **6**: each attempt's 10 s window is a `Job` per address, cancelled when the attempt ends sooner; a tap on an
+  attempt still open asks again but keeps its window.
+- **7**: `PlayerScreen.kt` and `OutputRows.kt` are in the "no `Log.`" scan.
+
+Device checks owed (§4, the music half): on API 34/35/36 images - the sheet with the grant and Bluetooth on shows no
+extra row for no bonded device and nothing throws; the revoked/denied grant shows today's sheet; logcat's
+`Accessing hidden method Landroid/bluetooth/BluetoothA2dp;->connect` / `setActiveDevice` `(unsupported, reflection,
+allowed)`; the A2DP broadcast reaches the app (`RECEIVER_EXPORTED`). On the Jelly Star - "<name> · Koble til" connects
+and the music moves (phone renderer); a room playing + a switched-off headset: the room plays on and the line shows
+(and the 3 s hint with the sheet closed); the same with the headset on: the room hands over once routed; "Bytt til"
+on a second connected headset; Bluetooth off: no extra rows; a long name ellipsizes at 320 dp.

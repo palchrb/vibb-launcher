@@ -558,4 +558,17 @@ class FitTest {
         assertEquals(2, BAR_ELEVATION_DP)
         assertTrue(body(library, "fun NowPlayingBar(").contains("shadow(BAR_ELEVATION_DP.dp"))
     }
+
+    @Test
+    fun `d52 - a headset row's long name ellipsizes, its failure line takes two lines, the sheet's rows scroll`() {
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        val row = player.substringAfter("private fun SheetRow(").substringBefore("\n}\n")
+        // the texts sit in the weighted column between the 34 dp glyph and the check: a long name never pushes them out
+        assertTrue(row.contains("Column(Modifier.weight(1f)) {"))
+        assertTrue("the name: one line, ellipsized (Line's default)", row.contains("Line(title, 15, 800, Palette.white)"))
+        assertTrue(row.contains("Line(it, 12, 700, Palette.sub, maxLines = subtitleLines)"))
+        assertTrue(player.contains("SheetRow(Icons.headphones, name, sub, selected = false, subtitleLines = 2) { onHeadset(h) }"))
+        assertTrue(player.contains("Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())"))
+        assertTrue(OUTPUT_SHEET_MAX_SHARE in 0.5f..0.8f)
+    }
 }

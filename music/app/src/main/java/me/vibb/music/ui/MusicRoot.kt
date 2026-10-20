@@ -68,6 +68,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             message = null
         }
     }
+    // design 52: a headset tapped on a room was routed - the room hands over to it (headsetTapPlan)
+    LaunchedEffect(Unit) { vm.outputRequests.collect { actions.output(it) } }
     // design 50 §1.3: once the first snapshot and the stored row are in, the carousel opens on the last played tile
     LaunchedEffect(snap != null, row != null) {
         val s0 = snap ?: return@LaunchedEffect
@@ -152,9 +154,12 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                         onDismiss = { vm.sheet = null },
                     )
                     SheetKind.OUTPUT -> OutputSheet(
-                        hub.outputs, hub.rooms, hub.output,
-                        onOpen = actions::refreshRooms,
+                        hub.outputs, vm.headsetRows(), hub.rooms, hub.output,
+                        onOpen = { actions.refreshRooms(); vm.outputSheetOpened() },
+                        onClose = vm::outputSheetClosed,
                         onPick = { actions.output(it.key); vm.sheet = null },
+                        // design 52: a headset only connects (or is made active); the sheet stays open on "Kobler til…"
+                        onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },
                         onRescan = actions::rescanRooms,
                         onDismiss = { vm.sheet = null },
                     )
@@ -215,6 +220,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     PlayerHub.Message.NOT_DOWNLOADED -> R.string.not_downloaded
                     PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
                     PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed
+                    PlayerHub.Message.HEADSET_NO_CONTACT -> R.string.headset_no_contact
                     PlayerHub.Message.STAYED -> null // never set (above)
                 }
                 text?.let { Line(stringResource(it), 14, 800, Palette.fg, maxLines = 2, center = true) }

@@ -408,7 +408,9 @@ alive while the speaker plays because the renderer reports playing (§3.2); adop
 ## 5. UI, strings, the launcher
 
 ### 5.1 "Spill av på" (`OutputSheet`, `M/ui/PlayerScreen.kt:197-230`)
-Rows: "Telefonen" + connected headsets as today, then the Sonos rooms from `PlayerHub.State.rooms` (grouped rows as
+Rows (order since design 52: the phone, the routed outputs, the paired headsets not routed now - "Koble til" /
+"Bytt til", design 52 decision 3 -, the rooms, "Se etter høyttalere"): "Telefonen" + connected headsets as today, then
+the paired-not-routed headsets, then the Sonos rooms from `PlayerHub.State.rooms` (grouped rows as
 §2.1, icon a speaker glyph from `scripts/material-symbols.sh`, subtitle "Sonos" / "Sonos · svarer ikke" when
 `roomsStale`), then "Se etter høyttalere" (`ROOMS_RESCAN`; "Søker etter høyttalere…" with a spinner while
 `scanning`). Opening the sheet sends `ROOMS_REFRESH`. The player's bottom bar shows the room name highlighted like a

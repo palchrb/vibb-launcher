@@ -15,6 +15,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- The device owner grants it (QA #6); the app never asks the kid. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Design 52: "Spill av på" connects a paired headset (the A2DP proxy) - granted by the device owner while a
+         policy exists, never asked of the kid. No scan, no pairing, no BLUETOOTH_SCAN/BLUETOOTH_ADMIN here. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- The launcher's bridge (design 21 §2): a signature permission, both launcher build names
          (a debug/release mix then fails to bind, not to install). -->
     <uses-permission android:name="me.vibb.launcher.permission.MUSIC_BRIDGE" />

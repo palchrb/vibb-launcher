@@ -33,6 +33,7 @@
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
     <string name="cant_play_on_sonos">Can\'t play on Sonos</string>
     <string name="room_not_allowed">This room is no longer allowed</string>
+    <string name="headset_no_contact">Couldn\'t reach the headphones - are they switched on?</string>
 
     <!-- Player -->
     <string name="play">Play</string>
@@ -74,6 +75,11 @@
     <string name="output_wired_sub">Wired · connected</string>
     <string name="output_sonos">Sonos</string>
     <string name="output_sonos_stale">Sonos · not responding</string>
+    <!-- Design 52: a paired headset that isn't routed now -->
+    <string name="headset_connect">Connect</string>
+    <string name="headset_switch">Switch to</string>
+    <string name="headset_connecting">Connecting…</string>
+    <string name="headset_no_contact_row">Couldn\'t reach %1$s - is it switched on?</string>
     <string name="rooms_rescan">Look for speakers</string>
     <string name="rooms_scanning">Looking for speakers…</string>
     <string name="renderer_grouped_away">Playing in another group</string>
