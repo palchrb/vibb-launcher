@@ -769,6 +769,21 @@ findings, merge to `main`, full suite once.
   works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
   camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
   picture migration (0082) and the receipt rule.
+- **Design 42: the clock on the lock - a timer tile like iPhone's, from the system clock alone** (the user, 2026-10-20:
+  "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp for å slå av og på ... når man
+  trykker på den så vil den i såfall åpne appen"; and "bruker systemklokken for å ikke skape noe mulige
+  angrepsflater" - no Fossify exemption, no hosted widgets). Decided: (1) a next-alarm line on the glance page from
+  `AlarmManager.getNextAlarmClock()` ("Alarm 07:00", only when the creator is the system clock app, as the PIN lock's
+  exemption already requires); (2) a tile in the music tile's style while the system clock has an ongoing timer or
+  stopwatch notification (the lock's notification listener reads it already for the glance rows): the remaining time
+  counted down locally from the notification's chronometer base (`when`, `EXTRA_CHRONOMETER_COUNT_DOWN`), the title
+  ("Timer", "Stoppeklokke"), and at most two buttons that are the notification's own actions (Pause/Resume, Stop) fired
+  through their `PendingIntent` - no app opens, nothing the lock didn't already allow; a tap on the tile itself goes
+  the glance rows' way: the keypad first, then the clock app (`GlanceOpener`). The tile goes when the notification
+  goes. Nothing is drawn from another app's views (no `AppWidgetHost`): the tile is our text and our buttons. Fits
+  `glanceFit` like the time-rule card (PLAN "A time rule shows as a card"). Emulator: Google's clock (system);
+  Jelly Star: its clock package to be checked (the alarm exemption needs it). Launcher round with 41 and the lock
+  tile's flicker; a design note first.
 - **Design 43: the PWA's app shell - the tab bar no longer `position: fixed`** (the user, 2026-10-20, the installed
   app on the iPhone, iOS 26: after a while in the background, not every time, the tab bar "floats up the screen" as
   the page scrolls). The cause is the stale layout viewport a standalone app keeps after a resume: a `fixed; bottom: 0`
@@ -820,6 +835,17 @@ findings, merge to `main`, full suite once.
   token, `ready`, transfer, play) - expected; holding the web player longer on Wi-Fi + charger is a battery trade-off to
   weigh, not a bug. Music app (+ the queue call); design note, the usual process; the behaviour reference stays vibb's
   list. Music round after stable 0.4.0's blockers.
+  **46b - the cheaper road to the whole list: a reader account** (2026-10-20, the user: "er du helt sikker på at vi
+  ikke klarer å hente hele listen?"). Design 26c decision 1 says the code already allows it: "N accounts, one bound per
+  phone, any of them a reader" - the parent's account is left out by the user's own choice at the time ("ingen grunn
+  til at min konto skal involveres"), not by a technical limit. If the parent logs in their own account too, bound to
+  no phone, the server lists every playlist the parent owns or collaborates on with that token, and the kid's phone
+  plays the tracks by uri in list mode (playing by uri needs no playlist read) - the full list, free choice, pictures,
+  today's code. Costs: one of the app's 5 development-mode users (User Management in the dashboard), the parent's
+  refresh token sealed on the server like the children's (6-month expiry, the same warning), and the setup text
+  "never yours" rewritten to "your own account too, as a reader, if you want your playlists listed in full - it plays
+  on no phone" (design 47's "Plays on" picker shows it as "Plays on no phone"). The user decides whether to log their
+  account in; 46 (the queue's next 20) stays the answer for lists nobody logged in can read.
 - **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
   reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
   tannhjul ... for å stille inn ... notification counter bør nullstilles når man har åpnet den innboxen; nå må man
