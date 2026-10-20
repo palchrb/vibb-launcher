@@ -357,7 +357,9 @@
          what TalkBack reads for it. -->
     <string name="lock_alarm">Alarm %1$s</string>
     <string name="lock_timer">Timer</string>
-    <string name="lock_timer_described">Timer, %1$s</string>
+    <string name="lock_stopwatch">Stopwatch</string>
+    <string name="lock_timer_stop">Stop</string>
+    <string name="lock_timer_described">%1$s, %2$s</string>
     <string name="lock_torch_off">Off</string>
     <string name="lock_media_back">Back</string>
     <!-- Design 25: the lock's glance page - its notification rows and the "more" line. -->

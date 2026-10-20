@@ -493,13 +493,16 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   hidden without a flash unit or after a `CAMERA_DISABLED` refusal while LOCKED), toggles the torch and opens nothing.
 - **The clock on the lock** (design 42, `docs/design/42-lock-clock.md`): the catalog's clock app is Fossify Clock, known
   by package and pinned signer (`lock/ClockApp`, `verified` refreshed off the main thread at start and on its package
-  changes). `PinLockRuntime.clockPackages()` (the system clock + Fossify while verified) opens the alarm exemption
-  (`rememberAlarm` takes the set) and, with the kiosk off, `pinLockHelpers(clockApp)` lets its alarm screen up. The
-  next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h; part of the fit's `date`).
-  `badges/ClockReader` reads only Fossify's ongoing notification's title and text (`clockCandidate` first) into
-  `ClockTile.parse`; `lock/ClockLockPanel` shows `lock_timer_tile` and counts down locally between updates; its tap is
-  `GlanceTarget.ClockApp` through the keypad and the opener's launch. `glanceFit(..., clock)`: `clockFull`, the timer
-  kept before the music tile's size and the rows.
+  changes). `PinLockRuntime.clockPackages()` (the system clock - a system `ACTION_SHOW_ALARMS` handler - + Fossify while
+  verified) opens the alarm exemption (`rememberAlarm` takes the set) and, with the kiosk off, `pinLockHelpers(clockApp)`
+  lets its alarm screen up. The next alarm under the date (`lock_glance_alarm`, pure `glanceAlarm`, weekday past 24 h;
+  part of the fit's `date`). `badges/ClockReader` reads only Fossify's three channels (`clockKind`: running timer,
+  stopwatch, ended timer) - title and text into `ClockTile.parse`, and an ended timer's single broadcast action
+  (`clockStopAction`, never an activity); `lock/ClockLockPanel` shows `lock_timer_tile` and moves the time locally
+  (down, or up for the stopwatch); an ended timer shows "Tiden er ute" and "Stopp", sent only by `lock/ClockActions`
+  with background starts denied. The tile's tap is `GlanceTarget.ClockApp` through the keypad and the opener's launch.
+  `glanceFit(..., clock)`: `clockFull`, the timer kept before the music tile's size and the rows; each tile's
+  callbacks render that tile alone (`musicDirty`/`clockDirty`).
 - **Not device-tested**: design 25 §9 and its "Implementation status" checklist (Jelly Star: Element X's shape and its room opening from the lock in both kiosk modes, suspension during bedtime, the emulator console capturing a secure window, the API 34/35 send, TalkBack).
 
 ## Background connection (design 19b phase 1, `docs/design/19b-doze-exemption.md`, at the monorepo root)

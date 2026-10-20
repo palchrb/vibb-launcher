@@ -297,7 +297,9 @@
          what TalkBack reads for it. -->
     <string name="lock_alarm">Alarm %1$s</string>
     <string name="lock_timer">Timer</string>
-    <string name="lock_timer_described">Timer, %1$s</string>
+    <string name="lock_stopwatch">Stoppeklokke</string>
+    <string name="lock_timer_stop">Stopp</string>
+    <string name="lock_timer_described">%1$s, %2$s</string>
     <string name="lock_torch_off">Av</string>
     <string name="lock_media_back">Tilbake</string>
     <!-- Design 25: låseskjermens første side - varslene og «flere»-linjen. -->

@@ -11,12 +11,13 @@ import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 
 /**
  * The glance page's timer tile (design 42 §1.4): binds [ClockReader.current] - the pinned clock
- * app's running timer, parsed from its notification's title - into `lock_timer_tile`, counts it down
- * locally once a second between the app's own updates ([clockTileTime]; every update corrects it,
- * it stops at 0:00), and tells the panel when the timer came, went or changed ([onChange]; the panel
- * coalesces and renders the tile alone, round 6's rule). The panel decides whether it shows ([show]).
- * The tick sets only the time's text: no layout. It opens nothing: the tile's tap is the panel's
- * (the keypad first, `GlanceTarget.ClockApp`).
+ * app's running timer, stopwatch or ended timer, parsed from its notification - into
+ * `lock_timer_tile`, moves the time locally once a second between the app's own updates
+ * ([clockTileTime]: down for a timer, stopping at 0:00; up for the stopwatch; every update corrects
+ * it), and tells the panel when it came, went or changed ([onChange]; the panel coalesces and renders
+ * this tile alone, round 6's rule). An ended timer shows its text and the "Stopp" button (wired by
+ * the panel to `ClockActions`). The panel decides whether the tile shows ([show]). The tick sets only
+ * the time's text and the description: no layout. It opens nothing itself.
  */
 class ClockLockPanel(
     private val activity: Activity,
@@ -30,7 +31,7 @@ class ClockLockPanel(
     private val ticker = Runnable { tick() }
     private val changed: () -> Unit = { onChange() }
 
-    /** Whether a timer runs now (the panel's fit input). */
+    /** Whether the clock app shows something now (the panel's fit input). */
     val up: Boolean get() = ClockReader.current != null
 
     fun start() {
@@ -52,8 +53,13 @@ class ClockLockPanel(
         shown = visible && tile != null
         pageShown = page
         glance.lockTimerTile.visibility = if (shown) View.VISIBLE else View.GONE
-        glance.lockTimerText.text = tile?.text
-        glance.lockTimerText.visibility = if (tile?.text != null) View.VISIBLE else View.GONE
+        val ended = tile?.kind == ClockKind.ENDED
+        glance.lockTimerLabel.setText(if (tile?.kind == ClockKind.STOPWATCH) R.string.lock_stopwatch else R.string.lock_timer)
+        // An ended timer's text is its big line; the small one is for a running timer's "1 timer er i gang".
+        val small = tile?.text?.takeIf { !ended }
+        glance.lockTimerText.text = small
+        glance.lockTimerText.visibility = if (small != null) View.VISIBLE else View.GONE
+        glance.lockTimerStop.visibility = if (ended && ClockReader.stopIntent != null) View.VISIBLE else View.GONE
         tick()
     }
 
@@ -63,7 +69,7 @@ class ClockLockPanel(
         val now = SystemClock.elapsedRealtime()
         val time = clockTileTime(tile, ClockReader.receivedAtMs, now)
         glance.lockTimerTime.text = time
-        glance.lockTimerTile.contentDescription = activity.getString(R.string.lock_timer_described, time.orEmpty())
+        glance.lockTimerTile.contentDescription = activity.getString(R.string.lock_timer_described, glance.lockTimerLabel.text, time.orEmpty())
         if (clockTicks(tile, ClockReader.receivedAtMs, now, shown && pageShown)) handler.postDelayed(ticker, 1_000)
     }
 }

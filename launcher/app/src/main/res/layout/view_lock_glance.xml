@@ -298,10 +298,13 @@
             android:tint="@color/kid_ground" />
     </LinearLayout>
 
-    <!-- The timer tile (design 42 §1.4), in the music tile's style: the glyph and our own label
-         "Timer", the remaining time large (counted down locally between the clock app's updates; one
-         line in a width its parent fixes, tabular figures - a tick swaps the text without a layout) and
-         the app's text, cleaned. No buttons; the tap is the keypad first, then the clock app. -->
+    <!-- The timer tile (design 42 §1.4), in the music tile's style: the timer glyph and our own label
+         ("Timer", or "Stoppeklokke" for the stopwatch), the time large (moved locally between the clock
+         app's updates - down for a timer, up for the stopwatch; one line in a width its parent fixes,
+         tabular figures - a tick swaps the text without a layout) and the app's text, cleaned. A timer
+         that ended shows its text ("Tiden er ute") in the time's place and one round button, "Stopp",
+         that fires the notification's broadcast (lock/ClockActions) - nothing else. The tile's own tap
+         is the keypad first, then the clock app. -->
     <LinearLayout
         android:id="@+id/lock_timer_tile"
         android:layout_width="match_parent"
@@ -310,57 +313,79 @@
         android:background="@drawable/bg_music_tile"
         android:clickable="true"
         android:focusable="true"
-        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:padding="12dp"
         android:visibility="gone">
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:layout_weight="1"
+            android:orientation="vertical">
 
-            <ImageView
-                android:layout_width="18dp"
-                android:layout_height="18dp"
-                android:importantForAccessibility="no"
-                android:src="@drawable/lock_glyph_hourglass"
-                android:tint="@color/kid_accent" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/clock_glyph_timer"
+                    android:tint="@color/kid_accent" />
+
+                <TextView
+                    android:id="@+id/lock_timer_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:fontFamily="@font/nunito_bold"
+                    android:importantForAccessibility="no"
+                    android:text="@string/lock_timer"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="13sp" />
+            </LinearLayout>
 
             <TextView
-                android:layout_width="wrap_content"
+                android:id="@+id/lock_timer_time"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:fontFamily="@font/nunito_bold"
+                android:fontFeatureSettings="tnum"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="24sp" />
+
+            <TextView
+                android:id="@+id/lock_timer_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
                 android:fontFamily="@font/nunito_bold"
                 android:importantForAccessibility="no"
-                android:text="@string/lock_timer"
+                android:maxLines="1"
                 android:textColor="@color/kid_core_dim"
                 android:textSize="13sp" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/lock_timer_time"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:ellipsize="end"
-            android:fontFamily="@font/nunito_bold"
-            android:fontFeatureSettings="tnum"
-            android:importantForAccessibility="no"
-            android:maxLines="1"
-            android:textColor="@color/kid_ink"
-            android:textSize="24sp" />
-
-        <TextView
-            android:id="@+id/lock_timer_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:fontFamily="@font/nunito_bold"
-            android:importantForAccessibility="no"
-            android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
-            android:textSize="13sp" />
+        <ImageButton
+            android:id="@+id/lock_timer_stop"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="12dp"
+            android:background="@drawable/bg_music_play"
+            android:contentDescription="@string/lock_timer_stop"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/clock_glyph_stop"
+            android:tint="@color/kid_ground"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- The rows (view_lock_glance_row.xml, added by the panel, 8 dp apart) and the "more" line right

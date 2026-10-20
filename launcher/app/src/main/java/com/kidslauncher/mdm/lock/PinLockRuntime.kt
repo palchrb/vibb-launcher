@@ -471,13 +471,7 @@ object PinLockRuntime {
         // Off the main thread: the clock app for the alarm exemption, and the kiosk-off lock
         // helpers, so a screen-off never waits for PackageManager (qa-10-code #7).
         CoroutineScope(Dispatchers.IO).launch {
-            systemClockPackage = try {
-                com.kidslauncher.mdm.server.alarmAppPackage(app)?.takeIf { pkg ->
-                    (app.packageManager.getApplicationInfo(pkg, 0).flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
-                }
-            } catch (e: Exception) {
-                null
-            }
+            systemClockPackage = systemClockApp(app)
             ClockApp.refresh(app)
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
@@ -1314,6 +1308,20 @@ object PinLockRuntime {
      * exemption (qa-10-code #4), as do the pinned clock app's ([clockPackages]). */
     @Volatile
     private var systemClockPackage: String? = null
+
+    /**
+     * The system clock app: a system handler of `AlarmClock.ACTION_SHOW_ALARMS` - never the next
+     * alarm's creator, which may be the catalog's clock app; with that one holding the next alarm at
+     * process start the system clock's own alarms lost the exemption (qa-r6-b-code L8).
+     */
+    private fun systemClockApp(context: Context): String? = try {
+        context.packageManager.queryIntentActivities(
+            android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS),
+            android.content.pm.PackageManager.ResolveInfoFlags.of(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY.toLong()),
+        ).map { it.activityInfo.packageName }.firstOrNull { it != "android" }
+    } catch (e: Exception) {
+        null
+    }
 
     /** The clock apps whose alarms show over the lock and under the glance page's date (design 42
      * §1.2): the system clock app and Fossify Clock while its signer is verified. Read-only. */

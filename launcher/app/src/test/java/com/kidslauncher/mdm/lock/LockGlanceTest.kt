@@ -387,7 +387,7 @@ class LockMediaGuardTest {
         assertEquals(
             setOf(
                 "lock_glance_root", "lock_media_previous", "lock_media_play", "lock_media_next", "lock_media_compact_play",
-                "lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile",
+                "lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop",
             ),
             touchable,
         )
@@ -402,7 +402,7 @@ class LockMediaGuardTest {
             assertTrue("${binding(id)} is wired", panel.contains("glance.${binding(id)}.setOnClickListener"))
         }
         val glance = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        for (id in listOf("lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile")) {
+        for (id in listOf("lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop")) {
             assertTrue("${binding(id)} is wired", glance.contains("glance.${binding(id)}.setOnClickListener"))
         }
         assertFalse(glance.contains("glance.root.setOnClickListener"))
@@ -573,6 +573,20 @@ class LockGlanceLayoutTest {
         // music + 2 rows mockup A (3, 475).
         fit(true, 1, available(24f)).let { assertEquals(3, it.candidate); assertEquals(GlanceTileSize.COMPACT, it.tile); assertEquals(411f, total(it), 0.5f) }
         fit(true, 2, available(24f)).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(475f, total(it), 0.5f) }
+    }
+
+    @Test
+    fun `the alarm line under the date costs its height in the fit (qa-r6-b-code L7)`() {
+        val alarm = withMargins("lock_glance_alarm")
+        assertEquals("2 dp + 13 sp x 1.4", 20.2f, alarm, 0.01f)
+        val withAlarm = heights.copy(date = heights.date + alarm)
+        // 473 dp: with a morning alarm set, no music and 4 rows take the small clock (460.2 > 449) ...
+        glanceFit(available(48f), withAlarm, false, 4).let { assertEquals(listOf(2, 3, 1), listOf(it.candidate, it.rows, it.more)) }
+        // ... and the full music tile alone too (464 > 449).
+        assertEquals(2, glanceFit(available(48f), withAlarm, true, 0).candidate)
+        // 497 dp: both keep the big clock.
+        assertEquals(1, glanceFit(available(24f), withAlarm, false, 4).candidate)
+        assertEquals(1, glanceFit(available(24f), withAlarm, true, 0).candidate)
     }
 
     /** The width of a horizontal row's fixed children with their margins (dp); [text] for a

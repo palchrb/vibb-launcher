@@ -262,19 +262,21 @@ class LockGlanceGuardTest {
     }
 
     @Test
-    fun `the clock reader reads only the pinned clock app's timer title and text (design 42 §2)`() {
+    fun `the clock reader reads only the pinned clock app's three channels - title, text and the ended timer's action (design 42 §2)`() {
         val clockReader = code("ClockReader.kt")
-        // Only after the package, the signer and the ongoing flag (clockCandidate) are the extras read.
-        assertTrue(clockReader.contains("clockCandidate(sbn.packageName, ClockApp.verified, "))
+        // Only after the package, the signer and the channel (clockKind) is anything read.
+        assertTrue(clockReader.contains("clockKind(sbn.packageName, ClockApp.verified, n.channelId) ?: return null"))
         assertEquals(setOf("EXTRA_TITLE", "EXTRA_TEXT"), Regex("""Notification\.(EXTRA_\w+)""").findAll(clockReader).map { it.groupValues[1] }.toSet())
         assertEquals(2, Regex("""\.getCharSequence\(""").findAll(clockReader).count())
+        // The actions only of an ended timer, judged by the pure clockStopAction (a broadcast, never an activity).
+        assertTrue(clockReader.contains("if (kind == ClockKind.ENDED) n.actions.orEmpty().map { it.actionIntent } else emptyList()"))
+        assertTrue(clockReader.contains("clockStopAction(kind, intents.map { ClockAction(it?.isActivity != false, it?.isBroadcast == true) })"))
         for (forbidden in listOf(
-            "actions", "contentIntent", "fullScreenIntent", "deleteIntent", "contentView", "RemoteViews", "getParcelable",
-            ".send(", "startActivity", "Intent(", "getString(", "getPrefs", "SharedPreferences", "cancelNotification",
+            "contentIntent", "fullScreenIntent", "deleteIntent", "contentView", "RemoteViews", "getParcelable", "remoteInputs",
+            ".send(", "startActivity", "Intent(", "getString(", "SharedPreferences", "cancelNotification",
         )) {
             assertFalse("ClockReader uses $forbidden", clockReader.contains(forbidden))
         }
-        // It logs the exception class only.
         for (line in Regex("""\bLog\.\w\(.*""").findAll(clockReader).map { it.value }) {
             val interpolations = Regex("""\$\{[^}]*\}|\$[A-Za-z_]+""").findAll(line).map { it.value }.toSet()
             assertEquals(line, setOf("\${e.javaClass.simpleName}"), interpolations)
@@ -283,6 +285,19 @@ class LockGlanceGuardTest {
         for (call in listOf("ClockReader.connected(active)", "ClockReader.disconnected()", "ClockReader.posted(it)", "ClockReader.removed(it)")) {
             assertTrue(call, listener.contains(call))
         }
+    }
+
+    @Test
+    fun `Stopp sends one broadcast with background starts denied, never an activity (design 42)`() {
+        val actions = code("ClockActions.kt")
+        assertEquals(1, Regex("""\.send\(""").findAll(actions).count())
+        assertTrue(actions.contains("if (intent == null || intent.isActivity || !intent.isBroadcast) return"))
+        assertTrue(actions.contains(".setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_DENIED)"))
+        assertTrue(actions.contains("intent.send(context, 0, null, null, null, null, options)"))
+        assertTrue(body(actions, "stop").contains("catch (e: Throwable)"))
+        // The panel only hands the reader's intent over; it sends nothing itself.
+        assertTrue(panel.contains("glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }"))
+        assertFalse(panel.contains(".send("))
     }
 
     @Test
@@ -297,6 +312,33 @@ class LockGlanceGuardTest {
         }
         // The clock app opens only through the opener's existing launch, after the code.
         assertEquals(2, Regex("""\bstartActivity\(""").findAll(code("GlanceOpener.kt")).count())
+    }
+
+    @Test
+    fun `the clock app counts only with its pinned signer - in every glue that decides it (qa-r6-b-code M3)`() {
+        // ClockApp.installed goes through the signer check.
+        val installed = body(code("ClockApp.kt"), "installed")
+        assertTrue(installed, installed.contains("= clockAppVerified("))
+        assertTrue(installed.contains("PackageManager.GET_SIGNING_CERTIFICATES"))
+        // The alarm exemption's clock packages: Fossify only while verified.
+        assertTrue(code("PinLockRuntime.kt").contains("fun clockPackages(): Set<String> = lockClockPackages(systemClockPackage, ClockApp.verified)"))
+        // The kiosk-off helper pin: Fossify only when installed with the signer.
+        assertTrue(code("AppEnforcer.kt").contains("clockApp = com.kidslauncher.mdm.lock.ClockApp.PACKAGE.takeIf { com.kidslauncher.mdm.lock.ClockApp.installed(context) },"))
+        // And the system clock is resolved from the system's own handlers, never the next alarm's creator (L8).
+        val runtime = code("PinLockRuntime.kt")
+        assertTrue(runtime.contains("systemClockPackage = systemClockApp(app)"))
+        assertTrue(body(runtime, "systemClockApp").contains("MATCH_SYSTEM_ONLY"))
+    }
+
+    @Test
+    fun `the tiles' callbacks go through the coalescer, never a whole render (qa-r6-b-code L5)`() {
+        assertTrue(panel.contains("private val music = MusicLockPanel(activity, glance) { musicDirty = true; tileChanges.request() }"))
+        assertTrue(panel.contains("private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }"))
+        assertTrue(panel.contains("GlanceCoalescer({ run -> Choreographer.getInstance().postFrameCallback { run() } }) { tileChanged() }"))
+        // A tick of one tile never shows the other: tileChanged renders only the source that changed.
+        val changed = body(panel, "tileChanged")
+        assertTrue(changed.contains("if (musicChanged) {") && changed.contains("if (clockChanged) {"))
+        assertFalse(changed.contains("renderNow()"))
     }
 
     @Test

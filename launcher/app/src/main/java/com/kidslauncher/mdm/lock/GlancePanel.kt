@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
+import com.kidslauncher.mdm.badges.ClockReader
 import com.kidslauncher.mdm.badges.GlanceLevel
 import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
@@ -98,10 +99,13 @@ class GlancePanel(
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
-    /** r6 §2: the session's and the timer's callbacks of one frame render the tiles once, alone. */
+    /** r6 §2: the session's and the timer's callbacks of one frame render once - each source's tile
+     * alone (qa-r6-b-code L4: the clock app posts every second, the music tile isn't touched for it). */
     private val tileChanges: GlanceCoalescer = GlanceCoalescer({ run -> Choreographer.getInstance().postFrameCallback { run() } }) { tileChanged() }
-    private val music = MusicLockPanel(activity, glance) { tileChanges.request() }
-    private val clock = ClockLockPanel(activity, glance) { tileChanges.request() }
+    private var musicDirty = false
+    private var clockDirty = false
+    private val music = MusicLockPanel(activity, glance) { musicDirty = true; tileChanges.request() }
+    private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }
     private var started = false
 
     /** The stage (memory only). */
@@ -159,6 +163,7 @@ class GlancePanel(
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
         glance.lockTimerTile.setOnClickListener { tapClock() }
+        glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
         openAction(glance.lockTimerTile)
         // The clock app's text, like a row's: only accessibility tools read it.
         sensitive(glance.lockTimerTile)
@@ -323,17 +328,28 @@ class GlancePanel(
      * tile's height changed (a two-line title, the entry line coming or going; [glanceRefitDue]).
      */
     private fun tileChanged() = guarded("tile") {
+        val musicChanged = musicDirty
+        val clockChanged = clockDirty
+        musicDirty = false
+        clockDirty = false
         if (!started) return@guarded
-        val wasUp = tileUp
-        val clockWasUp = clockUp
-        tileUp = glanceTile(music.lookUp())
-        clockUp = clock.up
         val page = state.stage == LockStage.GLANCE
-        music.show(shownTile(), page)
-        clock.show(shownClock(), page)
-        val width = pageWidth()
-        val clockPx = if (fit?.clock == true && width != null) withMargins(glance.lockTimerTile, width).roundToInt() else null
-        if (glanceRefitDue(wasUp, tileUp, fitTilePx, shownTilePx()) || glanceRefitDue(clockWasUp, clockUp, fitClockPx, clockPx)) {
+        var refit = false
+        if (musicChanged) {
+            val wasUp = tileUp
+            tileUp = glanceTile(music.lookUp())
+            music.show(shownTile(), page)
+            refit = glanceRefitDue(wasUp, tileUp, fitTilePx, shownTilePx())
+        }
+        if (clockChanged) {
+            val wasUp = clockUp
+            clockUp = clock.up
+            clock.show(shownClock(), page)
+            val width = pageWidth()
+            val clockPx = if (fit?.clock == true && width != null) withMargins(glance.lockTimerTile, width).roundToInt() else null
+            refit = glanceRefitDue(wasUp, clockUp, fitClockPx, clockPx) || refit
+        }
+        if (refit) {
             fitFor = 0
             fitNow()
         }

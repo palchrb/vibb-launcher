@@ -147,3 +147,45 @@ same, plus Fossify's alarm ringing over the lock and dismissable.
 - **Device checks owed**: §4 - first the full-screen-intent check above; then the timer counting down and following
   the app, the tile leaving at the timer's end, "Alarm tor 07:00", the tap (keypad, then Fossify), Google's clock
   showing nothing; on the emulator also with the kiosk off (Fossify's alarm over the lock through the new helper pin).
+
+### Fix round after qa-r6-b-code.md (2026-10-20, branch `r6-b`)
+
+- **Fossify's notifications, from its source** (FossifyOrg/Clock main, read by the coordinator; the decision that
+  replaces the QA's M2 step-aside): a running timer is channel `simple_alarm_timer` (ongoing, title = the remaining
+  time, text "N timer er i gang"); the stopwatch `simple_alarm_stopwatch` (title = the elapsed time, text
+  "Stoppeklokke"); the timer's end - fired from the app's own CountDownTimer, no `AlarmManager` entry (the user's
+  `dumpsys alarm` probe: only the alarm clock's two entries) - is a **notification only**, no activity and no
+  full-screen intent: channel `simple_timer_channel_<sound>_<millis>`, IMPORTANCE_HIGH, an insistent USAGE_ALARM sound,
+  category EVENT, title the timer's label or "Timer", text "Tiden er ute", **one action "Dismiss", a broadcast to its
+  HideTimerReceiver** (hides it and resets the timer), auto-hidden after `timerMaxReminderSecs`. Alarms are
+  `Alarm_Channel`, a full-screen intent to AlarmActivity and `setAlarmClock` - today's exemption path. So the timer never
+  reaches the alarm line and the lock needs no refront change for it: nothing over the lock moves.
+- **M1, the channels** (pure `clockKind(package, verified, channelId)`): `simple_alarm_timer` = TIMER (counts down, our
+  label "Timer"), `simple_alarm_stopwatch` = STOPWATCH (counts **up**, our label "Stoppeklokke"/"Stopwatch"), a channel
+  starting with `simple_timer_channel_` = ENDED; `Alarm_Channel`, any other channel, no channel, a wrong signer or
+  another package: nothing. `ClockReader` keeps one entry per notification key and shows one (`clockShown`: ended, then
+  running, then the stopwatch).
+- **The ended timer**: the tile shows "Timer", the cleaned text ("Tiden er ute") as its big line, and one round button
+  **"Stopp"** (`lock_timer_stop`, the peach disc with Material Symbols `stop`). It is offered only when the
+  notification has exactly one action and that action's intent is a broadcast and not an activity (pure
+  `clockStopAction`; read by `ClockReader` only for ENDED). A tap sends it from `lock/ClockActions.stop` - the glance
+  code's only `.send(`, re-checking `isActivity`/`isBroadcast`, with `ActivityOptions`
+  `setPendingIntentBackgroundActivityStartMode(MODE_BACKGROUND_ACTIVITY_START_DENIED)`; it never throws. An activity
+  action is never offered. The tile goes when the notification goes (the Dismiss, or Fossify's auto-hide).
+- **M3**: `LockGlanceGuardTest` pins the three signer checks in the glue - `ClockApp.installed` through
+  `clockAppVerified`, `clockPackages()` passing `ClockApp.verified`, the helper pin's `takeIf { ClockApp.installed }`.
+- **L4/L5**: the coalescer carries which source changed (`musicDirty`, `clockDirty`); a clock update renders and
+  measures the timer tile alone, never the music tile. The guard pins both panels' callbacks to `tileChanges.request()`
+  and that `tileChanged` renders no page.
+- **L7**: `LockGlanceLayoutTest` adds the alarm line (20.2 dp) to the date term: at 473 dp no music with 4 rows and the
+  full music tile alone take the small clock (2); at 497 dp both keep the big one.
+- **L8**: the system clock is a `MATCH_SYSTEM_ONLY` handler of `ACTION_SHOW_ALARMS` (`PinLockRuntime.systemClockApp`),
+  never the next alarm's creator - with Fossify holding the next alarm at process start the system clock's own alarms
+  kept the exemption.
+- **Nits**: the tile's glyph is Material Symbols `timer` (`clock_glyph_timer`, and `clock_glyph_stop` for Stopp) through
+  `scripts/material-symbols.sh`'s new `CLOCK_GLYPHS`; `ClockReader`'s doc names `LockGlanceGuardTest`.
+- **Left as is** (the user's call, the coordinator's word): L6, the compact music tile's time line.
+- **Device checks added**: a 2-minute timer ending with the screen LOCKED rings; the tile shows "Tiden er ute" with
+  Stopp; Stopp silences it and the tile goes; the lock never moved. The stopwatch running with Fossify in the background
+  shows "Stoppeklokke" counting up; an alarm ringing shows no tile (its own screen, the exemption).
+

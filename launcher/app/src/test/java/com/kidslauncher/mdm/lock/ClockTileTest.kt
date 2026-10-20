@@ -6,44 +6,72 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Design 42 §1.3-1.4: the timer's title parsed and counted down, the alarm line (pure, lock/ClockTile.kt). */
+/** Design 42 §1.3-1.4: Fossify Clock's three notification shapes, the time moved locally, the ended
+ * timer's one broadcast action, the alarm line (pure, lock/ClockTile.kt). */
 class ClockTileTest {
     @Test
-    fun `the title is the remaining time - else shown as is`() {
+    fun `only the pinned clock app's three channels are read (qa-r6-b-code M1)`() {
+        val pkg = ClockApp.PACKAGE
+        assertEquals(ClockKind.TIMER, clockKind(pkg, verified = true, channelId = "simple_alarm_timer"))
+        assertEquals(ClockKind.STOPWATCH, clockKind(pkg, verified = true, channelId = "simple_alarm_stopwatch"))
+        assertEquals(ClockKind.ENDED, clockKind(pkg, verified = true, channelId = "simple_timer_channel_content://alarm_1729400000000"))
+        // A ringing alarm, an upcoming-alarm or any other channel, no channel: nothing.
+        for (channel in listOf("Alarm_Channel", "upcoming_alarms", "simple_alarm_timerX", "simple_timer", null)) {
+            assertNull("$channel", clockKind(pkg, verified = true, channelId = channel))
+        }
+        assertNull("a wrong signer", clockKind(pkg, verified = false, channelId = "simple_alarm_timer"))
+        assertNull("the right channel from another package", clockKind("com.example.clock", verified = true, channelId = "simple_alarm_timer"))
+        // Several at once: an ended timer first, then a running one, then the stopwatch.
+        assertEquals(ClockKind.ENDED, clockShown(listOf(ClockKind.STOPWATCH, ClockKind.ENDED, ClockKind.TIMER)))
+        assertEquals(ClockKind.TIMER, clockShown(listOf(ClockKind.STOPWATCH, ClockKind.TIMER)))
+        assertNull(clockShown(emptyList()))
+    }
+
+    @Test
+    fun `the title is the time - else shown as is - and an ended timer shows its text`() {
         assertEquals(672L, clockSeconds("11:12"))
         assertEquals(3900L, clockSeconds("1:05:00"))
         assertEquals(9L, clockSeconds("0:09"))
         for (garbage in listOf("", "Timer", "11:2", "1:60", "12:34:56:78", "-0:09", "11 :12")) assertNull(garbage, clockSeconds(garbage))
-        val parsed = ClockTile.parse("11:12", "1 timer er i gang")
-        assertEquals(ClockTile(672, "11:12", "1 timer er i gang"), parsed)
-        val text = ClockTile.parse("Pasta ‮er klar", null)
-        assertNull(text.remainingS)
+        assertEquals(ClockTile(ClockKind.TIMER, 672, "11:12", "1 timer er i gang"), ClockTile.parse(ClockKind.TIMER, "11:12", "1 timer er i gang"))
+        val text = ClockTile.parse(ClockKind.TIMER, "Pasta ‮er klar", null)
+        assertNull(text.seconds)
         assertEquals("not a time: the cleaned title", "Pasta er klar", text.title)
         assertFalse("redacted", text.toString().contains("Pasta"))
+        // The timer's end: a label such as "7:30" is no time; the big line is "Tiden er ute".
+        val ended = ClockTile.parse(ClockKind.ENDED, "7:30", "Tiden er ute")
+        assertNull(ended.seconds)
+        assertEquals("Tiden er ute", clockTileTime(ended, 0, 99_000))
+        assertFalse(clockTicks(ended, 0, 1_000, shown = true))
     }
 
     @Test
-    fun `the time counts down locally between the app's updates, which correct it, and stops at 0`() {
-        val tile = ClockTile(672, "11:12", null)
-        assertEquals(672L, clockRemainingNow(tile, receivedAtMs = 10_000, nowMs = 10_999))
-        assertEquals(671L, clockRemainingNow(tile, 10_000, 11_000))
+    fun `a timer counts down and stops at 0, the stopwatch counts up - each update corrects it`() {
+        val tile = ClockTile(ClockKind.TIMER, 672, "11:12", null)
+        assertEquals(672L, clockSecondsNow(tile, receivedAtMs = 10_000, nowMs = 10_999))
+        assertEquals(671L, clockSecondsNow(tile, 10_000, 11_000))
         assertEquals("11:07", clockTileTime(tile, 10_000, 15_500))
-        // The app's next update (late by a second here) is the truth again.
-        assertEquals(670L, clockRemainingNow(ClockTile(670, "11:10", null), 12_000, 12_000))
-        assertEquals(0L, clockRemainingNow(tile, 10_000, 10_000 + 700_000))
+        assertEquals("the next update is the truth", 670L, clockSecondsNow(ClockTile(ClockKind.TIMER, 670, "11:10", null), 12_000, 12_000))
+        assertEquals(0L, clockSecondsNow(tile, 10_000, 10_000 + 700_000))
         assertFalse("stops at 0:00", clockTicks(tile, 10_000, 10_000 + 700_000, shown = true))
         assertTrue(clockTicks(tile, 10_000, 11_000, shown = true))
         assertFalse("not on the page", clockTicks(tile, 10_000, 11_000, shown = false))
-        assertEquals("no time: the title as is", "Pasta", clockTileTime(ClockTile(null, "Pasta", null), 0, 5_000))
-        assertFalse(clockTicks(ClockTile(null, "Pasta", null), 0, 5_000, shown = true))
+        val stopwatch = ClockTile(ClockKind.STOPWATCH, 1705, "28:25", "Stoppeklokke")
+        assertEquals("28:30", clockTileTime(stopwatch, 0, 5_000))
+        assertTrue("it never ends", clockTicks(stopwatch, 0, 10_000_000, shown = true))
+        assertEquals("no time: the title as is", "Pasta", clockTileTime(ClockTile(ClockKind.TIMER, null, "Pasta", null), 0, 5_000))
     }
 
     @Test
-    fun `only the pinned clock app's ongoing notification is read`() {
-        assertTrue(clockCandidate(ClockApp.PACKAGE, verified = true, ongoing = true))
-        assertFalse("a wrong signer", clockCandidate(ClockApp.PACKAGE, verified = false, ongoing = true))
-        assertFalse("another package", clockCandidate("com.google.android.deskclock", verified = true, ongoing = true))
-        assertFalse("not a running timer", clockCandidate(ClockApp.PACKAGE, verified = true, ongoing = false))
+    fun `Stopp is the ended timer's one broadcast action - never an activity`() {
+        val broadcast = ClockAction(isActivity = false, isBroadcast = true)
+        assertEquals(0, clockStopAction(ClockKind.ENDED, listOf(broadcast)))
+        assertNull("an activity", clockStopAction(ClockKind.ENDED, listOf(ClockAction(isActivity = true, isBroadcast = false))))
+        assertNull("a service", clockStopAction(ClockKind.ENDED, listOf(ClockAction(isActivity = false, isBroadcast = false))))
+        assertNull("two actions", clockStopAction(ClockKind.ENDED, listOf(broadcast, broadcast)))
+        assertNull("none", clockStopAction(ClockKind.ENDED, emptyList()))
+        assertNull("a running timer has no button", clockStopAction(ClockKind.TIMER, listOf(broadcast)))
+        assertNull(clockStopAction(ClockKind.STOPWATCH, listOf(broadcast)))
     }
 
     @Test
