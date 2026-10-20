@@ -30,6 +30,17 @@ built only if the chronometer extras are there. If the clock draws its own view 
 back to the alarm line alone and the timer tile is dropped - the user decides then. The implementer does not start 42
 before the probe's result is in this note.
 
+## 0c. The probe's result (2026-10-20, the emulator, Google's clock `com.google.android.deskclock`)
+
+A running stopwatch's notification: `contentView=com.google.android.deskclock/0x7f0e0044` (the clock's own layout),
+`android.showChronometer=false`, `android.title=null`, `android.text=null`, flags `AUTO_CANCEL|LOCAL_ONLY` (not
+ongoing), channel "Stopwatch v2", two actions. So the time lives inside a foreign RemoteViews only: **the timer tile
+with a countdown and the notification's buttons cannot be built against the system clock without rendering another
+app's view, which this design refuses.** What stands: §0's alarm line (AlarmManager, no notification involved) and,
+if the user wants it, a plain tile "Timer går" / "Stoppeklokke går" told apart by the channel id ("Timers v2" /
+"Stopwatch v2"), no time, no buttons, a tap the keypad-then-clock-app way. The user decides between the alarm line
+alone and the alarm line plus the plain tile; §1.1-1.3 and §1.5's countdown parts are void either way.
+
 ## 1. Decisions
 
 1. **The source is the system clock's notification, read by a `ClockReader`** of its own, wired from
