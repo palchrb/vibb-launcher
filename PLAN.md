@@ -793,6 +793,17 @@ findings, merge to `main`, full suite once.
   own (design QA + code QA), after the 0.29.5 verification; the user
   verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
   form not jumping (the standing rule), no zoom on a quick double tap on a tab.
+- **Design 46: a context-mode playlist shows its tracks, and the kid picks one** (the user, 2026-10-20: "se hele
+  playlisten slik den er, og så velge en konkret sang"; not the queue). Today a context entry's list screen shows one
+  row (design 26c §5.9, the live track, "rekkefølgen velges for deg"). Decided: for a playlist context the server reads
+  the playlist's tracks with the kid's token (as it does for list mode; the same `music_items` listing shape, pictures
+  through the sweep) and the phone shows the whole list as in list mode, the playing track marked; a tap on a row plays
+  the context from that track - the same play call with `offset.uri` = the row's uri (what resume does today) - so
+  Spotify still owns the playback and the order (shuffle off, so it is the playlist's order). An artist context keeps
+  its one row (Spotify picks there). What the kid sees may lag an edit made in Spotify until the next listing sync;
+  a tapped track Spotify refuses (left the playlist) falls back to the context from the top, as resume does. Music
+  app + server (listing for context entries); design note, the usual process; the behaviour reference stays vibb's
+  list. Music round after stable 0.4.0's blockers.
 - **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
   reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
   tannhjul ... for å stille inn ... notification counter bør nullstilles når man har åpnet den innboxen; nå må man
