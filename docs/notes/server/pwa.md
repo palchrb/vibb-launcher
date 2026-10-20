@@ -217,12 +217,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
   `lock_glance::Note` the notes' sentences; `parent_pin::event_row` the PWA's event lines (`event_line`, `until_text`'s
-  same-day form) and `parent_pin::notices` takes the zone. A sub-page warning (`device_pages::Note`) may carry a `fix`
+  same-day form) and `parent_pin::notices` takes the zone (deleted 2026-10-20 with the summary's Now). A sub-page warning (`device_pages::Note`) may carry a `fix`
   (an adb command) shown behind an ⓘ after its sentence (`partials/note_warning.html`), never in the visible text.
 - **Fix round (qa-31-s4-code):** "On the phone · Locked · 10:59" carries the report's local time, so an old report
   never reads as now; `device_pages::load_policy` gives a 500 on a DB error (About, Advanced and this page), never the
   defaults' "Child PIN · Off"; `device_pages::has_capability` is the pages' one capability check; the device page asks
-  `parent_pin::card` for the notices only (`with_events = false`), not the 10-event list.
+  `parent_pin::card` for the notices only (`with_events = false`), not the 10-event list (since 2026-10-20 the
+  summary doesn't ask it at all, and `with_events` is gone).
 - **Shared builders:** `devices::app_rows` (the Apps list's rows, parsed allowlist, installed apps, downloads) is the
   device page's and Lock Screen & PINs' (`devices::lock_screen_card` takes it).
 - Tests: `src/tests/device_pages.rs` (the moved forms, the row's value, the groups' order, the confirm, the redirect
@@ -384,6 +385,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "yesterday 14:50", "15 Oct 14:02"), the exact one in `title`; a last row "Everything for this phone ›" to that
   inbox. Shown when it has a row or the Cancel's line. A failed read is a 500. Tests: `summary::activity_*`,
   `an_event_opens_where_it_happened_or_this_phones_inbox`, `now_*`.
+- **Now went (the user, 2026-10-20, after 0.31.0: "kan vi ikke bare ta vekk hele den now biten?")**: no `#now`, no
+  `show_now`, no Parent PIN notices on the summary (the uses and lockouts are Activity's events; Lock Screen & PINs
+  keeps its Recent use list; `parent_pin::notices`/`Notice` and the card's `notices` are deleted). Only the lifts End
+  now can still end (`can_end`: the running rule pauses, filtered in the summary's view) are rows at the end of
+  **Quick Actions** - an ended pause or added screen time is history, shown only on Device › Time - in a `.group` after the `act-grid` (`l.what`, the
+  sub-line `l.when · l.by`, `l.status` as the value, End now posting to `/devices/{id}/lifts/{id}/end#quick` with
+  `back=summary`); `lifts::summary_group` is always `quick`, so End now lands on `?done=ended|over#quick` with the
+  flash in that same group, which shows while it has a lift row or its flash. **One clock per Activity row**: an
+  event's summary that carries its own clock (design 38's "14:09 · no shutdown seen …", the Parent PIN's "Vibb One's
+  Settings · 09:20") loses it when it is the row's (`activity::without_own_clock`: a leading "HH:MM · " or trailing
+  " · HH:MM" equal to the clock at the end of `Zone::at`'s words, or all of them), so the row reads "no shutdown seen …
+  · 14:09". The inbox keeps the summary whole: its time is `Zone::relative` ("3 min ago"), never the same words.
+  Tests: `summary::quick_actions_*`, `end_now_lands_on_quick_actions_when_nothing_else_is_left`,
+  `an_event_row_shows_its_clock_once`, `activity::tests`.
 
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 

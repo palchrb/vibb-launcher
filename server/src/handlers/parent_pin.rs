@@ -28,8 +28,6 @@ pub struct ParentPinCard {
     pub capable: bool,
     /// The last [parent_pin::SHOWN] events, newest first, as "Recent use" rows.
     pub events: Vec<parent_pin::EventRow>,
-    /// The Status card's notices from the last 24 hours ([parent_pin::notices]).
-    pub notices: Vec<parent_pin::Notice>,
 }
 
 pub async fn card(
@@ -39,26 +37,14 @@ pub async fn card(
     notice: Option<&str>,
     zone: &Zone,
     now: DateTime<Utc>,
-    // The "Recent use" list: Lock Screen & PINs only; the device page needs the notices alone.
-    with_events: bool,
 ) -> ParentPinCard {
-    let now_ms = now.timestamp_millis();
     let pin_set = policy.override_pin_hash.is_some();
     let capable = latest.is_none_or(|s| {
         s.capabilities_json.as_deref().is_some_and(|caps| {
             caps.contains(&format!("\"{}\"", parent_pin::PARENT_PIN_EVENTS_CAPABILITY))
         })
     });
-    let shown = if with_events {
-        device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await
-    } else {
-        Vec::new()
-    };
-    // The notices: the last 24 hours, and only since the PIN was last saved - after a new PIN
-    // they stop telling the parent to change it (qa-24-code Low 4). The list keeps everything.
-    let since =
-        (now_ms - 24 * 60 * 60 * 1000).max(policy.override_pin_set_at_ms.unwrap_or(i64::MIN));
-    let recent = device_events(db, policy.device_id, since, 500).await;
+    let shown = device_events(db, policy.device_id, i64::MIN, parent_pin::SHOWN).await;
     ParentPinCard {
         pin_set,
         easy: pin_set && policy.override_pin_easy == Some(true),
@@ -68,7 +54,6 @@ pub async fn card(
             .iter()
             .map(|e| parent_pin::event_row(e, zone, now))
             .collect(),
-        notices: parent_pin::notices(&recent, zone, now),
     }
 }
 

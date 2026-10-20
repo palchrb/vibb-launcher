@@ -78,7 +78,9 @@ pub(crate) async fn rows(
     }
     for event in events {
         let at = parse_db_utc(&event.5);
-        let row = inbox_row(event, zone, |t| zone.at(t, now));
+        let mut row = inbox_row(event, zone, |t| zone.at(t, now));
+        // One clock per row: the row shows `when` after the summary.
+        row.summary = without_own_clock(&row.summary, &row.when);
         all.push((at, false, ActivityRow::Event(row)));
     }
     // Newest first; a time that doesn't read goes last. Stable, so each table keeps its order.
@@ -94,4 +96,104 @@ pub(crate) async fn rows(
         rows: all.into_iter().map(|(_, _, row)| row).collect(),
         flash: cancel_flash(cancel),
     })
+}
+
+/// The clock at the end of a row's `when` ("14:09", "yesterday 14:09", "15 Oct 14:02", with
+/// [Zone]'s " UTC" when it has no zone): from its last "HH:MM" to the end. `None` without one.
+fn clock_of(when: &str) -> Option<&str> {
+    let bytes = when.as_bytes();
+    (0..bytes.len().saturating_sub(4)).rev().find_map(|i| {
+        let b = &bytes[i..i + 5];
+        let digits = [0, 1, 3, 4].iter().all(|&k| b[k].is_ascii_digit());
+        let starts = i == 0 || bytes[i - 1] == b' ';
+        (digits && b[2] == b':' && starts).then(|| &when[i..])
+    })
+}
+
+/// An event's summary without the clock it carries itself, when the row shows that clock anyway
+/// (`· {{ e.when }}`): design 38's "14:09 · no shutdown seen …" and the Parent PIN's "Vibb One's
+/// Settings · 09:20" lose their leading "HH:MM · " or trailing " · HH:MM" when it is `when`'s own
+/// clock (or all of `when`). Anything else is left as it is.
+pub(crate) fn without_own_clock(summary: &str, when: &str) -> String {
+    let Some(clock) = clock_of(when) else {
+        return summary.to_string();
+    };
+    for own in [clock, when] {
+        if let Some(rest) = summary
+            .strip_prefix(own)
+            .and_then(|s| s.strip_prefix(" · "))
+        {
+            return rest.to_string();
+        }
+        if let Some(rest) = summary
+            .strip_suffix(own)
+            .and_then(|s| s.strip_suffix(" · "))
+        {
+            return rest.to_string();
+        }
+    }
+    summary.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_own_clock;
+
+    #[test]
+    fn a_leading_own_clock_goes() {
+        assert_eq!(
+            without_own_clock("14:09 · no shutdown seen · last report 13:50", "14:09"),
+            "no shutdown seen · last report 13:50"
+        );
+        assert_eq!(
+            without_own_clock("14:09 · off since 13:00", "yesterday 14:09"),
+            "off since 13:00"
+        );
+    }
+
+    #[test]
+    fn a_trailing_own_clock_goes() {
+        assert_eq!(
+            without_own_clock("Vibb One's Settings · 09:20", "09:20"),
+            "Vibb One's Settings"
+        );
+        assert_eq!(
+            without_own_clock("Lock screen · 09:20", "15 Oct 09:20"),
+            "Lock screen"
+        );
+        assert_eq!(
+            without_own_clock("Lock screen · yesterday 09:20", "yesterday 09:20"),
+            "Lock screen"
+        );
+        assert_eq!(without_own_clock("Pause · 09:20 UTC", "09:20 UTC"), "Pause");
+    }
+
+    #[test]
+    fn another_clock_stays() {
+        let summary = "14:09 · no shutdown seen · last report 13:50";
+        assert_eq!(without_own_clock(summary, "14:10"), summary);
+        assert_eq!(
+            without_own_clock("Vibb One's Settings · 09:20", "09:21"),
+            "Vibb One's Settings · 09:20"
+        );
+        // A clock in the middle is the summary's own (the last report), never the row's.
+        assert_eq!(
+            without_own_clock("off · last report 13:50 · battery 10 %", "13:50"),
+            "off · last report 13:50 · battery 10 %"
+        );
+    }
+
+    #[test]
+    fn a_summary_without_a_clock_stays() {
+        assert_eq!(
+            without_own_clock("Battery at 15 %", "14:09"),
+            "Battery at 15 %"
+        );
+        assert_eq!(without_own_clock("", "14:09"), "");
+        assert_eq!(without_own_clock("14:09", "14:09"), "14:09");
+        assert_eq!(
+            without_own_clock("Lock screen · 09:20", ""),
+            "Lock screen · 09:20"
+        );
+    }
 }

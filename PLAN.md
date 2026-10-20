@@ -1052,7 +1052,8 @@ findings, merge to `main`, full suite once.
   something waits or just failed; the bell in the corner on all five tabs with the + beside it on Devices and Apps;
   Music's Edit by Library; emulator - tick two apps on the lock page and turn the text on for one, a message from each:
   the sender for both, the text for one, neither switch jumps the page. Goes out with server-v0.31.0 and
-  launcher-v0.31.0 (tagged together).
+  launcher-v0.31.0 (tagged together). Then (r7-c, the user after 0.31.0) Now went: the pauses End now can still end sit at the
+  end of Quick Actions (`#quick`), the PIN notices are gone from the summary, and an Activity row shows its clock once.
 - **Launcher round 6 (2026-10-20, merges 8d17d549 r6-a and c282bb0c r6-b; design QA `docs/design/qa-r6-launcher-design.md`
   + one revision check; code QA `docs/review/qa-r6-a-code.md` (0 High / 1 Medium / 3 Low, all fixed) and
   `qa-r6-b-code.md` (0 / 3 / 7, all fixed))**: **a parent-PIN event asks for a sync at once** (`SyncTriggers.pin`

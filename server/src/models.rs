@@ -121,9 +121,9 @@ pub struct DevicePolicy {
     /// The parent PIN is easy to guess (design 24 §4, migrations/0056): a warning on the device
     /// page; `None` = not checked yet (the startup sweep) or no PIN. Not in the policy JSON.
     pub override_pin_easy: Option<bool>,
-    /// When the parent PIN was last saved or removed here (ms; `None` = before this existed): the
-    /// Status card's parent-PIN notices start after it (qa-24-code Low 4).
-    pub override_pin_set_at_ms: Option<i64>,
+    // `override_pin_set_at_ms` (when the parent PIN was last saved or removed here) is still
+    // written but not read: the summary's PIN notices that started after it went with its Now
+    // (the user, 2026-10-20).
 }
 
 /// The screen timeouts a parent can choose (seconds) and their labels; the default is 1 minute.

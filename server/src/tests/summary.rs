@@ -230,7 +230,7 @@ async fn the_quick_actions_follow_the_phone() {
 }
 
 /// §5.1: every form on the summary, posted with what it carries, returns to the group it is in -
-/// the quick actions, Now, the blocked apps - with the flash there; built from the rendered forms
+/// the quick actions (End now at their end), the blocked apps - with the flash there; built from the rendered forms
 /// (a form that moves can't keep a stale target), each action's fragment the redirect's.
 #[tokio::test]
 async fn every_form_on_the_summary_returns_to_its_group() {
@@ -300,10 +300,10 @@ async fn every_form_on_the_summary_returns_to_its_group() {
             "quick",
         ),
         (
-            format!("/devices/{id}/lifts/1/end#now"),
+            format!("/devices/{id}/lifts/1/end#quick"),
             vec![],
             format!("{summary}?done=ended"),
-            "now",
+            "quick",
         ),
         (
             format!("/devices/{id}/allow-blocked#blocked-apps"),
@@ -365,10 +365,11 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     assert_eq!(before, after);
 }
 
-/// §3.2 item 4, design 48 §1.1: Now has the lifts made today and the pauses still running, in
-/// local time with the exact one in `title`; yesterday's finished ones are on Device › Time only.
+/// §3.2 item 4: Quick Actions ends with the pauses End now can still end (Now went, the user
+/// 2026-10-20), in local time with the exact one in `title`; a pause of today that is over and
+/// added screen time are history - Device › Time's only, nowhere on the summary.
 #[tokio::test]
-async fn now_lists_todays_lifts_in_local_time() {
+async fn quick_actions_list_running_pauses_in_local_time() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -380,49 +381,57 @@ async fn now_lists_todays_lifts_in_local_time() {
     let made = chrono::Utc::now() - chrono::Duration::minutes(2);
     let made = made - chrono::Duration::seconds(i64::from(chrono::Timelike::second(&made)));
     let stamp = made.format("%Y-%m-%d %H:%M:%S").to_string();
-    for (target, minutes, created, expires) in [
-        ("budget", 15, stamp.clone(), "datetime('now', '+12 hours')"),
-        (
-            "rule",
-            30,
-            "2020-01-01 10:00:00".to_string(),
-            "'2020-01-01 10:30:00'",
-        ),
+    let mut ids = Vec::new();
+    for (target, rule, expires) in [
+        ("rule", "Skole", "datetime('now', '+1 hour')"),
+        ("rule", "Kveld", "datetime('now', '-1 minute')"),
+        ("budget", "", "datetime('now', '+12 hours')"),
     ] {
-        sqlx::query(&format!(
-            "INSERT INTO time_lifts (device_id, target, minutes, created_at, expires_at, created_by) \
-             VALUES (?, ?, ?, ?, {expires}, 'parent')"
+        let lift: i64 = sqlx::query_scalar(&format!(
+            "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at, created_by) \
+             VALUES (?, ?, NULLIF(?, ''), 15, ?, {expires}, 'parent') RETURNING id"
         ))
         .bind(id)
         .bind(target)
-        .bind(minutes)
-        .bind(&created)
-        .execute(&app.db)
+        .bind(rule)
+        .bind(&stamp)
+        .fetch_one(&app.db)
         .await
         .unwrap();
+        ids.push(lift);
     }
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let today = group(&html, "now");
+    let quick = group(&html, "quick");
     let oslo = made.with_timezone(&chrono_tz::Europe::Oslo);
-    assert!(today.contains("+15 min screen time"), "{today}");
     assert!(
-        today.contains(&format!(
+        quick.contains(&format!("data-lift=\"{}\"", ids[0])),
+        "{quick}"
+    );
+    assert!(quick.contains("Skole paused for 15 min"), "{quick}");
+    assert!(
+        quick.contains(&format!(
             "title=\"{}\">{} · parent</span>",
             oslo.format("%Y-%m-%d %H:%M:%S %Z"),
             oslo.format("%H:%M")
         )),
-        "{today}"
+        "{quick}"
     );
-    assert!(!today.contains("All rules paused"), "{today}");
-    // Nothing happened: no Now, no Activity.
+    // The pause that is over and the screen time: nowhere on the summary.
+    for lift in &ids[1..] {
+        assert!(!html.contains(&format!("data-lift=\"{lift}\"")), "{html}");
+    }
+    assert!(!html.contains("Kveld"), "{html}");
+    assert!(!html.contains("+15 min screen time"), "{html}");
+    // Nothing happened: no lift rows, no Now, no Activity.
     let (emil, _) = app.enrolled_device("Emil").await;
     let html = app
         .get_page(&format!("/devices/{emil}"), &cookie)
         .await
         .text();
+    assert!(!html.contains("data-lift"), "{html}");
     assert!(!html.contains("id=\"now\""), "{html}");
     assert!(!html.contains("id=\"activity\""), "{html}");
 }
@@ -490,10 +499,11 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
     assert!(!html.contains(&warning), "{html}");
 }
 
-/// A pause still running behind more than ten newer lifts keeps its End now in Now
-/// (qa-31-s10-code N3). A command is one row, in Activity: Now has no answer lines (design 48 §1.1).
+/// A pause still running behind more than ten newer lifts keeps its End now in Quick Actions
+/// (qa-31-s10-code N3). A command is one row, in Activity: the lift rows have no answer lines
+/// (design 48 §1.1).
 #[tokio::test]
-async fn now_keeps_running_pauses_and_no_answer_lines() {
+async fn quick_actions_keep_running_pauses_and_no_answer_lines() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -524,24 +534,23 @@ async fn now_keeps_running_pauses_and_no_answer_lines() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let now = group(&html, "now");
+    let quick = group(&html, "quick");
     assert!(
-        now.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#now\"")),
-        "{now}"
+        quick.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#quick\"")),
+        "{quick}"
     );
-    assert_eq!(now.matches("+15 min screen time").count(), 11, "{now}");
+    assert!(!quick.contains("+15 min screen time"), "{quick}");
     assert!(!html.contains("data-answer"), "{html}");
-    assert!(!now.contains("Lock again"), "{now}");
     assert!(
         group(&html, "activity").contains("data-command=\"end_windows\""),
         "{html}"
     );
 }
 
-/// End now on a pause made yesterday: once ended it is neither running nor today's, so Now has
-/// nothing left but its flash - the group stays for it and the save lands there (no jump).
+/// End now on a pause made yesterday: once ended it is neither running nor today's, so its row
+/// is gone and Quick Actions has the flash where the save lands (no jump).
 #[tokio::test]
-async fn end_now_lands_on_now_when_nothing_else_is_left() {
+async fn end_now_lands_on_quick_actions_when_nothing_else_is_left() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -557,9 +566,9 @@ async fn end_now_lands_on_now_when_nothing_else_is_left() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let (action, hidden) = forms(group(&html, "now"))
+    let (action, hidden) = forms(group(&html, "quick"))
         .into_iter()
-        .find(|(action, _)| action.ends_with("/end#now"))
+        .find(|(action, _)| action.ends_with("/end#quick"))
         .expect("End now");
     let sent: Vec<(&str, &str)> = hidden
         .iter()
@@ -573,15 +582,16 @@ async fn end_now_lands_on_now_when_nothing_else_is_left() {
             &sent,
         )
         .await;
-    assert_redirect(&res, &format!("/devices/{id}?done=ended"), Some("now"));
+    assert_redirect(&res, &format!("/devices/{id}?done=ended"), Some("quick"));
     app.assert_lands(&res, &cookie).await;
     let html = app
         .get_page(&format!("/devices/{id}?done=ended"), &cookie)
         .await
         .text();
-    let now = group(&html, "now");
-    assert!(now.contains("data-flash=\"now\""), "{now}");
-    assert!(!now.contains("data-lift"), "{now}");
+    let quick = group(&html, "quick");
+    assert!(quick.contains("data-flash=\"quick\""), "{quick}");
+    assert!(!html.contains("data-lift"), "{html}");
+    assert!(!html.contains("id=\"now\""), "{html}");
 }
 
 /// Stored like `datetime('now')`.
@@ -723,6 +733,85 @@ async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
     // Under Quick actions.
     assert!(html.find("id=\"quick\"").unwrap() < html.find("id=\"activity\"").unwrap());
     super::settings_pages::check_forms(&format!("/devices/{id}"), &html);
+}
+
+/// One clock per Activity row (the user, 2026-10-20: "· 09:20 · 09:20"): design 38's start and
+/// the Parent PIN's use carry their clock in the summary, which the row shows once, after it.
+#[tokio::test]
+async fn an_event_row_shows_its_clock_once() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Sverre").await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let now = Utc::now() - Duration::minutes(1);
+    let happened = DateTime::from_timestamp(now.timestamp() - now.timestamp() % 60, 0).unwrap();
+    let clock = happened
+        .with_timezone(&chrono_tz::Europe::Oslo)
+        .format("%H:%M")
+        .to_string();
+    // The last report's own clock, three hours earlier: never the row's.
+    let earlier = (happened - Duration::hours(3))
+        .with_timezone(&chrono_tz::Europe::Oslo)
+        .format("%H:%M")
+        .to_string();
+    let mut ids = Vec::new();
+    for (kind, title, summary) in [
+        (
+            "phone_on",
+            "Sverre was turned on",
+            format!("{clock} · no shutdown seen · last report {earlier}, battery 10 %"),
+        ),
+        (
+            "pin_used",
+            "Parent PIN used on Sverre",
+            format!("Vibb One's Settings · {clock}"),
+        ),
+    ] {
+        let event: i64 = sqlx::query_scalar(
+            "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, happened_at) \
+             VALUES (?, ?, ?, ?, ?, '/devices', ?) RETURNING id",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(kind)
+        .bind(title)
+        .bind(&summary)
+        .bind(happened.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        ids.push(event);
+    }
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let activity = group(&html, "activity");
+    let row = |event: i64| {
+        let start = at(activity, &format!("data-event=\"{event}\""));
+        let end = start + at(&activity[start..], "</button>");
+        &activity[start..end]
+    };
+    let (on, pin) = (row(ids[0]), row(ids[1]));
+    assert!(
+        on.contains(&format!(
+            "no shutdown seen · last report {earlier}, battery 10 % · <span title="
+        )),
+        "{on}"
+    );
+    assert!(
+        pin.contains("Vibb One&#39;s Settings · <span title="),
+        "{pin}"
+    );
+    for row in [on, pin] {
+        // Once in the text; the exact time in `title=` ("… 18:56:00 CEST") is not shown.
+        let exact = row.matches(&format!("{clock}:00")).count();
+        assert_eq!(row.matches(&clock).count() - exact, 1, "{row}");
+        assert!(row.contains(&format!(">{clock}</span>")), "{row}");
+    }
 }
 
 /// Design 48 §1.2, 48-7: the last week and at most ten rows - but a command that can still be

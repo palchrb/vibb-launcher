@@ -417,7 +417,7 @@ async fn lifts_are_recorded_delivered_and_end() {
             &[],
         )
         .await;
-    assert_redirect(&res, &format!("/devices/{id}?done=over"), Some("now"));
+    assert_redirect(&res, &format!("/devices/{id}?done=over"), Some("quick"));
     let ended: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE event_type = 'time_lift_ended'",
     )
