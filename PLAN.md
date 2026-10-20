@@ -707,7 +707,9 @@ findings, merge to `main`, full suite once.
   Launcher only; a mockup first, then the usual process.
 
 ### Before stable `music-v0.4.0`
-- **A context-mode playlist doesn't play on the real SDK - NOT REPRODUCED 2026-10-20**: the release music app
+- **A context-mode playlist doesn't play on the real SDK - CLOSED 2026-10-20** (the user: a second parent-owned
+  playlist also plays fine on the release app; "da trenger vi ikke feilsøke mer"). Left: the wording fix alone (a 4xx
+  before the play must never read "Trenger internett"), in the next music round. History: the release music app
   (0.4.0-rc.4 era) on the emulator played a playlist the parent's account owns and the kid's only follows
   ("RÜFÜS DU SOL – SOLACE", context mode, the screenshot) from the first tap. So the 2026-10-16 failure was either
   intermittent (a 403 that comes and goes, the web player not yet Spotify's active device, a settings call before
