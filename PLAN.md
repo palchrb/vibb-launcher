@@ -780,7 +780,14 @@ findings, merge to `main`, full suite once.
   (round 5's rule, the reverse way round now: the command row wins, the event row stays for events without a
   command). Server only (`device_detail.html`, the summary's view in `device_pages.rs`/`locate::recent`,
   `parent_events` by device); tests: the mixed order, the cap, the Cancel still landing on `#activity`, the link's
-  filter; the no-jump rule. Next server round.
+  filter; the no-jump rule. **Also in 48 (the user, 2026-10-20, the Locate page's Recent: "Den expired location
+  event burde jo forsvinne etterhvert? ... Trenger også tidspunkt og ikke dato ... Usikker på om vi skal beholde
+  den"; "ja" to this):** (1) Locate's Recent becomes **Requests**: only what waits (with Cancel) and what failed or
+  expired in the last 24 h, plus the newest result of Ring, Lock and Erase; a successful Update Location is no row (its
+  fix is on the Locations page); the group is gone when empty. (2) Command rows always carry the time: "i dag 13:41",
+  "i går 14:50", "15. okt 14:02" (`display_time`, a clock on every row, not only in `title`) - on Requests and on the
+  Activity log. (3) `device_commands` older than 30 days are pruned by `retention::prune` like events and locations
+  (never a waiting one). (4) The Activity log is where the commands' history lives, with the same clock words.
 - **Design 42: the clock on the lock - a timer tile like iPhone's, from the system clock alone** (the user, 2026-10-20:
   "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp for å slå av og på ... når man
   trykker på den så vil den i såfall åpne appen"; and "bruker systemklokken for å ikke skape noe mulige
