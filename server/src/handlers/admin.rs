@@ -109,6 +109,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "dns_log_changed" => "Blocked Activity log changed",
         "dns_server_changed" => "DNS server changed",
         "lock_screen_text_changed" => "Lock screen text changed",
+        "lock_wake_changed" => "Lock screen wake changed",
         "lock_screen_app_changed" => "Lock screen app changed",
         "lock_wallpaper_changed" => "Lock screen background changed",
         "backup_schedule_changed" => "Backup schedule changed",

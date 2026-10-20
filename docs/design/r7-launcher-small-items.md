@@ -310,6 +310,45 @@ notification and a suspended app's notification wake nothing; during a VoIP ring
 `adb shell dumpsys power` shows no wake lock held by us after the 15 s or after a touch. Jelly Star: in a pocket
 (proximity near) nothing wakes.
 
+### 3.4 Implementation status (implementer B, branch `l7-b`)
+
+Built as §3.1 says, server and launcher in one commit:
+
+- **Server**: migration `0084_lock_wake_on_notification.sql` (`device_policy.lock_wake_on_notification`, default 0;
+  `migrations_73_to_84_in_order`), `LauncherUi.lock_wake_on_notification` always sent (`policy_json_keys_snapshot`
+  pins the key and its `false` for a new phone). The Lock screen group's cell `#lock-wake` under Background (switch,
+  sub-line, `data-autosave`, `<noscript>` Save) posts `POST /devices/{id}/lock-wake` (`lock_glance::save_wake`): back
+  to `#lock-wake`, the phone nudged, a `lock_wake_changed` security-log line ("device 3: wake the screen for a
+  notification: on"), 404 for an unknown phone with nothing written. The group's ⓘ gained the sentence.
+- **Launcher**: `LauncherUi.lockWakeOnNotification = false`; `PinLockRuntime.noticeWakeOn` from the cached policy at
+  process start (on the init's IO coroutine, never over a sync's value) and after every accepted sync. Pure
+  `lock/NoticeWakePlan.kt` (`WakeKind`, `noticeWakeAllowed` with `NoticeBusy`, `wakesAfter`/`wakesInHour`,
+  `proximityNear`, `noticeWakeOffDue`, the constants), `lock/NoticeProximity.kt` (the read), `badges/GlanceWake.kt`
+  (`glanceAlerts`, `glanceWakes`, `glanceRowConversations`). `show(context, wake: WakeKind?)` replaces
+  `wake: Boolean`; `VoipWakeActivity.intent(context, kind)` carries the kind and only a VOIP one calls
+  `voipWakePaused`. Triggers: `GlanceReader.posted` -> `GlanceStore.putPosted` (the rows compared as conversation
+  sets before and after the put), and `MissedCallNotifier` after a post that worked with `step.alert`, posted to its
+  `main` handler.
+- **Deviations**: (1) the on-time is not a wake lock: a wake lock can only keep a screen on, and the screen a
+  turn-screen-on start wakes stays on for the phone's own timeout anyway (the wake counts as user activity), so the
+  15 s is a main-thread timer that turns the screen off with the device owner's `DevicePolicyManager.lockNow()`
+  (`force-lock` is declared) when `noticeWakeOffDue` - untouched (`PinLockActivity.onUserInteraction`), the screen
+  on, LOCKED, the lock resumed, no call; a touch or a screen-off ends the timer and the phone's timeout applies. The
+  proximity read holds a 1 s partial wake lock instead. (2) The glance trigger's tests are a new `GlanceWakeTest`
+  (beside `GlanceRowsTest`, so the round's other branch can't conflict); the missed-call cases are in `LockWakeTest`.
+  (3) `NoticeBusy` makes the design's `busy` a value of its own, so each case is tested.
+- Tests: `LockWakeTest` (the gate's table: every busy case, 2 s, the gap, the hourly cap, switch off, not LOCKED,
+  interactive, proximity near/far/none; the 15 s rule and the touch; the missed-call steps and the notifier's hook;
+  the glue by source), `GlanceWakeTest` (each §3.1.5 condition alone, a new row, an update of a shown row, the opened
+  mark, only `posted` triggers, nothing passed), `PinLockManifestTest` (the turn-screen-on set is exactly
+  `InCallActivity` and `VoipWakeActivity`; NOTICE never `voipWakePaused`), `LockGlanceGuardTest` (the reader's new
+  identifiers reviewed), `PolicyResponseCompatTest` (the key, missing = off); server `lock_glance`, `device_pages`,
+  `device_api`, `music_spotify`.
+- **Device checks owed**: all of §3.3 - in particular whether `lockNow()` turns the screen off at 15 s on the
+  emulator and the Jelly Star (and leaves our lock on top: the screen-off's lock-up is NONE), the first frame after a
+  notice wake (lock or black, both kiosk modes, from inside an app), DND/muted/suspended, a VoIP ring and music,
+  `dumpsys power` after the 15 s, and the pocket on the Jelly Star.
+
 
 ## Revision (2026-10-20, after qa-r7-launcher-design.md)
 

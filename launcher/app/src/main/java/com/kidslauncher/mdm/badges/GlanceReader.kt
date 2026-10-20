@@ -24,7 +24,9 @@ import java.lang.ref.WeakReference
  * the group flag and the conversation title, else the notification's title; at every level the
  * key, post time, `when`, shortcut id, the content intent (kept, never read) and the ranking's
  * suspended flag, importance and channel visibility (a missing ranking counts as suspended, QA
- * Medium 1). Only [readTexts], called only at [GlanceLevel.TEXT], reads a text. Never read: the
+ * Medium 1); on a post also whether it passes Do Not Disturb and its only-alert-once flag (round 7
+ * §3.1.5, [alerts] - the notice wake learns only that a row came). Only [readTexts], called only at
+ * [GlanceLevel.TEXT], reads a text. Never read: the
  * actions, remote inputs, the delete and full-screen intents, the public version, pictures, icons,
  * a person's key, URI or icon, the big text or text lines. LockGlanceGuardTest scans this file.
  */
@@ -59,9 +61,25 @@ object GlanceReader {
 
     fun posted(service: NotificationListenerService, sbn: StatusBarNotification, rankingMap: NotificationListenerService.RankingMap?) =
         guarded(sbn.packageName) {
+            val known = GlanceStore.has(sbn.key)
             val entry = read(service, sbn, rankingMap)
-            if (entry == null) GlanceStore.remove(sbn.key) else GlanceStore.put(entry.first, entry.second)
+            if (entry == null) GlanceStore.remove(sbn.key) else GlanceStore.putPosted(entry.first, entry.second, alerts(sbn, rankingMap, known))
         }
+
+    /** Round 7 §3.1.5: the post alerts - its channel at DEFAULT or above, through Do Not Disturb, and
+     * not an only-alert-once update of a key already kept ([glanceAlerts]; no ranking = no alert). */
+    private fun alerts(sbn: StatusBarNotification, rankingMap: NotificationListenerService.RankingMap?, known: Boolean): Boolean {
+        val ranking = NotificationListenerService.Ranking()
+        val ranked = rankingMap?.getRanking(sbn.key, ranking) == true
+        return glanceAlerts(
+            GlanceAlertFacts(
+                importance = if (ranked) ranking.importance else null,
+                passesFilter = ranked && ranking.matchesInterruptionFilter(),
+                onlyAlertOnce = (sbn.notification?.flags ?: 0) and Notification.FLAG_ONLY_ALERT_ONCE != 0,
+                known = known,
+            ),
+        )
+    }
 
     fun removed(sbn: StatusBarNotification) = guarded(sbn.packageName) { GlanceStore.remove(sbn.key) }
 

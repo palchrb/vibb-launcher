@@ -74,6 +74,9 @@ class LockGlanceGuardTest {
         "category", "glanceLevel", "ticked", "GlanceLevel", "TEXT", "glanceTitle", "conversationTitle", "newestSender",
         "cleanGlanceText", "GLANCE_TITLE_MAX", "GLANCE_TEXT_MAX", "glanceGroupText", "glanceCount", "isMediaNotification",
         "glanceSuspended", "missedCall", "glanceMissedCall",
+        // round 7 §3.1.5: the post's alert facts, never its content
+        "known", "has", "putPosted", "alerts", "GlanceAlertFacts", "glanceAlerts", "passesFilter", "onlyAlertOnce",
+        "matchesInterruptionFilter", "FLAG_ONLY_ALERT_ONCE",
         "GlanceNotice", "key", "packageName", "conversationKey", "count", "whenMs", "postTimeMs", "suspended",
         // the platform: only these members
         "NotificationListenerService", "RankingMap", "Ranking", "getRanking", "isSuspended", "channel",

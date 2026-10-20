@@ -34,6 +34,11 @@ async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
         "lock_wallpaper always sent"
     );
     assert!(ui.as_object().unwrap().contains_key("lock_wallpaper"));
+    // Launcher round 7 §3: always sent; Lock Screen & PINs sets it, never this form.
+    assert!(ui["lock_wake_on_notification"].is_boolean());
+    ui.as_object_mut()
+        .unwrap()
+        .remove("lock_wake_on_notification");
     ui.as_object_mut().unwrap().remove("wallpapers");
     ui.as_object_mut().unwrap().remove("app_display");
     ui.as_object_mut().unwrap().remove("lock_wallpaper");

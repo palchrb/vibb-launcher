@@ -447,6 +447,27 @@ class PolicyResponseCompatTest {
         assertTrue("clock_format_applied" !in follow)
     }
 
+    /** Launcher round 7 §3: `launcher_ui.lock_wake_on_notification` (the server's
+     * `policy_json_keys_snapshot` pins it, always sent); missing (an older server) = off, and the
+     * cache round trip keeps it. */
+    @Test
+    fun `launcher_ui lock_wake_on_notification decodes, missing is off`() {
+        fun withWake(wake: String?) = serverResponse.replaceFirst(
+            "{",
+            """{"launcher_ui": {"language": "nb", "home_columns": 3, "wallpapers": []""" +
+                (wake?.let { """, "lock_wake_on_notification": $it""" } ?: "") + "},",
+        )
+        for ((json, on) in listOf("true" to true, "false" to false, null to false)) {
+            val cached = decodeCached(withWake(json))
+            assertTrue(json.toString(), cached is CachedPolicy.Ok)
+            val policy = (cached as CachedPolicy.Ok).policy
+            assertEquals(json.toString(), on, policy.launcherUi!!.lockWakeOnNotification)
+            assertEquals(FreshDecode.Ok(policy), decodeFresh(withWake(json)))
+            assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        }
+        assertFalse(LauncherUi().lockWakeOnNotification)
+    }
+
     /** Design 21 (step 1): the server's `music` object - today's shape, `null` (the server couldn't
      * read the library), missing (an older server), or anything else: the policy always decodes,
      * the cache round trip keeps it; `spotify` (design 26c §6.2) is read on its own. */

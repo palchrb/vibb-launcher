@@ -270,6 +270,9 @@ object MissedCallNotifier {
             }
             is NoticeStep.Post -> {
                 if (post(context, step.notice, step.alert, unread.newestId)) {
+                    // Round 7 §3: a new missed call (the alerting post only - never the boot re-send,
+                    // relearn or an update after a call) may wake the screen on the lock.
+                    if (step.alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
                     lastPosted = step.notice
                     prefs.edit()
                         .putLong(KEY_SHOWN_UP_TO, unread.newestId)

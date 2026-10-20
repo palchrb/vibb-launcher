@@ -146,6 +146,15 @@ pub fn text_log_line(device_id: i64, package: &str, on: bool) -> String {
     )
 }
 
+/// The security log's detail for the wake switch (launcher round 7 §3): "device 3: wake the screen
+/// for a notification: on".
+pub fn wake_log_line(device_id: i64, on: bool) -> String {
+    format!(
+        "device {device_id}: wake the screen for a notification: {}",
+        on_off(on)
+    )
+}
+
 fn on_off(on: bool) -> &'static str {
     if on { "on" } else { "off" }
 }

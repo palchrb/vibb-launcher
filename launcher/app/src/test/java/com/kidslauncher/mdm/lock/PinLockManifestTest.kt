@@ -49,6 +49,25 @@ class PinLockManifestTest {
         assertTrue(com.kidslauncher.mdm.calls.DirectBootComponents.needsUnlockedSetup("com.kidslauncher.mdm.lock.PinLockActivity"))
     }
 
+    /** Launcher round 7 §3.1.6 (design 32 §7): the notice wake reuses VoipWakeActivity - the only
+     * activities that turn the screen on are our call screen and that wake window, no new one. */
+    @Test
+    fun `the turn-screen-on activities are exactly the call screen and the wake window`() {
+        val nodes = parse("AndroidManifest.xml").getElementsByTagName("activity")
+        val turnOn = (0 until nodes.length).map { nodes.item(it) as Element }
+            .filter { it.getAttributeNS(ns, "turnScreenOn") == "true" }
+            .map { it.getAttributeNS(ns, "name") }
+            .toSet()
+        assertEquals(setOf(".calls.InCallActivity", ".lock.VoipWakeActivity"), turnOn)
+        // A notice wake never touches the ring's try detection (17b): only a VOIP wake reports its pause.
+        val wake = file("java/com/kidslauncher/mdm/lock/VoipWakeActivity.kt").readText()
+        assertTrue(wake.contains("if (kind == WakeKind.VOIP) PinLockRuntime.voipWakePaused(covered = !isFinishing)"))
+        assertEquals(1, Regex("""voipWakePaused\(""").findAll(wake).count())
+        assertEquals(WakeKind.NOTICE, wakeKindOf("NOTICE"))
+        assertEquals(WakeKind.VOIP, wakeKindOf("VOIP"))
+        assertEquals("an intent without the extra is a ring's, as before", WakeKind.VOIP, wakeKindOf(null))
+    }
+
     @Test
     fun `nothing is backed up or transferred - the prefs hold the PIN hashes`() {
         val app = parse("AndroidManifest.xml").getElementsByTagName("application").item(0) as Element

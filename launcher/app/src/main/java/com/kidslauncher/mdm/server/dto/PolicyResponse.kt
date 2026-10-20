@@ -169,6 +169,10 @@ data class LauncherUi(
      * read field by field ([com.kidslauncher.mdm.appdisplay.appDisplayMap], QA #1): nothing in it - a
      * `null`, a wrong type, a newer server's icon - can fail the policy. Missing = none. */
     val appDisplay: kotlinx.serialization.json.JsonElement? = null,
+    /** The parent's "Wake the screen for a notification" (launcher round 7 §3): a new row on the
+     * lock's glance page or a missed call turns the screen on, on the lock
+     * ([com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame]). Missing (an older server) = off. */
+    val lockWakeOnNotification: Boolean = false,
 )
 
 /** One entry of `launcher_ui.wallpapers` - see kid-phone-server's `PolicyWallpaper`. Checked by

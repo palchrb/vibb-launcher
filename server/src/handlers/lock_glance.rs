@@ -164,3 +164,41 @@ pub async fn save_app_text(
         }
     }
 }
+
+/// `POST /devices/{id}/lock-wake` (launcher round 7 §3): the checkbox `on` (missing = off) - "Wake
+/// the screen for a notification" in the Lock screen group. Back to `#lock-wake`, the phone nudged,
+/// a security-log line. 404 for an unknown device, 500 on a DB error - each with nothing written.
+pub async fn save_wake(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path(id): Path<i64>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let on = form.contains_key("on");
+    let result =
+        sqlx::query("UPDATE device_policy SET lock_wake_on_notification = ? WHERE device_id = ?")
+            .bind(on)
+            .bind(id)
+            .execute(&state.db)
+            .await;
+    match result {
+        Ok(done) if done.rows_affected() == 0 => {
+            (StatusCode::NOT_FOUND, "Device not found").into_response()
+        }
+        Ok(_) => {
+            security::record_security_event(
+                &state.db,
+                "lock_wake_changed",
+                Some(&admin.username),
+                None,
+                Some(&lock_glance::wake_log_line(id, on)),
+            )
+            .await;
+            saved(&state, id, "lock-wake")
+        }
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "couldn't save the lock screen's wake switch");
+            failed()
+        }
+    }
+}

@@ -128,7 +128,7 @@
     </section>
 
     {#- The pickers and switches save on change (autosave.js) and return to their group or row
-        (#screen, #lock-wallpaper, #lock-screen-app-<package>): without JS the
+        (#screen, #lock-wallpaper, #lock-wake, #lock-screen-app-<package>): without JS the
         answer lands on the form, with JS scroll-restore.js keeps the place (§5.1.4);
         <noscript> Save without JS. -#}
     <section id="screen" aria-labelledby="screen-title">
@@ -168,6 +168,13 @@
                 </label>
                 <noscript><button type="submit" class="row row-button">Save Background</button></noscript>
             </form>
+            <form method="post" action="/devices/{{ device.id }}/lock-wake#lock-wake" class="cell" id="lock-wake">
+                <label class="row">
+                    <span class="row-label">Wake the screen for a notification<span class="row-sub">For the apps ticked below and missed calls</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if lock_wake %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><button type="submit" class="row row-button">Save</button></noscript>
+            </form>
         </div>
         <div class="group-footer">
             <details class="info">
@@ -176,6 +183,7 @@
                     <p>The lock's first page shows the clock, what's playing and the newest notifications. Tapping one asks for the Child PIN, then opens it. Nothing can be answered or dismissed there, and it can't be screenshotted.</p>
                     <p>Who wrote always shows, missed calls by their name in the contacts. With an SMS app's text on, its login codes show too.</p>
                     <p>The background picks from the wallpapers this phone has. A photo shows to anyone holding it.</p>
+                    <p>With "Wake the screen for a notification" on, a new message from an app ticked below or a missed call turns the screen on, on the lock. What the lock shows then (text included, if on below) shows to anyone near the phone.</p>
                 </div>
             </details>
         </div>

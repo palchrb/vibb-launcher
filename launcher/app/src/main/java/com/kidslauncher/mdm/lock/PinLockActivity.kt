@@ -486,6 +486,13 @@ class PinLockActivity : AppCompatActivity() {
         handler.post(waitTicker)
     }
 
+    /** Round 7 §3: a touch (or key) on the lock ends a notice wake's 15 s - the phone's own screen
+     * timeout applies from here. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        PinLockRuntime.noticeWakeTouched()
+    }
+
     override fun onPause() {
         resumed = false
         handler.removeCallbacks(waitTicker)
