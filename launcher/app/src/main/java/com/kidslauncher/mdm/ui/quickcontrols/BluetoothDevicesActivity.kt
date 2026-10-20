@@ -135,11 +135,12 @@ class BluetoothDevicesActivity : UIObjectActivity() {
             dpm = dpm,
             admin = admin,
             onDeviceFound = { device ->
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
+                // The receiver runs on main; the device's row (UUIDs, ACL link) is read on IO.
+                lifecycleScope.launch {
+                    val info = QuickControls.foundBluetoothDevice(device)
                     // A bonded device keeps its proxy-read row.
-                    if (discovered[device.address]?.bonded != true) {
-                        discovered[device.address] = device
+                    if (discovered[info.address]?.bonded != true) {
+                        discovered[info.address] = info
                         refreshList()
                     }
                 }

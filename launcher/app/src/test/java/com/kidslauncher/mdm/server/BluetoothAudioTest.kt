@@ -150,13 +150,20 @@ class BluetoothAudioTest {
     fun `connect and disconnect reflect the A2DP and HEADSET proxies, never BluetoothDevice`() {
         val code = code(audio)
         for (call in listOf(
-            "BluetoothA2dp::class.java.getMethod(\"connect\", BluetoothDevice::class.java)",
-            "BluetoothA2dp::class.java.getMethod(\"disconnect\", BluetoothDevice::class.java)",
-            "BluetoothA2dp::class.java.getMethod(\"setActiveDevice\", BluetoothDevice::class.java)",
-            "BluetoothHeadset::class.java.getMethod(\"disconnect\", BluetoothDevice::class.java)",
+            "call(BluetoothA2dp::class.java, \"connect\", a2dp, device)",
+            "call(BluetoothA2dp::class.java, \"disconnect\", proxies.a2dp, device)",
+            "call(BluetoothA2dp::class.java, \"setActiveDevice\", a2dp, device)",
+            "call(BluetoothHeadset::class.java, \"disconnect\", it, device)",
         )) {
             assertTrue(call, code.contains(call))
         }
+        assertTrue(code.contains("owner.getMethod(method, BluetoothDevice::class.java).invoke(proxy, device)"))
+        // The routed output goes into the tap's choice (a routed device's tap is no setActiveDevice).
+        assertTrue(code.contains("btTap(a2dpState(proxies, device), isRouted(address, routedAddresses(context)))"))
+        // No connect while the page's own discovery pages.
+        val connect = code.substringAfter("suspend fun connect(").substringBefore("suspend fun disconnect(")
+        assertTrue(connect.indexOf("stopDiscovery(context)") in 0 until connect.indexOf("btTap("))
+        assertTrue(code.contains("adapter(context)?.cancelDiscovery()"))
         assertFalse(code.contains("isConnected"))
         assertFalse(code.contains("BluetoothLeAudio"))
         for (text in listOf(code, code(quick))) {
@@ -169,6 +176,49 @@ class BluetoothAudioTest {
         assertTrue(quick.contains("suspend fun connectBluetoothDevice("))
         assertTrue(quick.contains("suspend fun disconnectBluetoothDevice("))
         assertTrue(quick.contains("suspend fun bondedBluetoothDevices("))
+    }
+
+    @Test
+    fun `every reflective lookup sits inside a try, so a blocked method fails soft`() {
+        for (text in listOf(audio, quick)) {
+            val code = code(text)
+            var at = code.indexOf("getMethod(")
+            assertTrue(at >= 0)
+            while (at >= 0) {
+                val before = code.substring(0, at)
+                assertTrue(code.substring(at, at + 60), before.lastIndexOf("try {") > before.lastIndexOf("fun "))
+                at = code.indexOf("getMethod(", at + 1)
+            }
+        }
+    }
+
+    @Test
+    fun `a failure names the exception's classes, never its message`() {
+        val address = "AA:BB:CC:00:11:22"
+        val wrapped = java.lang.reflect.InvocationTargetException(SecurityException("Need BLUETOOTH_CONNECT for $address"))
+        assertEquals("SecurityException", BluetoothAudio.failure(wrapped))
+        val caused = IllegalArgumentException("$address is not a valid address", IllegalStateException("Headset $address"))
+        assertEquals("IllegalArgumentException (cause IllegalStateException)", BluetoothAudio.failure(caused))
+        for (e in listOf(wrapped, caused)) assertFalse(BluetoothAudio.failure(e).contains("AA:BB"))
+    }
+
+    @Test
+    fun `every proxy is closed - on stop, when it lands late, and after a cancelled open`() {
+        val code = code(audio)
+        // The session's close closes both proxies, each in its own try.
+        val proxiesClose = code.substringAfter("class Proxies").substringAfter("fun close() {").substringBefore("\n        }")
+        assertTrue(proxiesClose.contains("closeProxy(adapter, BluetoothProfile.A2DP, a2dp)"))
+        assertTrue(proxiesClose.contains("closeProxy(adapter, BluetoothProfile.HEADSET, headset)"))
+        assertTrue(code.substringAfter("class Session(").substringAfter("fun close() {").substringBefore("\n        }").contains("p?.close()"))
+        assertTrue(code.substringAfter("private fun closeProxy(").substringBefore("\n    }").contains("try {"))
+        // A proxy landing after the wait, or in the race with the timeout, is closed.
+        assertTrue(code.contains("CLOSED -> closeProxy(adapter, p, proxy)"))
+        assertTrue(code.contains("closeProxy(adapter, profile, late)"))
+        // The open can't be cancelled half-way, and no A2DP is a failed open (HEADSET closed, retried).
+        assertTrue(code.contains("withContext(NonCancellable) { openProxies(app) }"))
+        assertTrue(code.contains("closeProxy(adapter, BluetoothProfile.HEADSET, headset)\n            null"))
+        // The attempt's timer is the 10 s constant.
+        assertTrue(code(activity).contains("delay(BT_ATTEMPT_TIMEOUT_MS)"))
     }
 
     @Test
@@ -209,7 +259,7 @@ class BluetoothAudioTest {
         assertTrue(audioLogs.size >= 5)
         for (call in audioLogs) {
             for (value in interpolations(call)) {
-                assertTrue("$call interpolates $value", value in setOf("failure(e)", "what", "profile"))
+                assertTrue("$call interpolates $value", value in setOf("failure(e)", "profile", "owner.simpleName", "method"))
             }
             // Only the classes: never the exception (its message may name the device).
             assertFalse(call, call.trimEnd(')').trimEnd().endsWith(", e"))

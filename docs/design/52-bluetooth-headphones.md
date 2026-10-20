@@ -270,10 +270,13 @@ Built 2026-10-20 on branch `bt-a` (the music app's half is a separate branch).
 - **`launcher/.../server/BluetoothAudio.kt`**, beside `QuickControls.kt` and named in `KidScreensEscapeTest`'s
   `guarded` list: the pure rules (`btKind`, `hasLeAudio`, `btLink`, `isRouted`, `btTap`, `btAttemptStep`,
   `BT_ATTEMPT_TIMEOUT_MS`) and the glue (`Session` - the A2DP and HEADSET proxies opened on the page's start through
-  `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)` on IO, closed on stop, a proxy that lands late or after the
-  close is closed, a repeated `onServiceConnected` ignored; `connect` = `BluetoothA2dp.connect` or, for a CONNECTED
-  device that isn't the routed A2DP output, `setActiveDevice`; `disconnect` = `BluetoothHeadset.disconnect` then
-  `BluetoothA2dp.disconnect`; `failure(e)` = the exception's class and its cause's class).
+  `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)` on IO, the open `NonCancellable` so whatever lands reaches
+  the session's keep-or-close step, closed on stop (each proxy in its own `try`), a proxy that lands late or after the
+  close is closed, a repeated `onServiceConnected` ignored, no A2DP proxy = a failed open retried at the next call;
+  `connect` cancels discovery, then `BluetoothA2dp.connect` or, for a CONNECTED device that isn't the routed A2DP
+  output, `setActiveDevice`; `disconnect` = `BluetoothHeadset.disconnect` then `BluetoothA2dp.disconnect`; every
+  reflective lookup inside `call`'s `try`, so a blocked method answers `false`; `failure(e)` = the exception's class
+  and its cause's class).
 - **Kid Settings › Bluetooth**: decision 2 as written - the grant in `onCreate`, the first list read in `onStart`;
   `bluetoothRowActions(info, busy)` and `bluetoothRowStatus` (in `BluetoothDeviceAdapter.kt`) drive the row; one
   receiver for bond, A2DP connection-state and ACL broadcasts; "Kobler til …" / "Fikk ikke kontakt med %1$s – er den
@@ -292,7 +295,11 @@ Where it differs from or adds to the note:
 - A device A2DP reports CONNECTING by itself reads "Kobler til …" with Forget only (no Connect/Disconnect until it
   settles). Disconnect has no in-between text; the row follows the broadcast.
 - No proxy within 2 s (or Bluetooth off): the rows fall back to the ACL mark and Connect answers `false` (the failure
-  line at once). A device found by the scan (not paired) carries the ACL mark only; such a row only pairs.
+  line at once). A device found by the scan (not paired, read on IO) carries the ACL mark only; such a row only pairs.
+- Code QA (`docs/review/qa-52-a-code.md`): all findings fixed - the `getMethod` lookups inside the `try` (H1), the
+  open `NonCancellable` (M2), no A2DP = a failed open (L3), `cancelDiscovery` before a connect (L4), the test gaps
+  (L5), the nits; L6 (the grant rewritten each sync until the music app declares `BLUETOOTH_CONNECT`) is settled by
+  merging the music half with this one.
 - The failure line stays until the next Connect, a read that shows the device connected (a late success), or Forget.
 
 Device checks owed (launcher part of §4): `dumpsys package me.vibb.music | grep BLUETOOTH_CONNECT` granted and fixed

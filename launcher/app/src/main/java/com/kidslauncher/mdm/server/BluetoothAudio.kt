@@ -11,6 +11,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -133,19 +134,15 @@ object BluetoothAudio {
     private fun adapter(context: Context): BluetoothAdapter? =
         context.applicationContext.getSystemService(BluetoothManager::class.java)?.adapter
 
-    /** The A2DP and HEADSET proxies of one screen. Either may be null (Bluetooth off, the 2 s wait over). */
+    /** The A2DP and HEADSET proxies of one screen (HEADSET may be missing: no HFP, or its 2 s wait over). */
     class Proxies internal constructor(
         private val adapter: BluetoothAdapter,
-        val a2dp: BluetoothProfile?,
+        val a2dp: BluetoothProfile,
         val headset: BluetoothProfile?,
     ) {
         fun close() {
-            try {
-                a2dp?.let { adapter.closeProfileProxy(BluetoothProfile.A2DP, it) }
-                headset?.let { adapter.closeProfileProxy(BluetoothProfile.HEADSET, it) }
-            } catch (e: Exception) {
-                Log.w(TAG, "Closing the proxies failed: ${failure(e)}")
-            }
+            closeProxy(adapter, BluetoothProfile.A2DP, a2dp)
+            closeProxy(adapter, BluetoothProfile.HEADSET, headset)
         }
     }
 
@@ -166,7 +163,9 @@ object BluetoothAudio {
                 if (closed) return@withLock null
                 open?.let { return@withLock it }
             }
-            val fresh = openProxies(app) ?: return@withLock null
+            // Not cancellable (at most 2 x 2 s): what lands always reaches the keep-or-close step,
+            // even when the caller (a replaced refresh, the page's destroy) was cancelled meanwhile.
+            val fresh = withContext(NonCancellable) { openProxies(app) } ?: return@withLock null
             val keep = synchronized(lock) { (!closed).also { if (it) open = fresh } }
             if (!keep) fresh.close()
             if (keep) fresh else null
@@ -186,7 +185,22 @@ object BluetoothAudio {
         if (!adapter.isEnabled) return@withContext null
         val a2dp = awaitProxy(context, adapter, BluetoothProfile.A2DP)
         val headset = awaitProxy(context, adapter, BluetoothProfile.HEADSET)
-        if (a2dp == null && headset == null) null else Proxies(adapter, a2dp, headset)
+        if (a2dp == null) {
+            // No A2DP is a failed open (the profile still starting): tried again at the next call.
+            closeProxy(adapter, BluetoothProfile.HEADSET, headset)
+            null
+        } else {
+            Proxies(adapter, a2dp, headset)
+        }
+    }
+
+    private fun closeProxy(adapter: BluetoothAdapter, profile: Int, proxy: BluetoothProfile?) {
+        if (proxy == null) return
+        try {
+            adapter.closeProfileProxy(profile, proxy)
+        } catch (e: Exception) {
+            Log.w(TAG, "Closing proxy $profile failed: ${failure(e)}")
+        }
     }
 
     /**
@@ -213,7 +227,7 @@ object BluetoothAudio {
                             }
                             when (action) {
                                 DELIVERED -> cont.resume(proxy)
-                                CLOSED -> adapter.closeProfileProxy(p, proxy)
+                                CLOSED -> closeProxy(adapter, p, proxy)
                             }
                         }
 
@@ -234,7 +248,7 @@ object BluetoothAudio {
                 val late = synchronized(lock) {
                     if (state == DELIVERED) delivered.also { state = CLOSED } else { state = GAVE_UP; null }
                 }
-                late?.let { adapter.closeProfileProxy(profile, it) }
+                closeProxy(adapter, profile, late)
             }
         }
     }
@@ -273,14 +287,15 @@ object BluetoothAudio {
      */
     suspend fun connect(context: Context, session: Session, address: String): Boolean {
         val proxies = session.proxies() ?: return false
-        val a2dp = proxies.a2dp ?: return false
+        val a2dp = proxies.a2dp
         return withContext(Dispatchers.IO) {
             val device = device(context, address) ?: return@withContext false
+            stopDiscovery(context)
             val tap = btTap(a2dpState(proxies, device), isRouted(address, routedAddresses(context)))
             when (tap) {
                 BtTap.NONE -> true
-                BtTap.MAKE_ACTIVE -> call(BluetoothA2dp::class.java.getMethod("setActiveDevice", BluetoothDevice::class.java), a2dp, device, "A2DP setActiveDevice")
-                BtTap.CONNECT -> call(BluetoothA2dp::class.java.getMethod("connect", BluetoothDevice::class.java), a2dp, device, "A2DP connect")
+                BtTap.MAKE_ACTIVE -> call(BluetoothA2dp::class.java, "setActiveDevice", a2dp, device)
+                BtTap.CONNECT -> call(BluetoothA2dp::class.java, "connect", a2dp, device)
             }
         }
     }
@@ -294,10 +309,9 @@ object BluetoothAudio {
         return withContext(Dispatchers.IO) {
             val device = device(context, address) ?: return@withContext false
             proxies.headset?.let {
-                call(BluetoothHeadset::class.java.getMethod("disconnect", BluetoothDevice::class.java), it, device, "HFP disconnect")
+                call(BluetoothHeadset::class.java, "disconnect", it, device)
             }
-            val a2dp = proxies.a2dp ?: return@withContext false
-            call(BluetoothA2dp::class.java.getMethod("disconnect", BluetoothDevice::class.java), a2dp, device, "A2DP disconnect")
+            call(BluetoothA2dp::class.java, "disconnect", proxies.a2dp, device)
         }
     }
 
@@ -308,10 +322,24 @@ object BluetoothAudio {
         null
     }
 
-    private fun call(method: java.lang.reflect.Method, proxy: BluetoothProfile, device: BluetoothDevice, what: String): Boolean = try {
-        method.invoke(proxy, device) as? Boolean ?: false
+    /** The page's own scan slows paging down: no connect while discovery runs (`startDiscovery`'s rule). */
+    @Suppress("MissingPermission")
+    private fun stopDiscovery(context: Context) {
+        try {
+            adapter(context)?.cancelDiscovery()
+        } catch (e: Exception) {
+            Log.w(TAG, "cancelDiscovery failed: ${failure(e)}")
+        }
+    }
+
+    /**
+     * A hidden proxy method `method(BluetoothDevice)` by reflection. The lookup is inside the `try`: a
+     * method a later release blocks (`NoSuchMethodException`) fails soft to `false` like any refusal.
+     */
+    private fun call(owner: Class<out BluetoothProfile>, method: String, proxy: BluetoothProfile, device: BluetoothDevice): Boolean = try {
+        owner.getMethod(method, BluetoothDevice::class.java).invoke(proxy, device) as? Boolean ?: false
     } catch (e: Exception) {
-        Log.w(TAG, "$what failed: ${failure(e)}")
+        Log.w(TAG, "${owner.simpleName}.$method failed: ${failure(e)}")
         false
     }
 }

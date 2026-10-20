@@ -681,10 +681,17 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `setActiveDevice`; anything else `connect`), `btAttemptStep` (an attempt ends on connected - a late one clears the
   failure -, a `false` from the call, A2DP CONNECTING -> DISCONNECTED, or `BT_ATTEMPT_TIMEOUT_MS` 10 s). The glue:
   `Session` - one per Bluetooth page start, closed on stop - opens the A2DP and HEADSET proxies with
-  `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)` on IO (a proxy that lands after the wait, or after the
-  close, is closed; a repeated `onServiceConnected` after a Bluetooth restart is ignored), no LE Audio proxy;
+  `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)` on IO, the open itself `NonCancellable` (at most 2 x 2 s;
+  what lands always reaches the session's keep-or-close step - a proxy that lands after the wait, or after the close,
+  is closed; a repeated `onServiceConnected` after a Bluetooth restart is ignored; each proxy closed in its own
+  `try`); no A2DP proxy is a failed open (HEADSET closed, tried again at the next call), no LE Audio proxy.
+  `connect` cancels the page's discovery first (paging is slow while it runs), then
   `connect`/`disconnect` reflect `BluetoothA2dp.connect`/`setActiveDevice`/`disconnect` and, on disconnect, also
-  `BluetoothHeadset.disconnect` (HFP, so a call stops ringing in it; its `false` is no failure), all on IO. The music
+  `BluetoothHeadset.disconnect` (HFP, so a call stops ringing in it; its `false` is no failure), all on IO, through one
+  `call(owner, method, ...)` whose `getMethod` sits inside its `try` - a method a later release blocks
+  (`NoSuchMethodException`) fails soft to `false`, never an uncaught exception that would end the launcher's process
+  (qa-52-a-code H1; `BluetoothAudioTest` pins every `getMethod` inside a `try`). The scan's found devices are read on
+  IO too (`QuickControls.foundBluetoothDevice`). The music
   app has its own copy of the rules (`music/`, not byte-identical, no contract file).
 - **Kid Settings › Bluetooth** (`ui/quickcontrols/BluetoothDevicesActivity`): grants `BLUETOOTH_CONNECT` in `onCreate`
   (`QuickControls.grantBluetoothConnectIfNeeded`, now `internal`) before the first list read in `onStart`; the bonded

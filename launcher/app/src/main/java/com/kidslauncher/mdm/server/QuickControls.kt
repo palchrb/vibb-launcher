@@ -561,6 +561,10 @@ object QuickControls {
         }
     }
 
+    /** A device the scan found, read on IO (no proxy: the ACL mark; such a row only pairs). */
+    suspend fun foundBluetoothDevice(device: BluetoothDevice): BluetoothDeviceInfo =
+        withContext(Dispatchers.IO) { device.toInfo(null) }
+
     /**
      * Re-reads a single already-known device's state (after `ACTION_BOND_STATE_CHANGED`, the A2DP
      * or ACL broadcasts, a tap) without a rescan. On IO.
@@ -590,7 +594,7 @@ object QuickControls {
         context: Context,
         dpm: DevicePolicyManager,
         admin: ComponentName,
-        onDeviceFound: (BluetoothDeviceInfo) -> Unit,
+        onDeviceFound: (BluetoothDevice) -> Unit,
         onFinished: () -> Unit,
     ): BroadcastReceiver? {
         selfGrantPermission(context, dpm, admin, android.Manifest.permission.BLUETOOTH_SCAN)
@@ -618,7 +622,7 @@ object QuickControls {
                             BluetoothDevice.EXTRA_DEVICE,
                             BluetoothDevice::class.java,
                         )
-                        device?.let { onDeviceFound(it.toInfo(null)) }
+                        device?.let(onDeviceFound)
                     }
 
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> onFinished()
