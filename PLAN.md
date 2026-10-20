@@ -791,6 +791,13 @@ findings, merge to `main`, full suite once.
   all fixed). Device checks owed: §6q on the emulator; row pictures, TalkBack, the real Spotify SDK through a flip and
   a real Sonos room's first reorder on the Jelly Star.
 
+- **Launcher: an inbox event asks for a sync at once** (the user's yes, 2026-10-20: a parent-PIN use reached the
+  inbox and the iPhone minutes later). Today only the emergency call requests a sync (`EmergencyConnects`); the
+  parent-PIN events (design 24: "no send of its own", decided before push existed), foreign access, an unseen boot and
+  low battery ride the next sync (screen-on, an SSE nudge, else the 30-min backstop). Change: `ParentPin` (used,
+  wrong, lockout), the foreign-access and unseen-boot detectors and the low-battery edge call
+  `CommandListenerService.requestSync(context, reason)` like the emergency call, debounced by the existing sync
+  mutex; the power events already go at start. Next launcher round (one commit, tests on the request).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
