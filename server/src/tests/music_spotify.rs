@@ -178,11 +178,12 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// design 35's, and must reach a server before or with 0079, never after. Design 38 added 0080 (the
 /// phone's power switches; was `migrations_73_to_79_in_order`). Server round 5 added 0082 (the
 /// episode-picture backfill and `push_subscriptions.last_opened_at`; was `migrations_73_to_81_in_order`).
+/// Launcher round 7 §3 added 0084 (the wake switch; was `migrations_73_to_83_in_order`).
 #[test]
-fn migrations_73_to_83_in_order() {
+fn migrations_73_to_84_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
         .iter()
-        .filter(|m| (73..=83).contains(&m.version))
+        .filter(|m| (73..=84).contains(&m.version))
         .map(|m| (m.version, m.description.to_string()))
         .collect();
     assert_eq!(
@@ -198,11 +199,12 @@ fn migrations_73_to_83_in_order() {
             (80, "phone power".to_string()),
             (81, "music art more".to_string()),
             (82, "art backfill and last opened".to_string()),
-            (83, "lock glance text per app".to_string())
+            (83, "lock glance text per app".to_string()),
+            (84, "lock wake on notification".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5) and 0083 (design 51) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51) and 0084 (launcher round 7 §3) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }

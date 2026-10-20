@@ -94,6 +94,9 @@ pub struct DevicePolicy {
     pub notification_auto_cancel: bool,
     /// The launcher's boot cover (design 16b, migrations/0045, default off).
     pub boot_cover: bool,
+    /// "Wake the screen for a notification" (launcher round 7 §3, migrations/0084, default off),
+    /// sent as `launcher_ui.lock_wake_on_notification`.
+    pub lock_wake_on_notification: bool,
     /// The blocked-domain log (migrations/0039): off by default, a per-phone opt-in; while on,
     /// entries are kept `retention::DNS_LOG_RETENTION_DAYS`.
     pub dns_log_enabled: bool,
@@ -191,6 +194,10 @@ pub struct LauncherUi {
     /// How apps show on this phone (design 14): the catalog defaults resolved against the phone's
     /// own choices (`app_display::policy_app_display`). Always sent, possibly empty.
     pub app_display: Vec<crate::app_display::PolicyAppDisplay>,
+    /// "Wake the screen for a notification" (launcher round 7 §3): a new row on the lock's glance
+    /// page or a missed call turns the screen on, on the lock. Always sent; a launcher without the
+    /// key reads it as off.
+    pub lock_wake_on_notification: bool,
 }
 
 /// One allowed wallpaper in `launcher_ui.wallpapers` - every key always present.
@@ -847,6 +854,12 @@ pub struct InstalledApp {
     /// from Play. Absent from older launchers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer: Option<String>,
+    /// Round 7 §2: `isIgnoringBatteryOptimizations` for a catalog app the launcher installed
+    /// itself; absent for every other app, when unreadable and from
+    /// older launchers. Pinned by `testdata/installed_apps_battery.json` (the launcher's
+    /// `InstalledAppReportTest` encodes it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_exempt: Option<bool>,
 }
 
 // ---------------------------------------------------------------------

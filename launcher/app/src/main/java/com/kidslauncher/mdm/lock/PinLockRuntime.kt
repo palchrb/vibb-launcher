@@ -427,6 +427,7 @@ object PinLockRuntime {
         initialized = true
         val app = context.applicationContext
         appContext = app
+        processStartElapsed = SystemClock.elapsedRealtime()
         // Bug 25b-H: one of our own screens in front (Home, the time-rule screen) is never the SOS.
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(ownScreens)
         decide(app)
@@ -477,6 +478,8 @@ object PinLockRuntime {
             LockTaskChrome.prefetchHelpers(app)
             LockTaskChrome.prefetchRecentsPin(app)
             sosPackage = runCatching { emergencySosPackage(app) }.getOrNull()
+            // Round 7 §3: the parent's switch from the cached policy (never over a sync's).
+            noticeWakeFromCache()
             // Design 32 step 2 (qa-32-s2-code M2): the switch, and a cover the device policy may still
             // hold from an earlier process or boot goes off now - before the first apply.
             KeyguardCover.atProcessStart(app)
@@ -558,7 +561,7 @@ object PinLockRuntime {
         if (event is LockEvent.ScreenOff) {
             lockUpAtScreenOff(context, event, result)
         } else if (result.showLock) {
-            show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)
+            show(context, wake = WakeKind.VOIP.takeIf { result.wake }, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)
         } else if (screenOnUnshown(event, result.showLock)) {
             // qa-32-s1-code M1: the lock isn't resumed and nothing starts it (a system-dialer or VoIP
             // call came over the sleep-stopped lock) - nobody knows what is on top now.
@@ -645,6 +648,8 @@ object PinLockRuntime {
      */
     private fun lockUp(context: Context, start: LockUpStart, ask: LockAsk) {
         if (start == LockUpStart.NONE) return
+        // Round 7 §3: no notice wake in the first 2 s after a lock-up ([noticeWakeAllowed]).
+        lockUpAtElapsed = SystemClock.elapsedRealtime()
         if (start == LockUpStart.HOME_THEN_LOCK) {
             darkLockUp = true
             HomeFront.bring(context, "under the lock (a lock-up while dark)", animate = false)
@@ -728,6 +733,7 @@ object PinLockRuntime {
             val app = context.applicationContext
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 screenOffs++
+                endNoticeWake()
                 // The lock-up first ([lockUp]). This broadcast comes after the display is off, and the
                 // lock can't draw while dark: it is drawn only after the next screen-on (design 32).
                 rememberAlarm(app)
@@ -753,6 +759,8 @@ object PinLockRuntime {
                 handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
+                    // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
+                    if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()
                     PlayRuntime.suspendStoreAtScreenOn(app)
                     // No self-update commit while someone uses the phone (step 11).
                     com.kidslauncher.mdm.server.SelfUpdate.onScreenOn(app)
@@ -994,6 +1002,164 @@ object PinLockRuntime {
         return alarmLikelyRinging(rememberedAlarmMs, System.currentTimeMillis())
     }
 
+    // ---- the notice wake (launcher round 7 §3) ------------------------------------------------
+
+    /** The parent's "Wake the screen for a notification" (`launcher_ui.lock_wake_on_notification`),
+     * from the cached policy at process start and every accepted sync ([noticeWakeSwitch]). */
+    @Volatile
+    var noticeWakeOn = false
+        private set
+
+    /** A sync's value arrived: the cache read at process start never overwrites it. */
+    @Volatile
+    private var noticeWakeFresh = false
+
+    /** This process's start, the last lock-up and the last notice wakes (elapsed). Main thread. */
+    private var processStartElapsed = 0L
+    private var lockUpAtElapsed: Long? = null
+    private var noticeWakes: List<Long> = emptyList()
+
+    /** The current notice wake (elapsed; `null` = none on) and whether the lock was touched since. */
+    private var noticeWokeAt: Long? = null
+    private var noticeTouched = false
+
+    /** A proximity read is running: a second notice meanwhile is the same wake. Main thread. */
+    private var proximityReading = false
+
+    private val noticeWakeOff = Runnable { noticeWakeOffCheck() }
+
+    /** The lock's own dialogs open now (`PinLockActivity`: Foreldrekode, the emergency confirm): a notice wake
+     * never turns the screen off under one (qa-l7-b-code 2). Main thread. */
+    @Volatile
+    var lockDialogsOpen = 0
+
+    /** TalkBack's touch exploration is on: its hovers and clicks never reach `onUserInteraction` (qa-l7-b-code 2). */
+    private fun touchExploration(context: Context): Boolean = try {
+        context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true
+    } catch (e: Exception) {
+        true
+    }
+
+    /** After every accepted sync (`MdmSyncWorker`): the switch as the parent set it now. */
+    fun noticeWakeSwitch(ui: com.kidslauncher.mdm.server.dto.LauncherUi?) {
+        noticeWakeFresh = true
+        setNoticeWake(ui?.lockWakeOnNotification == true)
+    }
+
+    /** Process start (off the main thread): the `Ok` cached policy's switch, unless a sync came first. */
+    private fun noticeWakeFromCache() {
+        val ui = try {
+            (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy?.launcherUi
+        } catch (e: Exception) {
+            null
+        }
+        if (!noticeWakeFresh) setNoticeWake(ui?.lockWakeOnNotification == true)
+    }
+
+    private fun setNoticeWake(on: Boolean) {
+        if (on != noticeWakeOn) Log.i(LOG_TAG, "Notice wake: ${if (on) "on" else "off"}")
+        noticeWakeOn = on
+    }
+
+    /** What keeps the screen dark for a notice now ([NoticeBusy]). Main thread. */
+    private fun noticeBusy(app: Context, now: Long): NoticeBusy {
+        val telecom = telecomInCall(app)
+        return NoticeBusy(
+            ourCall = ourCall(),
+            systemCall = telecom,
+            voip = VoipCalls.phase != VoipPhase.NONE,
+            emergencyFlow = emergencyFlowNow(telecom),
+            alarm = alarmNow(app),
+            bootMark = bootMark != BootMarkState.Over,
+            sinceProcessStartMs = now - processStartElapsed,
+        )
+    }
+
+    private fun noticeAllowed(app: Context, now: Long, near: Boolean?): Boolean = noticeWakeAllowed(
+        switchOn = noticeWakeOn,
+        mode = mode,
+        interactive = interactive(app),
+        busy = noticeBusy(app, now),
+        sinceLastLockUpMs = lockUpAtElapsed?.let { now - it },
+        sinceLastWakeMs = noticeWakes.lastOrNull()?.let { now - it },
+        wakesThisHour = wakesInHour(noticeWakes, now).size,
+        near = near,
+    )
+
+    /**
+     * A row came on the lock's glance page (`GlanceReader.posted`) or our missed-call notice alerted
+     * (`MissedCallNotifier`, posted here): wake the screen on the lock when [noticeWakeAllowed] says so.
+     * Carries nothing about the notice - only that one came. The proximity read comes first (300 ms,
+     * near = no wake). Main thread.
+     */
+    fun noticeCame() {
+        val app = appContext ?: return
+        try {
+            if (proximityReading || !noticeAllowed(app, SystemClock.elapsedRealtime(), near = false)) return
+            proximityReading = true
+            NoticeProximity.read(app, handler) { near ->
+                proximityReading = false
+                val now = SystemClock.elapsedRealtime()
+                if (!noticeAllowed(app, now, near)) {
+                    if (near == true) Log.i(LOG_TAG, "Notice wake: the phone is in a pocket")
+                    return@read
+                }
+                noticeWakes = wakesAfter(noticeWakes, now)
+                Log.i(LOG_TAG, "Notice wake (proximity=${near ?: "unknown"})")
+                // The 15 s only for a start that went (qa-l7-b-code 3): a refused one lit nothing.
+                if (show(app, wake = WakeKind.NOTICE)) {
+                    noticeWokeAt = now
+                    noticeTouched = false
+                    handler.removeCallbacks(noticeWakeOff)
+                    handler.postDelayed(noticeWakeOff, NOTICE_WAKE_ON_MS)
+                }
+            }
+        } catch (e: Exception) {
+            proximityReading = false
+            Log.w(LOG_TAG, "Notice wake failed", e)
+        }
+    }
+
+    /** The lock was touched (`PinLockActivity.onUserInteraction`): a notice wake leaves the screen
+     * to the phone's own timeout. Main thread. */
+    fun noticeWakeTouched() {
+        if (noticeWokeAt == null) return
+        noticeTouched = true
+        endNoticeWake()
+    }
+
+    private fun endNoticeWake() {
+        noticeWokeAt = null
+        handler.removeCallbacks(noticeWakeOff)
+    }
+
+    /** [NOTICE_WAKE_ON_MS] after a notice wake: still untouched on the lock - the screen goes off
+     * (`lockNow`, the device owner's; the screen-off locks as always). */
+    private fun noticeWakeOffCheck() {
+        val app = appContext ?: return
+        val now = SystemClock.elapsedRealtime()
+        val busy = noticeBusy(app, now)
+        val due = noticeWakeOffDue(
+            wokeAtMs = noticeWokeAt,
+            touched = noticeTouched,
+            interactive = interactive(app),
+            locked = mode == LockMode.LOCKED,
+            lockResumed = lockResumed,
+            busy = busy.ourCall || busy.systemCall || busy.voip || busy.emergencyFlow || busy.alarm,
+            dialogOpen = lockDialogsOpen > 0,
+            touchExploration = touchExploration(app),
+            nowMs = now,
+        )
+        endNoticeWake()
+        if (!due) return
+        try {
+            app.getSystemService(DevicePolicyManager::class.java)?.lockNow()
+            Log.i(LOG_TAG, "Notice wake over: screen off")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Notice wake: couldn't turn the screen off", e)
+        }
+    }
+
     /** A time-rule screen was just started over everything: the PIN lock goes on top (QA 10 #4:
      * the time rules are never suppressed by the PIN lock). */
     fun afterTimeRuleShown(context: Context) = onMain { dispatch(context.applicationContext, LockEvent.TimeRuleShown) }
@@ -1077,10 +1243,13 @@ object PinLockRuntime {
         mode != LockMode.DISABLED || PinLockStore.active(context.applicationContext)
 
     /**
-     * [wake]: turn the screen on for it (a VoIP ring, design 17). The lock itself never sets
+     * [wake]: turn the screen on for it - a VoIP ring (design 17, [WakeKind.VOIP]) or a notice the
+     * parent's switch wakes for (round 7 §3, [WakeKind.NOTICE]); `null` = no wake. The lock itself never sets
      * turn-screen-on - an existing, stopped lock would learn it only after its start, and a left-over
      * bit would wake a later start in a pocket (qa-16-17-code #2): a fresh [VoipWakeActivity], whose
-     * manifest says `turnScreenOn`, goes on top of it in its task and finishes itself.
+     * manifest says `turnScreenOn`, goes on top of it in its task and finishes itself. The wake window
+     * is only ever started here, right after the lock's own start - never alone (design 32 §7: over a
+     * task that isn't the lock it would light a live app on a LOCKED phone).
      *
      * [ask] (design 16e): [LockAsk.BOOT] may be held while the boot's mark shows - then nothing is
      * started and `false` is returned (the backstop shows it); every other ask, and a wake, ends the
@@ -1092,7 +1261,7 @@ object PinLockRuntime {
      */
     fun show(
         context: Context,
-        wake: Boolean = false,
+        wake: WakeKind? = null,
         ask: LockAsk = LockAsk.AT_ONCE,
         sameLockUp: Boolean = false,
         fromLockUp: Boolean = false,
@@ -1103,7 +1272,7 @@ object PinLockRuntime {
             newIntentPauseHeld = false
             lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
         }
-        if (bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)) return false
+        if (bootMarkHolds(context, if (wake != null) LockAsk.AT_ONCE else ask)) return false
         var started = false
         try {
             context.startActivity(
@@ -1117,10 +1286,15 @@ object PinLockRuntime {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
             started = true
-            if (wake) {
-                voipWakeAskedAt = SystemClock.elapsedRealtime()
-                voipWakeGone = false
-                context.startActivity(VoipWakeActivity.intent(context))
+            when (wake) {
+                WakeKind.VOIP -> {
+                    voipWakeAskedAt = SystemClock.elapsedRealtime()
+                    voipWakeGone = false
+                    context.startActivity(VoipWakeActivity.intent(context, WakeKind.VOIP))
+                }
+                // No voipWakePaused bookkeeping for a notice (17b's try detection stays the ring's).
+                WakeKind.NOTICE -> context.startActivity(VoipWakeActivity.intent(context, WakeKind.NOTICE))
+                null -> Unit
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't start the lock screen", e)

@@ -788,6 +788,8 @@ struct LockTemplate {
     /// it is Home's.
     backgrounds: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
     background_same_as_home: bool,
+    /// "Wake the screen for a notification" (launcher round 7 §3, `/lock-wake`).
+    lock_wake: bool,
     /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
@@ -896,6 +898,7 @@ pub async fn view_lock(
                 .map(crate::models::screen_timeout_label),
             background_same_as_home: !backgrounds.iter().any(|w| w.lock),
             backgrounds,
+            lock_wake: policy.lock_wake_on_notification,
             lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note()).collect(),
             lock_screen,
             child,

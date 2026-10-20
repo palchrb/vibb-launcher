@@ -838,3 +838,74 @@ async fn unticking_a_row_listed_only_for_its_tick_lands_on_the_group() {
         app.assert_lands(&res, &cookie).await;
     }
 }
+
+/// Launcher round 7 §3: "Wake the screen for a notification" - off for a new phone, its own cell in
+/// the Lock screen group, a save that lands on `#lock-wake`, nudges the phone, logs a line and reaches
+/// the policy's `launcher_ui`; an unknown phone is a 404 with nothing written.
+#[tokio::test]
+async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    assert_eq!(
+        policy(&app, &token).await["launcher_ui"]["lock_wake_on_notification"],
+        json!(false)
+    );
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    let group = &html[html.find(r#"<section id="lock-screen""#).unwrap()..];
+    let group = &group[..group.find("</section>").unwrap()];
+    let cell = &group[group.find(r#"id="lock-wake""#).expect("the cell")..];
+    let cell = &cell[..cell.find("</form>").unwrap()];
+    assert!(
+        cell.contains("Wake the screen for a notification"),
+        "{cell}"
+    );
+    assert!(
+        cell.contains("For the apps ticked below and missed calls"),
+        "{cell}"
+    );
+    assert!(!cell.contains(" checked"), "off by default: {cell}");
+    assert!(group.contains("shows to anyone near the phone"), "{group}");
+
+    let mut nudges = app.state.command_notify.subscribe();
+    // The second "off" changes nothing: no log line (qa-l7-b-code 6).
+    for on in [true, false, false, true] {
+        let fields: &[(&str, &str)] = if on { &[("on", "on")] } else { &[] };
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lock-wake"),
+                Some(&cookie),
+                fields,
+            )
+            .await;
+        super::assert_redirect(&res, &lock_page(id), Some("lock-wake"));
+        app.assert_lands(&res, &cookie).await;
+        assert_eq!(nudges.try_recv().ok(), Some(id));
+        assert_eq!(
+            policy(&app, &token).await["launcher_ui"]["lock_wake_on_notification"],
+            json!(on)
+        );
+    }
+    let html = app.get_page(&lock_page(id), &cookie).await.text();
+    let cell = &html[html.find(r#"id="lock-wake""#).unwrap()..];
+    assert!(cell[..cell.find("</form>").unwrap()].contains(" checked"));
+    assert_eq!(
+        events(&app, "lock_wake_changed").await,
+        ["on", "off", "on"].map(|s| (
+            format!("device {id}: wake the screen for a notification: {s}"),
+            Some("parent".to_string())
+        ))
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/devices/999/lock-wake",
+            Some(&cookie),
+            &[("on", "on")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+    assert_eq!(events(&app, "lock_wake_changed").await.len(), 3);
+}

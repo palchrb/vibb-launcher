@@ -915,18 +915,18 @@ findings, merge to `main`, full suite once.
   widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
   targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
   surface.
-- **Catalog apps: protected from force-stop, no battery-exemption flow** (the user, 2026-10-20: "sikre
-  at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). Two parts: (1) the device
-  owner sets `setUserControlDisabledPackages` for the catalog apps we installed (the stored catalog pins ∩ installed
-  ∩ installed by us, minus hidden and our own; the kid can't force-stop or clear it) - plain code in `apply()` after
-  `applyHardening`, in its own try/catch, **lifted by the override and the pause** like every restriction (standing
-  rule) and re-applied after; gone when the app leaves the catalog; whether it also keeps the app out of hibernation is
-  a device check, not a claim; (2) the battery optimisation exemption: NO flow (the user, 2026-10-20, on the proposal of a
-  time-boxed Settings window for Android's dialog: "Nei vil ikke auto åpne settings, da er det bedre at vi ikke legger
-  inn noe spesielt rundt batteriunntaket. Da får folk styre det selv") - the parent grants it by hand during a pause as
-  design 19b says, and the app's row in the PWA only shows the state ("Background: unrestricted" / "Background: optimized (Android's default) - change it during a pause", from the
-  status report's app list). Design: `docs/design/r7-launcher-small-items.md` §2. Launcher round 7 (+ the status contract
-  field in both directories).
+- **Catalog apps' battery state in the report, no battery-exemption flow** (the user, 2026-10-20: "sikre
+  at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). The battery optimisation
+  exemption: NO flow (the user, 2026-10-20, on the proposal of a time-boxed Settings window for Android's dialog: "Nei
+  vil ikke auto åpne settings, da er det bedre at vi ikke legger inn noe spesielt rundt batteriunntaket. Da får folk
+  styre det selv") - the parent grants it by hand during a pause as design 19b says, and the app's row in the PWA only
+  shows the state ("Background: unrestricted" / "Background: optimized (Android's default) - change it during a
+  pause", from the status report's `installed_apps[].battery_exempt` for the catalog apps we installed). The planned
+  force-stop protection (`setUserControlDisabledPackages`) was built and then **dropped** after code QA
+  (`docs/review/qa-l7-b-code.md` finding 1: a protected package can't be suspended, hidden or uninstalled by the device
+  owner either - AOSP `SuspendPackageHelper` "protected package" - so time rules, the budget, the camera lock and the
+  update fence would fail open for those apps; the architect's decision, the user to be told). Design:
+  `docs/design/r7-launcher-small-items.md` §2. Launcher round 7 (+ the status contract field in both directories).
 - **Wake the screen for a notification - a global switch** (the user, 2026-10-20, on the lock screen never waking for a
   notification, design 32b's exclusion: "la det være en global bryter i pwa? Under feks lock screen kategorien i phone
   settings"): one per-device switch in the PWA under Device › Lock screen, off by default (today's behaviour), a policy

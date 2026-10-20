@@ -676,6 +676,9 @@ pub(crate) struct UnifiedAppRow {
     /// synced, or a manual-upload app nobody's uploaded a build to yet). Selecting it used to
     /// silently do nothing until a release showed up, with no indication why.
     pub(crate) show_no_release_hint: bool,
+    /// Round 7 §2: a catalog app the launcher installed itself reports its battery
+    /// state; its row says so quietly (`background_line`). `None` for every other row.
+    pub(crate) background: Option<String>,
 }
 
 /// The six parent-facing LockTask features, decoded from/encoded into the
@@ -1147,6 +1150,19 @@ pub(crate) struct AppRows {
     pub(crate) downloads: Option<crate::app_downloads::AppDownloads>,
 }
 
+/// The Apps page's quiet line for a protected catalog app's battery state (round 7 §2.1.2): no
+/// button and no command - the parent changes it on the phone during a pause.
+pub(crate) fn background_line(exempt: bool, label: &str) -> String {
+    if exempt {
+        "Background: unrestricted".to_string()
+    } else {
+        format!(
+            "Background: optimized (Android's default) - change it during a pause (Settings › \
+             Apps › {label} › Battery)"
+        )
+    }
+}
+
 pub(crate) async fn app_rows(
     state: &AppState,
     id: i64,
@@ -1247,6 +1263,9 @@ pub(crate) async fn app_rows(
             checked: allowed.contains(&app.package_name),
             tracked_app_id: tracked_match.map(|t| t.id),
             show_no_release_hint: false,
+            background: app
+                .battery_exempt
+                .map(|exempt| background_line(exempt, &app.label)),
             package_name: app.package_name.clone(),
             label: app.label.clone(),
             is_launcher: false,
@@ -1288,6 +1307,7 @@ pub(crate) async fn app_rows(
             checked: selected_app_ids.contains(&t.id),
             tracked_app_id: Some(t.id),
             show_no_release_hint: !has_release,
+            background: None,
             package_name: t.package_name.clone(),
             label: t.name.clone(),
             is_launcher: false,
@@ -1315,6 +1335,7 @@ pub(crate) async fn app_rows(
                 checked: true,
                 tracked_app_id: Some(launcher.id),
                 show_no_release_hint: false,
+                background: None,
                 package_name: launcher.package_name.clone(),
                 label: launcher.name.clone(),
                 is_launcher: true,

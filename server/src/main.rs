@@ -1058,6 +1058,11 @@ pub fn build_admin_router(
             "/devices/{id}/lock-screen/apps/text",
             post(handlers::lock_glance::save_app_text),
         )
+        // Launcher round 7 §3: "Wake the screen for a notification".
+        .route(
+            "/devices/{id}/lock-wake",
+            post(handlers::lock_glance::save_wake),
+        )
         .route(
             "/apps/tracked/{id}/display",
             post(handlers::tracked_apps::save_display),

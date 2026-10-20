@@ -133,10 +133,12 @@ class PinLockActivity : AppCompatActivity() {
 
     private fun trackDialog(dialog: Dialog) {
         openDialogs += dialog
+        PinLockRuntime.lockDialogsOpen = openDialogs.size
         handler.removeCallbacks(voipFsiSend)
         voipFsiPending = false
         dialog.setOnDismissListener {
             openDialogs -= dialog
+            PinLockRuntime.lockDialogsOpen = openDialogs.size
             renderVoip()
         }
     }
@@ -486,6 +488,13 @@ class PinLockActivity : AppCompatActivity() {
         handler.post(waitTicker)
     }
 
+    /** Round 7 §3: a touch (or key) on the lock ends a notice wake's 15 s - the phone's own screen
+     * timeout applies from here. */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        PinLockRuntime.noticeWakeTouched()
+    }
+
     override fun onPause() {
         resumed = false
         handler.removeCallbacks(waitTicker)
@@ -515,6 +524,9 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
         handler.removeCallbacksAndMessages(null)
+        // Its dialogs go with it (a leaked window fires no dismiss listener).
+        openDialogs.clear()
+        PinLockRuntime.lockDialogsOpen = 0
         instances--
         super.onDestroy()
     }

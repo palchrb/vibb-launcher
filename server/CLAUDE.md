@@ -55,7 +55,10 @@ No prior programming experience - build features directly rather than explaining
 - **A status report is stored within limits (security review M7).** `device_api::cap_installed_apps`: real package
   names only (`is_package_name`), no duplicates, labels clipped to 100 chars, an installer that isn't a package name
   dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob already
-  goes through its own `sanitize_*`. `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
+  goes through its own `sanitize_*`. An entry's `battery_exempt` (launcher round 7 §2: `Option<bool>`, only for the
+  catalog apps the launcher installed itself, absent otherwise) is kept as sent; the shared contract is
+  `testdata/installed_apps_battery.json` (`intake_limits::the_battery_state_of_a_catalog_app_is_kept` posts it), and
+  the phone's Apps page shows it as the row's "Background: …" line (`devices::background_line`). `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
   hide a sign-in attempt.
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
@@ -172,19 +175,21 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_83_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_84_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_83_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_84_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
-`device_policy.lock_glance_text`, which nothing reads after it) follows 0082. The next free number is 0084.
+`device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
+`0084_lock_wake_on_notification.sql` (launcher round 7 §3: `device_policy.lock_wake_on_notification`, default 0)
+follows 0083 (`migrations_73_to_84_in_order`). The next free number is 0085.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
-- `device_policy` - one row per device: allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10)
+- `device_policy` - one row per device: `lock_wake_on_notification` (launcher round 7 §3, 0084: Lock Screen & PINs' "Wake the screen for a notification", sent as `launcher_ui.lock_wake_on_notification`), allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10)
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
 - `device_status` - append-only heartbeat log (pruned after 30 days, the newest report per phone kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`, `relock_json`, `unseen_boots_count`/`_last_at_ms`, `foreign_access_json`, `relock_blocks_json` (design 24b)
 - `security_events` / `banned_ips` - admin login audit trail and lockout tracking
@@ -209,7 +214,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 (`tests::listeners::main_rs_has_no_device_route_literal`): both listeners build from it.
 
 - `POST /api/devices/enroll` - `{enrollment_code}` → `{device_id, device_token}`
-- `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
+- `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always; `lock_wake_on_notification` always in it since launcher round 7 §3, pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message, requested_at?}` → 204 (implies the receipt; a wipe only when it was refused)
 - `POST /api/devices/command-receipt` (bearer) - `{command_id, requested_at?}` → 204: the phone got the command and is about to run it (security review L12; the first receipt counts). `pending_command` is `{id, command, requested_at}`: an id alone isn't unique across a restored backup or another server, so the phone keys "ran it already" on both and sends `requested_at` back; an answer that names another `requested_at` counts for nothing (QA of the launcher wave, Medium 1)
 - `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots, battery}` (installed apps may carry `installer`) → 204

@@ -484,6 +484,7 @@ pub(crate) async fn build_policy(
                     );
                     Vec::new()
                 }),
+            lock_wake_on_notification: policy.lock_wake_on_notification,
         },
         time_policy,
         location_policy,

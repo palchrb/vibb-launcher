@@ -322,7 +322,7 @@ class BootMarkPlanTest {
         assertTrue(step(LockMode.LOCKED, LockEvent.ScreenOff()).showLock)
         assertTrue(step(LockMode.UNLOCKED, LockEvent.RemoteLock()).showLock)
         assertTrue(step(LockMode.LOCKED, LockEvent.VoipRinging()).showLock)
-        assertTrue(body(runtime, "show").contains("bootMarkHolds(context, if (wake) LockAsk.AT_ONCE else ask)"))
+        assertTrue(body(runtime, "show").contains("bootMarkHolds(context, if (wake != null) LockAsk.AT_ONCE else ask)"))
     }
 
     @Test
@@ -369,7 +369,7 @@ class BootMarkPlanTest {
             "if (event is LockEvent.ScreenOff) {",
             "lockUpAtScreenOff(context, event, result)",
             "} else if (result.showLock) {",
-            "show(context, wake = result.wake, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)",
+            "show(context, wake = WakeKind.VOIP.takeIf { result.wake }, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)",
             "if (lockedEdge && !chromeFirst) refreshChromeNow(context)",
         ).map { dispatch.indexOf(it) }
         assertTrue(order.toString(), order.all { it >= 0 } && order == order.sorted())

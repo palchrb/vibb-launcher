@@ -63,6 +63,26 @@ object GlanceStore {
         changed()
     }
 
+    /** The reader kept a notification with this key (before a post: an update, not a new one). */
+    fun has(key: String): Boolean = key in notices
+
+    /**
+     * A post the reader kept (`GlanceReader.posted` only - never a sweep, a ranking update or a
+     * policy re-read): [put], and when it [alerts] and the visible rows gained one
+     * ([glanceWakes]), the lock may wake the screen (round 7 §3, `PinLockRuntime.noticeCame` -
+     * nothing about the notice goes with it).
+     */
+    fun putPosted(notice: GlanceNotice, intent: PendingIntent?, alerts: Boolean) {
+        val before = if (alerts) visibleConversations() else emptySet()
+        put(notice, intent)
+        if (alerts && glanceWakes(alerts, notice.suspended, before, visibleConversations())) {
+            com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame()
+        }
+    }
+
+    private fun visibleConversations(): Set<GlanceConversation> =
+        glanceRowConversations(glanceRows(notices.values, null, policy, opened))
+
     fun remove(key: String) {
         intents.remove(key)
         if (notices.remove(key) != null) changed()

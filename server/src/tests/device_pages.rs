@@ -649,7 +649,7 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 7] = [
+    let table: [Row; 8] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
@@ -678,6 +678,12 @@ async fn lock_forms_return_to_the_page() {
             "lock-wallpaper#lock-wallpaper",
             &[("wallpaper", "")],
             (lock.clone(), Some("lock-wallpaper")),
+        ),
+        // Launcher round 7 §3: the wake switch, back to its cell.
+        (
+            "lock-wake#lock-wake",
+            &[("on", "on")],
+            (lock.clone(), Some("lock-wake")),
         ),
         // Element X, ticked for every new phone (its hidden `package_name`); listed only for its
         // tick (no report yet): kept ticked here, so its text switch below has its row (the
@@ -717,16 +723,16 @@ async fn lock_forms_return_to_the_page() {
         app.assert_lands(&res, &cookie).await;
     }
     // Each did what it says.
-    let (kid, timeout, text): (Option<String>, i64, bool) = sqlx::query_as(
+    let (kid, timeout, text, wake): (Option<String>, i64, bool, bool) = sqlx::query_as(
         "SELECT kid_pin_hash, screen_timeout_seconds, \
-         (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id) \
-         FROM device_policy p WHERE device_id = ?",
+         (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id), \
+         lock_wake_on_notification FROM device_policy p WHERE device_id = ?",
     )
     .bind(id)
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!((kid, timeout, text), (None, 120, true));
+    assert_eq!((kid, timeout, text, wake), (None, 120, true, true));
 }
 
 /// Without JS: every auto-saving control has a `<noscript>` Save in its form; the PIN forms save

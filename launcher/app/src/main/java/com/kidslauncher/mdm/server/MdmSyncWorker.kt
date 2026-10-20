@@ -126,6 +126,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(context)
         // The lock's glance page (design 25): which apps' messages it shows, and whether with text.
         com.kidslauncher.mdm.badges.GlanceStore.refreshPolicy(freshPolicy.lockGlance, fresh = true)
+        // Round 7 §3: the parent's "Wake the screen for a notification" (memory, read by the lock).
+        com.kidslauncher.mdm.lock.PinLockRuntime.noticeWakeSwitch(freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
         // until the device can hear from the server again) is done, so let real policy reassert
         // immediately rather than waiting out the rest of its time window.
@@ -938,6 +940,20 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
             }
         }
         .distinctBy { it.packageName }
+        // Round 7 §2: the battery state of the catalog apps we installed here, nothing else.
+        .let { apps ->
+            val pins = WindowRelock.store(context).catalogPins().keys
+            val catalogApps = catalogAppsInstalledByUs(
+                pins = pins,
+                installed = pins.filterTo(mutableSetOf()) { phonePackage(pm, it) is PhonePackage.Installed },
+                installers = apps.associate { it.packageName to it.installer },
+                own = com.kidslauncher.mdm.apps.AppFilter.OWN_PACKAGES,
+            )
+            val power = context.getSystemService(android.os.PowerManager::class.java)
+            withBatteryExempt(apps, catalogApps) { pkg ->
+                runCatching { power?.isIgnoringBatteryOptimizations(pkg) }.getOrNull()
+            }
+        }
 }
 
 /** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
