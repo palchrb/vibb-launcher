@@ -50,7 +50,7 @@ Mark All as Read.
    showing"/"not reaching" attention rows (today `#devices` on the same page, `notifications.html:23`) go to
    `/notifications/settings{query}#devices`; the clock warning
    shows on the settings page (it is about delivery), the inbox keeps a one-line version linking there when it
-   applies. The Settings hub's "Notifications" row (if present) goes to the settings page; the bell to the inbox.
+   applies. The Settings hub's "Notifications" row (`settings_hub.html:16`) goes to the settings page; the bell to the inbox.
 7. **`static/notifications.js`** (This Device's state and the subscribe tap) loads on the settings page only
    (`?v=` bumped); the inbox page loads nothing but the shared scripts. The Send-a-Test poll (r5 §5) lives in the
    same file.

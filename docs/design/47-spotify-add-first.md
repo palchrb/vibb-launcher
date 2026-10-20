@@ -56,17 +56,28 @@ row to `/music/settings#storytel`). Spotify follows that pattern instead of gett
    (`partials/spotify_setup.html`) included by `music_settings.html`, so the markup moves rather than being retyped.
 
 6. **Who plays as which account, from Music › Settings** (the user, 2026-10-20: "Ja jeg liker utvidelse 1 og 2").
-   Each account row in the Spotify group shows which phones play as it ("Plays on Annas telefon" / "Plays on no phone
-   yet") and carries a "Plays on" picker (`select data-autosave`, options: every enrolled phone). Picking a phone
-   sets that phone's `device_policy.music_spotify_account` to this account through the same write Device › Music's
-   "Plays as" uses; a phone already bound to another account moves. Multi-select is not needed. The group footer's
-   "one device at a time" advice stays. The form's action and the handler's redirect carry `#spotify-account-{id}`
-   (no jump).
-7. **Storytel on phones, from Music › Settings.** The Storytel group's "On phones · 2" row becomes a tappable
-   `details` row (`#storytel-phones`) that opens, on the same page, one switch per enrolled phone (`data-autosave`),
-   posting to the same handler Device › Music's "Storytel on this phone" uses with `back=settings`, which returns to
-   `/music/settings#storytel-phones`. The count stays on the summary row. Never a jump: the redirect carries the
-   fragment.
+   Each account row in the Spotify group shows which phones play as it ("Plays on Annas telefon"; "Plays on Annas
+   telefon, Olas telefon" when several; "Plays on no phone yet") and carries a "Plays on" picker (`select
+   data-autosave`, id `spotify-account-{id}-plays-on`; options "No phone" and every enrolled phone; when several
+   phones are bound the selected option is a disabled "Several phones"). The binding is per phone
+   (`device_policy.music_spotify_account`, Device › Music's "Plays as" = `handlers::music::save_device_spotify`,
+   `POST /devices/{id}/music/spotify`, which takes the phone from the path), so the picker needs **a new narrow
+   handler the other way round**: `POST /music/spotify/accounts/{id}/plays-on` with `device` = a phone id or `none`.
+   Picking a phone binds that phone to this account (a phone bound to another account moves) and unbinds this
+   account from every other phone - one phone per account by choice, because an account plays on one device at a
+   time (the footer's advice stays); "No phone" unbinds them all. The UPDATE is the one `save_device_spotify` runs,
+   extracted into a helper both call (it bumps the library revision through 0074's trigger, so the phones sync);
+   the handler nudges the phones it changed, writes the same `log_event`, refuses an unknown phone or account (400,
+   nothing written) and redirects to `/music/settings#spotify-account-{id}` (no jump).
+7. **Storytel on phones, from Music › Settings.** The Storytel group's "On phones · 2" row (`data-row="phones"`,
+   `storytel_phones()`) becomes a tappable `details` row (`#storytel-phones`) that opens, on the same page, one switch
+   per enrolled phone (`data-autosave`). Device › Music's "Storytel on this phone" is one checkbox of the whole-form
+   handler `handlers::music::save_device_settings` (`POST /devices/{id}/music`, which also sets the mobile-data
+   switches, `volume_cap` and `storage_limit` from the same form - a partial post would switch those off), so the
+   switches post to **a new narrow handler**, `POST /music/storytel/phones/{id}` with `on` (the checkbox), which sets
+   `device_policy.music_storytel` alone, nudges that phone, writes the same `log_event` the device page's save does,
+   refuses an unknown phone (400) and redirects to `/music/settings#storytel-phones`. The count stays on the summary
+   row. Never a jump: the redirect carries the fragment.
 
 ## 2. Tests (required)
 
@@ -74,7 +85,7 @@ row to `/music/settings#storytel`). Spotify follows that pattern instead of gett
 and no `client_id` field; Music › Settings has the Spotify group with the app and accounts forms and every form still
 lands (`check_forms` on both pages); each POST's redirect lands on the right page's group; the not-set-up state renders
 the attention row and the disabled form and the add POST is refused as before; the OAuth `done` return lands on
-`/music/settings?login={code}#spotify-accounts`; `/music/settings`'s CSP names Spotify's accounts origin in `form-action`; a refusal (`save_app` with an empty id) re-renders Music › Settings with the `Entered` values and `autofocus`; the Reauthorize and no-key refusals show their attention-row words; the prefixed ids exist and no unprefixed Spotify id is left; the "Plays on" picker sets `music_spotify_account` for that phone, moves a phone from another account, and the row says "Plays on …"/"Plays on no phone yet"; the Storytel phones switches post with `back=settings` and land on `/music/settings#storytel-phones`, the summary count unchanged.
+`/music/settings?login={code}#spotify-accounts`; `/music/settings`'s CSP names Spotify's accounts origin in `form-action`; a refusal (`save_app` with an empty id) re-renders Music › Settings with the `Entered` values and `autofocus`; the Reauthorize and no-key refusals show their attention-row words; the prefixed ids exist and no unprefixed Spotify id is left; the "Plays on" handler binds the chosen phone, moves it from another account, unbinds the account's other phones, "No phone" unbinds all, an unknown phone is a 400 with nothing written, and the row says "Plays on …"/"Several phones"/"Plays on no phone yet"; the Storytel phones handler sets `music_storytel` alone (the phone's mobile-data switches, `volume_cap` and `storage_limit` untouched - asserted), lands on `/music/settings#storytel-phones`, the summary count unchanged; the error ids (`spotify-app-error`, `spotify-clear-error`, `spotify-remove-error-{id}`, `spotify-paste-error`) carry the prefix too.
 
 ## 3. Device check
 
@@ -90,3 +101,4 @@ come back to the Spotify group without a jump; a fresh server (no app) shows the
 - 47-5: old §1.4 dropped (the Settings row shows no value); renumbered.
 - 47-6: `done` -> `/music/settings?login={code}#spotify-accounts`; no other reader of those query keys on the settings page.
 - New (the user): §1.6 "Plays on" picker per account and §1.7 Storytel phones `details` row (`#storytel-phones`), with tests in §2.
+- Revision check (2026-10-20): §1.6 and §1.7 each get a new narrow handler (`plays-on`, `storytel/phones/{id}`) - the device page's handlers take the phone from the path or save the whole form; the error ids prefixed too.

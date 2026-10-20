@@ -48,17 +48,18 @@ Design 31's look is unchanged: the same bar, the same pages, the same safe-area 
 6. **The bottom padding of `.container`** (96 px + the home indicator's inset, room under the fixed bar) becomes
    `16px`; the top padding keeps `env(safe-area-inset-top)`. `-webkit-overflow-scrolling: touch` is not added (a
    no-op since iOS 13).
-7. **`tab-bar.js` is deleted**, with `jstest/tab-bar.test.js`, the script tag in `partials/tab_bar.html`, and the
+7. **`style.css?v=` is bumped** in `partials/head.html`, as for every stylesheet change.
+8. **`tab-bar.js` is deleted**, with `jstest/tab-bar.test.js`, the script tag in `partials/tab_bar.html`, and the
    assertion in `src/tests/shell.rs:169` (which turns into "the tag is absent").
-8. **Double-tap zoom off, pinch zoom kept**: `touch-action: manipulation` on `main` (the scroller - a restriction set
+9. **Double-tap zoom off, pinch zoom kept**: `touch-action: manipulation` on `main` (the scroller - a restriction set
    above a scroll container does not reach into it), on `.tab-bar` and on the music cards' horizontal scrollers; never
    `*` (Leaflet's own `touch-action` rules must win on the map) and never `user-scalable=no` or `maximum-scale`. This
    also removes the 300 ms tap delay where it still exists.
-9. **A guard against the one offset iOS can still produce.** With `overflow: hidden` on the body, the iOS keyboard's
+10. **A guard against the one offset iOS can still produce.** With `overflow: hidden` on the body, the iOS keyboard's
    pan can leave the window scrolled by a few pixels after the keyboard closes. `scroll-restore.js` resets it: on
    `visualViewport` `resize`, on `focusout` and on `pageshow`, `if (win.scrollY) win.scrollTo(0, 0)` (a no-op
    everywhere else; skipped on `body.auth-page`).
-10. **The place on the page is the scripts' job now.** A browser restores an inner scroller's position on Back only
+11. **The place on the page is the scripts' job now.** A browser restores an inner scroller's position on Back only
     from the bfcache (the DOM kept), never on a fresh load; forms' redirects already go through `scroll-restore.js`.
     So `scroll-restore.js` grows one responsibility and the two other scripts follow it (§2).
 
@@ -89,7 +90,7 @@ Design 31's look is unchanged: the same bar, the same pages, the same safe-area 
   A `pageshow` with `persisted` (bfcache) restores nothing: the DOM came back as it was; the no-store pages never
   come from the bfcache and so always take this path, which is right.
 - `history.scrollRestoration = "manual"` around the restore stays (it still stops the browser's own window scroll).
-- The §1.9 guard lives here too. Loaded from the head partial, not deferred, as today; `?v=` bumped.
+- The §1.10 guard lives here too. Loaded from the head partial, not deferred, as today; `?v=` bumped.
 
 ### 2.2 `static/auto-reload.js` and `static/install-now.js`
 
@@ -110,7 +111,7 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
 - **The keyboard on iOS.** Safari scrolls the focused field into view by scrolling the nearest scrollable ancestor -
   `main`. Known weak spot: a field at the very bottom of a long form (Time rules, the DNS filter's lists). Device check
   §5; if a field hides behind the keyboard, the follow-up is `scroll-padding-bottom` on `main` from the
-  `visualViewport` height delta - not in this round unless the check fails. The §1.9 guard covers the offset the
+  `visualViewport` height delta - not in this round unless the check fails. The §1.10 guard covers the offset the
   keyboard can leave behind.
 - **`#fragment` on first load.** Browsers scroll every scrollable ancestor to reveal the anchor (Safari 14+, Chrome
   80+), so the forms' redirects to `#group` keep working without JS - design 31 §5.1's no-JS fallback.
@@ -126,7 +127,7 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
   document (the lazy lookup); new tests: `scrollerOf` picks `main`, then the window (an `auth-page` body, no `main`);
   a `back_forward` load restores the place record and beats a `#fragment`; a `reload` does; a `navigate` load doesn't;
   `performance.navigation.type` 1/2 as the fallback; a bfcache `pageshow` doesn't; the form record wins over the place
-  record; the map is capped at 50; the §1.9 guard resets a non-zero `scrollY` on `focusout` and not on an `auth-page`.
+  record; the map is capped at 50; the §1.10 guard resets a non-zero `scrollY` on `focusout` and not on an `auth-page`.
 - `jstest/auto-reload.test.js`, `install-now.test.js`: the record carries the scroller's top.
 - `src/tests/shell.rs`: the `tab-bar.js` tag absent; `style.css` has no `position: fixed`; `touch-action:
   manipulation` on `main` and `.tab-bar`; `every_dvh_follows_a_vh_fallback` still passes (`100vh` before `100dvh`).
@@ -150,13 +151,13 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
 
 - 43-1: `main` full width, the 720/480 px column from padding; `.editor-bar`'s margins re-checked (§1.2).
 - 43-2: `touch-action: manipulation` on `main`, `.tab-bar` and the card scrollers, not on `body`; the shell test
-  checks those (§1.8, §4).
+  checks those (§1.9, §4).
 - 43-3: `find()` uses the scroller's origin and `scrollTop`; the fragment jstests run against a scrolled `main` (§2.1).
 - 43-4: the scroller is resolved at each use, not at install (§2.1).
 - 43-5: the auth pages opt out of the shell and keep the document scroll; `music_spotify_done` takes the shell (§1.4).
-- 43-6: `body { height: 100vh; height: 100dvh }`, no `min-height`; the `scrollY` reset guard (§1.1, §1.9).
+- 43-6: `body { height: 100vh; height: 100dvh }`, no `min-height`; the `scrollY` reset guard (§1.1, §1.10).
 - 43-7: on Back/reload the place record beats the fragment; on `navigate` the fragment wins (§2.1).
 - 43-8: `performance.navigation.type` as the fallback, both tested (§2.1, §4).
 - 43-9: one `handy-place` map capped at 50 (§2.1).
-- 43-10: the `shell.rs` assertion flips, the `?v=` bumps listed, no `-webkit-overflow-scrolling` (§1.6, §1.7, §2.2).
+- 43-10: the `shell.rs` assertion flips, the `?v=` bumps listed, no `-webkit-overflow-scrolling` (§1.6, §1.7, §1.8, §2.2).
 - 43-11: `order: 1`; the reading order "unchanged" (§1.1).

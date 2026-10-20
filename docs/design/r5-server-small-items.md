@@ -78,6 +78,6 @@ stops.
 - r5-2: the count's basis is `max(last_receipt_at, last_opened_at)`; 0082 adds `push_subscriptions.last_opened_at` (marker layer and click receipt); words "since one was opened" / "not opened yet" / nothing.
 - r5-3: the `Why::Art` failures rule dropped; §4 keeps migration 0082 only; the bad-episode-URL question goes to PLAN as an investigation.
 - r5-4: 0082's art condition is `art_candidate`'s, join `entry_id`, file renamed `0082_art_backfill_and_last_opened.sql`; test for an untried item without `art_url`.
-- r5-5: `&push=` after an existing `?`; a summary or test sets `clicked_at` only.
+- r5-5: `&push=` after an existing `?`; a summary or test sets `clicked_at` and `last_opened_at` only.
 - r5-6: `subscriptions.json` is already no-store; nothing added, tested in `no_store_paths`; `notifications.js` on the settings page.
 - r5-7: the age lives on the guard (`opened`, `age()`), unit-tested.
