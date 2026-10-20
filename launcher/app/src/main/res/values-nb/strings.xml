@@ -286,6 +286,10 @@
     <string name="music_previous">Forrige</string>
     <string name="music_next">Neste</string>
     <string name="lock_media_unlock">Lås opp</string>
+    <!-- The lock's flashlight button (design 41 §1.3): its name and its state for TalkBack. -->
+    <string name="lock_torch">Lommelykt</string>
+    <string name="lock_torch_on">På</string>
+    <string name="lock_torch_off">Av</string>
     <string name="lock_media_back">Tilbake</string>
     <!-- Design 25: låseskjermens første side - varslene og «flere»-linjen. -->
     <plurals name="glance_messages">

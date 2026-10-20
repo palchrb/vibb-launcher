@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.text.format.DateFormat
 import android.util.Log
 import android.util.TypedValue
+import android.view.Choreographer
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
@@ -43,6 +44,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val LOG_TAG = "GlancePanel"
 
@@ -54,8 +56,9 @@ private const val LOG_TAG = "GlancePanel"
  * screen on ([lockStageDue]) it shows the glance page.
  *
  * It weakens nothing (LockGlanceGuardTest): "Lås opp" and a row lead to the keypad, the music tile's
- * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]) - nothing
- * here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
+ * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]), the
+ * flashlight (design 41 §1.3) only toggles the torch ([torch]) - nothing here opens an app, a
+ * notification or a setting. A row's tap only takes its target (§1.4: under a
  * time rule only when the rule leaves it usable, QA Q1) and the content intent it would open (kept,
  * never sent here); the unlock takes it ([takeTarget]) and [GlanceOpener] opens it after the code.
  * Every entry point catches everything and logs the exception class only: a glance fault must never
@@ -68,10 +71,15 @@ class GlancePanel(
     private val keypad: View,
     /** The stage changed: the activity renders the keypad's prompt. */
     private val onStage: () -> Unit,
+    /** The flashlight (design 41; the lock passes the `Torch`); `null` = no button. */
+    private val torch: TorchPort? = null,
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
-    private val music = MusicLockPanel(activity, glance) { render() }
+
+    /** r6 §2: the session's callbacks of one frame render the tile once, alone. */
+    private val tileChanges: GlanceCoalescer = GlanceCoalescer({ run -> Choreographer.getInstance().postFrameCallback { run() } }) { tileChanged() }
+    private val music = MusicLockPanel(activity, glance) { tileChanges.request() }
     private var started = false
 
     /** The stage (memory only). */
@@ -98,10 +106,14 @@ class GlancePanel(
     private var fitFor = 0
     private var fit: GlanceFit? = null
 
+    /** The shown tile's height (px, with its margins) the current fit was made with (null: none). */
+    private var fitTilePx: Int? = null
+
     private val labels = HashMap<String, String>()
     /** Home's icons for the rows, shared with the time-rule screen (qa-34-s7-code N4). */
     private val icons = AppIconLoader(activity, KidAvatars.dp(activity, 36f), LOG_TAG)
     private val changed: () -> Unit = { render() }
+    private val torchChanged: () -> Unit = { activity.runOnUiThread { guarded("torch") { bindTorch() } } }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
     private var clockWatch: ClockFormat.Watch? = null
@@ -114,6 +126,7 @@ class GlancePanel(
         glance.lockGlanceDate.format24Hour = datePattern
         glance.lockGlanceUnlock.setOnClickListener { step(GlanceStageEvent.Unlock) }
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
+        glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
         // The fit needs the page's height: never before the first layout, again after every change
         // (gesture <-> 3-button navigation, QA Low 4).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
@@ -134,6 +147,7 @@ class GlancePanel(
             started = true
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
+            torch?.addListener(torchChanged)
             music.start()
             clockWatch = ClockFormat.watch(activity) {
                 guarded("clock") {
@@ -174,6 +188,7 @@ class GlancePanel(
         started = false
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
+        torch?.removeListener(torchChanged)
         ClockFormat.unwatch(activity, clockWatch)
         clockWatch = null
         labels.clear()
@@ -242,8 +257,62 @@ class GlancePanel(
         null
     }
 
-    /** Re-render (rows, the session, a store change): never throws. */
+    /** Re-render (the rows, a store change): never throws. */
     private fun render() = guarded("render") { renderNow() }
+
+    /**
+     * A session callback (r6 §2, coalesced per frame): the tile rendered alone - the rows aren't
+     * rebound and the clock isn't touched. The page refits only when the tile came or went or the shown
+     * tile's height changed (a two-line title, the entry line coming or going; [glanceRefitDue]).
+     */
+    private fun tileChanged() = guarded("tile") {
+        if (!started) return@guarded
+        val wasUp = tileUp
+        tileUp = glanceTile(music.lookUp())
+        music.show(shownTile(), page = state.stage == LockStage.GLANCE)
+        if (glanceRefitDue(wasUp, tileUp, fitTilePx, shownTilePx())) {
+            fitFor = 0
+            fitNow()
+        }
+    }
+
+    /** The fit's tile while one is up (the full one before the first fit). */
+    private fun shownTile(): GlanceTileSize =
+        if (!tileUp) GlanceTileSize.NONE else fit?.tile?.takeIf { it != GlanceTileSize.NONE } ?: GlanceTileSize.FULL
+
+    /** The shown tile's height with its margins at the page's width; null before the page is laid out. */
+    private fun shownTilePx(): Int? {
+        val width = pageWidth() ?: return null
+        val view = when (fit?.tile) {
+            GlanceTileSize.FULL -> glance.lockMediaTile
+            GlanceTileSize.COMPACT -> glance.lockMediaCompact
+            else -> return null
+        }
+        return withMargins(view, width).roundToInt()
+    }
+
+    /** The page's content width once it is laid out and shown, else null. */
+    private fun pageWidth(): Int? {
+        val root = glance.root
+        if (root.height <= 0 || root.visibility != View.VISIBLE) return null
+        return (root.width - root.paddingStart - root.paddingEnd).takeIf { it > 0 }
+    }
+
+    /** The flashlight button (design 41 §1.3): hidden, off, or lit - a filled peach disc with the
+     * ground's glyph. It toggles the torch and opens nothing; its presence never moves the fit (the
+     * row is as tall as "Nødsamtale" either way). */
+    private fun bindTorch() {
+        val t = torch
+        val button = glance.lockGlanceTorch
+        val look = glanceTorchButton(t?.hasFlash == true, t?.refusedWhileLocked == true, t?.lit == true)
+        button.visibility = if (look == GlanceTorchButton.HIDDEN) View.GONE else View.VISIBLE
+        if (look == GlanceTorchButton.HIDDEN) return
+        val lit = look == GlanceTorchButton.LIT
+        button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)
+        button.setImageResource(if (lit) R.drawable.torch_glyph_on else R.drawable.torch_glyph_off)
+        button.imageTintList = ColorStateList.valueOf(activity.getColor(if (lit) R.color.kid_ground else R.color.kid_core))
+        button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
+    }
 
     private fun renderNow() {
         val shown = state.stage == LockStage.GLANCE
@@ -260,8 +329,9 @@ class GlancePanel(
             rows = emptyList()
             rowViews.forEach { it.root.visibility = View.GONE }
         }
+        bindTorch()
         // The tile's content first (the fit measures it), then the fit decides which tile shows.
-        music.show(fit?.tile?.takeIf { tileUp } ?: if (tileUp) GlanceTileSize.FULL else GlanceTileSize.NONE, page = shown)
+        music.show(shownTile(), page = shown)
         fitFor = 0
         fitNow()
     }
@@ -449,10 +519,8 @@ class GlancePanel(
      * Only once the page is laid out; a re-render starts again from candidate 1. */
     private fun fitNow() {
         val root = glance.root
+        val width = pageWidth() ?: return
         val height = root.height
-        if (height <= 0 || root.visibility != View.VISIBLE) return
-        val width = root.width - root.paddingStart - root.paddingEnd
-        if (width <= 0) return
         fitFor = height
         val available = (height - root.paddingTop - root.paddingBottom).toFloat()
         val clock = glance.lockGlanceClock
@@ -464,7 +532,7 @@ class GlancePanel(
         val more = glance.lockGlanceMore
         more.text = activity.resources.getQuantityString(R.plurals.glance_more, 9, 9)
         val heights = GlanceHeights(
-            fixed = withMargins(glance.lockGlanceUnlock, width) + withMargins(glance.lockGlanceEmergency, width),
+            fixed = withMargins(glance.lockGlanceUnlock, width) + withMargins(glance.lockGlanceBottom, width),
             clockBig = clockBig,
             clockSmall = clockSmall,
             date = withMargins(glance.lockGlanceDate, width),
@@ -482,6 +550,11 @@ class GlancePanel(
             refitPending = true
         }
         fit = next
+        fitTilePx = when (next.tile) {
+            GlanceTileSize.FULL -> heights.tileFull
+            GlanceTileSize.COMPACT -> heights.tileCompact
+            GlanceTileSize.NONE -> null
+        }?.roundToInt()
         apply(next, shownRows)
     }
 

@@ -2,7 +2,8 @@
 <!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; lock.GlancePanel, pure
      lock.LockGlance): the clock, the date, the music tile while something plays (full, or compact when
      rows compete for the height - lock.glanceFit), up to three notification rows and the "more" line,
-     "Lås opp" to the keypad and the lock's emergency call. The page never scrolls. Part of the lock:
+     "Lås opp" to the keypad and the bottom row: the lock's emergency call and the flashlight (design
+     41). The page never scrolls. Part of the lock:
      nothing here opens an app, a setting or a notification - a row only leads to the keypad. The root
      only blocks touches to the keypad below - no node for TalkBack (qa-21-step4-code L7). The fit and
      the widths at 320/360/411 dp are pinned by LockGlanceLayoutTest. -->
@@ -44,8 +45,8 @@
         android:textColor="@color/kid_core_dim"
         android:textSize="14sp" />
 
-    <!-- The full tile: step 4's, unchanged (72 dp art, item, entry, 5 dp progress, previous / play /
-         next). -->
+    <!-- The full tile: step 4's (72 dp art, item, entry, 5 dp progress, previous / play / next), with
+         the time line under the bar (r6 §2). -->
     <LinearLayout
         android:id="@+id/lock_media_tile"
         android:layout_width="match_parent"
@@ -124,6 +125,22 @@
             android:max="1000"
             android:progressDrawable="@drawable/bg_music_progress" />
 
+        <!-- "4:48 · 25:36" (r6 §2), ticking with the bar. Tabular figures in a width its parent fixes
+             (match_parent) and one line: a tick swaps the text without a layout. The bar's content
+             description says it to TalkBack. -->
+        <TextView
+            android:id="@+id/lock_media_time"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:fontFeatureSettings="tnum"
+            android:importantForAccessibility="no"
+            android:maxLines="1"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="12sp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -167,8 +184,9 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them,
-         a 48 dp peach play/pause. -->
+    <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them
+         and the time line under the bar (r6 §2, qa-r6 r6-5: never beside it), a 48 dp peach
+         play/pause. -->
     <LinearLayout
         android:id="@+id/lock_media_compact"
         android:layout_width="match_parent"
@@ -239,6 +257,19 @@
                 android:indeterminate="false"
                 android:max="1000"
                 android:progressDrawable="@drawable/bg_music_progress" />
+
+            <TextView
+                android:id="@+id/lock_media_compact_time"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="end"
+                android:fontFamily="@font/nunito_bold"
+                android:fontFeatureSettings="tnum"
+                android:importantForAccessibility="no"
+                android:maxLines="1"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <ImageButton
@@ -312,22 +343,49 @@
             android:textSize="17sp" />
     </LinearLayout>
 
-    <!-- Design 34 P7 (qa-34-s8-code N5): a 48 dp target like every emergency control; the margin
-         gave the 4 dp, so the fit's fixed parts (and every expected fit) stay as they were. -->
-    <TextView
-        android:id="@+id/lock_glance_emergency"
-        android:layout_width="wrap_content"
-        android:layout_height="48dp"
-        android:layout_marginTop="2dp"
-        android:background="?android:attr/selectableItemBackground"
-        android:clickable="true"
-        android:focusable="true"
-        android:fontFamily="@font/nunito_extrabold"
-        android:gravity="center"
-        android:paddingStart="18dp"
-        android:paddingEnd="18dp"
-        android:text="@string/pin_lock_emergency"
-        android:textColor="@color/kid_emergency_text"
-        android:textSize="15sp" />
+    <!-- The bottom row (design 41 §1.3): "Nødsamtale" centred as before and the flashlight at the
+         end, beside it without pushing it off centre. Nødsamtale keeps the 48 dp target of design 34
+         P7 (qa-34-s8-code N5; the row's margin gave the 4 dp) and the room for a 48 dp button on each
+         side, so a long label at a large font wraps before it reaches the button; the button is no
+         taller than it, so the row (the fit's fixed part) stays 50 dp. The flashlight is gone without a
+         flash unit or when the torch is refused while LOCKED (§1.5). -->
+    <FrameLayout
+        android:id="@+id/lock_glance_bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp">
+
+        <TextView
+            android:id="@+id/lock_glance_emergency"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginStart="52dp"
+            android:layout_marginEnd="52dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:fontFamily="@font/nunito_extrabold"
+            android:gravity="center"
+            android:minHeight="48dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/pin_lock_emergency"
+            android:textColor="@color/kid_emergency_text"
+            android:textSize="15sp" />
+
+        <ImageButton
+            android:id="@+id/lock_glance_torch"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end|center_vertical"
+            android:background="@drawable/bg_music_control"
+            android:contentDescription="@string/lock_torch"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/torch_glyph_off"
+            android:tint="@color/kid_core"
+            android:visibility="gone" />
+    </FrameLayout>
 
 </LinearLayout>

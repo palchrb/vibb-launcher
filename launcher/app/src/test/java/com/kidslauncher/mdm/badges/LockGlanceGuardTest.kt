@@ -243,6 +243,22 @@ class LockGlanceGuardTest {
     }
 
     @Test
+    fun `the flashlight button toggles the torch and nothing else (design 41 §2)`() {
+        val wiring = Regex("""glance\.lockGlanceTorch\.setOnClickListener \{([^}]*)\}""").findAll(panel).map { it.groupValues[1].trim() }.toList()
+        assertEquals(listOf("torch?.toggle()"), wiring)
+        assertEquals(1, Regex("""\btoggle\(""").findAll(panel).count())
+        // The panel never reaches the camera itself: no camera manager, torch mode or camera policy.
+        for (forbidden in listOf("CameraManager", "setTorchMode", "setCameraDisabled", "CameraLock", "DevicePolicyManager")) {
+            assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
+        }
+        // The port has nothing that could open something: its members are the state, the toggle and
+        // the listener.
+        val port = code("LockGlance.kt").substringAfter("interface TorchPort {").substringBefore("\n}")
+        val members = Regex("""\b(?:val|fun) (\w+)""").findAll(port).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("hasFlash", "lit", "refusedWhileLocked", "toggle", "addListener", "removeListener"), members)
+    }
+
+    @Test
     fun `FLAG_SECURE is on the lock's window before its content`() {
         val activity = code("PinLockActivity.kt")
         val onCreate = body(activity, "onCreate")

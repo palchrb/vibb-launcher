@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.lock
 
 import com.kidslauncher.mdm.badges.GlanceConversation
 import com.kidslauncher.mdm.music.MusicSession
+import com.kidslauncher.mdm.music.clockText
 
 /*
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
@@ -101,6 +102,65 @@ fun glanceTile(session: MusicSession?): Boolean = session != null
 fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
     tileShown && pageShown && session?.playing == true
 
+/** The line under both tiles' bar (r6 §2): "4:48 · 25:36"; a live stream or an unknown duration
+ * shows the position alone. The bar's content description keeps "4:48 av 25:36". */
+fun glanceTimeLine(positionMs: Long, durationMs: Long): String =
+    if (durationMs > 0) "${clockText(positionMs)} · ${clockText(durationMs)}" else clockText(positionMs)
+
+/**
+ * The refit rule (r6 §2, qa-r6 r6-4): a session callback renders the tile alone and refits the page
+ * only when the tile came or went ([tileWasUp] -> [tileUp]) or the shown tile's measured height
+ * ([measuredPx], with its margins; `null` before the page is laid out) differs from the one the last
+ * fit was made with ([fittedPx]; `null` = no fit with a tile yet).
+ */
+fun glanceRefitDue(tileWasUp: Boolean, tileUp: Boolean, fittedPx: Int?, measuredPx: Int?): Boolean =
+    tileWasUp != tileUp || (tileUp && (fittedPx == null || fittedPx != measuredPx))
+
+/**
+ * Callbacks within one frame draw once (r6 §2): [request] posts [work] through [post] (the glue's
+ * `Choreographer.postFrameCallback`) only when none is pending, so the two or three session
+ * messages of one tap render the tile once. Main thread only.
+ */
+class GlanceCoalescer(private val post: (() -> Unit) -> Unit, private val work: () -> Unit) {
+    private var pending = false
+
+    fun request() {
+        if (pending) return
+        pending = true
+        post {
+            pending = false
+            work()
+        }
+    }
+}
+
+// ---- the flashlight button (design 41 §1.3) ------------------------------------------------------
+
+/**
+ * What the lock needs of the torch (design 41 §1.1; the glue's `Torch` behind it): whether the phone
+ * has a flash unit, whether it is lit, whether turning it on failed with `CAMERA_DISABLED` while
+ * the PIN lock was LOCKED (§1.5: the lock's button goes, Home's tile stays), the toggle and the
+ * change listener. The lock's button toggles the torch and nothing else - it opens nothing.
+ */
+interface TorchPort {
+    val hasFlash: Boolean
+    val lit: Boolean
+    val refusedWhileLocked: Boolean
+    fun toggle()
+    fun addListener(listener: () -> Unit)
+    fun removeListener(listener: () -> Unit)
+}
+
+enum class GlanceTorchButton { HIDDEN, OFF, LIT }
+
+/** The lock's round button (§1.3): none without a flash unit or after a `CAMERA_DISABLED` refusal
+ * on the lock (§1.5); else off or lit (the lit state a filled peach disc). */
+fun glanceTorchButton(hasFlash: Boolean, refusedWhileLocked: Boolean, lit: Boolean): GlanceTorchButton = when {
+    !hasFlash || refusedWhileLocked -> GlanceTorchButton.HIDDEN
+    lit -> GlanceTorchButton.LIT
+    else -> GlanceTorchButton.OFF
+}
+
 // ---- the fit -------------------------------------------------------------------------------------
 
 /** The page shows at most this many rows; the rest is the "more" line's count. */
@@ -108,8 +168,9 @@ const val GLANCE_MAX_ROWS = 3
 
 /**
  * Each part's height as measured (any unit, the same for all and for the available height):
- * [fixed] = "Lås opp" and "Nødsamtale" with their margins; [date] with its margin; the tiles with
- * their top margin; [rowsTop] the list's margin below the tile, [rowsTopNoTile] below the date;
+ * [fixed] = "Lås opp" and the bottom row ("Nødsamtale" and the flashlight, design 41) with their
+ * margins; [date] with its margin; the tiles with their top margin (and the time line under the bar,
+ * r6 §2); [rowsTop] the list's margin below the tile, [rowsTopNoTile] below the date;
  * [row] one row (the tallest); [rowGap] between rows; [more] the "more" line (nothing above it).
  */
 data class GlanceHeights(
