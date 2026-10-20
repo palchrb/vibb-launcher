@@ -778,9 +778,12 @@ findings, merge to `main`, full suite once.
   music cards' horizontal scrollers are children of the scroller (check the map's touch handling). Known trade-off:
   with an inner scroller iOS may leave a focused field behind the keyboard (Safari usually scrolls it in; check the
   long forms - Time, Filter - on the iPhone). Tests: jstest for the restore paths (window and scroller, back_forward),
-  the tab-bar test deleted. A server round of its own (design QA + code QA), after the 0.29.5 verification; the user
+  the tab-bar test deleted. Also in this round (the user, 2026-10-20: "av og til virker det som om den zoomer inn
+  når jeg trykker på tabs på bunnen"): Safari's double-tap zoom fires on two quick taps on a tab or a row - `touch-action:
+  manipulation` on `.tab`, `.row`, buttons and links (pinch zoom stays; never `user-scalable=no`). A server round of its
+  own (design QA + code QA), after the 0.29.5 verification; the user
   verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
-  form not jumping (the standing rule).
+  form not jumping (the standing rule), no zoom on a quick double tap on a tab.
 - **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
   reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
   tannhjul ... for å stille inn ... notification counter bør nullstilles når man har åpnet den innboxen; nå må man
