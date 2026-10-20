@@ -113,7 +113,8 @@ fn every_template_with_the_bar_sets_its_tab() {
         // §5.1).
         assert!(
             ["devices", "apps", "locate", "music", "settings"].contains(&tab)
-                || (file == "notifications.html" && tab.is_empty()),
+                || (matches!(file, "notifications.html" | "notifications_settings.html")
+                    && tab.is_empty()),
             "{}: {tab}",
             path.display()
         );
