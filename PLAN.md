@@ -849,6 +849,11 @@ findings, merge to `main`, full suite once.
   kind-filtered Recent on each page, the cancel still right; jstest for the pick's storage and the list's pan. A PWA
   server round, together with design 43 or right after it; the user verifies on the iPhone and the emulator (a
   moving emulator: `geo fix` twice, §5 of docs/testing/emulator.md).
+- **Investigate: does one bad episode picture URL hold a listing's other pictures?** (from qa-r5-design.md r5-3,
+  2026-10-20: the proposed `Why::Art` failures rule changed nothing, because with `failures > 0` the regular time already
+  is the backoff). Find out whether a single picture's failure raises the listing's `failures` at all, or whether the
+  hold is `art_due`'s one-day retry / `ART_MAX_FAILS`; then decide the rule with a test that reproduces the case
+  (`fake-audio.py --feed` with one 404 picture). Next music/server round.
 - **Music app's episode list: thumbnails and a kid-side order flip** (the user, 2026-10-19, from a Snipp Snapp Snute
   screenshot): (1) small pictures in place of the number circles, only for an entry whose episodes really have their
   own art (the carousel's rule, `showsCarousel`: at least two different pictures; a one-picture entry keeps the

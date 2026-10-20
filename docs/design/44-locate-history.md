@@ -1,6 +1,6 @@
 # 44 - Locate: the history behind a row, a span pick, its own Recent (proposal)
 
-Asked 2026-10-20. Server only (`handlers::locate`, `device_locate.html`, a new page, the Lock page's template); no API
+Asked 2026-10-20. Server only (`handlers::locate`, `device_locate.html`, a new page, `static/locate.js`, the phone's summary page `device_detail.html`); no API
 or launcher change. Builds on design 31's Locate tab (`docs/notes/server/pwa.md`, "The Locate tab") and the Find My
 Device commands (`docs/notes/server/architecture.md`).
 
@@ -19,40 +19,48 @@ coincide); Recent lists the phone's last 10 commands of every kind (`RECENT_COMM
 
 1. **Recent on Locate shows only the page's own actions**: `locate`, `ring`, `stop_ring`, `lock`, `wipe`. The query
    takes a kind list; the limit stays 10.
-2. **The override commands get a Recent of their own on the Lock page** (`device_lock.html`, a new group `#recent`
-   under the page's last group): `end_windows` ("Lock again"), `start_pause` ("Unlock for 2 h"), `allow_blocked`
-   ("Allow these apps"). The same partial, the same rows, the same Cancel. `install_update` ("Install Now") needs no
-   new list: design 37's Install Now lives on the launcher's app page, whose phone rows show the install's state; the
-   implementer confirms that row names the last result and time ("Installed 0.30.0 · yesterday 18:42") - if it
-   doesn't, that page gets a Recent of `install_update` alone, the same partial.
+2. **The override commands get a Recent of their own on the phone's summary page** (`device_detail.html`, a
+   `#recent` group under `#quick`, where their buttons are): `end_windows` ("Lock again"), `start_pause` ("Unlock
+   for 2 h"), `allow_blocked` ("Allow these apps"). The same partial, the same rows, the same Cancel. The Lock page
+   gets nothing. `install_update` ("Install Now") needs nothing: `install_now::install_row` already shows the
+   command's row on the launcher's app page.
 3. **One partial, one function.** `templates/partials/recent.html` renders a `Vec<CommandRow>` with a cancel form and
    the flash; `locate::recent(state, device, kinds, zone, now) -> Vec<CommandRow>`; the cancel route stays
-   `POST /devices/{id}/commands/{command_id}/cancel` and takes `back=locate|lock` (default `locate`) to redirect to
-   the right page's `#recent` with the notice - never the top (`scroll-restore.js` keeps the place).
+   `POST /devices/{id}/commands/{command_id}/cancel` and takes a `Form<HashMap<String, String>>` with a hidden `back`
+   input in the shared partial, whitelisted to `locate` (default; `/devices/locate?device={id}&cancel=…#recent`) and
+   `summary` (`/devices/{id}#recent`), and redirects there with the notice - never the top (`scroll-restore.js` keeps
+   the place).
 4. **The history list is a page of its own**, `GET /devices/{id}/locations` (`device_locations.html`, tab Locate,
    back link to `/devices/locate?device={id}`), reached from one row on the Locate page under the map, "Locations",
    whose value is the count in the chosen span ("14 in the last 12 hours ›", "3 in the last 7 days", "None yet"). The
    page: the same map at the top with the trail and the newest marker, the span pick (§1.5), then every stored fix
    as a row: the time in the page's zone words (`display_time`, the exact time in `title`), the accuracy as the
    sub-line ("± 25 m"; "accuracy unknown" when null), newest first, 200 per page with an "Older" row
-   (`?before=<id>`), the same shape as the inbox's paging. A tap on a row pans that page's map to the fix and opens
-   its popup (JS; without JS the row is plain text). Nothing posts on this page.
+   (`?before=<captured_at>,<id>`: rows sort by `captured_at DESC, id DESC` and fixes can arrive out of order, so the
+   page keys on both), the same shape as the inbox's paging. A tap on a row scrolls the map box into view inside the
+   page scroller (`scrollIntoView({block: "start"})`, no sticky map), then pans to the fix and opens its popup (JS;
+   without JS the row is plain text). The page is `no_store_path` (`["devices", _, "locations"]`): it holds every kept
+   fix. Nothing posts on this page.
 5. **The span pick**, on both pages above the map: "Show: 12 hours · 24 hours · 7 days · All kept" as a segmented
-   row of four buttons (`role="radiogroup"`, the chosen one `aria-checked`), default 12 hours. A view preference:
+   row of four links (`role="radiogroup"` around `<a role="radio" aria-checked>`, JS calls `preventDefault`), default 12 hours. A view preference:
    remembered per browser in `localStorage` (`handy-locate-span`, one of `12`, `24`, `168`, `0`), no POST, nothing
    to save, nothing that can jump. The pick re-fetches `locations.json?since=<hours>` (`0` = everything kept) and
    redraws the trail, the dots, the marker, the "Locations" row's count and the list page's rows (the list page's
    first 200 of the span; "Older" keeps the span in its query). Without JS the pages show the server-rendered 12-hour
-   view and the pick does nothing (its buttons are links with `?span=` as a progressive fallback, the server honours
-   `span` for the rendered count and list).
+   view and the pick does nothing (the links carry `?span=` as the progressive fallback, the server honours
+   `span` for the rendered count and list). The `newest: true` point is never counted in the row's span count.
 6. **The newest fix is always shown**, whatever the span - the marker never disappears, the row's count may say "0
    in the last 12 hours · newest 3 days ago".
-7. **The trail gets a small dot per point** (`L.circleMarker`, 3 px, the trail's colour) so a short history with
+7. **The trail gets a small dot per point** (`L.circleMarker`, 3 px, the trail's colour; the map is
+   `L.map(..., { preferCanvas: true })`, as "All kept" can be about 4,300 dots) so a short history with
    points close together shows at all; the newest keeps the marker.
 8. **`locations.json`** takes `since=<hours>` (positive integer, else everything) and answers the points of the span
    oldest first plus the newest point when it is older than the span (flagged `"newest": true` on that last point so
-   the trail doesn't join it to the span). The route stays `no-store` (admin_auth's list of pages never stored).
-9. The retention setting ("Keep history for") stays where it is; the "Locations" row's help line says what the span
+   the trail doesn't join it to the span). The route stays `no-store` (`admin_auth::no_store_path`).
+9. **The map script is a file**: `static/locate.js` (ES5, `?v=`), the device id, `shown` and the popup text in
+   `data-` attributes (`textContent` rules unchanged; `js_string` goes). Both pages load it; the waiting poll moves
+   with it.
+10. The retention setting ("Keep history for") stays where it is; the "Locations" row's help line says what the span
    shows and what retention keeps.
 
 ## 2. Data
@@ -70,15 +78,30 @@ to an integer or are ignored.
 
 ## 4. Tests (required)
 
-Server (`src/tests/locate.rs` or the existing Locate tests): the Locate page's Recent holds a `locate` row and not an
-`end_windows` one, the Lock page's the reverse; Cancel from the Lock page comes back to `/devices/{id}/lock#recent`;
+Server (the existing Locate test file in `src/tests/`): the Locate page's Recent holds a `locate` row and not an
+`end_windows` one, the summary's `#recent` the reverse; Cancel with `back=summary` comes back to `/devices/{id}#recent`,
+an unknown `back` falls to Locate, and Cancel from Locate still lands on `/devices/locate?device={id}&cancel=…#recent`;
+the list page is no-store (`admin_auth::tests::no_store_paths`);
 `locations.json?since=12` leaves a 2-day-old point out and keeps the newest when it is the only one (`newest: true`);
-the list page pages at 200 with `before`; the "Locations" row's count matches the span; `?span=168` renders the week's
+the list page pages at 200 with `before=<captured_at>,<id>` without skipping or repeating out-of-order rows; the "Locations" row's count matches the span; `?span=168` renders the week's
 count. JS (`jstest/locate.test.js`, new): the pick stores and reads the span, fetches with `since`, redraws (a fake
-Leaflet with recorded calls), the list page's rows pan the map. `admin_auth::never_stored` keeps the JSON route.
+Leaflet with recorded calls), the span links are `role=radio` with `aria-checked`, the list page's rows scroll the map
+into view and pan it. `no_store_paths` keeps the JSON route.
 
 ## 5. Device checks
 
 The emulator with two `geo fix` positions ten minutes apart (docs/testing/emulator.md §5): the trail with its dots,
 the row's count, the list page with both rows, a tap pans; the span flipped to 24 hours keeps both, "All kept" too;
 the iPhone: the pick remembered across a relaunch, no jump on any tap.
+
+## Revision (2026-10-20, after qa-r5-design.md)
+
+- 44-1: the list page added to `no_store_path` (`["devices", _, "locations"]`) and tested.
+- 44-2: the override commands' Recent goes on the summary page (`#recent` under `#quick`), `back=summary`; the Lock page gets nothing; the Install Now fallback sentence dropped.
+- 44-3: `static/locate.js` with data- attributes, both pages load it; `js_string` goes (§1.9).
+- 44-4: a row tap scrolls the map box into view in the page scroller, then pans; no sticky map.
+- 44-5: the cancel takes a `Form` with a whitelisted `back` (`locate`, `summary`).
+- 44-6: paging on `(captured_at, id)`.
+- 44-7: `preferCanvas: true`.
+- 44-8: `<a role="radio" aria-checked>` with `preventDefault`; the `newest: true` point is never counted.
+- 44-9: test names corrected (`no_store_paths`, `src/tests/` Locate file); list-page-no-store and Cancel-from-Locate tests added.
