@@ -770,6 +770,25 @@ findings, merge to `main`, full suite once.
   is hidden (never a policy lift: qa-r6-launcher-design.md 41-1 - lifting the camera policy reopens design 25b's
   SystemUI crash path) and the Home tile keeps working - the user decides then. Calm look (no yellow flash icon): the
   Vibb tones. Launcher round 6 (`docs/design/41-flashlight.md`).
+- **Design 50: the player and the library, the user's picks of 2026-10-20** ("Jeg liker 1, 4 ... Ang 5 ... husker
+  hvilken tile som ble spilt ved siste avslutning ... Ang 6 ... grey out de tilesene man vet man ikke får spilt av"):
+  (1) **skip buttons** for everything that resumes (books, podcasts): the control row's two side slots become "15 s
+  tilbake" and "30 s fram" (music gets shuffle/repeat there, design 49); the same two on the lock's music tile for
+  such entries (the launcher; one glyph pair, Material Symbols replay_10/forward_30 or our own 15/30). Previous/Next
+  stay vibb's (`previousAction`: an item over 30 min never restarts, it steps to the previous part; positions per
+  item are never reset by a step - the user's worry - the entry's current item moves, each part keeps its place). (2)
+  **the sleep timer's extra choice "Til slutten"**: finishes the current track/episode/book part, then stops (the
+  Sov menu's fourth row; shown as the remaining time of the item). (3) **the carousel opens on the last played
+  tile**: at start `carouselIndex` is the stored now-playing entry's index (`NowPlayingRow`; 0 today) - no new state.
+  (4) **a tile the phone can't play right now is dimmed**: an entry with no playable item under the current network
+  (a Spotify entry when `spotifyPlayability` refuses - cell without the streaming switch, offline; an NRK/RSS entry
+  with no copy and no streaming allowed; a Storytel book with no copy) draws its cover at ~60 % with its quiet line
+  ("Trenger Wi-Fi", "Ikke lastet ned"); a tap still answers as today (the line, never a silent block), nothing is
+  hidden. (5) **Favoritter**: a heart per track/episode in the list and the player, a "Favoritter" category tile
+  first after Alle (the tile row scrolls past four, so width is no issue); phone-only (Room), never synced. Not taken:
+  the "Fortsett" strip (3 covers it), the offline check badge (4 covers it the user's way). The rewind-after-a-long-pause
+  idea (5-10 s back after > a few minutes paused) is offered again as part of (1) - the user to say. Design note first;
+  the music round with 46 and 49.
 - **Design 49: shuffle and repeat in the player's control row** (the user, 2026-10-20: "en spesifikk shuffle knapp og
   repeat knapp ved siden av next/prev ... toggle for shuffle av og på - og toggle for ikke repeat, repeat all eller
   repeat 1 sang"). Today: a shuffle button exists in the row's side slot but only for `canShuffle` = own files that
