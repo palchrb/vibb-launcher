@@ -14,32 +14,44 @@ result (`#added`). Every POST comes back to its own group's fragment (the no-jum
 
 ## 1. Decisions
 
+The Music tab already has one settings place, `/music/settings` (`music_settings.html`: New episodes, **Storytel** -
+the login, On phones, Pick Books -, The music app, Files no entry uses), and the Storytel shelf page already shows the
+pattern for "not set up yet" (`music_storytel.html`: "No Storytel login is saved - Save the family's login first" and a
+row to `/music/settings#storytel`). Spotify follows that pattern instead of getting a page of its own (the user,
+2026-10-20: "burde spotify heller legges inn der?").
+
 1. **`GET /music/spotify` is the add page**: back link "Music" (`/music#spotify`), title "Add from Spotify", then
    "Add a Spotify link" (`#add`), "On these phones" (`#add-phones`), the added result (`#added`), and one row at the
    end, **"Spotify setup"** with its value - "2 accounts" (the number of children's accounts logged in), "App saved, no
-   account yet", or "Not set up yet" - to `/music/spotify/setup`.
-2. **`GET /music/spotify/setup` is the setup page** (`music_spotify_setup.html`): back link "Add from Spotify"
-   (`/music/spotify`), title "Spotify Setup", then Your Spotify App (`#app`), Children's Accounts (`#accounts`, the
-   paste flow `#paste`) exactly as today. The POSTs `save_app`, `clear_app`, `login`, `paste`, `remove_account` and
-   the OAuth callback's return come back to `/music/spotify/setup?…#app|#accounts` with their notices; `add` comes
-   back to `/music/spotify?…#add|#add-phones|#added` as today.
-3. **Not set up yet** (no app, or no child account): the add page shows the setup row on top as an attention row
-   ("Set up Spotify first" / "Log in a child's account first", `attention attention-action`, the chevron) linking to
-   the setup page, and the add form below it stays visible but disabled (`fieldset disabled`, the row's sub-line says
-   why), so the parent sees what the page is for. `add`'s handler refuses a POST in that state as it does today
-   (whatever it answers now stays).
-4. **The Music tab's "From Spotify" row** keeps its link and its `spotify_state` value.
-5. One view struct per page; the shared pieces (`client_value`, `accounts`, the flashes) move with their groups; the
-   add page needs only the setup summary (counts) and the add form's state.
+   account yet", or "Not set up yet" - to `/music/settings#spotify`.
+2. **The setup moves into Music › Settings as its own group, "Spotify"** (`#spotify`, after Storytel): Your Spotify
+   App (`#spotify-app`: client id, redirect URI, Clear) and Children's Accounts (`#spotify-accounts`: Log in with
+   Spotify, the paste flow `#spotify-paste`, Remove) exactly as they are today, ids prefixed so they can't clash with
+   the page's other groups. The POSTs `save_app`, `clear_app`, `login`, `paste`, `remove_account` and the OAuth
+   callback's return (`done`) come back to `/music/settings?…#spotify-app|#spotify-accounts` with their notices; `add`
+   comes back to `/music/spotify?…#add|#add-phones|#added` as today. The settings page's view gains the Spotify
+   group's data (the client value, `client_from_env`, the accounts, the flashes), loaded by the same functions the
+   Spotify page used.
+3. **Not set up yet** (no app, or no child account): the add page shows, as the Storytel shelf does, a row on top
+   ("No Spotify app is saved - set it up first" / "No child's account is logged in yet", `attention attention-action`,
+   the chevron) linking to `/music/settings#spotify`, and the add form below it stays visible but disabled
+   (`fieldset disabled`, the sub-line says why). `add`'s handler refuses a POST in that state as it does today.
+4. **The Music tab's "From Spotify" row** keeps its link and its `spotify_state` value; the Settings row's value may
+   mention Spotify ("Storytel off · Spotify 2 accounts") if it mentions Storytel today - the implementer keeps its
+   current shape.
+5. One view struct per page; the shared pieces move with their groups; the add page needs only the setup summary
+   (counts) and the add form's state. `music_spotify.html` keeps the add groups; the setup groups become a partial
+   (`partials/spotify_setup.html`) included by `music_settings.html`, so the markup moves rather than being retyped.
 
 ## 2. Tests (required)
 
 `src/tests/music_spotify.rs` (or where the Spotify page tests are): the add page has the add form and the setup row
-and no `client_id` field; the setup page has the app and accounts groups and every form (`check_forms` on both);
-each POST's redirect lands on the right page's group; the not-set-up state renders the attention row and the disabled
-form and the add POST is refused as before; the OAuth `done` return lands on the setup page's `#accounts`.
+and no `client_id` field; Music › Settings has the Spotify group with the app and accounts forms and every form still
+lands (`check_forms` on both pages); each POST's redirect lands on the right page's group; the not-set-up state renders
+the attention row and the disabled form and the add POST is refused as before; the OAuth `done` return lands on
+`/music/settings#spotify-accounts`.
 
 ## 3. Device check
 
-The iPhone: Music › From Spotify opens on the form; the setup row's count right; Save/Log in/Remove come back to their
-groups without a jump; a fresh server (no app) shows the attention row.
+The iPhone: Music › From Spotify opens on the form; the setup row's count right; in Music › Settings, Save/Log in/Remove
+come back to the Spotify group without a jump; a fresh server (no app) shows the attention row on the add page.
