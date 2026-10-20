@@ -5415,6 +5415,12 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         if refusal_lands_at.is_some() {
             assert_eq!(action_fragment, refusal_lands_at, "{action} on {page}");
         }
+        // The login's form has no fragment (it would ride along on the 303 to Spotify): its
+        // refusal focuses its error instead (`settings_group::the_refusals_render_music_settings_
+        // with_prefixed_ids`, qa-r5-b-code M1), its success goes off this server (below).
+        if kind == "/music/spotify/login" {
+            assert_eq!(action_fragment, None, "{action} on {page}");
+        }
         let entry_page = entry.as_ref().map(|(id, _)| format!("/music/entries/{id}"));
         let entry_anchor = entry.as_ref().map(|(id, _)| format!("entry-{id}"));
         let category_anchor = category.as_ref().map(|(id, _)| format!("category-{id}"));

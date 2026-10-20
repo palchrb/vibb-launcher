@@ -1556,6 +1556,8 @@ async fn a_login_starts_only_at_the_redirects_address() {
         assert!(
             page.contains("href=\"https://pi.example.ts.net/music/settings#spotify-accounts\"")
         );
+        // The button is focused, so the group is in view on a long Music › Settings (M1).
+        assert!(page.contains("class=\"row row-button\" autofocus>Log in with Spotify</button>"));
         assert!(
             set_cookies(&res)
                 .iter()
@@ -4876,6 +4878,30 @@ mod settings_group {
                 "{path}"
             );
         }
+        // A refused login (its form has no fragment: one would ride along on the 303 to Spotify)
+        // focuses its error, so the browser scrolls the Spotify group into view instead of
+        // leaving the parent at the top of a long page (qa-r5-b-code M1): here with no app. The
+        // other-address refusal focuses the button (`a_login_starts_only_at_the_redirects_address`).
+        sqlx::query("DELETE FROM music_spotify_app")
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let res = app
+            .request_form(Method::POST, "/music/spotify/login", Some(&cookie), &[])
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        let page = text(&res);
+        assert_eq!(
+            page.matches("data-flash=\"login\" tabindex=\"-1\" autofocus>")
+                .count(),
+            1,
+            "{page}"
+        );
+        assert_eq!(
+            page.matches(" autofocus").count(),
+            1,
+            "one focus on the page"
+        );
     }
 
     /// §1.6: one phone per account. Picking a phone binds it (moving it from another account) and
@@ -4944,11 +4970,18 @@ mod settings_group {
 
         // Ola's phone for Ella: it moves from Ola, Ella's two others are unbound.
         let before = revision(&app).await;
+        let mut nudges = app.state.command_notify.subscribe();
         let res = post(ella, &ola_phone.to_string()).await;
         assert_eq!(
             res.location(),
             Some(format!("/music/settings#spotify-account-{ella}").as_str())
         );
+        // Every phone that changed is nudged at once, and only those (qa-r5-b-code L3).
+        let mut nudged: Vec<i64> = std::iter::from_fn(|| nudges.try_recv().ok()).collect();
+        nudged.sort();
+        let mut changed = vec![ola_phone, anna_phone, spare];
+        changed.sort();
+        assert_eq!(nudged, changed);
         app.assert_lands(&res, &cookie).await;
         assert_eq!(
             (
@@ -5038,6 +5071,7 @@ mod settings_group {
                 .unwrap()
             }
         };
+        let mut nudges = app.state.command_notify.subscribe();
         let res = app
             .request_form(
                 Method::POST,
@@ -5050,6 +5084,9 @@ mod settings_group {
             res.location(),
             Some("/music/settings?storytel=phones#storytel-phones")
         );
+        // That phone is nudged, and no other (qa-r5-b-code L3).
+        assert_eq!(nudges.try_recv().ok(), Some(ola));
+        assert!(nudges.try_recv().is_err());
         assert_eq!(settings(ola).await, (true, true, Some(70), Some(8), false));
         let res = app
             .request_form(

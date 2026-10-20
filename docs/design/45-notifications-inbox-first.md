@@ -106,7 +106,7 @@ Deviations:
 - Send a Test's push now navigates to `/notifications/settings#devices` (it was `/notifications#devices`).
 - `tests::shell::every_template_with_the_bar_sets_its_tab` allows `notifications_settings.html` with no tab: a one-line
   change in its own commit, since `shell.rs` belongs to the design 43 branch.
-- The Settings hub's row still shows "N unread" while it now leads to the settings page (unchanged; worth a look).
+- The Settings hub's row lost its "N unread" value (it leads to the settings page; the Settings tab's bell has the count; qa-r5-b-code L2).
 
 Device checks owed (§4): the iPhone - bell with 3 → inbox → dots on three rows, bell 0, the Home Screen badge 0; the
 gear → Turn On / Send a Test / Remove come back to their groups without a jump; the same on the Pi's Chromium.

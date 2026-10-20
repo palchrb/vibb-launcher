@@ -38,7 +38,7 @@
         {% endif %}
         {% else %}
         <p class="row row-note" data-row="not-configured">No Spotify app is set up on this server yet. Follow the steps below, then save your app's Client ID.</p>
-        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login">{{ error }}</p>{% endif %}
+        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login" tabindex="-1" autofocus>{{ error }}</p>{% endif %}
         {% endif %}
         {% if !spotify.client_from_env || !spotify.redirect_from_env %}
         <form method="post" action="/music/spotify/app#spotify-app" class="cell form-group" id="spotify-app-form">
@@ -142,7 +142,7 @@
             {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login">{{ error }}{% if let Some(link) = spotify.login_elsewhere %} <a href="{{ link }}">Open it there</a>{% endif %}</p>{% endif %}
         </form>
         {% else %}
-        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login">{{ error }}</p>{% endif %}
+        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login" tabindex="-1" autofocus>{{ error }}</p>{% endif %}
         <p class="row row-note" data-row="no-login">{% if !spotify.key_available %}Logins need the server's key (above).{% else %}Save a Redirect URI for your app first.{% endif %}</p>
         {% endif %}
         {% if spotify.loopback && spotify.ready && spotify.key_available %}

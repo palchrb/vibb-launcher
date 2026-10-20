@@ -125,6 +125,8 @@ Deviations:
 - Device › Music's "Spotify Accounts ›" row links to `/music/settings#spotify-accounts` (`device_music.html`, one href;
   it pointed at the old page's `#accounts`).
 - "Plays on" lists every phone with a policy row (as the add form's phone list does).
+- A refused "Log in with Spotify" focuses its error (or the button, for the other-address refusal), so the browser
+  scrolls the group into view; the form keeps no fragment, which would ride along on the 303 to Spotify (qa-r5-b-code M1).
 
 Device checks owed (§3): the iPhone - Music › From Spotify opens on the form; the setup row's count; in Music › Settings
 Save / Log in with Spotify (the CSP lets the 303 go) / Remove come back to the Spotify group without a jump; "Plays on"

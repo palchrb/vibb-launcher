@@ -328,8 +328,11 @@ async fn the_bell_counts_on_every_tab_page() {
     }
     let hub = app.get_page("/settings", &cookie).await.text();
     let row = &hub[hub.find("data-row=\"notifications\"").unwrap()..];
+    // The hub's row leads to Notification Settings, where no event is (design 45 §1.6): no
+    // count on it - the Settings tab's bell has it (qa-r5-b-code L2).
+    let row = &row[..row.find("</a>").unwrap()];
     assert!(
-        row[..row.find("</a>").unwrap()].contains("<span class=\"row-value\">3 unread</span>"),
+        !row.contains("unread") && !row.contains("row-value"),
         "{row}"
     );
     // 99+ at most.
