@@ -766,9 +766,10 @@ findings, merge to `main`, full suite once.
   `FLASH_INFO_AVAILABLE` (no camera permission needed; the Jelly Star has a flash). A Home tile beside Settings (lit
   while on) and a round button on the lock's glance page beside Emergency call. Rules: off by itself after 10 min, off
   when a call comes in (the camera), never off at screen-off (as iPhone). Device check first: whether `setTorchMode`
-  works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
-  camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
-  picture migration (0082) and the receipt rule.
+  works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock's button
+  is hidden (never a policy lift: qa-r6-launcher-design.md 41-1 - lifting the camera policy reopens design 25b's
+  SystemUI crash path) and the Home tile keeps working - the user decides then. Calm look (no yellow flash icon): the
+  Vibb tones. Launcher round 6 (`docs/design/41-flashlight.md`).
 - **Design 49: shuffle and repeat in the player's control row** (the user, 2026-10-20: "en spesifikk shuffle knapp og
   repeat knapp ved siden av next/prev ... toggle for shuffle av og på - og toggle for ikke repeat, repeat all eller
   repeat 1 sang"). Today: a shuffle button exists in the row's side slot but only for `canShuffle` = own files that
@@ -881,13 +882,13 @@ findings, merge to `main`, full suite once.
   all fixed). Device checks owed: §6q on the emulator; row pictures, TalkBack, the real Spotify SDK through a flip and
   a real Sonos room's first reorder on the Jelly Star.
 
-- **Launcher: an inbox event asks for a sync at once** (the user's yes, 2026-10-20: a parent-PIN use reached the
-  inbox and the iPhone minutes later). Today only the emergency call requests a sync (`EmergencyConnects`); the
-  parent-PIN events (design 24: "no send of its own", decided before push existed), foreign access, an unseen boot and
-  low battery ride the next sync (screen-on, an SSE nudge, else the 30-min backstop). Change: `ParentPin` (used,
-  wrong, lockout), the foreign-access and unseen-boot detectors and the low-battery edge call
-  `CommandListenerService.requestSync(context, reason)` like the emergency call, debounced by the existing sync
-  mutex; the power events already go at start. Next launcher round (one commit, tests on the request).
+- **Launcher: a parent-PIN event asks for a sync at once** (the user's yes, 2026-10-20: a parent-PIN use reached the
+  inbox and the iPhone minutes later). Corrected by qa-r6-launcher-design.md r6-1: foreign access and the battery edges
+  already request a sync (`SyncRunner.request`), and an unseen boot is a process start, which syncs; only the
+  parent-PIN events ride the next sync (design 24: "no send of its own", decided before push existed). Change:
+  `ParentPin.check` calls `SyncRunner.request` once the result is final (Ok, Wrong, a lockout that starts now; never
+  during a running lockout), decided by a pure `SyncTriggers.pin(...)` rule with its test. Launcher round 6
+  (`docs/design/r6-launcher-small-items.md` §1).
 - **Parked: a display-only widget host on the lock's glance page** (the user, 2026-10-20: "Er det umulig å lage en
   sikker widget host sak i vår launchers lock screen? ... klønete å gjøre alt dette manuelt per app"). Feasible only as
   pure display: `AppWidgetHost` with `appwidget grantbind` at enrolment, every widget under a touch-consuming layer
