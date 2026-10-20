@@ -1,8 +1,8 @@
 # Launcher round 7 - small items (proposal)
 
 Asked 2026-10-20. Each item is its own section with its own tests; they ship in one launcher round after 0.31.0.
-§1 is written; §2 (catalog apps protected from force-stop, the battery exemption shown to the kid) and §3 (the
-global wake-on-notification switch) follow in this file before the round's design QA.
+§1 any allowed app may ring over the lock; §2 catalog apps protected from force-stop and the battery exemption shown
+to the kid; §3 the global wake-on-notification switch.
 
 ## 1. Any allowed app may ring over the lock
 
@@ -69,3 +69,143 @@ Emulator (§6 of `docs/testing/emulator.md`, the Element X flow of design 17 as 
 over the lock in both kiosk modes; with Element removed from the contacts' message apps but kept on the allowlist it
 still rings (the new rule); with Element off the allowlist it doesn't. Jelly Star with Signal: a Signal call rings
 over the lock and the device page shows "Calls from Signal rang over the lock · today 14:02".
+
+## 2. Catalog apps kept working in the background
+
+The user, 2026-10-20: "er det ikke noe vi kan fikse på for å sikre at vi kan installere apper direkte på telefonen, og
+samtidig live gi de batteriunntak?" ... "La barnet trykke høres greit ut, slipper man en pin inntasting på noe
+ufarlig". Builds on design 13 (`AppDownloads`, `AppInstallReceiver`), design 19b (`server/BatteryExemption.kt`, the
+dialog only resolves to an unsuspended system package), design 09 (Settings is never a lock-task helper), design 16
+(the Home start), the status report's `installed_apps` (`cap_installed_apps` on the server).
+
+### 2.0 Today
+
+A catalog app the launcher installs is an ordinary user-installed app: the kid can force-stop it (Recents' "Pause
+app" ends in BlockedAppActivity in the kiosk, but an OEM battery manager or a long-press on a notification's app
+info can still reach it where Settings is reachable), Android 12+ hibernates it after months unused, and Doze
+restricts its background work like any app's. The one exemption API (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`)
+is a dialog hosted by Android's Settings, which a managed phone hides and suspends - today it opens only during a
+pause (19b). Fossify Clock's alarms need none of this (`setAlarmClock`), its timers do (they run in its process).
+
+### 2.1 Decisions
+
+1. **Force-stop and hibernation protection, plain code.** Every `apply()` sets
+   `setUserControlDisabledPackages(admin, pkgs)` to the catalog apps the launcher installed and that are installed
+   now (`TrackedAppUpdateState`'s installed records whose package Android has - `phonePackage` - plus the music app
+   when it is one of them; never our own package, never a Play-installed app the catalog also names, never a package
+   enforcement hides). Pure `userControlDisabledPackages(records, installed, hidden)` in a new
+   `server/UserControlPlan.kt`; applied right after the suspension pass, only while `hardeningManaged`; cleared
+   (an empty list) when unmanaged. From Android 12 this also keeps the app out of app hibernation and the unused-app
+   permission reset. Logged once per change. `LastEnforcedPlan` doesn't carry it (recomputed from the records).
+2. **The battery exemption, asked of the kid once per install.** Right after a catalog install succeeds
+   (`AppInstallReceiver`'s `STATUS_SUCCESS` for a non-launcher app whose package declares
+   `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` - read from its manifest with `GET_PERMISSIONS`; without it Android's
+   dialog finishes silently, so nothing is asked) the launcher records a pending ask (CE prefs `battery_asks`:
+   package -> first asked wall ms, asked count, last answer). Home's next interactive resume with the lock UNLOCKED
+   and no call shows **our own one-line sheet** in the kid's language: "La <app> jobbe i bakgrunnen?" with "Ja" and
+   "Ikke nå" (`KidAlertDialog`, the app's catalog name through `displayLabel`), no PIN. "Ja" starts Android's dialog
+   for that package; "Ikke nå" asks again at the next catalog install or a day later, at most 3 asks per app, never
+   a nag. Design 19b's `dialogTarget` rule stays the gate for the system dialog: it must resolve to an unsuspended
+   system package.
+   - **The hard part, to probe on the emulator before anything is built (the PLAN's condition)**: on a managed phone
+     Settings is hidden, so `dialogTarget` is `null` outside a pause and the ask cannot be honoured. Proposed: a
+     **time-boxed Settings window** - `BatteryAsk.open(pkg)` unhides and unsuspends `com.android.settings` (never
+     the allowlist: `apply()` would re-hide it; a marker in the same prefs, `settings_window_until`, 30 s wall +
+     elapsed, with the boot count), adds it to the lock-task list for that window **with the app-block bit kept** (a
+     new input `batteryWindow` of `LockTaskChrome.applyPlan`, the only setter - design 10), starts the dialog
+     explicitly (`setClassName` from the resolve), and on the dialog's result (`startActivityForResult`), Home's next
+     resume, a screen-off, a call or the 30 s alarm - whichever first - hides and suspends Settings again and drops
+     it from the list. While the window is open the kid can reach no other Settings screen: the dialog's AlertActivity
+     has no navigation, the block bit stops any other Settings activity a notification or link could start while
+     Settings is pinned ... **except** that a pinned package's own activity starts are allowed - the dialog starts
+     nothing, but an `ACTION_SETTINGS` intent from an allowed app during those 30 s would open Settings. That is the
+     residual risk of alternative A; it is 30 s long, on a phone whose owner just installed an app, and the dialog's
+     result closes it earlier. **If the probe shows the dialog still doesn't start, or the window can't be closed
+     cleanly (a Settings task left in Recents, `performClearTaskForReuse` finishing the dialog), alternative B**: no
+     dialog on the kid's screen; §2.1.1 alone, the PWA's app row says "Background: not exempt - grant it during a
+     pause (Settings › Apps › <app> › Battery)" as design 19b's text does for the launcher.
+3. **The parent sees the state.** `installed_apps[]` gets `battery_exempt: true|false` for the catalog apps (from
+   `isIgnoringBatteryOptimizations(pkg)`, any package; left out for others), capped and sanitised by
+   `cap_installed_apps` like `installer`; the app's page in the PWA shows "Background: exempt" / "not yet - the phone
+   asks after an install" / alternative B's text, and a row "Ask again" that sets a pending ask through a new command
+   `battery_ask` (`PendingCommand`, both directories, `PolicyResponseCompatTest`). Status contract in both directories
+   in one commit.
+4. **Not in this round**: an exemption for our own launcher at provisioning (19b phase 2), the music app's own
+   prompt, anything for Play-installed apps.
+
+### 2.2 Tests (required)
+
+`UserControlPlanTest`: the set from the records (installed only, never ours, never hidden, never a Play-installed
+twin), cleared when unmanaged; a source check that `setUserControlDisabledPackages` is called in `apply()` only.
+`BatteryAskTest` (pure): the ask after an install of a declaring app only, the day's re-ask, the 3-ask cap, the
+answer recorded, the window's 30 s by wall + elapsed + boot, the close on every end; `LockTaskHelpersTest`: Settings
+in the list only inside the window and only with the block bit; `PinLockTaskTest` unchanged. `BatteryReportTest`-style:
+`battery_exempt` in the report for catalog apps only. Server: `cap_installed_apps` keeps the field, the app page's
+three states, the `battery_ask` command, the key snapshot.
+
+### 2.3 Device checks
+
+Emulator first, before implementation (the probe): with the kiosk on and a managed allowlist, open Android's dialog
+for Fossify Clock from a debug hook with Settings (a) hidden - expected nothing -, (b) unhidden and pinned for 30 s -
+the dialog shows, Allow sets `isIgnoringBatteryOptimizations(org.fossify.clock)`, Deny returns, nothing of Settings
+stays in Recents, and `ACTION_SETTINGS` from an allowed app during the window (the residual) is noted; then the
+built flow: install Fossify from the catalog, the sheet on Home, Ja -> the dialog -> Allow -> the PWA says exempt;
+force-stop refused in Settings during a pause ("Force stop" greyed) after §2.1.1.
+
+## 3. Wake the screen for a notification - one switch per phone
+
+The user, 2026-10-20: "er det en emulator ting at våre varsler ikke slår på skjermen? Eller er det by design?" ... "la
+det være en global bryter i pwa? Under feks lock screen kategorien i phone settings". Builds on design 32
+(`32-lock-flash.md` §7: the lock itself never gets turn-screen-on), design 17's `VoipWakeActivity` (the pattern), design
+25/51 (the glance rows, `GlanceStore`), design 12 (the missed-call notice).
+
+### 3.0 Today
+
+A notification of a ticked app or a missed call appears on the lock's glance page when the kid wakes the phone; the
+screen never turns on for it (design 32b's exclusion: the lock is an ordinary activity without turn-screen-on, and
+the phone's own heads-up never shows over our lock with the status bar disabled). A VoIP ring is the one thing that
+wakes the screen, through `VoipWakeActivity`.
+
+### 3.1 Decisions
+
+1. **Server**: `device_policy.lock_wake_on_notification` (migration 0084, default 0), sent as
+   `launcher_ui.lock_wake_on_notification: bool` (always; `policy_json_keys_snapshot` + `PolicyResponseCompatTest` in
+   one commit). The Lock page's **Lock screen** group gets a switch row under Background: "Wake the screen for a
+   notification", sub-line "For the apps ticked below and missed calls", `POST /devices/{id}/lock-wake` back to
+   `#lock-screen` (the no-jump rule, `check_forms`), the phone nudged, an event line like the glance ticks.
+2. **Launcher**: `LauncherUi.lockWakeOnNotification: Boolean = false` (missing = off). A new **`LockWakeActivity`** -
+   `VoipWakeActivity`'s twin (manifest `turnScreenOn`, `taskAffinity` .pinlock, translucent, finishes after 500 ms;
+   `PinLockManifestTest` pins exactly these turn-screen-on activities) - is started by `PinLockRuntime.wakeForNotice`
+   when the pure `wakeForNotice(switchOn, mode, interactive, busy, sinceLastWakeMs, wakesThisHour)` says so: the switch
+   on, mode LOCKED, the display not interactive, not `busy` (our call, a system call, a VoIP phase, the emergency
+   flow, a ringing alarm, the boot mark, the first 2 minutes after the process start), at least `WAKE_GAP_MS` 30 s
+   since the last wake and at most `WAKES_PER_HOUR` 20 (a chatty group never keeps the screen on). The lock underneath
+   shows the glance page with the new row as today; the screen goes off by the phone's timeout and locks again
+   (`ScreenOff`) - nothing new there.
+3. **What triggers it**: a **new post** of a ticked app's conversation (`GlanceStore.put` with a `postTimeMs` newer
+   than the conversation's last, from the listener's `onNotificationPosted`, never a ranking update, a sweep, a
+   re-read after a policy change or an `update` of the same post) and the missed-call notice's post that alerts
+   (`MissedCallNotifier`'s alerting post, design 12 - not its boot re-send). Never the music tile, the clock tile, our
+   own notifications or anything `glanceCandidate` refuses. The trigger passes no text, only "a row came".
+4. **Design 32 holds**: the lock activity itself never sets turn-screen-on; the wake activity is started only from
+   the runtime's main-thread step with the lock already the top task (as the VoIP wake is; `lockOnTop`), never from
+   the listener thread directly, and never while `darkLockUp`'s HOME_THEN_LOCK is in flight (it waits for the lock's
+   next pause/resume, then re-checks). A refused start (BAL) is logged, not retried for that post.
+5. **Off by default**; the override and the pause change nothing (not a restriction); a time rule that suspends the
+   app means no post arrives, so no wake.
+
+### 3.2 Tests (required)
+
+`LockWakeTest` (pure): the table in §3.1.2 (every `busy` case, the gap, the hourly cap, the switch off, not LOCKED,
+interactive); `GlanceRowsTest`/`GlanceStore`: a new post triggers, an update/sweep/ranking/policy re-read doesn't; the
+missed-call alerting post triggers, the boot re-send doesn't; `PinLockManifestTest`: the turn-screen-on set is
+exactly `InCallActivity`, `VoipWakeActivity`, `LockWakeActivity`; `LockGlanceGuardTest`: the trigger carries no text;
+`PolicyResponseCompatTest`: the key, missing = false. Server: migration 0084 in the order test, the key snapshot, the
+switch's route landing on `#lock-screen`, the default off, the event line.
+
+### 3.3 Device checks
+
+Emulator: switch off - an Element message with the screen off leaves it dark (today); switch on - the screen wakes
+on the lock's glance page with the row, goes off again by the timeout, a second message within 30 s doesn't wake it,
+a missed call wakes it once; during a VoIP ring or a music session nothing extra; `adb shell dumpsys power` shows no
+wake lock held by us after the 500 ms.
