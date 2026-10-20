@@ -17,9 +17,14 @@ call" was wrong; the coordinator fixes PLAN.)
   save there is design 24's "count first", a provisional `wrong` event committed before PBKDF2, and a sync then would
   upload it on every correct entry.
 - The call is `SyncRunner.request(context, "pin_event")` like every other trigger (it takes the wake lock and the
-  pending count), not `CommandListenerService.requestSync`. A false return (the anchor service can't start) changes
-  nothing: the backstop covers.
-- The pure `SyncTriggers` (JVM) holds that one rule: `pin(result, lockoutAlreadyRunning) -> Boolean`.
+  pending count), not `CommandListenerService.requestSync`; it returns nothing - a failed service start is handled
+  inside `request`, and the backstop covers.
+- The pure `SyncTriggers` (JVM) holds that one rule: `pin(result, lockoutAlreadyRunning) -> Boolean`: true for
+  `Ok`, `Wrong` and a `LockedOut` that starts now; false for a `LockedOut` while one was already running or from an
+  unreadable state, and for `TooShort`, `NotConfigured`, `Unavailable` and `ForeignAccessOn` (nothing happened on the
+  server's side). `ParentPinResult.LockedOut` alone can't tell the three cases apart, so `ParentPin.check` (it is
+  `@Synchronized`) reads `ParentPin.status(context).lockoutMs > 0` before `checkParentPin` and hands that in as
+  `lockoutAlreadyRunning`; an unreadable state returns before any request.
 
 ## 2. The lock's music tile is rendered alone
 
@@ -45,7 +50,10 @@ again - a full page re-layout two or three times per tap, visible as the whole c
   relayouts the page. `glanceFit`'s `tileFull`/`tileCompact` terms grow by the line, so `LockGlanceTest`'s pinned
   numbers (`tileFull` 211, `tileCompact` 90, the model at :66-69, the expected fits at 473/497 dp) change and are
   re-derived and re-pinned in the same commit. On the compact tile at 320 dp with the largest font scale the line
-  must leave the 3 dp bar intact: a `FitTest`-style assertion in `LockGlanceTest` (the bar keeps at least 120 dp).
+  must leave the 3 dp bar intact: an assertion in `LockGlanceTest`'s layout test (the bar keeps at least 120 dp).
+  The full tile grows by the line and its margin; the compact tile's height is its 52 dp art row, so `tileCompact`
+  grows only by what the text column (now four lines) exceeds 52 dp - both re-derived from the XML, never "+ one line"
+  for both; `fixed` 106 stays.
   Today the text exists only as the bar's `contentDescription`; it stays there too.
 
 Tests: a JVM test of the coalescer (three calls in one frame = one render); the refit rule (a height change refits, an

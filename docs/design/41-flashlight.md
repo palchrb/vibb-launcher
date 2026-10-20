@@ -25,7 +25,8 @@ the way an iPhone does.
    toggles. It is the only tile that toggles instead of opening, so it has a TalkBack `stateDescription` ("på"/"av").
    `ui/home/` is GPL code, outside the MIT directories, so it is fine there.
 3. **The lock**: a round 48 dp button in a new bottom-row container in `view_lock_glance.xml` that holds it and
-   "Nødsamtale" (two children; the Emergency button keeps its size and text, today a direct child of the vertical
+   "Nødsamtale" (two children, the Emergency button centred as today - the torch button sits at its right without
+   pushing it off centre; the Emergency button keeps its size and text, today a direct child of the vertical
    root). Same glyph and lit look, usable while LOCKED without the PIN - it protects nothing and reveals nothing
    (design 25's rule: the page's only actions change no state the lock guards). `glanceFit`'s `fixed` is measured
    from the row (`withMargins(row)` in place of `withMargins(lock_glance_emergency)`); a 48 dp button in the row adds

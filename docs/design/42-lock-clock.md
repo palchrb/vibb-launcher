@@ -41,7 +41,7 @@ before the probe's result is in this note.
    A paused timer (posted without the chronometer, the remaining time in its text) shows the tile with the app's text
    line and the Resume action, no ticking. The tile goes when the notification goes (`removed`), like a row.
 2. **The buttons are the notification's actions, in the clock's order** (what the shade shows): the first two whose
-   `PendingIntent` is not an activity (`isActivity == false`), titles cleaned with `cleanGlanceText(raw, max)`. They are
+   `PendingIntent` is not an activity (`isActivity == false`), titles cleaned with `cleanGlanceText(raw, max)`. They are Taking the first two in the clock's order means "Pause, +1 min" with no "Stop" can result; that is accepted - the tile mirrors the shade.
    sent from their own file, `lock/ClockActions.kt`, with `ActivityOptions.makeBasic().
    setPendingIntentBackgroundActivityStartMode(MODE_BACKGROUND_ACTIVITY_START_DENIED)` (API 34+), so nothing can start
    over the LOCKED page. A guard test pins that single send, the `isActivity` filter and the system-clock package, and
@@ -56,10 +56,11 @@ before the probe's result is in this note.
    more than 24 h away, refreshed on `ACTION_NEXT_ALARM_CLOCK_CHANGED` and at every page show. No tap.
 5. **Layout and fit**: `view_lock_glance.xml` gets `lock_glance_alarm` (a line under the date, in `date`'s term) and
    `lock_timer_tile` (the music tile's card: glyph, title, the big time, a row of up to two buttons). `GlanceHeights`
-   gets a clock-tile term (`clockFull`, `clockNoButtons`), and `glanceFit`'s candidates are ordered: the music tile's
-   size is chosen first as today; then the clock tile full or none. Under pressure the clock tile stays and the music
-   tile goes compact first (a running timer is the thing the kid came to see), then rows become "+ N varsler", then
-   the clock tile loses its buttons, last the clock tile goes.
+   gets two clock-tile terms (`clockFull`, `clockNoButtons`, measured from the XML like `tileFull`), and `glanceFit`
+   tries the candidates in this order, first that fits wins: (1) both tiles full and every row; (2) the music tile
+   compact; (3) rows folded into "+ N varsler"; (4) the clock tile without its buttons; (5) the clock tile gone (then
+   today's order for the music tile alone). A running timer is the thing the kid came to see, so the clock tile
+   outlives the music tile's full size and the rows.
 6. **The tile's tap target**: a new `GlanceTarget.ClockApp` (the system clock's launch intent), handled by the opener's
    existing one-send-two-starts contract (unchanged counts); its case goes in `LockGlanceGuardTest` (the opener test)
    and in `glanceUsableUnderLock` (the clock app under a time rule).
@@ -82,8 +83,9 @@ notification without a chronometer and without actions shows nothing. Redacted `
 timer wins, remaining/elapsed maths and the format, the paused-timer shape, at most two non-activity actions in the
 clock's order with cleaned labels, the alarm line's condition (creator package, no alarm) and its weekday rule.
 `LockGlanceTest` (there is no `GlanceFitTest`): the clock-tile term and candidate order in the pure fit, the layout
-test pinning the XML model (with the existing `fixed` 106, `tileFull` 211, `tileCompact` 90 re-derived once with the
-other round-6 changes), 320/360/411 dp, 320 dp at the largest font scale. `LockGlanceGuardTest`: as in §2, the
+test pinning the XML model (with the existing `fixed` 106, `tileFull` 211, `tileCompact` 90 re-derived once, in one
+fit change together with design 41's bottom row and r6 §2's time line - the implementer of 41/r6 re-pins them first,
+42 adds its terms on top), 320/360/411 dp, 320 dp at the largest font scale. `LockGlanceGuardTest`: as in §2, the
 `ClockReader` allowlist, the `ClockActions` send.
 
 ## 4. Device checks
