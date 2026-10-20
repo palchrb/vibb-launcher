@@ -4,6 +4,7 @@ import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallRules
 import com.kidslauncher.mdm.calls.RuleContact
 import com.kidslauncher.mdm.calls.phoneBookView
+import com.kidslauncher.mdm.torch.TorchState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -44,6 +45,14 @@ class HomeModelTest {
         assertEquals(listOf(GridTile.App(app("a"), 0), GridTile.Settings), grid)
         assertEquals(listOf(GridTile.Settings), homeGrid(emptyList(), false, emptyMap()))
         assertEquals(listOf(GridTile.PhoneBook, GridTile.Settings), homeGrid(emptyList(), true, emptyMap()))
+    }
+
+    @Test
+    fun `the flashlight sits right before settings with its state, and is absent without a flash`() {
+        val dark = homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), torch = TorchState(lit = false))
+        assertEquals(listOf(GridTile.PhoneBook, GridTile.App(app("a"), 0), GridTile.Flashlight(lit = false), GridTile.Settings), dark)
+        assertEquals(GridTile.Flashlight(lit = true), homeGrid(emptyList(), false, emptyMap(), TorchState(lit = true)).dropLast(1).last())
+        assertTrue(homeGrid(listOf(app("a")), true, emptyMap(), torch = null).none { it is GridTile.Flashlight })
     }
 
     private val mamma = RuleContact(id = 1, name = "Mamma", number = "+4790000001", outbound = true, showOnHome = true)

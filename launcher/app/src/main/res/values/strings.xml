@@ -39,6 +39,10 @@
     <string name="notification_channel_calls_silent">Calls (call screen open)</string>
     <string name="calls_phone_book">Phone book</string>
     <string name="kid_settings_title">Settings</string>
+    <!-- The flashlight (design 41): Home's tile and the lock's button, and TalkBack's state words. -->
+    <string name="torch_title">Flashlight</string>
+    <string name="torch_state_on">on</string>
+    <string name="torch_state_off">off</string>
     <string name="calls_phone_book_empty">There\'s nobody to call yet. Emergency numbers (112, 110, 113) always work from the lock screen\'s Emergency button.</string>
     <string name="calls_off">Calls are turned off on this phone. Emergency numbers still work.</string>
     <string name="calls_call">Call</string>

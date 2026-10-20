@@ -5,6 +5,8 @@ import android.os.SystemClock
 import com.kidslauncher.mdm.lock.LockClocks
 import com.kidslauncher.mdm.play.INSTALL_MODE_DURATION_MS
 import com.kidslauncher.mdm.play.PlayRuntime
+import com.kidslauncher.mdm.push.SyncRunner
+import com.kidslauncher.mdm.push.SyncTriggers
 import com.kidslauncher.mdm.server.dto.ParentPinEvent
 import java.security.MessageDigest
 
@@ -49,29 +51,43 @@ object ParentPin {
         }
     }
 
-    /** PBKDF2 (~0.5 s) and the vault's HMAC: never on the main thread. */
-    @Synchronized
+    /**
+     * PBKDF2 (~0.5 s) and the vault's HMAC: never on the main thread. A final result whose event the
+     * parent should see asks for a sync at once (launcher round 6 §1, [SyncTriggers.pin]) - after the
+     * verdict, outside this object's lock: the provisional `wrong` committed before PBKDF2 must never
+     * be what a sync uploads.
+     */
     fun check(context: Context, entry: ParentPinEntry, pin: String): ParentPinResult {
         val app = context.applicationContext
-        val vault = vault(app)
-        if (!vault.configured()) return ParentPinResult.NotConfigured
-        // Checked again right before the verify (QA 24b High 1): the dialog's opening check may be old.
-        if (ForeignAccess.blocksParentPin(app)) return ParentPinResult.ForeignAccessOn
-        // The key failed: nothing can be checked (or counted) until the next sync re-wraps.
-        val fingerprint = vault.fingerprint()
-        if (vault.rewrapNeeded() || fingerprint == null) return ParentPinResult.Unavailable(storageFull = false, untilSync = true)
-        return checkParentPin(
-            store = ParentPinStore.of(app),
-            entry = entry,
-            pin = pin,
-            fingerprint = fingerprint,
-            verify = vault::verify,
-            now = clocks(),
-            newId = ::newPinEventId,
-            storageFull = { storageFull(app) },
-            windowStart = { windowDuration(entry)?.let { BootClock.windowStart(it) } },
-            startWindow = { start -> if (start != null) startWindow(app, entry, start) },
-        )
+        var lockoutAlreadyRunning = false
+        val result = synchronized(this) {
+            val vault = vault(app)
+            if (!vault.configured()) return ParentPinResult.NotConfigured
+            // Checked again right before the verify (QA 24b High 1): the dialog's opening check may be old.
+            if (ForeignAccess.blocksParentPin(app)) return ParentPinResult.ForeignAccessOn
+            // The key failed: nothing can be checked (or counted) until the next sync re-wraps.
+            val fingerprint = vault.fingerprint()
+            if (vault.rewrapNeeded() || fingerprint == null) return ParentPinResult.Unavailable(storageFull = false, untilSync = true)
+            val store = ParentPinStore.of(app)
+            val now = clocks()
+            // A LockedOut alone can't tell a lockout this try started from one already running (or an
+            // unreadable state, which becomes one): only the first wrote an event.
+            lockoutAlreadyRunning = parentPinStatus(store, fingerprint, now).lockoutMs > 0L
+            checkParentPin(
+                store = store,
+                entry = entry,
+                pin = pin,
+                fingerprint = fingerprint,
+                verify = vault::verify,
+                now = now,
+                newId = ::newPinEventId,
+                storageFull = { storageFull(app) },
+                windowStart = { windowDuration(entry)?.let { BootClock.windowStart(it) } },
+                startWindow = { start -> if (start != null) startWindow(app, entry, start) },
+            )
+        }
+        if (SyncTriggers.pin(result, lockoutAlreadyRunning)) SyncRunner.request(app, "pin_event")
+        return result
     }
 
     /**
