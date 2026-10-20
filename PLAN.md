@@ -769,6 +769,18 @@ findings, merge to `main`, full suite once.
   works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
   camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
   picture migration (0082) and the receipt rule.
+- **Design 48: one Activity log on the phone's summary** (the user, 2026-10-20, a screenshot of the summary after
+  round 5: "Hvorfor recent og today, og så vises ikke den today saken på recent heller? ... samle loggen på bunnen";
+  "høres greit ut" to this): today the summary has Recent (the override commands the parent asked for, design 44) and
+  Today (the phone's events of the day, design 35) as two groups with different sources. Decided: one group at the
+  bottom, **Activity**, newest first, the last 7 days, 10 rows, mixing a command row as Recent draws it (label, the
+  answer, time, status, Cancel while it waits) and an event row as the inbox draws it (title, sub-line, time, the
+  chevron to its target), then a row "Everything for this phone ›" to `/notifications?device={id}`. Today and Recent
+  go as groups; Quick actions stay on top. The Today card's answers that a command row repeats are not shown twice
+  (round 5's rule, the reverse way round now: the command row wins, the event row stays for events without a
+  command). Server only (`device_detail.html`, the summary's view in `device_pages.rs`/`locate::recent`,
+  `parent_events` by device); tests: the mixed order, the cap, the Cancel still landing on `#activity`, the link's
+  filter; the no-jump rule. Next server round.
 - **Design 42: the clock on the lock - a timer tile like iPhone's, from the system clock alone** (the user, 2026-10-20:
   "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp for å slå av og på ... når man
   trykker på den så vil den i såfall åpne appen"; and "bruker systemklokken for å ikke skape noe mulige
