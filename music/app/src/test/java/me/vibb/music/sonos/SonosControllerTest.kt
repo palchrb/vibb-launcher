@@ -1,5 +1,6 @@
 package me.vibb.music.sonos
 
+import me.vibb.music.logic.Repeat
 import me.vibb.music.model.Source
 import me.vibb.music.playback.RendererState
 import me.vibb.music.storytel.Mint
@@ -581,6 +582,161 @@ class SonosControllerTest {
         assertEquals("stop", r.spk.commands.last())
         assertTrue(r.c.takeEnded())
         assertEquals(PlayPhase.ENDED, r.c.spec(r.now).phase)
+    }
+
+    @Test
+    fun `d50 - Til slutten holds at the next item at 0 when the episode runs off its end, once`() {
+        playing("0:23:59")
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        r.work.drain()
+        assertEquals("the speaker held at the end: nothing more played", plays, r.host.played.size)
+        assertEquals("the next item waits at 0, as for a play that isn't allowed", 1, r.c.index)
+        assertEquals(1, held)
+        assertNull("run once, then off", r.c.holdAtEnd)
+        // the next play starts that item at 0
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(r.url(1), r.spk.lastUri)
+    }
+
+    @Test
+    fun `d49 - repeat all wraps to the first item at the queue's end, repeat one plays the item again - no Stop, no end`() {
+        r.c.repeat = Repeat.ALL
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.c.takeAuto()
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals(0, r.c.index)
+        assertEquals("a new URI set + Play of the first", r.url(0), r.host.played.last().second)
+        assertTrue("the wrap is the natural advance (the last one done)", r.c.takeAuto())
+        assertFalse(r.c.takeEnded())
+        assertFalse(r.spk.commands.contains("stop"))
+        r.c.repeat = Repeat.ONE
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(0))
+        r.poll()
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(0))
+        r.poll()
+        r.work.drain()
+        assertEquals(0, r.c.index)
+        assertEquals("the same item again", plays + 1, r.host.played.size)
+        assertEquals(r.url(0), r.host.played.last().second)
+        assertFalse("the same item: no item change, no done mark", r.c.takeAuto())
+        assertFalse(r.c.takeEnded())
+    }
+
+    /** The speaker plays [index] at 0:00:05 after a wrap or a replay: the bookmark takes the new start (the guard's deliberate). */
+    private fun startKept(index: Int) {
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:00:05", uri = r.url(index))
+        r.poll()
+        val w = r.store.writes.last()
+        assertEquals("ep${index + 1}", w.itemKey)
+        assertEquals("the new start at 0 over the saved place, not the guard's hold", 5_000L, w.posMs)
+    }
+
+    @Test
+    fun `qa-music-a-code 4 - a wrap and a replay start below the saved place deliberately - the bookmark takes them`() {
+        r.c.repeat = Repeat.ALL
+        r.store.saved["ep1"] = 1_200_000 // item 0 heard far in before
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        startKept(0)
+        // repeat one: the same item again, its saved place near its end
+        r.c.repeat = Repeat.ONE
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(0))
+        r.poll()
+        assertTrue(r.store.saved["ep1"]!! > 1_000_000)
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(0))
+        r.poll()
+        startKept(0)
+    }
+
+    @Test
+    fun `qa-music-a-code 4 - a wrap that waits for a play (nothing may play) starts deliberately when it comes`() {
+        r.c.repeat = Repeat.ALL
+        r.store.saved["ep1"] = 1_200_000
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.allowed = false
+        val before = r.host.played.size
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals("nothing sent while nothing may play", before, r.host.played.size)
+        assertEquals(0, r.c.index)
+        r.allowed = true
+        r.c.playTile()
+        startKept(0)
+    }
+
+    @Test
+    fun `d50 - Til slutten beats repeat one - held at the same item at 0, nothing played again`() {
+        r.c.repeat = Repeat.ONE
+        playing("0:23:59")
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        r.work.drain()
+        assertEquals("no replay", plays, r.host.played.size)
+        assertEquals(0, r.c.index)
+        assertEquals(1, held)
+        assertFalse(r.c.takeEnded())
+    }
+
+    @Test
+    fun `d50 - Til slutten beats repeat all - held at the first item at 0 after the last, no wrap played`() {
+        r.c.repeat = Repeat.ALL
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals("no wrap played", plays, r.host.played.size)
+        assertEquals(0, r.c.index)
+        assertEquals(1, held)
+        assertFalse(r.c.takeEnded())
+        assertFalse(r.spk.commands.contains("stop"))
     }
 
     @Test

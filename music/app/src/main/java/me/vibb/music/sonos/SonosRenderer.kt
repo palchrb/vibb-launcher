@@ -24,7 +24,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import me.vibb.music.bridge.Bridge
 import me.vibb.music.data.Store
+import me.vibb.music.logic.AT_END_LOOK_MS
 import me.vibb.music.logic.NO_AUDIO
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.atEndNextLookMs
+import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
 import me.vibb.music.playback.Active
@@ -174,6 +178,11 @@ internal class SonosRenderer(
         mediaItems = listOfNotNull(mediaItems.getOrNull(keep)) + after
     }
 
+    /** Design 49 §1.9: shuffle is the service's order ([reorder]); repeat is the controller's advance (wrap, or the item again). */
+    override fun setModes(shuffled: Boolean, repeat: Repeat) {
+        controller.repeat = repeat
+    }
+
     override fun positionMs(): Long {
         val now = clock()
         return controller.spec(now).positionAt(now)
@@ -218,6 +227,52 @@ internal class SonosRenderer(
     override val fadeMs: Long get() = 3 * SonosController.RAMP_STEP_MS
     override fun fadeOutAndPause(done: () -> Unit) = controller.fadeOutAndPause(done)
     override fun cancelFade() = controller.cancelFade()
+
+    /** "Til slutten" (design 50 §1.2): its done, the look at the item's time left, the item whose ramp runs (-1 none). */
+    private var atEnd: (() -> Unit)? = null
+    private var atEndLook: Runnable? = null
+    private var atEndRampIndex = -1
+
+    /**
+     * The room's way (design 50 §1.2): the controller holds at the next item at 0 when the episode runs off its end
+     * ([SonosController.holdAtEnd], `advance()`), and the room's own 3 s ramp starts when the item's time left crosses
+     * [fadeMs] (its Pause then lands at about the end; whichever comes first ends it, the other is cancelled). A seek
+     * back or a step cancels a running ramp and the look starts it again for the new place.
+     */
+    override fun pauseAtItemEnd(done: (() -> Unit)?) {
+        atEndLook?.let { handler.removeCallbacks(it) }
+        atEndLook = null
+        if (atEndRampIndex >= 0) controller.cancelFade()
+        atEndRampIndex = -1
+        atEnd = done
+        if (done == null) {
+            controller.holdAtEnd = null
+            return
+        }
+        controller.holdAtEnd = { finishAtEnd() }
+        val look = object : Runnable {
+            override fun run() {
+                val left = itemRemaining(positionMs(), durationMs())
+                if (atEndRampIndex >= 0 && (atEndRampIndex != controller.index || left == null || left > fadeMs + AT_END_LOOK_MS)) {
+                    controller.cancelFade()
+                    atEndRampIndex = -1
+                }
+                if (left != null && left <= fadeMs && atEndRampIndex < 0 && showsPlaying) {
+                    atEndRampIndex = controller.index
+                    controller.fadeOutAndPause { finishAtEnd() }
+                }
+                handler.postDelayed(this, atEndNextLookMs(left, fadeMs))
+            }
+        }
+        atEndLook = look
+        handler.post(look)
+    }
+
+    private fun finishAtEnd() {
+        val done = atEnd ?: return
+        pauseAtItemEnd(null)
+        done()
+    }
 
     // The phone's own player only (§3.2).
     override fun setAudioAttributes(attributes: AudioAttributes) = Unit
@@ -273,6 +328,7 @@ internal class SonosRenderer(
     override fun release() {
         if (released) return
         released = true
+        pauseAtItemEnd(null)
         // the locks go with it: close() reports false when this renderer held them (never for another's, qa L4)
         controller.close()
         poller?.stop()

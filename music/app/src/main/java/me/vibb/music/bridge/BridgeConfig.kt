@@ -5,6 +5,10 @@ package me.vibb.music.bridge
  * read here. Pure; BridgeTest.
  */
 
+import me.vibb.music.logic.ControlSlots
+import me.vibb.music.logic.controlSlots
+import me.vibb.music.model.Entry
+
 /** The launcher's two build names (release, debug). */
 val LAUNCHER_PACKAGES = listOf("me.vibb.launcher", "me.vibb.launcher.debug")
 
@@ -27,7 +31,20 @@ object NowPlayingKeys {
     const val DURATION_MS = "duration_ms"
     const val PLAYING = "playing"
     const val ART = "art"
+
+    /**
+     * Design 50 §1.1 (appended): which pair the lock tile shows - [CONTROLS_SKIP] (15 s back / 30 s on) or
+     * [CONTROLS_MUSIC] (previous / next) - the decision (`controlSlots`), never the kind, so the launcher needs no
+     * kind logic.
+     */
+    const val CONTROLS = "controls"
+    const val CONTROLS_SKIP = "skip"
+    const val CONTROLS_MUSIC = "music"
 }
+
+/** The `controls` word of [NowPlayingKeys] for [entry] (design 50 §1.1): `controlSlots`' decision. */
+fun nowPlayingControls(entry: Entry): String =
+    if (controlSlots(entry) == ControlSlots.SKIP) NowPlayingKeys.CONTROLS_SKIP else NowPlayingKeys.CONTROLS_MUSIC
 
 /** The managed config's keys. */
 object RestrictionKeys {

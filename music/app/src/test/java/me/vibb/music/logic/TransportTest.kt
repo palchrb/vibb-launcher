@@ -89,4 +89,25 @@ class TransportTest {
     fun `6 the limit is 30 minutes`() {
         assertEquals(30 * 60_000L, PREV_RESTART_MAX_MS)
     }
+
+    // design 50 §1.1: the skip pair
+
+    @Test
+    fun `d50 - 15 s back and 30 s on stay inside the item`() {
+        assertEquals(45_000L, skipWithin(60_000, -SKIP_BACK_MS, 600_000))
+        assertEquals("never below 0", 0L, skipWithin(10_000, -SKIP_BACK_MS, 600_000))
+        assertEquals(90_000L, skipWithin(60_000, SKIP_FORWARD_MS, 600_000))
+        assertEquals("never across into the next item", 599_000L, skipWithin(580_000, SKIP_FORWARD_MS, 600_000))
+        assertEquals("already that close: forward stays put", 599_500L, skipWithin(599_500, SKIP_FORWARD_MS, 600_000))
+        assertEquals("back still goes back from there", 584_500L, skipWithin(599_500, -SKIP_BACK_MS, 600_000))
+    }
+
+    @Test
+    fun `d50 - a context item has no listing duration - the live one clamps, unknown forward does nothing`() {
+        // the player passes the live state's duration (a Spotify context's synthetic item has none listed)
+        assertEquals(179_000L, skipWithin(170_000, SKIP_FORWARD_MS, 180_000))
+        assertEquals("no duration yet: forward stays", 20_000L, skipWithin(20_000, SKIP_FORWARD_MS, null))
+        assertEquals("back goes back", 5_000L, skipWithin(20_000, -SKIP_BACK_MS, null))
+        assertEquals(0L, skipWithin(20_000, -SKIP_BACK_MS * 2, 0))
+    }
 }

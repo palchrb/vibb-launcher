@@ -49,3 +49,26 @@ fun nextAction(index: Int, count: Int): TransportAction = when {
     index >= count - 1 -> TransportAction.GoTo(0)
     else -> TransportAction.GoTo(index + 1)
 }
+
+// --- design 50 §1.1: the skip pair (ours, not vibb's: the user's pick of 2026-10-20) ---
+
+/** "15 s tilbake" and "30 s fram" (design 50 §1.1). */
+const val SKIP_BACK_MS = 15_000L
+const val SKIP_FORWARD_MS = 30_000L
+
+/** A step forward never lands closer to the item's end than this: it stays inside the item, never moves on. */
+const val SKIP_END_MARGIN_MS = 1_000L
+
+/**
+ * Where a skip of [deltaMs] from [posMs] lands (design 50 §1.1): clamped to the item - never below 0, never past
+ * [durationMs] less [SKIP_END_MARGIN_MS] (a step never crosses into the next item; already that close, forward stays
+ * put). [durationMs] is the live one (a Spotify context's item has no listing duration: the web player's state gives
+ * it); unknown, a step forward does nothing and a step back still goes back.
+ */
+fun skipWithin(posMs: Long, deltaMs: Long, durationMs: Long?): Long {
+    val pos = posMs.coerceAtLeast(0)
+    val duration = durationMs?.takeIf { it > 0 }
+    if (duration == null) return if (deltaMs < 0) (pos + deltaMs).coerceAtLeast(0) else pos
+    val last = maxOf(minOf(pos, duration), duration - SKIP_END_MARGIN_MS).coerceAtLeast(0)
+    return (pos + deltaMs).coerceIn(0, last)
+}

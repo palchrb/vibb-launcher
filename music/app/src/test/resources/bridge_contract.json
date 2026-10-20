@@ -19,7 +19,8 @@
     "storage_limit_gb": "int"
   },
   "report_state": ["report", "held_files", "held_sha256"],
-  "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art"],
+  "now_playing": ["entry", "item", "position_ms", "duration_ms", "playing", "art", "controls"],
+  "now_playing_controls": ["skip", "music"],
   "call_commands": {
     "hold": "me.vibb.music.CALL_HOLD",
     "release": "me.vibb.music.CALL_RELEASE"

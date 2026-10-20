@@ -4,6 +4,7 @@ import android.media.AudioDeviceInfo
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import me.vibb.music.logic.Repeat
 
 /**
  * Who makes the sound (design 26a §0, 26c §5.1): the phone's own player, a Sonos room, or Spotify's web
@@ -36,6 +37,14 @@ interface Renderer {
 
     /** Shuffle on or off: item [keep] plays on as the queue's first, [after] follows it. */
     fun reorder(keep: Int, after: List<MediaItem>)
+
+    /**
+     * The loaded entry's shuffle and repeat (design 49 §1.4-§1.9), from the service before every [load] and at each
+     * toggle: the phone's ExoPlayer repeats by its own repeat mode, a Sonos room wraps or plays the item again in its
+     * advance, Spotify's web player sets the account's shuffle and repeat to what the entry wants. The order itself is
+     * the service's ([reorder]); no renderer shuffles on its own, except Spotify in context mode (Spotify's order).
+     */
+    fun setModes(shuffled: Boolean, repeat: Repeat)
 
     /** For display and the controls only; persisting goes through [saveNow] (design 26a QA H3). */
     fun positionMs(): Long
@@ -105,6 +114,15 @@ interface Renderer {
      */
     fun fadeOutAndPause(done: () -> Unit)
     fun cancelFade()
+
+    /**
+     * "Til slutten" (design 50 §1.2): with [done] the renderer pauses AT the end of whatever item is current then (a
+     * step keeps it armed) by its own means - the phone's `setPauseAtEndOfMediaItems`, a room's `advance()` holding at
+     * the next item at 0, the web player pausing itself just before Spotify's own advance - with its own fade over
+     * [fadeMs], started when the item's time left crosses it and recomputed after a seek. [done] runs once, on the main
+     * thread, after that pause; the renderer is then off again. Null turns it off (the volume back), never calling it.
+     */
+    fun pauseAtItemEnd(done: (() -> Unit)?)
 
     // The phone's own player only; a remote renderer ignores them (design 26a §3.2).
     fun setAudioAttributes(attributes: AudioAttributes)

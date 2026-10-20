@@ -40,7 +40,7 @@ class SpotifyTrackerTest {
         Event.Resumed -> "Resumed"
         is Event.NotOurs -> "NotOurs ${if (e.playing) "playing" else "paused"}"
         Event.Ended -> "Ended"
-        is Event.NewWindow -> "NewWindow ${e.index}${if (e.resume) " resume" else ""}"
+        is Event.NewWindow -> "NewWindow ${e.index}${if (e.resume) " resume" else ""}${if (e.wrap) " wrap" else ""}"
         is Event.ShuffleOrRepeat -> "ShuffleOrRepeat ${e.index}"
         is Event.QueueAdd -> "QueueAdd ${e.index}"
         Event.Look -> "Look"
@@ -647,5 +647,81 @@ class SpotifyTrackerTest {
         assertEquals("never NotOurs: the context isn't lost", Mode.OURS, t.mode)
         assertEquals(SpotifyTracker.Measured(0, 5_000, 5_100, true), t.measured)
         assertEquals(listOf("TrackChanged ${uri(8)}"), t.onState(cs(8, 0, prev = listOf(7, 1)), 6_500).map(::word))
+    }
+
+    // --- design 49: shuffle and repeat ---------------------------------------------------------------------------
+
+    @Test
+    fun `d49 - a state differing from the wanted shuffle and repeat is corrected, one as wanted is read`() {
+        val t = SpotifyTracker().apply { load((0..4).map { track(it) }, 0); setModes(SpotifyModes(repeat = 2), wrap = false) }
+        t.played(0, 4)
+        assertEquals("repeat off where the entry wants track", listOf("ShuffleOrRepeat 0"), t.onState(state(0, 0), 0).map(::word))
+        t.played(0, 4)
+        assertEquals(listOf("Started 0"), t.onState(state(0, 0, repeat = 2), 1_000).map(::word))
+        assertEquals("shuffle on in list mode is never wanted", listOf("ShuffleOrRepeat 0"), t.onState(state(0, 2_000, shuffle = true, repeat = 2), 2_000).map(::word))
+    }
+
+    @Test
+    fun `d49 - repeat one is Spotify's repeat track - the same uri again is no end, a stop under it plays it again`() {
+        val t = SpotifyTracker().apply { load((1..3).map { track(it) }, 0); setModes(SpotifyModes(repeat = 2), wrap = false) }
+        t.played(0, 2)
+        t.onState(state(1, 0, repeat = 2), 0)
+        t.onState(state(1, 15_000, repeat = 2), 15_000)
+        assertEquals("the loop goes on playing: nothing", emptyList<String>(), t.onState(state(1, 400, repeat = 2), 20_400).map(::word))
+        t.onState(state(1, 15_000, repeat = 2), 35_000)
+        assertEquals("paused at 0 after it ran out: asked again, never the end", listOf("Look"), t.onState(state(1, 0, paused = true, repeat = 2), 40_000).map(::word))
+        assertEquals("and playing again: the repeat", emptyList<String>(), t.onState(state(1, 300, repeat = 2), 40_300).map(::word))
+        assertEquals(Mode.OURS, t.mode)
+        t.onState(state(1, 15_000, repeat = 2), 55_000)
+        assertEquals(listOf("Look"), t.onState(state(1, 20_000, paused = true, repeat = 2), 60_000).map(::word))
+        assertEquals("still paused 2 s later: Spotify stopped - the item again from 0", listOf("NewWindow 0"), t.onState(state(1, 20_000, paused = true, repeat = 2), 62_100).map(::word))
+    }
+
+    @Test
+    fun `d49 - list mode's repeat all is a new window from the first item at the list's end, before Ended`() {
+        val t = SpotifyTracker().apply { load((1..2).map { track(it) }, 1); setModes(SpotifyModes(), wrap = true) }
+        t.played(1, 1)
+        t.onState(state(2, 0), 0)
+        t.onState(state(2, 15_000), 15_000)
+        assertEquals(listOf("NewWindow 0 wrap"), t.onState(state(2, 0, paused = true), 20_100).map(::word))
+        assertEquals("never the end", Mode.LOST, t.mode)
+        // Autoplay after the last track is the same end: paused, and the list again
+        val u = SpotifyTracker().apply { load((1..2).map { track(it) }, 1); setModes(SpotifyModes(), wrap = true) }
+        u.played(1, 1)
+        u.onState(state(2, 0), 0)
+        u.onState(state(2, 15_000), 15_000)
+        assertEquals(listOf("NotOurs playing", "NewWindow 0 wrap"), u.onState(foreign(), 20_100).map(::word))
+        // repeat off: the end as before
+        val v = SpotifyTracker().apply { load((1..2).map { track(it) }, 1) }
+        v.played(1, 1)
+        v.onState(state(2, 0), 0)
+        v.onState(state(2, 15_000), 15_000)
+        assertEquals(listOf("Ended"), v.onState(state(2, 0, paused = true), 20_100).map(::word))
+    }
+
+    @Test
+    fun `d49 - a shuffled window keeps ours exact - the current and its next in our order only`() {
+        val t = SpotifyTracker().apply { load((0..4).map { track(it) }, 0) }
+        val shuffled = listOf(0, 3, 1, 4, 2).map { track(it) }
+        t.reorder(shuffled, 0)
+        t.played(0, 4)
+        t.onState(state(0, 0), 0)
+        t.onState(state(0, 15_000), 15_000)
+        assertEquals("the shuffled next is ours", listOf("ItemChanged 1 auto"), t.onState(state(3, 0, prev = listOf(0)), 20_100).map(::word))
+        assertEquals("an item of ours out of the shuffled order is not ours (no skip evidence)", "NotOurs playing", word(t.onState(state(4, 2_000), 21_000).first()))
+    }
+
+    @Test
+    fun `d49 - a context with repeat on - a track that ran out is never the end, Autoplay still is`() {
+        val t = SpotifyTracker().apply { loadContext(pl, null); setModes(SpotifyModes(shuffle = true, repeat = 1), wrap = false) }
+        t.playedContext(null)
+        t.onState(cs(3, 0, next = emptyList()).copy(shuffle = true, repeat = 1), 0)
+        t.onState(cs(3, 15_000, next = emptyList()).copy(shuffle = true, repeat = 1), 15_000)
+        assertEquals("paused at 0 after it ran out: Spotify's repeat - asked again", listOf("Look"), t.onState(cs(3, 0, paused = true).copy(shuffle = true, repeat = 1), 20_100).map(::word))
+        assertEquals("the context from its top: a track change", listOf("TrackChanged ${uri(1)}"), t.onState(cs(1, 0).copy(shuffle = true, repeat = 1), 20_500).map(::word))
+        assertEquals(Mode.OURS, t.mode)
+        t.onState(cs(1, 15_000).copy(shuffle = true, repeat = 1), 35_000)
+        val auto = SdkState(false, 0, 180_000, "spotify:track:FAKEautoplay0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), "spotify:playlist:FAKEradio000000000001", true, 1)
+        assertEquals("another context after ours ran out: Autoplay, the end", listOf("NotOurs playing", "Ended"), t.onState(auto, 40_100).map(::word))
     }
 }

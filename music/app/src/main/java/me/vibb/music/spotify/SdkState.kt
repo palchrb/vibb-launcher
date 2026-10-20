@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import me.vibb.music.logic.Repeat
 
 /*
  * The web player's state as the page posts it (design 26c §5.3): `player.js` compacts the SDK's
@@ -18,6 +19,34 @@ import kotlinx.serialization.json.doubleOrNull
 
 /** What one post of the page says. */
 sealed interface SdkSnapshot
+
+/**
+ * The account's shuffle and repeat an entry wants on Spotify's side (design 49 §1.5-§1.7): [repeat] as the SDK's
+ * `repeat_mode` (0 off, 1 the context, 2 the track). Off and off is what list mode always had (26c §5.4).
+ */
+data class SpotifyModes(val shuffle: Boolean = false, val repeat: Int = 0) {
+    /** The Web API's `PUT /me/player/repeat?state=` word. */
+    val repeatWord: String get() = when (repeat) {
+        1 -> "context"
+        2 -> "track"
+        else -> "off"
+    }
+}
+
+/**
+ * What the entry's own [shuffled] and [repeat] ask of Spotify (design 49 §1.5-§1.7). List mode ([context] false): our
+ * order, so Spotify's shuffle stays off; repeat one is Spotify's `track` (the SDK repeats it), repeat all ours (the
+ * renderer starts the list again at its end), so Spotify's repeat is off. Context mode: Spotify's own shuffle and repeat
+ * (`context`, `track`).
+ */
+fun spotifyModes(context: Boolean, shuffled: Boolean, repeat: Repeat): SpotifyModes = SpotifyModes(
+    shuffle = context && shuffled,
+    repeat = when (repeat) {
+        Repeat.OFF -> 0
+        Repeat.ONE -> 2
+        Repeat.ALL -> if (context) 1 else 0
+    },
+)
 
 /** `null`: this player isn't Spotify's active device (another device plays, or nothing does). */
 data object Inactive : SdkSnapshot
@@ -47,8 +76,11 @@ data class SdkState(
     /** The account's repeat (`repeat_mode`: 0 off, 1 the context, 2 the track). */
     val repeat: Int = 0,
 ) : SdkSnapshot {
-    /** Shuffle or repeat is on: the order Spotify plays isn't ours (qa-26c-step4-code M1). */
-    val reordered: Boolean get() = shuffle || repeat != 0
+    /**
+     * The account's shuffle or repeat isn't what the entry wants (design 49 §1.5; qa-26c-step4-code M1 read "on"): the
+     * order Spotify plays isn't ours, or it repeats what shouldn't (or doesn't what should).
+     */
+    fun differs(wanted: SpotifyModes): Boolean = shuffle != wanted.shuffle || repeat != wanted.repeat
 
     /** A state that names no track (no uri, no name): evidence of nothing (qa-26c-step4-code L2). */
     val trackless: Boolean get() = uri == null && name == null

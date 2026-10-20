@@ -22,14 +22,25 @@ import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
 import me.vibb.music.data.Store
 import me.vibb.music.logic.ItemPosition
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.HLS_MAX_BITRATE
 import me.vibb.music.logic.SLEEP_FADE_MS
+import me.vibb.music.logic.atEndGain
+import me.vibb.music.logic.atEndNextLookMs
+import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.save
 import me.vibb.music.logic.showsPlaying
 import me.vibb.music.logic.sleepVolume
 import me.vibb.music.media.ItemMediaSourceFactory
 import me.vibb.music.media.MediaCache
 import me.vibb.music.media.SourceChangedPolicy
+
+/** The phone's ExoPlayer repeat mode for the entry's [repeat] (design 49 §1.4). */
+internal fun exoRepeatMode(repeat: Repeat): Int = when (repeat) {
+    Repeat.OFF -> Player.REPEAT_MODE_OFF
+    Repeat.ALL -> Player.REPEAT_MODE_ALL
+    Repeat.ONE -> Player.REPEAT_MODE_ONE
+}
 
 /** Speech (podcasts, stories: a notification pauses rather than ducks) or music. */
 internal fun audioAttributes(speech: Boolean): AudioAttributes = AudioAttributes.Builder()
@@ -86,6 +97,15 @@ internal class LocalRenderer(
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                // "Til slutten" (design 50 §1.2): ExoPlayer paused at the item's end - not the kid's pause
+                emit(RendererEvent.Paused(PauseCause.OTHER))
+                atEnd?.let { done ->
+                    pauseAtItemEnd(null)
+                    done()
+                }
+                return
+            }
             if (!playWhenReady) {
                 val cause = when (reason) {
                     Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY,
@@ -129,6 +149,15 @@ internal class LocalRenderer(
         exo.removeMediaItems(keep + 1, exo.mediaItemCount)
         exo.removeMediaItems(0, keep)
         exo.addMediaItems(1, after)
+    }
+
+    /**
+     * Design 49 §1.4: repeat is ExoPlayer's own ([exoRepeatMode]) - all wraps the queue, one repeats the item - so the
+     * natural end (`STATE_ENDED`, the service's `clear_state`) comes only with repeat off. Shuffle stays ours (the
+     * queue's order, `shuffledWithFirst`): ExoPlayer's shuffle mode is never on.
+     */
+    override fun setModes(shuffled: Boolean, repeat: Repeat) {
+        exo.repeatMode = exoRepeatMode(repeat)
     }
 
     override fun positionMs(): Long = exo.currentPosition
@@ -203,11 +232,36 @@ internal class LocalRenderer(
         exo.volume = 1f
     }
 
+    /** "Til slutten" (design 50 §1.2): its [done], and the look at the item's time left that sets the fade's gain. */
+    private var atEnd: (() -> Unit)? = null
+    private var atEndLook: Runnable? = null
+
+    override fun pauseAtItemEnd(done: (() -> Unit)?) {
+        atEndLook?.let { handler.removeCallbacks(it) }
+        atEndLook = null
+        atEnd = done
+        exo.pauseAtEndOfMediaItems = done != null
+        if (done == null) {
+            if (fade == null) exo.volume = 1f
+            return
+        }
+        val look = object : Runnable {
+            override fun run() {
+                val left = itemRemaining(exo.currentPosition, exo.duration.takeIf { it != C.TIME_UNSET })
+                exo.volume = atEndGain(left, fadeMs)
+                handler.postDelayed(this, atEndNextLookMs(left, fadeMs))
+            }
+        }
+        atEndLook = look
+        handler.post(look)
+    }
+
     override fun setAudioAttributes(attributes: AudioAttributes) = exo.setAudioAttributes(attributes, true)
     override fun setWakeMode(wakeMode: Int) = exo.setWakeMode(wakeMode)
     override fun setPreferredAudioDevice(device: AudioDeviceInfo?) = exo.setPreferredAudioDevice(device)
     override fun release() {
         cancelFade()
+        pauseAtItemEnd(null)
         exo.release()
     }
 

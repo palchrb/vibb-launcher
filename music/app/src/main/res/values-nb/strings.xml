@@ -38,6 +38,12 @@
     <string name="back_library">Tilbake til biblioteket</string>
     <string name="seek">Spol i sporet</string>
     <string name="shuffle">Tilfeldig rekkefølge</string>
+    <string name="shuffle_on">På</string>
+    <string name="shuffle_off">Av</string>
+    <string name="repeat">Gjenta</string>
+    <string name="repeat_off">Av</string>
+    <string name="repeat_all">Alle</string>
+    <string name="repeat_one">Én sang</string>
     <string name="previous">Forrige</string>
     <string name="next">Neste</string>
     <string name="episode_of">Episode %1$d av %2$d</string>
@@ -49,6 +55,13 @@
     <string name="sleep_title">Sov om</string>
     <string name="minutes">%1$d min</string>
     <string name="sleep_off">Av</string>
+    <string name="favourite">Favoritt</string>
+    <string name="category_favourites">Favoritter</string>
+    <string name="tile_needs_wifi">Trenger Wi-Fi</string>
+    <string name="sleep_at_end">Til slutten</string>
+    <string name="sleep_at_end_on">Sov · til slutten</string>
+    <string name="skip_back">15 sekunder tilbake</string>
+    <string name="skip_forward">30 sekunder fram</string>
     <string name="output">Spill av på</string>
     <string name="output_label">Spill av på: %1$s</string>
     <string name="output_phone">Telefonen</string>

@@ -657,7 +657,7 @@ class MusicPlanTest {
         assertEquals(strings("report_state"), listOf(REPORT, HELD_FILES, HELD_SHA256))
         assertEquals(
             strings("now_playing"),
-            listOf(MusicNowPlaying.ENTRY, MusicNowPlaying.ITEM, MusicNowPlaying.POSITION_MS, MusicNowPlaying.DURATION_MS, MusicNowPlaying.PLAYING, MusicNowPlaying.ART),
+            listOf(MusicNowPlaying.ENTRY, MusicNowPlaying.ITEM, MusicNowPlaying.POSITION_MS, MusicNowPlaying.DURATION_MS, MusicNowPlaying.PLAYING, MusicNowPlaying.ART, MusicNowPlaying.CONTROLS),
         )
         // The call rule's session commands (design 26a §6.7, qa-26a-step3b-code H1).
         val calls = (contract["call_commands"] as kotlinx.serialization.json.JsonObject).mapValues { (it.value as JsonPrimitive).content }

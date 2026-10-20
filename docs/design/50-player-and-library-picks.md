@@ -64,7 +64,7 @@ favoritt-kategori"; the rewind-after-pause idea declined). Music app, plus the l
    its copy keeps its heart); no heart on a context's synthetic item. A category tile "Favoritter" first after "Alle" in
    the category row (the row scrolls past four) with a sentinel category id (-1) in `CategoryTiles` that
    `tapCategory`/`effectiveCategory`/`backToLibrary` understand, showing the entries that hold a favourite; a tap on
-   it with one entry opens that entry (a proposal - drop if unwanted); a cover tap under Favoritter plays the entry as usual, not a favourites queue.
+   it with one entry opens that entry (a proposal - dropped after code QA 4: the tile only filters, no category tile starts sound); a cover tap under Favoritter plays the entry as usual, not a favourites queue.
    Phone-only, never synced or reported. The "Bare favoritter" filter row is dropped (beyond PLAN). Nothing in the
    parent's PWA.
 6. **Not taken**: the "Fortsett" strip (3 covers it), the offline check badge (4 covers it the user's way), the
@@ -100,3 +100,75 @@ Favoritter.
 - 50-6: §1.5 Room 6 holds both because 49 and 50 ship together; §1.1 the bridge carries `controls: "skip"|"music"`.
 - 50-7: §1.2 the full-width row under the 2x2; §1.1 fixed glyph size and the live duration for a context item.
 - Interactions: §1.1 refers to 49's `controlSlots`; §1.4 the account line wins over "Trenger Wi-Fi".
+
+## Implementation status (2026-10-20, branch `music-r-b`)
+
+Built on `main` at `d53edc81` in parallel with design 49 (branch `music-r-a`). §1.1-§1.4 first, §1.5 last on 49's Room 6.
+
+- **§1.1 the skip pair - built.** `PlayerScreen`'s side slots follow `controlSlots(entry)` (49 §1.1, `logic/Queue.kt`; a
+  stub of the same signature stood in until `music-r-a` was merged into this branch): `SKIP` draws `SkipButton`
+  with Material Symbols `replay`/`forward_media` (new `PLAYER_GLYPHS` in `scripts/material-symbols.sh`,
+  `res/drawable/player_glyph_*.xml`, the "Converted from" header) at 20 dp in the 44 dp slot, "15"/"30" at a fixed
+  7 dp (`SKIP_NUMBER_DP.dp.toSp()`). The target is `skipWithin(pos, ±delta, duration)` (`logic/Transport.kt`) from the
+  live position read at the tap, sent through the existing `seekTo` (live: the controller's seek - the phone, a room's
+  settled seek, the SDK; restored: `RESTORE` + `THEN_SEEK`), so no new command. The bridge: `NowPlayingKeys.CONTROLS`
+  (`controls`: `skip`/`music`, `nowPlayingControls`) in every `setNowPlaying`; `bridge_contract.json` (both copies)
+  gets `controls` appended to `now_playing` and a `now_playing_controls` list; the launcher only spells the key
+  (`MusicNowPlaying.CONTROLS`, `MusicPlanTest`), its lock tile's use is the later step.
+  - Deviation: "clamped to the item" is 1 s short of the end (`SKIP_END_MARGIN_MS`) - a seek to the very end would end
+    the item and move on, which §1.1 rules out; already within that second, forward stays put. With no duration
+    known (a context before its first state, live) forward does nothing and back still goes back.
+- **§1.2 "Til slutten" - built.** The sheet's full-width row under the 2x2 (`SleepOption`), shown only for an item
+  with a duration (`sleepAtEndOffered`; kept while it is on); a second tap turns it off. `Commands.SLEEP` with
+  `ARG_AT_END`, the service's `sleepAtEnd` (`PlayerHub.State.sleepAtEnd`), cleared per `sleepAtEndAfter` (a step keeps
+  it; the kid's new pick - `start(..., newChoice = true)` from `playEntry`/`playItem` only: a cover tap of another
+  entry or a list pick, which is a new queue, not a step -, its pause, a kid's `PauseCause.USER` pause, the queue's end,
+  a minute choice and, after code QA 8, a step onto a live item with no duration end it). The stored queue's first
+  play (`resumeLast`, `restoreThen`, a playback resumption) and both output switches (`toRoom`, `comeHome`) load a
+  queue and keep it (code QA 1; `NowPlayingTest` pins each path). While it is on, the web player sends Spotify's
+  repeat off and list mode never wraps; the entry's repeat comes back when it clears (code QA 3). The
+  renderers: `Renderer.pauseAtItemEnd(done)` - the phone `pauseAtEndOfMediaItems` and its `END_OF_MEDIA_ITEM` pause
+  (emitted as `Paused(OTHER)`, then done), the gain from the time left over 10 s; a room `SonosController.holdAtEnd`
+  in `advance()` (the `!mayPlay` branch's hold at the next item at 0) and the room's 3 s ramp started when the time
+  left crosses `fadeMs` (cancelled by a seek back or a step; whichever of the ramp's Pause and the hold comes first
+  ends it); the web player pauses itself `AT_END_SPOTIFY_PAUSE_MS` (400 ms) before the end with its 10 s gain, and a
+  belt pauses at 0 a track Spotify advanced to anyway. A renderer switch moves it to the new renderer (`attach`).
+  - Deviation: the bar says "Sov · til slutten" (measured at 320 dp, `FitTest`); the item's remaining time is the
+    seek bar's own two times - a third time in the bar would cut the output's name to its glyph at 320 dp. The
+    user's call is pending on this one (code QA 8).
+  - Repeat-one (49) on the phone: `pauseAtEndOfMediaItems` pauses at the item's end in every repeat mode; on a room the
+    hold is checked before 49's wrap or replay in `advance()` (kept so at the merge of `music-r-a`).
+- **§1.3 the carousel's start - built.** `CarouselStart` (`logic/LibraryView.kt`) + `MusicViewModel.startOn`, from a
+  `LaunchedEffect` in `MusicRoot` once both the snapshot and the stored row are non-null; `turned` (a real turn),
+  `pickCategory` and `backToLibrary` mark it moved. The pager reads `initialPage` again through `carouselJumps`.
+- **§1.4 dimmed tiles - built.** `EntryUi.unplayableNow`/`needsWifi` from `NetNow(netCaps, streamMobileData, onRoom)`
+  (`unplayableNow` in `ui/UiModel.kt` reuses `itemPlayable`/`spotifyPlayability`); `MusicViewModel.netVersion` moves
+  on a default-network callback and when the library is started again. Cases as written; `ASK_ADULT` dims too.
+- **§1.5 favourites - built** on 49's Room 6 (`FavouriteRow`, its DAO; cherry-picked from `music-r-a` 6c17f55c,
+  unchanged). `Snapshot.favourites` (`Store.snapshots` combines `favouritesFlow`), `MusicViewModel.setFavourite`
+  (IO; refused for a context's synthetic item), `HeartButton` in the list rows (40 dp target, 18 dp heart) and beside
+  the player's number line (32 dp); the prune in `Sync` (`applyListing`: what the parsed listing no longer names; own
+  files against the parsed library; a gone entry's hearts when every entry was read - design 39's flip rule). The
+  "Favoritter" tile (`CategoryTiles`, the `favorite` glyph) shows while an entry holds a heart; `FAVOURITES_CATEGORY`
+  = -1 in `shownEntries`/`effectiveCategory`/`backToLibrary`/`startOn`. "Bare favoritter" is not built (dropped, §1.5).
+  - "A tap on it with one entry opens that entry": dropped (code QA 4, decided) - the tile only filters the carousel,
+    which then shows that one entry; no category tile starts sound.
+  - The player's heart is overlaid at the end of the "Episode N av M" line at 40 dp (`overlayOnLine`, code QA 7): the
+    number stays centred and the line keeps its height, so the cover never moves.
+- **Tests**: `TransportTest` (`d50` clamp, context duration), `NowPlayingTest` (`d50` gain/look/offered, the clearing
+  rule, the renderers' means by source), `SpotifyRendererTest` (`d50` fade + pause before the end with nothing sent;
+  the belt), `SonosControllerTest` (`d50` hold at the next item at 0, once), `LibraryViewTest` (`d50` start index),
+  `UiModelTest` (`d50` per source/network, room, the single line, ASK_ADULT; `d46` arrow), `FitTest` (`d50` the skip
+  pair's slots and number, "Sov · til slutten" at 320 dp), `FavouritesTest` (set/unset by entry key, the tile and its
+  sentinel, the prune rule, no heart on a context item), `Room6Test` (49's, the migration), `BridgeTest`/`MusicPlanTest` (`controls`), and the
+  guards that pinned the old lines (`GuardsTest`, `SourceScanTest`) moved to the new code.
+- **Code QA** (`docs/review/qa-music-b-code.md`): all fixed - 1 the clearing above; 2 `SonosControllerTest` cases for
+  repeat one and all with the hold; 3 repeat off on Spotify while on; 4 the tile only filters; 5 `BridgeTest` pins the
+  `controls` word per kind (the launcher's `MusicPlanTest` only spells the key - it reads no value yet); 6 `netVersion`
+  moves only when what the gate reads changes (`netCapsOf`); 7 the overlaid heart; 8 one room guard (`entryUi`), a live
+  item ends it.
+- **Device checks owed** (§3): the emulator list as written, and with design 49: the phone with repeat one + Til
+  slutten (one play, a pause with the fade, no second start - `pauseAtEndOfMediaItems` pauses under
+  `REPEAT_MODE_ONE`); the last item with repeat off (one pause, `clear_state`, the done mark once); repeat all at the
+  last item (a pause, no wrap); Spotify with `fake-spotify.py --repeat track` and Til slutten (repeat off sent, one
+  pause); the heart's look at 320 dp.

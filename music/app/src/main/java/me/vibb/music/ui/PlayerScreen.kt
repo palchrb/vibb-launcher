@@ -41,15 +41,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.layout.offset
+import androidx.annotation.DrawableRes
+import me.vibb.music.logic.ControlSlots
+import me.vibb.music.logic.SKIP_BACK_MS
+import me.vibb.music.logic.SKIP_FORWARD_MS
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import me.vibb.music.R
 import me.vibb.music.logic.Kind
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.kindOf
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.Output
@@ -73,14 +83,23 @@ fun PlayerScreen(
     of: Int,
     positionMs: Long,
     sleepMinutes: Int?,
+    /** "Til slutten" is set (design 50 §1.2): the bar says "Sov · til slutten". */
+    sleepAtEnd: Boolean,
     output: Output,
     rendererState: RendererState?,
     onBack: () -> Unit,
     onSeek: (Long) -> Unit,
     onShuffle: () -> Unit,
+    /** The repeat button (design 49 §1.2): off -> all -> one. */
+    onRepeat: () -> Unit,
     onPrevious: () -> Unit,
     onTogglePlay: () -> Unit,
     onNext: () -> Unit,
+    /** The skip pair (design 50 §1.1): back ([SKIP_BACK_MS] as a negative step) or on, within the item. */
+    onSkipBy: (deltaMs: Long) -> Unit,
+    /** An item's heart (design 50 §1.5): set or not, null for none (a context's synthetic item). */
+    favourite: (PlayItem) -> Boolean?,
+    onFavourite: (PlayItem, Boolean) -> Unit,
     /** A swipe of the episode carousel (design 27): to queue index, in that direction. */
     onSkipTo: (index: Int, forward: Boolean) -> Unit,
     onList: () -> Unit,
@@ -114,7 +133,15 @@ fun PlayerScreen(
                     Kind.MUSIC -> R.string.track_of
                 }
                 // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
-                if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                val heart = favourite(item)
+                // design 50 §1.5: the heart at the end of the "Episode N av M" line, overlaid (code QA 7): the number stays
+                // centred, the line keeps its height, so the cover never moves
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                    heart?.let { on ->
+                        HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
+                    }
+                }
             }
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
@@ -122,11 +149,21 @@ fun PlayerScreen(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                if (now.canShuffle) {
+                // design 50 §1.1: what resumes gets "15 s tilbake" / "30 s fram" in the side slots; music gets design
+                // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
+                // context repeat only (Spotify picks)
+                val skips = now.slots == ControlSlots.SKIP
+                if (skips) {
+                    SkipButton(R.drawable.player_glyph_replay, "15", stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
+                } else if (now.canShuffle) {
+                    val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
                     RoundButton(
                         Icons.shuffle, stringResource(R.string.shuffle), onShuffle, row.side.dp, 20.dp,
                         if (now.shuffled) Palette.peach else Palette.card, if (now.shuffled) Palette.bg else Palette.fg,
-                        Modifier.semantics { selected = now.shuffled },
+                        Modifier.semantics {
+                            selected = now.shuffled
+                            stateDescription = state
+                        },
                     )
                 } else {
                     Spacer(Modifier.requiredSize(row.side.dp))
@@ -137,13 +174,33 @@ fun PlayerScreen(
                     onTogglePlay, row.play.dp, 32.dp, Palette.peach, Palette.bg,
                 )
                 RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
-                Spacer(Modifier.requiredSize(row.side.dp))
+                if (skips) {
+                    SkipButton(R.drawable.player_glyph_forward_media, "30", stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
+                } else if (now.canRepeat) {
+                    val on = now.repeat != Repeat.OFF
+                    val state = stringResource(repeatState(now.repeat))
+                    RoundButton(
+                        if (now.repeat == Repeat.ONE) Icons.repeatOne else Icons.repeat, stringResource(R.string.repeat), onRepeat,
+                        row.side.dp, 20.dp, if (on) Palette.peach else Palette.card, if (on) Palette.bg else Palette.fg,
+                        Modifier.semantics {
+                            selected = on
+                            stateDescription = state
+                        },
+                    )
+                } else {
+                    Spacer(Modifier.requiredSize(row.side.dp))
+                }
             }
         }
         // Liste and Sov are never cut ("Sov · 30 min"); the output's name gives way (the mockup's flex).
         FlexBar(listOf(1f, 1f, 1.2f), shrinks = listOf(false, false, true), gap = 8.dp) {
             BarButton(Icons.list, stringResource(R.string.list), null, Modifier, onClick = onList)
-            BarButton(Icons.moon, sleepMinutes?.let { stringResource(R.string.sleep_on, it) } ?: stringResource(R.string.sleep), null, Modifier, onClick = onSleep)
+            val sleepLabel = when {
+                sleepAtEnd -> stringResource(R.string.sleep_at_end_on)
+                sleepMinutes != null -> stringResource(R.string.sleep_on, sleepMinutes)
+                else -> stringResource(R.string.sleep)
+            }
+            BarButton(Icons.moon, sleepLabel, null, Modifier, onClick = onSleep)
             val name = outputName(output)
             val external = output.kind != OutputKind.PHONE
             BarButton(
@@ -153,6 +210,28 @@ fun PlayerScreen(
         }
     }
 }
+
+/**
+ * A side slot's skip button (design 50 §1.1): the Material Symbols `replay`/`forward_media` glyph at 20 dp in the
+ * [size] round button, our own [seconds] drawn in its ring at a fixed size - dp, not the font scale's sp, so it always
+ * fits the glyph.
+ */
+@Composable
+private fun SkipButton(@DrawableRes glyph: Int, seconds: String, label: String, size: Dp, onClick: () -> Unit) {
+    Box(Modifier.requiredSize(size).clip(CircleShape).background(Palette.card).button(label, onClick), contentAlignment = Alignment.Center) {
+        Glyph(ImageVector.vectorResource(glyph), SKIP_GLYPH_DP.dp, Palette.fg)
+        val number = with(LocalDensity.current) { SKIP_NUMBER_DP.dp.toSp() }
+        BasicText(seconds, Modifier.offset(y = SKIP_NUMBER_DROP_DP.dp), style = text(number, 800, Palette.fg))
+    }
+}
+
+/** The player's heart's touch target (dp): the list's 40. */
+const val PLAYER_HEART_DP = 40
+
+/** The skip glyph (dp), its number's fixed size and how far below the button's centre the ring's centre is (dp). */
+const val SKIP_GLYPH_DP = 20
+const val SKIP_NUMBER_DP = 7
+const val SKIP_NUMBER_DROP_DP = 1
 
 /**
  * A row of [weights] sharing the width, each child at least as wide as its content unless it
@@ -203,6 +282,13 @@ fun outputIcon(output: Output): ImageVector = when (output.kind) {
     OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
 }
 
+/** The repeat button's state for TalkBack (design 49 §1.2). */
+fun repeatState(repeat: Repeat): Int = when (repeat) {
+    Repeat.OFF -> R.string.repeat_off
+    Repeat.ALL -> R.string.repeat_all
+    Repeat.ONE -> R.string.repeat_one
+}
+
 /** The player's one line for a renderer that isn't playing what we sent it (design 26a §5.2; Spotify's, 26c §5.8). */
 fun rendererStateText(state: RendererState): Int = when (state) {
     RendererState.GROUPED_AWAY -> R.string.renderer_grouped_away
@@ -226,25 +312,34 @@ fun outputName(output: Output): String = when (output.kind) {
     OutputKind.SONOS -> output.name ?: stringResource(R.string.output_sonos)
 }
 
-/** "Sov om": 15 / 30 / 45 min / Av. */
+/**
+ * "Sov om": 15 / 30 / 45 min / Av, and "Til slutten" (design 50 §1.2) as a full-width row under them - only for an
+ * item with a duration ([offerAtEnd]; live, or a context before its first state, has none).
+ */
 @Composable
-fun SleepSheet(current: Int?, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+fun SleepSheet(current: Int?, atEnd: Boolean, offerAtEnd: Boolean, onPick: (Int) -> Unit, onAtEnd: () -> Unit, onDismiss: () -> Unit) {
     Sheet(stringResource(R.string.sleep_title), onDismiss, 12.dp) {
         val options = listOf(15, 30, 45, 0)
         for (row in options.chunked(2)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (m in row) {
-                    val on = (current ?: 0) == m
-                    Box(
-                        Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(16.dp)).background(if (on) Palette.peach else Palette.track)
-                            .semantics { selected = on }.button(null) { onPick(m) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Line(if (m == 0) stringResource(R.string.sleep_off) else stringResource(R.string.minutes, m), 16, 800, if (on) Palette.bg else Palette.fg)
-                    }
+                    val on = !atEnd && (current ?: 0) == m
+                    SleepOption(if (m == 0) stringResource(R.string.sleep_off) else stringResource(R.string.minutes, m), on, Modifier.weight(1f)) { onPick(m) }
                 }
             }
         }
+        if (offerAtEnd || atEnd) SleepOption(stringResource(R.string.sleep_at_end), atEnd, Modifier.fillMaxWidth(), onAtEnd)
+    }
+}
+
+@Composable
+private fun SleepOption(label: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.height(52.dp).clip(RoundedCornerShape(16.dp)).background(if (on) Palette.peach else Palette.track)
+            .semantics { selected = on }.button(null, onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Line(label, 16, 800, if (on) Palette.bg else Palette.fg)
     }
 }
 

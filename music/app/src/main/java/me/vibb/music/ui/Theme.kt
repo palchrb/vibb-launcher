@@ -85,6 +85,17 @@ object Icons {
     val previous = filled("previous", "M7 5h2v14H7zM20 5v14L10 12z")
     val next = filled("next", "M15 5h2v14h-2zM4 5v14l10-7z")
     val shuffle = stroked("shuffle", 2.2f, "M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5")
+
+    /**
+     * Repeat and repeat one (design 49 §1.2, §1.11): the loop of two arrows Spotify's app uses for the meaning, drawn in
+     * the row's stroked set beside [shuffle] (not the Material Symbols `repeat`/`repeat_one`: a filled glyph would stand
+     * out in this row, as [roomSpeaker] says); repeat one carries its "1" inside the loop.
+     */
+    val repeat = stroked("repeat", 2.2f, "M17 2l4 4-4 4", "M3 11v-1a4 4 0 0 1 4-4h14", "M7 22l-4-4 4-4", "M21 13v1a4 4 0 0 1-4 4H3")
+    val repeatOne = stroked(
+        "repeatOne", 2.2f,
+        "M17 2l4 4-4 4", "M3 11v-1a4 4 0 0 1 4-4h14", "M7 22l-4-4 4-4", "M21 13v1a4 4 0 0 1-4 4H3", "M10.6 10.4l1.6-1.2v5.6",
+    )
     val list = stroked("list", 2.4f, "M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01")
     val moon = stroked("moon", 2.2f, "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z")
     val speaker = stroked("speaker", 2.2f, "M11 5L6 9H3v6h3l5 4z", "M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13")

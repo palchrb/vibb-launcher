@@ -95,6 +95,8 @@ fun ListScreen(
     onVisible: (first: Int, last: Int) -> Unit,
     onBack: () -> Unit,
     onPick: (PlayItem) -> Unit,
+    /** A row's heart tapped (design 50 §1.5): the item, the new state. */
+    onFavourite: (PlayItem, Boolean) -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val words = order?.let { stringResource(orderWordsText(it.words)) }
@@ -151,7 +153,7 @@ fun ListScreen(
             }
         }
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(rows, key = { it.item.key }) { row -> ListRowView(row, entry, category, pictures, onPick) }
+            items(rows, key = { it.item.key }) { row -> ListRowView(row, entry, category, pictures, onPick, onFavourite) }
         }
     }
 }
@@ -186,7 +188,7 @@ private fun ListLine(summary: String, full: String, glyph: Boolean) {
 }
 
 @Composable
-private fun ListRowView(row: ListRow, entry: Entry, category: Category?, pictures: Boolean, onPick: (PlayItem) -> Unit) {
+private fun ListRowView(row: ListRow, entry: Entry, category: Category?, pictures: Boolean, onPick: (PlayItem) -> Unit, onFavourite: (PlayItem, Boolean) -> Unit) {
     val duration = formatDuration(row.item.durationMs)
     // a Spotify context's one row has no duration (design 26c §5.9): "Spilles nå" alone, no trailing dot
     val playing = stringResource(R.string.row_playing, duration).removeSuffix(" · ")
@@ -231,6 +233,8 @@ private fun ListRowView(row: ListRow, entry: Entry, category: Category?, picture
                 contentAlignment = Alignment.Center,
             ) { Glyph(Icons.downloaded, 14.dp, Palette.peach) }
         }
+        // design 50 §1.5: the small trailing heart, peach when set (none on a context's one row)
+        row.favourite?.let { on -> HeartButton(on, 40.dp, 18.dp) { onFavourite(row.item, it) } }
     }
 }
 

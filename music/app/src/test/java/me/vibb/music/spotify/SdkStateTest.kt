@@ -77,13 +77,13 @@ class SdkStateTest {
     fun `shuffle and repeat are read, junk is off, and a post without a track is trackless (qa-26c-step4-code M1, L2)`() {
         fun post(extra: String) = SdkState.parse("""{"paused":false,"position":0,"uri":"spotify:track:FAKEtrack0000000000001","name":"x"$extra}""") as SdkState
         assertEquals(false to 0, post("").let { it.shuffle to it.repeat })
-        assertTrue(post(",\"shuffle\":true").reordered)
+        assertTrue(post(",\"shuffle\":true").differs(SpotifyModes()))
         assertEquals(2, post(",\"repeat\":2").repeat)
-        assertTrue(post(",\"repeat\":1").reordered)
+        assertTrue(post(",\"repeat\":1").differs(SpotifyModes()))
         for (junk in listOf(",\"shuffle\":\"true\"", ",\"repeat\":3", ",\"repeat\":-1", ",\"repeat\":\"2\"")) {
-            assertFalse(junk, post(junk).reordered)
+            assertFalse(junk, post(junk).differs(SpotifyModes()))
         }
-        assertFalse(post("").reordered)
+        assertFalse(post("").differs(SpotifyModes()))
         assertTrue((SdkState.parse("""{"paused":false,"position":0}""") as SdkState).trackless)
         assertFalse("a name alone is a track", (SdkState.parse("""{"paused":false,"position":0,"name":"x"}""") as SdkState).trackless)
     }

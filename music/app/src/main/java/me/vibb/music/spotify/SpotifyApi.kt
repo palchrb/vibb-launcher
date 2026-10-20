@@ -22,8 +22,8 @@ import okhttp3.HttpUrl
 /*
  * The phone's Web API calls (design 26c §5.4): play our window of uris on this phone's web player
  * (`PUT /v1/me/player/play`), make the player Spotify's active device when it isn't known yet
- * (`PUT /v1/me/player`, transfer), turn the account's shuffle and repeat off (`PUT
- * /v1/me/player/shuffle`, `/repeat`; qa-26c-step4-code M1) and add the next queue item one track ahead
+ * (`PUT /v1/me/player`, transfer), set the account's shuffle and repeat to what the entry wants (`PUT
+ * /v1/me/player/shuffle`, `/repeat`; qa-26c-step4-code M1, design 49 §1.5: off and off unless the kid asked) and add the next queue item one track ahead
  * (`POST /v1/me/player/queue`). Pure and Android-free over the [SpotifyHttp] seam; the waits (a token, the
  * SDK's state after a transfer, a `Retry-After`) come in as functions. SpotifyApiTest.
  *
@@ -155,8 +155,8 @@ class SpotifyApi(
 
     /**
      * A start (§5.4 step 3) within [deadlineMs] (the elapsed clock): with [settings] (the device session's
-     * first play, or the tracker saw shuffle or repeat on - qa-26c-step4-code M1) first shuffle off and
-     * repeat off, each call's 204 awaited before the next (the Player API doesn't order calls), then the
+     * first play, the entry's wanted shuffle or repeat changed, or the tracker saw them differ - qa-26c-step4-code
+     * M1, design 49 §1.5) first the account's shuffle and repeat set to them, each call's 204 awaited before the next (the Player API doesn't order calls), then the
      * play. Every call shares one set of retries: a token from [tokens] (`renew` true after a 401: once; a
      * renewed token that is the one Spotify refused can't help, so that is [StartResult.TokenRefused] at
      * once - qa-26c-step4-code L4); a 404 -> one transfer, its 204 awaited, then [awaitDevice] (a state or
@@ -173,16 +173,16 @@ class SpotifyApi(
         tokens: suspend (renew: Boolean) -> TokenResult,
         awaitDevice: suspend (timeoutMs: Long) -> Boolean,
         sleep: suspend (Long) -> Unit = { delay(it) },
-        settings: Boolean = false,
+        settings: SpotifyModes? = null,
     ): StartResult {
         val first = when (val t = tokens(false)) {
             is TokenResult.Ok -> t.token
             else -> return StartResult.NoToken(t)
         }
         val run = Retries(deviceId, deadlineMs, first, tokens, awaitDevice, sleep)
-        if (settings) {
-            run.send { token, budget -> shuffle(token, deviceId, false, budget) }?.let { return it }
-            run.send { token, budget -> repeat(token, deviceId, "off", budget) }?.let { return it }
+        if (settings != null) {
+            run.send { token, budget -> shuffle(token, deviceId, settings.shuffle, budget) }?.let { return it }
+            run.send { token, budget -> repeat(token, deviceId, settings.repeatWord, budget) }?.let { return it }
         }
         return run.send { token, budget -> play(token, deviceId, body, budget) } ?: StartResult.Sent
     }

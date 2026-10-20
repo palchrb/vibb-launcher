@@ -55,7 +55,11 @@ import java.util.concurrent.TimeUnit
 /** The default network's capabilities, or null without one. */
 fun netCaps(context: Context): NetCaps? {
     val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
-    val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return null) ?: return null
+    return netCapsOf(cm.getNetworkCapabilities(cm.activeNetwork ?: return null) ?: return null)
+}
+
+/** What the gate reads of [caps]: internet, metered, roaming, a physical transport. */
+fun netCapsOf(caps: NetworkCapabilities): NetCaps {
     return NetCaps(
         internet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
         notMetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),

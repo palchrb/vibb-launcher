@@ -1,7 +1,6 @@
 package me.vibb.music.logic
 
 import me.vibb.music.model.Entry
-import me.vibb.music.model.Source
 import kotlin.random.Random
 
 /*
@@ -14,8 +13,71 @@ import kotlin.random.Random
 /** A queue to start: item keys in the order they play, the index to start at and where in it. */
 data class QueuePlan(val keys: List<String>, val startIndex: Int, val startPosMs: Long)
 
-/** Shuffle is offered for music entries only: own files (later Spotify) with resume off. */
-fun canShuffle(entry: Entry): Boolean = entry.source == Source.OWN && !entry.resume
+/**
+ * The player's two side slots (design 49 §1.1, shared with design 50 §1.1): [SHUFFLE_REPEAT] for music - Spotify's
+ * ([Kind.MUSIC]) and own files that don't resume - and [SKIP] (design 50's 15 s / 30 s pair) for what resumes: podcasts,
+ * audiobooks and a resuming own entry.
+ */
+enum class ControlSlots { SHUFFLE_REPEAT, SKIP }
+
+fun controlSlots(entry: Entry): ControlSlots = when (kindOf(entry)) {
+    Kind.MUSIC -> ControlSlots.SHUFFLE_REPEAT
+    Kind.OWN -> if (entry.resume) ControlSlots.SKIP else ControlSlots.SHUFFLE_REPEAT
+    Kind.PODCAST, Kind.AUDIOBOOK -> ControlSlots.SKIP
+}
+
+/**
+ * Shuffle is offered where [controlSlots] says music (design 49 §1.1; the user's override of 26c's "No shuffle"), except
+ * for a Spotify artist context: Spotify picks there (repeat only, the left slot a spacer).
+ */
+fun canShuffle(entry: Entry): Boolean = controlSlots(entry) == ControlSlots.SHUFFLE_REPEAT && contextResumes(entry)
+
+/** Repeat is offered wherever shuffle's slots are (design 49 §1.1), an artist context too. */
+fun canRepeat(entry: Entry): Boolean = controlSlots(entry) == ControlSlots.SHUFFLE_REPEAT
+
+/** The kid's repeat for an entry (design 49 §1.2): [word] is what Room's `repeat` table stores. */
+enum class Repeat(val word: String) {
+    OFF("off"), ALL("all"), ONE("one");
+
+    /** The button's step: off -> all -> one -> off. */
+    fun next(): Repeat = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        /** A stored word; anything else (no row, an unknown word) is off. */
+        fun of(word: String?): Repeat = entries.firstOrNull { it.word == word } ?: OFF
+    }
+}
+
+/**
+ * Where a natural end of item [index] (of [n]) goes (design 49 §1.9, a Sonos room's advance): off, the next item or
+ * null at the queue's end; all, the next wrapping to 0; one, the same item again.
+ */
+fun advanceIndex(index: Int, n: Int, repeat: Repeat): Int? = when {
+    n <= 0 || index !in 0 until n -> null
+    repeat == Repeat.ONE -> index
+    index + 1 < n -> index + 1
+    repeat == Repeat.ALL -> 0
+    else -> null
+}
+
+/**
+ * The phone's move-on past an unplayable item (design 49 §1.4): the first playable index after [from] in a queue of
+ * [n]; with [Repeat.ALL] it wraps around - one lap at most, never [from] itself (an item that just failed or can't play
+ * now is no place to go back to), so a lap with nothing playable is null (the player pauses) and never loops. Off and
+ * one stop at the queue's end. [origin]: where a run of failures began (the service's `Active.failRunFrom`,
+ * qa-music-a-code 1) - a chain of move-ons, each after the last one's item failed too, stops once its lap is back there.
+ */
+fun moveOnIndex(n: Int, from: Int, repeat: Repeat, origin: Int? = null, playable: (Int) -> Boolean): Int? {
+    val wrap = repeat == Repeat.ALL
+    for (step in 1 until n) {
+        val i = from + step
+        val j = if (wrap) i.mod(n) else i
+        if (j !in 0 until n) return null
+        if (j == origin) return null
+        if (playable(j)) return j
+    }
+    return null
+}
 
 /** A permutation of [keys] with [first] (when it is one of them) first, the rest at random. */
 fun shuffledWithFirst(keys: List<String>, first: String?, random: Random): List<String> {
@@ -32,13 +94,19 @@ fun rotatedTo(keys: List<String>, first: String): List<String> {
 /**
  * A cover tap. [order]: the entry's playable item keys in play order. Resume on: the order rotated
  * to the bookmark, at its position; resume off: the first item at 0, or with [shuffle] a fresh
- * permutation. Null when nothing is playable.
+ * permutation. Shuffle with resume (Spotify music, design 49 §1.8) changes the order only: the
+ * bookmarked item first at its position, the rest a fresh permutation (none bookmarked: all of it).
+ * Null when nothing is playable.
  */
 fun coverTapPlan(order: List<String>, resume: Boolean, bookmark: Bookmark?, shuffle: Boolean, random: Random = Random.Default): QueuePlan? {
     if (order.isEmpty()) return null
     if (shuffle && !resume) return QueuePlan(shuffledWithFirst(order, null, random), 0, 0)
     if (!resume) return QueuePlan(order, 0, 0)
     val (keys, pos) = rotateToBookmark(order, bookmark)
+    if (shuffle) {
+        val first = bookmark?.itemKey?.takeIf { it in order }
+        return QueuePlan(shuffledWithFirst(order, first, random), 0, if (first != null) pos else 0)
+    }
     return QueuePlan(keys, 0, pos)
 }
 

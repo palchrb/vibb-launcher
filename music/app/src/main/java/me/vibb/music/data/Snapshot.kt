@@ -11,6 +11,8 @@ import me.vibb.music.logic.Bookmark
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
 import me.vibb.music.logic.NewsItem
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.SPOTIFY_PLAYABLE
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.contextItem
@@ -40,6 +42,10 @@ fun buildSnapshot(
     spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
     /** `order_flips` (design 39 §3.1): entry key -> the parent's direction (newest first) at the kid's flip. */
     flips: Map<String, Boolean> = emptyMap(),
+    /** `favourites` (design 50 §1.5): entry key -> the item keys with a heart. */
+    favourites: Map<String, Set<String>> = emptyMap(),
+    /** `repeat` (design 49 §1.2, Room 6): entry key -> the kid's repeat, only those not off. */
+    repeat: Map<String, Repeat> = emptyMap(),
 ): Snapshot {
     val byEntry = items.groupBy { it.entryId }
     val done = downloads.filter { it.done }.groupBy { it.entryId }.mapValues { (_, ds) -> ds.map { it.itemKey }.toSet() }
@@ -71,6 +77,8 @@ fun buildSnapshot(
         news = news.map { NewsItem(it.entryId, it.key, it.seq) },
         shuffle = shuffle,
         flips = flips,
+        favourites = favourites,
+        repeat = repeat,
     )
 }
 
@@ -99,7 +107,17 @@ data class Snapshot(
     val spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
     /** The kid's order flips (design 39 §3.1): entry key -> the parent's direction at the tap (stale once it changed). */
     val flips: Map<String, Boolean> = emptyMap(),
+    /** The kid's hearts (design 50 §1.5): entry key -> item keys; phone-only, never synced or reported. */
+    val favourites: Map<String, Set<String>> = emptyMap(),
+    /** The kid's repeat (design 49 §1.2): entry key -> its mode, only those not off. */
+    val repeat: Map<String, Repeat> = emptyMap(),
 ) {
+    /** Does item [itemKey] of [entry] carry the kid's heart? */
+    fun favourite(entry: Entry, itemKey: String): Boolean = itemKey in favourites[entry.key].orEmpty()
+
+    /** [entry]'s repeat: off where it has none to offer ([canRepeat]). */
+    fun repeatOf(entry: Entry): Repeat = if (canRepeat(entry)) repeat[entry.key] ?: Repeat.OFF else Repeat.OFF
+
     /**
      * This snapshot for a renderer: [remote] true for a Sonos room (the speaker fetches a Storytel book
      * from the CDN itself, so every book shows), false for the phone (a Storytel book only with its

@@ -222,4 +222,24 @@ class LibraryViewTest {
         assertEquals(1, NewNotifier.count(downloaded))
         assertEquals("del 5 av 5 with two books on the phone", Hint.Started(Kind.AUDIOBOOK, 5, 5), ui.hint)
     }
+
+    // design 50 §1.3: the carousel opens on the last played tile
+
+    @Test
+    fun `d50 - the carousel starts on the stored entry, 0 without one or when it isn't shown, never after a move`() {
+        val shown = listOf(entry(1), entry(2), entry(3))
+        assertEquals(2, carouselStartIndex(shown, 3))
+        assertEquals(0, carouselStartIndex(shown, null))
+        assertEquals("filtered out (another category) or gone", 0, carouselStartIndex(shown, 9))
+        assertEquals(1, CarouselStart().first(shown, 2))
+        val once = CarouselStart()
+        assertEquals(2, once.first(shown, 3))
+        assertNull("only once", once.first(shown, 1))
+        val moved = CarouselStart().apply { moved() }
+        assertNull("never after the kid turned it or came back from the player", moved.first(shown, 3))
+        val vm = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt").readText()
+        assertTrue("backToLibrary wins", vm.substringAfter("fun backToLibrary(").substringBefore("\n    }").contains("carouselStart.moved()"))
+        assertTrue("a category tap moves it", vm.substringAfter("fun pickCategory(").substringBefore("\n    }").contains("carouselStart.moved()"))
+        assertTrue("a turn moves it", vm.contains("if (index != carouselIndex) carouselStart.moved()"))
+    }
 }

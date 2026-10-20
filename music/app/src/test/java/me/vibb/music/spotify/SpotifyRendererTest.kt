@@ -21,7 +21,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import me.vibb.music.bridge.TokenResult
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.SPOTIFY_STATE_GAP_MS
+import me.vibb.music.logic.SPOTIFY_STEP_COALESCE_MS
 import me.vibb.music.logic.SpotifyContextTrack
 import me.vibb.music.logic.SpotifyLine
 import me.vibb.music.model.Entry
@@ -257,9 +259,10 @@ class SpotifyRendererTest {
         prev: List<Int> = emptyList(),
         duration: Long = DURATION,
         shuffle: Boolean = false,
+        repeat: Int = 0,
     ): SdkSnapshot = SdkState(
         paused, pos, duration, uri(n), null, listOf(n + 1, n + 2).map { uri(it) }, prev.map { uri(it) },
-        "track", "Fake track $n", listOf("Fake Artist"), null, shuffle = shuffle,
+        "track", "Fake track $n", listOf("Fake Artist"), null, shuffle = shuffle, repeat = repeat,
     )
 
     private suspend fun post(s: SdkSnapshot) {
@@ -766,6 +769,66 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- design 50 §1.2: "Til slutten" ---
+
+    @Test
+    fun `d50 - Til slutten fades the SDK's volume over the last 10 s and pauses just before the end, nothing sent`() = runBlocking {
+        val r = playing(duration = 60_000)
+        advance(1_000)
+        post(state(0, 45_000, duration = 60_000))
+        var done = 0
+        r.pauseAtItemEnd { done++ }
+        val requests = api.all().size
+        advance(5_000)
+        assertFalse("15 s left: no fade yet", page.calls.any { it.startsWith("vibb.volume(") && it != "vibb.volume(1.0)" })
+        advance(5_000)
+        assertEquals("5 s left: half way down", "vibb.volume(0.5)", page.calls.last())
+        assertTrue(r.showsPlaying)
+        advance(4_800)
+        assertEquals("paused once, just before Spotify's own advance", 1, done)
+        assertFalse(r.showsPlaying)
+        assertTrue(events.contains(RendererEvent.Paused(PauseCause.OTHER)))
+        assertEquals(listOf("vibb.pause()", "vibb.volume(1.0)"), page.calls.takeLast(2))
+        assertEquals("nothing re-sent", requests, api.all().size)
+        advance(5_000)
+        assertEquals("off after its pause", 1, done)
+        r.release()
+    }
+
+    @Test
+    fun `d50 - Spotify got to the next track anyway - it is paused at 0 at once, and that is the end`() = runBlocking {
+        val r = playing(duration = 60_000)
+        var done = 0
+        r.pauseAtItemEnd { done++ }
+        advance(4_000)
+        post(state(1, 0, prev = listOf(0), duration = 60_000))
+        assertEquals(1, r.currentIndex())
+        assertEquals(1, done)
+        assertFalse(r.showsPlaying)
+        assertEquals(0L, r.positionMs())
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse("the volume never moved: 56 s were left", page.calls.any { it.startsWith("vibb.volume(") && it != "vibb.volume(1.0)" })
+        r.release()
+    }
+
+    @Test
+    fun `d50 - while Til slutten is on Spotify's repeat is off, the entry's repeat track back after it`() = runBlocking {
+        val r = renderer()
+        r.setModes(false, Repeat.ONE)
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        post(state(0, 2_000, repeat = 2))
+        r.pauseAtItemEnd { }
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals("no repeat-track loop past the end", "PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", api.paths().last { it.contains("/repeat") })
+        assertTrue("never from 0:00", body(api.plays().last())["position_ms"]!!.jsonPrimitive.long >= 2_000L)
+        post(state(0, 3_000))
+        r.pauseAtItemEnd(null)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals("PUT /v1/me/player/repeat?state=track&device_id=$DEVICE", api.paths().last { it.contains("/repeat") })
+        r.release()
+    }
+
     // --- §5.7: suspension; §5.8: errors ---
 
     @Test
@@ -964,6 +1027,143 @@ class SpotifyRendererTest {
         advance(0)
         assertEquals(3, api.paths().count { it.contains("/shuffle") })
         r.release()
+    }
+
+    @Test
+    fun `d49 - the start sends the wanted shuffle and repeat when they aren't known, a change or a differing state sets them again`() = runBlocking {
+        val r = renderer()
+        r.setModes(false, Repeat.ONE)
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(
+            "repeat one is Spotify's repeat track; list mode's shuffle is ours, Spotify's stays off",
+            listOf(
+                "PUT /v1/me/player/shuffle?state=false&device_id=$DEVICE",
+                "PUT /v1/me/player/repeat?state=track&device_id=$DEVICE",
+                "PUT /v1/me/player/play?device_id=$DEVICE",
+            ),
+            api.paths(),
+        )
+        post(state(0, 0, repeat = 2))
+        r.pause()
+        post(state(0, 1_000, paused = true, repeat = 2))
+        r.play()
+        advance(0)
+        assertEquals("known and unchanged: the SDK's resume, nothing more", 1, api.paths().count { it.contains("/repeat") })
+        post(state(0, 2_000, repeat = 2))
+        // the kid's repeat off while it plays: set at once, a fresh start at the current place (never from 0:00)
+        r.setModes(false, Repeat.OFF)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(
+            listOf("PUT /v1/me/player/shuffle?state=false&device_id=$DEVICE", "PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", "PUT /v1/me/player/play?device_id=$DEVICE"),
+            api.paths().takeLast(3),
+        )
+        assertTrue(body(api.plays().last())["position_ms"]!!.jsonPrimitive.long >= 2_000L)
+        post(state(0, 3_000))
+        val calls = api.paths().size
+        // off -> all in list mode is ours (the list again at its end): Spotify's side unchanged, nothing sent
+        r.setModes(false, Repeat.ALL)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals(calls, api.paths().size)
+        // the account changed elsewhere (another app turned repeat on): corrected
+        post(state(0, 4_000, repeat = 1))
+        advance(0)
+        assertEquals("PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", api.paths().takeLast(2).first())
+        r.release()
+    }
+
+    @Test
+    fun `qa-music-a-code 2 - repeat all, the last track unplayable - the move-on's wrap to the first sends one play`() = runBlocking {
+        val r = renderer(count = 3)
+        r.setModes(false, Repeat.ALL)
+        // the service's move-on with repeat all (moveOnIndex): past the last item to the first
+        r.onEvent = { e ->
+            events += e
+            if (e is RendererEvent.Error) {
+                r.seekTo((r.currentIndex() + 1) % r.itemCount(), 0)
+                r.prepare()
+                r.play()
+            }
+        }
+        r.load(mediaItems(3), 2, 0, playNow = true)
+        advance(0)
+        post(state(2, 0))
+        val plays = api.plays().size
+        page.emit(HostEvent.Error("playback", "boom"))
+        advance(0)
+        assertEquals(0, r.currentIndex())
+        assertEquals("a fresh start of the window from the first", plays + 1, api.plays().size)
+        assertEquals(uri(0), windowOf(api.plays().last()).first())
+        r.release()
+    }
+
+    @Test
+    fun `qa-music-a-code 3 - after the account played elsewhere or another app's track, the next start sets the settings again`() = runBlocking {
+        val r = playing()
+        post(state(0, 1_000))
+        val settings = api.paths().count { it.contains("/repeat") }
+        post(Inactive)
+        advance(SpotifyTracker.LOOK_MS)
+        post(Inactive)
+        advance(0)
+        r.play()
+        advance(0)
+        assertEquals("elsewhere: shuffle and repeat before the play", settings + 1, api.paths().count { it.contains("/repeat") })
+        assertEquals("PUT /v1/me/player/play?device_id=$DEVICE", api.paths().last())
+        post(state(0, 2_000))
+        post(SdkState(false, 0, 180_000, "spotify:track:FAKEforeign0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), null))
+        advance(0)
+        r.play()
+        advance(0)
+        assertEquals("a foreign track: again", settings + 2, api.paths().count { it.contains("/repeat") })
+        r.release()
+    }
+
+    @Test
+    fun `d49 - a playlist context sets Spotify's own shuffle and repeat context`() = runBlocking {
+        val r = contextRenderer()
+        r.setModes(true, Repeat.ALL)
+        r.load(contextItems(), 0, 0, playNow = true)
+        advance(0)
+        assertEquals(
+            listOf("PUT /v1/me/player/shuffle?state=true&device_id=$DEVICE", "PUT /v1/me/player/repeat?state=context&device_id=$DEVICE"),
+            api.paths().take(2),
+        )
+        r.release()
+    }
+
+    @Test
+    fun `d49 - list mode's repeat all plays the list again from the first at its end - before Ended, as the natural advance`() = runBlocking {
+        val r = renderer(count = 2)
+        r.setModes(false, Repeat.ALL)
+        r.load(mediaItems(2), 1, 0, playNow = true)
+        advance(0)
+        post(state(1, 0, duration = 20_000))
+        post(state(1, 18_000, duration = 20_000))
+        advance(3_000)
+        events.clear()
+        post(state(1, 0, paused = true, duration = 20_000))
+        advance(0)
+        assertFalse("no clear_state", events.contains(RendererEvent.Ended))
+        assertTrue("the first item, as an automatic change", events.contains(RendererEvent.ItemChanged(0, auto = true)))
+        assertEquals(0, r.currentIndex())
+        assertEquals(listOf(uri(0), uri(1)), windowOf(api.plays().last()))
+        assertEquals(0L, body(api.plays().last())["position_ms"]!!.jsonPrimitive.long)
+        r.release()
+        // after the kid's pause nothing starts by itself: the same end, paused, sends no play
+        val calls = api.plays().size
+        val p = renderer(count = 2)
+        p.setModes(false, Repeat.ALL)
+        p.load(mediaItems(2), 1, 0, playNow = true)
+        advance(0)
+        post(state(1, 0, duration = 20_000))
+        post(state(1, 18_000, duration = 20_000))
+        p.pause()
+        advance(3_000)
+        post(state(1, 0, paused = true, duration = 20_000))
+        advance(0)
+        assertEquals("one play: the start", calls + 1, api.plays().size)
+        p.release()
     }
 
     @Test

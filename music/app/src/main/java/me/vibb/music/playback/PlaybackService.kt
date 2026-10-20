@@ -54,10 +54,12 @@ import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.LAUNCHER_PACKAGES
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.NowPlayingKeys
+import me.vibb.music.bridge.nowPlayingControls
 import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
+import me.vibb.music.data.RepeatRow
 import me.vibb.music.data.ShuffleRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
@@ -71,8 +73,13 @@ import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.callMode
 import me.vibb.music.logic.callPauseStep
 import me.vibb.music.logic.callTimerEnded
+import me.vibb.music.logic.SleepEvent
+import me.vibb.music.logic.sleepAtEndAfter
 import me.vibb.music.logic.artOrCover
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.moveOnIndex
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
@@ -157,6 +164,14 @@ internal class Active(
     val uncached: MutableSet<String> = mutableSetOf(),
     /** [order]'s direction (`Snapshot.shownNewestFirst`, design 39): a `FLIP_ORDER` to it already is nothing to do. */
     var shownNewestFirst: Boolean = false,
+    /** The entry's repeat (design 49 §1.2, `Snapshot.repeatOf`): the renderer's through `setModes`; off ends the queue. */
+    var repeat: Repeat = Repeat.OFF,
+    /**
+     * Where the current run of play-time failures began (qa-music-a-code 1): `onError`'s move-on stops once its lap is
+     * back there (`moveOnIndex`'s origin); cleared when an item really plays (the 15 s save tick, or a natural end). A
+     * new queue is a new [Active]: none.
+     */
+    var failRunFrom: Int? = null,
 )
 
 /**
@@ -225,6 +240,9 @@ class PlaybackService : MediaSessionService() {
     private var lastIndex = -1
     private var sleepEndsAt: Long? = null
     private var sleepMinutes: Int? = null
+
+    /** "Til slutten" (design 50 §1.2): the renderer pauses at the current item's end ([Renderer.pauseAtItemEnd]). */
+    private var sleepAtEnd = false
     /** A pause the service makes itself (the sleep timer's end, a renderer switch): not the kid's, so it
      * never cancels the sleep timer. */
     private var selfPausing = false
@@ -416,6 +434,7 @@ class PlaybackService : MediaSessionService() {
             old.pause()
             selfPausing = false
             old.cancelFade()
+            old.pauseAtItemEnd(null)
             old.onEvent = null
             // design 26c §5.10, qa-26c-step5b-code M1: a detached web player owns nothing - a play from the account's
             // other app is paused at once, never focus or locks (the session no longer shows it)
@@ -429,6 +448,8 @@ class PlaybackService : MediaSessionService() {
             handler.removeCallbacks(sleepTick)
             handler.post(sleepTick)
         }
+        // so does "Til slutten" (design 50 §1.2): the new renderer pauses at its item's end
+        if (sleepAtEnd) next.pauseAtItemEnd { sleepAtEndReached() }
     }
 
     /** This app is suspended now (a time rule, design 21 step 4): nothing may start playing. */
@@ -447,11 +468,19 @@ class PlaybackService : MediaSessionService() {
             Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
         )
 
+        /** Only our own commands change shuffle and repeat (design 49 §1.3): Room stays the truth. */
+        private val refused = listOf(Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE)
+
         override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
             .add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
             .add(Player.COMMAND_SEEK_TO_PREVIOUS).add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+            .removeAll(Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE)
             .build()
-        override fun isCommandAvailable(command: Int): Boolean = command in extra || super.isCommandAvailable(command)
+        override fun isCommandAvailable(command: Int): Boolean = command !in refused && (command in extra || super.isCommandAvailable(command))
+
+        // the launcher, Bluetooth, the notification: refused (Commands.SHUFFLE / REPEAT are the app's own)
+        override fun setRepeatMode(repeatMode: Int) = Unit
+        override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) = Unit
         override fun hasNextMediaItem(): Boolean = mediaItemCount > 1
         override fun hasPreviousMediaItem(): Boolean = mediaItemCount > 1
         override fun seekToNext() = skipNext()
@@ -527,8 +556,9 @@ class PlaybackService : MediaSessionService() {
                         Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
                         Commands.SKIP_TO -> skipTo(args)
                         Commands.SHUFFLE -> toggleShuffle()
+                        Commands.REPEAT -> toggleRepeat()
                         Commands.FLIP_ORDER -> flipOrder(args.getString(Commands.ARG_ENTRY_KEY), args.getBoolean(Commands.ARG_NEWEST_FIRST))
-                        Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
+                        Commands.SLEEP -> if (args.getBoolean(Commands.ARG_AT_END)) setSleepAtEnd() else setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
                         Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
                         Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
@@ -579,6 +609,7 @@ class PlaybackService : MediaSessionService() {
                         // the phone's own player takes Media3's items (never Spotify's web player)
                         usePhoneRenderer(a.entry)
                         active = a
+                        applyModes(a)
                         lastIndex = index
                         clearFault()
                         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
@@ -651,6 +682,7 @@ class PlaybackService : MediaSessionService() {
                 art,
                 uncached = stale.toMutableSet(),
                 shownNewestFirst = snap.shownNewestFirst(entry),
+                repeat = snap.repeatOf(entry),
             )
         } catch (e: Throwable) {
             // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
@@ -699,7 +731,7 @@ class PlaybackService : MediaSessionService() {
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
         val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
-        start(a, p)
+        start(a, p, newChoice = true)
     }
 
     private suspend fun playItem(entryId: Long, key: String) {
@@ -710,7 +742,7 @@ class PlaybackService : MediaSessionService() {
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
         val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
         val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
-        start(a, p)
+        start(a, p, newChoice = true)
     }
 
     private suspend fun resumeLast() {
@@ -741,6 +773,7 @@ class PlaybackService : MediaSessionService() {
             Commands.THEN_PREVIOUS -> skipPrevious()
             Commands.THEN_SEEK -> renderer.seekTo(positionMs)
             Commands.THEN_SHUFFLE -> toggleShuffle()
+            Commands.THEN_REPEAT -> toggleRepeat()
             Commands.THEN_SKIP_TO -> skipTo(args)
         }
         publish()
@@ -792,8 +825,11 @@ class PlaybackService : MediaSessionService() {
      * player and its tile carry the renderer's line, "trenger Wi-Fi" or "trenger internett" - and never moves
      * to another item or says NOT_DOWNLOADED. Loading never touches the network or the web player (§5.4).
      */
-    private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
+    private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {
         renderer.saveNow()
+        // the kid's new pick ends "Til slutten" (design 50 §1.2, code QA 1) - a cover tap or a list pick; a step, the
+        // stored queue's first play, a playback resumption and an output switch load a queue but keep it
+        if (newChoice) endSleepAtEnd(SleepEvent.NEW_QUEUE)
         clearFault()
         var index = plan.startIndex.coerceIn(a.items.indices)
         var pos = plan.startPosMs
@@ -811,6 +847,7 @@ class PlaybackService : MediaSessionService() {
         // the old renderer saves its own place and pauses before the queue changes (attach)
         usePhoneRenderer(a.entry)
         active = a
+        applyModes(a)
         lastIndex = index
         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
         // Loaded paused: the wake mode goes between prepare and play, as before step 2.
@@ -903,6 +940,16 @@ class PlaybackService : MediaSessionService() {
         val caps = netCaps(this)
         val streamMobileData = store.streamMobileData
         return playableIndex(a.entry, a.items.size, index, forward, wrap) { playable(a, it, caps, streamMobileData) }
+    }
+
+    /**
+     * The move-on past item [from] that can't play (design 49 §1.4, [moveOnIndex]): the next playable item; with repeat
+     * all it wraps, one lap at most and never back to [from] - nothing playable in a lap is null (the caller pauses).
+     */
+    private fun moveOnFrom(a: Active, from: Int): Int? {
+        val caps = netCaps(this)
+        val streamMobileData = store.streamMobileData
+        return moveOnIndex(a.items.size, from, a.repeat, a.failRunFrom) { playable(a, it, caps, streamMobileData) }
     }
 
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). A no-op on Spotify's web
@@ -1126,20 +1173,45 @@ class PlaybackService : MediaSessionService() {
         val a = active ?: return
         if (!canShuffle(a.entry)) return
         val on = !a.shuffled
-        val index = renderer.currentIndex().coerceIn(a.items.indices)
-        val current = a.items[index]
-        val byKey = a.order.associateBy { it.key }
-        val items = toggledQueue(a.order.map { it.key }, current.key, on).mapNotNull { byKey[it] }
-        // Keep the current item playing, the new order after it.
-        renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
-        a.items = items
-        a.shuffled = on
-        lastIndex = 0
+        if (isSpotifyContext(a.entry)) {
+            // a playlist context (design 49 §1.7): Spotify's own shuffle - one synthetic item, no order of ours
+            a.shuffled = on
+        } else {
+            val index = renderer.currentIndex().coerceIn(a.items.indices)
+            val current = a.items[index]
+            val byKey = a.order.associateBy { it.key }
+            val items = toggledQueue(a.order.map { it.key }, current.key, on).mapNotNull { byKey[it] }
+            // Keep the current item playing, the new order after it (every renderer: Spotify's list mode re-feeds its
+            // tracker and marks its window stale, design 49 §1.6).
+            renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
+            a.items = items
+            a.shuffled = on
+            lastIndex = 0
+        }
+        applyModes(a)
         val entryKey = a.entry.key
         scope.launch(writer) { store.db.upsertShuffle(ShuffleRow(entryKey, on)) }
         renderer.saveNow()
         publish()
     }
+
+    /**
+     * The repeat button (design 49 §1.2-§1.3): off -> all -> one for the loaded entry, remembered in Room's `repeat`
+     * (never synced or reported) and handed to the renderer, which repeats by its own means. Not a play: nothing starts.
+     */
+    private fun toggleRepeat() {
+        val a = active ?: return
+        if (!canRepeat(a.entry)) return
+        val next = a.repeat.next()
+        a.repeat = next
+        applyModes(a)
+        val entryKey = a.entry.key
+        scope.launch(writer) { store.db.upsertRepeat(RepeatRow(entryKey, next.word)) }
+        publish()
+    }
+
+    /** The loaded queue's shuffle and repeat to the renderer (before every load, after a toggle, at an adopt). */
+    private fun applyModes(a: Active) = renderer.setModes(a.shuffled, a.repeat)
 
     /**
      * The kid's order flip (design 39 §3.3), after the list wrote its row (`Store.setFlip`, which also flipped the
@@ -1166,6 +1238,7 @@ class PlaybackService : MediaSessionService() {
     private fun setSleep(minutes: Int) {
         handler.removeCallbacks(sleepTick)
         renderer.cancelFade()
+        endSleepAtEnd(SleepEvent.TIMER_SET)
         if (minutes <= 0) {
             sleepEndsAt = null
             sleepMinutes = null
@@ -1188,6 +1261,35 @@ class PlaybackService : MediaSessionService() {
             }
             renderer.fadeOutAndPause { sleepEnded() }
         }
+    }
+
+    /**
+     * "Til slutten" (design 50 §1.2, the sheet's fourth choice): the minute timer off, the renderer pauses at the end of
+     * the item that plays then, with its own fade ([Renderer.pauseAtItemEnd]); [sleepAtEndReached] after that pause.
+     */
+    private fun setSleepAtEnd() {
+        handler.removeCallbacks(sleepTick)
+        renderer.cancelFade()
+        sleepEndsAt = null
+        sleepMinutes = null
+        sleepAtEnd = true
+        renderer.pauseAtItemEnd { sleepAtEndReached() }
+        publish()
+    }
+
+    /** [event] may end "Til slutten" ([sleepAtEndAfter]); then the renderer is told. */
+    private fun endSleepAtEnd(event: SleepEvent) {
+        if (!sleepAtEnd) return
+        sleepAtEnd = sleepAtEndAfter(true, event)
+        if (!sleepAtEnd) renderer.pauseAtItemEnd(null)
+    }
+
+    /** The pause "Til slutten" caused: like the minute timer's end (a call's pause is not undone after it). */
+    private fun sleepAtEndReached() {
+        sleepAtEnd = sleepAtEndAfter(sleepAtEnd, SleepEvent.ITEM_END_PAUSE)
+        callPause = callTimerEnded(callPause)
+        renderer.saveNow()
+        publish()
     }
 
     private fun sleepEnded() {
@@ -1251,6 +1353,9 @@ class PlaybackService : MediaSessionService() {
 
     private val saveTick = object : Runnable {
         override fun run() {
+            // 15 s of real play (the tick starts when it plays): a run of failures ends here (qa-music-a-code 1) - not at
+            // the first isPlaying, which an item that fails on its first frames may give too
+            active?.failRunFrom = null
             renderer.saveNow()
             // The launcher's snapshot keeps the place too, so Home is right after a crash or a
             // dead battery (qa-21-step4-code L4).
@@ -1265,17 +1370,24 @@ class PlaybackService : MediaSessionService() {
     private fun onRendererEvent(event: RendererEvent) {
         when (event) {
             is RendererEvent.ItemChanged -> onItemChanged(event.index, event.auto)
-            RendererEvent.Ready -> active?.let { a ->
-                val item = a.items.getOrNull(renderer.currentIndex())
-                val duration = renderer.durationMs()
-                // never a Spotify context's (design 26c §5.9): the web player's is the live track's, the item is never done
-                if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration
+            RendererEvent.Ready -> {
+                // design 50 §1.2 (code QA 8): carried by a step onto an item with no duration (live) it could never end
+                if (sleepAtEnd && renderer.kind == RendererKind.LOCAL && renderer.durationMs() == null) {
+                    endSleepAtEnd(SleepEvent.NO_DURATION)
+                    publish()
+                }
+                active?.let { a ->
+                    val item = a.items.getOrNull(renderer.currentIndex())
+                    val duration = renderer.durationMs()
+                    // never a Spotify context's (design 26c §5.9): the web player's is the live track's, the item is never done
+                    if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration
+                }
             }
             RendererEvent.Ended -> queueEnded()
             is RendererEvent.Paused -> {
                 when (event.cause) {
                     PauseCause.FAULT -> markFault()
-                    PauseCause.USER -> if (!selfPausing && sleepEndsAt != null) setSleep(0)
+                    PauseCause.USER -> if (!selfPausing && (sleepEndsAt != null || sleepAtEnd)) setSleep(0)
                     PauseCause.OTHER -> Unit
                 }
                 renderer.saveNow()
@@ -1305,6 +1417,7 @@ class PlaybackService : MediaSessionService() {
         val previous = a.items.getOrNull(lastIndex)
         if (auto && previous != null && lastIndex != index) {
             markDone(a, previous)
+            a.failRunFrom = null // an item played to its end: no run of failures (qa-music-a-code 1)
         }
         lastIndex = index
         wakeModeFor(a, index)
@@ -1317,7 +1430,7 @@ class PlaybackService : MediaSessionService() {
         } else if (!playable(a, index)) {
             // The queue moves on (21 §4.2's one line beyond the mockup).
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
-            val nextIndex = playableFrom(a, index, forward = true, wrap = false)
+            val nextIndex = moveOnFrom(a, index)
             if (nextIndex != null) {
                 renderer.seekTo(nextIndex, startPos(a, nextIndex))
             } else {
@@ -1456,7 +1569,8 @@ class PlaybackService : MediaSessionService() {
             !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
-        val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
+        if (a.failRunFrom == null) a.failRunFrom = index // the run's first failure: its lap ends back here
+        val nextIndex = moveOnFrom(a, index)
         if (nextIndex != null) {
             renderer.seekTo(nextIndex, startPos(a, nextIndex))
             renderer.prepare()
@@ -1521,6 +1635,7 @@ class PlaybackService : MediaSessionService() {
     /** The queue played to its end (vibb `clear_state`): the last item is done, the bookmark and the
      * partial positions go, the done marks stay. */
     private fun queueEnded() {
+        endSleepAtEnd(SleepEvent.QUEUE_ENDED)
         val a = active ?: return
         // a Spotify context's item is never done (design 26c §5.9): its end drops its place and its live track only
         a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }
@@ -1614,6 +1729,8 @@ class PlaybackService : MediaSessionService() {
                 putLong(NowPlayingKeys.DURATION_MS, renderer.durationMs() ?: a.durations[item.key] ?: item.durationMs ?: 0)
                 putBoolean(NowPlayingKeys.PLAYING, playing)
                 art?.let { putByteArray(NowPlayingKeys.ART, it) }
+                // design 50 §1.1: the lock tile's pair is the player's decision, never the kind
+                putString(NowPlayingKeys.CONTROLS, nowPlayingControls(a.entry))
             },
         )
     }
@@ -1633,10 +1750,12 @@ class PlaybackService : MediaSessionService() {
             keys = a?.items?.map { it.key }.orEmpty(),
             index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
+            repeat = a?.repeat ?: Repeat.OFF,
             playing = renderer.showsPlaying,
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
             sleepMinutes = sleepMinutes,
+            sleepAtEnd = sleepAtEnd,
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
@@ -1759,6 +1878,7 @@ class PlaybackService : MediaSessionService() {
         if (adopted != choice) withContext(writer) { home.write(adopted) }
         attach(sonos)
         active = a
+        applyModes(a)
         lastIndex = index
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
         publish()
