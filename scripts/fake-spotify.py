@@ -1451,10 +1451,10 @@ def main():
     p.add_argument("--transfer-in", type=float, metavar="S", help="a foreign track starts S seconds after the first play")
     p.add_argument("--unplayable", default="", metavar="ID,...", help="tracks that answer playback_error and are skipped")
     p.add_argument("--relink", default="", metavar="ID:OTHER,...", help="track ID plays as OTHER with linked_from ID")
-    p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone turns it off")
+    p.add_argument("--shuffle", action="store_true", help="the account's shuffle on until the phone sets the entry's wanted one")
     p.add_argument("--offset-404", action="store_true",
                    help="a context play whose offset isn't in the context answers 404 (else it plays from the top)")
-    p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone turns it off")
+    p.add_argument("--repeat", choices=sorted(REPEAT), default="off", help="the account's repeat until the phone sets the entry's wanted one")
     p.add_argument("--print-listing", type=int, metavar="ENTRY",
                    help="print the fixture playlist's listing for library entry ENTRY (debug-feed/items/ENTRY.json) and exit")
     p.add_argument("--tracks", type=int, metavar="N", help="--print-listing: N generated tracks instead (0: a context's empty list)")

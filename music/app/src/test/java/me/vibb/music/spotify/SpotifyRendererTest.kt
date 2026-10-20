@@ -1013,6 +1013,53 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `qa-music-a-code 2 - repeat all, the last track unplayable - the move-on's wrap to the first sends one play`() = runBlocking {
+        val r = renderer(count = 3)
+        r.setModes(false, Repeat.ALL)
+        // the service's move-on with repeat all (moveOnIndex): past the last item to the first
+        r.onEvent = { e ->
+            events += e
+            if (e is RendererEvent.Error) {
+                r.seekTo((r.currentIndex() + 1) % r.itemCount(), 0)
+                r.prepare()
+                r.play()
+            }
+        }
+        r.load(mediaItems(3), 2, 0, playNow = true)
+        advance(0)
+        post(state(2, 0))
+        val plays = api.plays().size
+        page.emit(HostEvent.Error("playback", "boom"))
+        advance(0)
+        assertEquals(0, r.currentIndex())
+        assertEquals("a fresh start of the window from the first", plays + 1, api.plays().size)
+        assertEquals(uri(0), windowOf(api.plays().last()).first())
+        r.release()
+    }
+
+    @Test
+    fun `qa-music-a-code 3 - after the account played elsewhere or another app's track, the next start sets the settings again`() = runBlocking {
+        val r = playing()
+        post(state(0, 1_000))
+        val settings = api.paths().count { it.contains("/repeat") }
+        post(Inactive)
+        advance(SpotifyTracker.LOOK_MS)
+        post(Inactive)
+        advance(0)
+        r.play()
+        advance(0)
+        assertEquals("elsewhere: shuffle and repeat before the play", settings + 1, api.paths().count { it.contains("/repeat") })
+        assertEquals("PUT /v1/me/player/play?device_id=$DEVICE", api.paths().last())
+        post(state(0, 2_000))
+        post(SdkState(false, 0, 180_000, "spotify:track:FAKEforeign0000000001", null, emptyList(), emptyList(), "track", "Picked", listOf("Someone"), null))
+        advance(0)
+        r.play()
+        advance(0)
+        assertEquals("a foreign track: again", settings + 2, api.paths().count { it.contains("/repeat") })
+        r.release()
+    }
+
+    @Test
     fun `d49 - a playlist context sets Spotify's own shuffle and repeat context`() = runBlocking {
         val r = contextRenderer()
         r.setModes(true, Repeat.ALL)

@@ -912,8 +912,10 @@ whose answer goes to the main frame's `vibb.token`. Nothing else is exposed.
      ones (the tracker's `ShuffleOrRepeat`; such a state is read for nothing), the start first sends
      `PUT /v1/me/player/shuffle?state=<wanted>&device_id=<id>` and `PUT /v1/me/player/repeat?state=<wanted>&device_id=<id>`,
      each 204 awaited before the next call (the Player API doesn't order calls), with the play's retries; a failed one
-     ends the start like a failed play (nothing plays shuffled). Two Web API requests per device session, from the
-     developer account's shared quota (§1.1).
+     ends the start like a failed play (nothing plays shuffled). Two Web API requests each time they go out - a device
+     session's first play, after the kid changed the wanted ones, after a state showed them different, and after the
+     account played elsewhere or another app's track (design 49, qa-music-a-code 3) - from the developer account's
+     shared quota (§1.1).
 - **The Media3 state** (QA M1; like 26a §3.2's table, `SpotifyPlayer` = the `SimpleBasePlayer`):
 
 | Situation | `playWhenReady` | `playbackState` | `showsPlaying` |
@@ -1773,7 +1775,8 @@ mode), 7 (docs), 8 (the kid's words and the account copy).
 - **No playlist editing** from the PWA (`vibb-spotify-options.md`'s "container playlists" idea) and no writes to
   Spotify at all (no saves, follows, library changes).
 - **No Liked Songs, no audiobooks, no profile following, no editorial/algorithmic playlists** (dev mode refuses them).
-- **No shuffle** for Spotify entries (phase 1's rule).
+- **No shuffle** for Spotify entries (phase 1's rule) - overridden by design 49 (the user's call of 2026-10-20): a
+  Spotify music entry has shuffle and repeat (§4.2).
 - **No position mirroring** to Spotify's cloud (the kid's other Spotify apps don't see Vibb's place; same as Storytel).
 - **No client ID, no client secret shipped**, no extended-quota application, no multi-tenant handling.
 - **No login on the phone**, no password anywhere in the system.

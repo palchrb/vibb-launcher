@@ -1408,6 +1408,8 @@ internal class SpotifyRenderer(
                 is Event.NotOurs -> {
                     if (e.playing && host.alive) sdk("pause")
                     ports.log("spotify: a track that isn't ours was paused")
+                    // another app or device had the account: its shuffle and repeat aren't known any more (qa-music-a-code 3)
+                    lastSet = null
                     if (pwr) {
                         pwr = false
                         pauseCause = PauseCause.OTHER
@@ -1443,6 +1445,7 @@ internal class SpotifyRenderer(
                 }
                 Event.Elsewhere -> {
                     ports.log("spotify: the account plays elsewhere")
+                    lastSet = null // the other device may have set shuffle and repeat (qa-music-a-code 3)
                     saveNow()
                     fail(SpotifyProblem.ELSEWHERE)
                 }
@@ -1542,7 +1545,8 @@ internal class SpotifyRenderer(
         if (mo.stop) {
             moveIndex(target, auto = false)
             place = Place(target, ms, ports.now(), moving = false)
-        } else if (target <= tracker.index && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
+        } else if (target in index..tracker.index && (tracker.mode == Mode.OURS || tracker.mode == Mode.STARTING)) {
+            // forward only (qa-music-a-code 2): a wrap back to item 0 (repeat all) is a fresh start below
             if (target != index) moveIndex(target, auto = false)
         } else {
             moveIndex(target, auto = false)

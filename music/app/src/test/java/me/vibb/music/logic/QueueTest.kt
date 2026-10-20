@@ -111,6 +111,24 @@ class QueueTest {
     }
 
     @Test
+    fun `qa-music-a-code 1 - a chain of move-ons with every item failing at play time ends within one lap`() {
+        // each item passes the gate but fails when played: onError moves on from the next one, the run's origin kept
+        val n = 5
+        val origin = 2
+        var from = origin
+        var steps = 0
+        while (true) {
+            val next = moveOnIndex(n, from, Repeat.ALL, origin) { true } ?: break
+            from = next
+            steps++
+            assertTrue("never more than one lap", steps <= n - 1)
+        }
+        assertEquals("every other item tried once, then paused", n - 1, steps)
+        assertEquals("without an origin the chain would go on", 3, moveOnIndex(n, 2, Repeat.ALL) { true })
+        assertEquals("off: the queue's end ends it anyway", null, moveOnIndex(n, 4, Repeat.OFF, origin) { true })
+    }
+
+    @Test
     fun `d49 - shuffle with resume changes the order only - the bookmarked item first at its place`() {
         val keys = (1..20).map { "t$it" }
         val plan = coverTapPlan(keys, true, Bookmark("t7", 90_000), true, Random(4))!!

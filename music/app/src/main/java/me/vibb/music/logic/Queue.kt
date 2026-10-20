@@ -64,14 +64,16 @@ fun advanceIndex(index: Int, n: Int, repeat: Repeat): Int? = when {
  * The phone's move-on past an unplayable item (design 49 §1.4): the first playable index after [from] in a queue of
  * [n]; with [Repeat.ALL] it wraps around - one lap at most, never [from] itself (an item that just failed or can't play
  * now is no place to go back to), so a lap with nothing playable is null (the player pauses) and never loops. Off and
- * one stop at the queue's end.
+ * one stop at the queue's end. [origin]: where a run of failures began (the service's `Active.failRunFrom`,
+ * qa-music-a-code 1) - a chain of move-ons, each after the last one's item failed too, stops once its lap is back there.
  */
-fun moveOnIndex(n: Int, from: Int, repeat: Repeat, playable: (Int) -> Boolean): Int? {
+fun moveOnIndex(n: Int, from: Int, repeat: Repeat, origin: Int? = null, playable: (Int) -> Boolean): Int? {
     val wrap = repeat == Repeat.ALL
     for (step in 1 until n) {
         val i = from + step
         val j = if (wrap) i.mod(n) else i
         if (j !in 0 until n) return null
+        if (j == origin) return null
         if (playable(j)) return j
     }
     return null

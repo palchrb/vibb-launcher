@@ -43,6 +43,11 @@ class KidPlayerTest {
         assertTrue(service.contains("Commands.THEN_REPEAT -> toggleRepeat()"))
         assertTrue(service.contains("store.db.upsertRepeat(RepeatRow(entryKey, next.word))"))
         assertTrue("the move-on wraps only through moveOnIndex", service.split("moveOnFrom(a, index)").size == 3)
+        // qa-music-a-code 1: a run of failures counts its lap across onError's calls
+        val onError = service.substringAfter("private fun onError(").substringBefore("\n    }\n")
+        assertTrue(onError.contains("if (a.failRunFrom == null) a.failRunFrom = index"))
+        assertTrue(service.contains("moveOnIndex(a.items.size, from, a.repeat, a.failRunFrom)"))
+        assertTrue("cleared by real play", service.substringAfter("private val saveTick").substringBefore("\n    }\n").contains("active?.failRunFrom = null"))
     }
 
     @Test
