@@ -1,7 +1,7 @@
 # Launcher round 7 - small items (proposal, revised after `qa-r7-launcher-design.md`)
 
 Asked 2026-10-20. Each item is its own section with its own tests; they ship in one launcher round after 0.31.0.
-§1 any allowed app may ring over the lock (pending the user's yes to the residual, QA question 1); §2 catalog apps protected from force-stop and hibernation (no battery-exemption flow,
+§1 any allowed app may ring over the lock (the residual accepted by the user 2026-10-20, no ring budget); §2 catalog apps protected from force-stop and hibernation (no battery-exemption flow,
 the user's call); §3 the global wake-on-notification switch.
 
 ## 1. Any allowed app may ring over the lock
@@ -56,8 +56,8 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
      cancels its ring and posts it again gets a fresh `ringStartedElapsedMs` after the 15 s grace
      (`VoipCallPlan.kt:278-284`, `continueCall` :297-313); once a record ends, the next ring starts a new record with
      a new 3 h cap (:288-290). An app also controls the in-call phase itself (a call-category foreground notification
-     and `MODE_IN_COMMUNICATION`, which any app may set). **The budget below bounds how often it can restart, not how
-     long one call lasts.**
+     and `MODE_IN_COMMUNICATION`, which any app may set). **No budget bounds this (the user's call, below): the lock is
+     the kid's own PIN, so an app that restarts its ring gains the kid nothing.**
    - **The kiosk does not keep every other app locked while the ring is on.** The re-front loop yields `"voip"` to
      whatever is in front and never checks the package (`lock/RefrontPolicy.kt:86`). With the kiosk **on**, the
      lock-task list is the whole kiosk list, untouched while LOCKED (`server/LockTaskHelpers.kt:188-190`): Home and
@@ -74,27 +74,25 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
      (`ringPlan` follows only the ringer mode and DND).
    - Bounded: Home sits below the lock; the permission controller is pinned with the kiosk off but grants that app
      nothing it couldn't ask for unlocked.
-   - **The bound we add: a ring budget.** `VOIP_RINGS_PER_HOUR` = 6 accepted rings per package per rolling hour
-     (a pure function in `VoipCallPlan.kt`, counted in memory from the accepted-ring times). A ring over the budget is
-     treated as **no ring**: the notification stays in the shade, no wake, no card, the lock stays; the in-call phase
-     for a call the kid answered elsewhere is unaffected. It is reported as `voip_rang[].limited: true` (§1.1.3). The
-     residual above is what remains inside the budget.
-3. **The parent sees which apps rang.** `lock_state.voip_rang`: `[{"package": "<pkg>", "last_at_ms": <wall ms>,
-   "limited": <bool>}]`, the packages whose ring the lock accepted (phase RINGING began) in the last 7 days, newest
-   first, at most 8, valid package names only; always sent (empty list); `limited` is true when a ring of that package
-   was refused by the budget since its last accepted one. **A ring is recorded only when it began while the lock mode
+   - **No ring budget** (the user, 2026-10-20, on a proposed cap of 6 accepted rings per app per hour: "jeg liker
+     ikke tanken på at man ikke kan ringe noen 7 ganger på en time ... For legitime anrop fra apper jeg har godtatt
+     forstår jeg ikke helt hvorfor vi skal begrense"). The reasoning that makes the cap unnecessary: the PIN lock's code
+     is the **kid's own** (design 10, `kid_lock`), so an allowed app that fakes or restarts rings to keep the lock away
+     gives the kid nothing the kid can't get by typing the code; anyone else can only trigger a ring from outside,
+     which is an incoming call - the behaviour wanted. What the lock protects (another person holding the phone) is
+     untouched by the widening. Every ring of a candidate app rings; nothing is counted.
+3. **The parent sees which apps rang.** `lock_state.voip_rang`: `[{"package": "<pkg>", "last_at_ms": <wall ms>}]`,
+   the packages whose ring the lock accepted (phase RINGING began) in the last 7 days, newest first, at most 8, valid
+   package names only; always sent (empty list). **A ring is recorded only when it began while the lock mode
    was LOCKED, or when the phone locked during it** (`VoipCalls.evaluate` builds records in every mode, so a call taken
    on an unlocked phone is not "over the lock"). Kept in `VoipCalls`' CE prefs `voip_call` (`rang_v1`, package -> wall
-   ms plus a `limited` flag per package, set by a ring the budget refused and cleared when the next ring of that
-   package is accepted; pruned at each write and each report; nothing but package names, times and that flag). The
-   budget's counts live in memory, so a restart empties them; `limited` survives in the prefs. Server: `kid_lock::LockState` gets
+   ms; pruned at each write and each report; nothing but package names and times). Server: `kid_lock::LockState` gets
    `voip_rang: Vec<serde_json::Value>` with `#[serde(default)]` (missing = empty); `sanitize_lock_state` validates
-   **each entry** (`valid_package_name`, an integer `last_at_ms`, a future time dropped, `limited` a bool else false),
+   **each entry** (`valid_package_name`, an integer `last_at_ms`, a future time dropped),
    dedupes by package, newest first, `take(MAX_FSI_DENIED)`; **a bad entry is dropped, never the whole `lock_state`**
    (the lock-off warnings stay). The sanitizer takes `now_ms` (its two callers pass it) for the future-time rule. The
    Lock Screen card shows an info note per package "Calls from <label> rang over the lock · <when>"
-   (`LockNote::RangOverLock`; "... · the hourly limit stopped further rings" when `limited`; a quiet line, not a
-   warning). The label is the catalog/app-display name for the package, else the package; the time is in the device's
+   (`LockNote::RangOverLock`; a quiet line, not a warning). The label is the catalog/app-display name for the package, else the package; the time is in the device's
    reported zone (`time_state.zone`), like the other device-page times. Contract: `StatusReportRequest.LockStateReport
    .voipRang` (`LockStateReport` is built in `PinLockRuntime` only), the launcher's `PolicyResponseCompatTest`
    (`status report lock_state uses the server's keys` pins the key set) and the server's `server/src/tests/step10.rs`
@@ -109,17 +107,15 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
 `VoipCallPlanTest`: the new `voipCandidates` table - managed and on with `voipAllowed` (every allowed app), managed and
 off / unknown (none), unmanaged with an allowlist (the allowlist), the two fallbacks (`policyKnown == false`,
 `voipAllowed == null`), and that `voipAllowed` never widens the gates; a duplicate or excluded package stays out
-(SMS packages, an essential/dialer package, our family); the budget table (6 in the hour pass, the 7th is limited, the
-oldest ageing out of the rolling hour frees one, per package). `NotificationRuleRuntime`: `voipAllowed` from the
+(SMS packages, an essential/dialer package, our family); no counting of rings anywhere (a source check that
+`VoipCallPlan.kt` holds no per-hour constant). `NotificationRuleRuntime`: `voipAllowed` from the
 effective allowlist (a relock-blocked package is out), `null` when apps are unmanaged. `VoipCallGuardTest` unchanged and
 still green (no new read of text). `VoipCalls`: `voip_rang`'s prune (7 days, 8 entries, newest first), a ring of a
-non-candidate never recorded, a ring while unlocked never recorded, a ring during which the phone locks recorded, a
-limited ring recorded as `limited` and doing nothing else; the status field's encoding in `LockStateReport`. Server
-`kid_lock`: `voip_rang` sanitized (package names, cap, times, future time with the passed `now_ms`, `limited`), a
+non-candidate never recorded, a ring while unlocked never recorded, a ring during which the phone locks recorded; the status field's encoding in `LockStateReport`. Server
+`kid_lock`: `voip_rang` sanitized (package names, cap, times, future time with the passed `now_ms`), a
 malformed entry leaves the rest of `lock_state` intact (`step10.rs::lock_state_is_stored_sanitized_and_capped`), the
 card's note and its label/zone; `step10`'s lock-state round trip with the field. `PolicyResponseCompatTest`: `status report
-lock_state uses the server's keys` gains `voip_rang` (default `[]`); `limited` set by a refused ring, cleared by the
-next accepted one; no policy change.
+lock_state uses the server's keys` gains `voip_rang` (default `[]`); no policy change.
 
 ### 1.3 Device checks
 
@@ -306,3 +302,6 @@ notification and a suspended app's notification wake nothing; during a VoIP ring
 - r7-14: `PinLockManifestTest` gets a new assertion for the turn-screen-on set (`InCallActivity`, `VoipWakeActivity`); gap/hour counters stated in memory; the switch read from the cached policy's `LauncherUi` at process start and after each accepted sync; the harmless `lockOnTop` clearing stated.
 - r7-15: the PWA switch is its own cell `#lock-wake` with `data-autosave` and `<noscript>` Save, returning to `#lock-wake`; the info-text sentence added.
 - r7-16: PLAN's three round 7 entries aligned with this revision (`voip_rang`, no "from Android 12", no `turnScreenOn` on the lock activity, the lift by override/pause, the new wording).
+- 2026-10-20, after the QA (the user): the ring budget is dropped - "jeg liker ikke tanken på at man ikke kan ringe noen 7
+  ganger på en time"; the residual is accepted with the reasoning in §1.1.2 (the lock is the kid's own PIN). `limited`
+  is gone from `voip_rang`.
