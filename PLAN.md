@@ -941,12 +941,11 @@ findings, merge to `main`, full suite once.
   `voipCandidates` (`lock/VoipCallPlan.kt`) fixes the set to Element X and Signal/Molly (the contacts' messaging apps
   while calls are managed, `KNOWN_VOIP_PACKAGES` while unmanaged). Change: the candidate set is every allowed,
   unsuspended app minus the SMS packages, the essential/dialer packages and our own family, under the same gates (calls
-  on - a no-calls time rule is folded into the effective state -; none while calls are off or unknown), with a budget of 6 accepted rings per app per hour
-  (over it = no ring, reported as `limited`). **Pending the user's yes to the residual** (design QA question 1): an
-  allowed app that fakes a ring gets its own screen over the lock for that ring, and with the kiosk on that screen can
-  open other allowed apps for the call's duration (as Element X today); strangers can ring through apps whose contacts
-  Vibb doesn't manage. The status report lists the apps that rang (`lock_state.voip_rang`, package + `last_at_ms` +
-  `limited`, no text) so the PWA can show "rang over the lock". The in-call phase stays
+  on - a no-calls time rule is folded into the effective state -; none while calls are off or unknown); no ring budget (the user, 2026-10-20: "jeg
+  liker ikke tanken på at man ikke kan ringe noen 7 ganger på en time" - and the lock is the kid's own PIN, so a faked
+  ring gains the kid nothing). The residual, accepted: an allowed app that fakes a ring gets its own screen over the
+  lock for that ring, and with the kiosk on that screen can open other allowed apps for the call's duration (as
+  Element X today); strangers can ring through apps whose contacts Vibb doesn't manage. The status report lists the apps that rang (`lock_state.voip_rang`, package + `last_at_ms`, no text) so the PWA can show "rang over the lock". The in-call phase stays
   "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
   the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
   directories). Launcher round 7.
