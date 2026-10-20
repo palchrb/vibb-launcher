@@ -62,7 +62,7 @@
         <div class="row" id="phone-{{ p.id }}" data-phone="{{ p.id }}" data-install-state="{{ i.state }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
             <span class="row-label"><a class="phone-link" href="{{ p.href }}">{{ p.name }}</a><span class="row-sub" data-install-sub>{{ i.sub }}</span></span>
-            {% if let Some(v) = i.value %}<span class="row-value">{{ v }}</span>{% endif %}
+            {% if let Some(v) = i.value %}<span class="row-value row-value-keep">{{ v }}</span>{% endif %}
             {% if i.install %}
             <form method="post" action="/apps/tracked/{{ app.id }}/install-now/{{ p.id }}#phone-{{ p.id }}" class="row-form"><button type="submit" class="button-small">Install Now</button></form>
             {% else if let Some(command) = i.cancel_id %}

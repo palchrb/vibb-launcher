@@ -2130,3 +2130,6 @@ details.app-display[open] > summary .section-chev {
 .phone-link { color: var(--label); text-decoration: none; }
 .phone-link:hover { color: var(--label); text-decoration: underline; }
 .row-form { flex: none; display: flex; align-items: center; }
+/* A short value beside a button (the phone's running version next to Install Now): never wrapped
+   or squeezed - the label column with its sub-line gives way instead (the user, 2026-10-20: "0.30." / "0"). */
+.row-value-keep { flex: none; min-width: auto; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
