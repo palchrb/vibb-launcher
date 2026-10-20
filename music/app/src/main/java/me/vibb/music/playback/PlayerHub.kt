@@ -157,7 +157,11 @@ object PlayerHub {
      * entry the network gate refuses: "Trenger internett"), so nothing more is shown (emulator check §6l A, F3: the
      * hold showed the next track for 3 s although nothing moved).
      */
-    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED }
+    /**
+     * [HEADSET_NO_CONTACT] (design 52 decision 3): a "Koble til" in "Spill av på" failed after the kid closed the sheet
+     * - the enum has no payload, so its line names no device. Sent by the screens' view model, not the service.
+     */
+    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState

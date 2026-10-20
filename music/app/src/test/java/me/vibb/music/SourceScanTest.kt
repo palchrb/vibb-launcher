@@ -648,4 +648,110 @@ class SourceScanTest {
         assertEquals(others.toString(), 1, others.size)
         for (variant in listOf("src/debug/AndroidManifest.xml")) assertFalse(moduleFile(variant).readText().contains("networkSecurityConfig"))
     }
+
+    // Design 52: Bluetooth headphones in "Spill av på".
+
+    /** Decision 4-5: `BLUETOOTH_CONNECT` only; nothing that scans, pairs, turns Bluetooth on or opens a system switcher. */
+    @Test
+    fun `d52 - BLUETOOTH_CONNECT only, and none of the Never list`() {
+        val manifest = code(moduleFile("src/main/AndroidManifest.xml"))
+        val permissions = Regex("<uses-permission android:name=\"([^\"]+)\"").findAll(manifest).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("android.permission.BLUETOOTH_CONNECT"), permissions.filter { it.contains("BLUETOOTH") })
+        val debug = code(moduleFile("src/debug/AndroidManifest.xml"))
+        assertFalse("no Bluetooth permission of a debug build's own", debug.contains("BLUETOOTH"))
+        val never = listOf(
+            "createBond", "startDiscovery", "ACTION_REQUEST_ENABLE", "ACTION_REQUEST_DISCOVERABLE", ".enable()", "setConnectionPolicy",
+            "ACTION_MEDIA_OUTPUT", "MEDIA_OUTPUT_DIALOG", "showSystemOutputSwitcher", "MediaRouter", "BluetoothLeAudio",
+            "BLUETOOTH_SCAN", "BLUETOOTH_ADMIN", "BLUETOOTH_PRIVILEGED",
+        )
+        val files = sources("src/main/java") + sources("src/debug/java")
+        for (f in files) {
+            val text = code(f)
+            for (token in never) assertFalse("${f.name} references $token", text.contains(token))
+        }
+    }
+
+    /**
+     * Decision 1-2 (52-2): the glue never blocks a thread for the proxy; the hidden calls are `BluetoothA2dp.connect` and
+     * `setActiveDevice` by reflection, never `BluetoothDevice.connect`/`disconnect`/`isConnected`, and no HEADSET or
+     * LE proxy (the music app never disconnects).
+     */
+    @Test
+    fun `d52 - the Bluetooth glue - no blocking wait, A2DP's connect and setActiveDevice only`() {
+        val files = sources("src/main/java/me/vibb/music/bluetooth")
+        assertEquals(setOf("BluetoothAudio.kt", "BluetoothLink.kt"), files.map { it.name }.toSet())
+        for (f in files) {
+            val text = code(f)
+            for (token in listOf("CountDownLatch", "runBlocking", ".await(", "Thread.sleep", ".get()", "isConnected", "\"disconnect\"", "BluetoothProfile.HEADSET", "BluetoothProfile.LE_AUDIO")) {
+                assertFalse("${f.name} uses $token", text.contains(token))
+            }
+        }
+        val link = code(moduleFile("src/main/java/me/vibb/music/bluetooth/BluetoothLink.kt"))
+        assertEquals(
+            listOf("BluetoothA2dp::class.java.getMethod(method, BluetoothDevice::class.java)"),
+            Regex("""\S+\.getMethod\([^)]*\)""").findAll(link).map { it.value }.toList(),
+        )
+        assertEquals(
+            listOf("callA2dp(BluetoothAudio.A2DP_CONNECT, a2dp, address)", "callA2dp(BluetoothAudio.A2DP_SET_ACTIVE, a2dp, address)"),
+            Regex("""callA2dp\(BluetoothAudio\.[A-Z0-9_]+, a2dp, address\)""").findAll(link).map { it.value }.toList(),
+        )
+        val pure = code(moduleFile("src/main/java/me/vibb/music/bluetooth/BluetoothAudio.kt"))
+        assertTrue(pure.contains("const val A2DP_CONNECT = \"connect\"") && pure.contains("const val A2DP_SET_ACTIVE = \"setActiveDevice\""))
+        assertTrue("the proxy is awaited, bounded", link.contains("withTimeoutOrNull(BluetoothAudio.PROXY_WAIT_MS) { awaitA2dp(adapter, wait) }"))
+        assertTrue("on IO", link.contains("val got = withContext(Dispatchers.IO) {"))
+        assertTrue(link.contains("suspendCancellableCoroutine { cont ->"))
+        // every other Bluetooth call is on IO: each public suspend read or call opens with withContext(Dispatchers.IO)
+        for (fn in listOf("suspend fun routed()", "suspend fun pairedAudio(", "private suspend fun callA2dp(")) {
+            assertTrue(fn, link.substringAfter(fn).substringBefore("\n").contains("= withContext(Dispatchers.IO) {"))
+        }
+        assertTrue(link.contains("closer.launch { closeQuietly(adapter, a2dp) }"))
+        // the view model calls the glue from its own scope
+        val vm = code(moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt"))
+        assertTrue(vm.contains("private val bt = BluetoothLink(app)"))
+        for (token in listOf("runBlocking", "CountDownLatch", "Log.")) assertFalse("MusicViewModel uses $token", vm.contains(token))
+    }
+
+    /**
+     * Decision 4 (52-6): names and addresses never leave memory - no log line in `bluetooth/` interpolates a value
+     * (failures are `failureWords`: the classes only), and nothing outside the sheet's own files names the package,
+     * so no name or address reaches the report, `music_state`, now-playing, the state recorder, renderer.json or the
+     * bridge.
+     */
+    @Test
+    fun `d52 - no device name or address leaves memory`() {
+        val files = sources("src/main/java/me/vibb/music/bluetooth")
+        var logs = 0
+        for (f in files) {
+            for (line in code(f).lines().filter { it.contains("Log.") || it.contains("println(") || it.contains("print(") }) {
+                logs++
+                assertFalse("${f.name}: $line", line.contains("$"))
+                assertTrue("${f.name}: $line", Regex("""Log\.w\(TAG, BluetoothAudio\.failureWords\("?\w+"?, e\)\)""").containsMatchIn(line))
+            }
+        }
+        assertTrue(logs >= 4)
+        val readers = setOf("MusicViewModel.kt", "PlayerScreen.kt", "OutputRows.kt", "BluetoothAudio.kt", "BluetoothLink.kt")
+        val outside = (sources("src/main/java") + sources("src/debug/java")).filter { it.extension == "kt" && it.name !in readers }
+        for (f in outside) {
+            val text = code(f)
+            assertFalse("${f.name} names the Bluetooth package", text.contains("me.vibb.music.bluetooth") || text.contains("BluetoothDevice") || text.contains("getBondedDevices") || text.contains("bondedDevices"))
+        }
+        // the routed outputs keep their AudioDeviceInfo id and product name only - no address in Output or the hub
+        for (path in listOf("src/main/java/me/vibb/music/playback/PlayerModel.kt", "src/main/java/me/vibb/music/playback/PlayerHub.kt", "src/main/java/me/vibb/music/playback/PlaybackService.kt")) {
+            val text = code(moduleFile(path))
+            assertFalse(path, text.contains(".address") || text.contains("address:"))
+        }
+    }
+
+    @Test
+    fun `d52 - nb has the headset words`() {
+        val nb = strings("src/main/res/values-nb/strings.xml")
+        assertEquals("Koble til", nb["headset_connect"])
+        assertEquals("Bytt til", nb["headset_switch"])
+        assertEquals("Kobler til…", nb["headset_connecting"])
+        assertEquals("Fikk ikke kontakt med %1\$s - er den på?", nb["headset_no_contact_row"])
+        assertEquals("Fikk ikke kontakt med hodetelefonene - er de på?", nb["headset_no_contact"])
+        val en = strings("src/main/res/values/strings.xml")
+        assertEquals("Couldn\\'t reach %1\$s - is it switched on?", en["headset_no_contact_row"])
+        assertEquals("Couldn\\'t reach the headphones - are they switched on?", en["headset_no_contact"])
+    }
 }

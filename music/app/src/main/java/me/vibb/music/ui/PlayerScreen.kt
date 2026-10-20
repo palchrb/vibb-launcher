@@ -23,11 +23,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalConfiguration
+import me.vibb.music.bluetooth.HeadsetLine
+import me.vibb.music.bluetooth.HeadsetRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.Crossfade
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -344,59 +350,88 @@ private fun SleepOption(label: String, on: Boolean, modifier: Modifier, onClick:
 }
 
 /**
- * "Spill av på" (design 26a §5.1): the phone and the connected Bluetooth or wired outputs, then the
- * Sonos rooms (a group is one row, "Kjøkken + Stua"; "Sonos · svarer ikke" while nobody answered),
- * then "Se etter høyttalere" ("Søker etter høyttalere…" while a round runs). Opening it asks for one
- * topology refresh ([onOpen]); picking a room is a play on it.
+ * "Spill av på" (design 26a §5.1, design 52 decision 3): the phone and the routed Bluetooth or wired outputs, the
+ * paired headsets not routed now ("Koble til" / "Bytt til" / "Kobler til…" / "Fikk ikke kontakt med <name> - er den
+ * på?"; a tap there keeps the sheet open), then the Sonos rooms (a group is one row, "Kjøkken + Stua"; "Sonos · svarer
+ * ikke" while nobody answered), then "Se etter høyttalere" ("Søker etter høyttalere…" while a round runs). Opening it
+ * asks for one topology refresh and opens the A2DP proxy ([onOpen]); leaving it closes the proxy ([onClose]); picking
+ * a room is a play on it. The rows scroll when they are taller than the sheet's room.
  */
 @Composable
 fun OutputSheet(
     outputs: List<Output>,
+    headsets: List<HeadsetRow>,
     rooms: RoomsView,
     current: Output,
     onOpen: () -> Unit,
+    onClose: () -> Unit,
     onPick: (Output) -> Unit,
+    onHeadset: (HeadsetRow) -> Unit,
     onRescan: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    LaunchedEffect(Unit) { onOpen() }
+    DisposableEffect(Unit) {
+        onOpen()
+        onDispose(onClose)
+    }
     Sheet(stringResource(R.string.output), onDismiss, 8.dp) {
-        for (o in outputs) {
-            val sub = when (o.kind) {
-                OutputKind.PHONE -> R.string.output_phone_sub
-                OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
-                OutputKind.WIRED -> R.string.output_wired_sub
-                OutputKind.SONOS -> R.string.output_sonos
+        val maxHeight = (LocalConfiguration.current.screenHeightDp * OUTPUT_SHEET_MAX_SHARE).dp
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for (item in outputSheetRows(outputs, headsets, rooms.rooms)) {
+                when (item) {
+                    is SheetItem.Out -> {
+                        val o = item.output
+                        val sub = when (o.kind) {
+                            OutputKind.PHONE -> R.string.output_phone_sub
+                            OutputKind.BLUETOOTH -> R.string.output_bluetooth_sub
+                            OutputKind.WIRED -> R.string.output_wired_sub
+                            OutputKind.SONOS -> R.string.output_sonos
+                        }
+                        val glyph = when (o.kind) {
+                            OutputKind.PHONE -> Icons.speakerSmall
+                            OutputKind.SONOS -> Icons.roomSpeaker
+                            OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
+                        }
+                        SheetRow(glyph, outputName(o), stringResource(sub), o.key == current.key) { onPick(o) }
+                    }
+                    is SheetItem.Headset -> {
+                        val h = item.row
+                        val name = h.name ?: stringResource(R.string.output_bluetooth)
+                        val line = headsetLineText(h.line)
+                        val sub = if (h.line == HeadsetLine.NO_CONTACT) stringResource(line, name) else stringResource(line)
+                        SheetRow(Icons.headphones, name, sub, selected = false, subtitleLines = 2) { onHeadset(h) }
+                    }
+                    is SheetItem.Speaker -> {
+                        val o = Output(Output.sonosKey(item.room.uid), OutputKind.SONOS, item.room.label)
+                        SheetRow(Icons.roomSpeaker, item.room.label, stringResource(if (rooms.stale) R.string.output_sonos_stale else R.string.output_sonos), o.key == current.key) { onPick(o) }
+                    }
+                    SheetItem.Rescan -> if (rooms.scanning) {
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) { Spinner(20.dp, Palette.sub) }
+                            Line(stringResource(R.string.rooms_scanning), 15, 800, Palette.sub, Modifier.weight(1f))
+                        }
+                    } else {
+                        SheetRow(Icons.search, stringResource(R.string.rooms_rescan), null, selected = false, onClick = onRescan)
+                    }
+                }
             }
-            val glyph = when (o.kind) {
-                OutputKind.PHONE -> Icons.speakerSmall
-                OutputKind.SONOS -> Icons.roomSpeaker
-                OutputKind.BLUETOOTH, OutputKind.WIRED -> Icons.headphones
-            }
-            SheetRow(glyph, outputName(o), stringResource(sub), o.key == current.key) { onPick(o) }
-        }
-        for (room in rooms.rooms) {
-            val o = Output(Output.sonosKey(room.uid), OutputKind.SONOS, room.label)
-            SheetRow(Icons.roomSpeaker, room.label, stringResource(if (rooms.stale) R.string.output_sonos_stale else R.string.output_sonos), o.key == current.key) { onPick(o) }
-        }
-        if (rooms.scanning) {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) { Spinner(20.dp, Palette.sub) }
-                Line(stringResource(R.string.rooms_scanning), 15, 800, Palette.sub, Modifier.weight(1f))
-            }
-        } else {
-            SheetRow(Icons.search, stringResource(R.string.rooms_rescan), null, selected = false, onClick = onRescan)
         }
         Spacer(Modifier.width(0.dp))
     }
 }
 
+/** The output sheet's rows take at most this share of the screen's height, then scroll (design 52: more rows). */
+const val OUTPUT_SHEET_MAX_SHARE = 0.7f
+
 @Composable
-private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selected: Boolean, subtitleLines: Int = 1, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Palette.selected else Palette.sheetRow)
             .semantics { this.selected = selected }.button(null, onClick).padding(horizontal = 14.dp, vertical = 6.dp),
@@ -408,7 +443,7 @@ private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selec
         }
         Column(Modifier.weight(1f)) {
             Line(title, 15, 800, Palette.white)
-            subtitle?.let { Line(it, 12, 700, Palette.sub) }
+            subtitle?.let { Line(it, 12, 700, Palette.sub, maxLines = subtitleLines) }
         }
         if (selected) Glyph(Icons.check, 22.dp, Palette.peach)
     }

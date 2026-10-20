@@ -31,6 +31,7 @@
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
     <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>
     <string name="room_not_allowed">Rommet er ikke lenger tillatt</string>
+    <string name="headset_no_contact">Fikk ikke kontakt med hodetelefonene - er de på?</string>
 
     <!-- Avspilling -->
     <string name="play">Spill</string>
@@ -72,6 +73,11 @@
     <string name="output_wired_sub">Kablet · tilkoblet</string>
     <string name="output_sonos">Sonos</string>
     <string name="output_sonos_stale">Sonos · svarer ikke</string>
+    <!-- Design 52: a paired headset that isn't routed now -->
+    <string name="headset_connect">Koble til</string>
+    <string name="headset_switch">Bytt til</string>
+    <string name="headset_connecting">Kobler til…</string>
+    <string name="headset_no_contact_row">Fikk ikke kontakt med %1$s - er den på?</string>
     <string name="rooms_rescan">Se etter høyttalere</string>
     <string name="rooms_scanning">Søker etter høyttalere…</string>
     <string name="renderer_grouped_away">Spilles i en annen gruppe</string>

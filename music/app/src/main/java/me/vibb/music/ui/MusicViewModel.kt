@@ -1,7 +1,18 @@
 package me.vibb.music.ui
 
 import android.app.Application
+import android.bluetooth.BluetoothA2dp
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.ConnectivityManager
+import android.os.SystemClock
 import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.compose.runtime.getValue
@@ -11,6 +22,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -37,6 +52,18 @@ import me.vibb.music.model.Entry
 import me.vibb.music.sync.ListArtWants
 import me.vibb.music.logic.shownEntries
 import me.vibb.music.logic.tapCategory
+import me.vibb.music.bluetooth.BluetoothAudio
+import me.vibb.music.bluetooth.BluetoothLink
+import me.vibb.music.bluetooth.ConnectEvent
+import me.vibb.music.bluetooth.HeadsetAction
+import me.vibb.music.bluetooth.HeadsetConnect
+import me.vibb.music.bluetooth.HeadsetLine
+import me.vibb.music.bluetooth.HeadsetMove
+import me.vibb.music.bluetooth.HeadsetRow
+import me.vibb.music.bluetooth.PairedAudio
+import me.vibb.music.bluetooth.connectStep
+import me.vibb.music.bluetooth.headsetTapPlan
+import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
@@ -100,6 +127,174 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         runCatching { getApplication<Application>().getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(netWatch) }
+        if (watching) {
+            runCatching { getApplication<Application>().unregisterReceiver(a2dpWatch) }
+            runCatching { getApplication<Application>().getSystemService(AudioManager::class.java)?.unregisterAudioDeviceCallback(routeWatch) }
+        }
+        a2dp?.let { bt.closeLater(it) }
+        a2dp = null
+    }
+
+    // Design 52 (decision 3): "Spill av på"'s paired headsets. The state lives here, not in the sheet - a reopened
+    // sheet reads it, and a "Koble til" outlives the sheet. Everything below runs on the main thread (the view
+    // model's scope, the receiver and the audio callback), the Bluetooth calls in BluetoothLink on IO.
+
+    private val bt = BluetoothLink(app)
+
+    /** The A2DP proxy: opened at the sheet's open, held while the sheet is open or a call runs, closed after. */
+    private var a2dp: BluetoothA2dp? = null
+    private val a2dpLock = Mutex()
+    private val refreshLock = Mutex()
+    private var sheetOpen = false
+    private var calls = 0
+    private var watching = false
+
+    /** The routed Bluetooth outputs: address -> `AudioDeviceInfo.id` (the `dev:` key). Memory only. */
+    private var routedIds: Map<String, Int> = emptyMap()
+
+    /** The paired audio devices not routed now, read while the sheet is open (empty without the grant). */
+    var headsets by mutableStateOf<List<PairedAudio>>(emptyList())
+        private set
+
+    /** The open "Koble til" attempts and the failed ones (BluetoothAudio's reducer). */
+    var headsetConnect by mutableStateOf(HeadsetConnect())
+        private set
+
+    /** A routed headset tapped on a Sonos room: its `dev:` key, for the screens to send as `OUTPUT` once. */
+    private val outputAsks = Channel<String>(Channel.BUFFERED)
+    val outputRequests: Flow<String> = outputAsks.receiveAsFlow()
+
+    /** The sheet's headset rows. */
+    fun headsetRows(): List<HeadsetRow> = BluetoothAudio.headsetRows(headsets, headsetConnect)
+
+    /**
+     * The sheet opened: without `BLUETOOTH_CONNECT` nothing (today's sheet); else the A2DP proxy, the watches and one
+     * read. A failure line from before is not shown again (a closed sheet's failure was the player's hint).
+     */
+    fun outputSheetOpened() {
+        sheetOpen = true
+        headsetConnect = headsetConnect.copy(failed = emptySet())
+        if (!bt.granted()) {
+            headsets = emptyList()
+            return
+        }
+        watch()
+        viewModelScope.launch { refreshHeadsets() }
+    }
+
+    /** The sheet left: the proxy closes unless a call still runs; an open attempt goes on. */
+    fun outputSheetClosed() {
+        sheetOpen = false
+        headsets = emptyList()
+        releaseA2dp()
+    }
+
+    /**
+     * A headset row tapped (decision 3): connect, or make a connected one active; the renderer doesn't move and the
+     * sheet stays open on "Kobler til…". [onRoom]: a Sonos room is the output - once the headset is routed, the room
+     * hands over to it (headsetTapPlan). A row already "Kobler til…" ignores the tap.
+     */
+    fun headsetTapped(row: HeadsetRow, onRoom: Boolean) {
+        if (row.line == HeadsetLine.CONNECTING || !bt.granted()) return
+        reduce(ConnectEvent.Tapped(row.address, SystemClock.elapsedRealtime(), onRoom))
+        calls++
+        viewModelScope.launch {
+            try {
+                val proxy = a2dp()
+                val asked = proxy != null && when (row.action) {
+                    HeadsetAction.CONNECT -> bt.connect(proxy, row.address)
+                    HeadsetAction.MAKE_ACTIVE -> bt.makeActive(proxy, row.address)
+                }
+                reduce(ConnectEvent.Answered(row.address, asked))
+                if (sheetOpen) refreshHeadsets()
+            } finally {
+                calls--
+                releaseA2dp()
+            }
+        }
+        viewModelScope.launch {
+            delay(BluetoothAudio.CONNECT_WINDOW_MS)
+            reduce(ConnectEvent.Tick(SystemClock.elapsedRealtime()))
+        }
+    }
+
+    private fun reduce(e: ConnectEvent) {
+        val step = connectStep(headsetConnect, e)
+        headsetConnect = step.state
+        // a failure after the kid closed the sheet: the player's one line for 3 s (nameless)
+        if (step.failed.isNotEmpty() && !sheetOpen) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.HEADSET_NO_CONTACT)
+        if (step.routed.isEmpty()) return
+        for ((address, attempt) in step.routed) {
+            if (headsetTapPlan(attempt.onRoom, routedNow = true) == HeadsetMove.OUTPUT) {
+                routedIds[address]?.let { outputAsks.trySend(Output.deviceKey(it)) }
+            }
+        }
+        // routed: the connected row takes over and the sheet closes, as a pick does
+        if (sheet == SheetKind.OUTPUT) sheet = null
+    }
+
+    private suspend fun a2dp(): BluetoothA2dp? = a2dpLock.withLock { a2dp ?: bt.openA2dp().also { a2dp = it } }
+
+    private fun releaseA2dp() {
+        if (sheetOpen || calls > 0) return
+        val proxy = a2dp ?: return
+        a2dp = null
+        bt.closeLater(proxy)
+    }
+
+    /** One read of the rows while the sheet is open (one at a time, so an older read never lands last). */
+    private suspend fun refreshHeadsets() {
+        refreshLock.withLock {
+            try {
+                val proxy = if (sheetOpen) a2dp() else null
+                if (proxy != null && sheetOpen) {
+                    val routed = bt.routed()
+                    routedIds = routed
+                    val paired = bt.pairedAudio(proxy, routed.keys)
+                    if (sheetOpen) headsets = paired
+                }
+            } finally {
+                releaseA2dp()
+            }
+        }
+    }
+
+    /** A2DP's state broadcast (protected, sent with `BLUETOOTH_CONNECT`): CONNECTING -> DISCONNECTED fails, CONNECTED ends "Kobler til…". */
+    private val a2dpWatch = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
+            val address = runCatching { device.address }.getOrNull() ?: return
+            val previous = intent.getIntExtra(BluetoothProfile.EXTRA_PREVIOUS_STATE, -1)
+            reduce(ConnectEvent.StateChanged(address, previous, intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)))
+            if (sheetOpen) viewModelScope.launch { refreshHeadsets() }
+        }
+    }
+
+    /** The routed outputs changed: an open attempt's headset routed is its success. */
+    private val routeWatch = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = routesChanged()
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = routesChanged()
+    }
+
+    private fun routesChanged() {
+        viewModelScope.launch {
+            val routed = bt.routed()
+            routedIds = routed
+            reduce(ConnectEvent.Routed(routed.keys))
+            if (sheetOpen) refreshHeadsets()
+        }
+    }
+
+    /** The receiver and the audio callback, once (at the first granted sheet), until the view model is cleared. */
+    private fun watch() {
+        if (watching) return
+        watching = true
+        val app = getApplication<Application>()
+        // a protected system broadcast (only the Bluetooth stack sends it), so exported: a not-exported dynamic
+        // receiver is not reached from the Bluetooth process's uid
+        runCatching { app.registerReceiver(a2dpWatch, IntentFilter(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED), Context.RECEIVER_EXPORTED) }
+        runCatching { app.getSystemService(AudioManager::class.java)?.registerAudioDeviceCallback(routeWatch, null) }
     }
 
     /** Read the network again (a callback's thread posts to main: Compose state is written there). */
