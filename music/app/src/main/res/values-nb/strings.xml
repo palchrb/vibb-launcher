@@ -49,6 +49,8 @@
     <string name="sleep_title">Sov om</string>
     <string name="minutes">%1$d min</string>
     <string name="sleep_off">Av</string>
+    <string name="favourite">Favoritt</string>
+    <string name="category_favourites">Favoritter</string>
     <string name="tile_needs_wifi">Trenger Wi-Fi</string>
     <string name="sleep_at_end">Til slutten</string>
     <string name="sleep_at_end_on">Sov · til slutten</string>

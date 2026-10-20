@@ -93,6 +93,9 @@ fun PlayerScreen(
     onNext: () -> Unit,
     /** The skip pair (design 50 §1.1): back ([SKIP_BACK_MS] as a negative step) or on, within the item. */
     onSkipBy: (deltaMs: Long) -> Unit,
+    /** An item's heart (design 50 §1.5): set or not, null for none (a context's synthetic item). */
+    favourite: (PlayItem) -> Boolean?,
+    onFavourite: (PlayItem, Boolean) -> Unit,
     /** A swipe of the episode carousel (design 27): to queue index, in that direction. */
     onSkipTo: (index: Int, forward: Boolean) -> Unit,
     onList: () -> Unit,
@@ -126,7 +129,12 @@ fun PlayerScreen(
                     Kind.MUSIC -> R.string.track_of
                 }
                 // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
-                if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                val heart = favourite(item)
+                // design 50 §1.5: the heart under the title, beside "Episode N av M"
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
+                    heart?.let { on -> HeartButton(on, 32.dp, 18.dp) { onFavourite(item, it) } }
+                }
             }
         }
         SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)

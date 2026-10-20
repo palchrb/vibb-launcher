@@ -138,10 +138,21 @@ Built on `main` at `d53edc81` in parallel with design 49 (branch `music-r-a`). �
 - **§1.4 dimmed tiles - built.** `EntryUi.unplayableNow`/`needsWifi` from `NetNow(netCaps, streamMobileData, onRoom)`
   (`unplayableNow` in `ui/UiModel.kt` reuses `itemPlayable`/`spotifyPlayability`); `MusicViewModel.netVersion` moves
   on a default-network callback and when the library is started again. Cases as written; `ASK_ADULT` dims too.
+- **§1.5 favourites - built** on 49's Room 6 (`FavouriteRow`, its DAO; cherry-picked from `music-r-a` 6c17f55c,
+  unchanged). `Snapshot.favourites` (`Store.snapshots` combines `favouritesFlow`), `MusicViewModel.setFavourite`
+  (IO; refused for a context's synthetic item), `HeartButton` in the list rows (40 dp target, 18 dp heart) and beside
+  the player's number line (32 dp); the prune in `Sync` (`applyListing`: what the parsed listing no longer names; own
+  files against the parsed library; a gone entry's hearts when every entry was read - design 39's flip rule). The
+  "Favoritter" tile (`CategoryTiles`, the `favorite` glyph) shows while an entry holds a heart; `FAVOURITES_CATEGORY`
+  = -1 in `shownEntries`/`effectiveCategory`/`backToLibrary`/`startOn`. "Bare favoritter" is not built (dropped, §1.5).
+  - "A tap on it with one entry opens that entry" is built as: the tile is selected and that entry plays as a cover
+    tap would (the player opens) - the list screen only ever shows the playing entry, so "open" can't mean the list.
+    Drop `favouritesTapOpens` if unwanted.
 - **Tests**: `TransportTest` (`d50` clamp, context duration), `NowPlayingTest` (`d50` gain/look/offered, the clearing
   rule, the renderers' means by source), `SpotifyRendererTest` (`d50` fade + pause before the end with nothing sent;
   the belt), `SonosControllerTest` (`d50` hold at the next item at 0, once), `LibraryViewTest` (`d50` start index),
   `UiModelTest` (`d50` per source/network, room, the single line, ASK_ADULT; `d46` arrow), `FitTest` (`d50` the skip
-  pair's slots and number, "Sov · til slutten" at 320 dp), `BridgeTest`/`MusicPlanTest` (`controls`), and the
+  pair's slots and number, "Sov · til slutten" at 320 dp), `FavouritesTest` (set/unset by entry key, the tile and its
+  sentinel, the prune rule, no heart on a context item), `Room6Test` (49's, the migration), `BridgeTest`/`MusicPlanTest` (`controls`), and the
   guards that pinned the old lines (`GuardsTest`, `SourceScanTest`) moved to the new code.
 - **Device checks owed** (§3): the emulator list as written.

@@ -43,6 +43,10 @@ import me.vibb.music.logic.offlineSummary
 import me.vibb.music.logic.requestStands
 import me.vibb.music.logic.search
 import me.vibb.music.logic.shownEntries
+import me.vibb.music.logic.FAVOURITES_CATEGORY
+import me.vibb.music.logic.canFavourite
+import me.vibb.music.logic.favouriteEntryKeys
+import me.vibb.music.logic.favouritesTapOpens
 import me.vibb.music.logic.skipWithin
 import me.vibb.music.logic.sleepAtEndOffered
 import me.vibb.music.playback.OutputKind
@@ -132,6 +136,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },
                     // design 50 §1.1: from the live place (read now, not the last tick), clamped inside the item by its live duration
+                    favourite = { item -> if (canFavourite(n.entry, item.key)) s.favourite(n.entry, item.key) else null },
+                    onFavourite = { item, on -> vm.setFavourite(n.entry, item.key, on) },
                     onSkipBy = { delta -> actions.seekTo(skipWithin(if (n.live) PlayerHub.positionMs() ?: position else position, delta, n.durationMs)) },
                     onSkipTo = skipTo,
                     onList = { vm.screen = Screen.LIST },
@@ -168,7 +174,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 ListScreen(
                     n.entry,
                     n.category,
-                    listRows(shown, n.item.key, heard, onPhone),
+                    listRows(shown, n.item.key, heard, onPhone, s.favourites[n.entry.key].orEmpty().takeIf { !isSpotifyContext(n.entry) }),
                     // Spotify streams only: no "N av M lastet ned", no offline marks (design 26c §4.2)
                     if (isSpotify(n.entry)) null else offlineSummary(s.visible(n.entry).map { it.key }, onPhone),
                     order = listOrderUi(s, n, shown.size),
@@ -177,6 +183,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     onVisible = { first, last -> vm.listShown(n.entry.id, listArtWindow(shown.map { it.artHash }, first, last)) },
                     onBack = { vm.screen = Screen.PLAYER },
                     onPick = { playItem(n.entry.id, it.key) },
+                    onFavourite = { item, on -> vm.setFavourite(n.entry, item.key, on) },
                 )
             }
             Screen.NEWS -> NewsScreen(
@@ -220,8 +227,10 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
 @Composable
 private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerHub.State, spotifyOutcome: String?, actions: Actions, playEntry: (Long) -> Unit) {
     val all = s.entries
-    val selected = effectiveCategory(all, vm.category)
-    val shown = shownEntries(all, selected)
+    // design 50 §1.5: "Favoritter" shows the entries holding a heart
+    val favourites = favouriteEntryKeys(s.favourites)
+    val selected = effectiveCategory(all, vm.category, favourites)
+    val shown = shownEntries(all, selected, favourites)
     // design 50 §1.4: the network as the library (re)appears, at each change and with each snapshot
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(Unit) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bumpNet() } }
@@ -231,6 +240,7 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerH
         // a Spotify tile's line: the loaded entry's web player state, else the stored outcome (design 26c §5.8)
         entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net) },
         tiles = categoryTiles(s.library?.categories.orEmpty(), all),
+        favouritesTile = all.any { it.key in favourites },
         selected = selected,
         startIndex = vm.carouselIndex,
         jumps = vm.carouselJumps,
@@ -239,7 +249,12 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerH
         onBack = actions::backHome,
         onSearch = vm::openSearch,
         onNews = { vm.screen = Screen.NEWS },
-        onCategory = vm::pickCategory,
+        onCategory = { id ->
+            val opens = if (id == FAVOURITES_CATEGORY && vm.category != FAVOURITES_CATEGORY) favouritesTapOpens(all, favourites) else null
+            vm.pickCategory(id)
+            // one entry under Favoritter: the tap opens it, as its cover would (§1.5's proposal)
+            opens?.let { playEntry(it) }
+        },
         onIndex = vm::turned,
         onPlay = { playEntry(it.entry.id) },
         onOpenPlayer = { vm.screen = Screen.PLAYER },

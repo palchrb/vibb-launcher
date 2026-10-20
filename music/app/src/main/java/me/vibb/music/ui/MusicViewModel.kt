@@ -25,7 +25,10 @@ import kotlinx.coroutines.withContext
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
+import me.vibb.music.data.FavouriteRow
 import me.vibb.music.logic.CarouselStart
+import me.vibb.music.logic.canFavourite
+import me.vibb.music.logic.favouriteEntryKeys
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.flipInEffect
 import me.vibb.music.logic.newestFirst
@@ -120,7 +123,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
      * entry's tile in the shown order - once, and never after the kid turned the carousel or came back from the player.
      */
     fun startOn(snap: Snapshot, row: NowPlayingRow) {
-        val shown = shownEntries(snap.entries, effectiveCategory(snap.entries, category))
+        val favourites = favouriteEntryKeys(snap.favourites)
+        val shown = shownEntries(snap.entries, effectiveCategory(snap.entries, category, favourites), favourites)
         val index = carouselStart.first(shown, row.entryId) ?: return
         carouselIndex = index
         carouselJumps++
@@ -141,10 +145,11 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         screen = Screen.LIBRARY
         val entries = snap?.entries ?: return
         val entry = entries.firstOrNull { it.id == entryId } ?: return
-        var shown = shownEntries(entries, effectiveCategory(entries, category))
+        val favourites = favouriteEntryKeys(snap.favourites)
+        var shown = shownEntries(entries, effectiveCategory(entries, category, favourites), favourites)
         if (entry !in shown) {
             category = entry.category?.takeIf { c -> entries.any { it.category == c } }
-            shown = shownEntries(entries, effectiveCategory(entries, category))
+            shown = shownEntries(entries, effectiveCategory(entries, category, favourites), favourites)
         }
         carouselIndex = shown.indexOf(entry).coerceAtLeast(0)
         carouselJumps++
@@ -182,6 +187,17 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     /** The list's visible rows' pictures, [window] (`listArtWindow`), of [entryId] (design 39 §2.2). */
     fun listShown(entryId: Long, window: List<String?>) {
         viewModelScope.launch { ListArtWants.note(getApplication(), entryId, window) }
+    }
+
+    /**
+     * A heart set or cleared (design 50 §1.5): the kid's own, on the phone only - written off the main thread, the
+     * snapshot brings it back to the screens. Never for a context's synthetic item ([canFavourite]).
+     */
+    fun setFavourite(entry: Entry, itemKey: String, on: Boolean) {
+        if (!canFavourite(entry, itemKey)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (on) store.db.insertFavourite(FavouriteRow(entry.key, itemKey)) else store.db.deleteFavourite(entry.key, itemKey)
+        }
     }
 
     /** "Fjern alle". */

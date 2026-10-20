@@ -84,18 +84,28 @@ fun overallProgress(order: List<String>, bookmark: Bookmark?, durationMs: Long?)
 fun categoryTiles(categories: List<Category>, entries: List<Entry>): List<Category> =
     categories.filter { c -> entries.any { it.category == c.id } }.sortedWith(compareBy({ it.sort }, { it.id }))
 
-/** Single choice: a tile shows only its category; tapping it again, or Alle (null), shows all. */
+/**
+ * Single choice: a tile shows only its category; tapping it again, or Alle (null), shows all. "Favoritter" is the
+ * sentinel [FAVOURITES_CATEGORY] (design 50 §1.5), a tile like the others.
+ */
 fun tapCategory(selected: Long?, tapped: Long?): Long? = if (tapped == null || tapped == selected) null else tapped
 
-/** The carousel's entries for [selected]; a category that emptied out under the kid falls back to all. */
-fun shownEntries(entries: List<Entry>, selected: Long?): List<Entry> {
-    val scoped = if (selected == null) emptyList() else entries.filter { it.category == selected }
+/** Is [entry] in [selected]: its category, or for "Favoritter" ([FAVOURITES_CATEGORY]) one of [favourites]' entry keys. */
+private fun inCategory(entry: Entry, selected: Long, favourites: Set<String>): Boolean =
+    if (selected == FAVOURITES_CATEGORY) entry.key in favourites else entry.category == selected
+
+/**
+ * The carousel's entries for [selected]; a category that emptied out under the kid falls back to all. [favourites]:
+ * the entry keys holding a favourite (design 50 §1.5), for the "Favoritter" tile.
+ */
+fun shownEntries(entries: List<Entry>, selected: Long?, favourites: Set<String> = emptySet()): List<Entry> {
+    val scoped = if (selected == null) emptyList() else entries.filter { inCategory(it, selected, favourites) }
     return scoped.ifEmpty { entries }
 }
 
-/** The selection still in force ([selected] unless its category emptied out). */
-fun effectiveCategory(entries: List<Entry>, selected: Long?): Long? =
-    selected?.takeIf { s -> entries.any { it.category == s } }
+/** The selection still in force ([selected] unless its category - or the favourites - emptied out). */
+fun effectiveCategory(entries: List<Entry>, selected: Long?, favourites: Set<String> = emptySet()): Long? =
+    selected?.takeIf { s -> entries.any { inCategory(it, s, favourites) } }
 
 /** Virtual pages: more than one entry wraps (laps of the list), so a swipe never hits an end. */
 const val CAROUSEL_LAPS = 1000
@@ -189,12 +199,23 @@ fun search(query: String, entries: List<Entry>, itemsOf: (Entry) -> List<PlayIte
 }
 
 /** A row in "Liste". */
-data class ListRow(val item: PlayItem, val number: Int, val playing: Boolean, val heard: Boolean, val offline: Boolean)
+data class ListRow(
+    val item: PlayItem,
+    val number: Int,
+    val playing: Boolean,
+    val heard: Boolean,
+    val offline: Boolean,
+    /** The row's heart (design 50 §1.5): set or not; null = no heart (a Spotify context's synthetic item). */
+    val favourite: Boolean? = null,
+)
 
-/** [shown] (the play order, or the shuffled queue) as rows; a heard item shows ✓, the playing one its state. */
-fun listRows(shown: List<PlayItem>, currentKey: String?, heard: Set<String>, onPhone: Set<String>): List<ListRow> =
+/**
+ * [shown] (the play order, or the shuffled queue) as rows; a heard item shows ✓, the playing one its state.
+ * [favourites]: the entry's item keys with a heart, null when its rows carry none (design 50 §1.5).
+ */
+fun listRows(shown: List<PlayItem>, currentKey: String?, heard: Set<String>, onPhone: Set<String>, favourites: Set<String>? = null): List<ListRow> =
     shown.mapIndexed { i, item ->
-        ListRow(item, i + 1, item.key == currentKey, item.key in heard && item.key != currentKey, item.key in onPhone)
+        ListRow(item, i + 1, item.key == currentKey, item.key in heard && item.key != currentKey, item.key in onPhone, favourites?.let { item.key in it })
     }
 
 /** 754_000 -> "12:34", 3_723_000 -> "1:02:03". */

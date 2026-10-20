@@ -531,6 +531,14 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     when the library (re)appears, on each snapshot and on the view model's network callback (`netVersion`). The cover
     at `UNPLAYABLE_ALPHA` (60 %, times the neighbour's alpha), no arrow; one line: the account/state line, else "Trenger
     Wi-Fi" (`tile_needs_wifi`), else the hint - `libraryFit`'s two lines never change. The tap answers as before.
+  - **Favourites**: Room 6 `favourites(entryKey, itemKey)` (one auto migration with design 49's `repeat`), read into
+    `Snapshot.favourites`; a heart (`HeartButton`, Material Symbols `favorite`, peach when set) trailing each list row
+    and beside "Episode N av M" in the player, never on a context's synthetic item (`canFavourite`). Pruned only when
+    a parsed listing (own files: the parsed library) no longer names the item, a gone entry's when every entry was
+    read (`favouritesToPrune`, `favouriteEntriesGone`, `Sync`). "Favoritter" is the category tile first after "Alle"
+    while an entry holds a heart, the sentinel `FAVOURITES_CATEGORY` (-1) that `shownEntries`/`effectiveCategory`
+    (and so `backToLibrary`) take with the entry keys; a tap with one such entry plays it as its cover would
+    (`favouritesTapOpens`); a cover tap there plays the entry as usual. Phone-only: never synced, reported or in the PWA.
   - **The play arrow means "tap to play"** (design 46 §1.4): on every tile (`showsPlayMark`), not only a started one;
     never on a dimmed tile. The progress line alone says "started". 46's queue view (§1.1-§1.3) is parked (§0b).
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item

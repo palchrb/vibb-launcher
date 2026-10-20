@@ -64,7 +64,10 @@ import androidx.compose.ui.util.lerp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import me.vibb.music.R
+import me.vibb.music.logic.FAVOURITES_CATEGORY
 import me.vibb.music.logic.Hint
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import me.vibb.music.logic.Kind
 import me.vibb.music.logic.carouselIndex
 import me.vibb.music.logic.carouselPageCount
@@ -115,6 +118,8 @@ fun animationsOn(): Boolean = ValueAnimator.areAnimatorsEnabled()
 fun LibraryScreen(
     entries: List<EntryUi>,
     tiles: List<Category>,
+    /** "Favoritter" first after "Alle" (design 50 §1.5): while an entry here holds a favourite. */
+    favouritesTile: Boolean,
     selected: Long?,
     startIndex: Int,
     /** Changes when the carousel is turned from outside, so it re-centres on [startIndex]. */
@@ -164,7 +169,7 @@ fun LibraryScreen(
                 Carousel(entries, startIndex.coerceIn(entries.indices), now != null, onIndex, onPlay, Modifier.weight(1f).fillMaxWidth())
             }
         }
-        if (tiles.isNotEmpty()) CategoryTiles(tiles, selected, onCategory)
+        if (tiles.isNotEmpty() || favouritesTile) CategoryTiles(tiles, favouritesTile, selected, onCategory)
         if (now != null) NowPlayingBar(now, onOpenPlayer, onTogglePlay)
     }
 }
@@ -374,14 +379,15 @@ private fun CoverBadges(e: EntryUi, kind: Boolean) {
  * needs at the font scale, never narrower than a fifth of the row ([categoryTileWidthFor], N6): a label is never cut.
  */
 @Composable
-private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (Long?) -> Unit) {
+private fun CategoryTiles(tiles: List<Category>, favouritesTile: Boolean, selected: Long?, onCategory: (Long?) -> Unit) {
     val label = stringResource(R.string.categories)
     val all = stringResource(R.string.category_all)
+    val favourites = stringResource(R.string.category_favourites)
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     // each label as the tile draws it (11 sp ExtraBold, one line), its natural width (dp) at this font scale - measured
     // once per set of names and font scale, not at every composition of the row (qa-26c-emu-music-code N2)
-    val names = listOf(all) + tiles.map { it.name }
+    val names = listOf(all) + listOfNotNull(favourites.takeIf { favouritesTile }) + tiles.map { it.name }
     val labelDp = remember(measurer, density.density, density.fontScale, names) {
         names.associateWith { name -> measurer.measure(name, text(CATEGORY_LABEL_SP.sp, 800, Palette.white), maxLines = 1).size.width / density.density }
     }
@@ -390,6 +396,10 @@ private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (L
         val widthOf = { name: String -> categoryTileWidthFor(room, labelDp[name] ?: 0f).dp }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             item { CategoryTile(null, selected == null, widthOf(all)) { onCategory(null) } }
+            // design 50 §1.5: the sentinel id, first after Alle
+            if (favouritesTile) {
+                item { CategoryTile(null, selected == FAVOURITES_CATEGORY, widthOf(favourites), favourites = true) { onCategory(FAVOURITES_CATEGORY) } }
+            }
             items(tiles, key = { it.id }) { c -> CategoryTile(c, selected == c.id, widthOf(c.name)) { onCategory(c.id) } }
         }
     }
@@ -399,8 +409,8 @@ private fun CategoryTiles(tiles: List<Category>, selected: Long?, onCategory: (L
 private const val CATEGORY_LABEL_SP = 11
 
 @Composable
-private fun CategoryTile(category: Category?, on: Boolean, width: Dp, onClick: () -> Unit) {
-    val label = category?.name ?: stringResource(R.string.category_all)
+private fun CategoryTile(category: Category?, on: Boolean, width: Dp, favourites: Boolean = false, onClick: () -> Unit) {
+    val label = category?.name ?: stringResource(if (favourites) R.string.category_favourites else R.string.category_all)
     val bg = when {
         !on -> Palette.card
         category == null -> Palette.peach
@@ -421,7 +431,9 @@ private fun CategoryTile(category: Category?, on: Boolean, width: Dp, onClick: (
                 .border(if (on) 3.dp else 1.dp, if (on) Palette.fg else Palette.ring, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            if (category == null) {
+            if (favourites) {
+                Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), 20.dp, fg)
+            } else if (category == null) {
                 Glyph(Icons.grid, 20.dp, fg)
             } else {
                 Image(painterResource(categoryGlyph(category)), null, Modifier.size(20.dp), colorFilter = ColorFilter.tint(fg))

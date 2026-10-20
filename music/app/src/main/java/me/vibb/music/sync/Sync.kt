@@ -24,8 +24,11 @@ import me.vibb.music.bridge.BridgeSync
 import me.vibb.music.data.ItemErrorRow
 import me.vibb.music.data.ItemRow
 import me.vibb.music.data.ListingRow
+import me.vibb.music.data.MusicDao
 import me.vibb.music.data.Store
 import me.vibb.music.logic.EntryError
+import me.vibb.music.logic.favouriteEntriesGone
+import me.vibb.music.logic.favouritesToPrune
 import me.vibb.music.logic.flipsToDelete
 import me.vibb.music.logic.ItemError
 import me.vibb.music.logic.Listed
@@ -187,6 +190,13 @@ object Sync {
             // when every entry named was read, a gone entry's.
             val flips = dao.allFlips().associate { it.entryKey to it.parentNewestFirst }
             flipsToDelete(flips, lib.entries, lib.entries.map { it.id }.toSet() == ids).forEach { dao.deleteFlip(it) }
+            // Design 50 §1.5: own files' hearts follow the parsed library's files; a gone entry's go when every entry
+            // named was read (as the flips)
+            for (e in lib.entries.filter { it.source == Source.OWN }) pruneFavourites(dao, e.key, lib.filesOf(e.id).map { it.key }.toSet())
+            val hearts = dao.allFavourites().groupBy { it.entryKey }.mapValues { (_, fs) -> fs.map { it.itemKey }.toSet() }
+            for (key in favouriteEntriesGone(hearts, lib.entries, lib.entries.map { it.id }.toSet() == ids)) {
+                dao.deleteFavourites(key, hearts[key].orEmpty().toList())
+            }
             dao.itemErrors().map { it.entryId }.distinct().filter { it !in ids }.forEach { dao.deleteItemErrors(it) }
             entryErrors.removeAll { it.entry !in ids }
             // Own files' copies of files the library no longer names (a `missing` one is still named, QA #3).
@@ -244,6 +254,15 @@ object Sync {
             listing.items.mapIndexed { i, it -> ItemRow(entry.id, it.key, i, it.title, it.url, it.hls, it.durationMs, it.art) },
         )
         dao.deleteStaleItemErrors(entry.id, listing.version)
+        // design 50 §1.5: a heart goes only when a parsed listing no longer names its item
+        pruneFavourites(dao, entry.key, listing.items.map { it.key }.toSet())
+    }
+
+    /** The hearts of [entryKey] that [listedKeys] (a parsed listing, or the parsed library's own files) no longer names. */
+    private suspend fun pruneFavourites(dao: MusicDao, entryKey: String, listedKeys: Set<String>) {
+        val favourites = mapOf(entryKey to dao.allFavourites().filter { it.entryKey == entryKey }.map { it.itemKey }.toSet())
+        val gone = favouritesToPrune(favourites, entryKey, listedKeys)
+        if (gone.isNotEmpty()) dao.deleteFavourites(entryKey, gone)
     }
 
     /**

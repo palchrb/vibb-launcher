@@ -1,5 +1,9 @@
 package me.vibb.music.ui
 
+import me.vibb.music.R
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.os.SystemClock
@@ -86,6 +90,21 @@ fun Glyph(icon: ImageVector, size: Dp, tint: Color, modifier: Modifier = Modifie
 /** A clickable that reads as a button to TalkBack. */
 fun Modifier.button(label: String?, onClick: () -> Unit): Modifier =
     this.semantics { if (label != null) contentDescription = label }.clickable(role = Role.Button, onClick = onClick)
+
+/**
+ * The kid's heart (design 50 §1.5): Material Symbols `favorite`, peach when set, quiet when not; [size] is the touch
+ * target, [glyph] the heart. TalkBack: "Favoritt", selected or not.
+ */
+@Composable
+fun HeartButton(on: Boolean, size: Dp, glyph: Dp, onToggle: (Boolean) -> Unit) {
+    val label = stringResource(R.string.favourite)
+    Box(
+        Modifier.requiredSize(size).clip(CircleShape).semantics { selected = on }.button(label) { onToggle(!on) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), glyph, if (on) Palette.peach else Palette.dim)
+    }
+}
 
 /** The mockup's round button (44 dp card circle by default): always [size] square, never squeezed
  * into an oval - its row must leave it the room (Fit.kt). */

@@ -40,6 +40,8 @@ fun buildSnapshot(
     spotifyContexts: Map<String, SpotifyContextTrack> = emptyMap(),
     /** `order_flips` (design 39 §3.1): entry key -> the parent's direction (newest first) at the kid's flip. */
     flips: Map<String, Boolean> = emptyMap(),
+    /** `favourites` (design 50 §1.5): entry key -> the item keys with a heart. */
+    favourites: Map<String, Set<String>> = emptyMap(),
 ): Snapshot {
     val byEntry = items.groupBy { it.entryId }
     val done = downloads.filter { it.done }.groupBy { it.entryId }.mapValues { (_, ds) -> ds.map { it.itemKey }.toSet() }
@@ -71,6 +73,7 @@ fun buildSnapshot(
         news = news.map { NewsItem(it.entryId, it.key, it.seq) },
         shuffle = shuffle,
         flips = flips,
+        favourites = favourites,
     )
 }
 
@@ -99,7 +102,12 @@ data class Snapshot(
     val spotifyPlayable: Boolean = SPOTIFY_PLAYABLE,
     /** The kid's order flips (design 39 §3.1): entry key -> the parent's direction at the tap (stale once it changed). */
     val flips: Map<String, Boolean> = emptyMap(),
+    /** The kid's hearts (design 50 §1.5): entry key -> item keys; phone-only, never synced or reported. */
+    val favourites: Map<String, Set<String>> = emptyMap(),
 ) {
+    /** Does item [itemKey] of [entry] carry the kid's heart? */
+    fun favourite(entry: Entry, itemKey: String): Boolean = itemKey in favourites[entry.key].orEmpty()
+
     /**
      * This snapshot for a renderer: [remote] true for a Sonos room (the speaker fetches a Storytel book
      * from the CDN itself, so every book shows), false for the phone (a Storytel book only with its

@@ -51,6 +51,8 @@
     <string name="sleep_title">Sleep in</string>
     <string name="minutes">%1$d min</string>
     <string name="sleep_off">Off</string>
+    <string name="favourite">Favourite</string>
+    <string name="category_favourites">Favourites</string>
     <string name="tile_needs_wifi">Needs Wi-Fi</string>
     <string name="sleep_at_end">To the end</string>
     <string name="sleep_at_end_on">Sleep · at the end</string>
