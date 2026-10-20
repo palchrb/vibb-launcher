@@ -760,16 +760,6 @@ findings, merge to `main`, full suite once.
 
 ### Asked for, scope not settled yet
 
-- **Design 41: a flashlight on Home and on the lock** (the user, 2026-10-19: "lommelykt ... kanskje tilogmed på låst
-  skjerm, som for iphone"; placement decided: "Home og lås", not Kid Settings). Android has no torch app - the Quick
-  Settings tile is out of reach in the kiosk - so the launcher owns it: `CameraManager.setTorchMode` on the camera with
-  `FLASH_INFO_AVAILABLE` (no camera permission needed; the Jelly Star has a flash). A Home tile beside Settings (lit
-  while on) and a round button on the lock's glance page beside Emergency call. Rules: off by itself after 10 min, off
-  when a call comes in (the camera), never off at screen-off (as iPhone). Device check first: whether `setTorchMode`
-  works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock's button
-  is hidden (never a policy lift: qa-r6-launcher-design.md 41-1 - lifting the camera policy reopens design 25b's
-  SystemUI crash path) and the Home tile keeps working - the user decides then. Calm look (no yellow flash icon): the
-  Vibb tones. Launcher round 6 (`docs/design/41-flashlight.md`).
 - **Design 50: the player and the library, the user's picks of 2026-10-20** ("Jeg liker 1, 4 ... Ang 5 ... husker
   hvilken tile som ble spilt ved siste avslutning ... Ang 6 ... grey out de tilesene man vet man ikke får spilt av"):
   (1) **skip buttons** for everything that resumes (books, podcasts): the control row's two side slots become "15 s
@@ -832,16 +822,6 @@ findings, merge to `main`, full suite once.
   "i går 14:50", "15. okt 14:02" (`display_time`, a clock on every row, not only in `title`) - on Requests and on the
   Activity log. (3) `device_commands` older than 30 days are pruned by `retention::prune` like events and locations
   (never a waiting one). (4) The Activity log is where the commands' history lives, with the same clock words.
-- **Design 42: the clock on the lock - Fossify Clock's timer tile and the next alarm** (the user, 2026-10-20; probed
-  the same day: Google's clock draws its timer in a custom view with no readable text, Fossify Clock posts the
-  remaining time as the notification's title every second and sets its alarms with `setAlarmClock`; its stopwatch
-  posts nothing). Decided: Fossify Clock (`org.fossify.clock`, from the catalog, pinned package + signer, no internet
-  permission) is the catalog's clock app - "om fossify oppsettet vil fungere likt over alt og for alle telefoner":
-  it does, the catalog installs the same APK everywhere. The lock's alarm exemption widens by that one pinned app;
-  a next-alarm line ("Alarm tor 07:00"); a timer tile in the music tile's style with the countdown parsed from the
-  title and smoothed locally, no buttons (the notification has none), a tap = the keypad, then Fossify; no stopwatch
-  tile. `docs/design/42-lock-clock.md` (rewritten). Launcher round 6, implementer B after its glance work.
-
 - **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
   NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
@@ -906,13 +886,6 @@ findings, merge to `main`, full suite once.
   all fixed). Device checks owed: §6q on the emulator; row pictures, TalkBack, the real Spotify SDK through a flip and
   a real Sonos room's first reorder on the Jelly Star.
 
-- **Launcher: a parent-PIN event asks for a sync at once** (the user's yes, 2026-10-20: a parent-PIN use reached the
-  inbox and the iPhone minutes later). Corrected by qa-r6-launcher-design.md r6-1: foreign access and the battery edges
-  already request a sync (`SyncRunner.request`), and an unseen boot is a process start, which syncs; only the
-  parent-PIN events ride the next sync (design 24: "no send of its own", decided before push existed). Change:
-  `ParentPin.check` calls `SyncRunner.request` once the result is final (Ok, Wrong, a lockout that starts now; never
-  during a running lockout), decided by a pure `SyncTriggers.pin(...)` rule with its test. Launcher round 6
-  (`docs/design/r6-launcher-small-items.md` §1).
 - **Parked: a display-only widget host on the lock's glance page** (the user, 2026-10-20: "Er det umulig å lage en
   sikker widget host sak i vår launchers lock screen? ... klønete å gjøre alt dette manuelt per app"). Feasible only as
   pure display: `AppWidgetHost` with `appwidget grantbind` at enrolment, every widget under a touch-consuming layer
@@ -1004,6 +977,31 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **Launcher round 6 (2026-10-20, merges 8d17d549 r6-a and c282bb0c r6-b; design QA `docs/design/qa-r6-launcher-design.md`
+  + one revision check; code QA `docs/review/qa-r6-a-code.md` (0 High / 1 Medium / 3 Low, all fixed) and
+  `qa-r6-b-code.md` (0 / 3 / 7, all fixed))**: **a parent-PIN event asks for a sync at once** (`SyncTriggers.pin`
+  after the final verdict, never during a running lockout; foreign access, battery and boots already synced);
+  **design 41 the flashlight** - `Torch`/`TorchRules`, the Home tile before Settings (lit = a filled peach disc),
+  the round button beside Nødsamtale on the lock, off after 10 min (`setExactAndAllowWhileIdle`, re-armed when a
+  switch-off is refused) and at a call's begin (MusicCalls' edges), never at screen-off, no camera-policy lift (a
+  refused ON under the lock hides the lock's button) (`docs/design/41-flashlight.md`); **the lock's music tile
+  rendered alone** (a session callback renders the tile, the page refits only on presence/height change, callbacks
+  coalesce per frame; "4:48 · 25:36" under the bar on both tiles - the compact tile's line costs one notification
+  row with music + 3 notifications, left as shipped pending the user) (`r6-launcher-small-items.md`); **design 42**
+  - Fossify Clock (`org.fossify.clock`, the catalog's, signer `affdb124…` pinned and verified) as the clock app:
+  the alarm exemption widened by it, a next-alarm line ("Alarm tor 07:00"), a timer tile counting down from its
+  notification's title and a stopwatch tile counting up, "Tiden er ute" with one Stopp button firing Fossify's own
+  Dismiss broadcast (background starts denied), nothing for any other channel, the tap = keypad then Fossify, the
+  lock never steps aside for a timer (`42-lock-clock.md`, Fossify's source read). **Device checks owed (the
+  user)**: emulator - a parent-PIN use/wrong/lockout reaches the inbox within seconds and a correct entry uploads no
+  `wrong`; a 2-minute Fossify timer ending with the screen LOCKED rings, the tile says "Tiden er ute" with Stopp,
+  Stopp silences it, the lock never moved; the stopwatch counting up on the lock; an alarm 2 minutes ahead with the
+  screen locked brings Fossify's AlarmActivity up (the `USE_FULL_SCREEN_INTENT` question - if not, Fossify's own
+  prompt at first open is the setup step); "Alarm tor 07:00" for a far alarm; a ringing alarm shows no tile; Google's
+  clock timer shows nothing; the lock tile recording (ffmpeg scene changes: one change per tap) and the music app's
+  player screen recorded the same way; Jelly Star - design 41 §4 (the torch under the camera policy, the camera
+  gesture while lit, 10 min, a call, screen off/on, the camera app afterwards). Goes out with launcher-v0.31.0
+  (the user: no tags until everything is in).
 - **Round 5 (2026-10-20, server 0.30.0; merges 6cf45ae4 r5-a and the r5-b merge after it; design QA
   `docs/design/qa-r5-design.md` + one revision check; code QA `docs/review/qa-r5-a-code.md` (0 High / 0 Medium / 3 Low,
   all fixed) and `qa-r5-b-code.md` (0 / 1 / 2, all fixed))**: **design 43** the PWA's app shell - the document never
