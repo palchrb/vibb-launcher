@@ -603,14 +603,14 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
         .text();
     assert!(!html.contains("id=\"blocked-apps\""), "{html}");
     assert!(!html.contains(&button), "{html}");
-    let today = group(&html, "today");
+    let activity = group(&html, "activity");
     assert!(
-        today.contains("data-answer=\"Allow these apps\""),
-        "{today}"
+        activity.contains("data-command=\"allow_blocked\""),
+        "{activity}"
     );
     assert!(
-        today.contains("The phone said: &#34;allowed: 1 apps&#34;."),
-        "{today}"
+        activity.contains("title=\"allowed: 1 apps\">1 app allowed<"),
+        "{activity}"
     );
 
     // An imposter of a catalog app: listed, why it stays, and no button for it alone.
@@ -657,7 +657,7 @@ async fn an_install_time_block_is_listed_allowed_and_cleared() {
 }
 
 /// QA Low 10: "Allow these apps" goes once the phone answered one pressed after the relock, and
-/// each command's answer - or that there is none - shows in Today.
+/// each command's answer - or that there is none - shows in Activity, its row (design 48).
 #[tokio::test]
 async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
     let app = TestApp::new().await;
@@ -684,13 +684,13 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         &[("blocks", "com.example.app:")],
     )
     .await;
-    // Sent, not answered: the button stays, and Today says so.
+    // Sent, not answered: the button stays, and Activity says so.
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
     assert!(group(&html, "blocked-apps").contains(&button));
-    assert!(group(&html, "today").contains("No answer yet"), "{html}");
+    assert!(group(&html, "activity").contains(">Waiting<"), "{html}");
     assert!(html.contains("1 blocked app waits"), "{html}");
     // The phone takes it and answers.
     let res = app
@@ -714,7 +714,7 @@ async fn the_phones_answers_show_and_an_answered_allow_hides_its_button() {
         .text();
     assert!(!html.contains(&button), "{html}");
     assert!(
-        group(&html, "today").contains("The phone said: &#34;allowed: 1 apps&#34;."),
+        group(&html, "activity").contains(">1 app allowed<"),
         "{html}"
     );
     // The list itself stays with the report it came from; nothing waits any more.

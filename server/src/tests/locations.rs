@@ -281,7 +281,13 @@ async fn a_delivered_command_is_not_shown_as_done() {
         row("wipe")
     );
     assert!(!row("wipe").contains("Send it again"));
-    // A result is done; an answer this server doesn't know is shown as the phone sent it.
+    // A result is done: not a request any more (design 48 §1.4), a row of the summary's Activity.
+    assert!(!page.contains("data-command=\"locate\""), "{page}");
+    let page = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let row = |command: &str| super::locate_page::recent_row(&page, command).to_string();
     assert!(row("locate").contains(">Done<"), "{}", row("locate"));
     // The server's own "ok" (no message from the phone) is no line: the word says it
     // (qa-31-s13-code L3).

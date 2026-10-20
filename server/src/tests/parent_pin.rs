@@ -632,10 +632,10 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     assert_eq!(group.matches("data-event").count(), 3);
     assert!(!group.contains("UTC"), "{group}");
 
-    // The summary's Today: the latest use with the watched-typing tail, and the wrong try, each a
+    // The summary's Now: the latest use with the watched-typing tail, and the wrong try, each a
     // row to the Parent PIN.
     let summary = page(device_page(id, Section::Summary)).await;
-    let today = &summary[summary.find("<section id=\"today\"").expect("Today")..];
+    let today = &summary[summary.find("<section id=\"now\"").expect("Now")..];
     assert!(
         today.contains("Parent PIN used<span class=\"row-sub\">Lock screen opened · 10 min ago · 1 more in 24 h"),
         "{today}"

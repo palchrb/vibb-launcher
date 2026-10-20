@@ -1,12 +1,14 @@
 //! The Locate tab (design 31 step 13, §3.6): the phone switcher as links, the fix as age and
-//! accuracy in local time, the actions and Erase Phone…'s confirm, Location Settings, Recent with
-//! labels instead of command ids, and §5.1's redirect table for every form on the page.
+//! accuracy in local time, the actions and Erase Phone…'s confirm, Location Settings, Requests with
+//! labels instead of command ids (design 48 §1.4), and §5.1's redirect table for every form on the
+//! page.
 
 use axum::http::{Method, StatusCode};
 
 use super::{TestApp, assert_redirect, autosaves, tags};
 
-/// The Recent row of the newest `command` (its stored id is the row's `data-command` hook).
+/// The row of the newest `command` in Requests or Activity (its stored id is the row's
+/// `data-command` hook).
 pub fn recent_row<'a>(page: &'a str, command: &str) -> &'a str {
     page.split(&format!("data-command=\"{command}\""))
         .nth(1)
@@ -75,7 +77,7 @@ fn check_forms(html: &str) {
 
 /// §5.1's redirect table for the Locate tab, built from the rendered forms: each lands back on
 /// the page - Update Location at the map (`#location`, where the wait shows), Ring, Stop Ringing,
-/// Lock and Erase at their group (`#actions`, Recent right under it), Cancel at Recent where its
+/// Lock and Erase at their group (`#actions`, Requests right under it), Cancel at Requests where its
 /// line is, the two pickers at Location Settings (the last group of a long page: a `<noscript>`
 /// Save, or a save from a refused erase's page, must not land at the top - qa-31-s13-code M1).
 /// Every form has a fragment, so none lands at the top. A form the table has no row for fails.
@@ -333,7 +335,7 @@ async fn the_fix_and_the_answer_read_in_local_time() {
         answer.contains("title=\"location is off for this device\">Location is off on the phone<"),
         "{answer}"
     );
-    // The row in Recent says the same, with its word.
+    // The row in Requests says the same, with its word (failed within the day).
     let row = recent_row(&html, "locate");
     assert!(row.contains("Update Location"), "{row}");
     assert!(row.contains("Failed"), "{row}");
@@ -359,7 +361,7 @@ async fn the_fix_and_the_answer_read_in_local_time() {
     assert!(html.contains(">2 Jan"), "{html}");
 }
 
-/// Recent: labels for every command, never its id; times local; Cancel only while it waits; the
+/// Requests: labels for every command, never its id; times local; Cancel only while it waits; the
 /// line after a Cancel in the group.
 #[tokio::test]
 async fn recent_names_each_command_and_cancels_what_waits() {
@@ -529,39 +531,27 @@ fn recent_of(html: &str) -> Option<&str> {
     Some(&html[start..end])
 }
 
-/// Locate's Recent lists the page's own commands; the override commands (pressed on the summary)
-/// are the summary's `#recent`, with Cancel back there (design 44 §1.1-§1.3).
+/// Locate's Requests lists the page's own commands; the summary's Activity every command of the
+/// phone, its Cancel back there (design 44 §1.1, design 48 §1.2, §1.5); an unknown `back` goes to
+/// Locate.
 #[tokio::test]
-async fn each_recent_lists_its_own_commands_and_cancels_back_to_it() {
+async fn requests_list_this_pages_commands_and_activity_every_one() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    // Nothing yet: the summary has no Recent.
-    let summary = app
-        .get_page(&format!("/devices/{id}"), &cookie)
-        .await
-        .text();
-    assert!(
-        recent_of(&summary).is_none(),
-        "an empty Recent on every summary"
-    );
+    // Nothing yet: no Requests (nor Activity).
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    assert!(recent_of(&html).is_none(), "{html}");
 
     for command in ["locate", "install_update"] {
         waiting(&app, id, command, "datetime('now', '-3 minutes')").await;
     }
     let lock_again = waiting(&app, id, "end_windows", "datetime('now', '-2 minutes')").await;
-    for command in ["start_pause", "allow_blocked"] {
-        waiting(&app, id, command, "datetime('now', '-1 minutes')").await;
-    }
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     let locate = recent_of(&html).unwrap();
+    assert!(locate.contains(">Requests</h2>"), "{locate}");
     assert!(locate.contains("data-command=\"locate\""), "{locate}");
-    for other in [
-        "end_windows",
-        "start_pause",
-        "allow_blocked",
-        "install_update",
-    ] {
+    for other in ["end_windows", "install_update"] {
         assert!(
             !locate.contains(&format!("data-command=\"{other}\"")),
             "{other} on Locate"
@@ -573,49 +563,24 @@ async fn each_recent_lists_its_own_commands_and_cancels_back_to_it() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let recent = recent_of(&summary).expect("the summary's Recent");
-    for (command, label) in [
-        ("end_windows", "Lock again"),
-        ("start_pause", "Unlock for 2 h"),
-        ("allow_blocked", "Allow these apps"),
-    ] {
-        let row = recent_row(recent, command);
-        assert!(row.contains(&format!(">{label}<")), "{command}: {row}");
-        assert!(row.contains(">Cancel</button>"), "{command}: {row}");
-    }
-    for other in ["locate", "install_update"] {
+    assert!(recent_of(&summary).is_none(), "{summary}");
+    let activity = &summary[summary.find("<section id=\"activity\"").expect("Activity")..];
+    for command in ["end_windows", "locate", "install_update"] {
         assert!(
-            !recent.contains(&format!("data-command=\"{other}\"")),
-            "{other} on the summary"
+            recent_row(activity, command).contains(">Cancel</button>"),
+            "{command}: {activity}"
         );
     }
-    assert!(recent.contains("<input type=\"hidden\" name=\"back\" value=\"summary\">"));
-    // Under Quick Actions, where the buttons are.
-    assert!(summary.find("id=\"quick\"").unwrap() < summary.find("id=\"recent\"").unwrap());
-
-    // Cancel from the summary comes back to its Recent with the line.
+    assert!(activity.contains("<input type=\"hidden\" name=\"back\" value=\"summary\">"));
     let cancel = format!("/devices/{id}/commands/{lock_again}/cancel");
     let res = app
         .request_form(Method::POST, &cancel, Some(&cookie), &[("back", "summary")])
         .await;
-    assert_redirect(&res, &format!("/devices/{id}?cancel=done"), Some("recent"));
-    app.assert_lands(&res, &cookie).await;
-    let summary = app
-        .get_page(&format!("/devices/{id}?cancel=done"), &cookie)
-        .await
-        .text();
-    assert!(
-        recent_of(&summary)
-            .unwrap()
-            .contains("data-flash=\"recent\">Cancelled. The phone will never get it.")
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}?cancel=done"),
+        Some("activity"),
     );
-    // The cancelled Lock again is Today's answer now, so Recent leaves it out (one row per command
-    // on the page, qa-r5-a-code N2); the waiting ones keep their row and Cancel.
-    let today = &summary[summary.find("<section id=\"today\"").expect("Today")..];
-    assert!(today.contains("data-answer=\"Lock again\""), "{today}");
-    let recent = recent_of(&summary).unwrap();
-    assert!(!recent.contains("data-command=\"end_windows\""), "{recent}");
-    assert!(recent_row(recent, "start_pause").contains(">Cancel</button>"));
     // Too late now; a `back` that isn't known (or none) goes to Locate.
     for fields in [&[("back", "https://evil.example")][..], &[][..]] {
         let res = app
@@ -627,6 +592,112 @@ async fn each_recent_lists_its_own_commands_and_cancels_back_to_it() {
             Some("recent"),
         );
     }
+}
+
+/// Requests' buckets (design 48 §1.4): in flight at any age; failed, expired or never confirmed
+/// for a day; the newest Ring, Stop Ringing, Lock and Erase whatever became of it; never what the
+/// parent cancelled, never a finished Update Location. Cancelling the last waiting one leaves the
+/// group for its line.
+#[tokio::test]
+async fn requests_show_what_is_in_flight_or_just_went_wrong() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // (command, asked, then) - `then` sets the answer columns.
+    let failed = "delivered_at = requested_at, acknowledged_at = requested_at, succeeded = 0, \
+                  result = 'no location fix'";
+    let done = "delivered_at = requested_at, acknowledged_at = requested_at, result = 'ok'";
+    let lost = "delivered_at = requested_at";
+    // Each row asked at its own time, told apart by its exact time in `title` (in UTC here).
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'UTC'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let rows = [
+        // In flight at any age: a lock waiting three days, behind a newer finished one.
+        ("lock", "-72 hours", "", true),
+        ("lock", "-48 hours", done, true),
+        // Gone wrong (failed, expired, never confirmed): shown for a day.
+        ("locate", "-2 hours", failed, true),
+        ("locate", "-49 hours", failed, false),
+        ("locate", "-3 hours", "", true),
+        ("locate", "-74 hours", "", false),
+        ("locate", "-4 hours", lost, true),
+        ("locate", "-98 hours", lost, false),
+        // A finished Update Location: never.
+        ("locate", "-5 minutes", done, false),
+        // The newest Ring whatever its age (a cancelled one after it doesn't count), not the one
+        // before.
+        ("ring", "-75 hours", done, true),
+        ("ring", "-99 hours", done, false),
+        // The parent's own Cancel: never, and it never hides the last real one of its kind.
+        (
+            "wipe",
+            "-1 hours",
+            "cancelled_at = requested_at, cancel_reason = 'parent'",
+            false,
+        ),
+        (
+            "ring",
+            "-30 minutes",
+            "cancelled_at = requested_at, cancel_reason = 'parent'",
+            false,
+        ),
+    ];
+    let mut ids = Vec::new();
+    for (command, age, then, _) in rows {
+        let row = waiting(&app, id, command, &format!("datetime('now', '{age}')")).await;
+        if !then.is_empty() {
+            sqlx::query(&format!("UPDATE device_commands SET {then} WHERE id = ?"))
+                .bind(row)
+                .execute(&app.db)
+                .await
+                .unwrap();
+        }
+        ids.push(row);
+    }
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let requests = recent_of(&html).unwrap();
+    for ((command, age, _, shown), row) in rows.iter().zip(&ids) {
+        let exact: String =
+            sqlx::query_scalar("SELECT requested_at FROM device_commands WHERE id = ?")
+                .bind(row)
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            requests.contains(&format!("title=\"{exact} UTC\"")),
+            *shown,
+            "{command} {age}: {requests}"
+        );
+    }
+    assert_eq!(requests.matches("data-command=").count(), 6, "{requests}");
+    assert!(requests.contains(&format!("/commands/{}/cancel#recent", ids[0])));
+
+    // Cancelling the last waiting one: the group stays for its line.
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let only = waiting(&app, emil, "locate", "datetime('now', '-1 minutes')").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{emil}/commands/{only}/cancel"),
+            Some(&cookie),
+            &[("back", "locate")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/locate?device={emil}&cancel=done"),
+        Some("recent"),
+    );
+    app.assert_lands(&res, &cookie).await;
+    let html = locate_page(&app, &cookie, &format!("?device={emil}&cancel=done")).await;
+    let requests = recent_of(&html).expect("Requests for its line");
+    assert!(
+        requests.contains("data-flash=\"recent\">Cancelled."),
+        "{requests}"
+    );
+    assert!(!requests.contains("data-command"), "{requests}");
 }
 
 /// `locations.json?since=<hours>`: the span's points oldest first, the newest added (`newest`)

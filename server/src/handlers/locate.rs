@@ -1,15 +1,16 @@
 //! The Locate tab (`/devices/locate`, `templates/device_locate.html`; design 31 §3.6, step 13): a
 //! phone switcher, the map (Leaflet against public OSM tiles, design 33), the last fix as age and
 //! accuracy, Update Location, Ring, Stop Ringing, Lock and Erase Phone…, the location settings and
-//! the recent commands. Commands are queued into `device_commands`, the phone is nudged over its
+//! the requests in flight. Commands are queued into `device_commands`, the phone is nudged over its
 //! push channel and fetches them with its policy (see `handlers::device_api::policy`) - within
 //! seconds while it's online, otherwise when it's back. The location policy (off / on request /
 //! every N minutes, handy step 6) decides when the phone takes a fix on its own.
 //!
-//! Design 44: Recent lists only this page's commands ([LOCATE_KINDS]; the summary page has its
-//! own Recent for [OVERRIDE_KINDS]), the trail shows a span ([SPANS], picked in the browser), and
-//! every kept fix is a row on `/devices/{id}/locations` ([show_locations]). The map's script is
-//! `static/locate.js`.
+//! Design 44: the trail shows a span ([SPANS], picked in the browser), and every kept fix is a row
+//! on `/devices/{id}/locations` ([show_locations]). The map's script is `static/locate.js`. Design
+//! 48: Requests ([requests]) lists this page's commands ([LOCATE_KINDS]) while they are in flight
+//! or just went wrong; every command of the phone is in its summary's Activity
+//! (`handlers::activity`).
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
@@ -26,15 +27,11 @@ use crate::models::{
 };
 use crate::security::{self, CurrentAdmin};
 
-/// How many commands Recent lists.
-const RECENT_COMMANDS: i64 = 10;
-
-/// The commands the Locate page sends, the only ones its Recent lists (design 44 §1.1).
+/// The commands the Locate page sends, the only ones its Requests lists (design 44 §1.1).
 pub(crate) const LOCATE_KINDS: &[&str] = &["locate", "ring", "stop_ring", "lock", "wipe"];
 
-/// The commands the phone's summary page sends (its Quick Actions and Blocked Apps): its own
-/// Recent (design 44 §1.2). Install Now's row is on the launcher's app page.
-pub(crate) const OVERRIDE_KINDS: &[&str] = &["end_windows", "start_pause", "allow_blocked"];
+/// How long a request that went wrong stays in Requests (design 48 §1.4).
+const REQUESTS_HOURS: i64 = 24;
 
 /// The trail's spans in hours (0 = everything kept) and their words, the first the default
 /// (design 44 §1.5). The browser remembers the pick (`static/locate.js`).
@@ -115,13 +112,11 @@ struct MapData {
     span: i64,
 }
 
-/// A Recent group (`partials/recent.html`): the Locate page's or the summary's (design 44 §1.3).
+/// The Locate page's Requests (`partials/recent.html`, design 48 §1.4), `#recent`.
 pub(crate) struct Recent {
     pub(crate) device_id: i64,
-    /// The cancel form's `back`: `locate` or `summary`.
-    pub(crate) back: &'static str,
     pub(crate) rows: Vec<CommandRow>,
-    /// After Cancel (`?cancel=done|too_late`): the line in Recent, and whether it was refused.
+    /// After Cancel (`?cancel=done|too_late`): the line in the group, and whether it was refused.
     pub(crate) flash: Option<(&'static str, bool)>,
 }
 
@@ -139,7 +134,8 @@ struct AnswerView {
     exact: String,
 }
 
-/// A Recent row: "Lock · 10:58 · Done", what happened under the label, Cancel while it waits.
+/// A command's row (Locate's Requests, the summary's Activity, Install Now's): "Lock · 10:58 ·
+/// Done", what happened under the label, Cancel while it waits.
 pub(crate) struct CommandRow {
     /// The stored command (`ring`, ...): a `data-` hook for tests, never shown.
     pub(crate) kind: String,
@@ -417,7 +413,7 @@ pub(crate) fn command_row(
     CommandRow {
         kind: command.command.clone(),
         label: command_label(&command.command),
-        asked: asked.map_or_else(|| "Time unknown".to_string(), |t| zone.when(t, now)),
+        asked: asked.map_or_else(|| "Time unknown".to_string(), |t| zone.at(t, now)),
         asked_exact: asked.map(|t| zone.exact(t)).unwrap_or_default(),
         word,
         tone,
@@ -455,38 +451,86 @@ pub async fn locate_result_json(State(state): State<AppState>, Path(id): Path<i6
     }
 }
 
-/// A Recent group for `device`: its newest [RECENT_COMMANDS] commands of `kinds`, as rows in local
-/// times, with the line after a Cancel (`cancel`, the page's `?cancel=`).
-pub(crate) async fn recent(
+/// Locate's Requests for `device` (design 48 §1.4), newest first, with the line after a Cancel
+/// (`cancel`, the page's `?cancel=`): every request still in flight, at any age; one that went
+/// wrong (failed, expired, never confirmed, no answer) for [REQUESTS_HOURS]; and the newest Ring,
+/// Stop Ringing, Lock and Erase whatever became of it. Never a request the parent cancelled (the
+/// Cancel's line says so; it never counts as the newest, so it can't hide the last real one) nor
+/// a finished Update Location (the map shows it). Every kept row is read - retention bounds them
+/// (`retention::prune`).
+pub(crate) async fn requests(
     state: &AppState,
     device_id: i64,
-    kinds: &[&str],
-    back: &'static str,
     cancel: Option<&str>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Result<Recent, sqlx::Error> {
-    let list = vec!["?"; kinds.len()].join(", ");
+    let list = vec!["?"; LOCATE_KINDS.len()].join(", ");
     let sql = format!(
         "SELECT * FROM device_commands WHERE device_id = ? AND command IN ({list}) \
-         ORDER BY requested_at DESC, id DESC LIMIT ?"
+         ORDER BY requested_at DESC, id DESC"
     );
     let mut query = sqlx::query_as::<_, DeviceCommand>(&sql).bind(device_id);
-    for kind in kinds {
+    for kind in LOCATE_KINDS {
         query = query.bind(*kind);
     }
-    let commands = query.bind(RECENT_COMMANDS).fetch_all(&state.db).await?;
+    let commands = query.fetch_all(&state.db).await?;
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
+    let since = now - chrono::Duration::hours(REQUESTS_HOURS);
+    let mut seen = std::collections::HashSet::new();
+    let rows = commands
+        .iter()
+        .filter(|command| {
+            let status = command.status(now.naive_utc(), receipts);
+            // The parent's own Cancel never hides the last real one of its kind.
+            if matches!(
+                status,
+                CommandStatus::Cancelled {
+                    by: CancelledBy::Parent,
+                    ..
+                }
+            ) {
+                return false;
+            }
+            let newest = seen.insert(command.command.as_str()) && command.command != "locate";
+            let lately = parse_db_utc(&command.requested_at).is_some_and(|t| t >= since);
+            in_requests(&status, lately, newest)
+        })
+        .map(|command| command_row(command, zone, now, receipts))
+        .collect();
     Ok(Recent {
         device_id,
-        back,
-        rows: commands
-            .iter()
-            .map(|command| command_row(command, zone, now, receipts))
-            .collect(),
+        rows,
         flash: cancel_flash(cancel),
     })
+}
+
+/// Whether a request is a row of Requests (design 48 §1.4): `lately` = asked within
+/// [REQUESTS_HOURS], `newest` = the newest Ring, Stop Ringing, Lock or Erase.
+fn in_requests(status: &CommandStatus, lately: bool, newest: bool) -> bool {
+    match status {
+        CommandStatus::Cancelled {
+            by: CancelledBy::Parent,
+            ..
+        } => false,
+        CommandStatus::Waiting { .. }
+        | CommandStatus::Erasing { .. }
+        | CommandStatus::Received { overdue: false, .. }
+        | CommandStatus::Sent {
+            unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain | Unconfirmed::CantConfirm,
+            ..
+        } => true,
+        _ if newest => true,
+        CommandStatus::Failed { .. }
+        | CommandStatus::Expired
+        | CommandStatus::Sent {
+            unconfirmed: Unconfirmed::Lost,
+            ..
+        }
+        | CommandStatus::Received { overdue: true, .. } => lately,
+        CommandStatus::Done { .. } | CommandStatus::Cancelled { .. } => false,
+    }
 }
 
 /// The span in `?span=` / `?since=`-style text: one of [SPANS]' hours, else the default.
@@ -520,8 +564,9 @@ fn locations_value(count: i64, hours: i64, newest_age: Option<&str>) -> String {
     }
 }
 
-/// The line in Recent after a Cancel (`?cancel=`), and whether it was refused.
-fn cancel_flash(code: Option<&str>) -> Option<(&'static str, bool)> {
+/// The line after a Cancel (`?cancel=`), in Requests or the summary's Activity, and whether it
+/// was refused.
+pub(crate) fn cancel_flash(code: Option<&str>) -> Option<(&'static str, bool)> {
     match code? {
         "done" => Some(("Cancelled. The phone will never get it.", false)),
         "too_late" => Some((
@@ -650,7 +695,7 @@ async fn locate_view(
         span,
     } = asked;
     let id = device.id;
-    let recent = recent(state, id, LOCATE_KINDS, "locate", cancel, zone, now).await?;
+    let recent = requests(state, id, cancel, zone, now).await?;
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
     // the defaults a new phone gets.
@@ -822,13 +867,13 @@ pub async fn show_locate(
     }
 }
 
-/// `POST /devices/{id}/commands/{command_id}/cancel` (full auth): Recent's "Cancel" for a command
+/// `POST /devices/{id}/commands/{command_id}/cancel` (full auth): the "Cancel" of a command
 /// the phone hasn't fetched yet (the user's decision, 2026-10-12). One statement, so it races the
 /// policy's pop cleanly: whichever comes first wins - a cancelled command is never handed out (the
 /// pop skips `cancelled_at`), and one the phone just fetched can't be cancelled (`too_late`, as is
-/// an expired one, or another phone's). Logged in the security log. Back to the Recent it came
-/// from (`#recent`), where the line says what happened: `back` = `summary` is the phone's summary
-/// page (design 44 §1.3), anything else the Locate page.
+/// an expired one, or another phone's). Logged in the security log. Back to the group it came
+/// from, where the line says what happened: `back` = `summary` is the phone's summary page's
+/// Activity (`#activity`, design 48 §1.5), anything else the Locate page's Requests (`#recent`).
 pub async fn cancel_command(
     State(state): State<AppState>,
     Path((id, command_id)): Path<(i64, i64)>,
@@ -848,7 +893,7 @@ pub async fn cancel_command(
         }
     };
     let back = match form.get("back").map(String::as_str) {
-        Some("summary") => format!("/devices/{id}?cancel={outcome}#recent"),
+        Some("summary") => format!("/devices/{id}?cancel={outcome}#activity"),
         _ => format!("/devices/locate?device={id}&cancel={outcome}#recent"),
     };
     Redirect::to(&back).into_response()
@@ -1584,6 +1629,48 @@ mod tests {
                 assert!(!text.contains(hidden), "{text}");
             }
         }
+    }
+
+    /// The states the page test can't set up at age: (status, shown anyway, shown only lately).
+    #[test]
+    fn requests_take_in_flight_at_any_age_and_failures_for_a_day() {
+        let sent = |unconfirmed| CommandStatus::Sent {
+            at: None,
+            unconfirmed,
+        };
+        for (status, always) in [
+            (sent(Unconfirmed::NotYet), true),
+            (sent(Unconfirmed::OfferedAgain), true),
+            (sent(Unconfirmed::CantConfirm), true),
+            (CommandStatus::Erasing { at: None }, true),
+            (
+                CommandStatus::Received {
+                    at: None,
+                    overdue: false,
+                },
+                true,
+            ),
+            (
+                CommandStatus::Received {
+                    at: None,
+                    overdue: true,
+                },
+                false,
+            ),
+            (sent(Unconfirmed::Lost), false),
+        ] {
+            assert!(in_requests(&status, true, false), "{status:?}");
+            assert_eq!(in_requests(&status, false, false), always, "{status:?}");
+        }
+        let replaced = CommandStatus::Cancelled {
+            at: None,
+            by: CancelledBy::Replaced,
+        };
+        assert!(
+            in_requests(&replaced, false, true),
+            "the newest of its kind"
+        );
+        assert!(!in_requests(&replaced, true, false));
     }
 
     #[test]

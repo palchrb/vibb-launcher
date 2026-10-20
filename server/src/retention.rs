@@ -24,6 +24,9 @@ pub const CRASH_REPORT_DAYS: i64 = 30;
 pub const SECURITY_EVENT_DAYS: i64 = 180;
 /// Web Push deliveries, and subscriptions after they were turned off (design 35 §2.4).
 pub const PUSH_DAYS: i64 = 30;
+/// The phones' commands (`device_commands`, design 48 §1.6), by when they were asked - except one
+/// that may still reach its phone.
+pub const COMMAND_DAYS: i64 = 30;
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -39,6 +42,8 @@ pub struct Pruned {
     pub parent_events: u64,
     /// Push deliveries and turned-off subscriptions (design 35 §2.4).
     pub push_rows: u64,
+    /// The phones' commands (design 48 §1.6).
+    pub commands: u64,
 }
 
 /// One pruning pass:
@@ -52,7 +57,12 @@ pub struct Pruned {
 /// - security log entries older than [SECURITY_EVENT_DAYS];
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
 /// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries and turned-off
-///   subscriptions after [PUSH_DAYS] (design 35 §2.4).
+///   subscriptions after [PUSH_DAYS] (design 35 §2.4);
+/// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
+///   delivered nor cancelled, and not an expiring kind (`models::EXPIRING_COMMANDS` - those are
+///   past their hour) - a lost phone that comes back weeks later must still be wiped or locked
+///   (the policy's pop, `device_api::build_policy`). A delivered one is long past its re-delivery
+///   window; an acknowledged or cancelled one is done (design 48 §1.6).
 pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     let dns_events = sqlx::query(
         "DELETE FROM device_dns_events \
@@ -146,6 +156,20 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    let expiring = crate::models::EXPIRING_COMMANDS;
+    let sql = format!(
+        "DELETE FROM device_commands WHERE requested_at < datetime('now', '-' || ? || ' days') \
+           AND (acknowledged_at IS NOT NULL OR cancelled_at IS NOT NULL \
+                OR delivered_at IS NOT NULL OR command IN ({}))",
+        vec!["?"; expiring.len()].join(", ")
+    );
+    let commands = sqlx::query(&sql);
+    let commands = expiring
+        .iter()
+        .fold(commands.bind(COMMAND_DAYS), |query, kind| query.bind(*kind))
+        .execute(db)
+        .await?
+        .rows_affected();
     Ok(Pruned {
         dns_events,
         locations,
@@ -155,6 +179,7 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
         pin_events,
         parent_events,
         push_rows: deliveries + gone,
+        commands,
     })
 }
 

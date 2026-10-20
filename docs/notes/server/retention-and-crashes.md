@@ -18,6 +18,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   report per phone kept, and the newest one with `call_policy_v1` (the calls warning "stopped reporting that it
   enforces calls" rests on it, qa-cleanup #7). There is no server-side blocked-call log; the phone deletes blocked calls from its call log
   after 30 days (launcher `calls/BlockedCallLog`).
+- **Commands** (`device_commands`, design 48 §1.6): `COMMAND_DAYS` = 30 by `requested_at`, counted in
+  `Pruned.commands` - except one that may still reach its phone: never delivered, never cancelled, never acknowledged
+  and not in `models::EXPIRING_COMMANDS` (the pop's rule in SQL). So an undelivered `lock`, `wipe`, `end_windows`,
+  `allow_blocked` or `install_update` waits at any age (a lost phone back weeks later is still locked or wiped); a
+  cancelled or answered one goes like the rest. The summary's Activity week is a query filter, not retention.
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
   `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`.
 - Tests: `src/tests/cleanup.rs`.
