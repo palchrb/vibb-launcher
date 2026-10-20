@@ -32,6 +32,12 @@ object MusicCalls {
     private var app: Context? = null
     private var state = CallHold()
 
+    /** Others that follow the same call edges ([callEdge]): the flashlight's off rule (design 41
+     * §1.4). Main thread, like [evaluate]. */
+    private val edgeListeners = mutableListOf<(CallEdge) -> Unit>()
+
+    fun addCallEdgeListener(listener: (CallEdge) -> Unit) { edgeListeners += listener }
+
     /** From [MusicMedia.init] (process start, main thread). */
     fun init(context: Context) {
         val ctx = context.applicationContext
@@ -48,7 +54,15 @@ object MusicCalls {
     private fun evaluate() {
         val ctx = app ?: return
         val inCall = musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))
-        if (inCall == state.inCall) return
+        val edge = callEdge(state.inCall, inCall)
+        if (edge == CallEdge.NONE) return
+        for (listener in edgeListeners.toList()) {
+            try {
+                listener(edge)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "A call-edge listener failed", e)
+            }
+        }
         val session = musicSession(ctx)
         // the log only: the hold goes whether or not the music plays (N3) - the music app decides
         val playing = session?.let { sessionPlay(it.playbackState?.state) } == SessionPlay.PLAYING

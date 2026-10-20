@@ -16,7 +16,8 @@ M10: a catalog app is pinned to its package and signer). Revised twice on 2026-1
 - **Fossify Clock** (`org.fossify.clock`, installed through the catalog from GitHub `FossifyOrg/Clock`): a running
   timer posts an ongoing notification (`channel=simple_alarm_timer`, `ONGOING_EVENT|FOREGROUND_SERVICE`, `vis=PUBLIC`)
   whose **title is the remaining time ("11:12", updated every second)** and whose text is "1 timer er i gang"; no
-  actions; `showChronometer=false`. A running stopwatch posts nothing (probed twice). Its alarms go through
+  actions; `showChronometer=false`. A running stopwatch posts the same shape ("Klokke · nå", title "28:25", text "Stoppeklokke" - seen in the shade
+  2026-10-20 after two dumps taken while it wasn't running); so the tile covers both. Its alarms go through
   **`setAlarmClock`** (`Alarm clock: triggerTime=… showIntent=… startActivity`), so `getNextAlarmClock` sees them.
 
 So: Fossify Clock becomes **the catalog's clock app**. The same APK, package and signer on every phone (the catalog
@@ -47,7 +48,8 @@ pins both; Fossify asks for no internet permission).
    fixed-width tabular text measured for "88:88:88"); the time **counts down locally between the app's updates** from
    the last parsed value (a drift corrected by every update; the app updates each second, so the local tick is a
    smoothing, never the truth) and stops at 0:00. No buttons (the notification has none). The tile goes when the
-   notification goes. A stopwatch shows nothing (no notification). The tile's tap: `GlanceTarget.ClockApp` (the
+   notification goes. A stopwatch shows the same tile counting **up** (the parse is the same; "Stoppeklokke" is told from the timer
+   by the notification's text/channel; our label says "Stoppeklokke"; no end). The tile's tap: `GlanceTarget.ClockApp` (the
    app's launch intent) through the opener's one-send-two-starts contract - the keypad first, then Fossify
    (`LockGlanceGuardTest` case). Several timers: the app posts one notification ("2 timere er i gang"); the title is
    the nearest - shown as is.
@@ -97,7 +99,7 @@ same, plus Fossify's alarm ringing over the lock and dismissable.
   42-6 `cleanGlanceText`, the weekday, tabular width.
 - After the probes: the system clock is out, Fossify Clock in as the catalog's clock app with a pinned signer; the
   exemption widened by that one app (§1.1-1.2); the time read from the notification's title and smoothed locally
-  (§1.4); no stopwatch tile.
+  (§1.4); the stopwatch tile too, counting up (seen in the shade after the dumps missed it).
 
 ## Implementation status (2026-10-20, implementer B, branch `r6-b`)
 

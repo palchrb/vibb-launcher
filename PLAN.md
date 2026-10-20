@@ -770,6 +770,25 @@ findings, merge to `main`, full suite once.
   is hidden (never a policy lift: qa-r6-launcher-design.md 41-1 - lifting the camera policy reopens design 25b's
   SystemUI crash path) and the Home tile keeps working - the user decides then. Calm look (no yellow flash icon): the
   Vibb tones. Launcher round 6 (`docs/design/41-flashlight.md`).
+- **Design 50: the player and the library, the user's picks of 2026-10-20** ("Jeg liker 1, 4 ... Ang 5 ... husker
+  hvilken tile som ble spilt ved siste avslutning ... Ang 6 ... grey out de tilesene man vet man ikke får spilt av"):
+  (1) **skip buttons** for everything that resumes (books, podcasts): the control row's two side slots become "15 s
+  tilbake" and "30 s fram" (music gets shuffle/repeat there, design 49); the same two on the lock's music tile for
+  such entries (the launcher; one glyph pair, Material Symbols replay_10/forward_30 or our own 15/30). Previous/Next
+  stay vibb's (`previousAction`: an item over 30 min never restarts, it steps to the previous part; positions per
+  item are never reset by a step - the user's worry - the entry's current item moves, each part keeps its place). (2)
+  **the sleep timer's extra choice "Til slutten"**: finishes the current track/episode/book part, then stops (the
+  Sov menu's fourth row; shown as the remaining time of the item). (3) **the carousel opens on the last played
+  tile**: at start `carouselIndex` is the stored now-playing entry's index (`NowPlayingRow`; 0 today) - no new state.
+  (4) **a tile the phone can't play right now is dimmed**: an entry with no playable item under the current network
+  (a Spotify entry when `spotifyPlayability` refuses - cell without the streaming switch, offline; an NRK/RSS entry
+  with no copy and no streaming allowed; a Storytel book with no copy) draws its cover at ~60 % with its quiet line
+  ("Trenger Wi-Fi", "Ikke lastet ned"); a tap still answers as today (the line, never a silent block), nothing is
+  hidden. (5) **Favoritter**: a heart per track/episode in the list and the player, a "Favoritter" category tile
+  first after Alle (the tile row scrolls past four, so width is no issue); phone-only (Room), never synced. Not taken:
+  the "Fortsett" strip (3 covers it), the offline check badge (4 covers it the user's way). The rewind-after-a-long-pause
+  idea (5-10 s back after > a few minutes paused) is offered again as part of (1) - the user to say. Design note first;
+  the music round with 46 and 49.
 - **Design 49: shuffle and repeat in the player's control row** (the user, 2026-10-20: "en spesifikk shuffle knapp og
   repeat knapp ved siden av next/prev ... toggle for shuffle av og på - og toggle for ikke repeat, repeat all eller
   repeat 1 sang"). Today: a shuffle button exists in the row's side slot but only for `canShuffle` = own files that
@@ -784,6 +803,16 @@ findings, merge to `main`, full suite once.
   queue's "next 20" view (design 46) follows. Resume entries keep shuffle hidden as today. The behaviour reference is
   vibb's player for the phone; Spotify's own app for the look of the two toggles. Design note first; the music round
   with 46.
+- **Design 51: "show the text" per app on the lock's glance page** (the user, 2026-10-20: "definere per enhet som
+  får poste push meldinger på lock screen hvorvidt full tekst skal vises eller ikke ... for en klokke app er det
+  lite å tape på det, samtidig som fulle meldinger vil man kanskje ikke vise på låst skjerm"). Today `lock_glance`
+  is `{apps: [pkg…], show_text: bool}` - one switch for all (design 25 §2.1, `GlancePolicy`). Decided: per app -
+  the policy becomes `{apps: [{package, show_text}…]}` (the launcher keeps reading the old shape: a plain string =
+  the old global `show_text`; an older launcher given the new shape ignores objects it can't read and shows missed
+  calls only, design 25's fail-safe); the PWA's Lock page gets a text switch per ticked app in place of the global one
+  (`device_lock.html` #notifications, autosave, back to its group - the no-jump rule); `policy_json_keys_snapshot` and
+  `PolicyResponseCompatTest` move together, both directories in one commit. Design 42's clock tile is untouched (its
+  own reader, the time only). Server round 6 with design 48, the launcher part in the same commit.
 - **Design 48: one Activity log on the phone's summary** (the user, 2026-10-20, a screenshot of the summary after
   round 5: "Hvorfor recent og today, og så vises ikke den today saken på recent heller? ... samle loggen på bunnen";
   "høres greit ut" to this): today the summary has Recent (the override commands the parent asked for, design 44) and
@@ -803,21 +832,16 @@ findings, merge to `main`, full suite once.
   "i går 14:50", "15. okt 14:02" (`display_time`, a clock on every row, not only in `title`) - on Requests and on the
   Activity log. (3) `device_commands` older than 30 days are pruned by `retention::prune` like events and locations
   (never a waiting one). (4) The Activity log is where the commands' history lives, with the same clock words.
-- **Design 42: the clock on the lock - a timer tile like iPhone's, from the system clock alone** (the user, 2026-10-20:
-  "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp for å slå av og på ... når man
-  trykker på den så vil den i såfall åpne appen"; and "bruker systemklokken for å ikke skape noe mulige
-  angrepsflater" - no Fossify exemption, no hosted widgets). Decided: (1) a next-alarm line on the glance page from
-  `AlarmManager.getNextAlarmClock()` ("Alarm 07:00", only when the creator is the system clock app, as the PIN lock's
-  exemption already requires); (2) a tile in the music tile's style while the system clock has an ongoing timer or
-  stopwatch notification (the lock's notification listener reads it already for the glance rows): the remaining time
-  counted down locally from the notification's chronometer base (`when`, `EXTRA_CHRONOMETER_COUNT_DOWN`), the title
-  ("Timer", "Stoppeklokke"), and at most two buttons that are the notification's own actions (Pause/Resume, Stop) fired
-  through their `PendingIntent` - no app opens, nothing the lock didn't already allow; a tap on the tile itself goes
-  the glance rows' way: the keypad first, then the clock app (`GlanceOpener`). The tile goes when the notification
-  goes. Nothing is drawn from another app's views (no `AppWidgetHost`): the tile is our text and our buttons. Fits
-  `glanceFit` like the time-rule card (PLAN "A time rule shows as a card"). Emulator: Google's clock (system);
-  Jelly Star: its clock package to be checked (the alarm exemption needs it). Launcher round with 41 and the lock
-  tile's flicker; a design note first.
+- **Design 42: the clock on the lock - Fossify Clock's timer tile and the next alarm** (the user, 2026-10-20; probed
+  the same day: Google's clock draws its timer in a custom view with no readable text, Fossify Clock posts the
+  remaining time as the notification's title every second and sets its alarms with `setAlarmClock`; its stopwatch
+  posts nothing). Decided: Fossify Clock (`org.fossify.clock`, from the catalog, pinned package + signer, no internet
+  permission) is the catalog's clock app - "om fossify oppsettet vil fungere likt over alt og for alle telefoner":
+  it does, the catalog installs the same APK everywhere. The lock's alarm exemption widens by that one pinned app;
+  a next-alarm line ("Alarm tor 07:00"); a timer tile in the music tile's style with the countdown parsed from the
+  title and smoothed locally, no buttons (the notification has none), a tap = the keypad, then Fossify; no stopwatch
+  tile. `docs/design/42-lock-clock.md` (rewritten). Launcher round 6, implementer B after its glance work.
+
 - **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
   NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
@@ -898,6 +922,21 @@ findings, merge to `main`, full suite once.
   widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
   targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
   surface.
+- **Catalog apps: protected from force-stop, a one-tap battery exemption at install** (the user, 2026-10-20: "sikre
+  at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). Two parts: (1) the device
+  owner sets `setUserControlDisabledPackages` for every catalog-installed app (the kid can't force-stop or clear it;
+  from Android 12 it is kept out of app hibernation) - plain code at install/allow time, removed when the app leaves
+  the catalog; (2) the battery optimisation exemption has no device-owner API, so right after a catalog install the
+  launcher opens the system dialog for that package (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `package:<pkg>`;
+  the app must declare the permission - Fossify Clock does) and someone taps Allow once (the user, 2026-10-20: "da må forelderen først låse opp telefonen": yes - so the dialog
+  is shown to the kid on Home right after the install, with one plain line ("La <app> jobbe i bakgrunnen?"), since it
+  only lets the app work in the background - the user's call, 2026-10-20: "La barnet trykke ... Så slipper man en
+  pin-inntasting på noe ufarlig"; a Deny asks again at the next install or a day later, never nags; no PIN session
+  involved; alarms need none of
+  this: `setAlarmClock` rings through Doze), the way design 19b does for the launcher itself; the app's page in the PWA shows the state ("exempt" / "not yet", from the status report's
+  app list) and a row to ask again. Verify on the emulator first: the dialog for another package accepted from our
+  app on Android 16, and what `setUserControlDisabledPackages` exempts there. Launcher round 7 (+ the status contract
+  field in both directories).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`

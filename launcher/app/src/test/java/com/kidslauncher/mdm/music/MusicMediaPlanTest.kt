@@ -248,7 +248,9 @@ class MusicSuspensionGuardTest {
         assertTrue(evaluate.contains("session?.transportControls?.sendCustomAction(command, Bundle())"))
         assertFalse(calls.contains("transportControls?.pause()"))
         assertFalse(calls.contains("transportControls?.play()"))
-        assertTrue(file("music/MusicSessions.kt").contains("VolumeCap.init(app)\n            MusicCalls.init(app)"))
+        // First, in its own try (design 41: the flashlight's call edges hang on it; qa-r6-a-code L3).
+        assertTrue(file("music/MusicSessions.kt").contains("fun init(app: Context) {\n        // The call rule in its own try"))
+        assertTrue(file("music/MusicSessions.kt").contains("        try {\n            MusicCalls.init(app)\n        } catch"))
     }
 
     @Test
@@ -284,8 +286,8 @@ class MusicSuspensionGuardTest {
 
     @Test
     fun `the headset watch starts with the process, its baseline read before the callback, the stamps loaded on first use`() {
-        // Design 28 §2.3/§4 (QA L4): after the call rule (the pin above), in its own try; the state never waits for it.
-        assertTrue(file("music/MusicSessions.kt").contains("MusicCalls.init(app)\n            MusicListening.init(app)"))
+        // Design 28 §2.3/§4 (QA L4): after the volume cap (the call rule has its own try since design 41), in its own try; the state never waits for it.
+        assertTrue(file("music/MusicSessions.kt").contains("VolumeCap.init(app)\n            MusicListening.init(app)"))
         val listening = file("music/MusicListening.kt")
         val init = body(listening, "fun init(")
         val baseline = init.indexOf("val baseline = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)")

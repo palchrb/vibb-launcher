@@ -158,6 +158,9 @@ class HomeActivity : UIObjectActivity() {
     // Chatty apps change their counts often: coalesce, and only rebuild the grid from the
     // already-filtered apps (QA step 5 #6).
     private val badgeRender = Runnable { renderGrid() }
+
+    /** The flashlight's state changed (design 41; its callback, main thread): the tile follows. */
+    private val torchListener: () -> Unit = { renderGrid() }
     private val badgeListener: () -> Unit = {
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
@@ -421,6 +424,7 @@ class HomeActivity : UIObjectActivity() {
         WallpaperStore.addListener(wallpaperListener)
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
+        com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -601,6 +605,7 @@ class HomeActivity : UIObjectActivity() {
         refreshHandler.removeCallbacks(badgeRender)
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
+        com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -741,7 +746,7 @@ class HomeActivity : UIObjectActivity() {
         if (!contentShown) return
         val data = gridData
         gridAdapter.submit(
-            homeGrid(data.apps, showPhoneBook, BadgeStore.counts),
+            homeGrid(data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state),
             data.infos,
             data.icons,
             data.metrics,

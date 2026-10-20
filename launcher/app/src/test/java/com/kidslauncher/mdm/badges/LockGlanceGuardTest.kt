@@ -246,7 +246,10 @@ class LockGlanceGuardTest {
     fun `the flashlight button toggles the torch and nothing else (design 41 §2)`() {
         val wiring = Regex("""glance\.lockGlanceTorch\.setOnClickListener \{([^}]*)\}""").findAll(panel).map { it.groupValues[1].trim() }.toList()
         assertEquals(listOf("torch?.toggle()"), wiring)
-        assertEquals(1, Regex("""\btoggle\(""").findAll(panel).count())
+        // The port's toggle is the phone's Torch and nothing else (design 41).
+        assertEquals("the button, the adapter and its Torch call", 3, Regex("""\btoggle\(""").findAll(panel).count())
+        assertTrue(panel.contains("override fun toggle() = Torch.toggle(context.applicationContext)"))
+        assertTrue(panel.contains("private val torch: TorchPort? = lockTorch(activity),"))
         // The panel never reaches the camera itself: no camera manager, torch mode or camera policy.
         for (forbidden in listOf("CameraManager", "setTorchMode", "setCameraDisabled", "CameraLock", "DevicePolicyManager")) {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))

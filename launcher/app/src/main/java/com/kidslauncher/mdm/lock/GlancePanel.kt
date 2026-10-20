@@ -39,6 +39,7 @@ import com.kidslauncher.mdm.calls.relativeDay
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
+import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.ClockFormat
@@ -53,6 +54,20 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 private const val LOG_TAG = "GlancePanel"
+
+/**
+ * The phone's torch as the lock's [TorchPort] (design 41 §1.3, §1.5): a flash unit when `Torch`
+ * found one, lit as it reports, and refused while LOCKED when it hides the lock's button. The
+ * button's toggle is `Torch.toggle` and nothing else.
+ */
+internal fun lockTorch(context: Context): TorchPort = object : TorchPort {
+    override val hasFlash: Boolean get() = Torch.state != null
+    override val lit: Boolean get() = Torch.state?.lit == true
+    override val refusedWhileLocked: Boolean get() = Torch.state != null && !Torch.lockButtonShown
+    override fun toggle() = Torch.toggle(context.applicationContext)
+    override fun addListener(listener: () -> Unit) = Torch.addListener(listener)
+    override fun removeListener(listener: () -> Unit) = Torch.removeListener(listener)
+}
 
 /**
  * The PIN lock's glance page (design 25, mockup LockGlance.dc.html; the rules are the pure
@@ -77,8 +92,8 @@ class GlancePanel(
     private val keypad: View,
     /** The stage changed: the activity renders the keypad's prompt. */
     private val onStage: () -> Unit,
-    /** The flashlight (design 41; the lock passes the `Torch`); `null` = no button. */
-    private val torch: TorchPort? = null,
+    /** The flashlight (design 41): the phone's `Torch` ([lockTorch]); `null` = no button. */
+    private val torch: TorchPort? = lockTorch(activity),
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)

@@ -118,3 +118,39 @@ other round-6 changes), and the 320/360/411 dp width checks with the button in t
   at 320/360/411 dp, the button a fixed round size, the child order ending in the row.
 - **Device checks owed**: §4 on the Jelly Star once `Torch` is wired (the emulator has no flash unit, so the button
   never shows there).
+
+## Implementation status (2026-10-20, branch r6-a; the lock's button is implementer B's)
+
+Built: `torch/TorchRules.kt` (pure: `torchCamera`, `torchStep`, `torchRefusedOnLock`, `torchLockButton`,
+`TORCH_AUTO_OFF_MS`) and `torch/Torch.kt` (glue: the camera, `setTorchMode`, the `TorchCallback`, the auto-off alarm
+to the non-exported `TorchOffReceiver` with `setExactAndAllowWhileIdle`, the call-edge rule, the unlock clearing a
+refusal), started from `Application.initRest` after `MusicMedia.init`. The call hook is a pure
+`callEdge(wasInCall, inCall)` in `MusicMediaPlan.kt`, which `callHoldStep` now uses too, and
+`MusicCalls.addCallEdgeListener`, called from `MusicCalls.evaluate` on every edge before the music's own part. Home:
+`GridTile.Flashlight(lit)`, `homeGrid(..., torch: TorchState?)` (default `null`), the adapter's two `when`s,
+`HomeActivity`'s listener -> `renderGrid()`, `stateDescription` "på"/"av". The glyphs `torch_glyph_on`/`_off` come
+from `material-symbols.sh` (`TORCH_GLYPHS`, hashes added). The API for B's lock button: `Torch.state`,
+`Torch.toggle(context)`, `Torch.lockButtonShown` (a flash unit and no `CAMERA_DISABLED` refusal under the lock in
+this process), `Torch.addListener`/`removeListener` (main thread).
+
+Tests: `TorchRulesTest` (6: the alarm armed at every on and cancelled on every off path, exact and while idle, the
+receiver not exported; a call's beginning from each of the three sources, and its end; no screen event in the torch;
+the refusal and the unlock; no flash unit; nothing opened, no camera policy, nothing stored), `HomeModelTest` (the
+tile before Settings, its state, its absence).
+
+Deviations:
+- The dark tile is the indigo tone (`kid_torch_tile` = `TONE_INDIGO`), so it reads apart from the slate Settings
+  tile beside it. The note only said "the Vibb tones".
+- The glyph hashes in `material-symbols.sh` were computed from the files as fetched once, because the sandbox
+  couldn't run the script's own download. The reconstruction method was checked against an existing glyph's pinned
+  hash (`bedtime`), and the script's next run verifies them.
+- Code QA fix round (qa-r6-a-code M1): only the platform's DARK cancels the auto-off alarm, and a switch-off that
+  fails (the alarm's, a call's) arms it again (`torchAlarmAfterOff`). So a torch lit on Home before the lock and
+  refused off under the camera policy is tried again every 10 minutes; it goes off as soon as an off is accepted
+  (at the latest at the next unlock, from Home), never staying lit for want of an alarm. Only a refused *on*-tap
+  hides the lock's button; a refused off keeps it, so a lit torch keeps its off button. This only matters if the
+  probe finds that the policy blocks the torch.
+
+Device checks owed (all of §4 - the emulator has no flash unit): step 0's probe of the lock's button under the camera
+policy (B and the user); steps 1-4 on the Jelly Star for the tile: on/off, the 10 minutes, an incoming cellular call
+and a ringing VoIP call, screen off and on still lit, the camera app afterwards.

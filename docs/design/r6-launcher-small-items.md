@@ -124,3 +124,23 @@ recording.
   change per play/pause tap, no full-card redraw ~0.8 s later; a track change from a one-line to a two-line title
   refits once (the "Lås opp"/"Nødsamtale" row stays on screen); the line ticking with no page movement. The same
   recording on the music app's player screen (no code this round).
+
+## Implementation status, §1 (2026-10-20, branch r6-a; §2 is implementer B's)
+
+Built: the pure `push/SyncTriggers.pin(result, lockoutAlreadyRunning)` and its call in `ParentPin.check`.
+`check` is now a `synchronized(this)` block instead of `@Synchronized`. Inside it, after the vault and foreign-access
+checks, it reads `parentPinStatus(store, fingerprint, now).lockoutMs > 0` (with the same `now` as `checkParentPin`;
+an unreadable state becomes a committed lockout there, so it counts as running). After the block it calls
+`SyncRunner.request(app, "pin_event")` when the rule says so. `checkParentPin` is unchanged, the event body and upload
+are unchanged, and there is no API change.
+
+Tests: `SyncTriggersTest` (2: the rule over every result, and by source: the status read before `checkParentPin`, the
+request after the lock, exactly one request in `ParentPin.kt`); `ParentPinCallersTest` still holds (the foreign-access
+refusal before the count).
+
+Deviation: the request runs outside `ParentPin`'s lock, not merely after the result. Requesting inside the lock
+would nest SyncRunner's monitor under ParentPin's, and the class's rule is that `check` takes no other lock.
+
+Device checks owed (§4): on the emulator, a parent-PIN use reaches the inbox within seconds
+(`CommandListenerService: ... sync (pin_event)`), a wrong PIN and a lockout starting do too, a correct entry uploads
+no `wrong` event, and a kid's OK during a running lockout causes no sync.

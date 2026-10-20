@@ -254,9 +254,15 @@ object MusicSessions {
  */
 object MusicMedia {
     fun init(app: Context) {
+        // The call rule in its own try: the flashlight's call edges hang on it too (design 41), so a
+        // failure in the volume cap's setup must not take them along.
+        try {
+            MusicCalls.init(app)
+        } catch (e: Exception) {
+            Log.e(LOG_TAG, "Call-edge setup failed", e)
+        }
         try {
             VolumeCap.init(app)
-            MusicCalls.init(app)
             MusicListening.init(app)
             ContextCompat.registerReceiver(
                 app,

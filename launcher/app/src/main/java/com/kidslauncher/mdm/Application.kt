@@ -380,6 +380,8 @@ class Application : android.app.Application() {
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
         // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
         com.kidslauncher.mdm.music.MusicMedia.init(this)
+        // The flashlight (design 41): its camera, the platform's torch callback, the call-edge rule.
+        com.kidslauncher.mdm.torch.Torch.init(this)
         // The lock's glance page (design 25): the parent's choice from the cached policy (off the
         // main thread), and our missed-call notification known again if it is still on screen.
         com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()

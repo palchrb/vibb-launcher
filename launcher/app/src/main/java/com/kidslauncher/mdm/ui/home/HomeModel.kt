@@ -27,6 +27,10 @@ sealed interface GridTile {
 
     data class App(val app: GridApp, val badge: Int) : GridTile
 
+    /** The flashlight (design 41), right before [Settings] - only on a phone with a flash unit. The
+     * one tile that toggles instead of opening; no long-press menu. */
+    data class Flashlight(val lit: Boolean) : GridTile
+
     /** The kid's own settings (wallpaper, Wi-Fi, Bluetooth, brightness), always last. It has no
      * long-press menu - only [App] tiles do (QA 08 #10). */
     data object Settings : GridTile
@@ -43,14 +47,20 @@ fun showPhoneBookTile(state: CallPolicyState): Boolean = state !is CallPolicySta
 /**
  * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), then
  * [apps] by label (case-insensitive, stable), each with its unread count from [badges]
- * (0 = no badge), then the Settings tile.
+ * (0 = no badge), then the flashlight ([torch]; `null` = no flash unit, no tile) and the Settings tile.
  */
-fun homeGrid(apps: List<GridApp>, showPhoneBook: Boolean, badges: Map<String, Int>): List<GridTile> {
+fun homeGrid(
+    apps: List<GridApp>,
+    showPhoneBook: Boolean,
+    badges: Map<String, Int>,
+    torch: com.kidslauncher.mdm.torch.TorchState? = null,
+): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
     }
+    if (torch != null) tiles += GridTile.Flashlight(torch.lit)
     tiles += GridTile.Settings
     return tiles
 }

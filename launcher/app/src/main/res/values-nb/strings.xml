@@ -28,6 +28,10 @@
     <string name="notification_channel_calls_silent">Samtaler (samtaleskjermen er åpen)</string>
     <string name="calls_phone_book">Telefonbok</string>
     <string name="kid_settings_title">Innstillinger</string>
+    <!-- Lommelykten (design 41): Home-flisen og låsens knapp, og TalkBacks tilstandsord. -->
+    <string name="torch_title">Lommelykt</string>
+    <string name="torch_state_on">på</string>
+    <string name="torch_state_off">av</string>
     <string name="calls_phone_book_empty">Det er ingen å ringe ennå. Nødnumrene (112, 110, 113) virker alltid fra nødknappen på låseskjermen.</string>
     <string name="calls_off">Samtaler er slått av på denne telefonen. Nødnumrene virker fortsatt.</string>
     <string name="calls_call">Ring</string>

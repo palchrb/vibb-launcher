@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.calls.PhoneBookActivity
+import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.ui.kidsettings.KidSettingsActivity
 import com.kidslauncher.mdm.ui.list.apps.showAppContextMenu
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
@@ -25,7 +26,8 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
 
 /**
  * The home grid (mockup Main.dc.html, design 08): the phone book first, then the apps as
- * coloured circles with their unread badge, then the kid's Settings. What is shown is decided by
+ * coloured circles with their unread badge, then the flashlight (design 41) and the kid's Settings.
+ * What is shown is decided by
  * [homeGrid], the sizes by [gridMetrics]. Icons arrive already rendered ([KidAvatars.renderAppIcon]
  * off the main thread); a missing one shows a grey circle until the next pass. Tapping an app
  * runs its normal launch action; long-press (apps only) shows the drawer's menu (hide/rename).
@@ -74,6 +76,8 @@ class HomeGridAdapter(
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
                     GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
+                    // Opens nothing: the torch's state comes back through its callback (renderGrid).
+                    is GridTile.Flashlight -> Torch.toggle(activity)
                     is GridTile.App -> {
                         val rect = Rect().also { v.getGlobalVisibleRect(it) }
                         infos[tile.app.key]?.getAction()?.invoke(activity, rect)
@@ -119,10 +123,12 @@ class HomeGridAdapter(
         PressFeedback.reset(holder.itemView)
     }
 
-    private fun glyphTile(holder: ViewHolder, color: Int, glyph: Int, label: Int) {
+    /** [glyphTint]: the glyph's colour, `null` = its own white. */
+    private fun glyphTile(holder: ViewHolder, color: Int, glyph: Int, label: Int, glyphTint: Int? = null) {
         val context = holder.itemView.context
         holder.icon.backgroundTintList = ColorStateList.valueOf(context.getColor(color))
         holder.icon.setImageResource(glyph)
+        holder.icon.imageTintList = glyphTint?.let { ColorStateList.valueOf(context.getColor(it)) }
         // The mockup's 28 dp glyph in a 60 dp circle.
         val pad = KidAvatars.dp(context, metrics.iconDp * 16f / 60f)
         holder.icon.setPadding(pad, pad, pad, pad)
@@ -135,10 +141,23 @@ class HomeGridAdapter(
         val context = holder.itemView.context
         holder.applyMetrics(metrics)
         KidInk.label(holder.label, ink)
+        // Only the flashlight has a state; a recycled view starts without one.
+        holder.itemView.stateDescription = null
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)
+            // Design 41: dark - the indigo tone, the struck-through glyph; lit - a filled peach disc with
+            // the night glyph. No yellow, no animation.
+            is GridTile.Flashlight -> {
+                if (tile.lit) {
+                    glyphTile(holder, R.color.kid_accent, R.drawable.torch_glyph_on, R.string.torch_title, glyphTint = R.color.kid_ground)
+                } else {
+                    glyphTile(holder, R.color.kid_torch_tile, R.drawable.torch_glyph_off, R.string.torch_title)
+                }
+                holder.itemView.stateDescription = context.getString(if (tile.lit) R.string.torch_state_on else R.string.torch_state_off)
+            }
             is GridTile.App -> {
+                holder.icon.imageTintList = null
                 holder.icon.setPadding(0, 0, 0, 0)
                 val bitmap = icons[tile.app.key]
                 if (bitmap != null) {

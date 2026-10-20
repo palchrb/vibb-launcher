@@ -481,6 +481,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- The flashlight's auto-off after 10 minutes (design 41): only our own alarm targets it. -->
+        <receiver
+            android:name=".torch.TorchOffReceiver"
+            android:exported="false" />
         <receiver
             android:name=".server.PackageReplacedReceiver"
             android:exported="false">
