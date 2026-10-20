@@ -486,8 +486,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `41-flashlight.md` §1.3): a session or listening-window callback never re-renders the page - `GlanceCoalescer` folds a
   frame's callbacks into one `tileChanged`, which renders the tile alone and refits only on the pure `glanceRefitDue`
   (the tile came or went, or the shown tile's measured height differs from the last fit's, `fitTilePx`); the rows are
-  rebound only on store/notifier changes. Both tiles have a time line under the bar ("4:48 · 25:36", `glanceTimeLine`;
-  `match_parent`, one line, `tnum`, so the 1 s tick - `MusicLockPanel.tick`, bars and lines only - never asks for a
+  rebound only on store/notifier changes. The full tile has a time line under the bar ("4:48 · 25:36", `glanceTimeLine`; the compact one none - the user, 2026-10-20;
+  `match_parent`, one line, `tnum`, so the 1 s tick - `MusicLockPanel.tick`, bars and the line only - never asks for a
   layout). "Nødsamtale" sits centred in the bottom row `lock_glance_bottom` with the round flashlight button at its end
   (`fixed` is measured from the row, 106 dp); the button follows the `TorchPort` the lock passes (`glanceTorchButton`:
   hidden without a flash unit or after a `CAMERA_DISABLED` refusal while LOCKED), toggles the torch and opens nothing.

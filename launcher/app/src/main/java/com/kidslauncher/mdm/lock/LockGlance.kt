@@ -115,7 +115,7 @@ fun glanceTile(session: MusicSession?): Boolean = session != null
 fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
     tileShown && pageShown && session?.playing == true
 
-/** The line under both tiles' bar (r6 §2): "4:48 · 25:36"; a live stream or an unknown duration
+/** The line under the full tile's bar (r6 §2; the compact tile has none - the user, 2026-10-20): "4:48 · 25:36"; a live stream or an unknown duration
  * shows the position alone. The bar's content description keeps "4:48 av 25:36". */
 fun glanceTimeLine(positionMs: Long, durationMs: Long): String =
     if (durationMs > 0) "${clockText(positionMs)} · ${clockText(durationMs)}" else clockText(positionMs)
