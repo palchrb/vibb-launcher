@@ -915,7 +915,8 @@ findings, merge to `main`, full suite once.
   widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
   targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
   surface.
-- **Catalog apps' battery state in the report, no battery-exemption flow** (the user, 2026-10-20: "sikre
+- **REMOVED 2026-10-20 (the user: "La oss ikke blande oss i det!"; design r7 §2.5): the report's `battery_exempt` and the
+  Apps page's "Background:" line are gone, launcher and server; the text below is history.** Catalog apps' battery state in the report, no battery-exemption flow (the user, 2026-10-20: "sikre
   at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). The battery optimisation
   exemption: NO flow (the user, 2026-10-20, on the proposal of a time-boxed Settings window for Android's dialog: "Nei
   vil ikke auto åpne settings, da er det bedre at vi ikke legger inn noe spesielt rundt batteriunntaket. Da får folk
@@ -1073,7 +1074,7 @@ findings, merge to `main`, full suite once.
   allowed app rings over the lock (no budget; `lock_state.voip_rang` -> "rang over the lock" on the Lock page); the
   per-phone "Wake the screen for a notification" switch (migration 0084; a notice wakes the lock's glance page, off
   again after 15 s untouched via `lockNow()`, never with a lock dialog open or TalkBack on); catalog apps'
-  `battery_exempt` and the Apps page's "Background:" line (the force-stop protection NOT built: a protected package
+  `battery_exempt` and the Apps page's "Background:" line (**both removed again the same day**, design r7 §2.5; the force-stop protection NOT built: a protected package
   can't be restricted by the device owner either); the Fossify items (icon eviction on update, Home press to the top,
   one-tile grid updates, coalesced `loadApps()`, the inherited Settings escape closed). Server 0.32.0 also carries the
   0.31.1 content (Now gone, one clock per Activity row, Install Now's value on one line). **Device checks owed**: the

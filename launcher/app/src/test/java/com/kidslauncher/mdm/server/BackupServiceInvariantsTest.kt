@@ -59,4 +59,20 @@ class BackupServiceInvariantsTest {
         val enforcer = productionSources.first { it.name == "AppEnforcer.kt" }.readText()
         assertTrue("BackupService.enforce(dpm, admin, managedForHardening)" in enforcer)
     }
+
+    /**
+     * Launcher round 7 §2 (docs/design/r7-launcher-small-items.md; qa-l7-b-code finding 1): a package on
+     * `setUserControlDisabledPackages` can't be suspended, hidden or uninstalled by the device owner either
+     * (AOSP "protected package"), so time rules, the budget, the camera lock and the update fence would
+     * fail open for it. Nothing in the production code may call it - in code, not in a comment.
+     */
+    @Test
+    fun `nothing sets setUserControlDisabledPackages`() {
+        fun code(file: File) = file.readText()
+            .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("//[^\\n]*"), "")
+        val callers = productionSources.filter { "setUserControlDisabledPackages" in code(it) }.map { it.name }
+        assertEquals(emptyList<String>(), callers)
+        assertTrue("The scan found no sources in $src", productionSources.isNotEmpty())
+    }
 }
