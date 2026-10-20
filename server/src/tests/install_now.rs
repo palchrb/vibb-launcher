@@ -546,7 +546,7 @@ async fn the_answer_shows_in_the_row() {
         .text();
     let html = row(&page, phone);
     assert!(
-        html.contains("<span class=\"row-value\">1.4.0</span>"),
+        html.contains("<span class=\"row-value row-value-keep\">1.4.0</span>"),
         "{html}"
     );
     assert!(!html.contains(">Install Now</button>"));
