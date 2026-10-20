@@ -1016,6 +1016,27 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **Server round 6 (2026-10-20, merges d2b6563b r7-a and 5b382da5 r7-b; design QA `docs/review/qa-r6-server-design.md`
+  + one revision check; code QA `docs/review/qa-r7-a-code.md` (0 High / 0 Medium / 4 Low, all fixed) and
+  `qa-r7-b-code.md` (0 / 1 / 3, all fixed))**: **design 48** the summary's Today and Recent become **Now** (the lifts
+  with End now, the PIN notices) and an **Activity** log at the bottom (commands and events of the last 7 days, 10
+  rows, newest first, a cancellable command at any age, "Everything for this phone ›"); Locate's Recent becomes
+  **Requests** (what waits, what failed or expired in the last 24 h, the newest real result of ring/lock/wipe - a
+  parent's Cancel never hides it); every command row carries the clock words; `device_commands` pruned after 30 days,
+  never one that may still reach its phone (`48-activity-log.md`); **design 51** "Show message text" per ticked app
+  on the lock page (`POST /devices/{id}/lock-screen/apps/text`, migration 0083 with the backfill from the old global
+  switch, policy `lock_glance = {"apps":[{"package","show_text"}]}` pinned on both sides, the launcher's
+  `GlancePolicy.apps: Map<String, Boolean>` reading both shapes) (`51-glance-text-per-app.md`); **the PWA's bell** in
+  the top right corner on every tab (the + before it), Music's Edit down by the Library header; **the library holds
+  500 entries** (a sizing guard, 200 before); **the music notes** 46/49/50 revised for the music round. **Release
+  notes**: an older launcher shows missed calls only on its lock until it updates to 0.31.0; a new launcher on an
+  older server shows the sender only. **Device checks owed (the user)**: iPhone - the summary reads Quick actions,
+  Now, then Activity after Blocked Apps and Locked Again; Unlock for 2 h shows its row with the clock and Done; a PIN
+  event sits between command rows in time order; End now and Cancel never jump; Locate shows Requests only while
+  something waits or just failed; the bell in the corner on all five tabs with the + beside it on Devices and Apps;
+  Music's Edit by Library; emulator - tick two apps on the lock page and turn the text on for one, a message from each:
+  the sender for both, the text for one, neither switch jumps the page. Goes out with server-v0.31.0 and
+  launcher-v0.31.0 (tagged together).
 - **Launcher round 6 (2026-10-20, merges 8d17d549 r6-a and c282bb0c r6-b; design QA `docs/design/qa-r6-launcher-design.md`
   + one revision check; code QA `docs/review/qa-r6-a-code.md` (0 High / 1 Medium / 3 Low, all fixed) and
   `qa-r6-b-code.md` (0 / 3 / 7, all fixed))**: **a parent-PIN event asks for a sync at once** (`SyncTriggers.pin`
@@ -1040,7 +1061,7 @@ findings, merge to `main`, full suite once.
   clock timer shows nothing; the lock tile recording (ffmpeg scene changes: one change per tap) and the music app's
   player screen recorded the same way; Jelly Star - design 41 §4 (the torch under the camera policy, the camera
   gesture while lit, 10 min, a call, screen off/on, the camera app afterwards). Goes out with launcher-v0.31.0
-  (the user: no tags until everything is in).
+  (tagged with server-v0.31.0 once server round 6 was in - the user: no tags until everything is in).
 - **Round 5 (2026-10-20, server 0.30.0; merges 6cf45ae4 r5-a and the r5-b merge after it; design QA
   `docs/design/qa-r5-design.md` + one revision check; code QA `docs/review/qa-r5-a-code.md` (0 High / 0 Medium / 3 Low,
   all fixed) and `qa-r5-b-code.md` (0 / 1 / 2, all fixed))**: **design 43** the PWA's app shell - the document never
