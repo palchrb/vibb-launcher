@@ -41,10 +41,22 @@
             <span class="row-value">{% if let Some(saved) = storytel.saved_on %}Saved {{ saved }}{% else %}None{% endif %}</span>
         </div>
         {% if storytel.saved_on.is_some() %}
-        <div class="row" data-row="phones">
-            <span class="row-label">On phones</span>
-            <span class="row-value">{{ storytel.phones }}</span>
-        </div>
+        {#- Storytel per phone (design 47 §1.7): one switch each, its own narrow handler; back here,
+            the row open. -#}
+        <details class="cell disclosure" id="storytel-phones"{% if storytel_phones_open %} open{% endif %}>
+            <summary class="row" data-row="phones"><span class="row-label">On phones</span><span class="row-value">{{ storytel.phones }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+            {% for (id, name, on) in storytel_switches %}
+            <form method="post" action="/music/storytel/phones/{{ id }}#storytel-phones" class="cell">
+                <label class="row">
+                    <span class="row-label">{{ name }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="on" value="on"{% if *on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+            </form>
+            {% else %}
+            <p class="row row-note">No phone is connected yet.</p>
+            {% endfor %}
+        </details>
         {% if let Some(status) = storytel.status %}
         <p class="row row-note{% if storytel.status_error %} text-alarm{% endif %}" data-row="status">{{ status }}</p>
         {% endif %}
@@ -84,6 +96,8 @@
     {% if storytel.key_available %}
     <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Used by the shelf here and by the phones where Storytel is on (each phone's Music page). Kept encrypted on this server, never in a log. Saving checks it with Storytel first.</p><p>Use a password you use only for Storytel: each phone keeps it to log in. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p></div></details></div>
     {% endif %}
+
+    {% include "partials/spotify_setup.html" %}
 
     <h2 class="group-header">The music app</h2>
     <div class="group" id="app">

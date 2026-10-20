@@ -482,7 +482,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             What::Test => (
                 "Test from Vibb Phone".to_string(),
                 format!("If you see this, notifications work on {label}"),
-                "/notifications#devices".to_string(),
+                "/notifications/settings#devices".to_string(),
             ),
         };
         due.push(Due {
@@ -687,7 +687,11 @@ async fn send_one(
         state.push.declarative,
         &delivery.title,
         &delivery.body,
-        format!("{}{target}", delivery.origin.trim_end_matches('/')),
+        format!(
+            "{}{}",
+            delivery.origin.trim_end_matches('/'),
+            with_marker(target, delivery.id)
+        ),
         tag,
         delivery.id,
         B64.encode(token),
@@ -838,6 +842,74 @@ async fn send_one(
     Ok(())
 }
 
+/// A target with the delivery's `?push=<id>` marker (server round 5 §1): before any `#fragment`,
+/// `&push=` after an existing query. A tap on the notification lands there, and
+/// `handlers::notifications::push_marker` marks the delivery opened.
+pub fn with_marker(target: &str, delivery_id: i64) -> String {
+    let (path, fragment) = match target.find('#') {
+        Some(at) => target.split_at(at),
+        None => (target, ""),
+    };
+    let join = if path.contains('?') { '&' } else { '?' };
+    format!("{path}{join}push={delivery_id}{fragment}")
+}
+
+/// A tap on a push opened its page (`?push=<id>`, server round 5 §1): for a delivery of one of
+/// `admin_id`'s subscriptions, the delivery is clicked, the subscription opened now and the event
+/// (a summary or test has none) read. `false` when the delivery isn't this admin's: nothing
+/// changes.
+pub async fn opened(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+    delivery_id: i64,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT d.subscription_id, d.event_id FROM push_deliveries d \
+         JOIN push_subscriptions s ON s.id = d.subscription_id \
+         WHERE d.id = ? AND s.admin_id = ?",
+    )
+    .bind(delivery_id)
+    .bind(admin_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((subscription_id, event_id)) = row else {
+        return Ok(false);
+    };
+    mark_opened(&mut tx, delivery_id, subscription_id, event_id).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// The writes of an opened push, from the marker or a `clicked` receipt: the delivery's
+/// `clicked_at` (the first one kept), the subscription's `last_opened_at`, the event's `read_at`.
+async fn mark_opened(
+    tx: &mut sqlx::SqliteConnection,
+    delivery_id: i64,
+    subscription_id: i64,
+    event_id: Option<i64>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE push_deliveries SET clicked_at = COALESCE(clicked_at, datetime('now')) WHERE id = ?",
+    )
+    .bind(delivery_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE push_subscriptions SET last_opened_at = datetime('now') WHERE id = ?")
+        .bind(subscription_id)
+        .execute(&mut *tx)
+        .await?;
+    if let Some(event_id) = event_id {
+        sqlx::query(
+            "UPDATE parent_events SET read_at = COALESCE(read_at, datetime('now')) WHERE id = ?",
+        )
+        .bind(event_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Claims a due delivery for its send: stores the receipt token's hash and counts the attempt,
 /// only while the row is still `queued`. `false` = it was dropped (or finished) meanwhile, and
 /// nothing goes.
@@ -953,6 +1025,11 @@ pub struct Subscription {
     pub failure: Option<String>,
     /// A push waits to go (queued, or to be tried again).
     pub sending: bool,
+    /// Accepted pushes newer than the last receipt or tap (`max(last_receipt_at,
+    /// last_opened_at)`; every accepted one when neither ever came) - server round 5 §2.
+    pub since_opened: i64,
+    /// A receipt or a tap ever came: "since one was opened" rather than "not opened yet".
+    pub ever_opened: bool,
 }
 
 /// Why a push failed, in words: the push service out of reach (a network error, 429, 5xx - also
@@ -988,6 +1065,8 @@ pub async fn subscriptions(
         Option<String>,
         bool,
         Option<String>,
+        i64,
+        bool,
     );
     // The newest finished delivery (accepted or failed) by id: its status, push-service status
     // and reason.
@@ -1003,7 +1082,12 @@ pub async fn subscriptions(
                 EXISTS (SELECT 1 FROM push_deliveries q \
                         WHERE q.subscription_id = s.id AND q.status = 'queued'), \
                 (SELECT MAX(p.accepted_at) FROM push_deliveries p \
-                        WHERE p.subscription_id = s.id AND p.reason = 'declarative') \
+                        WHERE p.subscription_id = s.id AND p.reason = 'declarative'), \
+                (SELECT COUNT(*) FROM push_deliveries o \
+                        WHERE o.subscription_id = s.id AND o.status = 'accepted' \
+                        AND o.accepted_at > MAX(COALESCE(s.last_receipt_at, ''), \
+                                                COALESCE(s.last_opened_at, ''))), \
+                s.last_receipt_at IS NOT NULL OR s.last_opened_at IS NOT NULL \
          FROM push_subscriptions s \
          LEFT JOIN push_deliveries u ON u.subscription_id = s.id AND u.status = 'accepted' \
               AND u.receipt_at IS NULL AND COALESCE(u.reason, '') <> 'declarative' \
@@ -1029,6 +1113,8 @@ pub async fn subscriptions(
                 latest_reason,
                 sending,
                 last_delivered,
+                since_opened,
+                ever_opened,
             )| {
                 let parse =
                     |t: Option<String>| t.as_deref().and_then(crate::display_time::parse_db_utc);
@@ -1048,6 +1134,8 @@ pub async fn subscriptions(
                     ),
                     failure: failed.then(|| failure_text(latest_status, latest_reason.as_deref())),
                     sending,
+                    since_opened,
+                    ever_opened,
                 }
             },
         )
@@ -1103,7 +1191,8 @@ pub enum Receipt {
 }
 
 /// A receipt from the worker (§7): `token` (base64url) must match delivery `id`'s hash. On a
-/// match the delivery, its subscription and - clicked - the event are marked.
+/// match the delivery and its subscription are marked; `clicked` marks it opened as the `?push=`
+/// marker does ([opened]).
 pub async fn receipt(
     db: &sqlx::SqlitePool,
     id: i64,
@@ -1144,11 +1233,8 @@ pub async fn receipt(
     }
     let mut tx = db.begin().await?;
     sqlx::query(
-        "UPDATE push_deliveries SET receipt_at = COALESCE(receipt_at, datetime('now')), \
-         clicked_at = CASE WHEN ? THEN COALESCE(clicked_at, datetime('now')) ELSE clicked_at END \
-         WHERE id = ?",
+        "UPDATE push_deliveries SET receipt_at = COALESCE(receipt_at, datetime('now')) WHERE id = ?",
     )
-    .bind(clicked)
     .bind(id)
     .execute(&mut *tx)
     .await?;
@@ -1156,13 +1242,8 @@ pub async fn receipt(
         .bind(subscription_id)
         .execute(&mut *tx)
         .await?;
-    if clicked && let Some(event_id) = event_id {
-        sqlx::query(
-            "UPDATE parent_events SET read_at = COALESCE(read_at, datetime('now')) WHERE id = ?",
-        )
-        .bind(event_id)
-        .execute(&mut *tx)
-        .await?;
+    if clicked {
+        mark_opened(&mut tx, id, subscription_id, event_id).await?;
     }
     tx.commit().await?;
     Ok(Receipt::Matched)
@@ -1209,6 +1290,22 @@ mod tests {
 
     fn utc(s: &str) -> DateTime<Utc> {
         crate::display_time::parse_db_utc(s).unwrap()
+    }
+
+    /// Server round 5 §1: the marker goes before the fragment, after an existing query with `&`.
+    #[test]
+    fn the_marker_in_a_target() {
+        for (target, marked) in [
+            ("/devices/3/calls", "/devices/3/calls?push=48"),
+            (
+                "/devices/3#foreign-access",
+                "/devices/3?push=48#foreign-access",
+            ),
+            ("/notifications", "/notifications?push=48"),
+            ("/devices/3?tab=x#a", "/devices/3?tab=x&push=48#a"),
+        ] {
+            assert_eq!(with_marker(target, 48), marked);
+        }
     }
 
     #[test]

@@ -115,6 +115,15 @@ pub(super) async fn subscribe(app: &TestApp, cookie: &str, endpoint: &str) -> Te
     .await
 }
 
+/// The inbox (the delivery lines, the warning rows) and Notification Settings (the device rows,
+/// the clock warning) as one text, for words that may be on either (design 45). Opening the inbox
+/// reads its rows.
+async fn pages(app: &TestApp, cookie: &str) -> String {
+    let inbox = app.get_page("/notifications", cookie).await.text();
+    let settings = app.get_page("/notifications/settings", cookie).await.text();
+    format!("{inbox}\n{settings}")
+}
+
 async fn scalar(app: &TestApp, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
 }
@@ -299,7 +308,9 @@ async fn subscribe_refusals_upsert_and_unsubscribe() {
         .await;
         assert_eq!(
             res.location(),
-            Some(format!("/notifications?from=music&notice={notice}#this-device").as_str()),
+            Some(
+                format!("/notifications/settings?from=music&notice={notice}#this-device").as_str()
+            ),
             "{endpoint} {origin:?}"
         );
         app.assert_lands(&res, &cookie).await;
@@ -311,7 +322,7 @@ async fn subscribe_refusals_upsert_and_unsubscribe() {
     let res = subscribe(&app, &cookie, ENDPOINT).await;
     assert_eq!(
         res.location(),
-        Some("/notifications?from=devices&notice=push_on#this-device")
+        Some("/notifications/settings?from=devices&notice=push_on#this-device")
     );
     let page = app.get_page(res.location().unwrap(), &cookie).await.text();
     // The row itself says On; no flash (the user, 2026-10-19: "rare grønne bokser og for mye tekst").
@@ -373,7 +384,7 @@ async fn subscribe_refusals_upsert_and_unsubscribe() {
     .await;
     assert_eq!(
         res.location(),
-        Some("/notifications?from=devices&notice=push_off#this-device")
+        Some("/notifications/settings?from=devices&notice=push_off#this-device")
     );
     app.assert_lands(&res, &cookie).await;
     assert_eq!(scalar(&app, active).await, 9);
@@ -422,7 +433,15 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
         .unwrap();
     }
 
-    let html = app.get_page("/notifications", &cookie).await.text();
+    let html = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    let json = app
+        .get_page("/notifications/subscriptions.json", &cookie)
+        .await
+        .text();
     assert!(html.contains(&format!("data-key=\"{}\"", key.public)));
     assert!(html.contains(&format!(
         "data-subscribed=\"{},{}\"",
@@ -436,12 +455,16 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
         test_browser::AUTH,
         token.as_str(),
     ] {
-        assert!(!html.contains(secret), "{secret} is on the page");
+        for (page, text) in [("settings", &html), ("inbox", &inbox), ("json", &json)] {
+            assert!(!text.contains(secret), "{secret} is on the {page} page");
+        }
     }
-    assert!(html.contains("<script src=\"/static/notifications.js?v=1\" defer></script>"));
-    check_forms("/notifications", &html);
+    assert!(html.contains("<script src=\"/static/notifications.js?v=2\" defer></script>"));
+    assert!(!inbox.contains("notifications.js"));
+    check_forms("/notifications/settings", &html);
+    check_forms("/notifications", &inbox);
     // Apple's service shows a declarative push itself: accepted is delivered (0.29.6).
-    assert!(html.contains("Delivered to iPhone · Safari"));
+    assert!(inbox.contains("Delivered to iPhone · Safari"));
 }
 
 /// §4.3, §5.3: the headers, the JWT, and the payload the browser decrypts - no `detail`.
@@ -514,7 +537,11 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
     assert_eq!(n["lang"], "en");
     assert_eq!(
         n["navigate"],
-        format!("{ORIGIN}/devices/{}#foreign-access", anna.id)
+        format!(
+            "{ORIGIN}/devices/{}?push={delivery}#foreign-access",
+            anna.id
+        ),
+        "the marker before the fragment (server round 5 §1)"
     );
     assert_eq!(n["tag"], format!("e{foreign}"));
     assert_eq!(n["data"]["d"], delivery);
@@ -571,7 +598,7 @@ async fn the_push_services_answers() {
         ("failed".into(), Some(403), Some("BadJwtToken".into()))
     );
     assert_eq!(scalar(&app, active).await, 1);
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("id=\"clock-warning\""));
     assert!(page.contains("Not sent"));
 
@@ -581,7 +608,7 @@ async fn the_push_services_answers() {
     send(&app).await;
     assert_eq!(app.pushes.take().len(), 2);
     assert_eq!(delivery_of(&app, two).await.0, "accepted");
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(!page.contains("id=\"clock-warning\""));
 
     // 429 with Retry-After: not again before it, then sent.
@@ -659,7 +686,7 @@ async fn the_push_services_answers() {
         .await,
         0
     );
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("Turned off on that device"));
     assert!(
         !page.contains(&crate::push::endpoint_hash(ENDPOINT)),
@@ -766,7 +793,7 @@ async fn switches_the_emergency_call_and_a_burst() {
     )
     .await;
     assert_eq!(sent, 1);
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("In a summary"));
 }
 
@@ -818,8 +845,6 @@ async fn the_receipt() {
         .await,
         1
     );
-    let page = app.get_page("/notifications", &cookie).await.text();
-    assert!(page.contains("Shown on iPhone · Safari"));
     let unread = format!("SELECT read_at IS NULL FROM parent_events WHERE id = {event}");
     assert_eq!(scalar(&app, &unread).await, 1);
     assert_eq!(
@@ -835,6 +860,17 @@ async fn the_receipt() {
         .await,
         1
     );
+    // A click is a tap as the `?push=` marker's: the device was opened (server round 5 §2).
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_subscriptions WHERE last_opened_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    let page = pages(&app, &cookie).await;
+    assert!(page.contains("Opened on iPhone · Safari"));
 
     // Misses count: after 30 the client is refused, even with a good token.
     for _ in 0..29 {
@@ -869,7 +905,7 @@ async fn an_apple_acceptance_is_the_delivery() {
         .await,
         3
     );
-    let inbox = app.get_page("/notifications", &cookie).await.text();
+    let inbox = pages(&app, &cookie).await;
     assert!(!inbox.contains("May not be showing"), "{inbox}");
     assert!(inbox.contains("Delivered to iPhone · Safari"));
     assert!(inbox.contains("Last delivered"));
@@ -881,7 +917,7 @@ async fn an_apple_acceptance_is_the_delivery() {
         post_receipt(&app, &receipt_of(&last, "shown"), "same-origin").await,
         StatusCode::NO_CONTENT
     );
-    let inbox = app.get_page("/notifications", &cookie).await.text();
+    let inbox = pages(&app, &cookie).await;
     assert!(inbox.contains("Shown on iPhone · Safari"));
     assert!(inbox.contains("Last shown"));
 }
@@ -901,14 +937,14 @@ async fn health_and_its_warnings() {
     .await;
     let anna = phone(&app, "Anna").await;
     let warned = || async {
-        let inbox = app.get_page("/notifications", &cookie).await.text();
+        let inbox = pages(&app, &cookie).await;
         let devices = app.get_page("/devices", &cookie).await.text();
         (
             inbox.contains("data-warning=\"not-showing\"") && inbox.contains("May not be showing"),
             devices.contains("id=\"push-warning\""),
         )
     };
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("Nothing sent yet"));
     for n in 1..=2 {
         raise(&app, &anna.unseen_boot(n, None)).await;
@@ -920,7 +956,7 @@ async fn health_and_its_warnings() {
     assert_eq!(warned().await, (true, true));
     let devices = app.get_page("/devices", &cookie).await.text();
     assert!(devices.contains("Notifications may not be showing on iPhone · Safari"));
-    assert!(devices.contains("href=\"/notifications?from=devices#devices\""));
+    assert!(devices.contains("href=\"/notifications/settings?from=devices#devices\""));
 
     // A receipt for the newest clears it.
     let last = app.pushes.take().pop().unwrap();
@@ -929,7 +965,7 @@ async fn health_and_its_warnings() {
         StatusCode::NO_CONTENT
     );
     assert_eq!(warned().await, (false, false));
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("Last shown"));
 
     // One unconfirmed push, a day old: the warning again.
@@ -969,7 +1005,10 @@ async fn send_a_test_and_remove() {
         .await;
     assert_eq!(
         res.location(),
-        Some(format!("/notifications?from=settings&notice=test_sent&sub={id}#devices").as_str())
+        Some(
+            format!("/notifications/settings?from=settings&notice=test_sent&sub={id}#devices")
+                .as_str()
+        )
     );
     app.assert_lands(&res, &cookie).await;
     assert!(app.state.push.woken().await);
@@ -1007,7 +1046,7 @@ async fn send_a_test_and_remove() {
         .await;
     assert_eq!(
         res.location(),
-        Some("/notifications?from=devices&notice=removed#devices")
+        Some("/notifications/settings?from=devices&notice=removed#devices")
     );
     app.assert_lands(&res, &cookie).await;
     assert_eq!(
@@ -1163,7 +1202,7 @@ async fn a_device_whose_pushes_dont_get_through_says_so() {
         assert_eq!(now, status, "after {wait} s");
     }
     assert_eq!(app.pushes.take().len(), 3);
-    let page = words(app.get_page("/notifications", &cookie).await.text());
+    let page = words(pages(&app, &cookie).await);
     assert!(page.contains("Not getting through"));
     assert!(page.contains("The push service couldn't be reached"));
     assert!(page.contains("Notifications aren't reaching iPhone · Safari"));
@@ -1176,11 +1215,11 @@ async fn a_device_whose_pushes_dont_get_through_says_so() {
     let anna = phone(&app, "Anna").await;
     raise(&app, &anna.unseen_boot(1, None)).await;
     send(&app).await;
-    let page = words(app.get_page("/notifications", &cookie).await.text());
+    let page = words(pages(&app, &cookie).await);
     assert!(page.contains("The push service refused it (400)"));
     raise(&app, &anna.unseen_boot(2, None)).await;
     send(&app).await;
-    let page = words(app.get_page("/notifications", &cookie).await.text());
+    let page = words(pages(&app, &cookie).await);
     assert!(!page.contains("Not getting through"));
     let devices = app.get_page("/devices", &cookie).await.text();
     assert!(!devices.contains("id=\"push-warning\""));
@@ -1207,7 +1246,7 @@ async fn a_receipt_before_the_retry_ends_it() {
     send_at(&app, now + chrono::Duration::seconds(61)).await;
     assert!(app.pushes.take().is_empty(), "never sent again");
     assert_eq!(delivery_of(&app, event).await.0, "accepted");
-    let page = app.get_page("/notifications", &cookie).await.text();
+    let page = pages(&app, &cookie).await;
     assert!(page.contains("Shown on iPhone · Safari"));
 
     // The receipt arrives only after the retry went out with a new token.
@@ -1255,4 +1294,280 @@ async fn an_http_origin_is_no_jwt_subject() {
     let (_, claims, _) = vapid(&requests[0]);
     assert!(claims.get("sub").is_none(), "{claims}");
     assert_eq!(claims["aud"], "https://web.push.apple.com");
+}
+
+/// `(clicked, the subscription opened, the event read)` of a delivery.
+async fn opened_state(app: &TestApp, delivery: i64) -> (bool, bool, Option<bool>) {
+    sqlx::query_as(
+        "SELECT d.clicked_at IS NOT NULL, s.last_opened_at IS NOT NULL, \
+                (SELECT e.read_at IS NOT NULL FROM parent_events e WHERE e.id = d.event_id) \
+         FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
+         WHERE d.id = ?",
+    )
+    .bind(delivery)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// Server round 5 §1: Safari opens a declarative notification's `navigate` itself, so the URL
+/// carries `?push=<delivery>`; a GET with it marks this admin's delivery opened (clicked, the
+/// subscription's `last_opened_at`, the event read) and answers a 303 to the same URL without it.
+/// A summary or a test has no event; another admin's delivery or garbage marks nothing; signed
+/// out the marker is lost.
+#[tokio::test]
+async fn a_tap_on_a_notification_marks_it_opened() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let event = raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let delivery = scalar(&app, "SELECT MAX(id) FROM push_deliveries").await;
+    let navigate = payload(&app.pushes.take()[0])["notification"]["navigate"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        navigate,
+        format!(
+            "{ORIGIN}/devices/{}/about?push={delivery}#diagnostics",
+            anna.id
+        )
+    );
+    // The fragment never reaches the server.
+    let path = navigate
+        .strip_prefix(ORIGIN)
+        .unwrap()
+        .split('#')
+        .next()
+        .unwrap();
+
+    // Signed out: the login, nothing marked.
+    let res = app.request(Method::GET, path, None, None).await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        opened_state(&app, delivery).await,
+        (false, false, Some(false))
+    );
+    // Another admin's delivery: the same 303, nothing marked.
+    let other: i64 = sqlx::query_scalar(
+        "INSERT INTO admin_users (username, password_hash) VALUES ('other', 'x') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let foreign: i64 = sqlx::query_scalar(
+        "INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp) \
+         VALUES (?, 'https://fcm.googleapis.com/fcm/send/other', x'00', x'00', ?, 'iPad', 'x') \
+         RETURNING id",
+    )
+    .bind(other)
+    .bind(ORIGIN)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let theirs: i64 = sqlx::query_scalar(
+        "INSERT INTO push_deliveries (subscription_id, kind, event_id, token_hash, status) \
+         VALUES (?, 'event', ?, X'', 'accepted') RETURNING id",
+    )
+    .bind(foreign)
+    .bind(event)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let res = app
+        .get_page(&format!("/devices/{}?push={theirs}", anna.id), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{}", anna.id).as_str())
+    );
+    assert_eq!(
+        opened_state(&app, theirs).await,
+        (false, false, Some(false))
+    );
+    // Garbage: the other parameters kept, in order.
+    let res = app
+        .get_page("/notifications?from=music&push=x1&device=7", &cookie)
+        .await;
+    assert_eq!(res.location(), Some("/notifications?from=music&device=7"));
+
+    // The tap: marked, and the page without the marker.
+    let res = app.get_page(path, &cookie).await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(res.location(), Some(path.split('?').next().unwrap()));
+    assert_eq!(opened_state(&app, delivery).await, (true, true, Some(true)));
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    // The other parent's delivery of the same event counts as a device of the line.
+    assert!(
+        inbox.contains("Pushed to 2 devices · opened on 1"),
+        "{inbox}"
+    );
+    // A POST is never redirected by it.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/notifications/{event}/open?push={delivery}"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{}/about#diagnostics", anna.id).as_str())
+    );
+
+    // A test has no event: clicked and opened only; an unread event stays unread.
+    sqlx::query("UPDATE push_subscriptions SET last_opened_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let unread = raise(&app, &anna.unseen_boot(2, None)).await;
+    let id = scalar(&app, "SELECT MIN(id) FROM push_subscriptions").await;
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/subscriptions/{id}/test"),
+        Some(&cookie),
+        &[],
+    )
+    .await;
+    send(&app).await;
+    let test = scalar(
+        &app,
+        "SELECT MAX(id) FROM push_deliveries WHERE kind = 'test'",
+    )
+    .await;
+    let navigate = app
+        .pushes
+        .take()
+        .iter()
+        .map(|r| {
+            payload(r)["notification"]["navigate"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .find(|n| n.contains("/notifications/settings"))
+        .unwrap();
+    assert_eq!(
+        navigate,
+        format!("{ORIGIN}/notifications/settings?push={test}#devices")
+    );
+    let res = app
+        .get_page(&format!("/notifications/settings?push={test}"), &cookie)
+        .await;
+    assert_eq!(res.location(), Some("/notifications/settings"));
+    assert_eq!(opened_state(&app, test).await, (true, true, None));
+    assert_eq!(
+        scalar(
+            &app,
+            &format!("SELECT read_at IS NULL FROM parent_events WHERE id = {unread}")
+        )
+        .await,
+        1
+    );
+}
+
+/// Server round 5 §2: the device row's quiet count - pushes delivered since the device last
+/// confirmed or opened one; the basis outlives the deliveries' 30 days (`last_opened_at`).
+#[tokio::test]
+async fn the_device_row_counts_pushes_since_one_was_opened() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    let row = || async {
+        let html = app
+            .get_page("/notifications/settings", &cookie)
+            .await
+            .text();
+        let at = html.find("data-sub>").expect("a device row") + "data-sub>".len();
+        html[at..at + html[at..].find('<').unwrap()].to_string()
+    };
+    let now = chrono::Utc::now();
+    for n in 1..=2 {
+        raise(&app, &anna.unseen_boot(n, None)).await;
+    }
+    send_at(&app, now - chrono::Duration::minutes(10)).await;
+    // An iPhone confirms nothing: never opened yet.
+    assert!(
+        row().await.ends_with(" · 2 not opened yet"),
+        "{}",
+        row().await
+    );
+
+    // Opened (the marker): nothing added; a later push counts.
+    let first = scalar(&app, "SELECT MIN(id) FROM push_deliveries").await;
+    app.get_page(&format!("/devices?push={first}"), &cookie)
+        .await;
+    assert!(!row().await.contains(" · "), "{}", row().await);
+    raise(&app, &anna.unseen_boot(3, None)).await;
+    send_at(&app, now + chrono::Duration::minutes(1)).await;
+    assert!(
+        row().await.ends_with(" · 1 since one was opened"),
+        "{}",
+        row().await
+    );
+    // The deliveries pruned after 30 days: the basis stays.
+    sqlx::query("DELETE FROM push_deliveries WHERE id = ?")
+        .bind(first)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(
+        row().await.ends_with(" · 1 since one was opened"),
+        "{}",
+        row().await
+    );
+
+    // A receipt is a basis too: a newer one counts nothing, an older one what came after it.
+    sqlx::query(
+        "UPDATE push_subscriptions SET last_opened_at = NULL, \
+         last_receipt_at = datetime('now', '+5 minutes')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(!row().await.contains(" · "), "{}", row().await);
+    sqlx::query("UPDATE push_subscriptions SET last_receipt_at = datetime('now', '-1 hour')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(
+        row().await.ends_with(" · 2 since one was opened"),
+        "{}",
+        row().await
+    );
+}
+
+/// Server round 5 §5: `subscriptions.json` is this admin's device rows (badge and sub-line,
+/// never an endpoint or a key), never stored; it needs a session.
+#[tokio::test]
+async fn the_device_rows_as_json() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let id = scalar(&app, "SELECT id FROM push_subscriptions").await;
+    let res = app
+        .get_page("/notifications/subscriptions.json", &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        res.headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let rows: Value = serde_json::from_slice(&res.body).unwrap();
+    assert_eq!(
+        rows,
+        json!([{ "id": id, "badge": "On", "badge_class": "badge badge-on",
+                 "sub": "Nothing sent yet" }])
+    );
+    let res = app
+        .request(Method::GET, "/notifications/subscriptions.json", None, None)
+        .await;
+    assert_eq!(res.location(), Some("/login"));
 }

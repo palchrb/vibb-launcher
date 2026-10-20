@@ -1703,3 +1703,88 @@ fn items_without_a_source_url_or_a_picture_url_are_skipped() {
         assert!(!sweep::art_candidate(&row(None, art, "pending"), link));
     }
 }
+
+/// Migration 0082 (server round 5 §4): an entry left with an untried picture under the old caps is
+/// due again at once (`art_more`); one whose pictures were all tried, or whose only untried item
+/// has no picture URL (or is gone), is not - the condition of `art_candidate`/`art_due`.
+#[tokio::test]
+async fn migration_0082_flags_entries_with_untried_pictures() {
+    let (db, _dir) = super::cleanup::migrated_before(82).await;
+    let category: i64 = sqlx::query_scalar("SELECT MIN(id) FROM music_categories")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    type Items<'a> = &'a [(Option<&'a str>, Option<&'a str>, &'a str)];
+    // (entry, its items as (art_url, art_from, state))
+    let entries: [(&str, Items); 4] = [
+        (
+            "untried",
+            &[
+                (Some("https://a/1.jpg"), Some("https://a/1.jpg"), "ok"),
+                (Some("https://a/2.jpg"), None, "ok"),
+            ],
+        ),
+        (
+            "moved",
+            &[(Some("https://a/new.jpg"), Some("https://a/old.jpg"), "ok")],
+        ),
+        (
+            "all tried",
+            &[(Some("https://a/1.jpg"), Some("https://a/1.jpg"), "ok")],
+        ),
+        (
+            "no url or gone",
+            &[(None, None, "ok"), (Some("https://a/3.jpg"), None, "gone")],
+        ),
+    ];
+    for (name, items) in entries {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO music_entries (name, category_id, source, key) VALUES (?, ?, 'rss', ?) \
+             RETURNING id",
+        )
+        .bind(name)
+        .bind(category)
+        .bind(name)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO music_listings (entry_id) VALUES (?)")
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        for (seq, (art_url, art_from, state)) in items.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO music_items (entry_id, key, seq, state, url, art_url, art_from, \
+                 first_seen_at) VALUES (?, ?, ?, ?, 'https://a/e.mp3', ?, ?, datetime('now'))",
+            )
+            .bind(id)
+            .bind(format!("k{seq}"))
+            .bind(seq as i64)
+            .bind(state)
+            .bind(art_url)
+            .bind(art_from)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+    }
+    super::cleanup::finish(&db).await;
+    let flagged: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT e.name, l.art_more FROM music_listings l JOIN music_entries e ON e.id = l.entry_id \
+         ORDER BY e.id",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    let flagged: Vec<(&str, i64)> = flagged.iter().map(|(n, m)| (n.as_str(), *m)).collect();
+    assert_eq!(
+        flagged,
+        [
+            ("untried", 1),
+            ("moved", 1),
+            ("all tried", 0),
+            ("no url or gone", 0)
+        ]
+    );
+}

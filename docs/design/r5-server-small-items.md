@@ -81,3 +81,23 @@ stops.
 - r5-5: `&push=` after an existing `?`; a summary or test sets `clicked_at` and `last_opened_at` only.
 - r5-6: `subscriptions.json` is already no-store; nothing added, tested in `no_store_paths`; `notifications.js` on the settings page.
 - r5-7: the age lives on the guard (`opened`, `age()`), unit-tested.
+
+## Implementation status (2026-10-20, branch `r5-b`)
+
+Built as decided: §1 `push::with_marker` in `send_one`'s `navigate`, the `handlers::notifications::push_marker` layer
+added before `.layer(require_full_auth)` with a 303 without `push`, `push::opened` (and a `clicked` receipt) through
+`push::mark_opened`, `delivery_line`'s "Opened on" / "opened on N"; §2 `push_subscriptions.last_opened_at`,
+`Subscription::since_opened`/`ever_opened`, the sub-line words; §3 the two `info` lines and `StreamGuard::age()`; §4
+`0082_art_backfill_and_last_opened.sql` with `art_candidate`'s condition (the migration test covers an untried item, a
+moved URL, all tried, and an untried one without `art_url` or `gone`); §5 `GET /notifications/subscriptions.json` and
+`notifications.js`'s `pollRows` (3 s, at most 10 tries, an early stop, a lost answer retried). `no_store_paths` lists
+`/notifications/settings` and `subscriptions.json`. No API change.
+
+Deviations: the count words show on the Ok and May-not-be-showing rows (the other states have their own sub-line);
+the poll finds the tested row from the page's `?notice=test_sent&sub=N` (no extra markup) and reaches the row's parts
+by `data-sub`/`data-badge`.
+
+Device checks owed: an iPhone tap on a declarative notification lands on the phone's page without `?push` in the
+address, and the inbox says "Opened on iPhone · Safari"; the device row's "· N since one was opened"; Chromium's tap
+(receipt and marker both); Send a Test's row updating in place; `journalctl` shows "command stream opened/closed" around
+a phone's reconnect; after 0082, the entries checked under the old caps fetch their pictures at the next sweep.

@@ -418,6 +418,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   uses with Delete Files…), `/music/categories` (the `<details>` editors, Delete Category… for an unused one, Add a
   category), `/music/import` (GET the form; `POST /music/import` renders this page with the preview). GETs chained
   with their POSTs on one route (L5).
+- **Design 47 (server round 5)**: From Spotify › opens Add from Spotify (`/music/spotify`: the add form first, a
+  "Spotify setup" row last, an attention row on top while the setup isn't done), and the setup - Your Spotify App,
+  Children's Accounts with a "Plays on" picker each - is Music › Settings' Spotify group after Storytel, whose "On
+  phones" row now opens to one Storytel switch per phone (`docs/notes/server/music.md`, Spotify).
 - **Where forms return** (§5.1, `tests::music::every_form_on_the_music_pages_returns_to_its_page` posts every rendered
   form): sweep and orphans → `/music/settings#sweep` / `#orphans`, the Storytel login and its removal →
   `/music/settings#storytel`, the catalog row → `#app`, categories → `/music/categories?open=<id>#category-<id>` (the editor stays open; delete:
@@ -512,6 +516,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
   Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
   Password (`/account`), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+- **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
+  (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads
+  to the inbox (`/notifications`), which reads the rows it shows (`docs/notes/server/notifications.md`, step 2).
 - **Where forms return** (§5.1; every action carries its group's fragment, so a save near the bottom never lands at the
   top, with or without JS; `tests::settings_pages::check_forms`): Web Filter → `/dns#lists|blocked|allowed|server`
   (`dns_filter::back_to` takes the group; a refused domain `?notice=not_a_domain_block|allow#blocked|allowed`, a list

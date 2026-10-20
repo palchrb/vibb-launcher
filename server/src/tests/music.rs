@@ -5377,7 +5377,9 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         let entry = id_and_rest("/music/entries/");
         let category = id_and_rest("/music/categories/");
         let account = id_and_rest("/music/spotify/accounts/");
+        let storytel_phone = id_and_rest("/music/storytel/phones/");
         let kind = match (&entry, &category, &account) {
+            _ if storytel_phone.is_some() => "storytel-phone".to_string(),
             (Some((_, rest)), _, _) if rest.starts_with("/files/") => {
                 "entry/file-delete".to_string()
             }
@@ -5399,15 +5401,25 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
             "entry" => Some("settings".to_string()),
             "entry/cover" => Some("cover".to_string()),
             "entry/files" => Some("files".to_string()),
-            "/music/spotify/app" => Some("app".to_string()),
-            "/music/spotify/app/clear" => Some("app-clear".to_string()),
-            "/music/spotify/paste" => Some("paste".to_string()),
+            // Design 47: the setup's forms are on Music › Settings, every id `spotify-` prefixed.
+            "/music/spotify/app" => Some("spotify-app".to_string()),
+            "/music/spotify/app/clear" => Some("spotify-app-clear".to_string()),
+            "/music/spotify/paste" => Some("spotify-paste".to_string()),
             "/music/spotify/add" => Some("add".to_string()),
-            "spotify-account/remove" => account.as_ref().map(|(id, _)| format!("account-{id}")),
+            "spotify-account/remove" | "spotify-account/plays-on" => account
+                .as_ref()
+                .map(|(id, _)| format!("spotify-account-{id}")),
+            "storytel-phone" => Some("storytel-phones".to_string()),
             _ => None,
         };
         if refusal_lands_at.is_some() {
             assert_eq!(action_fragment, refusal_lands_at, "{action} on {page}");
+        }
+        // The login's form has no fragment (it would ride along on the 303 to Spotify): its
+        // refusal focuses its error instead (`settings_group::the_refusals_render_music_settings_
+        // with_prefixed_ids`, qa-r5-b-code M1), its success goes off this server (below).
+        if kind == "/music/spotify/login" {
+            assert_eq!(action_fragment, None, "{action} on {page}");
         }
         let entry_page = entry.as_ref().map(|(id, _)| format!("/music/entries/{id}"));
         let entry_anchor = entry.as_ref().map(|(id, _)| format!("entry-{id}"));
@@ -5491,11 +5503,14 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
                     ("client_id", crate::spotify::tests::CLIENT),
                     ("redirect_uri", crate::spotify::LOOPBACK_REDIRECT),
                 ]);
-                ("/music/spotify?saved=*".into(), Some("app".into()))
+                ("/music/settings?saved=*".into(), Some("spotify-app".into()))
             }
             "/music/spotify/app/clear" => {
                 add(&[("confirm", "on")]);
-                ("/music/spotify?cleared=1".into(), Some("app".into()))
+                (
+                    "/music/settings?cleared=1".into(),
+                    Some("spotify-app".into()),
+                )
             }
             // The login goes to Spotify (a 303 off this server): no fragment to carry along.
             "/music/spotify/login" => ("https://accounts.spotify.com/authorize?*".into(), None),
@@ -5506,11 +5521,33 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
                     crate::spotify::LOOPBACK_REDIRECT
                 );
                 fields.push(("url".into(), url));
-                ("/music/spotify?login=*".into(), Some("accounts".into()))
+                (
+                    "/music/settings?login=*".into(),
+                    Some("spotify-accounts".into()),
+                )
             }
             "spotify-account/remove" => {
                 add(&[("confirm", "on")]);
-                ("/music/spotify?removed=1".into(), Some("accounts".into()))
+                (
+                    "/music/settings?removed=1".into(),
+                    Some("spotify-accounts".into()),
+                )
+            }
+            "spotify-account/plays-on" => {
+                fields.push(("device".into(), phone.to_string()));
+                (
+                    "/music/settings".into(),
+                    account
+                        .as_ref()
+                        .map(|(id, _)| format!("spotify-account-{id}")),
+                )
+            }
+            "storytel-phone" => {
+                add(&[("on", "on")]);
+                (
+                    "/music/settings?storytel=phones".into(),
+                    Some("storytel-phones".into()),
+                )
             }
             "/music/spotify/add" => {
                 add(&[(
@@ -5596,6 +5633,8 @@ async fn every_form_on_the_music_pages_returns_to_its_page() {
         "/music/spotify/login",
         "/music/spotify/paste",
         "spotify-account/remove",
+        "spotify-account/plays-on",
+        "storytel-phone",
         "/music/spotify/add",
     ] {
         assert!(seen.contains(kind), "no form posted to {kind}");

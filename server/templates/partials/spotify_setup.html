@@ -1,0 +1,162 @@
+{#- The Spotify setup (design 47 §1.2, moved here from /music/spotify): Your Spotify App and
+    Children's Accounts, a group of Music › Settings (`spotify`: music_spotify::SpotifySetup).
+    Every id is `spotify-` prefixed (the page has #app already). A form whose refusal renders
+    Music › Settings again posts to its group's fragment (#spotify-app, #spotify-app-clear,
+    #spotify-account-<id>, #spotify-paste), a success redirects to the group
+    (`?saved=..#spotify-app`, `?login=..#spotify-accounts`). The setup text, the limits and the
+    server's settings (.env, the key file) are behind ⓘs. -#}
+<section id="spotify" aria-label="Spotify">
+    {% if !spotify.key_available %}
+    <div class="group" id="spotify-key">
+        <details class="info cell" data-row="spotify-off">
+            <summary class="row"><span class="row-label text-alarm">Spotify logins are off</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why Spotify logins are off" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+            <div class="info-panel"><p>This server has no key to keep the logins safe. It makes one itself (data/keys/music-secret.key) unless MUSIC_SECRET_KEY is set in .env - the server's log says why that failed ("Storytel logins are off: ..."). See DEPLOY.md.</p></div>
+        </details>
+    </div>
+    {% endif %}
+
+    <h2 class="group-header">Your Spotify App</h2>
+    <div class="group" id="spotify-app">
+        {% if let Some(notice) = spotify.app_notice %}
+        <p class="flash" role="status" data-flash="app">{{ notice }}</p>
+        {% endif %}
+        {% if spotify.configured %}
+        <div class="row" data-row="client-id">
+            <span class="row-label">Client ID{% if spotify.client_from_env %}<span class="row-sub">Set by the server's configuration</span>{% endif %}</span>
+            <span class="row-value">ending in {{ spotify.last_four }}</span>
+        </div>
+        {% if spotify.app_refused %}
+        <p class="row text-alarm" data-row="app-refused">Spotify refused this Client ID<span class="row-sub">The app was deleted, or Spotify switched it off. Check it on developer.spotify.com, or save a new app's Client ID.</span></p>
+        {% endif %}
+        {% if let Some(uri) = spotify.redirect_uri %}
+        <div class="cell" data-row="redirect-uri">
+            <div class="row"><span class="row-label">Redirect URI<span class="row-sub">Paste exactly this into your app's Redirect URIs{% if spotify.redirect_from_env %} (set by the server's configuration){% endif %}:</span></span></div>
+            <p class="row row-note"><code class="key" id="spotify-redirect-uri" style="user-select: all;">{{ uri }}</code></p>
+        </div>
+        {% else %}
+        <p class="row text-alarm" data-row="no-redirect">No Redirect URI is saved yet<span class="row-sub">Save one below.</span></p>
+        {% endif %}
+        {% else %}
+        <p class="row row-note" data-row="not-configured">No Spotify app is set up on this server yet. Follow the steps below, then save your app's Client ID.</p>
+        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login" tabindex="-1" autofocus>{{ error }}</p>{% endif %}
+        {% endif %}
+        {% if !spotify.client_from_env || !spotify.redirect_from_env %}
+        <form method="post" action="/music/spotify/app#spotify-app" class="cell form-group" id="spotify-app-form">
+            <div class="field">
+                <label class="field-label" for="spotify-client-id">Client ID</label>
+                <input type="text" id="spotify-client-id" name="client_id" value="{{ spotify.client_value }}" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false"{% if spotify.client_from_env %} readonly{% else %} required{% endif %}{% if spotify.app_error_field == "client_id" %} aria-invalid="true" aria-describedby="spotify-app-error" autofocus{% endif %}>
+                {% if spotify.app_error_field == "client_id" %}{% if let Some(error) = spotify.app_error %}<p class="field-error" id="spotify-app-error">{{ error }}</p>{% endif %}{% endif %}
+            </div>
+            <div class="field">
+                <label class="field-label" for="spotify-redirect-uri-field">Redirect URI</label>
+                <details class="info field-info"><summary aria-label="About the Redirect URI"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For the address you opened this page with: <code class="key">{{ spotify.suggested }}</code>.</p>{% if spotify.suggested == spotify.loopback_redirect %}<p>This page didn't come over https, so the login ends with a paste (below): Spotify only sends a login back to an https address or to 127.0.0.1. Behind an https proxy (tailscale serve, say), open this page at its https address to get that one.</p>{% endif %}<p>SPOTIFY_CLIENT_ID and SPOTIFY_REDIRECT_URI in the server's .env win over these fields.</p></div></details>
+                <input type="text" id="spotify-redirect-uri-field" name="redirect_uri" value="{{ spotify.redirect_value }}" maxlength="300" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"{% if spotify.redirect_from_env %} readonly{% else %} required{% endif %}{% if spotify.app_error_field == "redirect_uri" %} aria-invalid="true" aria-describedby="spotify-app-error" autofocus{% endif %}>
+                {% if spotify.app_error_field == "redirect_uri" %}{% if let Some(error) = spotify.app_error %}<p class="field-error" id="spotify-app-error">{{ error }}</p>{% endif %}{% endif %}
+            </div>
+            {% if !spotify.accounts.is_empty() %}
+            <label class="checkbox-row">
+                <input type="checkbox" name="replace_accounts"{% if spotify.app_error_field == "replace_accounts" %} aria-invalid="true" aria-describedby="spotify-app-error" autofocus{% endif %}>
+                <span>Saving another Client ID removes the logged-in accounts below (their logins belong to the old app).</span>
+            </label>
+            {% if spotify.app_error_field == "replace_accounts" %}{% if let Some(error) = spotify.app_error %}<p class="field-error" id="spotify-app-error">{{ error }}</p>{% endif %}{% endif %}
+            {% endif %}
+            <button type="submit" class="button-wide">{% if spotify.configured %}Save{% else %}Save the App{% endif %}</button>
+        </form>
+        {% endif %}
+        <details id="spotify-setup"{% if !spotify.configured %} open{% endif %} class="cell disclosure">
+            <summary class="row"><span class="row-label">How to Set It Up</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+            <ol class="info-panel" style="padding-left: 2.2em;">
+                <li>Log in at <strong>developer.spotify.com/dashboard</strong> with a <strong>Premium</strong> account (a Development-mode app needs a Premium owner; if that Premium lapses, the app stops working until it resumes) and create an app. Name: anything not starting with "Spot", for example "Vibb hjemme". Website: empty.</li>
+                <li>Redirect URI: the exact value shown above{% if !spotify.configured %} once saved (for this address: <code class="key">{{ spotify.suggested }}</code>){% endif %}. APIs used: <strong>Web API</strong> and <strong>Web Playback SDK</strong>.</li>
+                <li>User Management: add each child's Spotify account - one per phone, the child's own, never yours - by name and e-mail. <strong>At most {{ spotify.dev_mode_users }} accounts can use a Development-mode app</strong>; Spotify only grants more to organisations with 250k monthly users.</li>
+                <li>Copy the <strong>Client ID</strong> (not the Client secret: this server doesn't need it) into the field above and save.</li>
+                <li>The limits are your app's own: logins have to be renewed every 6 months (this page reminds you), a playlist's tracks list only for its owner or a collaborator, Spotify's own editorial playlists aren't available to developer apps, and Spotify's Developer Policy forbids apps "targeted to children" - using this for your child is at your own risk; Spotify may switch the app off.</li>
+                <li>Playlists: a phone shows a playlist's tracks only when a child's account here owns it or collaborates on it - make it in the Spotify app while logged in as the child, or invite the child to collaborate on yours (in Spotify, the playlist's ⋯ › Invite collaborators; then open the invite link while logged in as the child - the private window you logged the child in from - and join). Then "Check Now" on its page lists it. Any other playlist plays in Spotify's order without a track list, and only if the child's account can open it (public, or shared with the child). Albums, tracks, artists and podcasts need nothing.</li>
+            </ol>
+        </details>
+        {% if spotify.clearable %}
+        <details class="confirm cell" id="spotify-app-clear"{% if spotify.clear_error.is_some() %} open{% endif %}>
+            <summary class="row">Remove the App…</summary>
+            <form method="post" action="/music/spotify/app/clear#spotify-app-clear" class="confirm-body">
+                <p>Remove the Spotify app{% if !spotify.accounts.is_empty() %} and every Spotify login{% endif %} from this server? Spotify entries stay in the library but go to no phone.</p>
+                <label class="checkbox-row">
+                    <input type="checkbox" name="confirm"{% if spotify.clear_error.is_some() %} aria-invalid="true" aria-describedby="spotify-clear-error" autofocus{% endif %}>
+                    <span>Yes, remove it</span>
+                </label>
+                {% if let Some(error) = spotify.clear_error %}<p class="field-error" id="spotify-clear-error">{{ error }}</p>{% endif %}
+                <button type="submit" class="button-destructive">Remove the App</button>
+            </form>
+        </details>
+        {% endif %}
+    </div>
+    <div class="group-footer">The server ships no Spotify app: register your family's own once. <details class="info"><summary aria-label="About your Spotify app"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Spotify plays on the phones through your family's own Spotify developer app and your children's Spotify accounts: one account per phone, the child's own. Your own Spotify account is never logged in here - you paste the links on Add from Spotify.</p><p>A Development-mode app: at most {{ spotify.dev_mode_users }} Spotify accounts, each added under User Management in the dashboard first. The Client ID is public by design; no Client secret is needed or stored.</p></div></details></div>
+
+    {% if spotify.configured %}
+    <h2 class="group-header">Children's Accounts</h2>
+    <div class="group" id="spotify-accounts">
+        {% if let Some(notice) = spotify.accounts_notice %}
+        <p class="flash{% if !spotify.accounts_notice_good %} flash-error{% endif %}" role="status" data-flash="accounts">{{ notice }}</p>
+        {% endif %}
+        {% for account in spotify.accounts %}
+        <div class="cell" id="spotify-account-{{ account.id }}">
+            <div class="row" data-row="account">
+                <span class="row-label">{{ account.name }}<span class="row-sub">{{ account.line }}</span><span class="row-sub" data-plays-on>{{ account.plays_on }}</span>{% if let Some(warning) = account.warning %}<span class="row-sub text-alarm" data-account-warning>{{ warning }}</span>{% endif %}</span>
+            </div>
+            {#- One phone per account (design 47 §1.6): picking a phone moves it here and unbinds the
+                account's other phones; "No phone" unbinds them all. -#}
+            {% if !spotify.phones.is_empty() %}
+            <form method="post" action="/music/spotify/accounts/{{ account.id }}/plays-on#spotify-account-{{ account.id }}" class="cell">
+                <label class="row" for="spotify-account-{{ account.id }}-plays-on">
+                    <span class="row-label">Plays on</span>
+                    <select id="spotify-account-{{ account.id }}-plays-on" name="device" class="pick" data-autosave>
+                        {% if account.several %}<option value="" disabled selected>Several phones</option>{% endif %}
+                        <option value="none"{% if account.bound.is_none() && !account.several %} selected{% endif %}>No phone</option>
+                        {% for (id, name) in spotify.phones %}
+                        <option value="{{ id }}"{% if account.is_bound_to(id) %} selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
+            </form>
+            {% endif %}
+            <details class="confirm cell"{% if account.remove_error.is_some() %} open{% endif %}>
+                <summary class="row">Remove {{ account.name }}…</summary>
+                <form method="post" action="/music/spotify/accounts/{{ account.id }}/remove#spotify-account-{{ account.id }}" class="confirm-body">
+                    <p>Remove {{ account.name }}'s login from this server? Phones that play as {{ account.name }} turn Spotify off.</p>
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="confirm"{% if account.remove_error.is_some() %} aria-invalid="true" aria-describedby="spotify-remove-error-{{ account.id }}" autofocus{% endif %}>
+                        <span>Yes, remove the login</span>
+                    </label>
+                    {% if let Some(error) = account.remove_error %}<p class="field-error" id="spotify-remove-error-{{ account.id }}">{{ error }}</p>{% endif %}
+                    <button type="submit" class="button-destructive">Remove Login</button>
+                </form>
+            </details>
+        </div>
+        {% else %}
+        <p class="row row-note" data-row="no-accounts">No account is logged in yet.</p>
+        {% endfor %}
+        {% if spotify.ready && spotify.key_available %}
+        <form method="post" action="/music/spotify/login" class="cell" id="spotify-login">
+            <button type="submit" class="row row-button"{% if spotify.login_error.is_some() %} autofocus{% endif %}>Log in with Spotify</button>
+            {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login">{{ error }}{% if let Some(link) = spotify.login_elsewhere %} <a href="{{ link }}">Open it there</a>{% endif %}</p>{% endif %}
+        </form>
+        {% else %}
+        {% if let Some(error) = spotify.login_error %}<p class="flash flash-error" role="status" data-flash="login" tabindex="-1" autofocus>{{ error }}</p>{% endif %}
+        <p class="row row-note" data-row="no-login">{% if !spotify.key_available %}Logins need the server's key (above).{% else %}Save a Redirect URI for your app first.{% endif %}</p>
+        {% endif %}
+        {% if spotify.loopback && spotify.ready && spotify.key_available %}
+        <form method="post" action="/music/spotify/paste#spotify-paste" class="cell form-group" id="spotify-paste">
+            <div class="field">
+                <label class="field-label" for="spotify-paste-url">Paste the address your browser shows after logging in</label>
+                <details class="info field-info"><summary aria-label="About the paste"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>This server has no https address, so Spotify sends your browser to <code class="key">{{ spotify.loopback_redirect }}</code> after the login, which shows "can't connect" - with the login in its address bar. Copy that whole address here within 10 minutes. It works from any device you use, for example a private tab on your phone.</p></div></details>
+                <input type="text" id="spotify-paste-url" name="url" value="{{ spotify.paste_value }}" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" required{% if spotify.paste_error.is_some() %} aria-invalid="true" aria-describedby="spotify-paste-error" autofocus{% endif %}>
+                {% if let Some(error) = spotify.paste_error %}<p class="field-error" id="spotify-paste-error">{{ error }}</p>{% endif %}
+            </div>
+            <button type="submit" class="button-wide">Finish the Login</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="group-footer">One account per phone, the child's own - never yours. <details class="info"><summary aria-label="About logging in"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Log in each child's own account - one per phone, never yours. Whoever is logged into Spotify in this browser logs in, so open this page in a private window (or log out of Spotify in this browser first) and log in as the child. An account plays on one device at a time: give each child their own.</p><p>A Development-mode app can be used by at most {{ spotify.dev_mode_users }} Spotify accounts, each added under User Management in the dashboard first. A login lasts 6 months; this page warns 14 days before.</p></div></details></div>
+    {% endif %}
+</section>

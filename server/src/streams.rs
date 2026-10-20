@@ -85,6 +85,7 @@ impl CommandStreams {
             device_id,
             id,
             closed,
+            opened: std::time::Instant::now(),
         }
     }
 
@@ -140,9 +141,16 @@ pub struct StreamGuard {
     device_id: i64,
     id: u64,
     closed: watch::Receiver<bool>,
+    /// When the stream opened: the "closed" log line's age (server round 5 §3).
+    opened: std::time::Instant,
 }
 
 impl StreamGuard {
+    /// How long this stream has been open.
+    pub fn age(&self) -> std::time::Duration {
+        self.opened.elapsed()
+    }
+
     /// `true` once this stream must end; the stream watches it (`WatchStream`).
     pub fn closed(&self) -> watch::Receiver<bool> {
         self.closed.clone()
@@ -151,6 +159,13 @@ impl StreamGuard {
 
 impl Drop for StreamGuard {
     fn drop(&mut self) {
+        // The server's half of the SSE diagnosis (the phone's: `adb logcat -s
+        // CommandListenerService`); `close_all` at shutdown gives one line per stream.
+        tracing::info!(
+            device = self.device_id,
+            secs = self.age().as_secs(),
+            "command stream closed"
+        );
         self.streams.close(self.device_id, self.id);
     }
 }
@@ -516,5 +531,15 @@ mod tests {
         assert!(*late.closed().borrow(), "opened during shutdown");
         drop(first);
         assert_eq!(streams.state(1).unwrap().open, 0);
+    }
+
+    #[test]
+    fn a_guard_knows_its_age() {
+        let streams = Arc::new(CommandStreams::default());
+        let guard = streams.open(1);
+        let first = guard.age();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(guard.age() >= first + std::time::Duration::from_millis(5));
+        assert!(guard.age() < std::time::Duration::from_secs(60));
     }
 }

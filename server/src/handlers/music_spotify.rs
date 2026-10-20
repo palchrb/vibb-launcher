@@ -1,7 +1,11 @@
-//! The Spotify page (design 26c §2, step 1): `/music/spotify` - the family's own developer app
-//! (`#app`: the client ID, the redirect URI to paste into the dashboard, how to set one up, Clear)
-//! and the logged-in Spotify accounts (`#accounts`: each one's 6-month line, Remove, "Log in with
-//! Spotify" and, for a server without https, the paste of the address the browser shows).
+//! Spotify in the PWA (design 26c §2, design 47). `/music/spotify` is Add from Spotify: a share
+//! link, its category and the phones (`#add`, `#add-phones`, `#added`), and a row to the setup -
+//! on top while the setup isn't done, the form disabled. The setup is a group of Music › Settings
+//! (`partials/spotify_setup.html`, [setup_view], every id `spotify-` prefixed): the family's own
+//! developer app (`#spotify-app`: the client ID, the redirect URI to paste into the dashboard, how
+//! to set one up, Clear) and the logged-in Spotify accounts (`#spotify-accounts`: each one's
+//! 6-month line, the phones it plays on and its "Plays on" picker, Remove, "Log in with Spotify"
+//! and, for a server without https, the paste of the address the browser shows).
 //!
 //! The login (§2.3): `POST /music/spotify/login` keeps a PKCE pair in memory and answers 303 to
 //! Spotify's authorize page, setting the `spotify_login` cookie (hex SHA-256 of the `state`,
@@ -9,18 +13,19 @@
 //! /music/spotify/callback` - reachable without a session (the admin cookie is `SameSite=Strict`,
 //! so the browser doesn't send it on that navigation), still behind the admin gate - which needs
 //! the cookie and a live `state`, and always answers 303 (the spent code never stays in the
-//! history or a `Referer`) to `/music/spotify/done?login=<outcome>`, a same-site step back to the
-//! page, where the Strict cookie is sent again. The paste (`POST /music/spotify/paste`) runs the
-//! same code path for the loopback redirect, from the admin who started the login.
+//! history or a `Referer`) to `/music/spotify/done?login=<outcome>`, a same-site step back to
+//! Music › Settings, where the Strict cookie is sent again. The paste (`POST /music/spotify/paste`)
+//! runs the same code path for the loopback redirect, from the admin who started the login.
+//! Music › Settings carries [page_csp] (the login form's 303 goes to Spotify).
 //!
 //! Entries (§3.2, step 2b): `POST /music/spotify/add` turns a share link into a library entry
 //! after the add check ([spotify::add_check]: the metadata read with the first account that may,
 //! a playlist's first items page with each in turn) and ticks it, in the same transaction, on the
 //! phones the parent picked that play as an account; the others are named in the notice.
 //!
-//! No form makes the page jump to the top: every save redirects to its card's anchor, a refused
+//! No form makes a page jump to the top: every save redirects to its group's anchor, a refused
 //! one (400) shows the page again with the error by the field, which is `autofocus`ed.
-//! Nothing secret is ever on the page: the client ID is public by design (it is in the address
+//! Nothing secret is ever on a page: the client ID is public by design (it is in the address
 //! bar of every login); tokens, the verifier and the code never reach a page, an event or a log.
 
 use std::collections::HashMap;
@@ -28,7 +33,7 @@ use std::net::SocketAddr;
 
 use askama::Template;
 use axum::extract::{ConnectInfo, Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{AppendHeaders, Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 use chrono::{DateTime, Utc};
@@ -67,8 +72,6 @@ pub struct AddView {
     pub category: String,
     pub categories: Vec<(i64, String)>,
     pub phones: Vec<PhoneChoice>,
-    /// An account that can read is logged in (else the form says to log in first).
-    pub usable: bool,
     pub error: Option<String>,
     pub error_field: &'static str,
     /// The link is in the library already: its entry's id (the card's anchor).
@@ -85,7 +88,7 @@ pub struct AddedView {
     pub skipped: Vec<String>,
 }
 
-/// One account on the page.
+/// One account in Music › Settings' Spotify group.
 pub struct AccountView {
     pub id: i64,
     pub name: String,
@@ -95,48 +98,82 @@ pub struct AccountView {
     pub warning: Option<String>,
     /// A refused Remove of this account.
     pub remove_error: Option<String>,
+    /// "Plays on Anna's phone", "Plays on Anna's phone, Ola's phone", "Plays on no phone yet"
+    /// (design 47 §1.6).
+    pub plays_on: String,
+    /// The one phone that plays as it (the picker's choice); `None` with none or several.
+    pub bound: Option<i64>,
+    /// Several phones play as it: the picker shows a disabled "Several phones".
+    pub several: bool,
 }
 
+impl AccountView {
+    /// The picker's choice is this phone.
+    pub fn is_bound_to(&self, device: &i64) -> bool {
+        self.bound == Some(*device)
+    }
+}
+
+/// The Spotify setup (design 47 §1.2): Your Spotify App and Children's Accounts, a group of Music
+/// › Settings (`partials/spotify_setup.html`, every id `spotify-` prefixed).
+pub struct SpotifySetup {
+    /// The music key is there (else no login can be kept).
+    pub key_available: bool,
+    /// A client ID is set (here or in the environment).
+    pub configured: bool,
+    /// A client ID and a redirect URI: a login can start.
+    pub ready: bool,
+    pub last_four: String,
+    pub redirect_uri: Option<String>,
+    pub client_from_env: bool,
+    pub redirect_from_env: bool,
+    /// The PWA's row exists, or accounts do (Clear has something to do).
+    pub clearable: bool,
+    pub client_value: String,
+    pub redirect_value: String,
+    /// What this request suggests (https only for an https request, §2.1).
+    pub suggested: String,
+    /// The saved redirect is the loopback one: the paste is how a login ends.
+    pub loopback: bool,
+    /// Spotify refused the client ID at an account's last refresh.
+    pub app_refused: bool,
+    pub accounts: Vec<AccountView>,
+    /// Every phone, for the accounts' "Plays on" pickers.
+    pub phones: Vec<(i64, String)>,
+    pub dev_mode_users: usize,
+    pub app_error: Option<String>,
+    pub app_error_field: &'static str,
+    pub clear_error: Option<String>,
+    pub login_error: Option<String>,
+    /// A refused start from another address (code QA M1): the page there.
+    pub login_elsewhere: Option<String>,
+    pub paste_error: Option<String>,
+    pub paste_value: String,
+    /// After a save or a Clear.
+    pub app_notice: Option<String>,
+    /// After a login (`?login=`) or a Remove.
+    pub accounts_notice: Option<String>,
+    pub accounts_notice_good: bool,
+    pub loopback_redirect: &'static str,
+}
+
+/// Why Add from Spotify can't add yet (design 47 §1.3): the attention row's words and the
+/// fragment of Music › Settings it leads to.
+pub struct NotReady {
+    pub title: &'static str,
+    pub sub: &'static str,
+    pub fragment: &'static str,
+}
+
+/// `/music/spotify`, Add from Spotify (design 47 §1.1): the add form first, the setup behind a row.
 #[derive(Template)]
 #[template(path = "music_spotify.html")]
-struct SpotifyTemplate {
+struct AddTemplate {
     title: String,
-    /// The music key is there (else no login can be kept).
-    key_available: bool,
-    /// A client ID is set (here or in the environment).
-    configured: bool,
-    /// A client ID and a redirect URI: a login can start.
-    ready: bool,
-    last_four: String,
-    redirect_uri: Option<String>,
-    client_from_env: bool,
-    redirect_from_env: bool,
-    /// The PWA's row exists, or accounts do (Clear has something to do).
-    clearable: bool,
-    client_value: String,
-    redirect_value: String,
-    /// What this request suggests (https only for an https request, §2.1).
-    suggested: String,
-    /// The saved redirect is the loopback one: the paste is how a login ends.
-    loopback: bool,
-    /// Spotify refused the client ID at an account's last refresh.
-    app_refused: bool,
-    accounts: Vec<AccountView>,
-    dev_mode_users: usize,
-    app_error: Option<String>,
-    app_error_field: &'static str,
-    clear_error: Option<String>,
-    login_error: Option<String>,
-    /// A refused start from another address (code QA M1): the page there.
-    login_elsewhere: Option<String>,
-    paste_error: Option<String>,
-    paste_value: String,
-    /// After a save or a Clear.
-    app_notice: Option<String>,
-    /// After a login (`?login=`) or a Remove.
-    accounts_notice: Option<String>,
-    accounts_notice_good: bool,
-    loopback_redirect: &'static str,
+    /// The setup row's value: "2 accounts", "App saved, no account yet", "Not set up yet".
+    setup_value: String,
+    /// The setup isn't done: the row on top, the form disabled.
+    not_ready: Option<NotReady>,
     add: AddView,
     added: Option<AddedView>,
 }
@@ -153,23 +190,37 @@ struct AddEntered {
     existing: Option<i64>,
 }
 
-/// What a refused form brings back.
+/// What a refused setup form brings back, and Music › Settings' query (`?login=`, `?saved=`, ...).
 #[derive(Default)]
-struct Entered {
-    add: Option<AddEntered>,
+pub struct Entered {
     app: Option<(String, String, String, &'static str)>,
     clear_error: Option<String>,
     login_error: Option<String>,
     login_elsewhere: Option<String>,
     paste: Option<(String, String)>,
     remove: Option<(i64, String)>,
-    /// The page's query (`?login=`, `?saved=`, ...).
     query: HashMap<String, String>,
+}
+
+impl Entered {
+    /// Nothing refused, the page's query.
+    pub fn query(query: HashMap<String, String>) -> Self {
+        Entered {
+            query,
+            ..Default::default()
+        }
+    }
+
+    /// One of the page's query values.
+    pub fn query_value(&self, key: &str) -> Option<&str> {
+        self.query.get(key).map(String::as_str)
+    }
 }
 
 /// ADMIN_CSP with the login form's `form-action` widened to Spotify's accounts service (or the
 /// loopback fake): the form's answer is a 303 there, and a browser checks `form-action` on it.
-fn page_csp(state: &AppState) -> String {
+/// Music › Settings carries it, where the login form is (design 47 §1.2).
+pub fn page_csp(state: &AppState) -> String {
     let origin = state.spotify.config().accounts_origin();
     crate::admin_auth::ADMIN_CSP.replace(
         "form-action 'self'",
@@ -182,41 +233,100 @@ fn trusted(state: &AppState, peer: SocketAddr) -> bool {
     state.net.is_trusted(peer.ip())
 }
 
-async fn render(
+/// A refused setup form: Music › Settings again, the values and the error by the field.
+async fn render_setup(
     state: &AppState,
     headers: &HeaderMap,
     peer_trusted: bool,
     status: StatusCode,
     entered: Entered,
 ) -> Response {
-    let page = match page(state, headers, peer_trusted, entered).await {
-        Ok(page) => page,
-        Err(err) => return server_error(err, "couldn't load the Spotify page"),
-    };
-    let mut response = (status, Html(page.render().unwrap())).into_response();
-    match HeaderValue::from_str(&page_csp(state)) {
-        Ok(csp) => {
-            response
-                .headers_mut()
-                .insert(header::CONTENT_SECURITY_POLICY, csp);
-        }
-        Err(err) => tracing::error!(%err, "spotify: the page's CSP isn't a header value"),
-    }
-    response
+    super::music::render_settings(state, headers, peer_trusted, status, (None, None), entered).await
 }
 
-async fn page(
+/// The add page, after a refused add with what was entered.
+async fn render_add(
+    state: &AppState,
+    status: StatusCode,
+    entered: Option<AddEntered>,
+    query: &HashMap<String, String>,
+) -> Response {
+    match add_page(state, entered, query).await {
+        Ok(page) => (status, Html(page.render().unwrap())).into_response(),
+        Err(err) => server_error(err, "couldn't load the Spotify page"),
+    }
+}
+
+async fn add_page(
+    state: &AppState,
+    entered: Option<AddEntered>,
+    query: &HashMap<String, String>,
+) -> Result<AddTemplate, sqlx::Error> {
+    let app = spotify::app(state).await?;
+    let rows = spotify::accounts(&state.db).await?;
+    let usable = rows.iter().filter(|row| row.needs_login == 0).count();
+    let not_ready = if state.music_key.is_none() {
+        Some(NotReady {
+            title: "The server has no music key",
+            sub: "Spotify logins can't be kept safe without it.",
+            fragment: "spotify-key",
+        })
+    } else if app.is_none() {
+        Some(NotReady {
+            title: "No Spotify app is saved - set it up first",
+            sub: "Your family's own Spotify app, once.",
+            fragment: "spotify",
+        })
+    } else if usable == 0 && !rows.is_empty() {
+        Some(NotReady {
+            title: "An account needs to log in again",
+            sub: "Spotify ended the login.",
+            fragment: "spotify-accounts",
+        })
+    } else if usable == 0 {
+        Some(NotReady {
+            title: "No child's account is logged in yet",
+            sub: "Log in each child's own account.",
+            fragment: "spotify",
+        })
+    } else {
+        None
+    };
+    let setup_value = match (app.is_some(), rows.len()) {
+        (false, _) => "Not set up yet".to_string(),
+        (true, 0) => "App saved, no account yet".to_string(),
+        (true, 1) => "1 account".to_string(),
+        (true, n) => format!("{n} accounts"),
+    };
+    Ok(AddTemplate {
+        title: "Add from Spotify".to_string(),
+        setup_value,
+        not_ready,
+        add: add_view(state, entered).await?,
+        added: added_view(state, query).await?,
+    })
+}
+
+/// Music › Settings' Spotify group (design 47 §1.2) from the app, the accounts, the phones that
+/// play as each, the request (the redirect URI it suggests) and what a refusal brought back.
+pub async fn setup_view(
     state: &AppState,
     headers: &HeaderMap,
     peer_trusted: bool,
     entered: Entered,
-) -> Result<SpotifyTemplate, sqlx::Error> {
+) -> Result<SpotifySetup, sqlx::Error> {
     let app = spotify::app(state).await?;
     let rows = spotify::accounts(&state.db).await?;
     let now = state.music_sweep.now();
     let suggested = spotify::suggested_redirect(headers, peer_trusted);
     let query = &entered.query;
     let zone = crate::display_time::Zone::load(&state.db).await;
+    let phones: Vec<(i64, String, Option<i64>)> = sqlx::query_as(
+        "SELECT d.id, d.name, p.music_spotify_account FROM devices d \
+         JOIN device_policy p ON p.device_id = d.id ORDER BY d.name, d.id",
+    )
+    .fetch_all(&state.db)
+    .await?;
     let accounts: Vec<AccountView> = rows
         .iter()
         .map(|row| {
@@ -259,6 +369,16 @@ async fn page(
                     }
                 })
             };
+            let bound: Vec<&(i64, String, Option<i64>)> = phones
+                .iter()
+                .filter(|(_, _, account)| *account == Some(row.id))
+                .collect();
+            let plays_on = if bound.is_empty() {
+                "Plays on no phone yet".to_string()
+            } else {
+                let names: Vec<&str> = bound.iter().map(|(_, name, _)| name.as_str()).collect();
+                format!("Plays on {}", names.join(", "))
+            };
             AccountView {
                 id: row.id,
                 name: row.display_name.clone(),
@@ -269,6 +389,12 @@ async fn page(
                     .as_ref()
                     .filter(|(id, _)| *id == row.id)
                     .map(|(_, error)| error.clone()),
+                plays_on,
+                bound: match bound.as_slice() {
+                    [(id, _, _)] => Some(*id),
+                    _ => None,
+                },
+                several: bound.len() > 1,
             }
         })
         .collect();
@@ -323,10 +449,7 @@ async fn page(
         None => (String::new(), None),
     };
     let redirect_uri = app.as_ref().and_then(|a| a.redirect_uri.clone());
-    let add = add_view(state, &rows, entered.add).await?;
-    let added = added_view(state, query).await?;
-    Ok(SpotifyTemplate {
-        title: "Spotify".to_string(),
+    Ok(SpotifySetup {
         key_available: state.music_key.is_some(),
         configured: app.is_some(),
         ready: app.as_ref().is_some_and(|a| a.ready().is_some()),
@@ -344,6 +467,7 @@ async fn page(
         suggested,
         app_refused,
         accounts,
+        phones: phones.into_iter().map(|(id, name, _)| (id, name)).collect(),
         dev_mode_users: spotify::DEV_MODE_USERS,
         app_error,
         app_error_field,
@@ -356,18 +480,12 @@ async fn page(
         accounts_notice,
         accounts_notice_good,
         loopback_redirect: spotify::LOOPBACK_REDIRECT,
-        add,
-        added,
     })
 }
 
-/// The add form's values: the phones with whom each plays as, the categories, an account that can
-/// read; as entered after a refusal.
-async fn add_view(
-    state: &AppState,
-    rows: &[spotify::AccountRow],
-    entered: Option<AddEntered>,
-) -> Result<AddView, sqlx::Error> {
+/// The add form's values: the phones with whom each plays as, the categories; as entered after a
+/// refusal.
+async fn add_view(state: &AppState, entered: Option<AddEntered>) -> Result<AddView, sqlx::Error> {
     let categories: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, name FROM music_categories ORDER BY sort, id")
             .fetch_all(&state.db)
@@ -394,7 +512,6 @@ async fn add_view(
                 plays_as,
             })
             .collect(),
-        usable: rows.iter().any(|row| row.needs_login == 0),
         error: (!entered.error.is_empty()).then_some(entered.error),
         error_field: entered.field,
         existing: entered.existing,
@@ -462,25 +579,12 @@ async fn added_view(
     }))
 }
 
-/// `GET /music/spotify[?login=<outcome>|saved=N|cleared=1|removed=1]`.
+/// `GET /music/spotify[?added=<id>...]`: Add from Spotify.
 pub async fn show(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let entered = Entered {
-        query,
-        ..Default::default()
-    };
-    render(
-        &state,
-        &headers,
-        trusted(&state, peer),
-        StatusCode::OK,
-        entered,
-    )
-    .await
+    render_add(&state, StatusCode::OK, None, &query).await
 }
 
 /// `POST /music/spotify/app` (`client_id`, `redirect_uri`, `replace_accounts`): the family's
@@ -520,7 +624,7 @@ pub async fn save_app(
              developer.spotify.com (not the Client secret).",
             "client_id",
         );
-        return render(
+        return render_setup(
             &state,
             &headers,
             peer_trusted,
@@ -538,7 +642,7 @@ pub async fn save_app(
             ),
             "redirect_uri",
         );
-        return render(
+        return render_setup(
             &state,
             &headers,
             peer_trusted,
@@ -568,7 +672,7 @@ pub async fn save_app(
             ),
             "replace_accounts",
         );
-        return render(
+        return render_setup(
             &state,
             &headers,
             peer_trusted,
@@ -608,7 +712,7 @@ pub async fn save_app(
     log_event(&state, &admin, "spotify_app_saved", &detail).await;
     // The Spotify entries that failed for want of an app are due now (design 26c step 2b).
     state.music_sweep.wake();
-    Redirect::to(&format!("/music/spotify?saved={removed}#app")).into_response()
+    Redirect::to(&format!("/music/settings?saved={removed}#spotify-app")).into_response()
 }
 
 /// `POST /music/spotify/app/clear` (`confirm`): the app row and every account (their sealed
@@ -628,7 +732,7 @@ pub async fn clear_app(
             ),
             ..Default::default()
         };
-        return render(
+        return render_setup(
             &state,
             &headers,
             trusted(&state, peer),
@@ -649,7 +753,7 @@ pub async fn clear_app(
         &format!("Spotify app and {removed} accounts removed"),
     )
     .await;
-    Redirect::to("/music/spotify?cleared=1#app").into_response()
+    Redirect::to("/music/settings?cleared=1#spotify-app").into_response()
 }
 
 /// The `spotify_login` cookie: `value` for `max_age` seconds (0 clears it), its path the
@@ -718,7 +822,7 @@ pub async fn login(
         None
     };
     if let Some((status, entered)) = refused {
-        return render(&state, &headers, trusted(&state, peer), status, entered).await;
+        return render_setup(&state, &headers, trusted(&state, peer), status, entered).await;
     }
     let (client, redirect) = ready.expect("checked above");
     // Spotify sends the browser back to the redirect URI's host, and the `spotify_login` cookie
@@ -734,10 +838,10 @@ pub async fn login(
                 "Spotify sends this login back to https://{target}: open this page there to log \
                  in."
             )),
-            login_elsewhere: Some(format!("https://{target}/music/spotify#accounts")),
+            login_elsewhere: Some(format!("https://{target}/music/settings#spotify-accounts")),
             ..Default::default()
         };
-        return render(
+        return render_setup(
             &state,
             &headers,
             peer_trusted,
@@ -848,7 +952,7 @@ pub async fn callback(
 
 /// `GET /music/spotify/done?login=<outcome>`: no session needed and nothing secret - the browser
 /// arrived here by the callback's 303 in a navigation Spotify's page started, so the Strict admin
-/// cookie isn't sent yet; this page's own navigation to `/music/spotify` is same-site, so it is.
+/// cookie isn't sent yet; this page's own navigation to Music › Settings is same-site, so it is.
 pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
     let code = params
         .get("login")
@@ -857,7 +961,7 @@ pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
         .unwrap_or("expired");
     let page = DoneTemplate {
         title: "Spotify Login".to_string(),
-        target: format!("/music/spotify?login={code}#accounts"),
+        target: format!("/music/settings?login={code}#spotify-accounts"),
     };
     (
         [(header::CACHE_CONTROL, "no-store")],
@@ -871,7 +975,7 @@ pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
 #[template(path = "music_spotify_done.html")]
 struct DoneTemplate {
     title: String,
-    /// `/music/spotify?login=<outcome>#accounts`; the outcome is one of the known codes.
+    /// `/music/settings?login=<outcome>#spotify-accounts`; the outcome is one of the known codes.
     target: String,
 }
 
@@ -922,7 +1026,7 @@ pub async fn paste(
             )),
             ..Default::default()
         };
-        return render(
+        return render_setup(
             &state,
             &headers,
             trusted(&state, peer),
@@ -933,7 +1037,11 @@ pub async fn paste(
     };
     let outcome = finish(&state, &params, Some(&admin.username)).await;
     // Same-site already (the session is here): straight to the page.
-    Redirect::to(&format!("/music/spotify?login={}#accounts", outcome.code())).into_response()
+    Redirect::to(&format!(
+        "/music/settings?login={}#spotify-accounts",
+        outcome.code()
+    ))
+    .into_response()
 }
 
 /// `POST /music/spotify/accounts/{id}/remove` (`confirm`): unbinds its phones, deletes the row
@@ -964,7 +1072,7 @@ pub async fn remove_account(
             )),
             ..Default::default()
         };
-        return render(
+        return render_setup(
             &state,
             &headers,
             trusted(&state, peer),
@@ -983,11 +1091,105 @@ pub async fn remove_account(
                 &format!("Spotify account {name} removed"),
             )
             .await;
-            Redirect::to("/music/spotify?removed=1#accounts").into_response()
+            Redirect::to("/music/settings?removed=1#spotify-accounts").into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(err) => server_error(err, "couldn't remove a Spotify account"),
     }
+}
+
+/// `POST /music/spotify/accounts/{id}/plays-on` (`device`: a phone's id or `none`; design 47
+/// §1.6): the account plays on that phone and on no other - one phone per account, as an account
+/// plays on one device at a time; a phone bound to another account moves; `none` unbinds every
+/// phone. Each binding is Device › Music's ([super::music::bind_spotify]: the library revision
+/// moves, so the phones sync); the changed phones are nudged and logged as there. An unknown
+/// account or phone, or no `device`, is a 400 with nothing written. Back to the account's row.
+pub async fn save_plays_on(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Path(id): Path<i64>,
+    Form(form): Form<FormMap>,
+) -> Response {
+    let device = match form.get("device").map(|v| v.trim()) {
+        Some("none") => None,
+        Some(value) => match value.parse::<i64>() {
+            Ok(device) => Some(device),
+            Err(_) => return (StatusCode::BAD_REQUEST, "Unknown phone").into_response(),
+        },
+        None => return (StatusCode::BAD_REQUEST, "Pick a phone").into_response(),
+    };
+    // The account's name, the phones bound to it now, the phones unbound from it.
+    type Changed = (String, Vec<i64>, Vec<i64>);
+    let saved: Result<Option<Changed>, sqlx::Error> = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let name: Option<String> =
+            sqlx::query_scalar("SELECT display_name FROM music_spotify_accounts WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        // Its phones now, and the chosen one's binding (no row = no such phone).
+        let others: Vec<i64> = sqlx::query_scalar(
+            "SELECT device_id FROM device_policy WHERE music_spotify_account = ? \
+             AND (? IS NULL OR device_id <> ?) ORDER BY device_id",
+        )
+        .bind(id)
+        .bind(device)
+        .bind(device)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut bound = Vec::new();
+        if let Some(device) = device {
+            let current: Option<Option<i64>> = sqlx::query_scalar(
+                "SELECT music_spotify_account FROM device_policy WHERE device_id = ?",
+            )
+            .bind(device)
+            .fetch_optional(&mut *tx)
+            .await?;
+            match current {
+                None => return Ok(None),
+                Some(Some(account)) if account == id => {}
+                Some(_) => {
+                    super::music::bind_spotify(&mut *tx, device, Some(id)).await?;
+                    bound.push(device);
+                }
+            }
+        }
+        for &other in &others {
+            super::music::bind_spotify(&mut *tx, other, None).await?;
+        }
+        tx.commit().await?;
+        Ok(Some((name, bound, others)))
+    }
+    .await;
+    let (name, bound, unbound) = match saved {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return (StatusCode::BAD_REQUEST, "Unknown account or phone").into_response(),
+        Err(err) => return server_error(err, "couldn't save where a Spotify account plays"),
+    };
+    let changed: Vec<i64> = bound.iter().chain(&unbound).copied().collect();
+    nudge(&state, &changed);
+    for device in bound {
+        log_event(
+            &state,
+            &admin,
+            "music_spotify_binding_changed",
+            &format!("device {device}: Spotify plays as {name}"),
+        )
+        .await;
+    }
+    for device in unbound {
+        log_event(
+            &state,
+            &admin,
+            "music_spotify_binding_changed",
+            &format!("device {device}: Spotify off"),
+        )
+        .await;
+    }
+    Redirect::to(&format!("/music/settings#spotify-account-{id}")).into_response()
 }
 
 /// Whether a phone plays as an account (the gate's condition, `spotify_gate!()`); no row = no such
@@ -1010,8 +1212,6 @@ const MAX_ADD_FIELDS: usize = 200;
 /// Spotify unreachable, a full library.
 pub async fn add(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
@@ -1036,29 +1236,24 @@ pub async fn add(
             Err(_) => bad_device = true,
         }
     }
-    let peer_trusted = trusted(&state, peer);
-    let refuse = |error: String, field: &'static str, existing: Option<i64>| Entered {
-        add: Some(AddEntered {
-            link: link_text.clone(),
-            category: picked.clone(),
-            devices: devices.clone(),
-            error,
-            field,
-            existing,
-        }),
-        ..Default::default()
+    let refuse = |error: String, field: &'static str, existing: Option<i64>| AddEntered {
+        link: link_text.clone(),
+        category: picked.clone(),
+        devices: devices.clone(),
+        error,
+        field,
+        existing,
     };
     macro_rules! refused {
         ($error:expr, $field:expr) => {
             refused!($error, $field, None)
         };
         ($error:expr, $field:expr, $existing:expr) => {
-            return render(
+            return render_add(
                 &state,
-                &headers,
-                peer_trusted,
                 StatusCode::BAD_REQUEST,
-                refuse($error.to_string(), $field, $existing),
+                Some(refuse($error.to_string(), $field, $existing)),
+                &HashMap::new(),
             )
             .await
         };
