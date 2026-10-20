@@ -40,36 +40,46 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **What it is**: the phone's PIN lock always comes up on a first page (clock, date, the music tile, up to three
   notification rows, "Lås opp", "Nødsamtale"): missed calls always, and messages from the apps the parent ticks here,
-  sender only unless the text switch is on. A row's tap only reaches the keypad; nothing is answered, marked read or
+  sender only unless that app's text switch is on (design 51). A row's tap only reaches the keypad; nothing is answered, marked read or
   dismissed from the lock. The phone reads the notifications in memory only - **no row, name, text or count ever
   comes to this server** (only the capability `lock_glance_v1`).
-- **Data** (`src/lock_glance.rs`): `device_lock_glance_apps` (device_id, package_name; one row per tick, cascades with
-  the device - a table, like `device_tracked_apps`, so there is no corrupt state) and `device_policy.lock_glance_text`
-  (default 0). The migration ticks Element X for every existing device; new ones get it from the
-  `devices_get_lock_glance_default` trigger (as `devices_get_builtin_wallpapers`), so every path that creates a
-  device has the default.
-- **Wire**: `PolicyResponse.lock_glance = {apps, show_text}`, always sent; `apps` sorted, only valid package names
-  (`app_display::valid_package_name`, the launcher's grammar). Cosmetic like the wallpapers: a failing query sends
-  `apps: []` (missed calls only on the lock) and logs, never a 500. An older server's missing key reads as Element X,
-  sender only on the phone; an older launcher ignores it - deploy order is free.
+- **Data** (`src/lock_glance.rs`): `device_lock_glance_apps` (device_id, package_name, `show_text` since 0083 -
+  default 0, the sender only; one row per tick, cascades with the device - a table, like `device_tracked_apps`, so
+  there is no corrupt state). An untick deletes the row, so a new tick and a re-tick start at the sender only. The
+  migration ticks Element X for every existing device; new ones get it from the `devices_get_lock_glance_default`
+  trigger (as `devices_get_builtin_wallpapers`), so every path that creates a device has the default.
+  `device_policy.lock_glance_text` (0066's one switch) is unused since 0083 copied it to every tick of its phone.
+- **Wire**: `PolicyResponse.lock_glance = {apps: [{package, show_text}]}` (design 51; before it `{apps: [pkg],
+  show_text}`), always sent; `apps` sorted, only valid package names (`app_display::valid_package_name`, the
+  launcher's grammar). Cosmetic like the wallpapers: a failing query sends `apps: []` (missed calls only on the lock)
+  and logs, never a 500. An older server's missing key reads as Element X, sender only on the phone; an older
+  server's strings read as sender only on a launcher with design 51. **Release note**: a launcher from before design
+  51 drops the objects and shows missed calls only on its lock until it updates (design 25's fail-safe; the gap
+  between the server and launcher releases is accepted, design 51 §1.3) - say so in both release notes.
 - **PWA** (`handlers::lock_glance`, full auth, CSRF as every form; Lock Screen & PINs since design 31 step 4, the
   Apps card's "On the lock screen" before): the explanation and Low 8's warning (names show to anyone holding the
-  phone even with the switch off, missed-call names included; with it on a ticked SMS app's login codes show too) in
+  phone even with the text off, missed-call names included; with an SMS app's text on its login codes show too) in
   the Lock screen group's ⓘ, the warnings (typed `lock_glance::Note`: no Child PIN, `notification_listener_enabled`
-  false, a reporting launcher without `lock_glance_v1`), the switch "Show message text" (`POST
-  /devices/{id}/lock-screen`, checkbox `show_text`, form `#lock-screen-text`) and, under "Notifications on the lock
-  screen", one auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` +
-  checkbox `on`, form `#lock-screen-app-<package>`). Listed: with an allowlist the allowed apps (the "Names and
+  false, a reporting launcher without `lock_glance_v1`) and, under "Notifications on the lock screen", one
+  auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` + checkbox `on`, in the cell
+  `#lock-screen-app-<package>`) and, under each ticked one, its own small form "Show message text" (design 51: `POST
+  /devices/{id}/lock-screen/apps/text`, `package_name` + checkbox `show_text`; sub-line "Text shown on the lock" /
+  "Sender's name only"); the footer "Anyone holding the phone can read the message text." is the group's. The global
+  switch (`POST /devices/{id}/lock-screen`, `#lock-screen-text`) is gone. Listed: with an allowlist the allowed apps (the "Names and
   icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
   too), never Play core or the launcher; every ticked package outside that list is added - "Not allowed"
   when the allowlist lacks it, else "Not on the phone" (`lock_glance::unlisted_note`) - so any tick can be
-  removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device, 400 a package
-  that isn't a package name or is Play core, 500 on a DB error - nothing written; security events
-  `lock_screen_text_changed` / `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on
-  the lock screen: on"); nudges; redirect to the form's row, `/devices/{id}/lock#lock-screen-text` /
-  `#lock-screen-app-<package>` (scroll-restore keeps the place). The
+  removed; an empty list says why (`empty_text`: no report yet, nothing allowed, nothing reported). 404 unknown device
+  (the text route: also an app that isn't ticked - `UPDATE ... WHERE device_id AND package_name` touched no row, so a
+  stale page writes nothing), 400 a package that isn't a package name or is Play core, 500 on a DB error - nothing
+  written; security events `lock_screen_app_changed` (`lock_glance::log_line`: "device 3: io.element.android.x on the
+  lock screen: on") / `lock_screen_text_changed` (`text_log_line`: "device 3: io.element.android.x's message text on
+  the lock screen: on"); nudges; redirect to the app's row, `/devices/{id}/lock#lock-screen-app-<package>` from both
+  forms (scroll-restore keeps the place). The
   Home Screen's notification-access warning and the Lock screen group's ⓘ name the lock's first page.
-- Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (the migration on an old database, the trigger, the
-  cascade, the policy incl. a dropped table, both routes, refusals, the page and its notes), `policy_json_keys_snapshot`
-  (`lock_glance` non-null, a fresh phone's `{"apps": ["io.element.android.x"], "show_text": false}`; the launcher's
-  `PolicyResponseCompatTest` decodes the same literal).
+- Tests: `lock_glance::tests`, `src/tests/lock_glance.rs` (both migrations on an old database - 0083's backfill per
+  phone -, the trigger, the cascade, the policy incl. a dropped table, both routes - the text per app, a re-tick
+  resetting it, the 404 for an unticked app -, refusals, the page and its notes), `device_pages`'s form table,
+  `policy_json_keys_snapshot` (`lock_glance` non-null, a fresh phone's `{"apps": [{"package":
+  "io.element.android.x", "show_text": false}]}`; the launcher's `PolicyResponseCompatTest` decodes the same literal),
+  `music_spotify::migrations_73_to_83_in_order`.

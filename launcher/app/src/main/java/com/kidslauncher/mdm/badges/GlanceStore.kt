@@ -143,7 +143,8 @@ object GlanceStore {
                 val before = policyState.policy
                 policyState = nextGlancePolicy(policyState, next, fresh)
                 if (policyState.policy == before) return@post
-                Log.i(LOG_TAG, "Lock glance policy: ${next.apps.size} apps, text ${if (next.showText) "on" else "off"}")
+                val withText = next.apps.count { it.value }
+                Log.i(LOG_TAG, "Lock glance policy: ${next.apps.size} apps, $withText with text")
                 notices.clear()
                 intents.clear()
                 GlanceReader.resweep()

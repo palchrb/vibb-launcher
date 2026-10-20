@@ -788,7 +788,7 @@ struct LockTemplate {
     /// it is Home's.
     backgrounds: Vec<crate::handlers::wallpapers::DeviceWallpaperChoice>,
     background_same_as_home: bool,
-    /// The message-text switch and the Notifications group.
+    /// The Notifications group: one switch per app and, on a ticked one, its text switch.
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
 }
@@ -796,7 +796,7 @@ struct LockTemplate {
 /// GET `/devices/{id}/lock`: Lock Screen & PINs (design 31 §3.2, step 4). The Child PIN
 /// (`/kid-lock`: set in a `<details>`, remove behind a confirm), the Parent PIN (`/parent-pin`,
 /// with what the phone reported), the screen timeout and the lock's background (inline selects),
-/// the message-text switch and one switch per app (`/lock-screen`, `/lock-screen/apps`). The
+/// one switch per app and a ticked app's text switch (`/lock-screen/apps`, `.../apps/text`). The
 /// forms keep their POST routes; they return here. A phone not set up yet has the page too: its
 /// PINs can be set before setup.
 pub async fn view_lock(

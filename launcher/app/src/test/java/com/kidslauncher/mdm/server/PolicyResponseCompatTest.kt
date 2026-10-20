@@ -492,25 +492,25 @@ class PolicyResponseCompatTest {
         assertEquals((decodeCached(serverResponse) as CachedPolicy.Ok).policy, policy.copy(music = null))
     }
 
-    /** Design 25: `lock_glance` - the server's literal, a missing key, `null`, an array, a bad `apps`
-     * entry: the policy always decodes and the cache round trip keeps it. A missing key (or `null`)
+    /** Design 25: `lock_glance` - the server's literal (per app since design 51), a missing key,
+     * `null`, an array, a bad `apps` entry: the policy always decodes and the cache round trip keeps it. A missing key (or `null`)
      * means the server's own default in a fresh response, and unknown (missed calls only) in the
      * cache - a cache an older build wrote never has the key (QA Low 11). */
     @Test
     fun `lock_glance never fails the policy, and missing means default fresh, unknown cached (25)`() {
         fun withGlance(glance: String) = serverResponse.replaceFirst("{", "{\"lock_glance\": $glance,")
         // The server's literal for a fresh device (policy_json_keys_snapshot).
-        val today = withGlance("""{"apps": ["io.element.android.x"], "show_text": false}""")
+        val today = withGlance("""{"apps": [{"package": "io.element.android.x", "show_text": false}]}""")
         val policy = (decodeCached(today) as CachedPolicy.Ok).policy
-        assertEquals(setOf("apps", "show_text"), policy.lockGlance!!.jsonObject.keys)
-        val expected = com.kidslauncher.mdm.badges.GlancePolicy(setOf("io.element.android.x"), showText = false)
+        assertEquals(setOf("apps"), policy.lockGlance!!.jsonObject.keys)
+        val expected = com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false))
         assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = false))
         assertEquals(expected, com.kidslauncher.mdm.badges.lockGlancePolicy(policy.lockGlance, fresh = true))
         assertEquals(FreshDecode.Ok(policy), decodeFresh(today))
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
-        val withText = (decodeCached(withGlance("""{"apps": ["org.example.chat", "io.element.android.x"], "show_text": true}""")) as CachedPolicy.Ok).policy
+        val withText = (decodeCached(withGlance("""{"apps": [{"package": "org.example.chat", "show_text": true}, {"package": "io.element.android.x", "show_text": false}]}""")) as CachedPolicy.Ok).policy
         assertEquals(
-            com.kidslauncher.mdm.badges.GlancePolicy(setOf("io.element.android.x", "org.example.chat"), showText = true),
+            com.kidslauncher.mdm.badges.GlancePolicy(mapOf("io.element.android.x" to false, "org.example.chat" to true)),
             com.kidslauncher.mdm.badges.lockGlancePolicy(withText.lockGlance, fresh = true),
         )
         // Nothing in it fails the policy; what can't be used is dropped.
@@ -532,7 +532,7 @@ class PolicyResponseCompatTest {
         val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
         assertNull(older.lockGlance)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = true))
-        assertEquals(setOf("io.element.android.x"), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
+        assertEquals(mapOf("io.element.android.x" to false), com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT.apps)
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.UNKNOWN, com.kidslauncher.mdm.badges.lockGlancePolicy(older.lockGlance, fresh = false))
         val explicitNull = (decodeFresh(withGlance("null")) as FreshDecode.Ok).policy
         assertEquals(com.kidslauncher.mdm.badges.GlancePolicy.SERVER_DEFAULT, com.kidslauncher.mdm.badges.lockGlancePolicy(explicitNull.lockGlance, fresh = true))

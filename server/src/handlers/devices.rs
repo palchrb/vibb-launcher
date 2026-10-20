@@ -870,7 +870,6 @@ pub(crate) async fn lock_screen_card(
         Err(err) => {
             tracing::error!(device_id = policy.device_id, %err, "couldn't read the lock screen's apps");
             return LockScreenCard {
-                show_text: policy.lock_glance_text,
                 notes,
                 apps: Vec::new(),
                 unreadable: true,
@@ -894,7 +893,6 @@ pub(crate) async fn lock_screen_card(
         lock_glance::card_apps(listed, &ticked, None)
     };
     LockScreenCard {
-        show_text: policy.lock_glance_text,
         notes,
         apps,
         unreadable: false,

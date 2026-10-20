@@ -17,7 +17,7 @@ class GlanceRowsTest {
     private val element = "io.element.android.x"
     private val school = "no.example.school"
     private val ours = "me.vibb.launcher"
-    private val ticked = GlancePolicy(setOf(element, school), showText = false)
+    private val ticked = GlancePolicy(mapOf(element to false, school to false))
 
     private fun json(text: String): JsonElement = Json.parseToJsonElement(text)
 
@@ -25,17 +25,30 @@ class GlanceRowsTest {
 
     @Test
     fun `the policy - an object field by field, missing means default fresh and unknown cached`() {
-        assertEquals(GlancePolicy(setOf(element), false), lockGlancePolicy(json("""{"apps": ["$element"], "show_text": false}"""), fresh = false))
-        assertEquals(GlancePolicy(setOf(element, school), true), lockGlancePolicy(json("""{"apps": ["$school", "$element", "$element"], "show_text": true}"""), fresh = true))
-        // Only valid package names; show_text only for JSON true.
+        // Design 51: each app an object with its own text.
         assertEquals(
-            GlancePolicy(setOf(element), false),
-            lockGlancePolicy(json("""{"apps": ["$element", "bad", ".x", "a..b", 7, null, ["x.y"]], "show_text": "true"}"""), fresh = true),
+            GlancePolicy(mapOf(school to true, element to false)),
+            lockGlancePolicy(json("""{"apps": [{"package": "$school", "show_text": true}, {"package": "$element", "show_text": false}]}"""), fresh = false),
         )
-        assertEquals(GlancePolicy(emptySet(), false), lockGlancePolicy(json("""{"show_text": 1}"""), fresh = true))
-        assertEquals(GlancePolicy(emptySet(), true), lockGlancePolicy(json("""{"apps": {}, "show_text": true}"""), fresh = true))
+        // The shape before 51 (an older server): strings, sender only - its global switch is ignored.
+        assertEquals(GlancePolicy(mapOf(element to false, school to false)), lockGlancePolicy(json("""{"apps": ["$school", "$element", "$element"], "show_text": true}"""), fresh = true))
+        // Mixed; only valid package names, show_text only for JSON true (missing = false); an
+        // object without a usable package is dropped.
+        assertEquals(
+            GlancePolicy(mapOf(element to true, school to false, "org.a.chat" to false, "org.b.chat" to false)),
+            lockGlancePolicy(
+                json(
+                    """{"apps": [{"package": "$element", "show_text": true}, "$school", {"package": "org.a.chat"},
+                    {"package": "org.b.chat", "show_text": "true"}, {"show_text": true}, {"package": "bad", "show_text": true},
+                    {"package": 7}, {"package": null}, "bad", ".x", "a..b", 7, null, ["x.y"]]}""",
+                ),
+                fresh = true,
+            ),
+        )
+        assertEquals(GlancePolicy(emptyMap()), lockGlancePolicy(json("""{"show_text": 1}"""), fresh = true))
+        assertEquals(GlancePolicy(emptyMap()), lockGlancePolicy(json("""{"apps": {}}"""), fresh = true))
         // Missing or null: an older server's default when fresh; a pre-25 cache when cached (QA Low 11).
-        assertEquals(GlancePolicy(setOf(element), false), lockGlancePolicy(null, fresh = true))
+        assertEquals(GlancePolicy(mapOf(element to false)), lockGlancePolicy(null, fresh = true))
         assertEquals(GlancePolicy.SERVER_DEFAULT, lockGlancePolicy(json("null"), fresh = true))
         assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(null, fresh = false))
         assertEquals(GlancePolicy.UNKNOWN, lockGlancePolicy(json("null"), fresh = false))
@@ -44,13 +57,13 @@ class GlanceRowsTest {
             assertEquals(odd, GlancePolicy.UNKNOWN, lockGlancePolicy(json(odd), fresh = true))
         }
         assertTrue(GlancePolicy.UNKNOWN.apps.isEmpty())
-        assertFalse(GlancePolicy.UNKNOWN.showText)
+        assertFalse(GlancePolicy.UNKNOWN.showsText(element))
     }
 
     @Test
     fun `the policy's order - a fresh one wins, the start's cache never overwrites it (code QA Low 4)`() {
-        val fresh = GlancePolicy(setOf(element), showText = true)
-        val cached = GlancePolicy(setOf(school), showText = false)
+        val fresh = GlancePolicy(mapOf(element to true))
+        val cached = GlancePolicy(mapOf(school to false))
         // The cache first, then a sync: the sync wins.
         val afterCache = nextGlancePolicy(GlancePolicyState.START, cached, fresh = false)
         assertEquals(GlancePolicyState(cached, freshSeen = false), afterCache)
@@ -122,6 +135,11 @@ class GlanceRowsTest {
         assertEquals(GlanceLevel.SENDER, glanceLevel(ticked = true, secret = false, showText = false, messaging = true))
         // A school app's title can be a grade: sender-only shows the app and a count.
         assertEquals(GlanceLevel.APP_ONLY, glanceLevel(ticked = true, secret = false, showText = false, messaging = false))
+        // Design 51: the text per app - shown for one ticked app, the sender only for the other.
+        val policy = GlancePolicy(mapOf(element to true, school to false))
+        assertEquals(GlanceLevel.TEXT, glanceLevel(ticked = true, secret = false, showText = policy.showsText(element), messaging = true))
+        assertEquals(GlanceLevel.SENDER, glanceLevel(ticked = true, secret = false, showText = policy.showsText(school), messaging = true))
+        assertFalse(policy.showsText(ours))
         assertTrue(GlanceLevel.NOT_READ < GlanceLevel.APP_ONLY && GlanceLevel.APP_ONLY < GlanceLevel.SENDER && GlanceLevel.SENDER < GlanceLevel.TEXT)
         assertEquals(-1, GLANCE_VISIBILITY_SECRET)
         assertEquals(1, GLANCE_IMPORTANCE_MIN)
@@ -265,7 +283,7 @@ class GlanceRowsTest {
 
     @Test
     fun `unticked apps and unread notices are no rows`() {
-        assertTrue(rows(notice("k1", post = 1), policy = GlancePolicy(setOf(school), false)).isEmpty())
+        assertTrue(rows(notice("k1", post = 1), policy = GlancePolicy(mapOf(school to false))).isEmpty())
         assertTrue(rows(notice("k1", post = 1), policy = GlancePolicy.UNKNOWN).isEmpty())
         assertTrue(rows(notice("k1", level = GlanceLevel.NOT_READ, post = 1)).isEmpty())
     }

@@ -20,25 +20,29 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The parent's choice (`PolicyResponse.lock_glance`): the packages whose messages show on the lock
- * ([apps]) and whether with their text ([showText]). Missed calls always show; they aren't in it.
+ * ([apps]'s keys), each with whether its text shows too (design 51; per app since then). Missed
+ * calls always show; they aren't in it.
  */
-data class GlancePolicy(val apps: Set<String>, val showText: Boolean) {
+data class GlancePolicy(val apps: Map<String, Boolean>) {
+    /** This ticked app's message text shows, not only who it's from. */
+    fun showsText(packageName: String): Boolean = apps[packageName] == true
+
     companion object {
         /** No usable policy (a corrupt or missing cache, the last-enforced fallback, anything the
          * server sent that isn't an object): missed calls only - the parent may have unticked
          * something. */
-        val UNKNOWN = GlancePolicy(emptySet(), showText = false)
+        val UNKNOWN = GlancePolicy(emptyMap())
 
         /** What an older server without the key means (its own default for every phone). */
-        val SERVER_DEFAULT = GlancePolicy(setOf(MessagePackages.ELEMENT_X), showText = false)
+        val SERVER_DEFAULT = GlancePolicy(mapOf(MessagePackages.ELEMENT_X to false))
     }
 }
 
 /**
  * `PolicyResponse.lockGlance` read field by field: nothing in it can fail the policy (design 25
  * §2.1, like `app_display` and `music`).
- * - an object: `apps` = its valid package names (anything else in the list is dropped, so is a
- *   non-list), `show_text` true only for JSON `true`;
+ * - an object: `apps` = its usable entries ([glanceApp]; anything else in the list is dropped, so
+ *   is a non-list); a top-level `show_text` (before design 51) is ignored - sender only;
  * - missing or JSON `null`: from a fresh response ([fresh]) an older server - its own default,
  *   Element X with the sender only; from the cache it is a cache an older build wrote (it never
  *   kept the key), so unknown (QA Low 11);
@@ -46,14 +50,21 @@ data class GlancePolicy(val apps: Set<String>, val showText: Boolean) {
  */
 fun lockGlancePolicy(element: JsonElement?, fresh: Boolean): GlancePolicy = when (element) {
     null, JsonNull -> if (fresh) GlancePolicy.SERVER_DEFAULT else GlancePolicy.UNKNOWN
-    is JsonObject -> GlancePolicy(
-        apps = (element["apps"] as? JsonArray).orEmpty()
-            .mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
-            .filter(::isValidPackageName)
-            .toSet(),
-        showText = (element["show_text"] as? JsonPrimitive)?.let { !it.isString && it.content == "true" } == true,
-    )
+    is JsonObject -> GlancePolicy((element["apps"] as? JsonArray).orEmpty().mapNotNull(::glanceApp).toMap())
     else -> GlancePolicy.UNKNOWN
+}
+
+/** One entry of `lock_glance.apps`: a string is that package, sender only (the shape before design
+ * 51, from an older server); an object is its `package` with its own `show_text` (true only for
+ * JSON `true`); anything else, or a package name that isn't one, is dropped. */
+private fun glanceApp(entry: JsonElement): Pair<String, Boolean>? {
+    val (packageName, showText) = when (entry) {
+        is JsonObject -> (entry["package"] as? JsonPrimitive)?.takeIf { it.isString }?.content to
+            ((entry["show_text"] as? JsonPrimitive)?.let { !it.isString && it.content == "true" } == true)
+        is JsonPrimitive -> entry.takeIf { it.isString }?.content to false
+        else -> null to false
+    }
+    return packageName?.takeIf(::isValidPackageName)?.let { it to showText }
 }
 
 /** The store's policy and whether a fresh one came in this process. */

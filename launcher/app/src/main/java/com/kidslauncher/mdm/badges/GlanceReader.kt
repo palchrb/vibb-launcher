@@ -111,7 +111,7 @@ object GlanceReader {
             .filterIsInstance<Bundle>()
         // The kid's own messages have no sender: they are not counted, and never "the newest".
         val fromOthers = messages.filter { it.containsKey(SENDER_PERSON) || it.containsKey(SENDER) }
-        val level = glanceLevel(ticked = true, secret = secret, showText = policy.showText, messaging = messages.isNotEmpty())
+        val level = glanceLevel(ticked = true, secret = secret, showText = policy.showsText(sbn.packageName), messaging = messages.isNotEmpty())
         val newest = fromOthers.lastOrNull()
         val group = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
         val sender = if (level >= GlanceLevel.SENDER) newest?.let(::senderOf) else null

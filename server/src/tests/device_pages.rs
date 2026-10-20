@@ -679,17 +679,19 @@ async fn lock_forms_return_to_the_page() {
             &[("wallpaper", "")],
             (lock.clone(), Some("lock-wallpaper")),
         ),
-        (
-            "lock-screen#lock-screen-text",
-            &[("show_text", "on")],
-            (lock.clone(), Some("lock-screen-text")),
-        ),
         // Element X, ticked for every new phone (its hidden `package_name`); listed only for its
-        // tick (no report yet), so the untick lands on the group (qa-browser-fixes-code L1).
+        // tick (no report yet): kept ticked here, so its text switch below has its row (the
+        // untick's landing on the group is tests::lock_glance's).
         (
             "lock-screen/apps#notifications",
-            &[],
-            (lock.clone(), Some("notifications")),
+            &[("on", "on")],
+            (lock.clone(), Some("lock-screen-app-io.element.android.x")),
+        ),
+        // Its text switch (design 51), back to its row.
+        (
+            "lock-screen/apps/text#lock-screen-app-io.element.android.x",
+            &[("show_text", "on")],
+            (lock.clone(), Some("lock-screen-app-io.element.android.x")),
         ),
     ];
     let found = forms(&html);
@@ -716,8 +718,9 @@ async fn lock_forms_return_to_the_page() {
     }
     // Each did what it says.
     let (kid, timeout, text): (Option<String>, i64, bool) = sqlx::query_as(
-        "SELECT kid_pin_hash, screen_timeout_seconds, lock_glance_text FROM device_policy \
-         WHERE device_id = ?",
+        "SELECT kid_pin_hash, screen_timeout_seconds, \
+         (SELECT show_text FROM device_lock_glance_apps g WHERE g.device_id = p.device_id) \
+         FROM device_policy p WHERE device_id = ?",
     )
     .bind(id)
     .fetch_one(&app.db)

@@ -69,7 +69,7 @@ class LockGlanceGuardTest {
         "guarded", "source", "work", "entry", "entries", "active", "rankingMap", "ranking", "ranked", "candidate",
         "secret", "extras", "messages", "fromOthers", "level", "newest", "group", "sender", "title", "text", "notice",
         "message", "messaging", "policy", "n", "sbn", "w", "Log",
-        "GlanceStore", "clearNotices", "remove", "put", "updateSuspended", "replaceAll", "apps", "showText",
+        "GlanceStore", "clearNotices", "remove", "put", "updateSuspended", "replaceAll", "apps", "showText", "showsText",
         "GlanceCandidateFacts", "glanceCandidate", "groupSummary", "ongoing", "clearable", "media", "importance",
         "category", "glanceLevel", "ticked", "GlanceLevel", "TEXT", "glanceTitle", "conversationTitle", "newestSender",
         "cleanGlanceText", "GLANCE_TITLE_MAX", "GLANCE_TEXT_MAX", "glanceGroupText", "glanceCount", "isMediaNotification",
@@ -130,6 +130,15 @@ class LockGlanceGuardTest {
         assertEquals(2, Regex("""\bisSuspended\b""").findAll(reader).count())
     }
 
+    /** qa-r7-b-code M1: the two glue lines that apply the parent's choice - an app not ticked is never
+     * read, and the text only for an app whose own switch is on (design 51). */
+    @Test
+    fun `the reader reads ticked apps only, and the text per app`() {
+        assertTrue(reader.contains("if (sbn.packageName !in policy.apps || sbn.user != Process.myUserHandle()) return null"))
+        assertTrue(reader.contains("showText = policy.showsText(sbn.packageName), messaging = messages.isNotEmpty())"))
+        assertEquals(1, Regex("""\bshowText =""").findAll(reader).count())
+    }
+
     @Test
     fun `text is read only inside readTexts, and readTexts only at TEXT`() {
         val texts = body(reader, "readTexts")
@@ -171,7 +180,7 @@ class LockGlanceGuardTest {
     /** A log line in a glance file names a package, a count or an exception class - never a title,
      * name, text, key or shortcut id. */
     private val allowedInterpolations = setOf(
-        "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\${if (next.showText) \"on\" else \"off\"}",
+        "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\$withText",
         "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}",
     )
 

@@ -322,20 +322,16 @@ pub(crate) async fn build_policy(
 
     // The lock's glance page (design 25): cosmetic like the wallpapers - a failing query sends no
     // apps (missed calls only on the phone's lock), never a 500 that would cost the phone its rules.
-    let lock_glance =
-        crate::lock_glance::policy_lock_glance(&state.db, device_id, policy.lock_glance_text)
-            .await
-            .unwrap_or_else(|err| {
-                tracing::error!(
-                    device_id,
-                    %err,
-                    "couldn't load the lock screen's apps - policy sent with lock_glance.apps: []"
-                );
-                crate::lock_glance::LockGlancePolicy {
-                    apps: Vec::new(),
-                    show_text: policy.lock_glance_text,
-                }
-            });
+    let lock_glance = crate::lock_glance::policy_lock_glance(&state.db, device_id)
+        .await
+        .unwrap_or_else(|err| {
+            tracing::error!(
+                device_id,
+                %err,
+                "couldn't load the lock screen's apps - policy sent with lock_glance.apps: []"
+            );
+            crate::lock_glance::LockGlancePolicy { apps: Vec::new() }
+        });
 
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. A launcher that
