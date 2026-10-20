@@ -840,6 +840,17 @@ findings, merge to `main`, full suite once.
   it has no list to measure progress through - so every one of the user's (parent-owned, context-mode) playlists shows
   no mark although it was started. Change: a context entry with a stored live track shows the play mark (started)
   and no progress bar; a list-mode Spotify entry already follows the rule. Music round after stable 0.4.0's blockers.
+  **The carousel's play arrow means "tap to play", on every tile** (the user, 2026-10-20: "i mitt hode betyr den
+  'trykk på tile for å starte avspilling'"; a deviation from vibb, where the mark means started - the user's call):
+  the peach play disc shows on every cover in the main carousel; "started" is said by the progress line and the hint
+  alone (unchanged: a started resume entry). `CoverBadges` + `EntryUiTest`/`FitTest`; same music round as 46.
+  **Not pursued: a librespot-style session for playlist metadata** (the user, 2026-10-20: "go-librespot klarer å hente
+  lister og metadata ... for innloggede kontoer"). True - the client protocol (spclient/Mercury) lists any playlist the
+  session can read, free of the Web API's development-mode limits - but it is the same session machinery
+  `docs/design/vibb-spotify-options.md` rejected for playback: login5/OAuth churn, new accounts failing (S2), outages
+  the official app survives (S5), against Spotify's terms, and a Go client beside the Rust server. For the family's
+  own playlists the reader account (46b) gives the same list with the official API and no new code; for a stranger's
+  public playlist the queue's next 20 (46) is the honest fallback. Revisit only if 46b proves insufficient.
   **46b - the cheaper road to the whole list: a reader account** (2026-10-20, the user: "er du helt sikker på at vi
   ikke klarer å hente hele listen?"). Design 26c decision 1 says the code already allows it: "N accounts, one bound per
   phone, any of them a reader" - the parent's account is left out by the user's own choice at the time ("ingen grunn
