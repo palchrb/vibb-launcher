@@ -1032,6 +1032,30 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **The music round (2026-10-20, merge 9a7017a0 of `music-r-b`, which holds `music-r-a`; design QA
+  `docs/design/qa-music-round-design.md` + one revision check; code QA `docs/review/qa-music-a-code.md` (1 High / 2
+  Medium / 5 Low, all fixed) and `qa-music-b-code.md` (0 / 3 / 5, all fixed); music suite 970, launcher 1431, server
+  1096 green)**: **design 49** shuffle and a three-state repeat in the player's control row for Spotify music and
+  non-resuming own files (`controlSlots`), remembered per entry (Room 6 `repeat`), the phone's ExoPlayer repeat mode
+  with a one-lap guard on the error move-on, Sonos' `advance()` wrapping/replaying, Spotify's own shuffle/repeat set to
+  the entry's want (list mode: our shuffle, `repeat=track`, a gated restart for repeat-all; the end rules never read a
+  repeating track as the end), `KidPlayer` refusing a controller's set-mode commands; **design 50** ±15/30 s for what
+  resumes (the lock's `now_playing` gets `controls: skip|music`), "Til slutten" in the sleep sheet (each renderer pauses
+  at the item's end by its own means, survives queue loads and output switches, beats repeat, Spotify's repeat off
+  while it is on), the carousel opening once on the last played tile, dimmed unplayable tiles with one line and no
+  arrow, favourites per track/episode (Room 6 `favourites`, the "Favoritter" category tile that only filters);
+  **design 46 §1.4** the play arrow on every non-dimmed tile (46's queue view parked). **The user's calls pending**:
+  the sleep bar reads "Sov · til slutten" without the remaining time (the seek bar shows it). **Device checks owed
+  (the user, emulator)**: 49 §3 and 50 §3 as written in the notes' Implementation status (own music shuffle/repeat
+  remembered across a restart, the flip hidden while shuffled, a Spotify playlist shuffled keeps the cover tap's
+  current item first, repeat one/all with the fakes; a podcast's ±15/30 on the phone and a fake room; "Til slutten"
+  after a manual step, with repeat one on the phone (one pause, no second play) and with `fake-spotify.py --repeat
+  track`; the app opening on the last played tile; dimmed tiles on cell with streaming off; a heart in a list showing
+  under Favoritter; the heart at 320 dp). Goes out with music-v0.4.0 (the user's go).
+- **Server 0.31.1 content (2026-10-20, merge daff2443 of `r7-c`)**: the summary's Now section is gone (the user: "kan
+  vi ikke bare ta vekk hele den now biten?"), End now for a running pause sits under Quick Actions, ended lifts show
+  on Device › Time only, each Activity event row shows its clock once; the running version beside Install Now never
+  wraps. Not tagged yet (the user decides when).
 - **Server round 6 (2026-10-20, merges d2b6563b r7-a and 5b382da5 r7-b; design QA `docs/review/qa-r6-server-design.md`
   + one revision check; code QA `docs/review/qa-r7-a-code.md` (0 High / 0 Medium / 4 Low, all fixed) and
   `qa-r7-b-code.md` (0 / 1 / 3, all fixed))**: **design 48** the summary's Today and Recent become **Now** (the lifts
