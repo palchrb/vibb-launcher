@@ -910,7 +910,10 @@ findings, merge to `main`, full suite once.
   (banner + badge, the inbox "Delivered to"). **Next server round**: the tap on a declarative notification goes
   straight to `navigate` without the worker (WebKit skips it when the notification has one), so the link carries the
   delivery (`?push=<delivery id>`) and the page handler of a logged-in parent sets `clicked_at` from it - "Opened on
-  iPhone · Safari" (the user's yes, 2026-10-20; a missing tap never changes a thing - delivered stays delivered); ("Shown on …" stays passive; the user: 201 = delivered
+  iPhone · Safari" (the user's yes, 2026-10-20; a missing tap never changes a thing - delivered stays delivered);
+  with it a quiet count on the device row under Getting Notifications, plain tone, never a warning: "Last delivered
+  2 min ago · 7 since one was opened" (delivered pushes after the device's last tap or receipt; the user,
+  2026-10-20: "en stillere notis på at det er x meldinger siden det er mottatt en receipt"); ("Shown on …" stays passive; the user: 201 = delivered
   for declarative, no repeat-until-opened); SSE `X-Accel-Buffering: no` + a log line per stream open/close (the
   emulator's "seen" resets every ~5 min = the 300 s read timeout, keepalives not arriving through the proxy at
   10.73.10.81 - ask which proxy); migration 0082 + the `failures == 0` art rule; the Send-a-Test row poll.
