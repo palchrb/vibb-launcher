@@ -515,7 +515,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `THEN_*` on a restored queue): `KidPlayer` refuses the Player's set-mode commands. Every queue hands its modes to the
   renderer (`Renderer.setModes`, after each `active = a`). **The phone**: ExoPlayer's repeat mode (`exoRepeatMode`), so
   `clear_state` runs only with repeat off; the move-on past an unplayable item wraps only with repeat all, one lap at
-  most (`moveOnIndex`). **A room**: the controller's `advance()` wraps (all) or plays the item again (one) through
+  most - counted across `onError`'s calls from where the run of failures began (`moveOnIndex`'s origin,
+  `Active.failRunFrom`, cleared by 15 s of real play or a natural end). **A room**: the controller's `advance()` wraps (all) or plays the item again (one) through
   `advanceIndex`, gated, a deliberate start. **Spotify**: list mode's shuffle is our order (`reorder`), Spotify's off;
   repeat one is Spotify's `repeat=track`, repeat all a gated `NewWindow(0, wrap)` at the list's end, before `Ended`; a
   context uses Spotify's own shuffle and `repeat=context|track`, and its end rules never read a repeating track as the

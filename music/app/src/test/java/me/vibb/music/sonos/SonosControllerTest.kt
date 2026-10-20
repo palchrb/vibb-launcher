@@ -639,6 +639,66 @@ class SonosControllerTest {
         assertFalse(r.c.takeEnded())
     }
 
+    /** The speaker plays [index] at 0:00:05 after a wrap or a replay: the bookmark takes the new start (the guard's deliberate). */
+    private fun startKept(index: Int) {
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:00:05", uri = r.url(index))
+        r.poll()
+        val w = r.store.writes.last()
+        assertEquals("ep${index + 1}", w.itemKey)
+        assertEquals("the new start at 0 over the saved place, not the guard's hold", 5_000L, w.posMs)
+    }
+
+    @Test
+    fun `qa-music-a-code 4 - a wrap and a replay start below the saved place deliberately - the bookmark takes them`() {
+        r.c.repeat = Repeat.ALL
+        r.store.saved["ep1"] = 1_200_000 // item 0 heard far in before
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        startKept(0)
+        // repeat one: the same item again, its saved place near its end
+        r.c.repeat = Repeat.ONE
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(0))
+        r.poll()
+        assertTrue(r.store.saved["ep1"]!! > 1_000_000)
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(0))
+        r.poll()
+        startKept(0)
+    }
+
+    @Test
+    fun `qa-music-a-code 4 - a wrap that waits for a play (nothing may play) starts deliberately when it comes`() {
+        r.c.repeat = Repeat.ALL
+        r.store.saved["ep1"] = 1_200_000
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.allowed = false
+        val before = r.host.played.size
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals("nothing sent while nothing may play", before, r.host.played.size)
+        assertEquals(0, r.c.index)
+        r.allowed = true
+        r.c.playTile()
+        startKept(0)
+    }
+
     @Test
     fun `d50 - Til slutten beats repeat one - held at the same item at 0, nothing played again`() {
         r.c.repeat = Repeat.ONE

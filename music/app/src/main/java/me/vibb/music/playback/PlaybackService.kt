@@ -166,6 +166,12 @@ internal class Active(
     var shownNewestFirst: Boolean = false,
     /** The entry's repeat (design 49 §1.2, `Snapshot.repeatOf`): the renderer's through `setModes`; off ends the queue. */
     var repeat: Repeat = Repeat.OFF,
+    /**
+     * Where the current run of play-time failures began (qa-music-a-code 1): `onError`'s move-on stops once its lap is
+     * back there (`moveOnIndex`'s origin); cleared when an item really plays (the 15 s save tick, or a natural end). A
+     * new queue is a new [Active]: none.
+     */
+    var failRunFrom: Int? = null,
 )
 
 /**
@@ -943,7 +949,7 @@ class PlaybackService : MediaSessionService() {
     private fun moveOnFrom(a: Active, from: Int): Int? {
         val caps = netCaps(this)
         val streamMobileData = store.streamMobileData
-        return moveOnIndex(a.items.size, from, a.repeat) { playable(a, it, caps, streamMobileData) }
+        return moveOnIndex(a.items.size, from, a.repeat, a.failRunFrom) { playable(a, it, caps, streamMobileData) }
     }
 
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). A no-op on Spotify's web
@@ -1347,6 +1353,9 @@ class PlaybackService : MediaSessionService() {
 
     private val saveTick = object : Runnable {
         override fun run() {
+            // 15 s of real play (the tick starts when it plays): a run of failures ends here (qa-music-a-code 1) - not at
+            // the first isPlaying, which an item that fails on its first frames may give too
+            active?.failRunFrom = null
             renderer.saveNow()
             // The launcher's snapshot keeps the place too, so Home is right after a crash or a
             // dead battery (qa-21-step4-code L4).
@@ -1408,6 +1417,7 @@ class PlaybackService : MediaSessionService() {
         val previous = a.items.getOrNull(lastIndex)
         if (auto && previous != null && lastIndex != index) {
             markDone(a, previous)
+            a.failRunFrom = null // an item played to its end: no run of failures (qa-music-a-code 1)
         }
         lastIndex = index
         wakeModeFor(a, index)
@@ -1559,6 +1569,7 @@ class PlaybackService : MediaSessionService() {
             !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
+        if (a.failRunFrom == null) a.failRunFrom = index // the run's first failure: its lap ends back here
         val nextIndex = moveOnFrom(a, index)
         if (nextIndex != null) {
             renderer.seekTo(nextIndex, startPos(a, nextIndex))
