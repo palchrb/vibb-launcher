@@ -900,8 +900,17 @@ findings, merge to `main`, full suite once.
   4852bb62)**: the replacement the worker showed was accepted and never displayed on iOS 26 (six tests), so the
   declarative path posts the receipt and sets the badge and shows nothing - Safari shows its own notification; the
   payload carries `app_badge`; the probes are out; a tap on Safari's notification opens its `navigate`. Owed: the
-  iPhone test (banner, badge, `event=push-declarative worker=v0.29.5`). **Next server round**: the "may not be showing"
-  rule exempts Apple endpoints ("Shown on …" stays passive; the user: 201 = delivered
+  iPhone test (banner, badge, `event=push-declarative worker=v0.29.5`) - **failed: nothing displayed** (the worker ran
+  and confirmed, iOS 26 showed nothing). **0.29.6 (tagged 2026-10-20 on 69e18d05)**: the declarative payload is
+  immutable - WebKit's `WebPushDaemon` shows an immutable one itself at once, no worker (the acrobid demo the user ran
+  on the iPhone, immutable, "funker 100%"); with `mutable` the worker's result went back through the host app and
+  that step displayed nothing on iOS 26 whatever the worker did. No receipt comes from a Safari device now: Apple's
+  acceptance is the delivery (`reason = 'declarative'`, "Delivered to iPhone · Safari", "Last delivered …", never
+  "May not be showing" - the user, 2026-10-20: "da velger vi å stole på declarative web push"). Owed: the iPhone test
+  (banner + badge, the inbox "Delivered to"). **Next server round**: the tap on a declarative notification goes
+  straight to `navigate` without the worker (WebKit skips it when the notification has one), so the link carries the
+  delivery (`?push=<delivery id>`) and the page handler of a logged-in parent sets `clicked_at` from it - "Opened on
+  iPhone · Safari" (the user's yes, 2026-10-20; a missing tap never changes a thing - delivered stays delivered); ("Shown on …" stays passive; the user: 201 = delivered
   for declarative, no repeat-until-opened); SSE `X-Accel-Buffering: no` + a log line per stream open/close (the
   emulator's "seen" resets every ~5 min = the 300 s read timeout, keepalives not arriving through the proxy at
   10.73.10.81 - ask which proxy); migration 0082 + the `failures == 0` art rule; the Send-a-Test row poll.
