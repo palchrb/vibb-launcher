@@ -14,8 +14,8 @@ use crate::display_time::Zone;
 use crate::models::DeviceStatus;
 use crate::security::{self, CurrentAdmin};
 use crate::window_relock::{
-    self, ALLOW_BLOCKED, AllowedBlock, Answer, BlockContext, Blocks, END_WINDOWS, Findings,
-    ForeignView, START_PAUSE, WINDOW_RELOCK_CAPABILITY,
+    self, ALLOW_BLOCKED, AllowedBlock, BlockContext, Blocks, END_WINDOWS, Findings, ForeignView,
+    START_PAUSE, WINDOW_RELOCK_CAPABILITY,
 };
 
 /// What the summary shows for design 24b, typed (the words are the template's).
@@ -32,8 +32,6 @@ pub struct RelockCard {
     pub findings: Option<Findings>,
     /// The phone refuses the Parent PIN ([window_relock::foreign_view]).
     pub foreign: Option<ForeignView>,
-    /// The newest answer to each command, under a week old ([window_relock::answer]).
-    pub answers: Vec<Answer>,
     /// What the phone blocks now - or, from an older launcher, what its last relock blocked.
     pub blocks: Blocks,
     /// "Allow these apps…"'s hidden `blocks` value: the listed apps and the keys shown
@@ -116,10 +114,6 @@ pub async fn card(
             latest.and_then(|s| s.foreign_access_json.as_deref()),
         )
         .map(|f| window_relock::foreign_view(&f, paused, &names)),
-        answers: answers
-            .iter()
-            .filter_map(|a| window_relock::answer(a, zone, now))
-            .collect(),
         allow_value: window_relock::allow_form_value(&blocks.allow),
         blocks,
     })

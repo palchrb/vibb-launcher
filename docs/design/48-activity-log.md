@@ -90,3 +90,15 @@ Requests only while something is in flight or just failed.
 - 48-9: sort key is the row's own time; `Zone::at` words for both kinds.
 - 48-10: event `open` form carries `from=device` and `device=<id>`; builder extracted; no avatar.
 - 48-11: Update Location rows are ordinary rows in Activity (the cap is the limit).
+
+## Implementation status (2026-10-20, branch r7-a)
+
+Implemented as revised: `handlers/activity.rs` (`activity::rows`, `ActivityRow`), `locate::requests` and
+`in_requests` (the §1.4 buckets; "newest" = the newest row of each of ring/stop_ring/lock/wipe, which counts whatever
+its status except `Cancelled{Parent}`), `notifications::inbox_row` (extracted; `ROW_COLUMNS`), `partials/recent.html`
+(`row` and `show(recent, title)`), Now/Activity in `device_detail.html`, `retention::prune`'s commands
+(`COMMAND_DAYS`, `Pruned.commands`). `RelockCard.answers` and `window_relock::{answer, Answer, AnswerState}` are
+deleted. Every command row's time is `Zone::at` (Locate's and Install Now's too). Choices: Activity sits after
+Blocked Apps and Locked Again, right before the Settings rows ("the log at the bottom"; still below Now); a
+Restart/Enrolled/Replaced cancel that isn't the newest of its kind is no Request (no bucket holds it) and is read in
+Activity. Event rows show no unread dot and no delivery line. Device check (§3) owed.

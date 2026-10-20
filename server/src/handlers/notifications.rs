@@ -186,7 +186,9 @@ fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
     })
 }
 
-type Row = (
+/// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
+/// `happened_at`, unread, the phone's name and `enrolled_at`.
+pub(crate) type Row = (
     i64,
     i64,
     String,
@@ -197,6 +199,34 @@ type Row = (
     String,
     Option<String>,
 );
+
+/// [Row]'s columns, of `parent_events e JOIN devices d ON d.id = e.device_id`.
+pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.detail, \
+     e.happened_at, e.read_at IS NULL, d.name, d.enrolled_at";
+
+/// One event as a row: the inbox's, and the phone summary's Activity (design 48 §1.2), which
+/// doesn't show the avatar. `words` says when it happened ("3 min ago" in the inbox, the clock
+/// on the summary); the delivery line is the inbox's to add.
+pub(crate) fn inbox_row(
+    raw: Row,
+    zone: &Zone,
+    words: impl Fn(chrono::DateTime<chrono::Utc>) -> String,
+) -> InboxRow {
+    let (id, device_id, title, summary, detail, happened_at, unread, name, enrolled) = raw;
+    let at = crate::display_time::parse_db_utc(&happened_at);
+    InboxRow {
+        id,
+        avatar: crate::handlers::devices::avatar_class_of(device_id, enrolled.is_some()),
+        initial: crate::handlers::devices::initial(&name),
+        title,
+        summary,
+        detail,
+        when: at.map(&words).unwrap_or_default(),
+        exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+        unread,
+        delivery: None,
+    }
+}
 
 /// The inbox (design 45 §1.1, §1.3): reads the page, marks exactly the rows it shows read, then
 /// counts what is left; the rows keep the unread state they had, for their dot.
@@ -246,26 +276,11 @@ pub async fn page(
     let rows = raw
         .into_iter()
         .take(parent_events::PAGE as usize)
-        .map(
-            |(id, device_id, title, summary, detail, happened_at, unread, name, enrolled)| {
-                let at = crate::display_time::parse_db_utc(&happened_at);
-                InboxRow {
-                    id,
-                    avatar: crate::handlers::devices::avatar_class_of(
-                        device_id,
-                        enrolled.is_some(),
-                    ),
-                    initial: crate::handlers::devices::initial(&name),
-                    title,
-                    summary,
-                    detail,
-                    when: at.map(|t| zone.relative(t, now)).unwrap_or_default(),
-                    exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-                    unread,
-                    delivery: lines.remove(&id).and_then(|d| delivery_line(&d)),
-                }
-            },
-        )
+        .map(|raw| {
+            let mut row = inbox_row(raw, &zone, |t| zone.relative(t, now));
+            row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(&d));
+            row
+        })
         .collect();
     Html(
         InboxTemplate {
@@ -454,13 +469,11 @@ async fn read_page(
     let phones = sqlx::query_as("SELECT id, name FROM devices ORDER BY name, id")
         .fetch_all(&state.db)
         .await?;
-    let rows = sqlx::query_as(
-        "SELECT e.id, e.device_id, e.title, e.summary, e.detail, e.happened_at, \
-                e.read_at IS NULL, d.name, d.enrolled_at \
-         FROM parent_events e JOIN devices d ON d.id = e.device_id \
+    let rows = sqlx::query_as(&format!(
+        "SELECT {ROW_COLUMNS} FROM parent_events e JOIN devices d ON d.id = e.device_id \
          WHERE (?1 IS NULL OR e.device_id = ?1) AND (?2 IS NULL OR e.id < ?2) \
-         ORDER BY e.id DESC LIMIT ?3",
-    )
+         ORDER BY e.id DESC LIMIT ?3"
+    ))
     .bind(device)
     .bind(before)
     .bind(parent_events::PAGE + 1)

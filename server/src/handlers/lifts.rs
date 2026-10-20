@@ -5,9 +5,9 @@
 //! phone has counted it.
 //!
 //! The forms live on Device › Time (design 31 §3.5, step 9) and the summary's Quick actions and
-//! Today (step 10). Where they return is §5.1's `back` table, always with a `done` code for the
+//! Now (step 10, design 48 §1.1). Where they return is §5.1's `back` table, always with a `done` code for the
 //! flash of the group that posted: `back=time` → `/devices/{id}/time` (`#extra`, `#pause`,
-//! `#lifts`); anything else (`summary`, an older page) → the summary (`#quick`, `#today`). A second
+//! `#lifts`); anything else (`summary`, an older page) → the summary (`#quick`, `#now`). A second
 //! tap on a pause that is already over, or a pause of a rule deleted or switched off in another
 //! tab, lands back there with nothing written and says why.
 
@@ -50,10 +50,10 @@ fn back_to(id: i64, form: &HashMap<String, String>, group: &str, done: &str) -> 
 }
 
 /// The summary's group for one of Device › Time's: the tiles and Pause a rule… are Quick actions,
-/// the lifts with End now are Today.
+/// the lifts with End now are Now (design 48 §1.1).
 pub(crate) fn summary_group(time_group: &str) -> &'static str {
     match time_group {
-        "lifts" => "today",
+        "lifts" => "now",
         _ => "quick",
     }
 }
@@ -513,7 +513,7 @@ mod tests {
         for code in ["extra", "pause", "gone", "ended", "over"] {
             let (group, text, _) = done_flash(code).unwrap();
             assert!(["extra", "pause", "lifts"].contains(&group), "{code}");
-            assert!(["quick", "today"].contains(&summary_group(group)), "{code}");
+            assert!(["quick", "now"].contains(&summary_group(group)), "{code}");
             assert!(!text.is_empty());
         }
         assert_eq!(done_flash("<script>"), None);

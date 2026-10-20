@@ -371,6 +371,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `device_api.rs`, `device_pages.rs`, `devices_list.rs`, `enrollment.rs`, `hardening.rs`, `parent_pin.rs`,
   `time_pages.rs`, `time_rules.rs`; `window_relock::tests`, `parent_pin::tests`, `lifts::tests`, `attention::tests`.
 
+- **Now and Activity (design 48, `docs/design/48-activity-log.md`; supersedes Today and the round-5 Recent above)**:
+  **Now** (`#now`, `show_now`) keeps the state only - today's lifts and the running pauses with End now
+  (`lifts::summary_group("lifts")` = `now`, so End now lands on `?done=ended|over#now`) and the Parent PIN notices;
+  the 24b answers (`RelockCard.answers`, `window_relock::answer`) are gone - a command's row is its one line
+  (`last_answers` stays for the blocks). **Activity** (`#activity`, after Locked Again, before the Settings rows;
+  `handlers::activity::rows`): every command of the phone (`partials/recent.html`'s `row` macro, Cancel →
+  `?cancel=done|too_late#activity`) and its `parent_events` (`notifications::inbox_row`, no avatar; the `open` form
+  carries hidden `from=devices`, `device=<id>`, so a pruned event or a non-local target lands on
+  `/notifications?from=devices&device=<id>#inbox`), merged newest first by when asked / happened, the last 7 days, at
+  most 10 rows, plus every command still cancellable at any age outside both; each row's time is `Zone::at` ("13:41",
+  "yesterday 14:50", "15 Oct 14:02"), the exact one in `title`; a last row "Everything for this phone ›" to that
+  inbox. Shown when it has a row or the Cancel's line. A failed read is a 500. Tests: `summary::activity_*`,
+  `an_event_opens_where_it_happened_or_this_phones_inbox`, `now_*`.
+
 ## The Apps tab (design 31 step 11, `docs/design/31-pwa-redesign.md` §3.3)
 
 - **`/apps`** (`tracked_apps::list_apps`, `apps_list.html`): **On phones** - a row per phone with "N allowed"
@@ -471,6 +485,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `src/tests/locate_page.rs` (the redirect table, the erase refusal, the switcher and the list, local times
   and the answer, Recent's labels and Cancel, the warnings and pickers, unknown phones and failed reads),
   `handlers::locate::tests`, repointed `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`.
+
+- **Requests (design 48 §1.4; supersedes Recent below)**: `locate::requests` (section `#recent`, titled by the
+  partial's `show(recent, "Requests")`) lists `LOCATE_KINDS` by `CommandStatus` (`in_requests`): in flight at any age
+  (`Waiting`, `Sent{NotYet|OfferedAgain|CantConfirm}`, `Received{overdue: false}`, `Erasing`), gone wrong within 24 h
+  (`Failed`, `Expired`, `Sent{Lost}`, `Received{overdue: true}`), and the newest Ring / Stop Ringing / Lock / Erase
+  whatever its status; never `Cancelled{Parent}`, never a Done locate. Shown when it has a row or the Cancel's line;
+  Cancel still lands on `#recent`. Every command row's time is `Zone::at` (the clock on every row). Tests:
+  `locate_page::requests_*`.
 
 ## Locate: history, span, each page its Recent (design 44, `docs/design/44-locate-history.md`)
 

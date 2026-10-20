@@ -1,9 +1,11 @@
 //! The phone's summary (`/devices/{id}`, design 31 §3.2, step 10): the header, Quick actions,
-//! Today, the not-set-up variant, where every form returns, and the reads that must fail loudly.
+//! Now and Activity (design 48), the not-set-up variant, where every form returns, and the reads
+//! that must fail loudly.
 //! The design 24b groups (the foreign-app warning, blocked apps, the last relock) are pinned in
 //! `window_relock.rs`, the Attention rows in `attention.rs` and `devices_list.rs`.
 
 use axum::http::{Method, StatusCode};
+use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
 
 use super::settings_pages::forms;
@@ -228,7 +230,7 @@ async fn the_quick_actions_follow_the_phone() {
 }
 
 /// §5.1: every form on the summary, posted with what it carries, returns to the group it is in -
-/// the quick actions, Today, the blocked apps - with the flash there; built from the rendered forms
+/// the quick actions, Now, the blocked apps - with the flash there; built from the rendered forms
 /// (a form that moves can't keep a stale target), each action's fragment the redirect's.
 #[tokio::test]
 async fn every_form_on_the_summary_returns_to_its_group() {
@@ -298,10 +300,10 @@ async fn every_form_on_the_summary_returns_to_its_group() {
             "quick",
         ),
         (
-            format!("/devices/{id}/lifts/1/end#today"),
+            format!("/devices/{id}/lifts/1/end#now"),
             vec![],
             format!("{summary}?done=ended"),
-            "today",
+            "now",
         ),
         (
             format!("/devices/{id}/allow-blocked#blocked-apps"),
@@ -363,10 +365,10 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     assert_eq!(before, after);
 }
 
-/// §3.2 item 4: Today has the lifts made today and the pauses still running, in local time with
-/// the exact one in `title`; yesterday's finished ones are on Device › Time only.
+/// §3.2 item 4, design 48 §1.1: Now has the lifts made today and the pauses still running, in
+/// local time with the exact one in `title`; yesterday's finished ones are on Device › Time only.
 #[tokio::test]
-async fn today_lists_todays_lifts_in_local_time() {
+async fn now_lists_todays_lifts_in_local_time() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -403,7 +405,7 @@ async fn today_lists_todays_lifts_in_local_time() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let today = group(&html, "today");
+    let today = group(&html, "now");
     let oslo = made.with_timezone(&chrono_tz::Europe::Oslo);
     assert!(today.contains("+15 min screen time"), "{today}");
     assert!(
@@ -415,13 +417,14 @@ async fn today_lists_todays_lifts_in_local_time() {
         "{today}"
     );
     assert!(!today.contains("All rules paused"), "{today}");
-    // Nothing happened: no Today at all.
+    // Nothing happened: no Now, no Activity.
     let (emil, _) = app.enrolled_device("Emil").await;
     let html = app
         .get_page(&format!("/devices/{emil}"), &cookie)
         .await
         .text();
-    assert!(!html.contains("id=\"today\""), "{html}");
+    assert!(!html.contains("id=\"now\""), "{html}");
+    assert!(!html.contains("id=\"activity\""), "{html}");
 }
 
 /// §3.2's not-set-up variant: the header, Connect This Phone (New Setup Code is a POST, the QR a
@@ -487,27 +490,14 @@ async fn a_phone_not_set_up_shows_connect_this_phone() {
     assert!(!html.contains(&warning), "{html}");
 }
 
-/// Today keeps today's command answers and any still waiting (qa-31-s10-code N2), and a pause
-/// still running behind more than ten newer lifts keeps its End now (N3).
+/// A pause still running behind more than ten newer lifts keeps its End now in Now
+/// (qa-31-s10-code N3). A command is one row, in Activity: Now has no answer lines (design 48 §1.1).
 #[tokio::test]
-async fn today_is_today_and_keeps_running_pauses() {
+async fn now_keeps_running_pauses_and_no_answer_lines() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    for (command, acknowledged) in [
-        ("end_windows", "NULL"),
-        ("allow_blocked", "datetime('now', '-2 days')"),
-    ] {
-        sqlx::query(&format!(
-            "INSERT INTO device_commands (device_id, command, requested_at, acknowledged_at) \
-             VALUES (?, ?, datetime('now', '-2 days'), {acknowledged})"
-        ))
-        .bind(id)
-        .bind(command)
-        .execute(&app.db)
-        .await
-        .unwrap();
-    }
+    command(&app, id, "end_windows", Utc::now() - Duration::days(2), "").await;
     sqlx::query(
         "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at) \
          VALUES (?, 'rule', 'Skole', 120, datetime('now', '-1 minute'), datetime('now', '+2 hours'))",
@@ -534,19 +524,297 @@ async fn today_is_today_and_keeps_running_pauses() {
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let today = group(&html, "today");
+    let now = group(&html, "now");
     assert!(
-        today.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#today\"")),
-        "{today}"
+        now.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#now\"")),
+        "{now}"
     );
-    assert_eq!(today.matches("+15 min screen time").count(), 11, "{today}");
-    // The waiting Lock again stays; the Allow answered two days ago is gone.
-    assert!(today.contains("data-answer=\"Lock again\""), "{today}");
-    assert!(today.contains("No answer yet"), "{today}");
+    assert_eq!(now.matches("+15 min screen time").count(), 11, "{now}");
+    assert!(!html.contains("data-answer"), "{html}");
+    assert!(!now.contains("Lock again"), "{now}");
     assert!(
-        !today.contains("data-answer=\"Allow these apps\""),
-        "{today}"
+        group(&html, "activity").contains("data-command=\"end_windows\""),
+        "{html}"
     );
+}
+
+/// Stored like `datetime('now')`.
+fn db_time(t: DateTime<Utc>) -> String {
+    t.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// A command asked at `requested`; `then` sets more columns (SQL, may name `requested_at`).
+async fn command(
+    app: &TestApp,
+    device: i64,
+    command: &str,
+    requested: DateTime<Utc>,
+    then: &str,
+) -> i64 {
+    let id = sqlx::query_scalar(
+        "INSERT INTO device_commands (device_id, command, requested_at) VALUES (?, ?, ?) \
+         RETURNING id",
+    )
+    .bind(device)
+    .bind(command)
+    .bind(db_time(requested))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    if !then.is_empty() {
+        sqlx::query(&format!("UPDATE device_commands SET {then} WHERE id = ?"))
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    id
+}
+
+/// One of the phone's events, happened at `at` (stored as `parent_events::raise` does).
+async fn event(app: &TestApp, device: i64, title: &str, at: DateTime<Utc>, target: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, happened_at) \
+         VALUES (?, 'pin_used', ?, ?, 'Lock screen opened', ?, ?) RETURNING id",
+    )
+    .bind(device)
+    .bind(title)
+    .bind(title)
+    .bind(target)
+    .bind(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// Where each needle first is in `haystack`.
+fn at(haystack: &str, needle: &str) -> usize {
+    haystack
+        .find(needle)
+        .unwrap_or_else(|| panic!("no {needle} in {haystack}"))
+}
+
+/// Design 48 §1.2, §1.3: commands and events in one list, newest first by when each was asked or
+/// happened, each with the clock in the Phone Setup zone ("13:41", "yesterday 14:50", "15 Oct
+/// 14:02"); an event without its avatar; the last row leads to this phone's inbox.
+#[tokio::test]
+async fn activity_mixes_commands_and_events_newest_first_with_the_clock() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let oslo = chrono_tz::Europe::Oslo;
+    let now = Utc::now();
+    let today = now.with_timezone(&oslo).date_naive();
+    let local = |days: i64, h: u32, m: u32| {
+        (today - Duration::days(days))
+            .and_hms_opt(h, m, 0)
+            .unwrap()
+            .and_local_timezone(oslo)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
+    };
+    let this_minute = DateTime::from_timestamp(now.timestamp() - now.timestamp() % 60, 0).unwrap();
+    let done = "delivered_at = requested_at, acknowledged_at = requested_at, result = 'ok'";
+    command(
+        &app,
+        id,
+        "end_windows",
+        this_minute,
+        &done.replace("'ok'", "'ended: pause'"),
+    )
+    .await;
+    let pin = event(&app, id, "Parent PIN used", local(1, 14, 50), "/devices").await;
+    command(&app, id, "ring", local(3, 14, 2), done).await;
+    let off = event(&app, id, "Phone turned off", local(4, 9, 0), "/devices").await;
+
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let activity = group(&html, "activity");
+    let order = [
+        at(activity, "data-command=\"end_windows\""),
+        at(activity, &format!("data-event=\"{pin}\"")),
+        at(activity, "data-command=\"ring\""),
+        at(activity, &format!("data-event=\"{off}\"")),
+        at(activity, "data-row=\"everything\""),
+    ];
+    assert!(order.is_sorted(), "{activity}");
+    let date = |t: DateTime<Utc>| {
+        let t = t.with_timezone(&oslo);
+        if t.date_naive().format("%Y").to_string() == today.format("%Y").to_string() {
+            t.format("%-d %b %H:%M").to_string()
+        } else {
+            t.format("%-d %b %Y %H:%M").to_string()
+        }
+    };
+    for words in [
+        format!(
+            ">{} · <span class=\"tone-green\">Done<",
+            this_minute.with_timezone(&oslo).format("%H:%M")
+        ),
+        ">yesterday 14:50<".to_string(),
+        format!(
+            ">{} · <span class=\"tone-green\">Done<",
+            date(local(3, 14, 2))
+        ),
+        format!(">{}<", date(local(4, 9, 0))),
+    ] {
+        assert!(activity.contains(&words), "{words}: {activity}");
+    }
+    assert!(!activity.contains("class=\"avatar"), "{activity}");
+    assert!(
+        activity.contains(&format!(
+            "href=\"/notifications?from=devices&amp;device={id}\""
+        )),
+        "{activity}"
+    );
+    // Under Quick actions.
+    assert!(html.find("id=\"quick\"").unwrap() < html.find("id=\"activity\"").unwrap());
+    super::settings_pages::check_forms(&format!("/devices/{id}"), &html);
+}
+
+/// Design 48 §1.2, 48-7: the last week and at most ten rows - but a command that can still be
+/// cancelled is shown at any age, outside both, with its Cancel back to `#activity`, where the
+/// line shows even when nothing else is left.
+#[tokio::test]
+async fn activity_keeps_a_week_ten_rows_and_what_can_be_cancelled() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let now = Utc::now();
+    let eight_days = now - Duration::days(8);
+    let waiting = command(&app, id, "end_windows", eight_days, "").await;
+    let done = "delivered_at = requested_at, acknowledged_at = requested_at, result = 'ok'";
+    command(&app, id, "ring", eight_days, done).await;
+    event(&app, id, "Old", eight_days, "/devices").await;
+    for hour in 1..=12 {
+        event(
+            &app,
+            id,
+            &format!("Event {hour}"),
+            now - Duration::hours(hour),
+            "/devices",
+        )
+        .await;
+    }
+    let summary = format!("/devices/{id}");
+    let html = app.get_page(&summary, &cookie).await.text();
+    let activity = group(&html, "activity");
+    assert_eq!(activity.matches("data-event=").count(), 10, "{activity}");
+    assert!(activity.contains(">Event 10<"), "{activity}");
+    assert!(!activity.contains(">Event 11<"), "{activity}");
+    assert!(!activity.contains(">Old<"), "{activity}");
+    assert!(!activity.contains("data-command=\"ring\""), "{activity}");
+    let row = super::locate_page::recent_row(activity, "end_windows");
+    assert!(row.contains(">Cancel</button>"), "{row}");
+    let cancel = format!("/devices/{id}/commands/{waiting}/cancel#activity");
+    assert!(
+        activity.contains(&format!("action=\"{cancel}\"")),
+        "{activity}"
+    );
+
+    // The only row of another phone: cancelled, the group stays for its line.
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let allow = command(&app, emil, "allow_blocked", eight_days, "").await;
+    let html = app
+        .get_page(&format!("/devices/{emil}"), &cookie)
+        .await
+        .text();
+    let (action, hidden) = forms(group(&html, "activity"))
+        .into_iter()
+        .find(|(action, _)| action.contains(&format!("/commands/{allow}/cancel")))
+        .expect("the Cancel");
+    assert!(action.ends_with("#activity"), "{action}");
+    let sent: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let res = app
+        .request_form(
+            Method::POST,
+            action.split('#').next().unwrap(),
+            Some(&cookie),
+            &sent,
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{emil}?cancel=done"),
+        Some("activity"),
+    );
+    app.assert_lands(&res, &cookie).await;
+    let html = app
+        .get_page(&format!("/devices/{emil}?cancel=done"), &cookie)
+        .await
+        .text();
+    let activity = group(&html, "activity");
+    assert!(
+        activity.contains("data-flash=\"activity\">Cancelled. The phone will never get it."),
+        "{activity}"
+    );
+    assert!(
+        !activity.contains("data-command"),
+        "8 days old and done: {activity}"
+    );
+}
+
+/// Design 48 §1.2, 48-10: an event's row marks it read and goes where it happened; its form
+/// carries this phone, so one pruned meanwhile (or a target that isn't a local path) comes back
+/// to this phone's inbox, not the top of the summary.
+#[tokio::test]
+async fn an_event_opens_where_it_happened_or_this_phones_inbox() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let target = format!("/devices/{id}/lock#parent-pin");
+    let pin = event(&app, id, "Parent PIN used", Utc::now(), &target).await;
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let (action, hidden) = forms(group(&html, "activity"))
+        .into_iter()
+        .find(|(action, _)| action == &format!("/notifications/{pin}/open"))
+        .expect("the event's form");
+    assert_eq!(
+        hidden,
+        [("from", "devices".to_string()), ("device", id.to_string())]
+            .map(|(k, v)| (k.to_string(), v))
+    );
+    let sent: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let res = app
+        .request_form(Method::POST, &action, Some(&cookie), &sent)
+        .await;
+    assert_redirect(&res, &format!("/devices/{id}/lock"), Some("parent-pin"));
+    let read: bool =
+        sqlx::query_scalar("SELECT read_at IS NOT NULL FROM parent_events WHERE id = ?")
+            .bind(pin)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(read);
+    sqlx::query("DELETE FROM parent_events")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let res = app
+        .request_form(Method::POST, &action, Some(&cookie), &sent)
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/notifications?from=devices&device={id}"),
+        Some("inbox"),
+    );
+    app.assert_lands(&res, &cookie).await;
 }
 
 /// The phone, its settings, its last report and its lifts are a 500 on a DB error - never an

@@ -6,6 +6,7 @@ use axum::{Extension, Form};
 use serde::Deserialize;
 
 use crate::AppState;
+use crate::handlers::activity::ActivityRow;
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
@@ -734,13 +735,13 @@ struct DeviceDetailTemplate {
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
-    /// blocked apps with Allow these apps…, the last relock's findings, the commands' answers.
+    /// blocked apps with Allow these apps…, the last relock's findings.
     relock: crate::handlers::window_relock::RelockCard,
-    /// Recent for the override commands (design 44 §1.2), with Cancel back here.
-    recent: crate::handlers::locate::Recent,
+    /// Activity (design 48): the phone's commands and events, with Cancel back here.
+    activity: crate::handlers::activity::Activity,
     /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
     pause_rules: Vec<(i64, String)>,
-    /// A lift form's flash (`?done=`): the summary group ("quick", "today"), text, refused.
+    /// A lift form's flash (`?done=`): the summary group ("quick", "now"), text, refused.
     done: Option<(&'static str, &'static str, bool)>,
     /// The last report has the phone's restrictions paused: said at the top of Quick actions,
     /// where the Attention row lands (qa-31-s10-code M1).
@@ -748,9 +749,9 @@ struct DeviceDetailTemplate {
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
-    /// Today: the lifts made today and the pauses still running, with End now.
+    /// Now: the lifts made today and the pauses still running, with End now.
     lifts: Vec<crate::handlers::lifts::LiftView>,
-    /// Today: the Parent PIN's notices from the last 24 hours (design 24 §5).
+    /// Now: the Parent PIN's notices from the last 24 hours (design 24 §5).
     pin_notices: Vec<crate::parent_pin::Notice>,
     /// The not-set-up variant's Connect This Phone group (design 22 §3.1).
     access: AccessCard,
@@ -789,12 +790,9 @@ impl DeviceDetailTemplate {
         )
     }
 
-    /// Today shows: something happened, or its flash lands there.
-    fn show_today(&self) -> bool {
-        !self.lifts.is_empty()
-            || !self.relock.answers.is_empty()
-            || !self.pin_notices.is_empty()
-            || self.flash("today").is_some()
+    /// Now shows (design 48 §1.1): a lift or a PIN notice, or its flash lands there.
+    fn show_now(&self) -> bool {
+        !self.lifts.is_empty() || !self.pin_notices.is_empty() || self.flash("now").is_some()
     }
 }
 
@@ -1499,7 +1497,7 @@ async fn render_device(
     .await;
     // Without the catalog's pins or the answers it would offer an imposter or an answered Allow
     // (qa-31-s10-code L4).
-    let mut relock = match relock {
+    let relock = match relock {
         Ok(relock) => relock,
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the relock parts");
@@ -1603,22 +1601,19 @@ async fn render_device(
         _ => (None, None),
     };
 
-    // Recent: the override commands' rows (design 44 §1.2); a failed read is no page, never an
-    // empty list that isn't true.
-    let mut recent = match crate::handlers::locate::recent(
+    // Activity (design 48); a failed read is no page, never a history that isn't true.
+    let activity = match crate::handlers::activity::rows(
         state,
         id,
-        crate::handlers::locate::OVERRIDE_KINDS,
-        "summary",
         query.get("cancel").map(String::as_str),
         &zone,
         now,
     )
     .await
     {
-        Ok(recent) => recent,
+        Ok(activity) => activity,
         Err(err) => {
-            tracing::error!(device_id = id, %err, "can't read the phone's recent commands");
+            tracing::error!(device_id = id, %err, "can't read the phone's activity");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Couldn't read this phone - check the server log.",
@@ -1626,21 +1621,6 @@ async fn render_device(
                 .into_response();
         }
     };
-    // Today keeps today's answers and any still waiting (qa-31-s10-code N2); older ones are in
-    // Recent.
-    relock.answers.retain(|a| {
-        a.state == crate::window_relock::AnswerState::Waiting || zone.is_today(a.at, now)
-    });
-    // An answer Today shows is its command's newest; Recent leaves that row out - the same
-    // command twice on one page (qa-r5-a-code N2) - unless it can still be cancelled, which only
-    // Recent offers. Rows are newest first, so the first of the label is that command.
-    for answer in &relock.answers {
-        if let Some(at) = recent.rows.iter().position(|row| row.label == answer.label)
-            && recent.rows[at].cancel_id.is_none()
-        {
-            recent.rows.remove(at);
-        }
-    }
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
     let done = query
         .get("done")
@@ -1681,7 +1661,7 @@ async fn render_device(
             no_parent_pin: managed_without_pin(&policy),
             pin_notices: parent_pin.notices,
             relock,
-            recent,
+            activity,
             access: access_card(
                 state,
                 &device,

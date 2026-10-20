@@ -858,94 +858,6 @@ pub struct CommandAnswer {
     pub cancelled: bool,
 }
 
-/// Where the phone's answer to one of this design's commands stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnswerState {
-    Answered,
-    /// Cancelled before it reached the phone (by the parent, or by an enrollment).
-    Cancelled,
-    /// A pause the phone didn't fetch within the hour: never sent (the user's decision,
-    /// 2026-10-12).
-    Expired,
-    /// No answer yet - so a command the phone never ran doesn't look like one that worked.
-    Waiting,
-}
-
-impl AnswerState {
-    pub fn text(self) -> &'static str {
-        match self {
-            AnswerState::Answered => "Answered",
-            AnswerState::Cancelled => "Cancelled",
-            AnswerState::Expired => "Expired",
-            AnswerState::Waiting => "No answer yet",
-        }
-    }
-}
-
-/// The summary's Today row for the newest of one of this design's commands, while it is under 7
-/// days old (QA Low 10).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Answer {
-    /// The quick action's name: "Lock again", "Unlock for 2 h", "Allow these apps".
-    pub label: &'static str,
-    /// When it was pressed (the server's clock): the summary's Today keeps today's.
-    pub at: DateTime<Utc>,
-    /// The same, local, and the exact time.
-    pub when: String,
-    pub exact: String,
-    pub state: AnswerState,
-    /// For the ⓘ: what the phone said, or why it was never sent.
-    pub detail: Option<String>,
-}
-
-fn command_label(command: &str) -> Option<&'static str> {
-    match command {
-        END_WINDOWS => Some("Lock again"),
-        ALLOW_BLOCKED => Some("Allow these apps"),
-        START_PAUSE => Some("Unlock for 2 h"),
-        _ => None,
-    }
-}
-
-pub fn answer(answer: &CommandAnswer, zone: &Zone, now: DateTime<Utc>) -> Option<Answer> {
-    let label = command_label(&answer.command)?;
-    let now_ms = now.timestamp_millis();
-    if now_ms - answer.requested_ms > WARN_MS {
-        return None;
-    }
-    let at = DateTime::from_timestamp_millis(answer.requested_ms)?;
-    let (state, detail) = match (answer.acknowledged_ms, answer.result.as_deref()) {
-        (Some(_), result) => (
-            AnswerState::Answered,
-            result.map(|r| {
-                let r: String = r.chars().take(120).collect();
-                format!("The phone said: \"{r}\".")
-            }),
-        ),
-        (None, _) if answer.cancelled => (AnswerState::Cancelled, None),
-        (None, _)
-            if !answer.delivered
-                && crate::models::command_expires(&answer.command)
-                && now_ms - answer.requested_ms
-                    >= crate::models::COMMAND_EXPIRY_MINUTES * 60 * 1000 =>
-        {
-            (
-                AnswerState::Expired,
-                Some("The phone didn't check in within an hour, so it was never sent.".to_string()),
-            )
-        }
-        (None, _) => (AnswerState::Waiting, None),
-    };
-    Some(Answer {
-        label,
-        at,
-        when: zone.when(at, now),
-        exact: zone.exact(at),
-        state,
-        detail,
-    })
-}
-
 /// "Allow these apps" stays only until the phone has answered one pressed after the relock - the
 /// report doesn't change, but the blocks it lists are gone (QA Low 10).
 pub fn allowed_since_relock(answer: Option<&CommandAnswer>, relock_at_ms: i64) -> bool {
@@ -1284,94 +1196,26 @@ mod tests {
     }
 
     #[test]
-    fn command_answers_say_what_the_phone_said_or_that_it_said_nothing() {
-        let zone = oslo();
-        let answer_of = |ack: Option<i64>, result: Option<&str>| CommandAnswer {
-            command: END_WINDOWS.to_string(),
-            requested_ms: NOW - 2 * 60 * 60 * 1000,
-            acknowledged_ms: ack,
-            result: result.map(str::to_string),
-            delivered: ack.is_some(),
-            cancelled: false,
-        };
-        let a = answer(&answer_of(Some(NOW), Some("ended: pause")), &zone, now()).unwrap();
-        // Pressed 13:40 UTC = 15:40 in Oslo.
-        assert_eq!(
-            (a.label, a.when.as_str(), a.state),
-            ("Lock again", "15:40", AnswerState::Answered)
-        );
-        assert_eq!(
-            a.detail.as_deref(),
-            Some("The phone said: \"ended: pause\".")
-        );
-        assert!(a.exact.starts_with("2025-10-10 15:40:00"), "{}", a.exact);
-        assert_eq!(
-            answer(&answer_of(Some(NOW), None), &zone, now())
-                .unwrap()
-                .detail,
-            None
-        );
-        let waiting = answer(&answer_of(None, None), &zone, now()).unwrap();
-        assert_eq!(waiting.state, AnswerState::Waiting);
-        assert_eq!(waiting.state.text(), "No answer yet");
-        // A week later: gone. Another command: no row.
-        let later = DateTime::from_timestamp_millis(NOW + WARN_MS).unwrap();
-        assert_eq!(answer(&answer_of(Some(NOW), None), &zone, later), None);
-        let ring = CommandAnswer {
-            command: "ring".to_string(),
-            ..answer_of(None, None)
-        };
-        assert_eq!(answer(&ring, &zone, now()), None);
-        // "Allow these apps" goes once an answered one is newer than the relock.
+    fn allow_these_apps_goes_once_an_answered_one_is_newer_than_the_relock() {
         let allowed = CommandAnswer {
             command: ALLOW_BLOCKED.to_string(),
-            ..answer_of(Some(NOW), Some("allowed: 1 apps"))
+            requested_ms: NOW - 2 * 60 * 60 * 1000,
+            acknowledged_ms: Some(NOW),
+            result: Some("allowed: 1 apps".to_string()),
+            delivered: true,
+            cancelled: false,
         };
-        assert_eq!(
-            answer(&allowed, &zone, now()).unwrap().label,
-            "Allow these apps"
-        );
         assert!(allowed_since_relock(
             Some(&allowed),
             NOW - 3 * 60 * 60 * 1000
         ));
         assert!(!allowed_since_relock(Some(&allowed), NOW - 60 * 60 * 1000));
         let unanswered = CommandAnswer {
-            command: ALLOW_BLOCKED.to_string(),
-            ..answer_of(None, None)
+            acknowledged_ms: None,
+            ..allowed
         };
         assert!(!allowed_since_relock(Some(&unanswered), 0));
         assert!(!allowed_since_relock(None, 0));
-        // Expiry and cancel (2026-10-12): a pause never fetched within the hour expired; "Lock
-        // again" waits however long it takes; a cancelled one says so.
-        let pause = |minutes: i64| CommandAnswer {
-            command: START_PAUSE.to_string(),
-            requested_ms: NOW - minutes * 60 * 1000,
-            ..answer_of(None, None)
-        };
-        let expired = answer(&pause(61), &zone, now()).unwrap();
-        assert_eq!(
-            (expired.label, expired.state),
-            ("Unlock for 2 h", AnswerState::Expired)
-        );
-        assert!(expired.detail.unwrap().contains("never sent"));
-        assert_eq!(
-            answer(&pause(59), &zone, now()).unwrap().state,
-            AnswerState::Waiting
-        );
-        assert_eq!(
-            answer(&answer_of(None, None), &zone, now()).unwrap().state,
-            AnswerState::Waiting,
-            "2 h old, but it doesn't expire"
-        );
-        let cancelled = CommandAnswer {
-            cancelled: true,
-            ..pause(5)
-        };
-        assert_eq!(
-            answer(&cancelled, &zone, now()).unwrap().state,
-            AnswerState::Cancelled
-        );
     }
 
     fn literal_blocks() -> Vec<RelockBlock> {

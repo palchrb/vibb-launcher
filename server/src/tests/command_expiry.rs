@@ -62,7 +62,7 @@ async fn locate_page(app: &TestApp, cookie: &str, device: i64) -> String {
         .text()
 }
 
-/// `command`'s row in the Locate page's Recent.
+/// `command`'s newest row in the Locate page's Requests or the summary's Activity.
 fn row<'a>(page: &'a str, command: &str) -> &'a str {
     super::locate_page::recent_row(page, command)
 }
@@ -169,6 +169,13 @@ async fn a_cancelled_command_never_reaches_the_phone() {
         .await
         .text();
     assert!(page.contains("Cancelled. The phone will never get it."));
+    // Requests leaves out what the parent cancelled (its line says so, design 48 §1.4); the
+    // summary's Activity keeps it.
+    assert!(!page.contains("data-command=\"wipe\""), "{page}");
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
     assert!(
         row(&page, "wipe").contains(">Cancelled<"),
         "{}",
@@ -312,51 +319,23 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
     );
 }
 
-/// The summary's design 24b answers (Today): a pause never fetched within the hour expired, a
-/// cancelled one says so.
+/// The summary's Activity (design 48): a pause never fetched within the hour expired, a cancelled
+/// one says so - the command's own row, the one line for it.
 #[tokio::test]
 async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (device, token) = app.enrolled_device("phone").await;
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(&token),
-            Some(json!({ "lock_reason": "NONE", "kiosk_engaged": true,
-                         "capabilities": ["window_relock_v1"] })),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-    // Today shows today's answers only (qa-31-s10-code N2): a Phone Setup zone where two hours
-    // ago is still today, whenever the test runs.
-    let now = chrono::Utc::now();
-    let zone = ["Europe/Oslo", "Asia/Tokyo", "America/New_York"]
-        .into_iter()
-        .find(|zone| {
-            crate::display_time::Zone::from_setting(zone)
-                .is_today(now - chrono::Duration::hours(2), now)
-        })
-        .unwrap();
-    sqlx::query("UPDATE provisioning_settings SET time_zone = ?")
-        .bind(zone)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    let (device, _) = app.enrolled_device("phone").await;
     insert(&app, device, "start_pause", "datetime('now', '-2 hours')").await;
     let page = app
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
-    // Today's row: "Unlock for 2 h · Expired", why behind its ⓘ.
+    let expired = row(&page, "start_pause");
+    assert!(expired.contains(">Expired<"), "{expired}");
     assert!(
-        page.contains("<span class=\"row-value\">Expired</span>"),
-        "{page}"
-    );
-    assert!(
-        page.contains("The phone didn&#39;t check in within an hour, so it was never sent."),
-        "{page}"
+        expired.contains("Never sent: the phone wasn&#39;t back within an hour."),
+        "{expired}"
     );
     let pause = insert(&app, device, "start_pause", "datetime('now')").await;
     cancel(&app, &cookie, device, pause).await;
@@ -364,10 +343,9 @@ async fn the_device_page_says_a_pause_expired_or_was_cancelled() {
         .get_page(&format!("/devices/{device}"), &cookie)
         .await
         .text();
-    assert!(
-        page.contains("<span class=\"row-value\">Cancelled</span>"),
-        "{page}"
-    );
+    let cancelled = row(&page, "start_pause");
+    assert!(cancelled.contains(">Cancelled<"), "{cancelled}");
+    assert_eq!(page.matches("data-command=\"start_pause\"").count(), 2);
 }
 
 async fn press(app: &TestApp, cookie: &str, device: i64, path: &str) {
@@ -510,7 +488,11 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
     let wipe = insert(&app, device, "wipe", "datetime('now')").await;
     crate::handlers::device_api::end_expiring_at_start(&app.db).await;
     assert_eq!(policy(&app, &token).await["pending_command"]["id"], wipe);
-    let page = locate_page(&app, &cookie, device).await;
+    // Not in Locate's Requests (no bucket of design 48 §1.4 holds it): the summary's Activity.
+    let page = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
     assert!(
         row(&page, "locate").contains("Never sent: the server restarted first."),
         "{}",

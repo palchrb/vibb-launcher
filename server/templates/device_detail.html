@@ -11,10 +11,10 @@
     <a class="nav-back" href="/devices"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Devices</a>
 
     {#- The phone's summary (design 31 §3.2): the header, Attention, the security warnings that need
-        steps, Quick actions, Today, the blocked apps and the last relock, then the Sections rows.
-        Every form returns to its own group with its flash there: the quick actions to #quick, End
-        now to #today, Allow these apps… to #blocked-apps (§5.1); each action carries the same
-        fragment. -#}
+        steps, Quick actions, Now, the blocked apps, the last relock and Activity, then the Sections
+        rows. Every form returns to its own group with its flash there: the quick actions to #quick,
+        End now to #now, Allow these apps… to #blocked-apps, a Cancel to #activity (§5.1); each
+        action carries the same fragment. -#}
     <header class="summary-head" id="header">
         <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
         <h1 class="summary-name">{{ device.name }}</h1>
@@ -169,44 +169,23 @@
         {% if let Some((text, refused)) = self.flash("quick") %}<div class="group"><p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="quick">{{ text }}</p></div>{% endif %}
     </section>
 
-    {#- Lock again, Unlock for 2 h… and Allow these apps… as they went, with Cancel while they wait
-        (design 44 §1.2; Locate's Recent has its own). Shown once there is one, or for its flash. -#}
-    {% if !recent.rows.is_empty() || recent.flash.is_some() %}
-    {% call recent_group::show(recent) %}{% endcall %}
-    {% endif %}
-
-    {% if self.show_today() %}
-    <section id="today" aria-labelledby="today-title">
-        <h2 class="group-header" id="today-title">Today</h2>
+    {#- Now (design 48 §1.1): what holds at the moment - today's lifts and the pauses still running,
+        with End now (back here, #now), and the Parent PIN's notices. The history is Activity. -#}
+    {% if self.show_now() %}
+    <section id="now" aria-labelledby="now-title">
+        <h2 class="group-header" id="now-title">Now</h2>
         <div class="group">
             {% for l in lifts %}
             <div class="row" data-lift="{{ l.id }}">
                 <span class="row-label">{{ l.what }}<span class="row-sub"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{{ l.when }}{% if !l.by.is_empty() %} · {{ l.by }}{% endif %}</span></span>
                 <span class="row-value">{{ l.status }}</span>
                 {% if l.can_end %}
-                <form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end#today" class="row-end">
+                <form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end#now" class="row-end">
                     <input type="hidden" name="back" value="summary">
                     <button type="submit" class="row-action">End now</button>
                 </form>
                 {% endif %}
             </div>
-            {% endfor %}
-            {% for a in relock.answers %}
-            {% if let Some(detail) = a.detail %}
-            <details class="info cell" data-answer="{{ a.label }}">
-                <summary class="row">
-                    <span class="row-label">{{ a.label }}<span class="row-sub" title="{{ a.exact }}">{{ a.when }}</span></span>
-                    <span class="row-value">{{ a.state.text() }}</span>
-                    <svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="More info" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg>
-                </summary>
-                <div class="info-panel"><p>{{ detail }}</p></div>
-            </details>
-            {% else %}
-            <div class="row" data-answer="{{ a.label }}">
-                <span class="row-label">{{ a.label }}<span class="row-sub" title="{{ a.exact }}">{{ a.when }}</span></span>
-                <span class="row-value">{{ a.state.text() }}</span>
-            </div>
-            {% endif %}
             {% endfor %}
             {% for n in pin_notices %}
             <a class="row" href="/devices/{{ device.id }}/lock#parent-pin" data-pin-notice>
@@ -214,7 +193,7 @@
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% endfor %}
-            {% if let Some((text, refused)) = self.flash("today") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="today">{{ text }}</p>{% endif %}
+            {% if let Some((text, refused)) = self.flash("now") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="now">{{ text }}</p>{% endif %}
         </div>
     </section>
     {% endif %}
@@ -282,6 +261,40 @@
             {% endif %}
         </div>
         <p class="group-footer">What the phone found when it locked again. Shown for a week.</p>
+    </section>
+    {% endif %}
+
+    {#- Activity (design 48 §1.2): the phone's history, newest first - every command asked of it
+        (Cancel while it waits, back here: #activity) and its events (a tap marks one read and goes
+        where it happened; a pruned one comes back to this phone's inbox). The last week, at most
+        ten rows, plus what can still be cancelled. Shown for the Cancel's line too. -#}
+    {% if !activity.rows.is_empty() || activity.flash.is_some() %}
+    <section id="activity" aria-labelledby="activity-title">
+        <h2 class="group-header" id="activity-title">Activity</h2>
+        <div class="group" data-group="activity">
+            {% for r in activity.rows %}
+            {% match r %}
+            {% when ActivityRow::Command(c) %}
+            {% call recent_group::row(c, device.id, "summary", "activity") %}{% endcall %}
+            {% when ActivityRow::Event(e) %}
+            <form method="post" action="/notifications/{{ e.id }}/open" class="cell">
+                <input type="hidden" name="from" value="devices">
+                <input type="hidden" name="device" value="{{ device.id }}">
+                <button type="submit" class="row inbox-row" data-event="{{ e.id }}">
+                    <span class="row-label">{{ e.title }}<span class="row-sub">{{ e.summary }} · <span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+            </form>
+            {% endmatch %}
+            {% endfor %}
+            {% if let Some((text, refused)) = activity.flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="activity">{{ text }}</p>
+            {% endif %}
+            <a class="row" href="/notifications?from=devices&amp;device={{ device.id }}" data-row="everything">
+                <span class="row-label">Everything for this phone</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
     </section>
     {% endif %}
     {% endif %}
