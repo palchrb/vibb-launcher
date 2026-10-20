@@ -797,12 +797,21 @@ findings, merge to `main`, full suite once.
   får poste push meldinger på lock screen hvorvidt full tekst skal vises eller ikke ... for en klokke app er det
   lite å tape på det, samtidig som fulle meldinger vil man kanskje ikke vise på låst skjerm"). Today `lock_glance`
   is `{apps: [pkg…], show_text: bool}` - one switch for all (design 25 §2.1, `GlancePolicy`). Decided: per app -
-  the policy becomes `{apps: [{package, show_text}…]}` (the launcher keeps reading the old shape: a plain string =
-  the old global `show_text`; an older launcher given the new shape ignores objects it can't read and shows missed
-  calls only, design 25's fail-safe); the PWA's Lock page gets a text switch per ticked app in place of the global one
-  (`device_lock.html` #notifications, autosave, back to its group - the no-jump rule); `policy_json_keys_snapshot` and
+  the policy becomes `{apps: [{package, show_text}…]}`, no top-level `show_text` (the launcher keeps reading the old
+  shape: a plain string = that package, sender only - an old server's global switch is ignored; an older launcher
+  given the new shape ignores objects it can't read and shows missed calls only, design 25's fail-safe); migration 0083
+  adds `device_lock_glance_apps.show_text`, backfilled from the old switch, and a new tick or a re-tick starts at the
+  sender only; the PWA's Lock page gets a text switch per ticked app in place of the global one (`device_lock.html`
+  #notifications: each app one cell with its tick form and, ticked, its text form `POST
+  /devices/{id}/lock-screen/apps/text`, both autosave and back to the app's row `#lock-screen-app-<pkg>` - the no-jump
+  rule; 404 and nothing written for an app that isn't ticked); `policy_json_keys_snapshot` and
   `PolicyResponseCompatTest` move together, both directories in one commit. Design 42's clock tile is untouched (its
   own reader, the time only). Server round 6 with design 48, the launcher part in the same commit.
+  **Status**: implemented on `r7-b` (2026-10-20; code QA `docs/review/qa-r7-b-code.md`, its fixes in). Release note
+  for both the `server-v*` and the `launcher-v*` release: an older launcher shows missed calls only on its lock until
+  it updates; on an older server a new launcher shows the sender only for every ticked app. Owed: the emulator check
+  of design 51 §3 (two ticked apps, the text on for one, a message from each - the sender for both, the text for one;
+  neither switch jumps the page).
 - **Design 48: one Activity log on the phone's summary** (the user, 2026-10-20, a screenshot of the summary after
   round 5: "Hvorfor recent og today, og så vises ikke den today saken på recent heller? ... samle loggen på bunnen";
   "høres greit ut" to this): today the summary has Recent (the override commands the parent asked for, design 44) and

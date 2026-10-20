@@ -130,6 +130,15 @@ class LockGlanceGuardTest {
         assertEquals(2, Regex("""\bisSuspended\b""").findAll(reader).count())
     }
 
+    /** qa-r7-b-code M1: the two glue lines that apply the parent's choice - an app not ticked is never
+     * read, and the text only for an app whose own switch is on (design 51). */
+    @Test
+    fun `the reader reads ticked apps only, and the text per app`() {
+        assertTrue(reader.contains("if (sbn.packageName !in policy.apps || sbn.user != Process.myUserHandle()) return null"))
+        assertTrue(reader.contains("showText = policy.showsText(sbn.packageName), messaging = messages.isNotEmpty())"))
+        assertEquals(1, Regex("""\bshowText =""").findAll(reader).count())
+    }
+
     @Test
     fun `text is read only inside readTexts, and readTexts only at TEXT`() {
         val texts = body(reader, "readTexts")

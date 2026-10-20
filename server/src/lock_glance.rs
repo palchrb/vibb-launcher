@@ -356,6 +356,8 @@ mod tests {
         ];
         let ticked: BTreeMap<String, bool> = [
             (ELEMENT_X, true),
+            // Listed and ticked with its text off (qa-r7-b-code L3).
+            ("org.signal", false),
             ("com.old.chat", false),
             ("com.google.android.gms", true),
             ("com.allowed.later", false),
@@ -372,7 +374,7 @@ mod tests {
                 LockScreenApp {
                     package_name: "org.signal".to_string(),
                     label: "Signal".to_string(),
-                    on: false,
+                    on: true,
                     show_text: false,
                     note: None,
                 },
