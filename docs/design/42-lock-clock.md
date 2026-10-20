@@ -23,6 +23,26 @@ M10: a catalog app is pinned to its package and signer). Revised twice on 2026-1
 So: Fossify Clock becomes **the catalog's clock app**. The same APK, package and signer on every phone (the catalog
 pins both; Fossify asks for no internet permission).
 
+## 0d. From Fossify Clock's source (2026-10-20, FossifyOrg/Clock main - read instead of more probes)
+
+- **Timer running**: `TimerService`'s foreground notification, channel `simple_alarm_timer`, ongoing, title = the
+  remaining time, text "N timer er i gang", VISIBILITY_PUBLIC, no actions. The countdown itself is `App`'s
+  `CountDownTimer` - **no AlarmManager entry** (the probe confirmed it), so a timer never shows on the alarm line.
+- **Timer ended**: `App.onMessageEvent(TimerEvent.Finish)` posts a **notification only** - no activity, no full-screen
+  intent: channel `simple_timer_channel_<sound>_<millis>`, IMPORTANCE_HIGH, USAGE_ALARM sound with `FLAG_INSISTENT`
+  (repeats until dismissed), category EVENT, PUBLIC, title = the timer's label or "Timer", text "Tiden er ute", one
+  action **Dismiss = a broadcast** to `HideTimerReceiver` (hides it, resets the timer), auto-hidden after the app's
+  `timerMaxReminderSecs`.
+- **Stopwatch**: `StopwatchService`'s notification, channel `simple_alarm_stopwatch`, title = the elapsed time, text
+  "Stoppeklokke".
+- **Alarm**: `setAlarmClock` + a full-screen intent to `AlarmActivity` (`showOnLockScreen`, its own task) on channel
+  `Alarm_Channel` - today's exemption path; the only part that needs `USE_FULL_SCREEN_INTENT`.
+
+So the lock needs no "step aside" for a timer: at its end the kid sees our tile say "Tiden er ute" with one **Stopp**
+button that fires the notification's own Dismiss broadcast (non-activity, sent with background activity starts
+denied) - the one action we ever fire, and the ringing stops there, the lock never moving. §1.4 below is read with
+this: the three channel shapes are the whole allowlist.
+
 ## 1. Decisions
 
 1. **The clock app is known by package and signer, in the launcher**: `ClockApp.PACKAGE = "org.fossify.clock"` and
