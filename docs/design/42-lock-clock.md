@@ -98,3 +98,50 @@ same, plus Fossify's alarm ringing over the lock and dismissable.
 - After the probes: the system clock is out, Fossify Clock in as the catalog's clock app with a pinned signer; the
   exemption widened by that one app (§1.1-1.2); the time read from the notification's title and smoothed locally
   (§1.4); no stopwatch tile.
+
+## Implementation status (2026-10-20, implementer B, branch `r6-b`)
+
+- **The pin** (`lock/ClockApp.kt`): `ClockApp.PACKAGE = "org.fossify.clock"`, `ClockApp.SIGNER_SHA256 =
+  affdb124d3f4720c2f98dbca9eacba0514fba4306e20a2786c861c3c0d6ff292` - `apksigner verify --print-certs` of
+  `clock-10-foss-release.apk` from GitHub `FossifyOrg/Clock` release 1.6.0 (APK SHA-256 `43cf9f0e...dca079`, signer
+  "C=IN, O=Fossify, CN=Naveen Singh"). Compare with the catalog's pin on the app's page in the PWA. `installed(context)`
+  (PackageManager, off the main thread) = the pin among the installed package's signers or their lineage
+  (`SelfUpdate.signers`, pure `clockAppVerified`); `verified` is its cached answer, refreshed by `ClockApp.refresh` from
+  `PinLockRuntime.init`'s IO block and from `Application`'s package callbacks (added, changed, removed) for that package
+  only; a lost verification drops the timer tile at once.
+- **The exemption** (§1.2): pure `lockClockPackages(systemClock, clockAppVerified)`; `PinLockRuntime.clockPackages()`
+  (read-only) feeds `rememberAlarm`, which now takes a set (`RefrontPolicyTest`: Fossify's alarm only with the
+  signer). **Addition, not in the note**: with the kiosk off the lock's lock task allows only `pinLockHelpers` while
+  LOCKED, so Fossify's alarm screen could not come up over it - `pinLockHelpers(..., clockApp)` adds the verified clock
+  app (`AppEnforcer.resolvePinLockHelpers` passes `ClockApp.installed`; `LockTaskHelpersTest`). With the kiosk on it is
+  pinned like any allowlisted app (the catalog allowlists what it installs).
+- **The alarm line** (§1.3): `lock_glance_alarm` under the date, pure `glanceAlarm` (a creator in `clockPackages()`,
+  ahead of now, `withWeekday` past 24 h), "Alarm 07:00" / "Alarm tor 07:00" (`ClockFormat.formatUntil` - AM/PM kept in
+  12 h, the alarm is a time, not a clock face - and the locale's "EEE" without its dot); refreshed at every page
+  render and on `ACTION_NEXT_ALARM_CLOCK_CHANGED` (a receiver between onStart and onStop). It is part of the fit's
+  `date` term and goes with the date.
+- **The timer** (§1.4): `badges/ClockReader` (posted, removed, the connect sweep, disconnect from
+  `BadgeListenerService`): pure `clockCandidate(package, verified, ongoing)` first, then only `EXTRA_TITLE` and
+  `EXTRA_TEXT` into the pure `ClockTile.parse` (`clockSeconds`: `H:MM:SS`/`MM:SS`/`M:SS`; else the cleaned title as
+  is; the text through `cleanGlanceText`), memory only, redacted `toString`. `lock/ClockLockPanel` binds
+  `lock_timer_tile` (the hourglass glyph, "Timer", the time 24 sp tabular, the text) and counts down locally
+  (`clockRemainingNow`/`clockTileTime`, stops at 0:00, ticks only while shown on the page - `clockTicks`); each update
+  of the app corrects it. The tap: `GlanceTarget.ClockApp` -> the keypad with "Skriv koden for å åpne <Klokke>", under a
+  time rule only when the rule leaves the app usable; after the code the opener's existing launch start (no send, no
+  new start - one send, two starts unchanged).
+- **Rendering** (§1.5): the timer's callbacks go through round 6's `GlanceCoalescer`; `tileChanged` refits when either
+  tile came, went or changed height (`glanceRefitDue` for each; `fitClockPx`).
+- **The fit** (§1.6): `GlanceHeights.clockFull` (114 dp from the XML) and `glanceFit(..., clock)`: with a timer, 1-2
+  both tiles full, 3-4 the music tile compact, 5 the rows folded one by one down to none ("+ N varsler"), then today's
+  order without the timer. At 473 dp with music, a timer and 2 rows: 5 with no rows and "+ 2" (446.6 of 449).
+- **Deviation**: the time's width is `match_parent` (one line, tabular figures), not measured for "88:88:88" - the same
+  reasoning as round 6's time line (no layout per tick, no overflow at 320 dp and font scale 2.0, where
+  `LockGlanceLayoutTest` checks "8:88:88" at 24 sp x 2.0 fits the tile).
+- Tests: `ClockTileTest` (the parse, the countdown and its correction, the candidate filter, the alarm line),
+  `ClockAppTest`, `LockGlanceTest` (the candidate order with a timer, the tap's target/prompt/time rule/open step,
+  `clockFull` 114 pinned, the order and touchables, the timer's width at 320/360/411 dp), `LockGlanceGuardTest` (the
+  reader's two extras after the candidate check, no action/intent/view/prefs, its log line, the four listener calls;
+  the tile opens nothing without the keypad), `RefrontPolicyTest`, `LockTaskHelpersTest`.
+- **Device checks owed**: §4 - first the full-screen-intent check above; then the timer counting down and following
+  the app, the tile leaving at the timer's end, "Alarm tor 07:00", the tap (keypad, then Fossify), Google's clock
+  showing nothing; on the emulator also with the kiosk off (Fossify's alarm over the lock through the new helper pin).
