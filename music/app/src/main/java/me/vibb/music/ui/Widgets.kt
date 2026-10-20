@@ -1,5 +1,7 @@
 package me.vibb.music.ui
 
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.layout
 import me.vibb.music.R
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.res.stringResource
@@ -96,14 +98,23 @@ fun Modifier.button(label: String?, onClick: () -> Unit): Modifier =
  * target, [glyph] the heart. TalkBack: "Favoritt", selected or not.
  */
 @Composable
-fun HeartButton(on: Boolean, size: Dp, glyph: Dp, onToggle: (Boolean) -> Unit) {
+fun HeartButton(on: Boolean, size: Dp, glyph: Dp, modifier: Modifier = Modifier, onToggle: (Boolean) -> Unit) {
     val label = stringResource(R.string.favourite)
     Box(
-        Modifier.requiredSize(size).clip(CircleShape).semantics { selected = on }.button(label) { onToggle(!on) },
+        modifier.requiredSize(size).clip(CircleShape).semantics { selected = on }.button(label) { onToggle(!on) },
         contentAlignment = Alignment.Center,
     ) {
         Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), glyph, if (on) Palette.peach else Palette.dim)
     }
+}
+
+/**
+ * Lays its content out at its own size but takes no height in its parent, centred on the parent's middle line - an
+ * overlay that never moves the line it sits on (the player's heart, design 50 §1.5, code QA 7).
+ */
+fun Modifier.overlayOnLine(): Modifier = layout { measurable, _ ->
+    val placeable = measurable.measure(Constraints())
+    layout(placeable.width, 0) { placeable.place(0, -placeable.height / 2) }
 }
 
 /** The mockup's round button (44 dp card circle by default): always [size] square, never squeezed

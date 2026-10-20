@@ -536,7 +536,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     next item waits at 0) and its 3 s ramp, the web player pausing itself `AT_END_SPOTIFY_PAUSE_MS` before the end
     (a belt pauses Spotify's own advance at 0); each fades over its own `fadeMs` from the time left (`atEndGain`,
     looked at every second, 250 ms inside the fade, so a seek recomputes it). `sleepAtEndAfter`: it survives a manual
-    step (the user's call); a new queue, its pause, a kid's pause, the queue's end and the minute timer end it.
+    step (the user's call) and every load that is no new pick (the stored queue's first play, a resumption, an output
+    switch: `start`'s `newChoice` is only `playEntry`/`playItem`'s); the kid's new pick, its pause, a kid's pause, the
+    queue's end, the minute timer and a step onto a live item end it. While it is on, Spotify's repeat is off.
   - **The carousel opens on the last played tile** (`CarouselStart`, `MusicViewModel.startOn`): once, when the first
     snapshot and the stored now-playing row are in; never after the kid turned it, picked a category or came back from
     the player (`backToLibrary` wins); 0 when the entry isn't shown.
@@ -551,8 +553,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     a parsed listing (own files: the parsed library) no longer names the item, a gone entry's when every entry was
     read (`favouritesToPrune`, `favouriteEntriesGone`, `Sync`). "Favoritter" is the category tile first after "Alle"
     while an entry holds a heart, the sentinel `FAVOURITES_CATEGORY` (-1) that `shownEntries`/`effectiveCategory`
-    (and so `backToLibrary`) take with the entry keys; a tap with one such entry plays it as its cover would
-    (`favouritesTapOpens`); a cover tap there plays the entry as usual. Phone-only: never synced, reported or in the PWA.
+    (and so `backToLibrary`) take with the entry keys; the tile only filters (no category tile starts sound); a cover
+    tap there plays the entry as usual. Phone-only: never synced, reported or in the PWA.
   - **The play arrow means "tap to play"** (design 46 §1.4): on every tile (`showsPlayMark`), not only a started one;
     never on a dimmed tile. The progress line alone says "started". 46's queue view (§1.1-§1.3) is parked (§0b).
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item

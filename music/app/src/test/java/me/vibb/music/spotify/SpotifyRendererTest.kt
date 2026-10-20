@@ -811,6 +811,24 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    @Test
+    fun `d50 - while Til slutten is on Spotify's repeat is off, the entry's repeat track back after it`() = runBlocking {
+        val r = renderer()
+        r.setModes(false, Repeat.ONE)
+        r.load(mediaItems(5), 0, 0, playNow = true)
+        advance(0)
+        post(state(0, 2_000, repeat = 2))
+        r.pauseAtItemEnd { }
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals("no repeat-track loop past the end", "PUT /v1/me/player/repeat?state=off&device_id=$DEVICE", api.paths().last { it.contains("/repeat") })
+        assertTrue("never from 0:00", body(api.plays().last())["position_ms"]!!.jsonPrimitive.long >= 2_000L)
+        post(state(0, 3_000))
+        r.pauseAtItemEnd(null)
+        advance(SPOTIFY_STEP_COALESCE_MS)
+        assertEquals("PUT /v1/me/player/repeat?state=track&device_id=$DEVICE", api.paths().last { it.contains("/repeat") })
+        r.release()
+    }
+
     // --- §5.7: suspension; §5.8: errors ---
 
     @Test

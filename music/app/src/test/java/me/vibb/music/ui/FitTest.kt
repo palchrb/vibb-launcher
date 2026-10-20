@@ -68,6 +68,19 @@ class FitTest {
     }
 
     @Test
+    fun `d50 - the player's heart is overlaid at the number line's end at 40 dp - the number centred, the line's height kept`() {
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertEquals(40, PLAYER_HEART_DP)
+        assertTrue(player.contains("Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {"))
+        assertTrue(player.contains("HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine())"))
+        val widgets = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText()
+        assertTrue("it takes no height in the line", widgets.substringAfter("fun Modifier.overlayOnLine()").contains("layout(placeable.width, 0)"))
+        // at 320 dp the number ("Episode 123 av 456", Nunito Bold 13 sp, about 120 dp) centred in 288 dp ends at 204 dp,
+        // and the heart starts at 248 dp: no overlap
+        assertTrue((288 + 120) / 2 <= 288 - PLAYER_HEART_DP)
+    }
+
+    @Test
     fun `d50 - Sov · til slutten is never cut at 320 dp, and Til slutten is the sheet's full-width row`() {
         val liste = 32.0f
         // Nunito ExtraBold 14 sp from the font's advances, as the others

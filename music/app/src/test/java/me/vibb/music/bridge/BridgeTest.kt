@@ -205,6 +205,14 @@ class BridgeTest {
         )
         // design 50 §1.1: the lock tile's pair, the decision's two words
         assertEquals(strings("now_playing_controls"), listOf(NowPlayingKeys.CONTROLS_SKIP, NowPlayingKeys.CONTROLS_MUSIC))
+        // ...and the word per kind (code QA 5): what resumes skips, music steps
+        fun e(source: me.vibb.music.model.Source, target: String?, resume: Boolean, mode: String? = null) =
+            me.vibb.music.model.Entry(1, "e1", "E", null, source, target, "auto", 0, resume, null, null, 1, spotifyMode = mode)
+        assertEquals("a podcast", "skip", nowPlayingControls(e(me.vibb.music.model.Source.RSS, "https://example.org/1.xml", true)))
+        assertEquals("a book", "skip", nowPlayingControls(e(me.vibb.music.model.Source.STORYTEL, "storytel:series:1", true)))
+        assertEquals("a resuming own entry", "skip", nowPlayingControls(e(me.vibb.music.model.Source.OWN, null, true)))
+        assertEquals("own music", "music", nowPlayingControls(e(me.vibb.music.model.Source.OWN, null, false)))
+        assertEquals("Spotify music", "music", nowPlayingControls(e(me.vibb.music.model.Source.SPOTIFY, "spotify:playlist:FAKEplaylist0000000001", true, "list")))
         // The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): its two session commands.
         val calls = (contract["call_commands"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
         assertEquals(calls["hold"], me.vibb.music.playback.Commands.CALL_HOLD)

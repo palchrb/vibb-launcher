@@ -74,10 +74,12 @@ fun atEndNextLookMs(remainingMs: Long?, fadeMs: Long): Long = when {
 const val AT_END_SPOTIFY_PAUSE_MS = 400L
 
 /** What may end "Til slutten" (design 50 §1.2). */
-enum class SleepEvent { STEP, NEW_QUEUE, KID_PAUSE, ITEM_END_PAUSE, QUEUE_ENDED, TIMER_SET }
+enum class SleepEvent { STEP, NEW_QUEUE, KID_PAUSE, ITEM_END_PAUSE, QUEUE_ENDED, TIMER_SET, NO_DURATION }
 
 /**
- * Is "Til slutten" still on after [event]? It survives a manual step - finish what plays (the user's call); a new
- * queue, the pause it causes, a kid's own pause, the queue's natural end and the minute timer end it.
+ * Is "Til slutten" still on after [event]? It survives a manual step - finish what plays (the user's call); the kid's
+ * new pick ([SleepEvent.NEW_QUEUE]: a cover tap or a list pick - not the stored queue's load, a resumption or an output
+ * switch), the pause it causes, a kid's own pause, the queue's natural end, the minute timer and a step onto an item
+ * with no duration ([SleepEvent.NO_DURATION]: it could never end) end it.
  */
 fun sleepAtEndAfter(on: Boolean, event: SleepEvent): Boolean = on && event == SleepEvent.STEP

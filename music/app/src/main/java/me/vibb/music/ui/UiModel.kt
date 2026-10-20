@@ -74,10 +74,9 @@ data class NetNow(val caps: NetCaps?, val streamMobileData: Boolean, val onRoom:
  * Can't [entry] play on the phone right now (design 50 §1.4)? NRK/RSS with no visible item on the phone ([onPhone])
  * that the streaming gate would let through, and Spotify under `spotifyPlayability`'s refusal - every renderer rule's
  * own `itemPlayable`, so the tile says what a tap would meet. Storytel and own entries show only with a copy, so
- * they always play. [onRoom]: never - the phone's gate isn't a room's (Spotify there says so itself).
+ * they always play. The phone's gate only: on a room ([NetNow.onRoom]) [entryUi] dims nothing - the one room guard.
  */
 fun unplayableNow(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, net: NetNow): Boolean = when {
-    net.onRoom -> false
     isSpotify(entry) -> spotifyPlayability(net.caps, net.streamMobileData) != Playability.STREAM
     else -> items.none { itemPlayable(RendererKind.LOCAL, entry, it.key in onPhone, it.url != null, net.caps, net.streamMobileData) }
 }
@@ -104,8 +103,9 @@ fun entryUi(
     val state = spotifyTileState(entry, loadedId, loadedState, spotifyOutcome)
     // design 50 §1.4: dimmed by the network, or by an account line of its own ("Spør en voksen": no play either);
     // never on a room. One line: the account line wins over "Trenger Wi-Fi".
-    val refused = net != null && unplayableNow(entry, snap.visible(entry), snap.onPhone[entry.id].orEmpty(), net)
-    val dimmed = net?.onRoom != true && (refused || state == RendererState.SPOTIFY_ASK_ADULT)
+    val onRoom = net?.onRoom == true
+    val refused = net != null && !onRoom && unplayableNow(entry, snap.visible(entry), snap.onPhone[entry.id].orEmpty(), net)
+    val dimmed = !onRoom && (refused || state == RendererState.SPOTIFY_ASK_ADULT)
     return EntryUi(
         entry,
         snap.library?.categories?.firstOrNull { it.id == entry.category },

@@ -725,7 +725,7 @@ class PlaybackService : MediaSessionService() {
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
         val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
-        start(a, p)
+        start(a, p, newChoice = true)
     }
 
     private suspend fun playItem(entryId: Long, key: String) {
@@ -736,7 +736,7 @@ class PlaybackService : MediaSessionService() {
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
         val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
         val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
-        start(a, p)
+        start(a, p, newChoice = true)
     }
 
     private suspend fun resumeLast() {
@@ -819,10 +819,11 @@ class PlaybackService : MediaSessionService() {
      * player and its tile carry the renderer's line, "trenger Wi-Fi" or "trenger internett" - and never moves
      * to another item or says NOT_DOWNLOADED. Loading never touches the network or the web player (§5.4).
      */
-    private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
+    private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {
         renderer.saveNow()
-        // a new queue ends "Til slutten" (design 50 §1.2); a step doesn't
-        endSleepAtEnd(SleepEvent.NEW_QUEUE)
+        // the kid's new pick ends "Til slutten" (design 50 §1.2, code QA 1) - a cover tap or a list pick; a step, the
+        // stored queue's first play, a playback resumption and an output switch load a queue but keep it
+        if (newChoice) endSleepAtEnd(SleepEvent.NEW_QUEUE)
         clearFault()
         var index = plan.startIndex.coerceIn(a.items.indices)
         var pos = plan.startPosMs
@@ -1360,11 +1361,18 @@ class PlaybackService : MediaSessionService() {
     private fun onRendererEvent(event: RendererEvent) {
         when (event) {
             is RendererEvent.ItemChanged -> onItemChanged(event.index, event.auto)
-            RendererEvent.Ready -> active?.let { a ->
-                val item = a.items.getOrNull(renderer.currentIndex())
-                val duration = renderer.durationMs()
-                // never a Spotify context's (design 26c §5.9): the web player's is the live track's, the item is never done
-                if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration
+            RendererEvent.Ready -> {
+                // design 50 §1.2 (code QA 8): carried by a step onto an item with no duration (live) it could never end
+                if (sleepAtEnd && renderer.kind == RendererKind.LOCAL && renderer.durationMs() == null) {
+                    endSleepAtEnd(SleepEvent.NO_DURATION)
+                    publish()
+                }
+                active?.let { a ->
+                    val item = a.items.getOrNull(renderer.currentIndex())
+                    val duration = renderer.durationMs()
+                    // never a Spotify context's (design 26c §5.9): the web player's is the live track's, the item is never done
+                    if (item != null && duration != null && keepsDuration(a.entry, item.key)) a.durations[item.key] = duration
+                }
             }
             RendererEvent.Ended -> queueEnded()
             is RendererEvent.Paused -> {

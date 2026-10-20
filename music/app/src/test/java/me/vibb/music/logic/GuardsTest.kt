@@ -710,7 +710,7 @@ class GuardsTest {
 
     @Test
     fun `26c 5_10 - which renderer - a Spotify entry's start attaches the web player, made once, before the queue changes`() {
-        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {")
         assertTrue(start.contains("usePhoneRenderer(a.entry)\n        active = a"))
         assertTrue("before the queue loads", start.indexOf("usePhoneRenderer(a.entry)") in 0 until start.indexOf("renderer.load("))
         assertTrue("after the old renderer's own save", start.indexOf("renderer.saveNow()") < start.indexOf("usePhoneRenderer("))
@@ -740,6 +740,8 @@ class GuardsTest {
                 // design 30 (merged from main 571f86f): the changed-source reload, the played mark and the held set are
                 // the phone's own player's (LOCAL) - never Spotify's web player, never a room; the claim is claimsQueue's
                 "val next = if (phoneRendererFor(entry) == RendererKind.SPOTIFY) spotifyRenderer() else local",
+                // design 50 §1.2 (code QA 8): only the phone's ExoPlayer knows at Ready that an item has no duration (live)
+                "if (sleepAtEnd && renderer.kind == RendererKind.LOCAL && renderer.durationMs() == null) {",
                 "renderer.kind == RendererKind.LOCAL && a.entry.source != Source.STORYTEL",
                 "if (renderer.kind != RendererKind.LOCAL || item.fileId != null || a.entry.source == Source.STORYTEL) return",
                 "val held = if (a == null || renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0) {",
@@ -763,7 +765,7 @@ class GuardsTest {
         assertTrue(serviceBody("private fun playable(").contains("streamMobileData: Boolean = store.streamMobileData): Boolean {"))
         assertTrue(serviceBody("private fun playable(").contains("return itemPlayable(renderer.kind, a.entry, hasCopy(a, item), item.url != null, caps, streamMobileData)"))
         assertTrue(serviceBody("private fun playableFrom(").contains("return playableIndex(a.entry, a.items.size, index, forward, wrap) { playable(a, it, caps, streamMobileData) }"))
-        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        val start = serviceBody("private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {")
         assertTrue("NOT_DOWNLOADED only for another source", start.contains("if (first == null && !isSpotify(a.entry)) {\n            if (play) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)\n            updateHeld(loaded = true) \n            return"))
         assertTrue(start.contains("if (first != null && first != index) {"))
         assertTrue("refused: loaded paused with the line, no play", start.contains("if (play && (first != null || !refuseSpotify())) {\n            renderer.play()"))
@@ -1070,7 +1072,7 @@ class GuardsTest {
         assertTrue(service.contains("renderer.load(a.items.map { mediaItem(a, it) }, index, pos, playNow = false)\n        updateHeld(loaded = true)"))
         // Every other end of a queue's claims (qa-30-s3b-code L6): start() giving up, playback resumption once the
         // session has its items, and an exception between the claim and the queue.
-        val start = body(service, "private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {")
+        val start = body(service, "private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {")
         assertTrue(start.substringAfter("if (first == null && !isSpotify(a.entry)) {").substringBefore("return").contains("updateHeld(loaded = true)"))
         assertTrue(Regex("future\\.set\\(MediaSession\\.MediaItemsWithStartPosition\\(a\\.items\\.map \\{ mediaItem\\(a, it\\) \\}, index, pos\\)\\)\\s*handler\\.post \\{ updateHeld\\(loaded = true\\) \\}").containsMatchIn(service))
         val active = body(service, "private suspend fun activeFor(")

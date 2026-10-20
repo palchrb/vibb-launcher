@@ -41,6 +41,8 @@ import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
 import me.vibb.music.sync.netCaps
+import me.vibb.music.sync.netCapsOf
+import me.vibb.music.logic.NetCaps
 
 enum class Screen { LIBRARY, PLAYER, LIST, NEWS, SEARCH }
 
@@ -71,9 +73,25 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     var netVersion by mutableIntStateOf(0)
         private set
 
+    /**
+     * The default network's callback (code QA 6): `onCapabilitiesChanged` also fires for signal strength and bandwidth,
+     * every few seconds on cell - only a change of what the gate reads ([netCapsOf]) moves [netVersion].
+     */
     private val netWatch = object : ConnectivityManager.NetworkCallback() {
-        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) = bumpNet()
-        override fun onLost(network: Network) = bumpNet()
+        @Volatile private var last: NetCaps? = null
+
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+            val now = netCapsOf(networkCapabilities)
+            if (now != last) {
+                last = now
+                bumpNet()
+            }
+        }
+
+        override fun onLost(network: Network) {
+            last = null
+            bumpNet()
+        }
     }
 
     init {

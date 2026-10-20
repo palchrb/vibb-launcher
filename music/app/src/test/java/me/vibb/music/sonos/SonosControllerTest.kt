@@ -640,6 +640,46 @@ class SonosControllerTest {
     }
 
     @Test
+    fun `d50 - Til slutten beats repeat one - held at the same item at 0, nothing played again`() {
+        r.c.repeat = Repeat.ONE
+        playing("0:23:59")
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        r.work.drain()
+        assertEquals("no replay", plays, r.host.played.size)
+        assertEquals(0, r.c.index)
+        assertEquals(1, held)
+        assertFalse(r.c.takeEnded())
+    }
+
+    @Test
+    fun `d50 - Til slutten beats repeat all - held at the first item at 0 after the last, no wrap played`() {
+        r.c.repeat = Repeat.ALL
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals("no wrap played", plays, r.host.played.size)
+        assertEquals(0, r.c.index)
+        assertEquals(1, held)
+        assertFalse(r.c.takeEnded())
+        assertFalse(r.spk.commands.contains("stop"))
+    }
+
+    @Test
     fun `a stop far from the end is a human and stays stopped`() {
         playing("0:10:00")
         r.advance(5_000)

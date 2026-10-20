@@ -540,9 +540,12 @@ internal class SpotifyRenderer(
      * coalesced like a step, so nothing restarts from 0:00; paused, the next play is a fresh start ([needSettings]).
      */
     private fun applyModes(replay: Boolean) {
-        val wanted = spotifyModes(contextUri != null, shuffledMode, repeatMode)
+        // design 50 §1.2 (code QA 3): while "Til slutten" is on, Spotify's repeat is off and list mode never wraps - the
+        // item's end is the end; the entry's own repeat comes back when it clears
+        val repeat = if (atEnd != null) Repeat.OFF else repeatMode
+        val wanted = spotifyModes(contextUri != null, shuffledMode, repeat)
         val changed = wanted != tracker.wanted
-        tracker.setModes(wanted, wrap = contextUri == null && repeatMode == Repeat.ALL)
+        tracker.setModes(wanted, wrap = contextUri == null && repeat == Repeat.ALL)
         if (!replay || !changed || !needSettings || released || !pwr || ended || tracks.isEmpty() || tracker.mode != Mode.OURS) return
         place = Place(index, positionMs(), ports.now(), moving = false)
         cancelStep()
@@ -735,7 +738,10 @@ internal class SpotifyRenderer(
     override fun pauseAtItemEnd(done: (() -> Unit)?) {
         atEndTimer?.invoke()
         atEndTimer = null
+        val was = atEnd != null
         atEnd = done
+        // repeat off while it is on, the entry's repeat back after it (QA 3)
+        if (was != (done != null)) applyModes(replay = true)
         if (done == null) {
             if (fadeTimer == null && fadeLevel != 1.0) {
                 fadeLevel = 1.0

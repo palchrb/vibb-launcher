@@ -33,10 +33,3 @@ fun favouriteEntriesGone(favourites: Map<String, Set<String>>, entries: List<Ent
     val keys = entries.map { it.key }.toSet()
     return favourites.keys.filter { it !in keys }.toSet()
 }
-
-/**
- * A tap on the "Favoritter" tile (§1.5, the proposal "drop if unwanted", built): with exactly one entry holding a
- * favourite among [shown] that entry's id - the screen plays it as its cover would - else null (the tile filters).
- */
-fun favouritesTapOpens(shown: List<Entry>, favouriteEntries: Set<String>): Long? =
-    shown.filter { it.key in favouriteEntries }.singleOrNull()?.id

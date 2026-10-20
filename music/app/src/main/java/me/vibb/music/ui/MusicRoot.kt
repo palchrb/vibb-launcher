@@ -43,10 +43,8 @@ import me.vibb.music.logic.offlineSummary
 import me.vibb.music.logic.requestStands
 import me.vibb.music.logic.search
 import me.vibb.music.logic.shownEntries
-import me.vibb.music.logic.FAVOURITES_CATEGORY
 import me.vibb.music.logic.canFavourite
 import me.vibb.music.logic.favouriteEntryKeys
-import me.vibb.music.logic.favouritesTapOpens
 import me.vibb.music.logic.skipWithin
 import me.vibb.music.logic.sleepAtEndOffered
 import me.vibb.music.playback.OutputKind
@@ -250,12 +248,8 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerH
         onBack = actions::backHome,
         onSearch = vm::openSearch,
         onNews = { vm.screen = Screen.NEWS },
-        onCategory = { id ->
-            val opens = if (id == FAVOURITES_CATEGORY && vm.category != FAVOURITES_CATEGORY) favouritesTapOpens(all, favourites) else null
-            vm.pickCategory(id)
-            // one entry under Favoritter: the tap opens it, as its cover would (§1.5's proposal)
-            opens?.let { playEntry(it) }
-        },
+        // "Favoritter" filters like every category tile: no tile starts sound (design 50 §1.5, code QA 4)
+        onCategory = vm::pickCategory,
         onIndex = vm::turned,
         onPlay = { playEntry(it.entry.id) },
         onOpenPlayer = { vm.screen = Screen.PLAYER },

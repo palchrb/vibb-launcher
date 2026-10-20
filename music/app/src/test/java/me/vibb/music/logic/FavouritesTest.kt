@@ -45,9 +45,10 @@ class FavouritesTest {
         assertNull(tapCategory(FAVOURITES_CATEGORY, FAVOURITES_CATEGORY))
         assertEquals(FAVOURITES_CATEGORY, tapCategory(10, FAVOURITES_CATEGORY))
         assertEquals("a real category is untouched by the hearts", listOf(a, c), shownEntries(entries, 10, favs))
-        // one entry with hearts: the tap opens it; more, the tile filters
-        assertEquals(a.id, favouritesTapOpens(entries, setOf(a.key)))
-        assertNull(favouritesTapOpens(entries, favs))
+        // code QA 4: the tile filters like every category, one entry or many - no category tile starts sound
+        assertEquals(listOf(a), shownEntries(entries, FAVOURITES_CATEGORY, setOf(a.key)))
+        val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
+        assertTrue(root.contains("onCategory = vm::pickCategory,"))
     }
 
     @Test

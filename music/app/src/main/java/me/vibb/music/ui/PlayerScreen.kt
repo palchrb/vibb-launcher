@@ -134,10 +134,13 @@ fun PlayerScreen(
                 }
                 // a Spotify context has no number: Spotify picks the tracks (design 26c §5.9)
                 val heart = favourite(item)
-                // design 50 §1.5: the heart under the title, beside "Episode N av M"
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // design 50 §1.5: the heart at the end of the "Episode N av M" line, overlaid (code QA 7): the number stays
+                // centred, the line keeps its height, so the cover never moves
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)
-                    heart?.let { on -> HeartButton(on, 32.dp, 18.dp) { onFavourite(item, it) } }
+                    heart?.let { on ->
+                        HeartButton(on, PLAYER_HEART_DP.dp, 18.dp, Modifier.align(Alignment.CenterEnd).overlayOnLine()) { onFavourite(item, it) }
+                    }
                 }
             }
         }
@@ -221,6 +224,9 @@ private fun SkipButton(@DrawableRes glyph: Int, seconds: String, label: String, 
         BasicText(seconds, Modifier.offset(y = SKIP_NUMBER_DROP_DP.dp), style = text(number, 800, Palette.fg))
     }
 }
+
+/** The player's heart's touch target (dp): the list's 40. */
+const val PLAYER_HEART_DP = 40
 
 /** The skip glyph (dp), its number's fixed size and how far below the button's centre the ring's centre is (dp). */
 const val SKIP_GLYPH_DP = 20
