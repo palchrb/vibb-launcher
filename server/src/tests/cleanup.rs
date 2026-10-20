@@ -356,25 +356,29 @@ async fn pruning_keeps_only_what_retention_allows() {
     status(db, quiet, "-1 days").await;
     // Commands (design 48 §1.6): 30 days, but never one that may still reach the phone - an
     // undelivered wipe or lock waits however long it takes; an expired locate, a finished ring, a
-    // cancelled lock go.
-    for (command, age, done, cancelled) in [
-        ("wipe", "-31 days", false, false),
-        ("lock", "-31 days", false, false),
-        ("locate", "-31 days", false, false),
-        ("ring", "-31 days", true, false),
-        ("lock", "-31 days", false, true),
-        ("ring", "-29 days", true, false),
+    // cancelled lock and a delivered one never confirmed go.
+    // (command, asked, delivered, answered, cancelled)
+    for (command, age, delivered, answered, cancelled) in [
+        ("wipe", "-31 days", false, false, false),
+        ("lock", "-31 days", false, false, false),
+        ("locate", "-31 days", false, false, false),
+        ("ring", "-31 days", true, true, false),
+        ("lock", "-31 days", false, false, true),
+        // Delivered and never confirmed: long past its re-delivery window.
+        ("lock", "-31 days", true, false, false),
+        ("ring", "-29 days", true, true, false),
     ] {
         sqlx::query(
             "INSERT INTO device_commands (device_id, command, requested_at, delivered_at, \
              acknowledged_at, cancelled_at) VALUES (?1, ?2, datetime('now', ?3), \
-             CASE WHEN ?4 THEN datetime('now', ?3) END, CASE WHEN ?4 THEN datetime('now', ?3) END, \
-             CASE WHEN ?5 THEN datetime('now', ?3) END)",
+             CASE WHEN ?4 THEN datetime('now', ?3) END, CASE WHEN ?5 THEN datetime('now', ?3) END, \
+             CASE WHEN ?6 THEN datetime('now', ?3) END)",
         )
         .bind(logged)
         .bind(command)
         .bind(age)
-        .bind(done)
+        .bind(delivered)
+        .bind(answered)
         .bind(cancelled)
         .execute(db)
         .await
@@ -393,7 +397,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             pin_events: 0,
             parent_events: 0,
             push_rows: 0,
-            commands: 3,
+            commands: 4,
         }
     );
     let commands: Vec<(String, bool)> = sqlx::query_as(

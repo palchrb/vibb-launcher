@@ -455,8 +455,9 @@ pub async fn locate_result_json(State(state): State<AppState>, Path(id): Path<i6
 /// (`cancel`, the page's `?cancel=`): every request still in flight, at any age; one that went
 /// wrong (failed, expired, never confirmed, no answer) for [REQUESTS_HOURS]; and the newest Ring,
 /// Stop Ringing, Lock and Erase whatever became of it. Never a request the parent cancelled (the
-/// Cancel's line says so) nor a finished Update Location (the map shows it). Every kept row is
-/// read - retention bounds them (`retention::prune`).
+/// Cancel's line says so; it never counts as the newest, so it can't hide the last real one) nor
+/// a finished Update Location (the map shows it). Every kept row is read - retention bounds them
+/// (`retention::prune`).
 pub(crate) async fn requests(
     state: &AppState,
     device_id: i64,
@@ -481,9 +482,20 @@ pub(crate) async fn requests(
     let rows = commands
         .iter()
         .filter(|command| {
+            let status = command.status(now.naive_utc(), receipts);
+            // The parent's own Cancel never hides the last real one of its kind.
+            if matches!(
+                status,
+                CommandStatus::Cancelled {
+                    by: CancelledBy::Parent,
+                    ..
+                }
+            ) {
+                return false;
+            }
             let newest = seen.insert(command.command.as_str()) && command.command != "locate";
             let lately = parse_db_utc(&command.requested_at).is_some_and(|t| t >= since);
-            in_requests(&command.status(now.naive_utc(), receipts), lately, newest)
+            in_requests(&status, lately, newest)
         })
         .map(|command| command_row(command, zone, now, receipts))
         .collect();

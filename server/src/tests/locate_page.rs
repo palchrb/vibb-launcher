@@ -626,13 +626,20 @@ async fn requests_show_what_is_in_flight_or_just_went_wrong() {
         ("locate", "-98 hours", lost, false),
         // A finished Update Location: never.
         ("locate", "-5 minutes", done, false),
-        // The newest Ring whatever its age, not the one before.
+        // The newest Ring whatever its age (a cancelled one after it doesn't count), not the one
+        // before.
         ("ring", "-75 hours", done, true),
         ("ring", "-99 hours", done, false),
-        // The parent's own Cancel: never, even the newest.
+        // The parent's own Cancel: never, and it never hides the last real one of its kind.
         (
             "wipe",
             "-1 hours",
+            "cancelled_at = requested_at, cancel_reason = 'parent'",
+            false,
+        ),
+        (
+            "ring",
+            "-30 minutes",
             "cancelled_at = requested_at, cancel_reason = 'parent'",
             false,
         ),

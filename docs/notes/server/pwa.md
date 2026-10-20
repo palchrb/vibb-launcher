@@ -361,7 +361,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   a DB error (without the pins an imposter would be offered, without the answers an answered Allow; the Devices list's
   badge reads them leniently); a row whose read fails
   says "Couldn't read" (logged), as before.
-- **Typed (M5)**: `window_relock::{Blocks, BlockItem, BlockWhy, ForeignView, Findings, Answer, AnswerState, flash}`
+- **Typed (M5)**: `window_relock::{Blocks, BlockItem, BlockWhy, ForeignView, Findings, flash}`
   replace `blocks_note`, `more_blocks_line`, `foreign_note`, `relock_notes`, `answer_line` and `flash_text` (deleted
   with their unit tests); apps are named by the phone's label (`window_relock::app_names`), the package behind ⓘ;
   times in the Phone Setup zone, a phone time with its age. `parent_pin::when_text` and `ago` are gone;
@@ -490,7 +490,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   partial's `show(recent, "Requests")`) lists `LOCATE_KINDS` by `CommandStatus` (`in_requests`): in flight at any age
   (`Waiting`, `Sent{NotYet|OfferedAgain|CantConfirm}`, `Received{overdue: false}`, `Erasing`), gone wrong within 24 h
   (`Failed`, `Expired`, `Sent{Lost}`, `Received{overdue: true}`), and the newest Ring / Stop Ringing / Lock / Erase
-  whatever its status; never `Cancelled{Parent}`, never a Done locate. Shown when it has a row or the Cancel's line;
+  whatever its status; never `Cancelled{Parent}` - skipped before the newest of each kind is picked, so a cancelled request never hides the last real one -, never a Done locate. Shown when it has a row or the Cancel's line;
   Cancel still lands on `#recent`. Every command row's time is `Zone::at` (the clock on every row). Tests:
   `locate_page::requests_*`.
 

@@ -538,6 +538,52 @@ async fn now_keeps_running_pauses_and_no_answer_lines() {
     );
 }
 
+/// End now on a pause made yesterday: once ended it is neither running nor today's, so Now has
+/// nothing left but its flash - the group stays for it and the save lands there (no jump).
+#[tokio::test]
+async fn end_now_lands_on_now_when_nothing_else_is_left() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query(
+        "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at) \
+         VALUES (?, 'rule', 'Skole', 1500, datetime('now', '-1 day'), datetime('now', '+2 hours'))",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let (action, hidden) = forms(group(&html, "now"))
+        .into_iter()
+        .find(|(action, _)| action.ends_with("/end#now"))
+        .expect("End now");
+    let sent: Vec<(&str, &str)> = hidden
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let res = app
+        .request_form(
+            Method::POST,
+            action.split('#').next().unwrap(),
+            Some(&cookie),
+            &sent,
+        )
+        .await;
+    assert_redirect(&res, &format!("/devices/{id}?done=ended"), Some("now"));
+    app.assert_lands(&res, &cookie).await;
+    let html = app
+        .get_page(&format!("/devices/{id}?done=ended"), &cookie)
+        .await
+        .text();
+    let now = group(&html, "now");
+    assert!(now.contains("data-flash=\"now\""), "{now}");
+    assert!(!now.contains("data-lift"), "{now}");
+}
+
 /// Stored like `datetime('now')`.
 fn db_time(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
