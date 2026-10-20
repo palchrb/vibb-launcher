@@ -888,6 +888,15 @@ findings, merge to `main`, full suite once.
   wrong, lockout), the foreign-access and unseen-boot detectors and the low-battery edge call
   `CommandListenerService.requestSync(context, reason)` like the emergency call, debounced by the existing sync
   mutex; the power events already go at start. Next launcher round (one commit, tests on the request).
+- **Parked: a display-only widget host on the lock's glance page** (the user, 2026-10-20: "Er det umulig å lage en
+  sikker widget host sak i vår launchers lock screen? ... klønete å gjøre alt dette manuelt per app"). Feasible only as
+  pure display: `AppWidgetHost` with `appwidget grantbind` at enrolment, every widget under a touch-consuming layer
+  that leads to the keypad (the click-interception API `setInteractionHandler` is hidden, so a widget's own
+  PendingIntents can't be filtered), accessibility actions off as the keypad's; the parent picks widgets per phone in
+  the PWA (they can show content); `glanceFit` takes arbitrary heights. It does not give the timer tile (no clock
+  widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
+  targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
+  surface.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
