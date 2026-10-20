@@ -769,6 +769,20 @@ findings, merge to `main`, full suite once.
   works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
   camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
   picture migration (0082) and the receipt rule.
+- **Design 49: shuffle and repeat in the player's control row** (the user, 2026-10-20: "en spesifikk shuffle knapp og
+  repeat knapp ved siden av next/prev ... toggle for shuffle av og på - og toggle for ikke repeat, repeat all eller
+  repeat 1 sang"). Today: a shuffle button exists in the row's side slot but only for `canShuffle` = own files that
+  don't resume (`logic/Queue.kt`); no repeat anywhere. Proposal: for every `Kind.MUSIC` entry (own music, Spotify
+  playlists/albums; never podcasts or books, where order is the point) the row's two side slots are a shuffle toggle
+  and a three-state repeat (off → all → one, the glyph with a "1" badge), both remembered per entry on the phone like
+  design 39's flip (Room, never synced). The phone's player: ExoPlayer's shuffle and `REPEAT_MODE_ALL/ONE`; a Sonos
+  room: the controller's queue bookkeeping (vibb's order rules); Spotify: in list mode our window is shuffled on the
+  phone (the tracker's "ours" widens to any uri of our window) and repeat-all re-sends the window at its end,
+  repeat-one re-sends the track; in context mode Spotify's own shuffle/repeat API is set to the kid's choice (today
+  both are forced off before the first play; the tracker already takes every track of the context as ours), and the
+  queue's "next 20" view (design 46) follows. Resume entries keep shuffle hidden as today. The behaviour reference is
+  vibb's player for the phone; Spotify's own app for the look of the two toggles. Design note first; the music round
+  with 46.
 - **Design 48: one Activity log on the phone's summary** (the user, 2026-10-20, a screenshot of the summary after
   round 5: "Hvorfor recent og today, og så vises ikke den today saken på recent heller? ... samle loggen på bunnen";
   "høres greit ut" to this): today the summary has Recent (the override commands the parent asked for, design 44) and
