@@ -784,41 +784,6 @@ findings, merge to `main`, full suite once.
   `glanceFit` like the time-rule card (PLAN "A time rule shows as a card"). Emulator: Google's clock (system);
   Jelly Star: its clock package to be checked (the alarm exemption needs it). Launcher round with 41 and the lock
   tile's flicker; a design note first.
-- **Design 43: the PWA's app shell - the tab bar no longer `position: fixed`** (the user, 2026-10-20, the installed
-  app on the iPhone, iOS 26: after a while in the background, not every time, the tab bar "floats up the screen" as
-  the page scrolls). The cause is the stale layout viewport a standalone app keeps after a resume: a `fixed; bottom: 0`
-  box is placed against it, so it moves with the scroll. `tab-bar.js`'s relayout (round 1's hypothesis) doesn't hold
-  on the device, so round 1's named fallback goes in: the document stops scrolling (`html, body { height: 100%;
-  overflow: hidden }`, body a flex column, `100dvh` where known), `main` is the scroller (`flex: 1; overflow-y: auto;
-  overscroll-behavior: contain`), the tab bar a plain flex child at the bottom with the safe-area padding it has, no
-  fixed box anywhere; `tab-bar.js` and the container's 96 px bottom padding go; the desktop's always-there scrollbar
-  (`overflow-y: scroll`) moves from `html` to the scroller. Consequences to carry: `scroll-restore.js`,
-  `auto-reload.js` and `install-now.js` read and set the scroller instead of the window (a `handyScroller()` helper
-  in scroll-restore.js, falling back to the window when no `main` scrolls - the login page keeps its own layout and
-  has no tab bar); a browser restores no inner scroller on Back/reload, so scroll-restore.js keeps the place itself
-  (per path, on `pagehide` and throttled on scroll, restored when the navigation type is `back_forward` or
-  `reload` - qa-browser-fixes-code M1 must still pass); the `#fragment` anchors scroll the nearest scrollable ancestor,
-  so forms' redirects still land right; `.editor-bar`'s sticky top works inside the scroller; the Locate map and the
-  music cards' horizontal scrollers are children of the scroller (check the map's touch handling). Known trade-off:
-  with an inner scroller iOS may leave a focused field behind the keyboard (Safari usually scrolls it in; check the
-  long forms - Time, Filter - on the iPhone). Tests: jstest for the restore paths (window and scroller, back_forward),
-  the tab-bar test deleted. Also in this round (the user, 2026-10-20: "av og til virker det som om den zoomer inn
-  når jeg trykker på tabs på bunnen"): Safari's double-tap zoom fires on two quick taps on a tab or a row - `touch-action:
-  manipulation` on `.tab`, `.row`, buttons and links (pinch zoom stays; never `user-scalable=no`). A server round of its
-  own (design QA + code QA), after the 0.29.5 verification; the user
-  verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
-  form not jumping (the standing rule), no zoom on a quick double tap on a tab.
-- **Design 47: "Add from Spotify" opens on the add form; the Spotify setup behind a row** (the user, 2026-10-20:
-  "trykker på add from spotify, så kommer jeg inn i en tab som øverst viser ... settings; client id og pålogging av
-  kontoer ... add spotify link, category og 'on these phones' ... er det som burde komme opp ... Blir mye støy"). Today
-  `/music/spotify` (`music_spotify.html`) is: Your Spotify App, Children's Accounts (+ the paste flow), Add a Spotify
-  link, On these phones. Decided: `/music/spotify` = "Add a Spotify link" + "On these phones" first, then one row
-  "Spotify setup" with its value ("2 accounts", or "Not set up yet") to `/music/spotify/setup` (`music_spotify_setup.html`:
-  Your Spotify App, Children's Accounts, the paste flow, back link to the add page); when no app or no child account
-  exists, the add page shows that row on top as an attention row ("Set up Spotify first ›") and the form below it
-  disabled with the reason. Every POST keeps its own group's `#fragment` and comes back to the page that holds it (the
-  no-jump rule). Server only, small; the Music tab's "Add from Spotify" row keeps its link. Could ride in round 5's B
-  implementer or the next server round - the user decides.
 - **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
   NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
@@ -862,40 +827,6 @@ findings, merge to `main`, full suite once.
   "never yours" rewritten to "your own account too, as a reader, if you want your playlists listed in full - it plays
   on no phone" (design 47's "Plays on" picker shows it as "Plays on no phone"). The user decides whether to log their
   account in; 46 (the queue's next 20) stays the answer for lists nobody logged in can read.
-- **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
-  reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
-  tannhjul ... for å stille inn ... notification counter bør nullstilles når man har åpnet den innboxen; nå må man
-  trykke på hvert varsel"). Today `/notifications` is one page: This Device, Inbox, Getting Notifications, Notify Me
-  About; the bell leads there; an event is read only when tapped (its row goes to the phone's page) or by Mark All as
-  Read. Decided: (1) `/notifications` = the inbox alone (the phone filter, the rows, older/newer), with a gear
-  top-right (`title-action`, like the bell) to `/notifications/settings` = This Device, Getting Notifications, Notify
-  Me About, with their forms and `#fragments` unchanged (every redirect target moves with them - the no-jump rule);
-  (2) opening the inbox marks every event it shows as read (`read_at` on the page's rows, not older pages), so the
-  bell count and the app badge drop to what is not shown yet; a row keeps a quiet "new" dot for that visit (the
-  unread state rendered before the marking) so the parent still sees what was new; Mark All as Read stays for the
-  rest; a tap on a row still opens the phone's page (and still counts as `clicked` for the delivery). (3) The push's
-  `navigate` keeps pointing at the phone's page (the user: a tap should land on the phone), and the Notifications
-  warning rows keep linking to `/notifications/settings#devices`. Tests: the inbox read-on-open, the bell after it,
-  the settings forms' redirects, the links from Devices/Settings hubs. Server round, with designs 43/44.
-- **Design 44: the Locate page shows its history, and only its own Recent** (the user, 2026-10-20: "hvor kan jeg
-  vise location history ... ser jo ikke den på noe vis i kartet"; the Recent list "viser egentlig feil ting" - Install
-  Now and Unlock rows; "1 og 2 er bra", plus a span choice for the trail). Today the history is the blue trail alone
-  (all stored points, `locations.json`; invisible when the points coincide, as on the emulator) and Recent lists the
-  phone's last 10 commands of every kind. Decided: (1) Recent on Locate keeps only the page's own actions (Update
-  Location, Ring, Stop Ringing, Lock, Erase); the other commands get a Recent of their own where they belong - Unlock
-  and Lock again on the Lock page, Install Now on Home (the Time page has its own already) - one shared partial and
-  one query taking a kind list, the same cancel. (2) The history list behind a row, not on the page (the user: "en
-  detaljer man må trykke seg inn på ... så de ikke blir masse støy på locate siden"): under the map one row
-  "Locations" with a count in its value ("14 in the last 12 hours ›") opening `/devices/{id}/locations` - the same
-  map at the top with the trail, then every stored fix with its time (the zone words the page uses) and accuracy
-  ("± 25 m"), newest first, a tap pans that page's map to it (JS-only enhancement, the list reads without it); the
-  trail gets a small dot per point on both pages so a short history shows. (3) A span pick above the map on both pages, "Show: 12 hours (default) · 24 hours · 7 days · everything
-  kept", applied to the trail, the row's count and the list alike, remembered per browser (localStorage, a view preference - no POST, so nothing to
-  save and nothing that can jump) and sent as `?since=` to `locations.json`, which filters by `captured_at`; the
-  newest fix is always shown whatever the span, so the marker never disappears. Server tests: the filtered JSON, the
-  kind-filtered Recent on each page, the cancel still right; jstest for the pick's storage and the list's pan. A PWA
-  server round, together with design 43 or right after it; the user verifies on the iPhone and the emulator (a
-  moving emulator: `geo fix` twice, §5 of docs/testing/emulator.md).
 - **Investigate: does one bad episode picture URL hold a listing's other pictures?** (from qa-r5-design.md r5-3,
   2026-10-20: the proposed `Why::Art` failures rule changed nothing, because with `failures > 0` the regular time already
   is the backoff). Find out whether a single picture's failure raises the listing's `failures` at all, or whether the
@@ -991,6 +922,39 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **Round 5 (2026-10-20, server 0.30.0; merges 6cf45ae4 r5-a and the r5-b merge after it; design QA
+  `docs/design/qa-r5-design.md` + one revision check; code QA `docs/review/qa-r5-a-code.md` (0 High / 0 Medium / 3 Low,
+  all fixed) and `qa-r5-b-code.md` (0 / 1 / 2, all fixed))**: **design 43** the PWA's app shell - the document never
+  scrolls, `main` does, the tab bar a plain flex child (no `position: fixed`), `touch-action: manipulation` on `main`
+  and the bar (no double-tap zoom), `scroll-restore.js` keeps the place in `main` and restores it on a history Back and
+  on reload (the place record beats the fragment there), `tab-bar.js` gone (`docs/design/43-pwa-app-shell.md`);
+  **design 44** Locate's Recent shows only its own commands, the override commands' Recent sits on the phone's summary
+  under Quick actions (rows Today's card already shows are left out), a Locations page behind a row with a span pick
+  (12 h default, remembered per browser), dots on the trail, `locations.json?since=`, the map script in
+  `static/locate.js` with data- attributes (`44-locate-history.md`); **design 45** `/notifications` is the inbox alone
+  with a gear to `/notifications/settings` (This Device, Getting Notifications, Notify Me About), opening the inbox
+  marks the shown rows read (the dots stay for that visit), the gear carries `data-unread` so the Home Screen badge
+  follows (`45-notifications-inbox-first.md`); **design 47** `/music/spotify` opens on the add form, the Spotify setup
+  lives in Music › Settings as its own group with `spotify-` ids, each account row has a "Plays on" picker
+  (`POST /music/spotify/accounts/{id}/plays-on`), Storytel's "On phones" opens per-phone switches
+  (`POST /music/storytel/phones/{id}`), the Settings hub's row lost its "N unread" (`47-spotify-add-first.md`); **the
+  small items** (`r5-server-small-items.md`): the push's `navigate` carries `?push=<delivery>` and an admin-router layer
+  marks the delivery opened (+ the event read) with a 303 that drops the key - "Opened on iPhone · Safari"; the device
+  row's quiet "· N since one was opened" from `push_subscriptions.last_opened_at`; `command stream opened/closed` log
+  lines with the age; migration 0082 (`art_more` backfill with `art_due`'s condition + `last_opened_at`; next free
+  0083); Send a Test's rows poll `subscriptions.json` for 30 s. **Device checks owed (the user)**: iPhone - the bar
+  still after > 10 min in the background on Device › Time, no double-tap zoom on a tab or a deep row (pinch still
+  zooms), a save never jumps (Home's switches, Lock › Parent PIN, a low group on Time), a history Back to the long
+  Devices list and a reload land at the place (the page's "‹" opens at the top by design), the editor bar right under
+  the status bar on Device › Time with Save not covered (also landscape), login with the keyboard up, Time rules' last
+  field with the keyboard up and down with no offset bar, the Locate map drags without the page scrolling, a bell of 3
+  → inbox dots → bell and badge 0, Turn On/Send a Test/Remove from the gear's page back to their groups, a tap on a
+  notification lands without `?push` and the inbox says "Opened on", Music › From Spotify opens on the form, Music ›
+  Settings' Spotify group saves/logs in (the 303 through the CSP)/removes without a jump, "Plays on" and the Storytel
+  switches save in place; desktop (the Pi's Chromium) - the scrollbar at the window's edge, the wheel over the margins,
+  the column steady; emulator - two `geo fix` positions: trail, dots, the row's count, the Locations page, a tap pans,
+  the spans; after 0082 the old entries fetch their pictures at the next sweep; `docker compose logs` shows the stream
+  lines. Goes out with server-v0.30.0.
 - **Round 1 (2026-10-18, main 5911178a; QA: `docs/review/qa-r1-server-code.md`, `qa-r1-apps-code.md`)**:
   the Locate marker; the tab bar still in a narrow window (`html { overflow-y: scroll }`) and inset on an iPhone
   (`viewport-fit=cover`, `tab-bar.js` - **the user verifies on the iPhone**: the bar above the home indicator, and
@@ -1042,7 +1006,7 @@ findings, merge to `main`, full suite once.
   "May not be showing" - the user, 2026-10-20: "da velger vi å stole på declarative web push"). **Verified on the
   iPhone 2026-10-20 07:20 UTC**: Send a Test shows its banner (deliveries 50-52, no receipt lines), a parent-PIN use
   on the emulator reached the inbox and the badge on the Home Screen icon carried the unread count (a test push
-  carries `app_badge` = the unread count, 0 when the inbox is read - by design, no badge for a test alone). **Next server round**: the tap on a declarative notification goes
+  carries `app_badge` = the unread count, 0 when the inbox is read - by design, no badge for a test alone). **Done in round 5 (0.30.0, see "Done (not released yet)")**: the tap on a declarative notification goes
   straight to `navigate` without the worker (WebKit skips it when the notification has one), so the link carries the
   delivery (`?push=<delivery id>`) and the page handler of a logged-in parent sets `clicked_at` from it - "Opened on
   iPhone · Safari" (the user's yes, 2026-10-20; a missing tap never changes a thing - delivered stays delivered);
