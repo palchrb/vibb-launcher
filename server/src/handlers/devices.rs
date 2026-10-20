@@ -736,6 +736,8 @@ struct DeviceDetailTemplate {
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
     /// blocked apps with Allow these apps…, the last relock's findings, the commands' answers.
     relock: crate::handlers::window_relock::RelockCard,
+    /// Recent for the override commands (design 44 §1.2), with Cancel back here.
+    recent: crate::handlers::locate::Recent,
     /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
     pause_rules: Vec<(i64, String)>,
     /// A lift form's flash (`?done=`): the summary group ("quick", "today"), text, refused.
@@ -1601,8 +1603,31 @@ async fn render_device(
         _ => (None, None),
     };
 
-    // Today keeps today's answers and any still waiting (qa-31-s10-code N2); older ones are on
-    // the Locate tab's Recent.
+    // Recent: the override commands' rows (design 44 §1.2); a failed read is no page, never an
+    // empty list that isn't true.
+    let recent = match crate::handlers::locate::recent(
+        state,
+        id,
+        crate::handlers::locate::OVERRIDE_KINDS,
+        "summary",
+        query.get("cancel").map(String::as_str),
+        &zone,
+        now,
+    )
+    .await
+    {
+        Ok(recent) => recent,
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's recent commands");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response();
+        }
+    };
+    // Today keeps today's answers and any still waiting (qa-31-s10-code N2); older ones are in
+    // Recent.
     relock.answers.retain(|a| {
         a.state == crate::window_relock::AnswerState::Waiting || zone.is_today(a.at, now)
     });
@@ -1646,6 +1671,7 @@ async fn render_device(
             no_parent_pin: managed_without_pin(&policy),
             pin_notices: parent_pin.notices,
             relock,
+            recent,
             access: access_card(
                 state,
                 &device,

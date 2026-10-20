@@ -1,0 +1,27 @@
+{#- A Recent group (design 44 §1.3, `locate::Recent`): what was asked and how it went, newest first;
+    Cancel while it waits, back to this group (#recent, `back` names the page), where the line after
+    it shows. The Locate page's and the phone's summary's. -#}
+{% macro show(recent) %}
+    <section id="recent" aria-labelledby="recent-title">
+        <h2 class="group-header" id="recent-title">Recent</h2>
+        <div class="group" data-group="recent">
+            {% for c in recent.rows %}
+            <div class="row" data-command="{{ c.kind }}">
+                <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>
+                <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
+                {% if let Some(cancel_id) = c.cancel_id %}
+                <form method="post" action="/devices/{{ recent.device_id }}/commands/{{ cancel_id }}/cancel#recent" class="row-form">
+                    <input type="hidden" name="back" value="{{ recent.back }}">
+                    <button type="submit" class="row-action" aria-label="Cancel {{ c.label }} asked for at {{ c.asked }}">Cancel</button>
+                </form>
+                {% endif %}
+            </div>
+            {% else %}
+            <p class="row row-note">Nothing asked yet.</p>
+            {% endfor %}
+            {% if let Some((text, refused)) = recent.flash %}
+            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="recent">{{ text }}</p>
+            {% endif %}
+        </div>
+    </section>
+{% endmacro %}

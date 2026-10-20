@@ -464,8 +464,9 @@ pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inlin
      connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; \
      object-src 'none'";
 
-/// Admin pages that must never be stored: live locations, backups, the setup QR (an enrollment
-/// code), the provisioning settings, the account and 2FA pages; and the inbox (design 35,
+/// Admin pages that must never be stored: live locations and the Locations page (every kept fix,
+/// design 44), backups, the setup QR (an enrollment code), the provisioning settings, the account
+/// and 2FA pages; and the inbox (design 35,
 /// qa-35-s1-code L4), so Back never shows a read event as unread from the back-forward cache. The
 /// tab pages with the bell keep their cache and scroll restore (the count may lag one navigation
 /// after Back - accepted).
@@ -474,6 +475,7 @@ pub fn no_store_path(path: &str) -> bool {
     matches!(
         segments.as_slice(),
         ["devices", _, "locations.json"]
+            | ["devices", _, "locations"]
             | ["devices", _, "locate-result.json"]
             | ["devices", _, "provision"]
             | ["devices", _, "regenerate-code"]
@@ -639,6 +641,8 @@ mod tests {
     fn no_store_paths() {
         for path in [
             "/devices/3/locations.json",
+            // Every kept fix (design 44 §1.4).
+            "/devices/3/locations",
             "/devices/3/locate-result.json",
             "/devices/3/provision",
             "/devices/3/regenerate-code",

@@ -960,6 +960,10 @@ pub fn build_admin_router(
             get(handlers::locate::locations_json),
         )
         .route(
+            "/devices/{id}/locations",
+            get(handlers::locate::show_locations),
+        )
+        .route(
             "/devices/{id}/locate-result.json",
             get(handlers::locate::locate_result_json),
         )
