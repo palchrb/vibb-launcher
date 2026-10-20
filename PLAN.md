@@ -910,6 +910,13 @@ findings, merge to `main`, full suite once.
   app list) and a row to ask again. Verify on the emulator first: the dialog for another package accepted from our
   app on Android 16, and what `setUserControlDisabledPackages` exempts there. Launcher round 7 (+ the status contract
   field in both directories).
+- **Wake the screen for a notification - a global switch** (the user, 2026-10-20, on the lock screen never waking for a
+  notification, design 32b's exclusion: "la det være en global bryter i pwa? Under feks lock screen kategorien i phone
+  settings"): one per-device switch in the PWA under Device › Lock screen, off by default (today's behaviour), a policy
+  field `lock_wake_on_notification` (both directories, `policy_json_keys_snapshot` + `PolicyResponseCompatTest` in one
+  commit); when on, the launcher wakes the screen (`PowerManager`/`turnScreenOn` on the lock activity, a short
+  timeout, never a dismiss) for a missed call and for a glance app's notification (design 51's list), never for the
+  music tile. Launcher round 7 (the server half with it).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
